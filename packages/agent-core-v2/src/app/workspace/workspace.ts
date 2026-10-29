@@ -10,6 +10,8 @@ export interface Workspace {
   readonly additionalDirs: readonly string[];
   readonly createdAt: number;
   readonly lastOpenedAt: number;
+  readonly runtimeId?: string;
+  readonly deviceId?: string;
 }
 
 export interface WorkspaceCreate {
@@ -17,6 +19,8 @@ export interface WorkspaceCreate {
   readonly name?: string;
   readonly additionalDirs?: readonly string[];
   readonly idempotencyKey?: string;
+  readonly runtimeId?: string;
+  readonly deviceId?: string;
 }
 
 export interface WorkspaceUpdate {

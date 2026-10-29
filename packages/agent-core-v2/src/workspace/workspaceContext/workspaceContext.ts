@@ -11,6 +11,8 @@ export interface WorkspaceMeta {
   readonly kind: WorkspaceKind;
   readonly createdAt: number;
   readonly lastOpenedAt: number;
+  readonly runtimeId?: string;
+  readonly deviceId?: string;
 }
 
 export interface IWorkspaceContext {

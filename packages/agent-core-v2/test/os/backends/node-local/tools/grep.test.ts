@@ -161,6 +161,7 @@ function createTestFs(kaos: FakeKaos): IHostFileSystem {
     readdir: () => notImplemented('readdir'),
     mkdir: () => notImplemented('mkdir'),
     remove: () => notImplemented('remove'),
+    rename: () => notImplemented('rename'),
     realpath: () => notImplemented('realpath'),
   };
 }

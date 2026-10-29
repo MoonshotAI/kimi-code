@@ -10,6 +10,8 @@ export interface PersistedWorkspaceEntry {
   readonly additional_dirs?: readonly string[];
   readonly created_at: string;
   readonly last_opened_at: string;
+  readonly runtime_id?: string;
+  readonly device_id?: string;
 }
 
 export interface PersistedWorkspaceFile {

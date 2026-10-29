@@ -6,6 +6,7 @@ import {
   readFile,
   readdir,
   mkdir,
+  rename,
   realpath as nodeRealpath,
   rm,
   stat as nodeStat,
@@ -196,6 +197,14 @@ export class HostFileSystem implements IHostFileSystem {
       await rm(path, { recursive: true, force: true });
     } catch (error) {
       throw toHostFsError(error, { path, op: 'remove' });
+    }
+  }
+
+  async rename(path: string, nextPath: string): Promise<void> {
+    try {
+      await rename(path, nextPath);
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'rename' });
     }
   }
 

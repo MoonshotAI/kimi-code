@@ -107,8 +107,6 @@ interface ProgramGeneration {
   retired: boolean;
 }
 
-const PROGRAM_CAPABILITIES = ['fs', 'process'] as const;
-
 export class Program {
   readonly binding: RuntimeBinding;
   private currentStatus: ProgramStatus = 'preparing';
@@ -118,6 +116,7 @@ export class Program {
   private readonly resolver: IRuntimeResolver;
   private generation?: ProgramGeneration;
   private generationFailed = false;
+  private generationFailure?: Error;
   private disposed = false;
   private readonly generationCleanups = new Set<Promise<void>>();
   private resolveReady?: () => void;
@@ -129,7 +128,7 @@ export class Program {
     private readonly context: IWorkspaceContext,
     private readonly dependencies: ProgramDependencies,
   ) {
-    this.binding = Object.freeze({ workspaceId, runtimeId: 'local' });
+    this.binding = Object.freeze({ workspaceId, runtimeId: context.meta.runtimeId ?? 'local' });
     this.resolver = {
       _serviceBrand: undefined,
       inspect: (binding) => this.runtimes.inspect(binding),
@@ -245,33 +244,39 @@ export class Program {
   }
 
   private requireGeneration(): ProgramGeneration {
-    if (this.generation === undefined) throw new Error(`program ${this.workspaceId} has no available local runtime generation`);
-    return this.generation;
+    if (this.generation !== undefined) return this.generation;
+    if (this.binding.runtimeId === 'local') {
+      throw new Error(`program ${this.workspaceId} has no available local runtime generation`);
+    }
+    if (this.generationFailure !== undefined) throw this.generationFailure;
+    throw new RuntimeError('runtime.unavailable', `program ${this.workspaceId} has no available ${this.binding.runtimeId} runtime generation`);
   }
 
   private onRuntimeChange(change: RuntimeRegistryChange): void {
-    if (change.runtimeId !== 'local' || this.disposed) return;
+    if (change.runtimeId !== this.binding.runtimeId || this.disposed) return;
     this.reconcileGeneration();
   }
 
   private reconcileGeneration(): void {
-    const local = this.runtimes.current('local');
-    if (local === undefined) {
+    const runtime = this.runtimes.current(this.binding.runtimeId);
+    if (runtime === undefined) {
       const previous = this.generation;
       this.generation = undefined;
       if (previous !== undefined) this.retireGeneration(previous);
       this.refresh();
       return;
     }
-    if (this.generation?.id !== local.identity.generation) {
+    if (this.generation?.id !== runtime.identity.generation) {
       const previous = this.generation;
       this.generationFailed = false;
+      this.generationFailure = undefined;
       try {
         const next = this.createGeneration();
         this.generation = next;
         if (previous !== undefined) this.retireGeneration(previous);
         this.observeReadiness(next);
       } catch (error) {
+        this.generationFailure = error instanceof Error ? error : new Error(String(error));
         if (!(error instanceof RuntimeError && error.code === 'runtime.unavailable')) {
           this.generationFailed = true;
           this.resolveProgramReady();
@@ -282,7 +287,8 @@ export class Program {
   }
 
   private createGeneration(): ProgramGeneration {
-    const lease = this.resolver.acquire(this.binding, PROGRAM_CAPABILITIES);
+    const required = this.binding.runtimeId === 'local' ? ['fs', 'process'] as const : ['fs'] as const;
+    const lease = this.resolver.acquire(this.binding, required);
     const runtime = lease.runtime;
     const disposables: { dispose(): void | Promise<void> }[] = [];
     const own = <T extends { dispose(): void | Promise<void> }>(value: T): T => {
@@ -294,7 +300,7 @@ export class Program {
       const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, runtime.fs!);
       const dirs = own(new WorkspaceDirsService(this.context, localConfig, this.dependencies.workspaces, this.dependencies.workspaceStore, this.dependencies.log, state));
       const git = new WorkspaceGitService(this.context, this.dependencies.git);
-      const fs = new WorkspaceFsService(this.context, dirs, runtime.fs!, this.resolver, this.dependencies.telemetry, git);
+      const fs = new WorkspaceFsService(this.context, dirs, runtime.fs!, this.resolver, this.dependencies.telemetry, git, this.binding.runtimeId);
       const instructions = own(new WorkspaceInstructionsService(this.context, runtime.fs!, runtime.environment, this.dependencies.bootstrap, this.dependencies.log, state));
       const trust = own(new WorkspaceTrustService(this.context, this.dependencies.trustStore, state));
       const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, runtime.fs!, trust, this.dependencies.configStore));
@@ -415,11 +421,11 @@ export class Program {
   }
 
   private refresh(): void {
-    const local = this.runtimes.current('local');
-    if (local === undefined || local.status === 'connecting') this.currentStatus = 'preparing';
+    const runtime = this.runtimes.current(this.binding.runtimeId);
+    if (runtime === undefined || runtime.status === 'connecting') this.currentStatus = 'preparing';
     else if (this.generationFailed || this.generation?.failed === true) this.currentStatus = 'degraded';
-    else if (this.generation?.ready !== true) this.currentStatus = this.generation === undefined && local.status !== 'ready' ? 'degraded' : 'preparing';
-    else this.currentStatus = local.status === 'ready' ? 'ready' : 'degraded';
+    else if (this.generation?.ready !== true) this.currentStatus = this.generation === undefined && runtime.status !== 'ready' ? 'degraded' : 'preparing';
+    else this.currentStatus = runtime.status === 'ready' ? 'ready' : 'degraded';
     this.changeEmitter.fire(this.snapshot());
   }
 }

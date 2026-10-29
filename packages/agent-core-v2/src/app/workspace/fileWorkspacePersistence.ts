@@ -97,6 +97,8 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
         merged['root'] = ws.root;
         merged['name'] = ws.name;
         merged['kind'] = ws.kind;
+        merged['runtime_id'] = ws.runtimeId;
+        merged['device_id'] = ws.deviceId;
         merged['created_at'] = new Date(ws.createdAt).toISOString();
         merged['last_opened_at'] = new Date(ws.lastOpenedAt).toISOString();
         record[ws.id] = merged as unknown as PersistedWorkspaceEntry;
@@ -240,6 +242,8 @@ function parseProjectsDocument(value: unknown): {
       additionalDirs: entry.additional_dirs ?? [],
       createdAt: parseTime(entry.created_at, now),
       lastOpenedAt: parseTime(entry.last_opened_at, now),
+      runtimeId: entry.runtime_id,
+      deviceId: entry.device_id,
     });
   }
   return {
@@ -352,6 +356,8 @@ function sanitizeEntry(value: unknown, strict = false): PersistedWorkspaceEntry 
     additional_dirs: additionalDirs,
     created_at: v.created_at,
     last_opened_at: v.last_opened_at,
+    runtime_id: typeof v.runtime_id === 'string' ? v.runtime_id : undefined,
+    device_id: typeof v.device_id === 'string' ? v.device_id : undefined,
   };
 }
 

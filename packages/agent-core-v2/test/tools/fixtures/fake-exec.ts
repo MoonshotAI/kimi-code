@@ -30,6 +30,7 @@ export function createFakeHostFs(overrides: Partial<IHostFileSystem> = {}): IHos
     readdir: () => notImplemented('FakeHostFs.readdir'),
     mkdir: () => notImplemented('FakeHostFs.mkdir'),
     remove: () => notImplemented('FakeHostFs.remove'),
+    rename: () => notImplemented('FakeHostFs.rename'),
     realpath: () => notImplemented('FakeHostFs.realpath'),
   };
   return { ...fs, ...overrides };

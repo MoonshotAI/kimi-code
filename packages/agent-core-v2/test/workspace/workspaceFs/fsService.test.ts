@@ -234,6 +234,7 @@ function fakeFs(
       dirSet.add(p);
     },
     remove: async () => {},
+    rename: async () => {},
     realpath: async (p) => {
       let current = p;
       for (let i = 0; i < 40; i++) {

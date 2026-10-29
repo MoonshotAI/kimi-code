@@ -48,7 +48,7 @@ import {
 import { ErrorCodes, Error2, isError2, unwrapErrorCause } from '#/errors';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
-import type { RuntimePath } from '#/runtime/runtime';
+import type { RuntimeLease, RuntimePath } from '#/runtime/runtime';
 import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -1261,7 +1261,13 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private async resolveRg(): Promise<RgResolution | null> {
     if (this.rgResolution !== undefined) return this.rgResolution;
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
+    let lease: RuntimeLease;
+    try {
+      lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
+    } catch {
+      this.rgResolution = null;
+      return null;
+    }
     const probe: RgProbe = {
       exec: (args) => runCommand(lease.runtime.process!, args, { cwd: this.workDir }),
     };

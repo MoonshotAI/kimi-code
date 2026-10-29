@@ -89,6 +89,7 @@ export class LocalRuntimeProviderFactory implements RuntimeProviderFactory {
   };
 
   async attach(context: RuntimeProviderContext, host: RuntimeProviderHost): Promise<RuntimeProviderAttachment> {
+    if ((context.metadata.runtimeId ?? 'local') !== 'local') return { dispose: () => {} };
     const handle = host.registerRuntime(new LocalRuntime(
       context.id,
       host.get(IHostEnvironment),

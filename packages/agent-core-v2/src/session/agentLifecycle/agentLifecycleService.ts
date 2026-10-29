@@ -295,7 +295,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             [ITelemetryService, telemetryBinding.telemetry],
             [IAgentRuntimeBindingSeed, {
               _serviceBrand: undefined,
-              binding: { workspaceId: this.ctx.workspaceId, runtimeId: opts.runtimeId ?? 'local' },
+              binding: { workspaceId: this.ctx.workspaceId, runtimeId: opts.runtimeId ?? this.ctx.runtimeId ?? 'local' },
             }],
             [IAgentBlobService, blobView],
             [IWireService, wire],

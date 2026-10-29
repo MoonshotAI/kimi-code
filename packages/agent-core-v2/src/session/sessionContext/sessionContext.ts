@@ -15,6 +15,7 @@ export interface ISessionContext {
   readonly sessionDir: string;
   readonly metaScope: string;
   readonly cwd: string;
+  readonly runtimeId?: string;
   scope(subKey?: string): string;
 }
 

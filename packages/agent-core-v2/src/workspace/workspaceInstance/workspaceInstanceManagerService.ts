@@ -328,7 +328,10 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     this.materializing.add(instance);
     try {
       for (const provider of this.providers.values()) await this.attach(instance, provider);
-      if (instance.runtimes.current('local') === undefined) throw new Error(`workspace ${workspace.id} has no local runtime`);
+      const runtimeId = workspace.runtimeId ?? 'local';
+      if (instance.runtimes.current(runtimeId) === undefined) {
+        throw new RuntimeError('runtime.not_found', `workspace ${workspace.id} has no ${runtimeId} runtime`);
+      }
       instance.activate();
       this.instances.set(workspace.id, instance);
       this.changeEmitter.fire({ workspaceId: workspace.id, instance });

@@ -117,11 +117,11 @@ export class WorkspaceService implements IWorkspaceService {
 
   create(input: WorkspaceCreate): Promise<Workspace> {
     return this.runExclusive(async () => {
-      await this.requireDirectory(input.root);
-      const additionalDirs = await this.normalizeAdditionalDirs(
-        input.root,
-        input.additionalDirs ?? [],
-      );
+      const remote = input.runtimeId !== undefined && input.runtimeId !== 'local';
+      if (!remote) await this.requireDirectory(input.root);
+      const additionalDirs = remote
+        ? [...(input.additionalDirs ?? [])]
+        : await this.normalizeAdditionalDirs(input.root, input.additionalDirs ?? []);
       await this.ensureMerged();
       let ws!: Workspace;
       let reused = false;
@@ -147,6 +147,8 @@ export class WorkspaceService implements IWorkspaceService {
           additionalDirs,
           createdAt: now,
           lastOpenedAt: now,
+          runtimeId: input.runtimeId,
+          deviceId: input.deviceId,
         };
         const idempotencyKeys = { ...catalog.idempotencyKeys };
         if (input.idempotencyKey !== undefined) idempotencyKeys[input.idempotencyKey] = ws.id;
@@ -183,7 +185,9 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
-        await this.requireDirectory(existing.root);
+        if (existing.runtimeId === undefined || existing.runtimeId === 'local') {
+          await this.requireDirectory(existing.root);
+        }
         touched = { ...existing, lastOpenedAt: Date.now() };
         return {
           workspaces: catalog.workspaces.map((ws) => (ws.id === id ? touched! : ws)),
@@ -205,10 +209,13 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
+        const remote = existing.runtimeId !== undefined && existing.runtimeId !== 'local';
         const additionalDirs =
           patch.additionalDirs === undefined
             ? existing.additionalDirs
-            : await this.normalizeAdditionalDirs(existing.root, patch.additionalDirs);
+            : remote
+              ? [...patch.additionalDirs]
+              : await this.normalizeAdditionalDirs(existing.root, patch.additionalDirs);
         updated = {
           ...existing,
           ...(patch.name !== undefined ? { name: patch.name } : {}),
@@ -235,6 +242,9 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
+        if (existing.runtimeId !== undefined && existing.runtimeId !== 'local') {
+          throw new Error2(ErrorCodes.CONFIG_INVALID, 'remote workspace primary changes are unsupported');
+        }
         const resolved = (await this.localConfig.resolveAdditionalDirs(existing.root, [path]))[0];
         if (resolved === undefined) {
           throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `primary ${path} does not exist`);
