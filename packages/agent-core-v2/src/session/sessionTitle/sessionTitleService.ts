@@ -78,6 +78,7 @@ export class SessionTitleService implements ISessionTitleService {
     if (!force) {
       if (current.titleKind === 'custom') return undefined;
       if (current.titleKind === 'generated') return undefined;
+      if (current.forkedFrom !== undefined) return undefined;
     }
     const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
     if (main === undefined) return undefined;
