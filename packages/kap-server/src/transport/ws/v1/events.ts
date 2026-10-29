@@ -1,6 +1,7 @@
 import type { ConfigResponse } from '../../../protocol/rest-config';
 import type { Session, SessionPendingInteraction } from '../../../protocol/session';
 import type { Workspace } from '../../../protocol/workspace';
+import type { DeviceChangedEvent } from '../../../protocol/rest-device';
 
 export interface SessionMetaUpdatedEvent {
   readonly type: 'session.meta.updated';
@@ -127,6 +128,7 @@ export type PushEvent =
   | ModelCatalogChangedEvent
   | PluginChangedEvent
   | CapabilityChangedEvent
-  | DiUnitChangedEvent;
+  | DiUnitChangedEvent
+  | DeviceChangedEvent;
 
 export type Event = PushEvent & { agentId: string; sessionId: string; readonly time?: number };

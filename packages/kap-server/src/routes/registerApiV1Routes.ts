@@ -10,7 +10,9 @@ import { okEnvelope } from '../envelope';
 import type { MetaFeature } from '../protocol/rest-meta';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import type { TranscriptService } from '../services/transcript/transcriptService';
+import type { DeviceBridgeHub } from '../devices/bridgeHub';
 import { registerAuthRoute } from './auth';
+import { registerDeviceRoutes } from './devices';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
 import { registerConfigRoutes } from './config';
@@ -68,6 +70,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly connectionRegistry: IConnectionRegistry;
   readonly transcriptService: TranscriptService;
   readonly sessionRating: SessionRatingHost;
+  readonly devices: DeviceBridgeHub;
   readonly pluginMarketplaceUrl: () => string | Promise<string>;
   readonly pluginMarketplaceIsDefault: boolean;
   readonly remoteControl: RemoteControlRouteOptions;
@@ -110,6 +113,7 @@ export async function registerApiV1Routes(
       });
 
       registerAuthRoute(apiV1 as unknown as Parameters<typeof registerAuthRoute>[0], core);
+      registerDeviceRoutes(apiV1 as unknown as Parameters<typeof registerDeviceRoutes>[0], core, opts.devices);
       registerOAuthRoutes(
         apiV1 as unknown as Parameters<typeof registerOAuthRoutes>[0],
         core,
@@ -172,6 +176,7 @@ export async function registerApiV1Routes(
       registerWorkspacesRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspacesRoutes>[0],
         core,
+        opts.devices,
       );
       registerWorkspaceFsRoutes(
         apiV1 as unknown as Parameters<typeof registerWorkspaceFsRoutes>[0],

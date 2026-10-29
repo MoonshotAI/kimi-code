@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
 import { wsOperations, type WsOperationDefinition } from './ws-control';
+import {
+  DEVICE_BRIDGE_PATH,
+  deviceClientFrameSchema,
+  deviceServerFrameSchema,
+} from '../devices/protocol';
 
 const ASYNCAPI_VERSION = '3.1.0';
 const DEFAULT_TITLE = 'Kimi Code WebSocket API';
@@ -27,8 +32,12 @@ export function createAsyncApiDocument(
   const serverProtocol = options.serverProtocol ?? 'ws';
   const wsPath = options.wsPath ?? DEFAULT_WS_PATH;
   const messages = buildMessages();
+  const deviceMessages = buildDeviceMessages();
   const channelMessages = Object.fromEntries(
     Object.keys(messages).map((id) => [id, { $ref: `#/components/messages/${id}` }]),
+  );
+  const deviceChannelMessages = Object.fromEntries(
+    Object.keys(deviceMessages).map((id) => [id, { $ref: `#/components/messages/${id}` }]),
   );
 
   return {
@@ -37,7 +46,7 @@ export function createAsyncApiDocument(
       title,
       version,
       description:
-        'WebSocket protocol for Kimi Code daemon control frames, acknowledgements, system frames, and session event streaming.',
+        'WebSocket protocol for Kimi Code daemon control frames, acknowledgements, system frames, session event streaming, and Desktop device bridges.',
     },
     defaultContentType: 'application/json',
     servers: {
@@ -54,6 +63,11 @@ export function createAsyncApiDocument(
         servers: [{ $ref: '#/servers/local' }],
         messages: channelMessages,
       },
+      kimiCodeDeviceBridge: {
+        address: DEVICE_BRIDGE_PATH,
+        servers: [{ $ref: '#/servers/local' }],
+        messages: deviceChannelMessages,
+      },
     },
     operations: {
       receiveClientMessages: {
@@ -69,10 +83,35 @@ export function createAsyncApiDocument(
           ...ackMessageRefs(),
         ],
       },
+      receiveDeviceMessages: {
+        action: 'receive',
+        channel: { $ref: '#/channels/kimiCodeDeviceBridge' },
+        messages: [{ $ref: '#/components/messages/deviceClientFrame' }],
+      },
+      sendDeviceMessages: {
+        action: 'send',
+        channel: { $ref: '#/channels/kimiCodeDeviceBridge' },
+        messages: [{ $ref: '#/components/messages/deviceServerFrame' }],
+      },
     },
     components: {
-      messages,
+      messages: { ...messages, ...deviceMessages },
     },
+  };
+}
+
+function buildDeviceMessages(): Record<string, unknown> {
+  return {
+    deviceClientFrame: asyncApiMessage(
+      'deviceClientFrame',
+      'Authenticated Desktop to central device bridge frame.',
+      deviceClientFrameSchema,
+    ),
+    deviceServerFrame: asyncApiMessage(
+      'deviceServerFrame',
+      'Central to authenticated Desktop device bridge frame.',
+      deviceServerFrameSchema,
+    ),
   };
 }
 
@@ -132,7 +171,7 @@ function jsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
 }
 
 function messageId(type: string): string {
-  return type.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return type.replaceAll(/[^A-Za-z0-9]+/g, '_').replaceAll(/^_+|_+$/g, '');
 }
 
 function titleFromName(name: string): string {

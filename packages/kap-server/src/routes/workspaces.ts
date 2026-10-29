@@ -16,7 +16,11 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import { DeviceBridgeError } from '../devices/deviceRegistry';
+import type { DeviceBridgeHub } from '../devices/bridgeHub';
+import { deviceIdFromRuntime } from '../devices/protocol';
 import { ErrorCode } from '../protocol/error-codes';
+import { mapError } from '../transport/errors';
 import {
   createWorkspaceRequestSchema,
   createWorkspaceResponseSchema,
@@ -70,7 +74,7 @@ interface WorkspaceRouteHost {
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): void {
+export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope, devices?: DeviceBridgeHub): void {
   const listRoute = defineRoute(
     {
       method: 'GET',
@@ -96,12 +100,42 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.RUNTIME_NOT_FOUND]: {},
+        [ErrorCode.RUNTIME_UNAVAILABLE]: {},
+        [ErrorCode.RUNTIME_DENIED]: {},
+        [ErrorCode.RUNTIME_UNSUPPORTED]: {},
       },
-      description: 'Register a workspace (fresh id per call; retry-safe via idempotency_key)',
+      description: 'Register a local or bridge-authorized Desktop workspace (fresh id per call; retry-safe via idempotency_key)',
       tags: ['workspaces'],
     },
     async (req, reply) => {
       const root = req.body.root;
+      const runtimeId = req.body.runtime_id ?? 'local';
+      if (runtimeId !== 'local') {
+        try {
+          const deviceId = deviceIdFromRuntime(runtimeId);
+          if (deviceId === undefined) throw new DeviceBridgeError('runtime.not_found', `unknown runtime ${runtimeId}`);
+          if ((req.body.additional_dirs ?? []).length > 0) {
+            throw new DeviceBridgeError('runtime.unsupported', 'remote additional_dirs are not supported in M2');
+          }
+          if (devices === undefined || !devices.enabled) {
+            throw new DeviceBridgeError('runtime.unsupported', 'internal central server experiment is disabled');
+          }
+          const authorized = await devices.registry.authorizeWorkspace(deviceId, root);
+          const ws = await core.accessor.get(IWorkspaceService).create({
+            root: authorized.root,
+            name: req.body.name,
+            additionalDirs: [],
+            idempotencyKey: req.body.idempotency_key,
+            runtimeId,
+            deviceId,
+          });
+          reply.send(okEnvelope(await toWireWorkspace(core, ws), req.id));
+        } catch (error) {
+          reply.send(mapError(error, req.id));
+        }
+        return;
+      }
       if (!isAbsolute(root)) {
         reply.send(
           buildValidationEnvelope(
@@ -160,6 +194,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.RUNTIME_UNSUPPORTED]: {},
       },
       description: 'Update a workspace name and/or source folders (full replace)',
       tags: ['workspaces'],
@@ -172,6 +207,10 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         reply.send(
           errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspace_id} does not exist`, req.id),
         );
+        return;
+      }
+      if (existing.runtimeId !== undefined && existing.runtimeId !== 'local' && req.body.additional_dirs !== undefined) {
+        reply.send(errEnvelope(ErrorCode.RUNTIME_UNSUPPORTED, 'remote additional_dirs changes are unsupported in M2', req.id));
         return;
       }
       let additionalDirs: readonly string[] | undefined;
@@ -326,6 +365,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.RUNTIME_UNSUPPORTED]: {},
       },
       description: 'Promote a source folder to the primary directory (atomic swap; id and bucket unchanged)',
       tags: ['workspaces'],
@@ -338,6 +378,10 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         reply.send(
           errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspace_id} does not exist`, req.id),
         );
+        return;
+      }
+      if (existing.runtimeId !== undefined && existing.runtimeId !== 'local') {
+        reply.send(errEnvelope(ErrorCode.RUNTIME_UNSUPPORTED, 'remote workspace primary changes are unsupported in M2', req.id));
         return;
       }
       const resolved = resolveAdditionalDirPath(core, existing.root, req.body.path);
@@ -495,6 +539,8 @@ export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<Works
     created_at: new Date(ws.createdAt).toISOString(),
     last_opened_at: new Date(ws.lastOpenedAt).toISOString(),
     session_count: sessionCount,
+    runtime_id: ws.runtimeId,
+    device_id: ws.deviceId,
   };
 }
 

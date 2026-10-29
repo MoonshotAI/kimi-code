@@ -19,6 +19,8 @@ export const workspaceSchema = z.object({
   created_at: isoDateTimeSchema,
   last_opened_at: isoDateTimeSchema,
   session_count: z.number().int().nonnegative(),
+  runtime_id: z.string().min(1).optional(),
+  device_id: z.string().min(1).optional(),
 });
 
 export type Workspace = z.infer<typeof workspaceSchema>;
@@ -28,6 +30,7 @@ export const workspaceCreateSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   additional_dirs: z.array(z.string().min(1)).max(64).optional(),
   idempotency_key: z.string().min(1).max(200).optional(),
+  runtime_id: z.string().min(1).optional(),
 });
 
 export type WorkspaceCreate = z.infer<typeof workspaceCreateSchema>;

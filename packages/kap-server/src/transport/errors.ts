@@ -72,6 +72,51 @@ export function mapError(err: unknown, requestId: string): ReturnType<typeof err
   if (err instanceof TimeoutError) {
     return errEnvelope(ErrorCode.INTERNAL_ERROR, err.message, requestId, err.stack);
   }
+  const code = typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined;
+  if (typeof code === 'string') {
+    const osCode = {
+      ENOENT: ErrorCode.FS_PATH_NOT_FOUND,
+      ENOTDIR: ErrorCode.FS_PATH_NOT_FOUND,
+      EACCES: ErrorCode.FS_PERMISSION_DENIED,
+      EPERM: ErrorCode.FS_PERMISSION_DENIED,
+      EEXIST: ErrorCode.FS_ALREADY_EXISTS,
+      'os.fs.not_found': ErrorCode.FS_PATH_NOT_FOUND,
+      'os.fs.not_directory': ErrorCode.FS_PATH_NOT_FOUND,
+      'os.fs.permission_denied': ErrorCode.FS_PERMISSION_DENIED,
+      'os.fs.already_exists': ErrorCode.FS_ALREADY_EXISTS,
+      'os.fs.is_directory': ErrorCode.FS_IS_DIRECTORY,
+    }[code];
+    if (osCode !== undefined) return errEnvelope(osCode, err instanceof Error ? err.message : String(err), requestId);
+    if (code.startsWith('runtime.') || code.startsWith('device.')) {
+      const protocolCode = code === 'runtime.not_found'
+        ? ErrorCode.RUNTIME_NOT_FOUND
+        : code === 'runtime.denied'
+          ? ErrorCode.RUNTIME_DENIED
+          : code === 'runtime.unsupported' || code === 'runtime.capability_unavailable'
+            ? ErrorCode.RUNTIME_UNSUPPORTED
+            : code === 'runtime.write_uncertain'
+              ? ErrorCode.RUNTIME_WRITE_UNCERTAIN
+              : code === 'runtime.timeout'
+                ? ErrorCode.RUNTIME_TIMEOUT
+                : code === 'runtime.too_large'
+                  ? ErrorCode.FS_TOO_LARGE
+                  : ErrorCode.RUNTIME_UNAVAILABLE;
+      const candidate = err as { retryable?: unknown; uncertain?: unknown };
+      return errEnvelope(
+        protocolCode,
+        err instanceof Error ? err.message : String(err),
+        requestId,
+        err instanceof Error ? err.stack : undefined,
+        {
+          runtime_error: {
+            code,
+            retryable: typeof candidate.retryable === 'boolean' ? candidate.retryable : undefined,
+            uncertain: typeof candidate.uncertain === 'boolean' ? candidate.uncertain : undefined,
+          },
+        },
+      );
+    }
+  }
   return errEnvelope(
     ErrorCode.INTERNAL_ERROR,
     err instanceof Error ? err.message : String(err),

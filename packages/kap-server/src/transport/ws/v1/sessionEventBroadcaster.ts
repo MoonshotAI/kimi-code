@@ -60,6 +60,8 @@ import {
 } from '../../../protocol/interaction-wire';
 import { toWireQuestion } from '../../../protocol/question-wire';
 import { toWireWorkspace } from '../../../routes/workspaces';
+import { toWireDevice } from '../../../routes/devices';
+import type { DeviceBridgeHub } from '../../../devices/bridgeHub';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
 
 export interface EventEnvelope {
@@ -120,6 +122,7 @@ export class SessionEventBroadcaster {
   private readonly deletionSubscription: IDisposable | undefined;
   private readonly createSubscription: IDisposable | undefined;
   private readonly lifecycleSubscription: IDisposable;
+  private readonly deviceSubscription?: IDisposable;
   private closed = false;
 
   constructor(
@@ -127,6 +130,7 @@ export class SessionEventBroadcaster {
       readonly core: Scope;
       readonly logger?: BroadcastLogger;
       readonly transcriptService?: TranscriptService;
+      readonly devices?: DeviceBridgeHub;
     },
   ) {
     const sessionManager = opts.core.accessor.get(ISessionManager);
@@ -162,6 +166,14 @@ export class SessionEventBroadcaster {
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)
       .subscribe((event) => this.onCoreEvent(event));
+    this.deviceSubscription = opts.devices?.onDidChange(({ device }) => {
+      this.enqueueGlobal('event.device.updated', () => ({
+        type: 'event.device.updated',
+        device: toWireDevice(device),
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      }));
+    });
   }
 
   addGlobalTarget(target: BroadcastTarget): void {
@@ -381,6 +393,7 @@ export class SessionEventBroadcaster {
     this.deletionSubscription?.dispose();
     this.createSubscription?.dispose();
     this.lifecycleSubscription.dispose();
+    this.deviceSubscription?.dispose();
     for (const sessionId of this.workTrackers.keys()) this.untrackWork(sessionId);
     for (const [sessionId, state] of this.sessions) {
       disposeSessionState(state);

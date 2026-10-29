@@ -19,6 +19,7 @@ import {
   ICapabilityService,
   IPluginService,
   IWorkspaceService,
+  IWorkspaceInstanceManager,
   NOTIFY_USER_UI_CAPABILITY,
   PluginChanged,
   logSeed,
@@ -101,6 +102,10 @@ import {
 import { createCredentialValidator } from './services/auth/credentials';
 import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
+import type { AuthPrincipal } from './services/auth/principal';
+import { DeviceBridgeHub } from './devices/bridgeHub';
+import { DEVICE_BRIDGE_PATH } from './devices/protocol';
+import { RemoteRuntimeProviderFactory } from '@moonshot-ai/agent-core-v2/runtime/remoteRuntime';
 
 import { drainGlobalSearchDisposals, IGlobalSearchService } from './search/searchService';
 
@@ -136,6 +141,11 @@ export interface ServerStartOptions {
   readonly webAssetsDir?: string;
   readonly serverVersion?: string;
   readonly telemetry?: boolean;
+  readonly deviceBridge?: {
+    readonly defaultTimeoutMs?: number;
+    readonly heartbeatIntervalMs?: number;
+    readonly helloTimeoutMs?: number;
+  };
 }
 
 export interface RunningServer {
@@ -143,6 +153,7 @@ export interface RunningServer {
   readonly core: Scope;
   readonly connectionRegistry: IConnectionRegistry;
   readonly authTokenService: IAuthTokenService;
+  readonly devices: DeviceBridgeHub;
   readonly host: string;
   readonly port: number;
   close(): Promise<void>;
@@ -223,10 +234,21 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
+  const centralEnabled = (): boolean => core.accessor.get(IFlagService).enabled(INTERNAL_CENTRAL_SERVER_FLAG_ID);
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken, {
     authenticate: createCentralUserAuthenticator(centralUsersPath(homeDir)),
-    enabled: () => core.accessor.get(IFlagService).enabled(INTERNAL_CENTRAL_SERVER_FLAG_ID),
+    enabled: centralEnabled,
   });
+  const deviceBridge = await DeviceBridgeHub.create({
+    catalogFile: join(homeDir, 'server', 'device-catalog.json'),
+    enabled: centralEnabled,
+    defaultTimeoutMs: opts.deviceBridge?.defaultTimeoutMs,
+    heartbeatIntervalMs: opts.deviceBridge?.heartbeatIntervalMs,
+    helloTimeoutMs: opts.deviceBridge?.helloTimeoutMs,
+  });
+  const remoteRuntimeProvider = await core.accessor.get(IWorkspaceInstanceManager).addProvider(
+    new RemoteRuntimeProviderFactory(deviceBridge, centralEnabled),
+  );
 
   const readManagedOAuth = (): { key?: string; oauthHost?: string } | undefined =>
     core.accessor
@@ -346,6 +368,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
     configChangedPublisher.close();
     await remoteControlManager.close();
+    await deviceBridge.close();
     await app.close();
     sessionRating.dispose();
     configWarningSubscription.dispose();
@@ -367,6 +390,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await core.accessor.get(ISessionIndexMirror).drain();
       await core.accessor.get(IMcpOAuthService).shutdown();
       const appendLogStore = core.accessor.get(IAppendLogStore);
+      await remoteRuntimeProvider.dispose();
       core.dispose();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
@@ -392,6 +416,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     core,
     logger,
     transcriptService,
+    devices: deviceBridge,
   });
 
   const configService = core.accessor.get(IConfigService);
@@ -456,6 +481,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'tasks', description: 'Task management' },
           { name: 'fs', description: 'Filesystem operations' },
           { name: 'files', description: 'File upload & download' },
+          { name: 'devices', description: 'Desktop device and runtime catalog' },
           { name: 'remote-control', description: 'Remote Control tunnel' },
         ],
       },
@@ -503,6 +529,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     connectionRegistry,
     transcriptService,
     sessionRating,
+    devices: deviceBridge,
     dangerousBypassAuth: opts.disableAuth === true,
     webTitle: opts.webTitle,
   });
@@ -524,7 +551,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     const url = req.url ?? '';
     const isV1 = url === WS_PATH_V1 || url.startsWith(`${WS_PATH_V1}?`);
     const isDebug = url === WS_DEBUG_PATH || url.startsWith(`${WS_DEBUG_PATH}?`);
-    const wss = isV1 ? wssV1 : isDebug ? wssDebug : undefined;
+    const isDevice = url === DEVICE_BRIDGE_PATH || url.startsWith(`${DEVICE_BRIDGE_PATH}?`);
+    const wss = isV1 ? wssV1 : isDebug ? wssDebug : isDevice ? deviceBridge.wss : undefined;
     if (wss === undefined) {
       socket.destroy();
       return;
@@ -549,15 +577,15 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       return;
     }
 
+    let principal: AuthPrincipal | undefined;
     if (opts.disableAuth !== true) {
       const authHeader = req.headers.authorization;
       const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : null;
       const protocolToken = extractWsBearerToken(req.headers['sec-websocket-protocol']);
       const candidate = bearerToken !== null && bearerToken.length > 0 ? bearerToken : protocolToken;
-      let ok = false;
       if (candidate !== null) {
         try {
-          ok = (await validateCredential(candidate)) !== undefined;
+          principal = await validateCredential(candidate);
         } catch (error) {
           logger.warn(
             {
@@ -568,10 +596,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
             },
             'ws upgrade rejected',
           );
-          ok = false;
+          principal = undefined;
         }
       }
-      if (!ok) {
+      if (principal === undefined) {
         logger.warn(
           {
             remoteAddress: req.socket.remoteAddress,
@@ -587,7 +615,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
 
     (socket as Socket).setNoDelay(true);
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, principal));
   };
   app.server.on('upgrade', (req, socket, head) => {
     void handleUpgrade(req, socket, head).catch((error: unknown) =>
@@ -647,7 +675,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);
 
-  return { app, core, connectionRegistry, authTokenService, host, port: boundPort, close };
+  return { app, core, connectionRegistry, authTokenService, devices: deviceBridge, host, port: boundPort, close };
 }
 
 export const PORT_RETRY_LIMIT = 100;

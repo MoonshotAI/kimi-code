@@ -110,6 +110,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/devices",
+    ],
+    [
+      "GET",
       "/api/v1/files/{file_id}",
     ],
     [
@@ -187,6 +191,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/remote-control/devices",
+    ],
+    [
+      "GET",
+      "/api/v1/runtimes",
     ],
     [
       "GET",

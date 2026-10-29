@@ -56,6 +56,7 @@ import { parseRangeHeader, pickHeader } from '../lib/httpRange';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
+import { mapError } from '../transport/errors';
 import {
   fsOpenInRequestSchema,
   fsOpenRequestSchema,
@@ -182,10 +183,9 @@ async function acquireWorkspaceFs(
   runtimeId: string,
   required: readonly RuntimeCapability[],
 ): Promise<RuntimeFsScope> {
-  const workspaceLease = await core.accessor.get(IWorkspaceInstanceManager).acquire({
-    workspaceId,
-    root: roots.workDir,
-  });
+  const workspaceLease = await core.accessor.get(IWorkspaceInstanceManager).acquire(
+    runtimeId === 'local' ? { workspaceId, root: roots.workDir } : { workspaceId },
+  );
   try {
     return { ...createRuntimeFs(core, workspaceId, roots, runtimeId, required), workspaceLease };
   } catch (error) {
@@ -373,7 +373,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         const runtimeId = runtime_id ?? 'local';
         req.body = request;
         const required: RuntimeCapability[] = ['fs'];
-        if (fsAction === 'search' || fsAction === 'grep' || fsAction === 'git_status' || fsAction === 'diff') {
+        if (fsAction === 'git_status' || fsAction === 'diff') {
           required.push('process');
         }
         runtimeFs = session === undefined && fsAction === 'search'
@@ -526,7 +526,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, runtime_id, ...searchRequest } = req.body;
       let runtimeFs: RuntimeFsScope | undefined;
       try {
-        runtimeFs = await resolveWorkspaceFs(core, workspace, runtime_id ?? 'local', ['fs', 'process']);
+        runtimeFs = await resolveWorkspaceFs(core, workspace, runtime_id ?? 'local', ['fs']);
         if (runtimeFs === undefined) {
           reply.send(
             errEnvelope(
@@ -1035,15 +1035,13 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
         return;
     }
   }
+  const mapped = mapError(err, requestId);
+  if (mapped.code !== ErrorCode.INTERNAL_ERROR) {
+    reply.send(mapped);
+    return;
+  }
   log?.error({ err }, 'fs request failed');
-  reply.send(
-    errEnvelope(
-      ErrorCode.INTERNAL_ERROR,
-      err instanceof Error ? err.message : String(err),
-      requestId,
-      err instanceof Error ? err.stack : undefined,
-    ),
-  );
+  reply.send(mapped);
 }
 
 function buildValidationEnvelope(

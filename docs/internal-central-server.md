@@ -47,15 +47,111 @@ Core `agent-core-v2` and transcript models use the corresponding `{ "userId": "a
 
 Existing health, version and meta routes already provide the required centralized-server bootstrap information; M1 adds no duplicate health or version endpoint.
 
-## M2 device Runtime/bridge extension point
+## M2 device Runtime and bridge
 
-M2 should add a device provider, not change the ownership of session state or add another AgentLoop writer. The extension points are `RuntimeProviderFactory`, `WorkspaceInstanceManager.addProvider()`, `IAgentRuntimeService` and the existing `runtime_id` route fields. A provider can expose `desktop:<deviceId>` as a runtime ID and bind it per workspace.
+M2 adds an FS-only `RemoteRuntimeProviderFactory` without changing session, queue, transcript, or AgentLoop ownership. One central writer still owns each `KIMI_CODE_HOME`; a Desktop supplies only filesystem operations for explicitly authorized directories. It does not supply process execution, a terminal, or another AgentLoop writer.
 
-The device bridge should use an authenticated outbound channel to the central server, a stable device ID, and an explicit per-device root allowlist. Device credentials can reuse the M1 authenticated-user identity; no device-specific PKI is required. Unknown runtime IDs must continue to fail closed with `RUNTIME_NOT_FOUND` and must never fall back to the development machine's `local` runtime or same-named path.
+Protocol v1 currently accepts POSIX device paths only. A Windows `path_class` is rejected with `runtime.unsupported` instead of being interpreted with the central host's path rules. Remote workspaces support one primary authorized root and no `additional_dirs` in this iteration.
 
-M2's intended capability is FS-only `Read`/`Write`/`Edit` plus their required path operations. The remote `IHostFileSystem` surface to review and implement as needed is `readText`, `writeText`, `appendText`, `readBytes`, `writeBytes`, `readLines`, `createExclusive`, `stat`, `lstat`, `readdir`, `mkdir`, `remove` and `realpath`. `Glob`/`Grep`/`Bash`/Git/test/PTY/process execution is outside M2 and should report the execution environment as unavailable or unsupported. A disconnected device also fails closed; it must not silently execute against the central host.
+### Connection and identity
 
-M1 does not implement the remote FS bridge, a device runtime, a deployment profile manager, or any CDN/relay integration.
+Desktop makes an outbound WebSocket connection to `/api/v1/devices/bridge`; it never listens for inbound connections. Authenticate the upgrade with the same independent user Bearer token as M1, using either the `Authorization` header or the existing `kimi-code.bearer.<token>` WebSocket subprotocol. Tokens are not accepted in the URL and are not logged. There is no device-specific PKI.
+
+The first frame must be `device.hello`:
+
+```json
+{
+  "type": "device.hello",
+  "protocol_version": 1,
+  "device_id": "desktop-a",
+  "display_name": "Alice Desktop",
+  "connection_id": "conn-unique-1",
+  "environment": {
+    "os_kind": "macOS",
+    "os_arch": "arm64",
+    "os_version": "15.0",
+    "shell_name": "bash",
+    "shell_path": "/bin/bash",
+    "path_class": "posix",
+    "home_dir": "/Users/alice"
+  },
+  "capabilities": { "fs": true, "process": false, "terminal": false }
+}
+```
+
+A successful connection receives `device.welcome` with the same `device_id` and `connection_id`, plus a server-assigned `generation` such as `g_1` and the protocol limits. A second simultaneously active `device_id` or `connection_id` is rejected with `device.conflict`. Every runtime request and response carries `device_id`, `connection_id`, `generation`, `request_id`, and `protocol_version`. Responses from a stale generation are ignored and can never settle a request from the current generation.
+
+The bridge uses JSON text frames and base64 for binary values. Limits are 16 MiB per frame, 10 MiB per text/binary payload, 32 pending requests per device, and 4 MiB of socket buffering before `runtime.busy` is returned. The default RPC timeout is 15 seconds. Protocol errors fail the call or connection; there is no implicit fallback and no automatic write replay. Reads are not retried automatically either, so a caller can apply its own explicit idempotency policy.
+
+### Authorization and workspace binding
+
+Only the connected Desktop can authorize a directory after its local folder-selection flow. It sends:
+
+```json
+{
+  "type": "device.command",
+  "request_id": "root-1",
+  "command": "root.register",
+  "root": { "path": "/Users/alice/project", "display_name": "Project" }
+}
+```
+
+The server calls `device.inspect_root` on that same connection and persists the canonical real path, the registering user, and the connection/generation in `<KIMI_CODE_HOME>/server/device-catalog.json` with mode `0600`. A `device.result` contains the root in the bridge's internal camelCase form: `root`, `displayName`, `registeredBy: { userId, displayName }`, `registeredAt`, `connectionId`, and `generation`. No REST endpoint can create or claim an authorized root.
+
+`POST /api/v1/workspaces` accepts an existing local workspace request or a remote request with `root`, `runtime_id: "desktop:<deviceId>"`, optional `name`, and optional `idempotency_key`. The root must exactly match an already authorized canonical root; arbitrary REST clients cannot add roots indirectly. Remote creation validates the device online state and current root without calling the central host's `hostFs.stat` on the remote path. Workspace responses add optional `runtime_id` and `device_id`. Managed workspace IDs remain globally unique even when two devices expose the same path string.
+
+`GET /api/v1/devices` returns devices, online state, environment, capabilities, and authorized roots. Root/user objects use the REST snake_case forms `registered_by` and `connected_by`. `GET /api/v1/runtimes` returns central `local` plus `desktop:<deviceId>` entries and explicit `fs`, `process`, and `terminal` capabilities. Existing app WS connections receive a global `event.device.updated` envelope whose payload contains the complete `device` object whenever a connection or root registration changes. `GET /openapi.json` and `GET /asyncapi.json` include the REST and bridge contracts.
+
+### Runtime RPC
+
+After authorization, the central server sends `runtime.rpc`:
+
+```json
+{
+  "type": "runtime.rpc",
+  "protocol_version": 1,
+  "device_id": "desktop-a",
+  "connection_id": "conn-unique-1",
+  "generation": "g_1",
+  "request_id": "request-uuid",
+  "method": "fs.read_bytes",
+  "params": { "path": "/Users/alice/project/image.png", "n": 65536, "offset": 0 },
+  "timeout_ms": 15000
+}
+```
+
+Desktop responds with `runtime.result` and a `result` value, or `runtime.error` with `error: { code, message, retryable?, uncertain? }`; all identity fields must match the request. The supported methods and result shapes are:
+
+| Method | Params beyond `path` | Result |
+| --- | --- | --- |
+| `device.inspect_root` | none | `{ root, is_directory: true }` |
+| `fs.realpath` | none | `{ path }` |
+| `fs.read_text` | `encoding?`, `errors?` | `{ text }` |
+| `fs.write_text` / `fs.append_text` | `data` | `null` |
+| `fs.read_bytes` | `n?`, `offset?` | `{ base64 }` |
+| `fs.write_bytes` | `base64` | `null` |
+| `fs.create_exclusive` | `base64` | `{ created }` |
+| `fs.stat` / `fs.lstat` | none | `{ is_file, is_directory, is_symbolic_link?, size, mtime_ms?, ino? }` |
+| `fs.readdir` | none | Array of `{ name, is_file, is_directory, is_symbolic_link? }` |
+| `fs.mkdir` | `recursive` | `null` |
+| `fs.remove` | none | `null` |
+| `fs.rename` | `next_path` | `null` |
+
+`IHostFileSystem.readLines` is implemented over bounded `readText`, not an unbounded stream. Every request has a `requestId`. A disconnect or timeout before a write result is known produces `runtime.write_uncertain` with `uncertain: true`; it is never retried blindly. Device `os.fs.*` failures are normalized to familiar `ENOENT`/`ENOTDIR`/`EACCES`/`EEXIST`/`EISDIR` values where applicable.
+
+The server validates lexical root containment and real paths before remote operations. The Desktop must independently enforce the same allowlist and realpath policy and remains the final local security boundary. Symlinks escaping an authorized root are denied. No general mobile/other-client file save API is added.
+
+### Tool and client behavior
+
+- Agent `Read`, `Write`, and `Edit` use the bound remote `IHostFileSystem`, including text, binary, stat/lstat, readdir, mkdir, remove, rename, create-exclusive, and realpath dependencies.
+- Agent `Glob` and `Grep` require `process` on the current main and are unavailable on a Desktop FS-only runtime. `Bash`, Git, tests, PTY, and all other process execution are also unavailable and can never run on the central host as a fallback.
+- Existing workspace FS `list`, `read`, `download`, `search`, `suggest`, and `grep` routes accept `runtime_id`. Search/suggest/grep can use the existing Remote FS node fallback without a process. `git_status` and `diff` still require `process` and are unsupported remotely.
+- A remote session inherits its workspace runtime by default. Unknown runtimes return `runtime.not_found`; offline devices return `runtime.unavailable`; unauthorized roots return `runtime.denied`; unsupported protocol/capabilities return `runtime.unsupported`. None of these paths starts another session writer or falls back to `local`.
+- Device disconnection fails current reads and marks uncertain writes, while the central session and queue retain their identity. Reconnection creates a new runtime generation without restarting the central AgentLoop.
+
+REST errors use `details.runtime_error: { code, retryable?, uncertain? }`. Numeric codes are `40420 RUNTIME_NOT_FOUND`, `40926 RUNTIME_UNAVAILABLE`, `40301 RUNTIME_DENIED`, `40933 RUNTIME_UNSUPPORTED`, `50301 RUNTIME_WRITE_UNCERTAIN`, `50401 RUNTIME_TIMEOUT`, and `41302 FS_TOO_LARGE` for payload-limit failures.
+
+M2 does not implement Desktop main, deployment, distributed transactions, HA, remote process execution, or a CDN/relay integration. `packages/kap-server/test/deviceBridge.test.ts` is the fake-Desktop protocol and end-to-end reference for the app integration.
 
 ## Desktop M1 integration
 

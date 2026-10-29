@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { configResponseSchema } from './rest-config';
 import { sessionPendingInteractionSchema, sessionSchema } from './session';
 import { workspaceSchema } from './workspace';
+import { deviceChangedEventSchema } from './rest-device';
 
 export const sessionMetaUpdatedEventSchema = z.object({
   type: z.literal('session.meta.updated'),
@@ -130,6 +131,7 @@ export const pushEventSchema = z.discriminatedUnion('type', [
   diUnitChangedEventSchema,
   pluginChangedEventSchema,
   capabilityChangedEventSchema,
+  deviceChangedEventSchema,
 ]).and(
   z.object({
     agentId: z.string(),
