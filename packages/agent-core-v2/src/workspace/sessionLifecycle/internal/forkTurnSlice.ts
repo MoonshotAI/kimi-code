@@ -17,6 +17,7 @@ export interface MainTurnSlice {
   readonly records: readonly WireRecord[];
   readonly cutoffTime?: number;
   readonly lastPrompt?: string;
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export function assertForkTurnIndex(turnIndex: number | undefined): void {
@@ -27,6 +28,57 @@ export function assertForkTurnIndex(turnIndex: number | undefined): void {
     'forkSession turnIndex must be a non-negative safe integer',
     { details: { turnIndex } },
   );
+}
+
+export function sliceRecordsBeforePendingWork(
+  records: readonly WireRecord[],
+  turnId: number | undefined,
+  queuedPromptIds: readonly string[],
+): readonly WireRecord[] {
+  const turnEnd = turnId === undefined ? -1 : records.findIndex(
+    (record) =>
+      (record.type === 'agent.turn.started' || record.type === 'turn.prompt') &&
+      record['turnId'] === turnId,
+  );
+  if (turnId !== undefined && turnEnd === -1) {
+    throw new Error2(
+      ErrorCodes.INTERNAL,
+      `The active turn ${String(turnId)} boundary was not found in the session wire`,
+      { details: { turnId } },
+    );
+  }
+  const queued = new Set(queuedPromptIds);
+  const queueEnd = queued.size === 0 ? -1 : records.findIndex((record) => {
+    if (record.type !== 'agent.input.submitted') return false;
+    const entry = asRecord(record['entry']);
+    const meta = asRecord(entry?.['meta']);
+    const promptId = meta?.['promptId'] ?? record['id'];
+    return typeof promptId === 'string' && queued.has(promptId);
+  });
+  const end = turnEnd === -1
+    ? queueEnd
+    : queueEnd === -1
+      ? turnEnd
+      : Math.min(turnEnd, queueEnd);
+  return end === -1 ? records : records.slice(0, end);
+}
+
+export function sliceMainRecordsAtLatestTurn(
+  records: readonly WireRecord[],
+  sourceSessionId: string,
+): MainTurnSlice {
+  let turnCount = 0;
+  for (const record of records) {
+    if (isUserVisibleTurnRecord(record)) turnCount += 1;
+  }
+  if (turnCount === 0) {
+    throw new Error2(
+      ErrorCodes.REQUEST_INVALID,
+      `Session "${sourceSessionId}" has no completed turn to fork`,
+      { details: { availableTurns: 0 } },
+    );
+  }
+  return sliceMainRecordsAtTurn(records, sourceSessionId, turnCount - 1);
 }
 
 export function sliceMainRecordsAtTurn(
@@ -64,6 +116,7 @@ export function sliceMainRecordsAtTurn(
     records: retained,
     cutoffTime: cutoffTimes.length === 0 ? undefined : Math.max(...cutoffTimes),
     lastPrompt,
+    lastTurnReason: lastTurnReasonOf(retained),
   };
 }
 
@@ -81,6 +134,26 @@ export function sliceSubagentRecordsAtTime(
     }
   }
   return records.slice(0, end);
+}
+
+function lastTurnReasonOf(
+  records: readonly WireRecord[],
+): 'completed' | 'cancelled' | 'failed' | undefined {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index]!;
+    if (record.type === 'turn.ended') {
+      const reason = record['reason'];
+      if (reason === 'completed' || reason === 'cancelled') return reason;
+      if (reason === 'failed' || reason === 'blocked') return 'failed';
+    }
+    if (record.type === 'agent.turn.ended') {
+      const outcome = record['outcome'];
+      if (outcome === 'done') return 'completed';
+      if (outcome === 'aborted') return 'cancelled';
+      if (outcome === 'failed') return 'failed';
+    }
+  }
+  return undefined;
 }
 
 function isUserVisibleTurnRecord(record: WireRecord): boolean {

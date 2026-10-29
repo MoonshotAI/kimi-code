@@ -773,16 +773,18 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-将会话——其转录、Agent 状态与文件——复制到同一工作区中的新会话，并广播 `event.session.created`。当会话中任一 Agent 有进行中的轮次时，fork 会被拒绝。
+将会话——其转录、Agent 状态与文件——复制到同一工作区中的新会话，并广播 `event.session.created`。源会话会继续运行；如果存在进行中的轮次，fork 会停在该轮次之前最近一个已完成的边界，不包含当前轮次、排队输入或后续事件。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `title` | body | string | fork 的标题（至少 1 个字符）。默认 `Fork: <source title>` |
 | `metadata` | body | object | fork 的自定义元数据 |
+| `turn_index` | body | integer | 要保留到的用户可见轮次（从 0 开始，包含该轮次）。必须是非负安全整数，且该轮次已经完成 |
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
-- `40901`：会话有进行中的轮次，无法 fork
+- `40001`：`turn_index` 无效、不存在或选中了进行中的轮次
+- `40901`：另一项会话历史操作正在进行
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
@@ -868,7 +870,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}/children`
 
-创建子会话：fork 当前会话并记录为其子会话，因此会出现在 `GET /api/v1/sessions/{session_id}/children` 下。适用与 `:fork` 相同的进行中轮次限制。
+创建子会话：fork 当前会话并记录为其子会话，因此会出现在 `GET /api/v1/sessions/{session_id}/children` 下。运行中的源会话采用与 `:fork` 相同的已完成轮次边界；创建子会话不接受历史 `turn_index` 参数。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -878,7 +880,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)，并且服务端广播 `event.session.created`。
 
-- `40901`：会话有进行中的轮次，无法 fork
+- `40901`：另一项会话历史操作正在进行
 
 #### `GET /api/v1/sessions/{session_id}/status`
 

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { sliceMainRecordsAtTurn } from '#/workspace/sessionLifecycle/internal/forkTurnSlice';
+import {
+  sliceMainRecordsAtTurn,
+  sliceRecordsBeforePendingWork,
+} from '#/workspace/sessionLifecycle/internal/forkTurnSlice';
 import type { WireRecord } from '#/wire/record';
 
 function userTurnRecord(text: string, time: number): WireRecord {
@@ -18,12 +21,13 @@ function userTurnRecord(text: string, time: number): WireRecord {
 describe('sliceMainRecordsAtTurn', () => {
   it('derives a fork last prompt from readable client metadata while retaining the original message', () => {
     const record: WireRecord = { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: '<browser_ref>serialized</browser_ref>' }], origin: { kind: 'user', clientMetadata: [{ display_text: 'Save button · Rename it' }] } }, time: 2 };
-    const slice = sliceMainRecordsAtTurn([{ type: 'metadata', protocol_version: '1.5', created_at: 1 }, record, userTurnRecord('next', 3)], 'example-source', 0);
+    const slice = sliceMainRecordsAtTurn([{ type: 'metadata', protocol_version: '1.5', created_at: 1 }, record, { type: 'turn.ended', turnId: 0, reason: 'blocked', time: 3 }, userTurnRecord('next', 4)], 'example-source', 0);
     expect(slice.lastPrompt).toBe('Save button · Rename it');
+    expect(slice.lastTurnReason).toBe('failed');
     expect(slice.records).toContainEqual(record);
   });
 
-  it('keeps cron records that fall inside a truncated fork slice', () => {
+  it('keeps completed records before queued input and an active turn in a truncated fork slice', () => {
     const records: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.5', created_at: 1 },
       {
@@ -47,5 +51,9 @@ describe('sliceMainRecordsAtTurn', () => {
     ).toHaveLength(1);
     expect(types).toContain('metadata');
     expect(types).toContain('context.append_message');
+
+    const queued = { type: 'agent.input.submitted', entry: { meta: { promptId: 'queued' } } };
+    expect(sliceRecordsBeforePendingWork([...records, queued], undefined, ['queued'])).toEqual(records);
+    expect(sliceRecordsBeforePendingWork([...records, { type: 'turn.prompt', turnId: 2 }], 2, [])).toEqual(records);
   });
 });

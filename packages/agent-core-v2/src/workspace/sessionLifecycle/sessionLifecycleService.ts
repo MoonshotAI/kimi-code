@@ -102,7 +102,9 @@ import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressin
 import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
+  sliceMainRecordsAtLatestTurn,
   sliceMainRecordsAtTurn,
+  sliceRecordsBeforePendingWork,
   sliceSubagentRecordsAtTime,
 } from './internal/forkTurnSlice';
 import {
@@ -612,44 +614,54 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     ) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sourceId} does not exist`);
     }
-    if (sourceHandle !== undefined) {
-      const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
-      for (const agent of sourceAgents.list()) {
-        const agentHandle = sourceAgents.handleOf(agent.agentId);
-        if (agentHandle === undefined) continue;
-        if (agentHandle.accessor.get(IAgentLoopService).snapshot().state === 'running') {
-          throw new Error2(
-            ErrorCodes.SESSION_FORK_ACTIVE_TURN,
-            `Session "${sourceId}" cannot be forked while a turn is running`,
-            { details: { sessionId: sourceId } },
-          );
-        }
-        await agentHandle.accessor.get(IEventDispatcher).flush();
-      }
-      await this.appendLogStore.flush();
-    }
     assertForkTurnIndex(opts.turnIndex);
 
     let targetId: string | undefined;
     let targetSessionDir: string | undefined;
     const quiescenceHolds: IDisposable[] = [];
+    const historySnapshotAgentIds = new Set<string>();
+    const activeTurnIds = new Map<string, number>();
+    const queuedPromptIds = new Map<string, readonly string[]>();
     const sourceLease = this.sessionLocks.lease(sourceId);
     try {
       if (sourceHandle !== undefined) {
         const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
-        for (const agent of sourceAgents.list()) {
-          const agentHandle = sourceAgents.handleOf(agent.agentId);
-          if (agentHandle === undefined) continue;
-          const hold = agentHandle.accessor.get(IAgentLoopService).tryAcquireQuiescence();
+        const sourceAgentHandles = sourceAgents.list().flatMap((agent) => {
+          const handle = sourceAgents.handleOf(agent.agentId);
+          return handle === undefined ? [] : [handle];
+        });
+        for (const agentHandle of sourceAgentHandles) {
+          const loop = agentHandle.accessor.get(IAgentLoopService);
+          const snapshot = loop.snapshot();
+          const activeTurnId = snapshot.activeTurnId ?? snapshot.turn?.turnId;
+          const requiresHistorySnapshot = activeTurnId !== undefined || snapshot.hasPendingRequests;
+          const hold = requiresHistorySnapshot
+            ? loop.tryAcquireHistorySnapshot()
+            : loop.tryAcquireQuiescence();
           if (hold === undefined) {
             throw new Error2(
               ErrorCodes.SESSION_FORK_ACTIVE_TURN,
-              `Session "${sourceId}" cannot be forked while a turn is running or queued, or while another fork is copying it`,
-              { details: { sessionId: sourceId, agentId: agent.agentId } },
+              `Session "${sourceId}" cannot be forked while another session history operation is in progress`,
+              { details: { sessionId: sourceId, agentId: agentHandle.id } },
             );
           }
           quiescenceHolds.push(hold);
+          if (requiresHistorySnapshot) {
+            historySnapshotAgentIds.add(agentHandle.id);
+            queuedPromptIds.set(
+              agentHandle.id,
+              snapshot.queue.flatMap((item) => {
+                const promptId = item.meta?.promptId;
+                return typeof promptId === 'string' ? [promptId] : [];
+              }),
+            );
+          }
+          if (activeTurnId !== undefined) activeTurnIds.set(agentHandle.id, activeTurnId);
         }
+        for (const agentHandle of sourceAgentHandles) {
+          await agentHandle.accessor.get(IEventDispatcher).flush();
+        }
+        await this.appendLogStore.flush();
       }
       await drainSessionMetadataWrites();
       if (sourceHandle !== undefined) {
@@ -673,14 +685,25 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         );
       }
 
-      const turnSlice =
-        opts.turnIndex === undefined
+      const runningFork = historySnapshotAgentIds.size > 0;
+      const mainRecords =
+        opts.turnIndex === undefined && !runningFork
           ? undefined
-          : sliceMainRecordsAtTurn(
-              flattenChain(await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID)),
-              sourceId,
-              opts.turnIndex,
+          : flattenChain(await this.readSourceWireRecords(sourceHandle, sourceId, MAIN_AGENT_ID));
+      const completedMainRecords =
+        mainRecords === undefined || !runningFork
+          ? mainRecords
+          : sliceRecordsBeforePendingWork(
+              mainRecords,
+              activeTurnIds.get(MAIN_AGENT_ID),
+              queuedPromptIds.get(MAIN_AGENT_ID) ?? [],
             );
+      const turnSlice =
+        opts.turnIndex !== undefined
+          ? sliceMainRecordsAtTurn(completedMainRecords!, sourceId, opts.turnIndex)
+          : runningFork
+            ? sliceMainRecordsAtLatestTurn(completedMainRecords!, sourceId)
+            : undefined;
 
       targetSessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, targetId);
       await this.copySessionFiles(
@@ -700,7 +723,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             slicedRecords = turnSlice.records;
           } else {
             const subagentRecords = sliceSubagentRecordsAtTime(
-              flattenChain(await this.readSourceWireRecords(sourceHandle, sourceId, agentId)),
+              sliceRecordsBeforePendingWork(
+                flattenChain(await this.readSourceWireRecords(sourceHandle, sourceId, agentId)),
+                activeTurnIds.get(agentId),
+                queuedPromptIds.get(agentId) ?? [],
+              ),
               turnSlice.cutoffTime,
             );
             if (subagentRecords.length === 0) continue;
@@ -761,7 +788,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         environmentCwd: sourceMeta?.environmentCwd,
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
         lastPrompt: turnSlice === undefined ? sourceMeta?.lastPrompt : turnSlice.lastPrompt,
-        lastTurnReason: sourceMeta?.lastTurnReason,
+        lastTurnReason: turnSlice === undefined ? sourceMeta?.lastTurnReason : turnSlice.lastTurnReason,
       };
       await this.docs.set(
         sessionScopeOf(this.handlerScope, targetId),
