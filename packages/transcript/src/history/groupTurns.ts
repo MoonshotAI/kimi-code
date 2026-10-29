@@ -144,6 +144,7 @@ interface StepDraft {
 }
 
 const HIDDEN_USER_ORIGINS = new Set(['injection', 'system_trigger', 'retry']);
+const LOST_TASK_REMINDER_VARIANT = 'task_resume_termination';
 const TURN_OPENING_SYSTEM_TRIGGERS = new Set(['goal_continuation', 'subagent']);
 const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
   skill_activation: 'skill',
@@ -387,6 +388,10 @@ export function groupMessagesIntoSnapshot(
       for (const part of hookParts) {
         pushMarker('hook', userPromptSubmitHookMarkerPayload(part));
       }
+      if (isLostTaskReminder(message)) {
+        pushMarker('notice', { level: 'warning', message: reminderText(textOf(message)) });
+        continue;
+      }
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
           const opening =
@@ -534,7 +539,7 @@ export function groupMessagesIntoSnapshot(
 
   flushSteeredLeftovers();
 
-  return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
+  return { items, interactions: [], attachments, todos: [], prompts: [], meta: {} };
 }
 
 function notificationFrameText(text: string): string {
@@ -670,6 +675,15 @@ function originFileAttachments(message: HistoryMessage): readonly OriginFileAtta
       typeof (attachment as { size?: unknown }).size === 'number' &&
       typeof (attachment as { path?: unknown }).path === 'string',
   );
+}
+
+function isLostTaskReminder(message: HistoryMessage): boolean {
+  const origin = message.origin as { kind?: unknown; variant?: unknown } | undefined;
+  return origin?.kind === 'injection' && origin.variant === LOST_TASK_REMINDER_VARIANT;
+}
+
+function reminderText(text: string): string {
+  return text.replace(/^<system-reminder>\n/, '').replace(/\n<\/system-reminder>$/, '');
 }
 
 function textOf(message: HistoryMessage): string {

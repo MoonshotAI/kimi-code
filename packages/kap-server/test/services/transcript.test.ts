@@ -11,7 +11,6 @@ import {
   IAgentConversationUndoParticipantRegistry,
   IAgentLoopService,
   IAgentScopeContext,
-  IAgentTaskService,
   IEventBus,
   IFlagService,
   IBlobStore,
@@ -44,13 +43,13 @@ import {
   type InteractionUpsertOp,
   type TranscriptFrame,
   type TranscriptOperation,
-  type TranscriptTask,
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
 import { toWireQuestion } from '../../src/protocol/question-wire';
+import type { TaskEventMessage } from '../../src/protocol/ws-task';
 import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { LegacyActivityApproval } from '../../src/services/legacyStatus/legacyStatus';
 import {
@@ -665,14 +664,15 @@ describe('AgentTranscriptProjector', () => {
           prompt: 'two',
           steps: [],
         },
-        { kind: 'taskref', refId: 'r1', taskId: 'bash-1' },
+        { kind: 'marker', markerId: 'm2', marker: 'notice' },
       ],
-      tasks: [],
       meta: {},
     };
     const ops = snapshotToOps(snapshot);
-    expect(ops.find((op) => op.op === 'marker.upsert')).toMatchObject({ beforeTurn: 1 });
-    expect(ops.find((op) => op.op === 'taskref.upsert')).toMatchObject({ beforeTurn: 2 });
+    expect(ops.filter((op) => op.op === 'marker.upsert')).toMatchObject([
+      { beforeTurn: 1 },
+      { beforeTurn: 2 },
+    ]);
 
     const tx = new AgentTranscript('main');
     tx.apply([
@@ -683,12 +683,8 @@ describe('AgentTranscriptProjector', () => {
     ]);
     tx.apply(ops);
     expect(
-      tx.getItems().map((item) => {
-        if (item.kind === 'turn') return item.turnId;
-        if (item.kind === 'marker') return item.markerId;
-        return item.refId;
-      }),
-    ).toEqual(['t0', 'm1', 't1', 'r1', 't2']);
+      tx.getItems().map((item) => (item.kind === 'turn' ? item.turnId : item.markerId)),
+    ).toEqual(['t0', 'm1', 't1', 'm2', 't2']);
   });
 
   it('snapshotToOps flattens attachment entities so backfilled attachmentIds never dangle', () => {
@@ -716,7 +712,6 @@ describe('AgentTranscriptProjector', () => {
           steps: [],
         },
       ],
-      tasks: [],
       meta: {},
     };
 
@@ -1085,127 +1080,6 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
-  it('projects process tasks as shell tasks with streaming output', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const ops: TranscriptOperation[] = [];
-    const feed = (event: ProjectorBusEvent): void => {
-      const mapped = projector.map(event);
-      ops.push(...mapped);
-      tx.apply(mapped);
-    };
-
-    const started = {
-      taskId: 'bash-1',
-      kind: 'process',
-      description: 'ls -la',
-      status: 'running',
-      detached: false,
-      startedAt: 1_700_000_000_000,
-      endedAt: null,
-    };
-    feed(ev({ type: 'task.started', info: started }));
-    feed(ev({ type: 'shell.started', commandId: 'cmd-1', taskId: 'bash-1' }));
-    feed(ev({ type: 'shell.output', commandId: 'cmd-1', update: { kind: 'stdout', text: 'a\n' } }));
-    feed(ev({ type: 'shell.output', commandId: 'cmd-1', update: { kind: 'stderr', text: 'b\n' } }));
-    feed(
-      ev({
-        type: 'task.terminated',
-        info: { ...started, status: 'completed', endedAt: 1_700_000_001_000 },
-      }),
-    );
-
-    expect(ops.some((op) => op.op === 'taskref.upsert' && op.item.taskId === 'bash-1')).toBe(true);
-    const appends = ops.filter((op): op is AppendOp => op.op === 'append');
-    expect(appends.map((op) => [op.offset, op.text])).toEqual([
-      [0, 'a\n'],
-      [2, 'b\n'],
-    ]);
-
-    const task = tx.getTask('bash-1');
-    expect(task).toMatchObject({
-      kind: 'shell',
-      state: 'completed',
-      detached: false,
-      description: 'ls -la',
-      outputTail: 'a\nb\n',
-    });
-    expect(
-      projector.map(
-        ev({ type: 'shell.output', commandId: 'cmd-1', update: { kind: 'progress', percent: 50 } }),
-      ),
-    ).toEqual([]);
-  });
-
-  it('fills the shell task output from late stderr chunks before completing', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-
-    tx.apply(projector.map(ev({ type: 'shell.started', commandId: 'c1', taskId: 'task-1' })));
-    tx.apply(
-      projector.map(ev({ type: 'shell.output', commandId: 'c1', update: { kind: 'stderr', text: 'boom' } })),
-    );
-    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', isError: true })));
-
-    expect(tx.getTask('task-1')).toMatchObject({ state: 'failed', outputTail: 'boom' });
-  });
-
-  it('routes shell output/completion via the event taskId when shell.started was missed', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-
-    tx.apply(
-      projector.map(
-        ev({ type: 'shell.output', commandId: 'c1', taskId: 'task-1', update: { kind: 'stdout', text: 'hello' } }),
-      ),
-    );
-    expect(tx.getTask('task-1')).toMatchObject({ kind: 'shell', state: 'running', outputTail: 'hello' });
-    expect(tx.getItems()).toContainEqual(expect.objectContaining({ kind: 'taskref', taskId: 'task-1' }));
-
-    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', taskId: 'task-1', isError: false })));
-    expect(tx.getTask('task-1')).toMatchObject({ state: 'completed', outputTail: 'hello' });
-  });
-
-  it('emits a taskref when only shell.completed arrives for a command', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-
-    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', taskId: 'task-1', isError: true })));
-
-    expect(tx.getTask('task-1')).toMatchObject({ kind: 'shell', state: 'failed' });
-    expect(tx.getItems()).toContainEqual(expect.objectContaining({ kind: 'taskref', taskId: 'task-1' }));
-  });
-
-  it('projects no-taskId shell failures under a synthetic per-command task id', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-
-    tx.apply(
-      projector.map(ev({ type: 'shell.output', commandId: 'c1', update: { kind: 'stderr', text: 'boom' } })),
-    );
-    expect(tx.getTask('shell-c1')).toMatchObject({ kind: 'shell', state: 'running', outputTail: 'boom' });
-
-    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', isError: true })));
-    expect(tx.getTask('shell-c1')).toMatchObject({ state: 'failed', outputTail: 'boom' });
-    expect(tx.getItems()).toContainEqual(expect.objectContaining({ kind: 'taskref', taskId: 'shell-c1' }));
-  });
-
-  it('marks a foreground shell task terminal on shell.completed', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-
-    tx.apply(projector.map(ev({ type: 'shell.started', commandId: 'c1', taskId: 'task-1' })));
-    expect(tx.getTask('task-1')?.state).toBe('running');
-
-    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', isError: false })));
-    expect(tx.getTask('task-1')).toMatchObject({ kind: 'shell', state: 'completed' });
-    expect(tx.getTask('task-1')?.endedAt).toBeTypeOf('string');
-
-    tx.apply(projector.map(ev({ type: 'shell.started', commandId: 'c2', taskId: 'task-2' })));
-    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c2', isError: true })));
-    expect(tx.getTask('task-2')?.state).toBe('failed');
-  });
-
   it('ignores task.notified (it re-surfaces as an origin:task turn)', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     expect(projector.map(ev({ type: 'task.notified', taskId: 't' }))).toEqual([]);
@@ -1236,284 +1110,13 @@ describe('AgentTranscriptProjector', () => {
         description: 'scan the repo',
         swarmIndex: 0,
         runInBackground: false,
-        model: 'example-model',
-        thinkingEffort: 'high',
       }),
     );
-    feed(ev({ type: 'subagent.completed', subagentId: 'agent-0', resultSummary: 'done' }));
 
     const tool = turnOps('t1', tx.getItems()).steps[0]!.frames.find((f) => f.kind === 'tool');
     expect(tool).toMatchObject({
       agentRefs: [{ agentId: 'agent-0', role: 'member' }],
     });
-    const task = tx.getTask('agent-0');
-    expect(task).toMatchObject({
-      kind: 'subagent',
-      state: 'completed',
-      agentId: 'agent-0',
-      description: 'scan the repo',
-      detached: false,
-      model: 'example-model',
-      thinkingEffort: 'high',
-    });
-  });
-
-  it('keys an Agent-tool subagent row by its registered task id and folds the lifecycle', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-
-    feed(
-      ev({
-        type: 'subagent.spawned',
-        subagentId: 'agent-1',
-        subagentName: 'explore',
-        parentToolCallId: 'call-1',
-        description: 'Inspect files',
-        runInBackground: true,
-        taskId: 'task-9',
-      }),
-    );
-    feed(
-      ev({
-        type: 'task.started',
-        info: {
-          taskId: 'task-9',
-          kind: 'agent',
-          description: 'Inspect files',
-          status: 'running',
-          detached: true,
-          agentId: 'agent-1',
-          startedAt: 1_700_000_000_000,
-          endedAt: null,
-        },
-      }),
-    );
-    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
-    feed(
-      ev({
-        type: 'task.terminated',
-        info: {
-          taskId: 'task-9',
-          kind: 'agent',
-          description: 'Inspect files',
-          status: 'completed',
-          detached: true,
-          agentId: 'agent-1',
-          startedAt: 1_700_000_000_000,
-          endedAt: 1_700_000_001_000,
-        },
-      }),
-    );
-
-    expect(tx.getTask('task-9')).toMatchObject({
-      kind: 'subagent',
-      state: 'completed',
-      agentId: 'agent-1',
-      description: 'Inspect files',
-      detached: true,
-      resultSummary: 'done',
-    });
-    expect(tx.getTask('agent-1')).toBeUndefined();
-  });
-
-  it('drops the stale task mapping when a child respawns without a task id', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-
-    feed(
-      ev({
-        type: 'subagent.spawned',
-        subagentId: 'agent-1',
-        subagentName: 'explore',
-        parentToolCallId: 'call-1',
-        description: 'Inspect files',
-        runInBackground: true,
-        taskId: 'task-9',
-      }),
-    );
-    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
-    feed(
-      ev({
-        type: 'subagent.spawned',
-        subagentId: 'agent-1',
-        subagentName: 'worker',
-        parentToolCallId: 'call-2',
-        description: 'scan again',
-        runInBackground: false,
-      }),
-    );
-    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
-
-    expect(tx.getTask('task-9')).toMatchObject({ state: 'completed', resultSummary: 'done' });
-    expect(tx.getTask('agent-1')).toMatchObject({ kind: 'subagent', state: 'running' });
-  });
-
-  it('resets the agent-run generation stamps when a completed subagent is resumed for rework', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-
-    feed(
-      ev({
-        type: 'subagent.spawned',
-        subagentId: 'agent-1',
-        subagentName: 'worker',
-        parentToolCallId: 'call-1',
-        description: 'tower worker',
-        runInBackground: true,
-      }),
-    );
-    feed(
-      ev({
-        type: 'task.started',
-        info: {
-          taskId: 'task-9',
-          kind: 'agent',
-          description: 'tower worker',
-          status: 'running',
-          detached: true,
-          agentId: 'agent-1',
-          startedAt: 1_700_000_000_000,
-          endedAt: null,
-        },
-      }),
-    );
-    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
-    feed(
-      ev({
-        type: 'task.terminated',
-        info: {
-          taskId: 'task-9',
-          kind: 'agent',
-          description: 'tower worker',
-          status: 'completed',
-          detached: true,
-          agentId: 'agent-1',
-          startedAt: 1_700_000_000_000,
-          endedAt: 1_700_000_001_000,
-        },
-      }),
-    );
-    const firstRun = tx.getTask('agent-1');
-    expect(firstRun).toMatchObject({ state: 'completed', resultSummary: 'done' });
-
-    feed(
-      ev({
-        type: 'subagent.spawned',
-        subagentId: 'agent-1',
-        subagentName: 'worker',
-        parentToolCallId: 'call-2',
-        description: 'tower worker',
-        runInBackground: true,
-        taskId: 'task-10',
-      }),
-    );
-    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
-
-    const resumed = tx.getTask('agent-1');
-    expect(resumed).toMatchObject({ kind: 'subagent', state: 'running' });
-    expect(resumed?.endedAt).toBeUndefined();
-    expect(resumed?.resultSummary).toBeUndefined();
-    expect(resumed?.error).toBeUndefined();
-    expect((resumed?.startedAt ?? '') >= (firstRun?.endedAt ?? '')).toBe(true);
-    expect(tx.getTask('task-9')).toMatchObject({
-      state: 'completed',
-      resultSummary: 'done',
-      endedAt: new Date(1_700_000_001_000).toISOString(),
-    });
-    expect(tx.getTask('task-10')).toMatchObject({
-      kind: 'subagent',
-      state: 'running',
-      agentId: 'agent-1',
-    });
-  });
-
-  it('clears the terminal stamps when a terminal subagent is respawned without a task id', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-
-    feed(
-      ev({
-        type: 'subagent.spawned',
-        subagentId: 'agent-1',
-        subagentName: 'worker',
-        parentToolCallId: 'call-1',
-        description: 'scan',
-        runInBackground: false,
-      }),
-    );
-    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
-    const finished = tx.getTask('agent-1');
-    expect(finished).toMatchObject({ state: 'completed', resultSummary: 'done' });
-
-    feed(
-      ev({
-        type: 'subagent.spawned',
-        subagentId: 'agent-1',
-        subagentName: 'worker',
-        parentToolCallId: 'call-2',
-        description: 'scan again',
-        runInBackground: false,
-      }),
-    );
-
-    const respawned = tx.getTask('agent-1');
-    expect(respawned).toMatchObject({ kind: 'subagent', state: 'running' });
-    expect(respawned?.endedAt).toBeUndefined();
-    expect(respawned?.resultSummary).toBeUndefined();
-    expect((respawned?.startedAt ?? '') >= (finished?.endedAt ?? '')).toBe(true);
-  });
-
-  it('keeps the run stamps when subagent.started arrives for an already-running task', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-
-    feed(
-      ev({
-        type: 'subagent.spawned',
-        subagentId: 'agent-1',
-        subagentName: 'explore',
-        parentToolCallId: 'call-1',
-        description: 'Inspect files',
-        runInBackground: true,
-        taskId: 'task-9',
-      }),
-    );
-    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
-    const startedAt = tx.getTask('task-9')?.startedAt;
-    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
-
-    expect(tx.getTask('task-9')).toMatchObject({ state: 'running', startedAt });
-  });
-
-  it('recovers the agent → task association from a backfilled task.started', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-
-    feed(
-      ev({
-        type: 'task.started',
-        info: {
-          taskId: 'task-9',
-          kind: 'agent',
-          description: 'Inspect files',
-          status: 'running',
-          detached: true,
-          agentId: 'agent-1',
-          startedAt: 1_700_000_000_000,
-          endedAt: null,
-        },
-      }),
-    );
-    feed(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
-
-    expect(tx.getTask('task-9')).toMatchObject({ state: 'completed', resultSummary: 'done' });
-    expect(tx.getTask('agent-1')).toBeUndefined();
   });
 
   it('projects goal updates into meta.goal plus an inline marker', () => {
@@ -2797,7 +2400,7 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
-  it('readColdSnapshot folds task/todo/goal/plan/interaction records into the cold snapshot', async () => {
+  it('readColdSnapshot folds todo/goal/plan/interaction records into the cold snapshot', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-facts-'));
     try {
       const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
@@ -2835,31 +2438,6 @@ describe('AgentTranscriptProjector', () => {
         },
         { type: 'goal.create', goalId: 'g1', objective: 'fix the bug', time: 4000 },
         { type: 'plan_mode.enter', id: 'plan-1', time: 5000 },
-        {
-          type: 'task.started',
-          info: {
-            taskId: 'task_1',
-            kind: 'process',
-            description: 'pnpm test',
-            status: 'running',
-            startedAt: 6000,
-            endedAt: null,
-          },
-          time: 6000,
-        },
-        {
-          type: 'task.terminated',
-          info: {
-            taskId: 'task_1',
-            kind: 'process',
-            description: 'pnpm test',
-            status: 'completed',
-            startedAt: 6000,
-            endedAt: 9000,
-          },
-          outputTail: '42 passed',
-          time: 9000,
-        },
         {
           type: 'interaction.request',
           id: 'apr-1',
@@ -2913,19 +2491,6 @@ describe('AgentTranscriptProjector', () => {
       ]);
       expect(JSON.stringify(snapshot)).not.toContain('blobref:');
 
-      expect(snapshot!.tasks).toEqual([
-        {
-          taskId: 'task_1',
-          kind: 'shell',
-          state: 'completed',
-          detached: true,
-          description: 'pnpm test',
-          agentId: undefined,
-          outputTail: '42 passed',
-          startedAt: new Date(6000).toISOString(),
-          endedAt: new Date(9000).toISOString(),
-        },
-      ]);
       expect(snapshot!.todos).toEqual([
         {
           todoId: 'todo',
@@ -2950,7 +2515,6 @@ describe('AgentTranscriptProjector', () => {
       expect(standalone).toEqual([
         expect.objectContaining({ kind: 'marker', marker: 'goal', markerId: 'm1' }),
         expect.objectContaining({ kind: 'marker', marker: 'plan.enter', markerId: 'm2' }),
-        expect.objectContaining({ kind: 'taskref', refId: 'ref-task_1', taskId: 'task_1' }),
       ]);
       service.dropSession('s1');
     } finally {
@@ -3044,7 +2608,7 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
-  it('restores interrupted swarm members and exact call associations without starting a session', async () => {
+  it('restores exact swarm call associations without starting a session', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-swarm-'));
     try {
       const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
@@ -3067,11 +2631,6 @@ describe('AgentTranscriptProjector', () => {
       await writeFile(join(childDir, 'wire.jsonl'), JSON.stringify({ type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'partial review' }], toolCalls: [] }, time: 3500 }) + '\n');
       const service = coldTranscriptService(home);
       const snapshot = await service.readColdSnapshot('s1', 'main');
-      expect(snapshot?.tasks).toEqual(expect.arrayContaining([
-        expect.objectContaining({ agentId: 'child-a', state: 'completed', resultSummary: 'done' }),
-        expect.objectContaining({ agentId: 'child-b', state: 'lost', description: 'second' }),
-        expect.objectContaining({ agentId: 'child-c', state: 'lost' }),
-      ]));
       const frames = snapshot?.items.flatMap((item) => item.kind === 'turn' ? item.steps.flatMap((step) => step.frames) : []);
       expect(frames).toEqual(expect.arrayContaining([
         expect.objectContaining({ toolCallId: 'swarm-a', agentRefs: [{ agentId: 'child-a', role: 'member' }, { agentId: 'child-b', role: 'member' }] }),
@@ -3118,64 +2677,6 @@ describe('AgentTranscriptProjector', () => {
       expect(frames).toEqual([
         expect.objectContaining({ toolCallId: 'call_spawn', state: 'done', output: 'agent_id: child-a' }),
       ]);
-      expect(snapshot?.tasks).toEqual([
-        expect.objectContaining({ agentId: 'child-a', state: 'completed', resultSummary: 'done' }),
-      ]);
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  });
-
-  it('loses a member whose spawning turn ended even while the parent runs a later turn', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-stale-member-'));
-    try {
-      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
-      await mkdir(wireDir, { recursive: true });
-      const records = [
-        { type: 'turn.prompt', turnId: 0, origin: { kind: 'user' }, time: 1000 },
-        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'review' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
-        { type: 'context.append_message', message: { role: 'assistant', content: [], toolCalls: [
-          { type: 'function', id: 'swarm-a', name: 'AgentSwarm', arguments: '{}' },
-        ] }, time: 2000 },
-        { type: 'subagent.spawned', subagentId: 'child-a', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'swarm-a', swarmIndex: 0, runInBackground: false, time: 3000 },
-        { type: 'turn.ended', turnId: 0, reason: 'interrupted', time: 4000 },
-        { type: 'turn.prompt', turnId: 1, origin: { kind: 'user' }, time: 5000 },
-        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'anything new?' }], toolCalls: [], origin: { kind: 'user' } }, time: 5000 },
-      ];
-      await writeFile(join(wireDir, 'wire.jsonl'), records.map((record) => JSON.stringify(record)).join('\n') + '\n');
-      const busy = await coldTranscriptService(home, fakeLoopStates({ main: 'running' })).readColdSnapshot('s1', 'main');
-      expect(busy?.meta.activity).toBe('turn');
-      expect(busy?.tasks).toEqual([expect.objectContaining({ agentId: 'child-a', state: 'lost' })]);
-
-      const stillRunning = await coldTranscriptService(
-        home,
-        fakeLoopStates({ main: 'running', 'child-a': 'running' }),
-      ).readColdSnapshot('s1', 'main');
-      expect(stillRunning?.tasks).toEqual([expect.objectContaining({ agentId: 'child-a', state: 'running' })]);
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  });
-
-  it('keeps a member spawned by the parent\'s current turn running while that turn is active', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-live-member-'));
-    try {
-      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
-      await mkdir(wireDir, { recursive: true });
-      const records = [
-        { type: 'turn.prompt', turnId: 0, origin: { kind: 'user' }, time: 1000 },
-        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'review' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
-        { type: 'context.append_message', message: { role: 'assistant', content: [], toolCalls: [
-          { type: 'function', id: 'swarm-a', name: 'AgentSwarm', arguments: '{}' },
-        ] }, time: 2000 },
-        { type: 'subagent.spawned', subagentId: 'child-a', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'swarm-a', swarmIndex: 0, runInBackground: false, time: 3000 },
-      ];
-      await writeFile(join(wireDir, 'wire.jsonl'), records.map((record) => JSON.stringify(record)).join('\n') + '\n');
-      const busy = await coldTranscriptService(home, fakeLoopStates({ main: 'running' })).readColdSnapshot('s1', 'main');
-      expect(busy?.tasks).toEqual([expect.objectContaining({ agentId: 'child-a', state: 'running' })]);
-
-      const idle = await coldTranscriptService(home, fakeLoopStates({ main: 'idle' })).readColdSnapshot('s1', 'main');
-      expect(idle?.tasks).toEqual([expect.objectContaining({ agentId: 'child-a', state: 'lost' })]);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -3200,6 +2701,9 @@ describe('AgentTranscriptProjector', () => {
       await write([boundary, user, assistant]);
       const dangling = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
       expect(dangling!.meta.activity).toBe('idle');
+
+      const running = await coldTranscriptService(home, fakeLoopStates({ main: 'running' })).readColdSnapshot('s1', 'main');
+      expect(running!.meta.activity).toBe('turn');
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -3708,46 +3212,6 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
-  it('treats subagent.started/failed/suspended within the running→failed vocabulary', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-
-    feed(ev({ type: 'subagent.started', subagentId: 'agent-1' }));
-    expect(tx.getTask('agent-1')).toMatchObject({ kind: 'subagent', state: 'running' });
-    feed(ev({ type: 'subagent.suspended', subagentId: 'agent-1', reason: 'approval' }));
-    expect(tx.getTask('agent-1')).toMatchObject({ state: 'running', stateReason: 'approval' });
-    feed(ev({ type: 'subagent.failed', subagentId: 'agent-1', error: 'boom' }));
-    expect(tx.getTask('agent-1')).toMatchObject({ state: 'failed', error: 'boom' });
-
-    feed(
-      ev({
-        type: 'subagent.completed',
-        subagentId: 'agent-2',
-        resultSummary: 'found 3 files',
-        usage: { inputOther: 10, output: 5, inputCacheRead: 2, inputCacheCreation: 1 },
-      }),
-    );
-    expect(tx.getTask('agent-2')).toMatchObject({
-      state: 'completed',
-      resultSummary: 'found 3 files',
-      usage: { inputOther: 10, output: 5, inputCacheRead: 2, inputCacheCreation: 1 },
-    });
-  });
-});
-
-describe('AgentTranscript transcript task vocabulary', () => {
-  it('documents the task states used by the projector', () => {
-    const states: Array<TranscriptTask['state']> = [
-      'running',
-      'completed',
-      'failed',
-      'timed_out',
-      'killed',
-      'lost',
-    ];
-    expect(states).toHaveLength(6);
-  });
 });
 
 describe('bindSessionTranscript', () => {
@@ -3797,7 +3261,7 @@ describe('bindSessionTranscript', () => {
       this.closeHandlers.add(cb);
       return { dispose: () => this.closeHandlers.delete(cb) };
     }
-    add(id: string, opts?: { loopStatus?: { state?: 'idle' | 'running'; activeTurnId?: number }; tasks?: readonly unknown[]; activePromptId?: string }): FakeAgentHandle {
+    add(id: string, opts?: { loopStatus?: { state?: 'idle' | 'running'; activeTurnId?: number }; activePromptId?: string }): FakeAgentHandle {
       const bus = this.handles.get(id)?.bus ?? new FakeBus();
       const undoParticipants = new Map<string, AgentConversationUndoParticipant>();
       const scope = makeAgentScopeContext({
@@ -3873,9 +3337,6 @@ describe('bindSessionTranscript', () => {
                 }),
                 promptHandle: (id: string) => (active?.id === id ? active : undefined),
               };
-            }
-            if (token === IAgentTaskService) {
-              return { list: () => opts?.tasks ?? [] };
             }
             return undefined;
           },
@@ -4010,46 +3471,6 @@ describe('bindSessionTranscript', () => {
     expect(descriptor).toBeDefined();
     expect(typeof descriptor?.disposedAt).toBe('string');
     expect(store.agents().find((a) => a.agentId === 'main')?.disposedAt).toBeUndefined();
-    binding.dispose();
-  });
-
-  it('seeds pre-attach Agent task mappings so a late-bound projector folds the lifecycle', () => {
-    const agents = new FakeAgents();
-    agents.add('main', {
-      tasks: [
-        {
-          taskId: 'task-9',
-          kind: 'agent',
-          agentId: 'agent-1',
-          status: 'running',
-          description: 'Inspect',
-          detached: false,
-          startedAt: 1_700_000_000_000,
-        },
-      ],
-    });
-    const store = new TranscriptStore('s1');
-    const binding = bindSessionTranscript(
-      store,
-      fakeSession(agents),
-    );
-
-    expect(store.getAgent('main')?.getTask('task-9')).toMatchObject({
-      kind: 'subagent',
-      state: 'running',
-      detached: false,
-      description: 'Inspect',
-      agentId: 'agent-1',
-    });
-
-    agents.byId('main')!.bus.emit(ev({ type: 'subagent.completed', subagentId: 'agent-1', resultSummary: 'done' }));
-
-    expect(store.getAgent('main')?.getTask('task-9')).toMatchObject({
-      state: 'completed',
-      resultSummary: 'done',
-      detached: false,
-    });
-    expect(store.getAgent('main')?.getTask('agent-1')).toBeUndefined();
     binding.dispose();
   });
 
@@ -4750,6 +4171,39 @@ describe('bindSessionTranscript', () => {
 
       expect(service.getSeqWatermark('s1', 'nope')).toBe(0);
       expect(service.getOpsSince('nope-session', 'main', 0)).toBeUndefined();
+      service.dropSession('s1');
+    });
+
+    it('keeps task events out of the transcript and its journal', async () => {
+      const agents = new FakeAgents();
+      const main = agents.add('main');
+      const service = new TranscriptService({
+        homeDir: '/nonexistent-home',
+        core: fakeCoreWithAgents(agents),
+      });
+      service.forSessionLive('s1');
+      await service.whenReady('s1');
+      const base = service.getSeqWatermark('s1', 'main');
+
+      const ops: string[] = [];
+      service.onSessionOps('s1', (event) => ops.push(...event.ops.map((op) => op.op)));
+      main.bus.emit(
+        ev({
+          type: 'task.started',
+          info: {
+            taskId: 'bash-1',
+            kind: 'process',
+            description: 'sleep 60',
+            status: 'running',
+            detached: true,
+            startedAt: 1_700_000_000_000,
+            endedAt: null,
+          },
+        }),
+      );
+
+      expect(ops).toEqual([]);
+      expect(service.getSeqWatermark('s1', 'main')).toBe(base);
       service.dropSession('s1');
     });
 
