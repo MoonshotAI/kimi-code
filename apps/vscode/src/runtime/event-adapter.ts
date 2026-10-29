@@ -117,7 +117,7 @@ export function adaptSdkEvent(
       event: withSessionId(
         {
           type: 'TurnBegin',
-          payload: { user_input: options.pendingInput },
+          payload: { user_input: options.pendingInput, turnIndex: sdkEvent.turnId },
         },
         sdkEvent.sessionId,
       ),

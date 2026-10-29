@@ -941,7 +941,7 @@ describe('Session.prompt events', () => {
       const fork = await harness.forkSession({
         id: source.id,
         forkId: 'ses_turn_fork_undo_child',
-        turnIndex: 2,
+        turnIndex: 3,
       });
       await fork.close();
       const resumed = await harness.resumeSession({ id: fork.id });

@@ -779,7 +779,7 @@ Copies the session — its transcript, agent state, and files — into a new ses
 | --- | --- | --- | --- |
 | `title` | body | string | Title for the fork (at least 1 character). Default `Fork: <source title>` |
 | `metadata` | body | object | Custom metadata for the fork |
-| `turn_index` | body | integer | Zero-based user-visible turn to fork through, including that turn. Must be a non-negative safe integer and already complete |
+| `turn_index` | body | integer | Persistent engine `turnId` to fork through, including that turn. Gaps are allowed. Must be a non-negative safe integer and already complete |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
