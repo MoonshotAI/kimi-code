@@ -73,7 +73,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
   private get workDirs(): readonly string[] {
     const primary =
       this.workspaceDirs.primaryByWorkspace[this.workspace.workspaceId] ?? this.workspace.cwd;
-    return [primary, this.workspace.cwd, ...this.workspaceDirs.additionalDirs];
+    return [primary, this.workspace.cwd, ...this.workspaceDirs.sharedAdditionalDirs];
   }
 
   async load(): Promise<SkillContribution> {

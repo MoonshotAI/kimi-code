@@ -41,6 +41,7 @@ function stubWorkspaceDirs(additionalDirs: readonly string[] = []): IWorkspaceDi
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     additionalDirs: [...additionalDirs],
+    sharedAdditionalDirs: [...additionalDirs],
     primaryByWorkspace: {},
     onDidChange: () => ({ dispose: () => {} }),
     addDir: () => Promise.reject(new Error('not supported in tests')),

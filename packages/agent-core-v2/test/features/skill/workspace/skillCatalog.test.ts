@@ -171,11 +171,15 @@ function workspaceContextStub(workDir: string): IWorkspaceContext {
   };
 }
 
-function workspaceDirsStub(additionalDirs: readonly string[] = []): IWorkspaceDirs {
+function workspaceDirsStub(
+  sharedAdditionalDirs: readonly string[] = [],
+  additionalDirs: readonly string[] = sharedAdditionalDirs,
+): IWorkspaceDirs {
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     additionalDirs,
+    sharedAdditionalDirs,
     primaryByWorkspace: {},
     onDidChange: () => ({ dispose: () => {} }),
     addDir: async () => {
@@ -332,6 +336,34 @@ describe('WorkspaceSkillCatalogService', () => {
     }
   });
 
+  it('excludes session-only directories from the shared workspace catalog', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'skill-catalog-session-only-'));
+    const primary = join(base, 'primary');
+    const secondary = join(base, 'secondary');
+    await seedCatalogSkill(primary, 'primary-only', 'from primary');
+    await seedCatalogSkill(secondary, 'session-only', 'from session-only');
+    const { host, workspace } = makeHost(
+      new FileSkillDiscovery(stubLog()),
+      workspaceContextStub(primary),
+      [],
+      undefined,
+      undefined,
+      workspaceDirsStub([], [secondary]),
+    );
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+
+      expect(catalog.catalog.getSkill('primary-only')).toBeDefined();
+      expect(catalog.catalog.getSkill('session-only')).toBeUndefined();
+      expect(watchMockState.calls.map((call) => call.path)).not.toContain(await realpath(secondary));
+    } finally {
+      host.dispose();
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
   it('uses the current primary after a live primary change without losing other dirs', async () => {
     const base = await mkdtemp(join(tmpdir(), 'skill-catalog-primary-change-'));
     const primary = join(base, 'primary');
@@ -404,7 +436,7 @@ describe('WorkspaceSkillCatalogService', () => {
     let additionalDirs = [secondary];
     const dirs: IWorkspaceDirs = {
       ...workspaceDirsStub(),
-      get additionalDirs() {
+      get sharedAdditionalDirs() {
         return additionalDirs;
       },
       onDidChange: dirChanges.event,

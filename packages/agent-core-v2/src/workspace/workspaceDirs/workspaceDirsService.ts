@@ -116,8 +116,12 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     this.states.set(workspaceDirsPrimaryByWorkspaceKey, value);
   }
 
+  get sharedAdditionalDirs(): readonly string[] {
+    return [...new Set([...this.fileDirs, ...this.registryDirs])];
+  }
+
   get additionalDirs(): readonly string[] {
-    return [...new Set([...this.fileDirs, ...this.registryDirs, ...this.ephemeralDirs])];
+    return [...new Set([...this.sharedAdditionalDirs, ...this.ephemeralDirs])];
   }
 
   addDir(input: WorkspaceAddDirInput): Promise<WorkspaceAdditionalDirsResult> {

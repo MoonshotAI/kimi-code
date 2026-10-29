@@ -185,6 +185,7 @@ describe('WorkspaceDirsService (registry source)', () => {
 
     await dirs.addDir({ path: dirC, persist: false });
     expect(dirs.additionalDirs).toEqual([dirB, dirC]);
+    expect(dirs.sharedAdditionalDirs).toEqual([dirB]);
   });
 
   it('pushes registry updates live through the persistence change event', async () => {

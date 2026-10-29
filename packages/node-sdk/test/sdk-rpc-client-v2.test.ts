@@ -11,7 +11,7 @@
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
@@ -2208,11 +2208,17 @@ describe('SDKRpcClientV2 workspace trust', () => {
     }
   });
 
-  it('discloses skills from session-only additional dirs before session creation', async () => {
+  it('resolves and discloses session-only dirs without loading their skills', async () => {
+    const osHome = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-os-home-'));
+    tempDirs.push(osHome);
+    vi.stubEnv('HOME', osHome);
+    vi.stubEnv('USERPROFILE', osHome);
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     const additionalDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-additional-'));
+    const homeAdditionalDir = join(osHome, 'home-additional');
     tempDirs.push(workDir, additionalDir);
+    await mkdir(homeAdditionalDir, { recursive: true });
     const skillRoot = join(additionalDir, '.kimi-code', 'skills');
     await mkdir(join(skillRoot, 'startup-only'), { recursive: true });
     await writeFile(
@@ -2223,13 +2229,16 @@ describe('SDKRpcClientV2 workspace trust', () => {
 
     try {
       const info = await harness.getWorkspaceTrustInfo(workDir, {
-        additionalDirs: [additionalDir],
+        additionalDirs: [relative(workDir, additionalDir), '~/home-additional'],
       });
+      const realAdditionalDir = await realpath(additionalDir);
+      const realHomeAdditionalDir = await realpath(homeAdditionalDir);
 
-      expect(info.instructionSources.skills).toContain('startup-only');
-      expect(info.instructionSources.paths).toContain(`${await realpath(skillRoot)}/`);
-      expect(info.gatedAdditionalDirs).toContain(await realpath(skillRoot));
-      expect(info.additionalDirSources).toContain(await realpath(skillRoot));
+      expect(info.gatedAdditionalDirs).toEqual([realAdditionalDir, realHomeAdditionalDir]);
+      expect(info.additionalDirSources).toEqual([realAdditionalDir, realHomeAdditionalDir]);
+      expect(info.instructionSources.skills).not.toContain('startup-only');
+      expect(info.instructionSources.paths).not.toContain(`${await realpath(skillRoot)}/`);
+      expect(info.gatedAdditionalDirs).not.toContain(await realpath(skillRoot));
     } finally {
       await harness.close();
     }
