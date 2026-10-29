@@ -62,6 +62,7 @@ import { formatBackgroundTaskTranscript } from '../utils/background-task-status'
 import { formatHookResultMarkdown } from '../utils/hook-result-format';
 import { McpOAuthAuthorizationUrlOpener } from '../utils/mcp-oauth';
 import {
+  formatMcpServerErrorSummary,
   formatMcpStartupStatusSummary,
   mcpServerStatusKey,
   type McpServerStatusSnapshot,
@@ -1054,7 +1055,8 @@ export class SessionEventHandler {
         return;
       }
       case 'failed': {
-        const message = `MCP server "${server.name}" failed${server.error !== undefined ? `: ${server.error}` : ''}`;
+        const summary = server.error === undefined ? '' : formatMcpServerErrorSummary(server.error);
+        const message = `MCP server "${server.name}" failed${summary.length > 0 ? `: ${summary}` : ''}`;
         this.finalizeMcpServerStatusRow(server.name, message, 'error');
         return;
       }
