@@ -67,6 +67,7 @@ export interface ToolResult {
 
 export interface TurnBegin {
   user_input: string | ContentPart[];
+  turnIndex?: number;
 }
 
 export interface TokenUsage {

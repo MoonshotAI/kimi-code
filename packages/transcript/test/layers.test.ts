@@ -2226,6 +2226,25 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(first.steps[0]?.stepId).toBe('t5.1');
     expect(first.steps[0]?.frames.every((frame) => frame.frameId.startsWith('t5.1.'))).toBe(true);
     expect(second.steps[0]?.stepId).toBe('t7.1');
+
+    const rawIds = [5, 1, 7, 8, 9, 6];
+    const collisionBase = groupMessagesIntoSnapshot(
+      rawIds.flatMap((rawId) => [
+        { role: 'user' as const, id: `p${rawId}`, content: [{ type: 'text' as const, text: `prompt ${rawId}` }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: `answer ${rawId}` }], toolCalls: [] },
+      ]),
+    );
+    const collision = foldWireRecordFacts(
+      [
+        ...rawIds.map((rawId) => ({ type: 'turn.prompt', turnId: rawId, promptId: `p${rawId}`, origin: { kind: 'user' } })),
+        { type: 'turn.prompt', turnId: 2, origin: { kind: 'retry' } },
+        { type: 'turn.ended', turnId: 2, reason: 'failed' },
+      ],
+      collisionBase,
+    );
+    const collisionTurns = collision.items.filter((item) => item.kind === 'turn');
+    expect(collisionTurns.map((turn) => turn.ordinal).toSorted((a, b) => a - b)).toEqual([1, 2, 5, 6, 7, 8, 9]);
+    expect(new Set(collisionTurns.map((turn) => turn.turnId)).size).toBe(7);
   });
 
   it('marks a turn without terminal events as wedged once a later turn starts, and wedgifies a dangling tail unless it is live', () => {
@@ -2530,7 +2549,10 @@ describe('foldWireRecordFacts (cold facts)', () => {
       ],
       base,
     );
-    const system = folded.items[0];
+    const empty = folded.items[0];
+    if (empty?.kind !== 'turn') throw new Error('expected empty turn');
+    expect(empty).toMatchObject({ turnId: 't0', triggerPromptId: 'prompt-empty', state: 'failed' });
+    const system = folded.items[1];
     if (system?.kind !== 'turn') throw new Error('expected turn');
     expect(system.triggerPromptId).toBeUndefined();
     expect(system.state).toBe('cancelled');
@@ -2561,7 +2583,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(system.error).toBe('system failure');
   });
 
-  it('maps turn.ended around hidden retry turns replayed from the turn-clock records', () => {
+  it('keeps hidden retry turns with their raw turn ids and terminal facts', () => {
     const base = groupMessagesIntoSnapshot([
       { id: 'prompt-1', role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
@@ -2583,12 +2605,12 @@ describe('foldWireRecordFacts (cold facts)', () => {
     if (first?.kind !== 'turn') throw new Error('expected turn');
     expect(first.state).toBe('completed');
     expect(first.triggerPromptId).toBe('prompt-1');
-    const second = folded.items[1];
+    const retry = folded.items[1];
+    if (retry?.kind !== 'turn') throw new Error('expected retry turn');
+    expect(retry).toMatchObject({ turnId: 't1', ordinal: 1, state: 'failed', error: 'retry boom', steps: [] });
+    const second = folded.items[2];
     if (second?.kind !== 'turn') throw new Error('expected turn');
-    expect(second.state).toBe('cancelled');
-    expect(second.triggerPromptId).toBe('prompt-2');
-    expect(second.error).toBeUndefined();
-    expect(second.durationMs).toBe(20);
+    expect(second).toMatchObject({ turnId: 't2', ordinal: 2, state: 'cancelled', triggerPromptId: 'prompt-2', durationMs: 20 });
   });
 
   it('maps turn.ended across queued-then-cancelled turn reservations', () => {
@@ -2643,6 +2665,30 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(replacement.triggerPromptId).toBe('prompt-3');
     expect(replacement.state).toBe('failed');
     expect(replacement.error).toBe('replacement failed');
+
+    const reopened = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', turnId: 0, origin: { kind: 'user' }, promptId: 'prompt-old', time: 1 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'date reminder' }], origin: { kind: 'injection' } }, time: 1.5 },
+        { type: 'token_counting.truncated', time: 2 },
+        { type: 'turn.prompt', turnId: 1, origin: { kind: 'user' }, promptId: 'prompt-new', time: 3 },
+        { type: 'turn.ended', turnId: 1, reason: 'completed', time: 4 },
+      ],
+      groupMessagesIntoSnapshot([
+        { id: 'prompt-new', role: 'user', content: [{ type: 'text', text: 'steered request' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+      ]),
+    );
+    const reopenedTurns = reopened.items.filter((item) => item.kind === 'turn');
+    expect(reopenedTurns.map((turn) => turn.prompt)).toEqual(['steered request']);
+
+    const flattenedUndo = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', turnId: 0, origin: { kind: 'user' }, promptId: 'prompt-undone', time: 1 },
+      ],
+      groupMessagesIntoSnapshot([]),
+    );
+    expect(flattenedUndo.items.filter((item) => item.kind === 'turn')).toEqual([]);
   });
 
   it('counts context-only blocked prompts as undo anchors', () => {

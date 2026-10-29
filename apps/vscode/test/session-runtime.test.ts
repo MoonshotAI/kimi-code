@@ -332,7 +332,7 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     await expect(result).resolves.toEqual({ status: "finished" });
     expect(streamData(broadcasts)).toContainEqual({
       type: "TurnBegin",
-      payload: { user_input: "/skill:review carefully" },
+      payload: { user_input: "/skill:review carefully", turnIndex: 7 },
       _sessionId: "session-1",
     });
   });

@@ -11,6 +11,7 @@ import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,
 } from '#/agent/prompt/promptMetadataText';
+import { matchWireTurnInputRecords } from '#/agent/replayBuilder/fold';
 import type { WireRecord } from '#/wire/record';
 
 export interface MainTurnSlice {
@@ -67,21 +68,75 @@ export function sliceMainRecordsAtLatestTurn(
   records: readonly WireRecord[],
   sourceSessionId: string,
 ): MainTurnSlice {
-  let turnCount = 0;
-  for (const record of records) {
-    if (isUserVisibleTurnRecord(record)) turnCount += 1;
+  const turns = persistentTurnStarts(records);
+  const legacyTurns = contextOnlyTurnStarts(records);
+  const latest = turns.at(-1);
+  const latestLegacy = legacyTurns.at(-1);
+  if (latestLegacy !== undefined && (latest === undefined || latestLegacy.start > latest.start)) {
+    return sliceMainRecordsAtLegacyTurn(records, sourceSessionId, latestLegacy.turnIndex);
   }
-  if (turnCount === 0) {
-    throw new Error2(
-      ErrorCodes.REQUEST_INVALID,
-      `Session "${sourceSessionId}" has no completed turn to fork`,
-      { details: { availableTurns: 0 } },
-    );
-  }
-  return sliceMainRecordsAtTurn(records, sourceSessionId, turnCount - 1);
+  if (latest !== undefined) return sliceMainRecordsAtTurn(records, sourceSessionId, latest.id);
+  throw new Error2(
+    ErrorCodes.REQUEST_INVALID,
+    `Session "${sourceSessionId}" has no completed turn to fork`,
+    { details: { availableTurns: 0 } },
+  );
 }
 
 export function sliceMainRecordsAtTurn(
+  records: readonly WireRecord[],
+  sourceSessionId: string,
+  turnIndex: number,
+): MainTurnSlice {
+  const turns = persistentTurnStarts(records);
+  const legacyTurns = contextOnlyTurnStarts(records);
+  const selected = turns.find((turn) => turn.id === turnIndex);
+  if (selected === undefined) {
+    if (legacyTurns.some((turn) => turn.turnIndex === turnIndex)) {
+      return sliceMainRecordsAtLegacyTurn(records, sourceSessionId, turnIndex);
+    }
+    throw new Error2(
+      ErrorCodes.REQUEST_INVALID,
+      `Turn ${String(turnIndex)} was not found in session "${sourceSessionId}"`,
+      { details: { turnIndex, availableTurns: turns.length + legacyTurns.length } },
+    );
+  }
+  const next = turns.find((turn) => turn.start > selected.start);
+  const nextLegacy = legacyTurns.find((turn) => turn.start > selected.start);
+  const end = Math.min(next?.start ?? records.length, nextLegacy?.start ?? records.length);
+  const retainedTurnIds = new Set(
+    turns.filter((turn) => turn.start < end).map((turn) => turn.id),
+  );
+  const persistentByPromptIndex = new Map(turns.map((turn) => [turn.promptIndex, turn.id]));
+  let visibleTurnCount = 0;
+  for (let index = 0; index < end; index += 1) {
+    if (isUserVisibleTurnRecord(records[index]!)) visibleTurnCount += 1;
+  }
+  const retainedTurnInputs = turnInputIndicesThrough(records, visibleTurnCount - 1);
+  const retained = records
+    .slice(0, end)
+    .filter((record, index) => {
+      if (record.type.startsWith(FILE_HISTORY_RECORD_PREFIX)) return false;
+      if (record.type !== 'turn.prompt' && record.type !== 'turn.steer') return true;
+      const turnId = record['turnId'];
+      if (typeof turnId === 'number') return retainedTurnIds.has(turnId);
+      const persistentTurnId = persistentByPromptIndex.get(index);
+      return persistentTurnId === undefined
+        ? retainedTurnInputs.has(index)
+        : retainedTurnIds.has(persistentTurnId);
+    });
+  const cutoffTimes = retained
+    .map(recordTime)
+    .filter((time): time is number => time !== undefined);
+  return {
+    records: retained,
+    cutoffTime: cutoffTimes.length === 0 ? undefined : Math.max(...cutoffTimes),
+    lastPrompt: promptMetadataFromTurnRecord(records[selected.promptIndex]!),
+    lastTurnReason: lastTurnReasonOf(retained),
+  };
+}
+
+function sliceMainRecordsAtLegacyTurn(
   records: readonly WireRecord[],
   sourceSessionId: string,
   turnIndex: number,
@@ -99,7 +154,11 @@ export function sliceMainRecordsAtTurn(
     );
   }
 
-  const end = turnStarts[turnIndex + 1] ?? records.length;
+  const nextPersistent = persistentTurnStarts(records).find((turn) => turn.start > start);
+  const end = Math.min(
+    turnStarts[turnIndex + 1] ?? records.length,
+    nextPersistent?.start ?? records.length,
+  );
   const retainedTurnInputs = turnInputIndicesThrough(records, turnIndex);
   const retained = records
     .slice(0, end)
@@ -118,6 +177,68 @@ export function sliceMainRecordsAtTurn(
     lastPrompt,
     lastTurnReason: lastTurnReasonOf(retained),
   };
+}
+
+interface LegacyTurnStart {
+  readonly start: number;
+  readonly turnIndex: number;
+}
+
+interface PersistentTurnStart {
+  readonly id: number;
+  readonly start: number;
+  readonly promptIndex: number;
+}
+
+function contextOnlyTurnStarts(records: readonly WireRecord[]): LegacyTurnStart[] {
+  return matchWireTurnInputRecords(records).flatMap((match) =>
+    match.inputIndex === undefined
+      ? [{ start: match.appendIndex, turnIndex: match.visibleTurnIndex }]
+      : [],
+  );
+}
+
+function persistentTurnStarts(records: readonly WireRecord[]): PersistentTurnStart[] {
+  const turns: (PersistentTurnStart & { start: number })[] = [];
+  const humanStarts = new Map<number, number>();
+  const terminalTurnIds = new Set<number>();
+  const cancelledTurnIds = new Set<number>();
+  let nextTurnId = 0;
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!;
+    if (record.type === 'agent.turn.started') {
+      const turnId = record['turnId'];
+      if (typeof turnId === 'number') {
+        humanStarts.set(turnId, Math.min(humanStarts.get(turnId) ?? index, index));
+        const existing = turns.find((turn) => turn.id === turnId);
+        if (existing !== undefined) existing.start = Math.min(existing.start, index);
+      }
+      continue;
+    }
+    if (record.type === 'turn.ended' || record.type === 'agent.turn.ended') {
+      const turnId = record['turnId'];
+      if (typeof turnId === 'number') terminalTurnIds.add(turnId);
+      continue;
+    }
+    if (record.type === 'turn.cancel') {
+      const turnId = record['turnId'];
+      if (record['target'] !== undefined && typeof turnId === 'number' && turnId >= nextTurnId) {
+        cancelledTurnIds.add(turnId);
+        while (cancelledTurnIds.delete(nextTurnId)) nextTurnId += 1;
+      }
+      continue;
+    }
+    if (record.type !== 'turn.prompt') continue;
+    const explicitTurnId = record['turnId'];
+    const id = typeof explicitTurnId === 'number' ? explicitTurnId : nextTurnId;
+    nextTurnId = Math.max(nextTurnId, id + 1);
+    while (cancelledTurnIds.delete(nextTurnId)) nextTurnId += 1;
+    turns.push({ id, start: Math.min(index, humanStarts.get(id) ?? index), promptIndex: index });
+  }
+  const retainedTurnInputs = turnInputIndicesThrough(records, Number.MAX_SAFE_INTEGER);
+  return turns.filter(
+    (turn) => retainedTurnInputs.has(turn.promptIndex) || terminalTurnIds.has(turn.id),
+  );
 }
 
 export function sliceSubagentRecordsAtTime(
@@ -195,82 +316,13 @@ function turnInputIndicesThrough(
   records: readonly WireRecord[],
   turnIndex: number,
 ): ReadonlySet<number> {
-  const inputIndices: number[] = [];
-  const appends: { readonly record: WireRecord; readonly visibleTurnIndex: number }[] = [];
-  let visibleTurnIndex = 0;
-  for (let index = 0; index < records.length; index += 1) {
-    const record = records[index]!;
-    if (isUserVisibleTurnInputRecord(record)) {
-      inputIndices.push(index);
-      continue;
-    }
-    if (!isUserVisibleTurnRecord(record)) continue;
-    appends.push({ record, visibleTurnIndex });
-    visibleTurnIndex += 1;
-  }
-  const unused = [...inputIndices];
   const retained = new Set<number>();
-  for (const append of appends) {
-    const matchAt = findMatchingTurnInput(records, unused, append.record);
-    if (matchAt === -1) continue;
-    const [inputIndex] = unused.splice(matchAt, 1);
-    if (append.visibleTurnIndex <= turnIndex && inputIndex !== undefined) {
-      retained.add(inputIndex);
+  for (const match of matchWireTurnInputRecords(records)) {
+    if (match.visibleTurnIndex <= turnIndex && match.inputIndex !== undefined) {
+      retained.add(match.inputIndex);
     }
   }
   return retained;
-}
-
-function findMatchingTurnInput(
-  records: readonly WireRecord[],
-  pending: readonly number[],
-  turnRecord: WireRecord,
-): number {
-  const exact = pending.findIndex((index) =>
-    turnInputMatchesRecord(records[index]!, turnRecord, true),
-  );
-  if (exact !== -1) return exact;
-  return pending.findIndex((index) => turnInputMatchesRecord(records[index]!, turnRecord, false));
-}
-
-function turnInputMatchesRecord(
-  inputRecord: WireRecord,
-  turnRecord: WireRecord,
-  compareContent: boolean,
-): boolean {
-  if (inputRecord.type !== 'turn.prompt' && inputRecord.type !== 'turn.steer') return false;
-  if (turnRecord.type !== 'context.append_message') return false;
-  const message = asRecord(turnRecord['message']);
-  if (message === undefined || message['role'] !== 'user') return false;
-  const inputKind = asRecord(inputRecord['origin'])?.['kind'];
-  if (typeof inputKind !== 'string') return false;
-  const messageKind = asRecord(message['origin'])?.['kind'];
-  if (messageKind !== undefined && typeof messageKind !== 'string') return false;
-  if (!sameTurnOrigin(inputKind, messageKind)) return false;
-  const messageId = typeof message['id'] === 'string' ? message['id'] : undefined;
-  const steerMessageId =
-    inputRecord.type === 'turn.steer' && typeof inputRecord['messageId'] === 'string'
-      ? inputRecord['messageId']
-      : undefined;
-  if (steerMessageId !== undefined && messageId !== undefined) {
-    return steerMessageId === messageId;
-  }
-  const promptId =
-    inputRecord.type === 'turn.prompt' && typeof inputRecord['promptId'] === 'string'
-      ? inputRecord['promptId']
-      : undefined;
-  if (promptId !== undefined && messageId !== undefined) {
-    return promptId === messageId;
-  }
-  return (
-    !compareContent ||
-    JSON.stringify(inputRecord['input']) === JSON.stringify(message['content'])
-  );
-}
-
-function sameTurnOrigin(inputKind: string, messageKind: string | undefined): boolean {
-  if (inputKind === 'user') return messageKind === undefined || messageKind === 'user';
-  return inputKind === messageKind;
 }
 
 function recordTime(record: WireRecord): number | undefined {
@@ -283,10 +335,19 @@ function recordTime(record: WireRecord): number | undefined {
 }
 
 function promptMetadataFromTurnRecord(record: WireRecord): string | undefined {
+  if (record.type === 'turn.prompt') {
+    return promptMetadataFromInput(record['input'], asRecord(record['origin']));
+  }
   if (record.type !== 'context.append_message') return undefined;
   const message = asRecord(record['message']);
   if (message === undefined || message['role'] !== 'user') return undefined;
-  const origin = asRecord(message['origin']);
+  return promptMetadataFromInput(message['content'], asRecord(message['origin']));
+}
+
+function promptMetadataFromInput(
+  content: unknown,
+  origin: Record<string, unknown> | undefined,
+): string | undefined {
   if (origin?.['kind'] === 'skill_activation') {
     const name = origin['skillName'];
     if (typeof name !== 'string') return undefined;
@@ -300,7 +361,6 @@ function promptMetadataFromTurnRecord(record: WireRecord): string | undefined {
       slashCommandText(`/${pluginId}:${commandName}`, origin['commandArgs']),
     );
   }
-  const content = message['content'];
   if (!Array.isArray(content)) return undefined;
   const activations = origin?.['skillActivations'];
   const bundled =

@@ -3237,10 +3237,12 @@ describe('AgentTranscriptProjector', () => {
       const turns = (snapshot?.items ?? []).filter((item) => item.kind === 'turn');
       expect(turns.map((turn) => [turn.turnId, turn.ordinal, turn.state])).toEqual([
         ['t3', 3, 'completed'],
+        ['t4', 4, 'failed'],
+        ['t5', 5, 'failed'],
         ['t6', 6, 'failed'],
         ['t7', 7, 'completed'],
       ]);
-      const wedged = turns[1];
+      const wedged = turns[3];
       if (wedged?.kind !== 'turn') throw new Error('expected turn');
       expect(wedged.wedged).toBe(true);
       expect(wedged.prompt).toBe('wedged prompt');

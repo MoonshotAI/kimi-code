@@ -779,7 +779,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | --- | --- | --- | --- |
 | `title` | body | string | fork 的标题（至少 1 个字符）。默认 `Fork: <source title>` |
 | `metadata` | body | object | fork 的自定义元数据 |
-| `turn_index` | body | integer | 要保留到的用户可见轮次（从 0 开始，包含该轮次）。必须是非负安全整数，且该轮次已经完成 |
+| `turn_index` | body | integer | 要保留到的持久化 engine `turnId`（包含该轮次），允许编号空洞。必须是非负安全整数，且该轮次已经完成 |
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
