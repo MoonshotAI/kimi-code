@@ -34,15 +34,15 @@ describe('builtin agent profiles', () => {
   it('uses read-only prompts for explore and plan while preserving AGENTS.md', () => {
     const coderPrompt = profile('coder').renderSystemPrompt({ agentsMd: 'AGENTS' }).text;
     expect(coderPrompt).toContain('# Coding');
-    expect(coderPrompt).toContain('Before you call a change done');
+    expect(coderPrompt).toContain('A change is done when it works');
     expect(coderPrompt).toContain('# Project information');
     expect(coderPrompt).toContain('AGENTS');
 
     for (const name of ['explore', 'plan']) {
       const prompt = profile(name).renderSystemPrompt({ agentsMd: 'AGENTS' }).text;
       expect(prompt).not.toContain('# Coding');
-      expect(prompt).not.toContain('Before you call a change done');
-      expect(prompt).toContain('distinguish confirmed findings from hypotheses');
+      expect(prompt).not.toContain('A change is done when it works');
+      expect(prompt).toContain('what is still a hypothesis');
       expect(prompt).toContain('# Project information');
       expect(prompt).toContain('AGENTS');
     }

@@ -1,8 +1,5 @@
-Perform exact replacements in existing files.
+Perform exact replacements in existing files. Use it for incremental changes rather than `Write` or `sed`.
 
-- Edit is mandatory for every incremental change, especially small edits. DO NOT use Write or Bash `sed`.
-- Drop the line-number prefix and tab; match only file content.
+- Match file content only: drop Read's line-number prefix and tab.
 - `old_string` must be unique unless `replace_all` is set.
-- If `old_string` is ambiguous, add surrounding context.
-- Multiple Edit calls may run in one response only when they do not target the same file.
-- DO NOT issue consecutive Edit calls on the same file. A previous Edit can invalidate a later Edit's `old_string`, causing `old_string not found`. Read the file again before the next Edit.
+- Edits apply in order to the file's current content, so a later `old_string` must still match after your earlier edits. Multiple Edit calls in one response must target different files.

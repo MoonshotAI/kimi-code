@@ -95,7 +95,7 @@ describe('systemPromptVars', () => {
   it('composes Windows notes only on Windows', () => {
     expect(
       systemPromptVars({ osKind: 'Windows' }, { skillActive: true })['windows_notes'],
-    ).toContain('IMPORTANT: You are on Windows');
+    ).toContain('You are on Windows');
     expect(systemPromptVars({ osKind: 'macOS' }, { skillActive: true })['windows_notes']).toBe('');
   });
 
@@ -222,13 +222,13 @@ describe('renderSystemPromptResult', () => {
     const readOnly = renderSystemPromptResult('', {}, { skillActive: false, readOnly: true }).text;
 
     expect(full).toContain('# Coding');
-    expect(full).toContain('Before you call a change done');
+    expect(full).toContain('A change is done when it works');
     expect(readOnly).not.toContain('# Coding');
-    expect(readOnly).not.toContain('Before you call a change done');
-    expect(readOnly).not.toContain('When the standard way is blocked');
-    expect(readOnly).not.toContain('After you run tests or builds');
+    expect(readOnly).not.toContain('A change is done when it works');
+    expect(readOnly).not.toContain('If the requested approach is blocked');
+    expect(readOnly).not.toContain('Remove files your own runs created');
     expect(readOnly).toContain('# Delivering work');
-    expect(readOnly).toContain('distinguish confirmed findings from hypotheses');
+    expect(readOnly).toContain('what is still a hypothesis');
     expect(readOnly).toContain('# Context management');
   });
 
@@ -238,7 +238,7 @@ describe('renderSystemPromptResult', () => {
 
     expect(full).toContain('If you change anything an `AGENTS.md` documents, update that `AGENTS.md` to match.');
     expect(readOnly).not.toContain('If you change anything an `AGENTS.md` documents');
-    expect(readOnly).toContain('with more specific guidance.\n');
+    expect(readOnly).toContain('applies within those directories.\n');
     expect(readOnly).toContain('AGENTS');
   });
 
@@ -252,10 +252,10 @@ describe('renderSystemPromptResult', () => {
   it('shows Windows notes only on Windows', () => {
     expect(
       renderSystemPromptResult('', { osKind: 'Windows' }, { skillActive: true }).text,
-    ).toContain('IMPORTANT: You are on Windows');
+    ).toContain('You are on Windows');
     expect(
       renderSystemPromptResult('', { osKind: 'macOS' }, { skillActive: true }).text,
-    ).not.toContain('IMPORTANT: You are on Windows');
+    ).not.toContain('You are on Windows');
   });
 
   it('shows the additional directories section only when directories exist', () => {
@@ -579,9 +579,9 @@ describe('systemPromptVars todo_list_guidance', () => {
     const withTodo = renderSystemPromptResult('', { todoListActive: true }, { skillActive: false }).text;
     const withoutTodo = renderSystemPromptResult('', {}, { skillActive: false }).text;
 
-    expect(withTodo).toContain(`\n\n${TODO_LIST_GUIDANCE}\n\nBefore you finalize a reply`);
+    expect(withTodo).toContain(`\n\n${TODO_LIST_GUIDANCE}\n\nRemove files your own runs created`);
     expect(withoutTodo).not.toContain(TODO_LIST_GUIDANCE);
-    expect(withoutTodo).toMatch(/[^\n]\n\nBefore you finalize a reply/);
+    expect(withoutTodo).toMatch(/[^\n]\n\nRemove files your own runs created/);
   });
 });
 
@@ -592,10 +592,10 @@ describe('systemPromptVars plan_mode_guidance', () => {
     const readOnly = renderSystemPromptResult('', { planModeAvailable: true }, { skillActive: false, readOnly: true }).text;
 
     expect(withPlan).toContain(
-      `only if the user asked for a fix.\n\n${PLAN_MODE_GUIDANCE}\n\nBefore you call a change done`,
+      `fix only if asked.\n\n${PLAN_MODE_GUIDANCE}\n\nA change is done when it works`,
     );
     expect(withoutPlan).not.toContain(PLAN_MODE_GUIDANCE);
-    expect(withoutPlan).toContain('only if the user asked for a fix.\n\nBefore you call a change done');
+    expect(withoutPlan).toContain('fix only if asked.\n\nA change is done when it works');
     expect(readOnly).not.toContain(PLAN_MODE_GUIDANCE);
   });
 
