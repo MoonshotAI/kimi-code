@@ -1332,6 +1332,29 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(context.get().at(-1)?.origin).toEqual({ kind: 'system_trigger', name: 'goal_continuation' });
   });
 
+  it('keeps a deferred continuation until the loop can launch again', async () => {
+    const queue = ctx!.get(IAgentPromptQueueService);
+    const pending = vi.spyOn(queue, 'hasPendingInputs').mockReturnValue(true);
+    const launchable = vi.spyOn(loopService, 'canLaunchPrompt').mockReturnValue(false);
+    await goals.createGoal({ objective: 'finish the task' });
+
+    const turn = makeTurn(1);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+    await runGoalStep(loopService, turn);
+    endTurn(eventBus, turn);
+    await vi.waitFor(() => expect(goals.getGoal().goal?.turnsUsed).toBe(1));
+
+    pending.mockReturnValue(false);
+    queue.pause();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(loopService.launches).toEqual([]);
+
+    launchable.mockReturnValue(true);
+    queue.resume();
+    await vi.waitFor(() => expect(loopService.launches).toHaveLength(1));
+  });
+
   it('drops a deferred continuation once a queued input starts its own goal turn', async () => {
     const queue = ctx!.get(IAgentPromptQueueService);
     const pending = vi.spyOn(queue, 'hasPendingInputs').mockReturnValue(true);

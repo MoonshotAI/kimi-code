@@ -761,6 +761,7 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
 function launchDeferredContinuation(context: GoalOperationContext): void {
   const deferred = context.effects.deferredContinuation;
   if (deferred === undefined || !canLaunchContinuation(context)) return;
+  if (!context.runtime.get(IAgentLoopService).canLaunchPrompt()) return;
   context.effects.deferredContinuation = undefined;
   try {
     launchContinuationTurn(context, deferred.goalId, deferred.stepCapped);

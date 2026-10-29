@@ -305,26 +305,26 @@ describe('AgentPromptQueueService', () => {
     await loop.settled();
   });
 
-  it('does not start a queued prompt that was cancelled while its mode was being applied', async () => {
+  it('takes a starting prompt out of the queue while its mode is applied', async () => {
     setup();
-    respond(1);
+    respond(2);
     const release = await startHeldTurn();
     let finishPrepare!: () => void;
     const prepare = vi.fn(() => new Promise<void>((resolve) => {
       finishPrepare = resolve;
     }));
     await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'plan', prepare });
+    await queue.submitInput({ id: 'p3', entry: entry('p3', 'third'), delivery: 'queue' });
 
     release();
     await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
-    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
-    queue.cancel('p2');
+    expect(ids(queue.snapshot())).toEqual(['p3:queue']);
+    expect(() => queue.move('p2')).toThrow(expect.objectContaining({ code: ErrorCodes.PROMPT_NOT_FOUND }));
+    expect(() => queue.move('p3', 'p2')).toThrow(expect.objectContaining({ code: ErrorCodes.PROMPT_NOT_FOUND }));
     finishPrepare();
-    await loop.settled();
-    await Promise.resolve();
 
-    expect(launched).toEqual(['first']);
-    expect(queue.snapshot().items).toEqual([]);
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second', 'third']));
+    await loop.settled();
   });
 
   it('emits a snapshot for each change and skips no-op pause and resume', async () => {

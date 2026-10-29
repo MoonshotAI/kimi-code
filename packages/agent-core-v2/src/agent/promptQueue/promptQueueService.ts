@@ -237,7 +237,8 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     const head = this.entries[0]!;
     if (head.kind === 'input' && head.delivery === 'steer' && this.loop.canSteerPrompt()) {
       await this.runBusy(async () => {
-        const id = this.submitHead(head);
+        this.take(head);
+        const id = this.submitTaken(head);
         if (id !== undefined) await this.steerSubmitted(id);
       });
       return;
@@ -249,6 +250,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       return;
     }
     await this.runBusy(async () => {
+      this.take(head);
       if (head.prepare !== undefined) {
         try {
           await head.prepare();
@@ -257,7 +259,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
           this.warn('queued-mode-failed', `The queued prompt could not enter its mode and started as a normal prompt: ${reasonOf(error)}`);
         }
       }
-      this.submitHead(head);
+      this.submitTaken(head);
     });
   }
 
@@ -271,20 +273,20 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     }
   }
 
-  private submitHead(head: QueueEntry & { readonly kind: 'input' }): string | undefined {
-    if (!this.entries.includes(head)) return undefined;
-    let id: string;
+  private submitTaken(entry: QueueEntry & { readonly kind: 'input' }): string | undefined {
     try {
-      ({ id } = this.loop.submit(head.entry));
+      return this.loop.submit(entry.entry).id;
     } catch (error) {
-      this.logger.warn('queued prompt could not start', { promptId: head.id, error });
+      this.logger.warn('queued prompt could not start', { promptId: entry.id, error });
+      const firstQueued = this.entries.findIndex((item) => item.delivery !== 'steer');
+      const afterSteers = firstQueued === -1 ? this.entries.length : firstQueued;
+      const index = entry.delivery === 'steer' ? 0 : afterSteers;
+      this.entries = [...this.entries.slice(0, index), entry, ...this.entries.slice(index)];
       this.paused = true;
       this.emitChange();
       this.warn('queued-prompt-failed', `The queue was paused because a queued prompt could not start: ${reasonOf(error)}`);
       return undefined;
     }
-    this.take(head);
-    return id;
   }
 
   private take(entry: QueueEntry): void {
