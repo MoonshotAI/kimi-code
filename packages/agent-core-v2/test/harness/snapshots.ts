@@ -48,7 +48,26 @@ export function eventSnapshot(
   events: readonly EventSnapshotEntry[],
   labels: SnapshotLabels,
 ) {
-  const normalized = events.map((event) => normalizeValue(event, labels));
+  const normalized = events.map((event) => {
+    let stableEvent = event;
+    if (event.type === '[wire]' && event.event === 'llm.tools_snapshot') {
+      const args = event.args as { readonly tools: readonly { readonly name: string }[] };
+      stableEvent = {
+        ...event,
+        args: { ...args, hash: '<tools-hash>', tools: args.tools.map((tool) => tool.name) },
+      };
+    }
+    if (
+      event.type === '[wire]' &&
+      event.event === 'llm.request' &&
+      event.args !== null &&
+      typeof event.args === 'object' &&
+      'toolsHash' in event.args
+    ) {
+      stableEvent = { ...event, args: { ...event.args, toolsHash: '<tools-hash>' } };
+    }
+    return normalizeValue(stableEvent, labels);
+  });
   (normalized as unknown as Record<symbol, true>)[IS_EVENT_ARRAY] = true;
   return normalized;
 }

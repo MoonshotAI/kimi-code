@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ToolCall } from '#human/llm/message';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
-import { IAgentGoalService } from '#/features/goal/goalService';
-
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
+import type { ToolCall } from '#human/llm/message';
+
+import { runWillBeginStepHooks, type StubLoop } from '../../../agent/loop/stubs';
 import {
   InMemoryWireRecordPersistence,
   agentService,
@@ -93,9 +93,13 @@ describe('GoalInjection content', () => {
 
     await injectDynamic(local, true);
     expect(lastGoalReminder(localContext)).toContain('<untrusted_objective>');
-    expect(localContext.get().filter((message) =>
-      message.origin?.kind === 'injection' && message.origin.variant === 'goal'
-    )).toHaveLength(1);
+    expect(
+      localContext
+        .get()
+        .filter(
+          (message) => message.origin?.kind === 'injection' && message.origin.variant === 'goal',
+        ),
+    ).toHaveLength(1);
 
     await local.dispose();
     const count = localContext.get().length;
@@ -142,7 +146,9 @@ describe('GoalInjection content', () => {
         completionCriterion: 'tests pass',
       });
     }))!;
-    expect(text).toContain('<untrusted_completion_criterion>\ntests pass\n</untrusted_completion_criterion>');
+    expect(text).toContain(
+      '<untrusted_completion_criterion>\ntests pass\n</untrusted_completion_criterion>',
+    );
   });
 
   it('escapes objective and completion criterion delimiters inside untrusted wrappers', async () => {
@@ -224,6 +230,71 @@ describe('GoalInjection content', () => {
     expect(text).toContain('</untrusted_completion_criterion>\n\nStatus: active');
     expect(text).toMatch(/Progress: [^\n]*\.\nBudgets: /);
     expect(text).toMatch(/Budgets: [^\n]*\.\nBudget guidance: /);
+  });
+
+  it('uses a sparse reminder for an unchanged active goal', async () => {
+    await goals.createGoal({ objective: 'Ship feature X', completionCriterion: 'tests pass' });
+    await injectDynamic(ctx, true);
+    const full = lastGoalReminder(context)!;
+
+    await injectDynamic(ctx, true);
+    const sparse = lastGoalReminder(context)!;
+    await injectDynamic(ctx, true);
+
+    expect(lastGoalReminder(context)).toBe(sparse);
+    expect(full).toContain('Blocked audit:');
+    expect(sparse).toContain('The full audit is in the earlier goal reminder.');
+    expect(sparse).toContain('<untrusted_objective>\nShip feature X\n</untrusted_objective>');
+    expect(sparse).toContain(
+      '<untrusted_completion_criterion>\ntests pass\n</untrusted_completion_criterion>',
+    );
+    expect(sparse).toContain('Status: active');
+    expect(sparse.length).toBeLessThan(full.length);
+  });
+
+  it('refreshes the full reminder when the goal resumes after being paused', async () => {
+    await goals.createGoal({ objective: 'work' });
+    await injectDynamic(ctx, true);
+    await goals.pauseGoal();
+    await injectDynamic(ctx, true);
+    await goals.resumeGoal();
+
+    await injectDynamic(ctx, true);
+    const resumed = lastGoalReminder(context)!;
+    await injectDynamic(ctx, true);
+
+    expect(resumed).toContain('Blocked audit:');
+    expect(lastGoalReminder(context)).toContain('The full audit is in the earlier goal reminder.');
+  });
+
+  it('refreshes the full reminder when the goal enters the nearing-budget band', async () => {
+    await goals.createGoal({ objective: 'work' });
+    await goals.setBudgetLimits({ budgetLimits: { turnBudget: 4 } }, 'model');
+    await injectDynamic(ctx, true);
+    await goals.incrementTurn();
+    await goals.incrementTurn();
+    await goals.incrementTurn();
+
+    await injectDynamic(ctx, true);
+
+    expect(lastGoalReminder(context)).toContain('Blocked audit:');
+    expect(lastGoalReminder(context)).toContain('nearing a budget');
+  });
+
+  it('refreshes the full reminder after compaction removes the previous reminders', async () => {
+    await goals.createGoal({ objective: 'work' });
+    await injectDynamic(ctx, true);
+    await injectDynamic(ctx, true);
+    expect(lastGoalReminder(context)).toContain('The full audit is in the earlier goal reminder.');
+    context.applyCompaction({
+      summary: 'Earlier goal work.',
+      compactedCount: context.get().length,
+      tokensBefore: 100,
+    });
+
+    await injectDynamic(ctx, true);
+
+    expect(lastGoalReminder(context)).toContain('Blocked audit:');
   });
 });
 
@@ -356,5 +427,4 @@ describe('GoalInjection integration', () => {
       await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(0);
     });
   });
-
 });

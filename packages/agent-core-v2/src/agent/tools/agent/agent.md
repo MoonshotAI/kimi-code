@@ -1,10 +1,10 @@
-Launch a subagent to handle a task. The subagent runs as a same-process loop instance with its own context and wire file.
+Launch a subagent to handle a task in its own context.
 
-Do not launch a subagent unless the user explicitly asks for one. Each subagent starts cold and re-derives context you already have, which costs the user time and tokens. Asking means: the user asks for a subagent, delegation, or parallel agents, or requests one of the agent types below by name (for example "use an explore agent"). Explicit instructions in AGENTS.md or a skill, and a multi-agent mode the user turned on (such as swarm or tower mode), also count. Nothing else does: a large or multi-part task, or a request for depth, thoroughness, research, or investigation, is not a request to launch — do that work yourself with your own tools. The agent type descriptions below only help you choose a type once launching is authorized; they never authorize it. Resuming a subagent to continue already-authorized work needs no new request.
+Do not launch a subagent unless the user explicitly asks for one, including delegation, parallel agents, or a named agent type. Explicit instructions in AGENTS.md or a skill, and user-enabled multi-agent modes, also authorize launching. Large or multi-part tasks and requests for depth, thoroughness, research, or investigation do not; do that work yourself. Agent type descriptions below guide selection only after authorization. Resuming already-authorized work needs no new request. Each subagent starts cold and re-derives context, costing time and tokens.
 
 Writing the prompt:
-- The subagent starts with zero context — it has not seen this conversation. Brief it like a colleague who just walked into the room: state the goal, list what you already know, hand over the specifics.
-- Lookups (read this file, run that test): put the exact path or command in the prompt. The subagent should not have to search for things you already know.
+- Brief it like a colleague who just walked into the room: state the goal, list what you already know, hand over the specifics.
+- Lookups: put exact paths or commands you already know in the prompt.
 - Investigations (figure out X, find why Y): give the question, not prescribed steps — fixed steps become dead weight when the premise is wrong.
 - Do not delegate understanding. If the task hinges on a file path or line number, find it yourself first and write it into the prompt.
 
