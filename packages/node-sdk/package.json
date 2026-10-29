@@ -33,6 +33,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./exec-server": {
+      "types": "./src/exec-server.ts",
+      "default": "./src/exec-server.ts"
     }
   },
   "publishConfig": {
