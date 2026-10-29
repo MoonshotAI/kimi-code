@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 import { resolve } from 'node:path';
 
+import { firstNonAscii } from '../ascii-bundle.mjs';
 import { nativeIntermediatesDir, nativeJsBundlePath } from './paths.mjs';
 
 const builtins = new Set([
@@ -37,6 +38,14 @@ function checkBundle(bundlePath, { worker = false } = {}) {
   if (!existsSync(bundlePath)) return [`bundle does not exist: ${bundlePath}`];
   const text = readFileSync(bundlePath, 'utf-8');
   const errors = [];
+  // ascii-bundle.mjs must have run: a single character above U+00FF forces V8
+  // to hold the whole source as a two-byte string.
+  const nonAscii = firstNonAscii(text);
+  if (nonAscii !== undefined) {
+    errors.push(
+      `non-ASCII code unit U+${nonAscii.codeUnit.toString(16)} at line ${nonAscii.line}, column ${nonAscii.column}; run scripts/ascii-bundle.mjs`,
+    );
+  }
   const allowedExternal = worker ? new Set() : optionalRuntimeRequires;
   const allowedRelative = worker ? new Set() : optionalRelativeRuntimeRequires;
 
