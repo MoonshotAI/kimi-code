@@ -1091,7 +1091,7 @@ On success, `data` is `{ active, queued }`: `active` is the running prompt (`nul
 
 #### `POST /api/v1/sessions/{session_id}/prompts`
 
-Submits a user prompt to the session. Media references are validated first, then the optional overrides are applied to the target agent — `profile` (bound together with `model` / `thinking`), then `model`, `thinking`, `permission_mode`, `swarm_mode`, and `disabled_tools` — and the prompt is enqueued; the response returns as soon as the prompt is accepted, without waiting for the turn. With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
+Submits a user prompt to the session. Media references are validated first, then the optional overrides are applied to the target agent — `profile` (bound together with `model` / `thinking`), then `model`, `thinking`, `permission_mode`, `plan_mode`, `swarm_mode`, `goal_objective`, `goal_control`, and `disabled_tools` — and the prompt is enqueued; the response returns as soon as the prompt is accepted, without waiting for the turn. With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1104,10 +1104,13 @@ Submits a user prompt to the session. Media references are validated first, then
 | `model` | body | string | Model alias to switch the agent to |
 | `thinking` | body | string | Thinking-mode effort level |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
+| `plan_mode` | body | boolean | Enter or exit Plan mode before submitting; only available for the main agent |
 | `swarm_mode` | body | boolean | Enable or disable Swarm mode before submitting |
+| `goal_objective` | body | string | Create a goal with this objective before submitting; only available for the main agent |
+| `goal_control` | body | string | `pause` / `resume` / `cancel` the current goal before submitting; only available for the main agent |
 | `disabled_tools` | body | array | Tool names to disable for the session |
 
-The schema also accepts `plan_mode`, `goal_objective`, and `goal_control`, but the submit route currently does not apply them. `metadata` is optional client metadata stored with the prompt. Each `content` part is an object discriminated by `type`:
+`metadata` is optional client metadata stored with the prompt. Each `content` part is an object discriminated by `type`:
 
 | Part | Fields | Description |
 | --- | --- | --- |
@@ -1129,6 +1132,13 @@ On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status,
 - `40415`: a `skills` entry names an unknown skill
 - `40903`: `prompt_id` belongs to an already-completed prompt; `data` carries `{ aborted: false }`
 - `40912`: the skill exists but cannot be activated by the user
+- `40913`: a goal already exists and cannot be created again
+- `40914`: no current goal exists for the requested control
+- `40915`: the current goal status does not allow the requested control
+- `40916`: the current goal cannot be resumed
+- `40917`: the goal objective is empty
+- `40918`: the goal objective exceeds the length limit
+- `40920`: goals are only supported by the main agent
 - `40927`: `prompt_id` is already reserved by an in-flight prompt
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`

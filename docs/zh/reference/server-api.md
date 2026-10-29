@@ -1091,7 +1091,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### `POST /api/v1/sessions/{session_id}/prompts`
 
-向会话提交一条用户提示词。先校验媒体引用，然后把可选的覆盖项应用到目标 Agent——`profile`（与 `model` / `thinking` 一起绑定），接着是 `model`、`thinking`、`permission_mode`、`swarm_mode` 和 `disabled_tools`——随后提示词入队；响应在提示词被接受后立即返回，不等待轮次执行。提供 `skills` 时，提示词以打包的 Skill 激活方式运行，而不是普通用户提示词。
+向会话提交一条用户提示词。先校验媒体引用，然后把可选的覆盖项应用到目标 Agent——`profile`（与 `model` / `thinking` 一起绑定），接着是 `model`、`thinking`、`permission_mode`、`plan_mode`、`swarm_mode`、`goal_objective`、`goal_control` 和 `disabled_tools`——随后提示词入队；响应在提示词被接受后立即返回，不等待轮次执行。提供 `skills` 时，提示词以打包的 Skill 激活方式运行，而不是普通用户提示词。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1104,10 +1104,13 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `model` | body | string | 要切换到的模型别名 |
 | `thinking` | body | string | Thinking 强度等级 |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
+| `plan_mode` | body | boolean | 提交前进入或退出 Plan 模式；仅适用于 main agent |
 | `swarm_mode` | body | boolean | 提交前启用或关闭 Swarm 模式 |
+| `goal_objective` | body | string | 提交前以此目标创建 goal；仅适用于 main agent |
+| `goal_control` | body | string | 提交前对当前 goal 执行 `pause` / `resume` / `cancel`；仅适用于 main agent |
 | `disabled_tools` | body | array | 要为会话禁用的工具名 |
 
-schema 还接受 `plan_mode`、`goal_objective` 和 `goal_control`，但提交路由当前不会应用它们。`metadata` 是随提示词保存的可选客户端元数据。每个 `content` 内容块是按 `type` 区分的对象：
+`metadata` 是随提示词保存的可选客户端元数据。每个 `content` 内容块是按 `type` 区分的对象：
 
 | 内容块 | 字段 | 说明 |
 | --- | --- | --- |
@@ -1129,6 +1132,13 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 - `40415`：某个 `skills` 条目指向未知的 Skill
 - `40903`：`prompt_id` 属于已完成的提示词；`data` 携带 `{ aborted: false }`
 - `40912`：Skill 存在但无法由用户激活
+- `40913`：已有 goal，不能重复创建
+- `40914`：没有可执行当前控制的 goal
+- `40915`：当前 goal 状态不允许执行该控制
+- `40916`：当前 goal 无法恢复
+- `40917`：goal objective 为空
+- `40918`：goal objective 超过长度上限
+- `40920`：goal 仅支持 main agent
 - `40927`：`prompt_id` 已被进行中的提示词占用
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`

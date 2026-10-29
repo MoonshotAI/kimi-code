@@ -9,12 +9,12 @@ import {
   IAgentRuntimeBindingService,
   IAgentToolPolicyService,
   IAgentSkillService,
-  IAgentSwarmService,
   IEventBus,
   IEventService,
   IFileService,
   ISessionMediaStore,
   ISessionMetadata,
+  ISessionRunGate,
   ISessionSkillCatalog,
   isUserActivatableSkillType,
   promptMetadataTextFromContentParts,
@@ -66,6 +66,7 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
+import { applyAgentConfig } from './sessionAgentConfig';
 
 interface PromptRouteHost {
   get(
@@ -113,6 +114,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
   return {
+    agent,
     prompt: agent.accessor.get(IAgentLoopService),
     skill: agent.accessor.get(IAgentSkillService),
     events: agent.accessor.get(IEventBus),
@@ -120,7 +122,6 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
     binding: agent.accessor.get(IAgentRuntimeBindingService),
-    swarm: agent.accessor.get(IAgentSwarmService),
   };
 }
 
@@ -204,6 +205,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.GOAL_ALREADY_EXISTS]: {},
+        [ErrorCode.GOAL_NOT_FOUND]: {},
+        [ErrorCode.GOAL_STATUS_INVALID]: {},
+        [ErrorCode.GOAL_NOT_RESUMABLE]: {},
+        [ErrorCode.GOAL_OBJECTIVE_EMPTY]: {},
+        [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: {},
+        [ErrorCode.GOAL_UNSUPPORTED_AGENT]: {},
         ...sessionConflictErrors,
       },
       description: 'Submit a prompt to a session',
@@ -247,6 +255,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             session.accessor.get(ISessionMediaStore),
           );
           resolved ??= await resolvePromptFromSession(session, req.body.agent_id);
+          if (req.body.plan_mode === true && req.body.agent_id !== undefined && req.body.agent_id !== MAIN_AGENT_ID) {
+            throw new Error2(ErrorCodes.REQUEST_INVALID, 'plan_mode is only available for the main agent');
+          }
           reservation = reservePromptId(session_id, req.body.prompt_id);
 
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
@@ -287,10 +298,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           if (req.body.thinking !== undefined && !thinkingConsumed)
             resolved.profile.setThinking(req.body.thinking);
           if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
-          if (req.body.swarm_mode !== undefined && resolved.swarm.isActive !== req.body.swarm_mode) {
-            if (req.body.swarm_mode) resolved.swarm.enter('manual');
-            else resolved.swarm.exit();
-          }
           if (req.body.disabled_tools !== undefined) {
             try {
               await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
@@ -301,6 +308,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               throw error;
             }
           }
+          session.accessor.get(ISessionRunGate).begin();
+          await applyAgentConfig(resolved.agent, {
+            plan_mode: req.body.plan_mode,
+            swarm_mode: req.body.swarm_mode,
+            goal_objective: req.body.goal_objective,
+            goal_control: req.body.goal_control,
+          });
           const parts = contentToCoreParts(resolvedContent);
           const clientMetadata = req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)];
           if (req.body.skills !== undefined) {

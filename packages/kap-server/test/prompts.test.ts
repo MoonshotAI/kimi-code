@@ -8,8 +8,10 @@ import {
   agentRuntimeBindingKey,
   IAgentTitlePromptSource,
   IAgentContextMemoryService,
+  IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
+  IAgentPlanService,
   IAgentProfileService,
   IAgentLoopService,
   IAgentStateService,
@@ -21,6 +23,7 @@ import {
   IFileService,
   ISessionContext,
   ISessionMetadata,
+  ISessionRunGate,
   MAX_IMAGE_DECODE_BYTES,
   Error2,
   ErrorCodes,
@@ -311,38 +314,89 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(Array.isArray(list.body.data.queued)).toBe(true);
   });
 
-  it('applies swarm_mode before submitting the prompt', async () => {
+  it('applies plan_mode and swarm_mode before submitting the prompt', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id)!;
     const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const plan = agent.accessor.get(IAgentPlanService);
     const swarm = agent.accessor.get(IAgentSwarmService);
     const loop = agent.accessor.get(IAgentLoopService);
-    const enter = vi.spyOn(swarm, 'enter');
-    const exit = vi.spyOn(swarm, 'exit');
+    const planEnter = vi.spyOn(plan, 'enter');
+    const planExit = vi.spyOn(plan, 'exit');
+    const swarmEnter = vi.spyOn(swarm, 'enter');
+    const swarmExit = vi.spyOn(swarm, 'exit');
     const submit = vi.spyOn(loop, 'submit');
-    const post = (swarmMode: boolean) =>
+    const post = (planMode: boolean, swarmMode: boolean) =>
       call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
         content: [{ type: 'text', text: 'hello' }],
+        plan_mode: planMode,
         swarm_mode: swarmMode,
       });
 
-    const first = await post(true);
+    const first = await post(true, true);
     expect(first.body.code).toBe(0);
-    expect(enter).toHaveBeenCalledTimes(1);
-    expect(enter).toHaveBeenCalledWith('manual');
-    expect(enter.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[0]!);
+    expect(planEnter).toHaveBeenCalledTimes(1);
+    expect(swarmEnter).toHaveBeenCalledTimes(1);
+    expect(swarmEnter).toHaveBeenCalledWith('manual');
+    expect(planEnter.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[0]!);
+    expect(swarmEnter.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[0]!);
+    expect(await plan.status()).not.toBeNull();
     expect(swarm.isActive).toBe(true);
 
-    const repeated = await post(true);
+    const repeated = await post(true, true);
     expect(repeated.body.code).toBe(0);
-    expect(enter).toHaveBeenCalledTimes(1);
+    expect(planEnter).toHaveBeenCalledTimes(1);
+    expect(swarmEnter).toHaveBeenCalledTimes(1);
 
-    const off = await post(false);
+    const off = await post(false, false);
     expect(off.body.code).toBe(0);
-    expect(exit).toHaveBeenCalledTimes(1);
-    expect(exit.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[2]!);
+    expect(planExit).toHaveBeenCalledTimes(1);
+    expect(swarmExit).toHaveBeenCalledTimes(1);
+    expect(planExit.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[2]!);
+    expect(swarmExit.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[2]!);
+    expect(await plan.status()).toBeNull();
     expect(swarm.isActive).toBe(false);
+  });
+
+  it('applies goal_objective and goal_control before submitting prompts', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const goal = agent.accessor.get(IAgentGoalService);
+    const loop = agent.accessor.get(IAgentLoopService);
+    const create = vi.spyOn(goal, 'createGoal').mockResolvedValue({} as never);
+    const pause = vi.spyOn(goal, 'pauseGoal').mockResolvedValue({} as never);
+    const resume = vi.spyOn(goal, 'resumeGoal').mockResolvedValue({} as never);
+    const cancel = vi.spyOn(goal, 'cancelGoal').mockResolvedValue({} as never);
+    const submit = vi.spyOn(loop, 'submit');
+    const post = (goalObjective?: string, goalControl?: 'pause' | 'resume' | 'cancel') =>
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'hello' }],
+        goal_objective: goalObjective,
+        goal_control: goalControl,
+      });
+
+    const created = await post('finish the migration');
+    expect(created.body.code).toBe(0);
+    expect(create).toHaveBeenCalledWith({ objective: 'finish the migration' });
+    expect(create.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[0]!);
+
+    const paused = await post(undefined, 'pause');
+    expect(paused.body.code).toBe(0);
+    expect(pause).toHaveBeenCalledWith({});
+    expect(pause.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[1]!);
+
+    const resumed = await post(undefined, 'resume');
+    expect(resumed.body.code).toBe(0);
+    expect(resume).toHaveBeenCalledWith({ continueIfPaused: true, continueIfBlocked: true });
+    expect(resume.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[2]!);
+
+    const cancelled = await post(undefined, 'cancel');
+    expect(cancelled.body.code).toBe(0);
+    expect(cancel).toHaveBeenCalledWith({});
+    expect(cancel.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[3]!);
   });
 
   it('accepts a prompt-carried model when default_model is not configured', async () => {
@@ -629,6 +683,67 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.data.prompt_id).toBe('submission-1');
     expect(submit).toHaveBeenCalledTimes(1);
     expect(getLiveSessionById(server!.core.accessor, id)).not.toBe(handle);
+  });
+
+  it('reloads a stale session before applying goal controls', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const handle = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = handle.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const runGate = handle.accessor.get(ISessionRunGate);
+    const begin = runGate.begin.bind(runGate);
+    const gate = vi
+      .spyOn(runGate, 'begin')
+      .mockImplementationOnce(() => {
+        throw new Error2(ErrorCodes.SESSION_STALE, 'stale');
+      })
+      .mockImplementation(begin);
+    const create = vi.spyOn(agent.accessor.get(IAgentGoalService), 'createGoal');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      prompt_id: 'goal-stale-1',
+      goal_objective: 'finish the migration',
+    });
+
+    expect(submitted.body.code).toBe(0);
+    expect(gate).toHaveBeenCalledTimes(1);
+    expect(create).not.toHaveBeenCalled();
+    const resumed = getLiveSessionById(server!.core.accessor, id)!;
+    expect(resumed).not.toBe(handle);
+    const goal = resumed.accessor
+      .get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentGoalService)
+      .getGoal().goal;
+    expect(goal).toMatchObject({ objective: 'finish the migration' });
+  });
+
+  it('rejects plan_mode for a non-main agent before applying config', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const main = lifecycle.handleOf('main')!;
+    const childContext = await lifecycle.fork(agentContextOf(main));
+    const child = lifecycle.handleOf(childContext.agentId)!;
+    const enter = vi.spyOn(child.accessor.get(IAgentPlanService), 'enter');
+
+    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'side question' }],
+      agent_id: childContext.agentId,
+      plan_mode: true,
+    });
+
+    expect(submitted.body.code).toBe(40001);
+    expect(submitted.body.msg).toContain('main agent');
+    expect(enter).not.toHaveBeenCalled();
+    expect(
+      child.accessor
+        .get(IAgentContextMemoryService)
+        .get()
+        .filter((message) => message.origin?.kind === 'user'),
+    ).toHaveLength(0);
   });
 
   it.each([false, true])('preserves client metadata through submission and cold resume (skills=%s)', async (withSkills) => {
@@ -2051,12 +2166,17 @@ describe('server-v2 /api/v1 prompts', () => {
   it('rejects disabled_tools before the agent profile is bound', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const create = vi.spyOn(agent.accessor.get(IAgentGoalService), 'createGoal');
 
     const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'hello' }],
       disabled_tools: ['Bash'],
+      goal_objective: 'finish the migration',
     });
     expect(body.code).toBe(40001);
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('persists disabled_tools across a cold resume', async () => {
