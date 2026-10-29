@@ -1,5 +1,9 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
+
+import crossSpawn from 'cross-spawn';
 
 import { BufferedReadable } from '#/_base/execEnv/bufferedReadable';
 import { LifecycleScope } from '#/app/scopes';
@@ -15,6 +19,109 @@ import {
 
 const isWindows: boolean = process.platform === 'win32';
 const TASKKILL_TIMEOUT_MS = 5_000;
+
+export function resolveWindowsBatchCommand(
+  command: string,
+  env: NodeJS.ProcessEnv,
+  cwd: string = process.cwd(),
+): string | undefined {
+  const lowerCommand = command.toLowerCase();
+  const isBatchName = lowerCommand.endsWith('.bat') || lowerCommand.endsWith('.cmd');
+  const hasPath = command.includes('/') || command.includes('\\');
+  if (hasPath) {
+    const candidate = resolve(cwd, command);
+    return isBatchName && isFile(candidate) ? candidate : undefined;
+  }
+  const dirs = (envValue(env, 'PATH') ?? '')
+    .split(';')
+    .map((dir) => stripQuotes(dir.trim()))
+    .filter((dir) => dir.length > 0);
+  if (isBatchName) {
+    for (const dir of dirs) {
+      const candidate = resolve(cwd, dir, command);
+      if (isFile(candidate)) return candidate;
+    }
+    return undefined;
+  }
+  const extensions = pathExtensions(env);
+  if (extensions.length === 0) return undefined;
+  for (const dir of dirs) {
+    for (const ext of extensions) {
+      const candidate = resolve(cwd, dir, `${command}${ext}`);
+      if (!isFile(candidate)) continue;
+      return ext === '.bat' || ext === '.cmd' ? candidate : undefined;
+    }
+  }
+  return undefined;
+}
+
+function pathExtensions(env: NodeJS.ProcessEnv): string[] {
+  const raw = envValue(env, 'PATHEXT');
+  if (raw === undefined || raw.trim().length === 0) return ['.com', '.exe', '.bat', '.cmd'];
+  return raw
+    .split(';')
+    .map((ext) => stripQuotes(ext.trim()).toLowerCase())
+    .filter((ext) => ext.length > 0);
+}
+
+function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const target = name.toLowerCase();
+  let found: string | undefined;
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toLowerCase() === target) found = value;
+  }
+  return found;
+}
+
+function stripQuotes(value: string): string {
+  return value.replaceAll(/^"|"$/g, '');
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function spawnCwd(cwd: string | undefined): string {
+  try {
+    return resolve(cwd ?? process.cwd());
+  } catch {
+    return cwd ?? '.';
+  }
+}
+
+function toSpawnError(
+  error: unknown,
+  command: string,
+  args: readonly string[],
+  options: HostProcessOptions,
+): HostProcessError {
+  const err = error as NodeJS.ErrnoException;
+  return new HostProcessError(
+    HostProcessErrorCode.SpawnFailed,
+    `Failed to spawn "${command}": ${err.message}`,
+    {
+      details: { command, args: [...args], cwd: options.cwd, errno: err.code },
+      cause: error,
+    },
+  );
+}
+
+function spawnProcess(
+  command: string,
+  args: readonly string[],
+  spawnOptions: SpawnOptions,
+): ChildProcess {
+  return spawn(command, args as string[], spawnOptions);
+}
+
+function isRetryableWithBatchShim(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'ENOENT' || code === 'EINVAL';
+}
 
 function buildSpawnOptions(options: HostProcessOptions): SpawnOptions {
   const detached = options.detached ?? !isWindows;
@@ -38,7 +145,18 @@ function buildEnv(overrides: Record<string, string> | undefined): Record<string,
   if (overrides === undefined) {
     return undefined;
   }
-  return { ...(process.env as Record<string, string>), ...overrides };
+  const merged: Record<string, string> = { ...(process.env as Record<string, string>) };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (isWindows) {
+      for (const existing of Object.keys(merged)) {
+        if (existing !== key && existing.toLowerCase() === key.toLowerCase()) {
+          delete merged[existing];
+        }
+      }
+    }
+    merged[key] = value;
+  }
+  return merged;
 }
 
 function waitForSpawn(child: ChildProcess): Promise<void> {
@@ -188,21 +306,35 @@ export class HostProcessService implements IHostProcessService {
     options: HostProcessOptions = {},
   ): Promise<IHostProcess> {
     const spawnOptions = buildSpawnOptions(options);
-    const child = spawn(command, args as string[], spawnOptions);
+    let child: ChildProcess | undefined;
+    let failure: unknown;
     try {
+      child = spawnProcess(command, args, spawnOptions);
       await waitForSpawn(child);
     } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      throw new HostProcessError(
-        HostProcessErrorCode.SpawnFailed,
-        `Failed to spawn "${command}": ${err.message}`,
-        {
-          details: { command, args: [...args], cwd: options.cwd, errno: err.code },
-          cause: error,
-        },
-      );
+      failure = error;
     }
-    return new HostProcess(child, options.mergeStderr ?? false);
+    if (child !== undefined && failure === undefined) {
+      return new HostProcess(child, options.mergeStderr ?? false);
+    }
+    if (!isWindows || !isRetryableWithBatchShim(failure)) {
+      throw toSpawnError(failure, command, args, options);
+    }
+    const batchCommand = resolveWindowsBatchCommand(
+      command,
+      buildEnv(options.env) ?? process.env,
+      spawnCwd(options.cwd),
+    );
+    if (batchCommand === undefined) {
+      throw toSpawnError(failure, command, args, options);
+    }
+    const batchChild = crossSpawn(batchCommand, args as string[], spawnOptions);
+    try {
+      await waitForSpawn(batchChild);
+    } catch (error) {
+      throw toSpawnError(error, command, args, options);
+    }
+    return new HostProcess(batchChild, options.mergeStderr ?? false);
   }
 }
 

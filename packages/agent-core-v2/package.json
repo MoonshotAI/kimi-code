@@ -69,6 +69,7 @@
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
     "chokidar": "^4.0.3",
+    "cross-spawn": "^7.0.6",
     "ignore": "^5.3.2",
     "immer": "^11.1.0",
     "jimp": "^1.6.1",
@@ -92,6 +93,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/picomatch": "^4.0.3",
     "@types/proper-lockfile": "^4.1.4",
