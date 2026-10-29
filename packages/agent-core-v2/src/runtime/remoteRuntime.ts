@@ -104,6 +104,7 @@ const textResultSchema = z.object({ text: z.string() });
 const bytesResultSchema = z.object({ base64: z.string() });
 const pathResultSchema = z.object({ path: z.string().min(1) });
 const createdResultSchema = z.object({ created: z.boolean() });
+const STALE_GENERATION = new Error('stale generation');
 
 export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
   readonly id = 'desktop';
@@ -112,6 +113,7 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
   constructor(
     private readonly connector: RemoteRuntimeConnector,
     private readonly enabled: () => boolean,
+    private readonly onError: (error: unknown) => void = (error) => console.error(error),
   ) {}
 
   async attach(context: RuntimeProviderContext, host: RuntimeProviderHost): Promise<RuntimeProviderAttachment> {
@@ -123,16 +125,52 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
     let current = this.createRuntime(context, deviceId);
     const handle = host.registerRuntime(current);
     let disposed = false;
+    let desiredGeneration: string | undefined = current.identity.generation;
+    let desiredOnline = current.status === 'ready';
+    let updateInFlight = false;
+    let rebuildRequested = false;
+    const rebuild = (): void => {
+      if (disposed || !desiredOnline) {
+        rebuildRequested = false;
+        return;
+      }
+      if (updateInFlight) {
+        rebuildRequested = true;
+        return;
+      }
+      updateInFlight = true;
+      let replacement: RemoteRuntime | undefined;
+      void handle.update(() => {
+        const snapshot = this.assertWorkspace(context, deviceId);
+        if (snapshot.generation !== desiredGeneration || snapshot.online !== desiredOnline) {
+          throw STALE_GENERATION;
+        }
+        replacement = this.createRuntime(context, deviceId);
+        return replacement;
+      }).then(() => {
+        if (replacement !== undefined) current = replacement;
+      }).catch((error: unknown) => {
+        if (error !== STALE_GENERATION) {
+          current.setStatus('disconnected');
+          this.onError(error);
+        }
+      }).finally(() => {
+        updateInFlight = false;
+        if (rebuildRequested) {
+          rebuildRequested = false;
+          rebuild();
+        }
+      });
+    };
     const subscription = this.connector.onDidChange((change) => {
-      if (disposed || change.reason !== 'connection' || change.device.deviceId !== deviceId) return;
-      if (!change.device.online) {
+      if (disposed || change.device.deviceId !== deviceId) return;
+      desiredGeneration = change.device.generation;
+      desiredOnline = change.device.online;
+      if (!desiredOnline) {
         current.setStatus('disconnected');
         return;
       }
-      void handle.update(() => {
-        current = this.createRuntime(context, deviceId);
-        return current;
-      }).catch(() => {});
+      rebuild();
     });
     return {
       dispose: async () => {

@@ -247,7 +247,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     helloTimeoutMs: opts.deviceBridge?.helloTimeoutMs,
   });
   const remoteRuntimeProvider = await core.accessor.get(IWorkspaceInstanceManager).addProvider(
-    new RemoteRuntimeProviderFactory(deviceBridge, centralEnabled),
+    new RemoteRuntimeProviderFactory(
+      deviceBridge,
+      centralEnabled,
+      (error) => logger.warn({ err: error }, 'desktop runtime update failed'),
+    ),
   );
 
   const readManagedOAuth = (): { key?: string; oauthHost?: string } | undefined =>

@@ -666,6 +666,50 @@ describe('Desktop device bridge M2', () => {
     const devices = await call<{ items: Array<{ device_id: string; roots: unknown[] }> }>(ALICE_TOKEN, 'GET', '/api/v1/devices');
     expect(devices.body.data.items.find((item) => item.device_id === 'dev-a')?.roots).toEqual([]);
   }, 30000);
+
+  it('rebuilds the original workspace when connection arrives before root registration', async () => {
+    const manager = server.core.accessor.get(IWorkspaceInstanceManager);
+    const lease = await manager.acquire({ workspaceId: workspaceB });
+    const workspace = lease.instance;
+    const oldGeneration = deviceB.generation;
+    await deviceB.unregisterRoot(rootA);
+    await deviceB.close();
+    await vi.waitFor(() => expect(server.devices.get('dev-b')?.online).toBe(false));
+
+    deviceB = new FakeDesktop('dev-b', 'Bob Desktop', 'conn-b-2', bridgeUrl, BOB_TOKEN, [rootA]);
+    await deviceB.connect();
+    await vi.waitFor(() => {
+      const snapshot = server.devices.get('dev-b')!;
+      expect(snapshot.online).toBe(true);
+      expect(snapshot.roots).toEqual([]);
+    });
+    await deviceB.registerRoot(rootA);
+    await vi.waitFor(() => {
+      const runtime = workspace.runtimes.current('desktop:dev-b')!;
+      expect(runtime.identity.generation).toBe(deviceB.generation);
+      expect(runtime.status).toBe('ready');
+    });
+    await expect(remoteFs(workspaceB).readText(join(rootA, ROOT_FILE))).resolves.toContain('device');
+
+    deviceB.hold('fs.realpath');
+    const pending = remoteFs(workspaceB).stat(join(rootA, ROOT_FILE));
+    const requestForNote = (frame: RuntimeRpc): boolean =>
+      frame.method === 'fs.realpath' && (frame.params as { path: string }).path === join(rootA, ROOT_FILE);
+    await vi.waitFor(() => expect([...deviceB.held.values()].some(requestForNote)).toBe(true));
+    const request = [...deviceB.held.values()].findLast(requestForNote)!;
+    await deviceB.respond(request, oldGeneration);
+    await deviceB.respond(request, deviceB.generation);
+    await expect(pending).resolves.toMatchObject({ isFile: true });
+    deviceB.release('fs.realpath');
+
+    await deviceB.unregisterRoot(rootA);
+    await vi.waitFor(() => expect(workspace.runtimes.current('desktop:dev-b')?.status).toBe('disconnected'));
+    await expect(remoteFs(workspaceB).readText(join(rootA, ROOT_FILE))).rejects.toMatchObject({ code: 'runtime.denied' });
+    await deviceB.close();
+    await vi.waitFor(() => expect(server.devices.get('dev-b')?.online).toBe(false));
+    await expect(remoteFs(workspaceB).readText(join(rootA, ROOT_FILE))).rejects.toMatchObject({ code: 'runtime.unavailable' });
+    lease.dispose();
+  }, 30000);
 });
 
 async function executeTool<T>(
