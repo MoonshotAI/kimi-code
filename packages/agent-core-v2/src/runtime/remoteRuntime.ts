@@ -412,6 +412,13 @@ export class RemoteHostFileSystem implements IHostFileSystem {
   }
 
   private async call(method: RemoteRuntimeMethod, params: unknown, mutating = false): Promise<unknown> {
+    const snapshot = this.connector.get(this.deviceId);
+    if (snapshot === undefined) throw new RemoteRuntimeError('runtime.not_found', `device ${this.deviceId} is not registered`);
+    if (!snapshot.online) throw new RemoteRuntimeError('runtime.unavailable', `device ${this.deviceId} is offline`, { retryable: true });
+    const authorized = new Set(snapshot.roots.map((root) => normalizeRoot(this.path, root.root)));
+    if (!this.roots.some((root) => authorized.has(root))) {
+      throw new RemoteRuntimeError('runtime.denied', `workspace authorization was revoked on ${this.deviceId}`);
+    }
     try {
       return await this.connector.request(this.deviceId, method, params, { mutating });
     } catch (error) {

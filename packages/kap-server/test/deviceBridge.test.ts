@@ -179,6 +179,21 @@ class FakeDesktop {
     this.authorizedRoots.add(parsed.root);
   }
 
+  async unregisterRoot(path: string): Promise<void> {
+    const requestId = `unroot-${String(this.commandWaiters.size + 1)}`;
+    const result = new Promise<unknown>((resolve, reject) => {
+      this.commandWaiters.set(requestId, { resolve, reject });
+    });
+    this.socket?.send(JSON.stringify({
+      type: 'device.command',
+      request_id: requestId,
+      command: 'root.unregister',
+      root: { path },
+    }));
+    const root = await result as { root: string };
+    this.authorizedRoots.delete(root.root);
+  }
+
   hold(method: RemoteRuntimeMethod): void {
     this.holdMethods.add(method);
   }
@@ -640,6 +655,17 @@ describe('Desktop device bridge M2', () => {
     expect(() => main.accessor.get(IAgentRuntimeBindingService).switch('desktop:missing')).toThrow();
     expect(main.accessor.get(IAgentLoopService)).toBe(before);
   });
+
+  it('revokes roots only through the connected Desktop and denies later FS calls', async () => {
+    deviceA = new FakeDesktop('dev-a', 'Alice Desktop', 'conn-a-3', bridgeUrl, ALICE_TOKEN, [rootA]);
+    await deviceA.connect();
+    await vi.waitFor(() => expect(server.devices.get('dev-a')?.online).toBe(true));
+    await expect(remoteFs().readText(join(rootA, ROOT_FILE))).resolves.toContain('device');
+    await deviceA.unregisterRoot(rootA);
+    await expect(remoteFs().readText(join(rootA, ROOT_FILE))).rejects.toMatchObject({ code: 'runtime.denied' });
+    const devices = await call<{ items: Array<{ device_id: string; roots: unknown[] }> }>(ALICE_TOKEN, 'GET', '/api/v1/devices');
+    expect(devices.body.data.items.find((item) => item.device_id === 'dev-a')?.roots).toEqual([]);
+  }, 30000);
 });
 
 async function executeTool<T>(

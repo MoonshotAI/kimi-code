@@ -46,7 +46,7 @@ export const deviceRootRegistrationSchema = z.object({
 export const deviceCommandSchema = z.object({
   type: z.literal('device.command'),
   request_id: bridgeRequestIdSchema,
-  command: z.literal('root.register'),
+  command: z.enum(['root.register', 'root.unregister']),
   root: deviceRootRegistrationSchema,
 });
 

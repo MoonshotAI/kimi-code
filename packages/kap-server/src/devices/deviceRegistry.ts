@@ -294,7 +294,10 @@ export class DeviceRegistry {
       });
       return;
     }
-    void this.registerRoot(connection, frame).then(
+    const operation = frame.command === 'root.register'
+      ? this.registerRoot(connection, frame)
+      : this.unregisterRoot(connection, frame);
+    void operation.then(
       (root) => this.send(connection, { type: 'device.result', request_id: frame.request_id, result: root }),
       (error: unknown) => this.send(connection, {
         type: 'device.error',
@@ -427,6 +430,24 @@ export class DeviceRegistry {
     await this.persist();
     this.emit('roots', record);
     return snapshot;
+  }
+
+  private async unregisterRoot(
+    connection: ActiveDevice,
+    frame: DeviceCommand,
+  ): Promise<{ readonly root: string; readonly revoked: true }> {
+    if (frame.command !== 'root.unregister') {
+      throw new DeviceBridgeError('runtime.unsupported', `unsupported device command ${String(frame.command)}`);
+    }
+    const root = normalizeDeviceRoot(frame.root.path);
+    const record = this.records.get(connection.deviceId)!;
+    if (!record.roots.delete(root)) {
+      throw new DeviceBridgeError('runtime.denied', `root ${root} is not authorized on ${connection.deviceId}`);
+    }
+    record.lastSeenAt = new Date().toISOString();
+    await this.persist();
+    this.emit('roots', record);
+    return { root, revoked: true };
   }
 
   private async inspectRoot(connection: ActiveDevice, path: string): Promise<{ readonly root: string; readonly isDirectory: true }> {
