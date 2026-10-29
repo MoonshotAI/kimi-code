@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
@@ -16,6 +16,7 @@ import {
   IMcpConfigStore,
   type McpConfigWriteEvent,
 } from '#/app/mcpConfig/configStore';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { PluginReloadEvent } from '#/app/plugin/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
@@ -67,6 +68,7 @@ describe('WorkspaceMcpConfigService', () => {
   let trustFlips: Emitter<WorkspaceTrustChange>;
   let sectionChanges: Emitter<ConfigSectionChangedEvent>;
   let changes: McpServersChange[];
+  let cancelAuthorization: Mock<(serverName: string, serverUrl: string | URL) => Promise<void>>;
 
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-cwd-'));
@@ -80,6 +82,7 @@ describe('WorkspaceMcpConfigService', () => {
     trustFlips = new Emitter<WorkspaceTrustChange>();
     sectionChanges = disposables.add(new Emitter<ConfigSectionChangedEvent>());
     changes = [];
+    cancelAuthorization = vi.fn(async () => undefined);
   });
 
   afterEach(async () => {
@@ -94,6 +97,7 @@ describe('WorkspaceMcpConfigService', () => {
   function createService(
     mcpSection?: McpSection,
     trustReady: () => Promise<void> = () => Promise.resolve(),
+    log: ILogService = stubLog(),
   ): IWorkspaceMcpConfigService {
     const ix = createServices(disposables, {
       strict: true,
@@ -104,7 +108,7 @@ describe('WorkspaceMcpConfigService', () => {
           enabledMcpServers: async () => pluginServers,
           onDidReload: pluginReloads.event,
         });
-        reg.defineInstance(ILogService, stubLog());
+        reg.defineInstance(ILogService, log);
         reg.definePartialInstance(IConfigService, {
           ready: Promise.resolve(),
           onDidSectionChange: sectionChanges.event,
@@ -120,6 +124,7 @@ describe('WorkspaceMcpConfigService', () => {
           onDidChange: trustFlips.event,
         });
         reg.definePartialInstance(IMcpConfigStore, { onDidWrite: storeWrites.event });
+        reg.definePartialInstance(IMcpOAuthService, { cancelAuthorization });
         reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);
       },
     });
@@ -365,6 +370,66 @@ describe('WorkspaceMcpConfigService', () => {
       { timeout: 10000, interval: 50 },
     );
   }, 20000);
+
+  it('cancels the previous remote authorization when a plugin server is removed', async () => {
+    const url = 'https://mcp.example.test/mcp';
+    pluginServers = { alpha: { transport: 'http', url, auth: 'oauth' } };
+    const service = createService();
+    await service.ready;
+
+    pluginServers = {};
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+
+    expect(cancelAuthorization).toHaveBeenCalledOnce();
+    expect(cancelAuthorization).toHaveBeenCalledWith('alpha', url);
+  });
+
+  it('cancels the previous remote authorization when a plugin server is disabled', async () => {
+    const url = 'https://mcp.example.test/mcp';
+    const config: McpServerConfig = { transport: 'http', url, auth: 'oauth' };
+    pluginServers = { alpha: config };
+    const service = createService();
+    await service.ready;
+
+    pluginServers = { alpha: { ...config, enabled: false } };
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+
+    expect(cancelAuthorization).toHaveBeenCalledOnce();
+    expect(cancelAuthorization).toHaveBeenCalledWith('alpha', url);
+  });
+
+  it('warns and continues removing the plugin server when authorization cleanup fails', async () => {
+    const error = new Error('close failed');
+    const log = stubLog();
+    const warn = vi.spyOn(log, 'warn');
+    cancelAuthorization.mockRejectedValue(error);
+    pluginServers = {
+      alpha: { transport: 'http', url: 'https://mcp.example.test/mcp', auth: 'oauth' },
+    };
+    const service = createService(undefined, undefined, log);
+    await service.ready;
+    changes = [];
+
+    pluginServers = {};
+    await expect(
+      pluginReloads.fireAsyncConcurrent(
+        { added: [], removed: [], errors: [] },
+        new AbortController().signal,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledWith('mcp oauth authorization cleanup failed', {
+      name: 'alpha',
+      error,
+    });
+    expect(changes).toEqual([{ upsert: {}, remove: ['alpha'] }]);
+  });
 
   it('keeps the winning file server when the same-named plugin entry vanishes', async () => {
     await writeProjectConfig({ shared: stdioConfig('file-version') });

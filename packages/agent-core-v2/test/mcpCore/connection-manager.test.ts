@@ -553,6 +553,32 @@ describe('McpConnectionManager', () => {
     }
   });
 
+  it('closes the previous stdio client when replaced by an HTTP server config', async () => {
+    const server: HttpServer = createHttpServer((_req, res) => {
+      res.writeHead(401).end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as HttpAddress).port;
+    const cm = createManager();
+    try {
+      await cm.connectAll({ alpha: stdioConfig() });
+      const close = vi.spyOn(Client.prototype, 'close');
+
+      await cm.connect('alpha', {
+        transport: 'http',
+        url: `http://127.0.0.1:${port}/mcp`,
+        startupTimeoutMs: 5_000,
+      });
+
+      expect(close).toHaveBeenCalled();
+      expect(cm.get('alpha')).toMatchObject({ transport: 'http', status: 'failed' });
+    } finally {
+      vi.restoreAllMocks();
+      await cm.shutdown();
+      await closeServer(server);
+    }
+  }, 15000);
+
   it('serializes replacement close and tracks disabled or removed clients through shutdown', async () => {
     const cm = createManager();
     let releaseReplacement = (): void => {};
