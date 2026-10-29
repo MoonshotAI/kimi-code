@@ -76,6 +76,7 @@ import type {
   Unsubscribe,
   UploadFileOptions,
   WorkspaceTrustInfo,
+  WorkspaceTrustInfoOptions,
 } from '#/types';
 
 const MAIN_AGENT_ID = 'main';
@@ -212,7 +213,10 @@ export abstract class SDKRpcClientBase {
 
   abstract listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]>;
 
-  abstract getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo>;
+  abstract getWorkspaceTrustInfo(
+    workDir: string,
+    options?: WorkspaceTrustInfoOptions,
+  ): Promise<WorkspaceTrustInfo>;
 
   abstract trustWorkspace(workDir: string): Promise<void>;
 

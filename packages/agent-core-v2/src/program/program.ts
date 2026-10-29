@@ -312,7 +312,7 @@ export class Program {
       const workspaceSkills = own(new WorkspaceRootSkillSource(skillDiscovery, this.context, this.dependencies.config, this.dependencies.bootstrap, dirs));
       const pluginSkills = new PluginSkillSource(skillDiscovery, this.dependencies.plugins);
       const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, userSkills, explicitSkills, extraSkills, workspaceSkills, pluginSkills, state));
-      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, runtime.fs!, this.dependencies.bootstrap, this.dependencies.config, localConfig, dirs, trust, skills, agentProfiles, this.dependencies.agentProfiles, instructions, this.dependencies.log);
+      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, runtime.fs!, this.dependencies.bootstrap, this.dependencies.config, localConfig, skillDiscovery, dirs, trust, skills, agentProfiles, this.dependencies.agentProfiles, instructions, this.dependencies.log);
       return {
         id: runtime.identity.generation,
         lease,

@@ -2112,6 +2112,33 @@ describe('SDKRpcClientV2 workspace trust', () => {
     }
   });
 
+  it('discloses skills from session-only additional dirs before session creation', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const additionalDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-additional-'));
+    tempDirs.push(workDir, additionalDir);
+    const skillRoot = join(additionalDir, '.kimi-code', 'skills');
+    await mkdir(join(skillRoot, 'startup-only'), { recursive: true });
+    await writeFile(
+      join(skillRoot, 'startup-only', 'SKILL.md'),
+      '---\nname: startup-only\ndescription: Startup-only skill\n---\nbody',
+      'utf8',
+    );
+
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir, {
+        additionalDirs: [additionalDir],
+      });
+
+      expect(info.instructionSources.skills).toContain('startup-only');
+      expect(info.instructionSources.paths).toContain(`${await realpath(skillRoot)}/`);
+      expect(info.gatedAdditionalDirs).toContain(await realpath(skillRoot));
+      expect(info.additionalDirSources).toContain(await realpath(skillRoot));
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('points to the scanned agent directory for an effective workspace profile', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));

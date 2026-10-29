@@ -20,6 +20,7 @@ export interface IWorkspaceDirs {
 
   readonly ready: Promise<void>;
   readonly additionalDirs: readonly string[];
+  readonly primaryByWorkspace: Readonly<Record<string, string>>;
   readonly onDidChange: Event<void>;
   addDir(input: WorkspaceAddDirInput): Promise<WorkspaceAdditionalDirsResult>;
   mergeAdditionalDirs(baseDir: string, dirs: readonly string[]): Promise<void>;

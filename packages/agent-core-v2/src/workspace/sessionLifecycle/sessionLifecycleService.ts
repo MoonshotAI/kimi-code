@@ -252,6 +252,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
     await this.workspaceDirs.ready;
     await this.workspaceDirs.mergeAdditionalDirs(opts.workDir, opts.additionalDirs ?? []);
+    await this.workspaceSkillCatalog.reloadSources(['workspace']).catch(() => undefined);
     const ctx: ISessionContext = {
       _serviceBrand: undefined,
       sessionId: opts.sessionId,

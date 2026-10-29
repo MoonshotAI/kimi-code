@@ -176,6 +176,7 @@ function workspaceDirsStub(additionalDirs: readonly string[] = []): IWorkspaceDi
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     additionalDirs,
+    primaryByWorkspace: {},
     onDidChange: () => ({ dispose: () => {} }),
     addDir: async () => {
       throw new Error('addDir is not used by these tests');
@@ -327,6 +328,52 @@ describe('WorkspaceSkillCatalogService', () => {
       }
     } finally {
       host.dispose();
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the current primary after a live primary change without losing other dirs', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'skill-catalog-primary-change-'));
+    const primary = join(base, 'primary');
+    const secondary = join(base, 'secondary');
+    await seedCatalogSkill(primary, 'primary-only', 'from primary');
+    await seedCatalogSkill(primary, 'shared', 'from primary');
+    await seedCatalogSkill(secondary, 'secondary-only', 'from secondary');
+    await seedCatalogSkill(secondary, 'shared', 'from secondary');
+    const dirChanges = new Emitter<void>();
+    let primaryByWorkspace = { wd_test: primary };
+    const dirs = {
+      ...workspaceDirsStub([secondary]),
+      get primaryByWorkspace() {
+        return primaryByWorkspace;
+      },
+      onDidChange: dirChanges.event,
+    } as IWorkspaceDirs;
+    const { host, workspace } = makeHost(
+      new FileSkillDiscovery(stubLog()),
+      workspaceContextStub(primary),
+      [],
+      undefined,
+      undefined,
+      dirs,
+    );
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.getSkill('shared')?.description).toBe('from primary');
+
+      primaryByWorkspace = { wd_test: secondary };
+      const changed = waitForEvents(catalog.onDidChange, 1);
+      dirChanges.fire();
+      await changed;
+
+      expect(catalog.catalog.getSkill('shared')?.description).toBe('from secondary');
+      expect(catalog.catalog.getSkill('primary-only')?.description).toBe('from primary');
+      expect(catalog.catalog.getSkill('secondary-only')?.description).toBe('from secondary');
+    } finally {
+      host.dispose();
+      dirChanges.dispose();
       await rm(base, { recursive: true, force: true });
     }
   });

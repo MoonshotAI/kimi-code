@@ -333,6 +333,7 @@ import type {
   Unsubscribe,
   UploadFileOptions,
   WorkspaceTrustInfo,
+  WorkspaceTrustInfoOptions,
   WorkspaceTrustInstructionSources,
 } from '#/types';
 import {
@@ -709,7 +710,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * `createSession` takes. The disclosure of what trusting would activate is
    * computed inside the engine by `WorkspaceTrustDisclosureService`.
    */
-  override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
+  override async getWorkspaceTrustInfo(
+    workDir: string,
+    options?: WorkspaceTrustInfoOptions,
+  ): Promise<WorkspaceTrustInfo> {
     const lease = await this.engineAccessor
       .get(IWorkspaceInstanceManager)
       .acquire({ root: workDir });
@@ -725,7 +729,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           instructionSources: EMPTY_INSTRUCTION_SOURCES,
         };
       }
-      const activation = await lease.instance.program.trustDisclosure.describeGatedActivation();
+      const activation = await lease.instance.program.trustDisclosure.describeGatedActivation(
+        options?.additionalDirs,
+      );
       return {
         trusted: false,
         gatedMcpServers: activation.mcpServers,

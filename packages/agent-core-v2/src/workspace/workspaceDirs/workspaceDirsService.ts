@@ -108,7 +108,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     this.states.set(workspaceDirsRegistryDirsKey, value);
   }
 
-  private get primaryByWorkspace(): Readonly<Record<string, string>> {
+  get primaryByWorkspace(): Readonly<Record<string, string>> {
     return this.states.get(workspaceDirsPrimaryByWorkspaceKey);
   }
 

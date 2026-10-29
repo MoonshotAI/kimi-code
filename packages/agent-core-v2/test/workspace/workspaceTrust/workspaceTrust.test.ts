@@ -474,6 +474,7 @@ describe('WorkspaceTrustService', () => {
           additionalDirs: [],
         }),
       } as never,
+      new FileSkillDiscovery(stubLog()),
       { ready: Promise.resolve(), additionalDirs: [secondary] } as never,
       { ready: Promise.resolve(), isTrusted: () => false } as never,
       { ready: Promise.resolve(), catalog } as never,

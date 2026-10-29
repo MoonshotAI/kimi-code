@@ -70,6 +70,12 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
       .then(() => undefined);
   }
 
+  private get workDirs(): readonly string[] {
+    const primary =
+      this.workspaceDirs.primaryByWorkspace[this.workspace.workspaceId] ?? this.workspace.cwd;
+    return [primary, this.workspace.cwd, ...this.workspaceDirs.additionalDirs];
+  }
+
   async load(): Promise<SkillContribution> {
     await this.watchReady;
     if ((this.bootstrap.args.skillDirs?.length ?? 0) > 0) {
@@ -81,7 +87,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     const discover = async () =>
       this.discovery.discover(
         await projectRootsForDirs(
-          [this.workspace.cwd, ...this.workspaceDirs.additionalDirs],
+          this.workDirs,
           { mergeAllAvailableSkills },
         ),
       );
@@ -96,7 +102,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     scannedDirectories: readonly string[],
   ): Promise<boolean> {
     const watches = new Map<string, readonly string[]>();
-    for (const workDir of [this.workspace.cwd, ...this.workspaceDirs.additionalDirs]) {
+    for (const workDir of this.workDirs) {
       const { projectRoot, candidates } = await projectSkillRootCandidates(workDir);
       if (!watches.has(projectRoot)) watches.set(projectRoot, candidates);
     }
