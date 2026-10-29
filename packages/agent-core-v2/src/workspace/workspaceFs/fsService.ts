@@ -1031,7 +1031,16 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       }
     }
 
-    return this.git.status(filter);
+    const cwd = req.root === undefined ? this.workDir : await this.resolveWithin(req.root);
+    if (req.root !== undefined) {
+      const stat = await this.hostFs.stat(cwd).catch(() => undefined);
+      if (stat?.isDirectory !== true) {
+        throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, `git root is not a directory: ${req.root}`, {
+          details: { cwd, path: req.root },
+        });
+      }
+    }
+    return this.git.status(cwd, { pathFilter: filter, scopeToCwd: req.root !== undefined });
   }
 
   async diff(req: FsDiffRequest): Promise<FsDiffResponse> {

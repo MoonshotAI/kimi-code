@@ -1,4 +1,4 @@
-import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from './git';
+import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest, GitStatusOptions } from './git';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -28,18 +28,20 @@ export class GitService implements IGitService {
     @IHostFileSystem private readonly fs: IHostFileSystem,
   ) {}
 
-  async status(cwd: string, pathFilter?: ReadonlySet<string>): Promise<FsGitStatusResponse> {
+  async status(cwd: string, options: GitStatusOptions = {}): Promise<FsGitStatusResponse> {
     const inside = await this.runCommand('git', ['rev-parse', '--is-inside-work-tree'], cwd);
     if (inside.exitCode !== 0 || inside.stdout.trim() !== 'true') {
       throw this.gitUnavailable(cwd, inside.stderr.trim() || `git rev-parse exit ${inside.exitCode}`);
     }
 
-    const porc = await this.runCommand('git', ['status', '--porcelain=v1', '--branch', '-z'], cwd);
+    const statusArgs = ['status', '--porcelain=v1', '--branch', '-z'];
+    if (options.scopeToCwd === true) statusArgs.push('--', '.');
+    const porc = await this.runCommand('git', statusArgs, cwd);
     if (porc.exitCode !== 0) {
       throw this.gitUnavailable(cwd, porc.stderr.trim() || `git status exit ${porc.exitCode}`);
     }
 
-    const result = parsePorcelain(porc.stdout, pathFilter);
+    const result = parsePorcelain(porc.stdout, options.pathFilter);
 
     const dirty = porc.stdout
       .split('\0')
@@ -47,7 +49,9 @@ export class GitService implements IGitService {
     if (dirty) {
       const head = await this.runCommand('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
       if (head.exitCode === 0) {
-        const numstat = await this.runCommand('git', ['diff', '--no-color', '--numstat', 'HEAD', '--'], cwd);
+        const diffArgs = ['diff', '--no-color', '--numstat', 'HEAD', '--'];
+        if (options.scopeToCwd === true) diffArgs.push('.');
+        const numstat = await this.runCommand('git', diffArgs, cwd);
         if (numstat.exitCode === 0) {
           const stats = parseNumstat(numstat.stdout);
           result.additions = stats.additions;
@@ -126,7 +130,7 @@ export class GitService implements IGitService {
 
     const res = await this.runCommand(
       'gh',
-      ['pr', 'view', '--json', 'number,url,state'],
+      ['pr', 'view', '--json', 'number,url,state,isDraft'],
       cwd,
       {
         env: { GH_NO_UPDATE_NOTIFIER: '1', GH_PROMPT_DISABLED: '1' },
@@ -197,7 +201,7 @@ export class GitService implements IGitService {
   }
 
   private resolveWorkspaceId(cwd: string): string {
-    const workspace = this.workspaces.findByRoot(cwd);
+    const workspace = this.workspaces.findContaining(cwd);
     if (workspace === undefined) {
       throw new Error(`workspace for root ${cwd} is not materialized`);
     }

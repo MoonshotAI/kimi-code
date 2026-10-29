@@ -1,5 +1,5 @@
 import { ref, type LiveRef } from '#/_base/di/instantiation';
-import { type FsDiffResponse, type FsGitStatusResponse, IGitService } from '#/app/git/git';
+import { type FsDiffResponse, type FsGitStatusResponse, type GitStatusOptions, IGitService } from '#/app/git/git';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 import { IWorkspaceGitService } from './workspaceGit';
@@ -12,8 +12,8 @@ export class WorkspaceGitService implements IWorkspaceGitService {
     @ref(IGitService) private readonly git: LiveRef<IGitService>,
   ) {}
 
-  status(pathFilter?: ReadonlySet<string>): Promise<FsGitStatusResponse> {
-    return this.git.current!.status(this.workspace.cwd, pathFilter);
+  status(cwd: string, options?: GitStatusOptions): Promise<FsGitStatusResponse> {
+    return this.git.current!.status(cwd, options);
   }
 
   diff(relPath: string, absPath: string): Promise<FsDiffResponse> {

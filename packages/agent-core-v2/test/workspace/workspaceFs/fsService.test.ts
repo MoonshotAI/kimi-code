@@ -54,7 +54,7 @@ function stubWorkspaceDirs(additionalDirs: readonly string[] = []): IWorkspaceDi
 function workspaceGitStub(git: IGitService): IWorkspaceGitService {
   return {
     _serviceBrand: undefined,
-    status: (filter) => git.status(WORK_DIR, filter),
+    status: (cwd, options) => git.status(cwd, options),
     diff: (rel, abs) => git.diff(WORK_DIR, rel, abs),
   };
 }
@@ -428,11 +428,11 @@ const emptyHandler: RunHandler = () => ({ stdout: '', exitCode: 0 });
 
 describe('WorkspaceFsService.gitStatus', () => {
   it('delegates to IWorkspaceGitService with the handler root and a confined filter', async () => {
-    const calls: Array<{ cwd: string; filter: ReadonlySet<string> | undefined }> = [];
+    const calls: Array<{ cwd: string; options: { pathFilter?: ReadonlySet<string>; scopeToCwd?: boolean } | undefined }> = [];
     const git: IGitService = {
       _serviceBrand: undefined,
-      status: async (cwd, filter) => {
-        calls.push({ cwd, filter });
+      status: async (cwd, options) => {
+        calls.push({ cwd, options });
         return {
           branch: 'main',
           ahead: 0,
@@ -450,10 +450,36 @@ describe('WorkspaceFsService.gitStatus', () => {
     const result = await fs.gitStatus({ paths: ['src/a.ts'] });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.cwd).toBe(WORK_DIR);
-    expect(calls[0]?.filter).toEqual(new Set(['src/a.ts']));
+    expect(calls[0]?.options?.pathFilter).toEqual(new Set(['src/a.ts']));
+    expect(calls[0]?.options?.scopeToCwd).toBe(false);
     expect(result.branch).toBe('main');
     expect(result.entries).toEqual({ 'src/a.ts': 'modified' });
     expect(result.additions).toBe(3);
+  });
+
+  it('delegates a selected additional root with cwd scoping', async () => {
+    const calls: Array<{ cwd: string; options: { scopeToCwd?: boolean } | undefined }> = [];
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async (cwd, options) => {
+        calls.push({ cwd, options });
+        return { branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
+      },
+      diff: async () => ({ path: '', diff: '', truncated: false }),
+      findWorkTree: async () => null,
+    };
+    const fs = makeSession({ '/extra/placeholder': '' }, emptyHandler, [], git, [], undefined, {}, ['/extra']);
+
+    await fs.gitStatus({ root: '/extra' });
+
+    expect(calls).toEqual([{ cwd: '/extra', options: { pathFilter: undefined, scopeToCwd: true } }]);
+  });
+
+  it('rejects roots outside the workspace and roots that are files', async () => {
+    const fs = makeSession({ 'src/a.ts': '' }, emptyHandler);
+
+    await expect(fs.gitStatus({ root: '/outside' })).rejects.toMatchObject({ code: 'fs.path_escapes' });
+    await expect(fs.gitStatus({ root: 'src/a.ts' })).rejects.toMatchObject({ code: 'fs.git_unavailable' });
   });
 
   it('propagates FS_GIT_UNAVAILABLE thrown by IGitService', async () => {

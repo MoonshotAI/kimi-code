@@ -55,7 +55,7 @@ describe('GitService', () => {
           acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
         });
         reg.definePartialInstance(IWorkspaceInstanceManager, {
-          findByRoot: () => ({ id: 'workspace-1' } as never),
+          findContaining: () => ({ id: 'workspace-1' } as never),
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,
         });
         reg.define(IGitService, GitService);
@@ -105,8 +105,24 @@ describe('GitService', () => {
       writeFileSync(join(repo, 'a.txt'), 'a2\n');
       writeFileSync(join(repo, 'b.txt'), 'b2\n');
 
-      const result = await service.status(repo, new Set(['a.txt']));
+      const result = await service.status(repo, { pathFilter: new Set(['a.txt']) });
       expect(result.entries).toEqual({ 'a.txt': 'modified' });
+    });
+
+    it('scopes entries and numstat to the selected cwd', async () => {
+      mkdirSync(join(repo, 'a'), { recursive: true });
+      mkdirSync(join(repo, 'b'), { recursive: true });
+      writeFileSync(join(repo, 'a/file.txt'), 'one\n');
+      writeFileSync(join(repo, 'b/file.txt'), 'one\n');
+      commitAll('init');
+      writeFileSync(join(repo, 'a/file.txt'), 'one\ntwo\n');
+      writeFileSync(join(repo, 'b/file.txt'), 'one\ntwo\nthree\n');
+
+      const result = await service.status(join(repo, 'a'), { scopeToCwd: true });
+
+      expect(result.entries).toEqual({ 'a/file.txt': 'modified' });
+      expect(result.additions).toBe(1);
+      expect(result.deletions).toBe(0);
     });
 
     it('reports a non-ASCII path without quoting', async () => {

@@ -18,6 +18,7 @@ import {
   type Scope,
   type WorkspaceInstanceLease,
 } from '@moonshot-ai/agent-core-v2';
+import { canonicalWorkspaceRoot } from '@moonshot-ai/agent-core-v2/_base/utils/paths';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { RuntimeError } from '@moonshot-ai/agent-core-v2/runtime/runtimeRegistry';
 import {
@@ -261,7 +262,15 @@ function buildRuntimeFsScope(
     },
   };
   const instances = {
-    findByRoot: (root: string) => root === mapped.workDir ? { id: workspaceId } : undefined,
+    findContaining: (cwd: string) => {
+      const probe = canonicalWorkspaceRoot(cwd);
+      const contains = [mapped.workDir, ...(mapped.additionalDirs ?? [])].some((dir) => {
+        const root = canonicalWorkspaceRoot(dir);
+        const prefix = root.endsWith('/') ? root : `${root}/`;
+        return probe === root || probe.startsWith(prefix);
+      });
+      return contains ? { id: workspaceId } : undefined;
+    },
   } as unknown as IWorkspaceInstanceManager;
   const git = new WorkspaceGitService(
     workspace,

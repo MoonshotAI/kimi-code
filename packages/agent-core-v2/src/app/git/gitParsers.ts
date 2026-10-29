@@ -130,6 +130,7 @@ export function parsePullRequest(stdout: string): FsPullRequest | null {
   if (typeof state !== 'string') return null;
   const normalized = state.toLowerCase();
   if (normalized !== 'open' && normalized !== 'merged' && normalized !== 'closed') return null;
+  if (normalized === 'open' && record['isDraft'] === true) return { number, state: 'draft', url };
   return { number, state: normalized, url };
 }
 
