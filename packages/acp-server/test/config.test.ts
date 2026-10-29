@@ -5,6 +5,14 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { AcpSession } from '../src/session';
+import {
+  getLiveSessionById,
+  IAgentLifecycleService,
+  IAgentPlanService,
+  IAgentSwarmService,
+  IEventBus,
+} from '@moonshot-ai/agent-core-v2';
+import { ToolCallStarted } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { FAKE_MODEL_ALT_ID, writeFakeModelConfig } from './_helpers/fakeModelConfig';
 
@@ -96,6 +104,7 @@ describe('acp-server config surface', () => {
       expect(modes?.availableModes.map((m) => m.id)).toEqual([
         'default',
         'plan',
+        'swarm',
         'auto',
         'yolo',
       ]);
@@ -153,6 +162,103 @@ describe('acp-server config surface', () => {
   );
 
   it(
+    'plan mode emits plan updates from the plan service',
+    async () => {
+      await boot();
+      const { sessionId } = await newSession();
+      await client!.send('session/set_mode', { sessionId, modeId: 'plan' });
+
+      const session = getLiveSessionById(client!.server.core.accessor, sessionId);
+      const agentHandle = session?.accessor.get(IAgentLifecycleService).handleOf('main');
+      expect(agentHandle).toBeDefined();
+      const planService = agentHandle!.accessor.get(IAgentPlanService);
+      const plan = await planService.status();
+      expect(plan).not.toBeNull();
+      await writeFile(plan!.path, 'Plan: ship the typed errors\n');
+
+      const planPromise = client!.waitForSessionUpdate('plan');
+      const bus = agentHandle!.accessor.get(IEventBus);
+      bus.publish(
+        new ToolCallStarted({
+          agentId: 'main',
+          turnId: 1,
+          toolCallId: 'exit-plan-1',
+          name: 'ExitPlanMode',
+          args: {},
+        }),
+      );
+      const notification = await planPromise;
+      const update = (
+        notification.params as {
+          update?: { entries?: ReadonlyArray<{ content: string; status: string }> };
+        }
+      ).update;
+      expect(update?.entries?.[0]?.content).toBe('Plan: ship the typed errors\n');
+      expect(update?.entries?.[0]?.status).toBe('pending');
+
+      await client!.send('session/set_mode', { sessionId, modeId: 'default' });
+      await expect.poll(() => {
+        const plans = client!.sessionUpdates().filter(
+          (m) =>
+            (m.params as { update?: { sessionUpdate?: string } }).update?.sessionUpdate ===
+            'plan',
+        );
+        return (
+          plans.at(-1)?.params as { update?: { entries?: readonly unknown[] } } | undefined
+        )?.update?.entries;
+      }, { timeout: 5000 }).toEqual([]);
+    },
+    30_000,
+  );
+
+  it(
+    'agent swarm forwards subagent progress into tool_call_update',
+    async () => {
+      const session = Object.create(AcpSession.prototype) as AcpSession;
+      const updates: unknown[] = [];
+      Object.assign(session as unknown as Record<string, unknown>, {
+        sessionId: 'session-test',
+        conn: { sessionUpdate: async (update: unknown) => updates.push(update) },
+        swarmCalls: new Map(),
+      });
+
+      (session as unknown as { onToolCallStarted(event: unknown): void }).onToolCallStarted({
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        args: { description: 'Compute two expressions', items: ['a', 'b'] },
+      });
+
+      const subagentEvent = (
+        kind: string,
+        payload: Record<string, unknown>,
+      ): void => {
+        (
+          session as unknown as {
+            onSwarmSubagentEvent(kind: string, event: unknown): void;
+          }
+        ).onSwarmSubagentEvent(kind, payload);
+      };
+
+      subagentEvent('spawned', { parentToolCallId: 'call_swarm', subagentId: 'a1', subagentName: 'coder' });
+      subagentEvent('spawned', { parentToolCallId: 'call_swarm', subagentId: 'a2', subagentName: 'coder' });
+      subagentEvent('completed', { parentToolCallId: 'call_swarm', subagentId: 'a1', resultSummary: '4' });
+
+      const last = updates.at(-1) as {
+        update: {
+          toolCallId: string;
+          title: string;
+          content: Array<{ content: { text: string } }>;
+        };
+      };
+      expect(last.update.toolCallId).toBe('1:call_swarm');
+      expect(last.update.title).toContain('(1/2)');
+      expect(last.update.content[0]?.content.text).toContain('4');
+    },
+    30_000,
+  );
+
+  it(
     'session/set_config_option mode also pushes current_mode_update',
     async () => {
       await boot();
@@ -167,6 +273,34 @@ describe('acp-server config surface', () => {
       const modeUpdate = (modeNotification.params as { update?: { currentModeId?: string } })
         .update;
       expect(modeUpdate?.currentModeId).toBe('plan');
+    },
+    30_000,
+  );
+
+  it(
+    'session/set_config_option mode=swarm toggles the engine swarm service',
+    async () => {
+      await boot();
+      const { sessionId } = await newSession();
+      const session = getLiveSessionById(client!.server.core.accessor, sessionId);
+      const agentHandle = session?.accessor.get(IAgentLifecycleService).handleOf('main');
+      expect(agentHandle).toBeDefined();
+      const swarm = agentHandle!.accessor.get(IAgentSwarmService);
+      expect(swarm.isActive).toBe(false);
+
+      await client!.send('session/set_config_option', {
+        sessionId,
+        configId: 'mode',
+        value: 'swarm',
+      });
+      expect(swarm.isActive).toBe(true);
+
+      await client!.send('session/set_config_option', {
+        sessionId,
+        configId: 'mode',
+        value: 'default',
+      });
+      expect(swarm.isActive).toBe(false);
     },
     30_000,
   );

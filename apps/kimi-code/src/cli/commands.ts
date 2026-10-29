@@ -14,6 +14,7 @@ import { registerInstallDesktopCommand } from './sub/install-desktop';
 import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
 import { registerSessionCommand } from './sub/session';
+import { registerUsageCommand } from './sub/usage';
 import { registerVisCommand } from './sub/vis';
 import { registerWebCommand } from './sub/web';
 
@@ -131,6 +132,7 @@ export function createProgram(
   registerForkCommand(program);
   registerProviderCommand(program);
   registerSessionCommand(program);
+  registerUsageCommand(program);
   registerAcpCommand(program);
   registerWebCommand(program);
   registerLoginCommand(program);
