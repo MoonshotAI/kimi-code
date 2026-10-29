@@ -112,6 +112,7 @@ describe('server-v2 /api/v1/search', () => {
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
+      env: { ...process.env, KIMI_CODE_GLOBAL_SEARCH: '1' },
       logLevel: 'silent',
       seeds: [[ISessionIndex, stubSessionIndex(summaries)]],
     });
@@ -237,6 +238,7 @@ describe('server-v2 session routes with the global search DB unavailable', () =>
       host: '127.0.0.1',
       port: 0,
       homeDir: home as string,
+      env: { ...process.env, KIMI_CODE_GLOBAL_SEARCH: '1' },
       logLevel: 'silent',
     });
     base = `http://127.0.0.1:${server.port}`;
@@ -301,5 +303,51 @@ describe('server-v2 session routes with the global search DB unavailable', () =>
 
     const list = await getJson<{ items: unknown[] }>('/api/v1/sessions');
     expect(list.code).toBe(0);
+  });
+});
+
+describe('server-v2 /api/v1/search with global search off by default', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-search-off-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterAll(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  it('reports the switch instead of indexing, and leaves the session routes alone', { timeout: 20_000 }, async () => {
+    const searchRes = await authedFetch(server!, base, '/api/v1/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query: 'anything' }),
+    });
+    const search = (await searchRes.json()) as Envelope<unknown>;
+    expect(search.code).toBe(50001);
+    expect(search.msg).toContain('global_search');
+
+    const listRes = await authedFetch(server!, base, '/api/v1/sessions');
+    const list = (await listRes.json()) as Envelope<{ items: unknown[] }>;
+    expect(list.code).toBe(0);
+
+    await expect(stat(join(home!, 'search-index'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

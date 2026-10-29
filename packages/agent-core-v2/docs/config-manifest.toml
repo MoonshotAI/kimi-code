@@ -106,6 +106,7 @@ manual_tick = false
 #   hooks: stripEnv
 #   env:
 #     base <- KIMI_CODE_PERSISTENCE_MINIDB_READMODEL (custom parse)
+#     global_search <- KIMI_CODE_GLOBAL_SEARCH (custom parse)
 #     search <- KIMI_CODE_SEARCH_WORKER (custom parse)
 #     search_sync_session_cap <- KIMI_CODE_SEARCH_SYNC_SESSION_CAP (custom parse)
 #     search_sync_debounce_ms <- KIMI_CODE_SEARCH_SYNC_DEBOUNCE_MS (custom parse)
@@ -113,6 +114,7 @@ manual_tick = false
 
 [database]
 # base: boolean
+# global_search: boolean
 # search: boolean
 # search_sync_session_cap: integer
 # search_sync_debounce_ms: integer
