@@ -111,16 +111,22 @@ import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import { summarizeSkill, type SkillCatalog } from '#/features/skill/catalog/types';
 import { type ModelCapability } from '#/llm-adapter/contract/capability';
-import { isToolCall, isToolCallPart, type ContentPart, type Message as KosongMessage, type StreamedMessagePart } from '#/llm-adapter/contract/message';
-import { type ThinkingEffort } from '#human/llm/thinking';
-import { type Tool as KosongTool } from '#/llm-adapter/contract/message';
-import { type TokenUsage } from '#human/llm/usage';
+import {
+  isToolCall,
+  isToolCallPart,
+  type ContentPart,
+  type Message as KosongMessage,
+  type StreamedMessagePart,
+  type ToolDescription as KosongTool,
+} from '#human/llm/message';
+import { type ThinkingEffort } from '#human/llm-requester/thinking';
+import { type TokenUsage } from '#human/llm-requester/usage';
 import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { type TodoItem } from '#/features/todo/todoItem';
-import type { LlmRequester } from '#human/llm/requester/requester';
+import type { LlmRequester } from '#human/llm-requester/requester';
 import type { ILogger, LogContext, LogLevel } from '#/_base/log/log';
 import { ILogOptions } from '#/_base/log/logConfig';
 import {
@@ -1307,6 +1313,7 @@ export class AgentTestContext {
               _serviceBrand: undefined,
               ready: Promise.resolve(),
               additionalDirs: [],
+              primaryByWorkspace: {},
               onDidChange: Event.None as Event<void>,
             } satisfies ISessionWorkspaceInfo);
             reg.defineInstance(ISessionWorkdir, {
@@ -1762,7 +1769,6 @@ export class AgentTestContext {
     this.appendMessage({
       role: 'user',
       content: [...content],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
   }
@@ -1778,7 +1784,6 @@ export class AgentTestContext {
     this.appendMessage({
       role: 'user',
       content: [{ type: 'text', text }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
   }
@@ -1790,7 +1795,6 @@ export class AgentTestContext {
     this.appendMessage({
       role: 'user',
       content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
-      toolCalls: [],
       origin,
     });
   }
@@ -1804,7 +1808,6 @@ export class AgentTestContext {
           text: `<local-command-stdout>\n${content.trim()}\n</local-command-stdout>`,
         },
       ],
-      toolCalls: [],
       origin: { kind: 'injection', variant: 'local-command-stdout' },
     });
   }
@@ -1969,9 +1972,11 @@ export class AgentTestContext {
       role: 'user',
       content: [
         { type: 'text', text: 'inspect this image' },
-        { type: 'image_url', imageUrl: { url: 'ms://image-1', id: 'image-1' } },
+        {
+          type: 'image_url',
+          imageUrl: { url: 'ms://image-1', id: 'image-1' },
+        },
       ],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     this.appendAssistantMessage({
@@ -1985,7 +1990,10 @@ export class AgentTestContext {
     this.coverUsage(60);
     this.appendToolResult('call_lookup', [
       { type: 'text', text: 'lookup result' },
-      { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
+      {
+        type: 'video_url',
+        videoUrl: { url: 'ms://video-1', id: 'video-1' },
+      },
     ]);
   }
 
@@ -2293,7 +2301,6 @@ export class AgentTestContext {
     this.appendMessage({
       role: 'user',
       content: [{ type: 'text', text }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
   }
@@ -2306,7 +2313,6 @@ export class AgentTestContext {
     this.appendMessage({
       role: 'tool',
       content: contentPartsFromToolOutput(output),
-      toolCalls: [],
       toolCallId,
       isError,
     });
@@ -2448,9 +2454,8 @@ function resumeContextSnapshot(ctx: AgentTestContext) {
 }
 
 function stripMessageId(message: ContextMessage): ContextMessage {
-  if (message.id === undefined) return message;
   const { id: _id, ...rest } = message;
-  return rest as ContextMessage;
+  return { ...rest, content: rest.content.map(stripUndefinedFields) } as ContextMessage;
 }
 
 function isSystemReminderMessage(message: ContextMessage): boolean {
@@ -2770,7 +2775,11 @@ function capabilityNames(capabilities: ModelCapability | undefined): string[] {
   ].filter((capability): capability is string => capability !== undefined);
 }
 
-function toolCall(id: string, name: string, args: unknown): ContextMessage['toolCalls'][number] {
+function toolCall(
+  id: string,
+  name: string,
+  args: unknown,
+): Extract<ContextMessage, { role: 'assistant' }>['toolCalls'][number] {
   return {
     type: 'function',
     id,

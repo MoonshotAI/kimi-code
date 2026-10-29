@@ -234,7 +234,6 @@ export class AgentShellCommandService implements IAgentShellCommandService {
     this.context.append({
       role: 'user',
       content: [{ type: 'text', text }],
-      toolCalls: [],
       origin: { kind: 'shell_command', phase: 'input' },
     });
   }
@@ -244,7 +243,6 @@ export class AgentShellCommandService implements IAgentShellCommandService {
     this.context.append({
       role: 'user',
       content: [{ type: 'text', text }],
-      toolCalls: [],
       origin:
         isError === true
           ? { kind: 'shell_command', phase: 'output', isError: true }

@@ -4,7 +4,21 @@ import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart, Message } from '#human/llm/message';
+import {
+  fromCoreMessage,
+  fromCorePart,
+  historyRecordFromPersistent,
+  historyRecordToPersistent,
+  toCoreMessage,
+  toCorePart,
+  type ContentPart as LegacyContentPart,
+} from '#human/message';
+import {
+  fromLlmMessage,
+  toLlmMessage,
+  type Message as LegacyContractMessage,
+} from '#/llm-adapter/contract/message';
 import {
   type AppendLogTruncation,
   IAppendLogStore,
@@ -15,7 +29,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
 import { IWireService, type WireRestoreChains } from './wire';
 import { WireError, WireErrors } from './errors';
-import { isHumanRecordType } from './human';
+import { HUMAN_AGENT_DOMAIN, humanEventType, isHumanRecordType } from './human';
 import {
   type AgentJournalRef,
   type IAgentJournal,
@@ -143,7 +157,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
   }
 
   async *readJournal(): AsyncIterable<WireRecord> {
-    for await (const { record } of this.readEntries()) {
+    for await (const { record } of this.readEntries(false)) {
       yield record;
     }
   }
@@ -325,7 +339,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     return this.drainPersisted();
   }
 
-  private async *readEntries(): AsyncIterable<WireLine> {
+  private async *readEntries(decodePersistent = true): AsyncIterable<WireLine> {
     let truncation: AppendLogTruncation | undefined;
     const source = this.log.read<WireRecord>(this.wireScope, AGENT_WIRE_RECORD_KEY, {
       onTruncate: (info) => {
@@ -395,10 +409,11 @@ export class WireService extends Service implements IWireService, IAgentJournal 
         continue;
       }
       rewrittenRecords?.push(normalized);
-      if (isHumanRecordType(normalized.type)) {
-        modeTwoEntries.push({ record: normalized, line: lineCount });
+      const runtimeRecord = fromPersistentWireRecord(normalized);
+      if (isHumanRecordType(runtimeRecord.type)) {
+        modeTwoEntries.push({ record: runtimeRecord, line: lineCount });
       }
-      yield { record: normalized, line: lineCount };
+      yield { record: decodePersistent ? runtimeRecord : normalized, line: lineCount };
       if (normalized.type !== 'metadata') {
         recordIndex++;
       }
@@ -628,7 +643,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
   }
 
   private appendRecordLow(record: WireRecord): void {
-    this.log.append(this.wireScope, AGENT_WIRE_RECORD_KEY, record, {
+    this.log.append(this.wireScope, AGENT_WIRE_RECORD_KEY, toPersistentWireRecord(record), {
       onError: onUnexpectedError,
     });
     this.lines += 1;
@@ -637,6 +652,119 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     }
     if (record.type === 'context.clear') this.lastClearLine = this.lines;
   }
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+const CONTEXT_MESSAGE_FIELDS = [
+  'id',
+  'providerMessageId',
+  'name',
+  'origin',
+  'isError',
+  'partial',
+  'toolCallDisplays',
+  'note',
+  'usage',
+  'llmTiming',
+  'durationMs',
+] as const;
+
+function isUnknownRecord(value: unknown): value is UnknownRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function fromPersistentPart(part: unknown): ContentPart {
+  return toCorePart(part as LegacyContentPart);
+}
+
+function toPersistentContextMessage(message: Message): UnknownRecord {
+  const legacy = fromLlmMessage(fromCoreMessage(message));
+  const output: UnknownRecord = { ...legacy };
+  const source = message as unknown as UnknownRecord;
+  for (const key of CONTEXT_MESSAGE_FIELDS) {
+    if (source[key] !== undefined) output[key] = source[key];
+  }
+  return output;
+}
+
+function fromPersistentContextMessage(message: unknown): UnknownRecord {
+  const source = message as LegacyContractMessage & UnknownRecord;
+  const output: UnknownRecord = { ...toCoreMessage(toLlmMessage(source)) };
+  for (const key of CONTEXT_MESSAGE_FIELDS) {
+    if (source[key] !== undefined) output[key] = source[key];
+  }
+  return output;
+}
+
+function toPersistentLoopEvent(event: unknown): unknown {
+  if (!isUnknownRecord(event)) return event;
+  if (event['type'] === 'content.part') {
+    return { ...event, part: fromCorePart(event['part'] as ContentPart) };
+  }
+  if (event['type'] === 'tool.result' && isUnknownRecord(event['result'])) {
+    const result = event['result'];
+    const output = result['output'];
+    if (Array.isArray(output)) {
+      return {
+        ...event,
+        result: { ...result, output: output.map((part) => fromCorePart(part as ContentPart)) },
+      };
+    }
+  }
+  return event;
+}
+
+function fromPersistentLoopEvent(event: unknown): unknown {
+  if (!isUnknownRecord(event)) return event;
+  if (event['type'] === 'content.part') {
+    return { ...event, part: fromPersistentPart(event['part']) };
+  }
+  if (event['type'] === 'tool.result' && isUnknownRecord(event['result'])) {
+    const result = event['result'];
+    const output = result['output'];
+    if (Array.isArray(output)) {
+      return { ...event, result: { ...result, output: output.map(fromPersistentPart) } };
+    }
+  }
+  return event;
+}
+
+function toPersistentWireRecord(record: WireRecord): WireRecord {
+  const humanType = humanEventType(record.type, HUMAN_AGENT_DOMAIN);
+  if (humanType !== undefined) {
+    return historyRecordToPersistent(humanType, record) as WireRecord;
+  }
+  if (record.type === 'context.append_message') {
+    return {
+      ...record,
+      message: toPersistentContextMessage(record['message'] as Message),
+    };
+  }
+  if (record.type === 'context.append_loop_event') {
+    return { ...record, event: toPersistentLoopEvent(record['event']) };
+  }
+  if (record.type === 'context.apply_compaction' && isUnknownRecord(record['summary'])) {
+    return { ...record, summary: toPersistentContextMessage(record['summary'] as unknown as Message) };
+  }
+  return record;
+}
+
+export function fromPersistentWireRecord(record: WireRecord): WireRecord {
+  const humanType = humanEventType(record.type, HUMAN_AGENT_DOMAIN);
+  if (humanType !== undefined) {
+    return historyRecordFromPersistent(humanType, record) as WireRecord;
+  }
+  if (record.type === 'context.append_message') {
+    return { ...record, message: fromPersistentContextMessage(record['message']) };
+  }
+  if (record.type === 'context.append_loop_event') {
+    return { ...record, event: fromPersistentLoopEvent(record['event']) };
+  }
+  if (record.type === 'context.apply_compaction' && isUnknownRecord(record['summary'])) {
+    return { ...record, summary: fromPersistentContextMessage(record['summary']) };
+  }
+  return record;
 }
 
 function recordsMatch(a: WireRecord, b: WireRecord): boolean {

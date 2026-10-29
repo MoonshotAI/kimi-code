@@ -11,7 +11,7 @@ import {
 } from '#/environment/environmentRegistry';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { ModelCapability } from '#human/llm/capability';
+import type { ModelCapability } from '#human/llm-requester/capability';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import type { IAgentProfileService } from '#/agent/profile/profile';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';

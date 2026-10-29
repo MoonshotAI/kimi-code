@@ -4,7 +4,7 @@ import {
   runWithCredentialRecovery,
   streamWithCredentialRecovery,
 } from '#/llm-adapter/model/credential-recovery';
-import type { LlmCredentialProvider } from '#human/llm/requester/requester';
+import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 
 const unauthorized = Object.assign(new Error('unauthorized'), { status: 401 });
 const forbidden = Object.assign(new Error('forbidden'), { status: 403 });

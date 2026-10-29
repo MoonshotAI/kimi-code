@@ -1,4 +1,4 @@
-import type { FinishInfo } from '#/llm/finish-reason';
+import type { FinishInfo } from '#/llm-requester/finish-reason';
 import type {
   AssistantMessage,
   Message,
@@ -6,7 +6,7 @@ import type {
   ToolMessage,
   UserMessage,
 } from '#/llm/message';
-import type { TokenUsage } from '#/llm/usage';
+import type { TokenUsage } from '#/llm-requester/usage';
 
 import type { PromptOrigin } from './origin';
 

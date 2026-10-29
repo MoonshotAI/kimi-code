@@ -351,7 +351,8 @@ export class Program {
       const root = this.buildWorkdir(own, harness, LOCAL_ENVIRONMENT_ID, this.context.cwd);
       const trust = own(new WorkspaceTrustService(this.context, this.dependencies.trustStore, root.state));
       const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, hostFs, trust, this.dependencies.configStore));
-      const mcp = own(new WorkspaceMcpService(this.context, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
+      const mcp = new WorkspaceMcpService(this.context, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager);
+      disposables.push({ dispose: () => mcp.disposeAsync() });
       const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, trust, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
       const workdirs = new Map<string, ProgramWorkdirEntry>([[this.rootKey, { view: root, disposables: [], references: 1 }]]);
       own({
@@ -475,7 +476,7 @@ export class Program {
   ): ProgramView {
     const state = own(new WorkspaceStateService(this.dependencies.appState));
     const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, input.hostFs, input.homeDir);
-    const dirs = own(new WorkspaceDirsService(input.context, localConfig, this.dependencies.log, state));
+    const dirs = own(new WorkspaceDirsService(input.context, localConfig, this.dependencies.workspaces, this.dependencies.workspaceStore, this.dependencies.log, state));
     const git = new WorkspaceGitService(input.context, input.git);
     const fs = new WorkspaceFsService(input.context, dirs, input.hostFs, this.environments, this.dependencies.telemetry, git, input.environmentId);
     const instructions = own(new WorkspaceInstructionsService(input.context, input.hostFs, input.instructionsHost, this.dependencies.bootstrap, this.dependencies.log, state, input.personalFs, input.watch));
@@ -568,6 +569,7 @@ function watchable(environmentId: string): boolean {
 }
 
 async function reloadView(view: ProgramView): Promise<void> {
+  await view.dirs.reload();
   await view.instructions.reload();
   await view.skills.reload();
   await view.agentProfiles.reload().catch(() => undefined);

@@ -413,6 +413,35 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(40409);
   });
 
+  it.each(['missing', 'not-a-directory'] as const)(
+    'rejects create via workspace_id when the registered root is %s (40409)',
+    async (state) => {
+      const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspace-root-'));
+      let workspaceId: string | undefined;
+      try {
+        const created = await postJson<{ id: string }>('/api/v1/workspaces', { root: cwd });
+        expect(created.body.code).toBe(0);
+        workspaceId = created.body.data.id;
+        await rm(cwd, { recursive: true, force: true });
+        if (state === 'not-a-directory') await writeFile(cwd, 'not a directory', 'utf8');
+
+        const { body } = await postJson<null>('/api/v1/sessions', {
+          workspace_id: workspaceId,
+        });
+        expect(body.code).toBe(40409);
+        const sessions = await getJson<PageWire>(
+          `/api/v1/sessions?workspace_id=${encodeURIComponent(workspaceId)}`,
+        );
+        expect(sessions.body.data.items).toEqual([]);
+      } finally {
+        if (workspaceId !== undefined) {
+          await deleteJson<{ deleted: boolean }>(`/api/v1/workspaces/${workspaceId}`);
+        }
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('creates a second session via workspace_id resolved from a prior cwd create', async () => {
     const cwd = home as string;
     const first = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -1215,6 +1244,7 @@ describe('server-v2 /api/v1/sessions', () => {
     base = `http://127.0.0.1:${server.port}`;
 
     const cwd = await mkdtemp(join(tmpdir(), 'kimi-reload-cwd-'));
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-reload-extra-'));
     await mkdir(join(cwd, '.git'));
     try {
       const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -1234,19 +1264,47 @@ describe('server-v2 /api/v1/sessions', () => {
       const baselineCount = baseline.body.data.items.length;
 
       await writeFile(join(cwd, 'AGENTS.md'), 'new workspace rules');
+      const projectsPath = join(home as string, 'projects.json');
+      const projects = JSON.parse(await readFile(projectsPath, 'utf8')) as {
+        projects: Record<string, { root: string; additional_dirs?: string[] }>;
+      };
+      const project = Object.values(projects.projects).find((entry) => entry.root === cwd);
+      if (project === undefined) throw new Error('expected the session project');
+      project.additional_dirs = [extra];
+      await writeFile(projectsPath, JSON.stringify(projects), 'utf8');
 
       const second = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`);
       expect(second.body.code).toBe(0);
 
-      const after = await getJson<{ items: unknown[]; has_more: boolean }>(
-        `/api/v1/sessions/${id}/messages`,
-      );
+      const after = await getJson<{
+        items: { metadata?: { origin?: { variant?: string } } }[];
+        has_more: boolean;
+      }>(`/api/v1/sessions/${id}/messages`);
       expect(after.body.data.items.length).toBeGreaterThan(baselineCount);
       const text = JSON.stringify(after.body.data.items);
       expect(text).toContain('AGENTS.md');
       expect(text).toContain('were not included in your system prompt');
+      expect(text).toContain(`Added directories: ${extra}.`);
+      expect(
+        after.body.data.items.filter(
+          (item) => item.metadata?.origin?.variant === 'workspace_dirs_change',
+        ),
+      ).toHaveLength(1);
+
+      const third = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`);
+      expect(third.body.code).toBe(0);
+      const reloaded = await getJson<{
+        items: { metadata?: { origin?: { variant?: string } } }[];
+        has_more: boolean;
+      }>(`/api/v1/sessions/${id}/messages`);
+      expect(
+        reloaded.body.data.items.filter(
+          (item) => item.metadata?.origin?.variant === 'workspace_dirs_change',
+        ),
+      ).toHaveLength(1);
     } finally {
       await rm(cwd, { recursive: true, force: true });
+      await rm(extra, { recursive: true, force: true });
     }
   });
 
@@ -1588,7 +1646,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
     const context = agent.accessor.get(IAgentContextMemoryService);
     context.append(
-      { role: 'user', content: [{ type: 'text', text: 'original prompt' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'user', content: [{ type: 'text', text: 'original prompt' }], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer before steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
@@ -1597,7 +1655,7 @@ describe('server-v2 /api/v1/sessions', () => {
       origin: { kind: 'user', inTurn: true },
     }));
     context.append(
-      { role: 'user', content: [{ type: 'text', text: 'steered prompt' }], toolCalls: [], origin: { kind: 'user', inTurn: true } },
+      { role: 'user', content: [{ type: 'text', text: 'steered prompt' }], origin: { kind: 'user', inTurn: true } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer after steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
@@ -1606,7 +1664,7 @@ describe('server-v2 /api/v1/sessions', () => {
       origin: { kind: 'user', inTurn: true },
     }));
     context.append(
-      { role: 'user', content: [{ type: 'text', text: 'second steer' }], toolCalls: [], origin: { kind: 'user', inTurn: true } },
+      { role: 'user', content: [{ type: 'text', text: 'second steer' }], origin: { kind: 'user', inTurn: true } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer after second steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IWireService).flush();
@@ -1635,7 +1693,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const user = (text: string): ContextMessage => ({
       role: 'user',
       content: [{ type: 'text', text }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     const assistant = (text: string): ContextMessage => ({
@@ -2105,23 +2162,26 @@ describe('server-v2 /api/v1/sessions', () => {
     const typedId = encodeWorkDirKey(typedRoot);
     const lowerId = encodeWorkDirKey(lowerRoot);
     await writeFile(
-      join(home as string, 'workspaces.json'),
+      join(home as string, 'projects.json'),
       JSON.stringify({
-        version: 1,
-        workspaces: {
+        schema_version: 2,
+        projects: {
           [typedId]: {
             root: typedRoot,
             name: 'proj',
+            kind: 'implicit',
             created_at: '2024-01-01T00:00:00.000Z',
             last_opened_at: '2024-01-01T00:00:00.000Z',
           },
           [lowerId]: {
             root: lowerRoot,
             name: 'proj',
+            kind: 'implicit',
             created_at: '2024-01-01T00:00:00.000Z',
             last_opened_at: '2024-01-01T00:00:00.000Z',
           },
         },
+        deleted_project_ids: [],
       }),
       'utf8',
     );

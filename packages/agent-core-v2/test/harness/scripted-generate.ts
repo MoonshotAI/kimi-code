@@ -1,5 +1,5 @@
-import { type FinishReason } from '#human/llm/finish-reason';
-import type { ThinkingRequestOptions } from '#human/llm/thinking';
+import { type FinishReason } from '#human/llm-requester/finish-reason';
+import type { ThinkingRequestOptions } from '#human/llm-requester/thinking';
 import {
   isContentPart,
   isToolCall,
@@ -12,11 +12,11 @@ import type {
   LlmRequestContent,
   LlmRequestControl,
   LlmRequester,
-} from '#human/llm/requester/requester';
-import { fromLlmMessage, type Message, type Tool } from '#/llm-adapter/contract/message';
+} from '#human/llm-requester/requester';
+import type { AssistantMessage, Message, ToolDescription as Tool } from '#human/llm/message';
 import { isAbortError } from '#/llm-adapter/contract/errors';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import type { TokenUsage } from '#human/llm/usage';
+import type { TokenUsage } from '#human/llm-requester/usage';
 import type { SamplingOptions } from '#/llm-adapter/model/model-requester';
 import { translateProviderError } from '#/llm-adapter/protocol/errors';
 
@@ -29,7 +29,7 @@ import {
 
 export interface LegacyGenerateResult {
   readonly id: string | null;
-  readonly message: Message;
+  readonly message: AssistantMessage;
   readonly usage: TokenUsage | null;
   readonly finishReason: FinishReason | null;
   readonly rawFinishReason: string | null;
@@ -75,7 +75,7 @@ export function generateCallOf(config: LlmRequestConfig, content: LlmRequestCont
       description,
       parameters,
     })),
-    history: structuredClone(content.messages.map(fromLlmMessage)),
+    history: structuredClone([...content.messages]),
   });
 }
 
@@ -90,7 +90,7 @@ export function requesterFromGenerateFn(fn: LegacyGenerateFn): LlmRequester {
           { name: config.model.provider, modelName: config.model.model },
           config.systemPrompt ?? '',
           [...(config.tools ?? [])],
-          content.messages.map(fromLlmMessage),
+          [...content.messages],
           {
             onMessagePart: (part) => {
               parts.push(structuredClone(part));
@@ -205,7 +205,7 @@ export function createScriptedGenerate() {
     const scriptedParts = response.parts ?? [];
     const contentParts = scriptedParts.filter((part) => isContentPart(part));
     const toolCalls = scriptedParts.filter((part) => isToolCall(part));
-    const message: Message = {
+    const message: AssistantMessage = {
       role: 'assistant',
       content: structuredClone(contentParts),
       toolCalls: structuredClone(toolCalls),
@@ -286,7 +286,7 @@ export function createScriptedGenerate() {
   };
 }
 
-function partsFromGeneratedMessage(message: Message): StreamedMessagePart[] {
+function partsFromGeneratedMessage(message: AssistantMessage): StreamedMessagePart[] {
   const parts: StreamedMessagePart[] = [
     ...message.content.map((part) => structuredClone(part)),
     ...message.toolCalls.map((part) => structuredClone(part)),
@@ -328,7 +328,7 @@ function normalizeProviderStreamParts(
   return normalized;
 }
 
-function normalizeMessagesForTokenEstimates(messages: Message[]): Message[] {
+function normalizeMessagesForTokenEstimates(messages: readonly Message[]): Message[] {
   return messages.map((message) => ({
     ...message,
     content: message.content.map((part) =>

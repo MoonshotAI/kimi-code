@@ -1,5 +1,5 @@
-import { extractImageCompressionCaptions } from '#/llm/media/imageCaption';
-import { matchSingleMediaPathTag } from '#/llm/media/pathTag';
+import { extractImageCompressionCaptions } from '#/media/imageCaption';
+import { matchSingleMediaPathTag } from '#/media/pathTag';
 import type { ContentPart, TextPart } from '#/llm/message';
 
 export const SKILL_ACTIVATION_PART_SOURCE = 'skill activation';
@@ -9,7 +9,7 @@ export function skillActivationPart(text: string, activationId: string): TextPar
 }
 
 export function isSkillActivationPart(part: ContentPart): boolean {
-  return part.type === 'text' && part.meta?.source === SKILL_ACTIVATION_PART_SOURCE;
+  return part.type === 'text' && part.meta?.['source'] === SKILL_ACTIVATION_PART_SOURCE;
 }
 
 export function annotateBundledSkillParts(
@@ -22,7 +22,7 @@ export function annotateBundledSkillParts(
   let index = 0;
   return content.map((part) => {
     const activation = bundledActivations[index];
-    if (activation !== undefined && part.type === 'text' && part.meta?.source === undefined) {
+    if (activation !== undefined && part.type === 'text' && part.meta?.['source'] === undefined) {
       index += 1;
       return {
         ...part,
@@ -115,7 +115,6 @@ function promptPartText(part: ContentPart): string | undefined {
 export function mergeSteerMessages(messages: readonly SteerMessage[]): {
   role: 'user';
   content: ContentPart[];
-  toolCalls: [];
   origin: UserPromptOrigin;
 } {
   const hasClientMetadata = messages.some((message) => (userOriginOf(message.origin)?.clientMetadata?.length ?? 0) > 0);
@@ -137,7 +136,6 @@ export function mergeSteerMessages(messages: readonly SteerMessage[]): {
       ),
       ...messages.flatMap((message) => stripBundledSkillBlocks(message)),
     ],
-    toolCalls: [],
     origin:
       skillActivations.length === 0 && attachments.length === 0 && clientMetadata.length === 0
         ? USER_PROMPT_ORIGIN

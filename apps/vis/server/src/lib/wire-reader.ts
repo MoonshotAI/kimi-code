@@ -9,6 +9,8 @@ import {
   resolveWireMigrations,
   type WireMigration,
 } from '@moonshot-ai/agent-core-v2/wire/migration/migration';
+import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
+import { fromPersistentWireRecord } from '@moonshot-ai/agent-core-v2/wire/wireService';
 
 import type { AgentRecord, WireEntry } from './agent-record-types';
 
@@ -35,7 +37,7 @@ function bestEffortMigrations(): readonly WireMigration[] {
 /** Read a single agent's `wire.jsonl`.
  *
  *  Each record is returned as a `WireEntry` containing both the on-disk parsed
- *  form (`raw`) and the migrated current-protocol form (`data`). The reader
+ *  form (`raw`) and the migrated, persistent-decoded runtime form (`data`). The reader
  *  never rejects a file over its `protocol_version`:
  *    - below-1.0 (or otherwise unrecognized-low) — `resolveWireMigrations`
  *      throws, so records run through the 1.0-onwards best-effort chain and a
@@ -124,7 +126,11 @@ export async function readAgentWire(path: string): Promise<WireReadResult> {
       warnings.push(`line ${lineNo}: invalid legacy plan.revision record skipped`);
       continue;
     }
-    records.push({ lineNo, data: normalized as AgentRecord, raw });
+    records.push({
+      lineNo,
+      data: fromPersistentWireRecord(normalized as WireRecord) as AgentRecord,
+      raw,
+    });
   }
   if (metadata === null) {
     throw new Error('Wire file is empty (no metadata)');

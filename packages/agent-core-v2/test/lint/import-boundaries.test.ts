@@ -57,8 +57,8 @@ describe('check-import-boundaries', () => {
 
   it('allows intra-human imports through its own alias', () => {
     const violations = checkSource(
-      `import { createMessageAccumulator } from '#/llm/message';`,
-      atHuman('llm/requester', 'machine.ts'),
+      `import { createMessageAccumulator } from '#/message';`,
+      atHuman('llm-requester', 'machine.ts'),
     );
     expect(violations).toHaveLength(0);
   });
@@ -66,14 +66,14 @@ describe('check-import-boundaries', () => {
   it('allows human to import external SDK packages', () => {
     const violations = checkSource(
       `import OpenAI from 'openai';`,
-      atHuman('llm/requester/bases/openai', 'requester.ts'),
+      atHuman('llm/builtin/protocol/openai', 'index.ts'),
     );
     expect(violations).toHaveLength(0);
   });
 
   it('flags a non-adapter v2 file importing a human implementation module', () => {
     const violations = checkSource(
-      `import { createOpenAIRequester } from '#human/llm/requester/bases/openai/requester';`,
+      `import { createOpenAIRequester } from '#human/llm-requester/factories';`,
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
@@ -82,7 +82,7 @@ describe('check-import-boundaries', () => {
 
   it('allows a non-adapter v2 file importing human vocabulary', () => {
     const violations = checkSource(
-      `import type { Message } from '#human/llm/message';\nimport { emptyUsage } from '#human/llm/usage';`,
+      `import type { Message } from '#human/llm/message';\nimport { emptyUsage } from '#human/llm-requester/usage';\nimport type { LlmError } from '#human/llm-requester/errors';`,
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(0);
@@ -90,7 +90,7 @@ describe('check-import-boundaries', () => {
 
   it('allows llm-adapter to import the human implementation', () => {
     const violations = checkSource(
-      `import { createOpenAIRequester } from '#human/llm/requester/bases/openai/requester';\nimport { kimiProvider } from '#human/llm-kimi/provider';`,
+      `import { createOpenAIRequester } from '#human/llm-requester/factories';\nimport { kimiRequesters } from '#human/llm/builtin/provider/kimi/index';`,
       atAdapter('protocol', 'protocolAdapterRegistry.ts'),
     );
     expect(violations).toHaveLength(0);
@@ -98,77 +98,75 @@ describe('check-import-boundaries', () => {
 
   it('flags a package-self human implementation import outside llm-adapter', () => {
     const violations = checkSource(
-      `import { createOpenAIRequester } from '@moonshot-ai/agent-core-v2/human/llm/requester/bases/openai/requester';`,
+      `import { createOpenAIRequester } from '@moonshot-ai/agent-core-v2/human/llm-requester/factories';`,
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
     expect(violations[0]?.message).toMatch(/only llm-adapter, agent\/loop\/machine and session\/agentLifecycle may import the human implementation/);
   });
 
-  it('flags a trait importing a protocol format module', () => {
+  it('allows a built-in provider importing a protocol lower module', () => {
     const violations = checkSource(
-      `import { CONTEXT_MANAGEMENT_BETA } from '#/llm/requester/bases/anthropic/format';`,
-      atHuman('llm-kimi', 'trait.ts'),
-    );
-    expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/format and trait never import each other/);
-  });
-
-  it('flags a trait importing a protocol lower module via a relative path', () => {
-    const violations = checkSource(
-      `import type { OpenAIWireToolCall } from '../openai/lower';`,
-      atHuman('llm/requester/bases/anthropic', 'trait.ts'),
-    );
-    expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/format and trait never import each other/);
-  });
-
-  it('flags a format module importing a trait', () => {
-    const violations = checkSource(
-      `import type { OpenAITrait } from './trait';`,
-      atHuman('llm/requester/bases/openai', 'format.ts'),
-    );
-    expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/format and trait never import each other/);
-  });
-
-  it('allows a trait importing the protocol contract', () => {
-    const violations = checkSource(
-      `import type { OpenAIWireToolCall } from '#/llm/requester/bases/openai/contract';`,
-      atHuman('llm-kimi', 'trait.ts'),
+      `import { lowerMessage } from '#/llm/builtin/protocol/anthropic/lower';`,
+      atHuman('llm/builtin/provider/kimi', 'protocol.ts'),
     );
     expect(violations).toHaveLength(0);
   });
 
-  it('flags llm-adapter importing a protocol format module', () => {
+  it('allows a built-in provider importing a protocol lower module via a relative path', () => {
     const violations = checkSource(
-      `import { convertOpenAIError } from '#human/llm/requester/bases/openai/format';`,
+      `import { lowerMessage } from '../../protocol/openai/lower';`,
+      atHuman('llm/builtin/provider/kimi', 'protocol.ts'),
+    );
+    expect(violations).toHaveLength(0);
+  });
+
+  it('flags the A requester importing a protocol lower module', () => {
+    const violations = checkSource(
+      `import { lowerMessage } from '#/llm/builtin/protocol/openai/lower';`,
+      atHuman('llm-requester', 'run.ts'),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/internal to the requester pipeline/);
+  });
+
+  it('allows a built-in provider importing the protocol contract', () => {
+    const violations = checkSource(
+      `import type { OpenAIWireToolCall } from '#/llm/builtin/protocol/openai/contract';`,
+      atHuman('llm/builtin/provider/kimi', 'protocol.ts'),
+    );
+    expect(violations).toHaveLength(0);
+  });
+
+  it('flags llm-adapter importing a protocol lower module', () => {
+    const violations = checkSource(
+      `import { convertOpenAIError } from '#/llm/builtin/protocol/openai/lower';`,
       atAdapter('protocol', 'protocolAdapterRegistry.ts'),
     );
     expect(violations).toHaveLength(1);
     expect(violations[0]?.message).toMatch(/internal to the requester pipeline/);
   });
 
-  it('flags human code outside bases importing a protocol lower module', () => {
+  it('flags other human code importing a protocol lower module', () => {
     const violations = checkSource(
-      `import { lowerMessage } from '#/llm/requester/bases/openai/lower';`,
-      atHuman('llm-kimi', 'provider.ts'),
+      `import { lowerMessage } from '#/llm/builtin/protocol/openai/lower';`,
+      atHuman('agent', 'turn.ts'),
     );
     expect(violations).toHaveLength(1);
     expect(violations[0]?.message).toMatch(/internal to the requester pipeline/);
   });
 
-  it('allows a sibling base importing another base format module', () => {
+  it('allows a sibling protocol importing another protocol lower module', () => {
     const violations = checkSource(
-      `import { convertOpenAIError } from '../openai/format';`,
-      atHuman('llm/requester/bases/openai-responses', 'format.ts'),
+      `import { convertOpenAIError } from '../openai/lower';`,
+      atHuman('llm/builtin/protocol/openai-responses', 'index.ts'),
     );
     expect(violations).toHaveLength(0);
   });
 
-  it('allows a test importing a protocol format module', () => {
+  it('allows a test importing a protocol lower module', () => {
     const violations = checkSource(
-      `import { createOpenAIFormat } from '#/llm/requester/bases/openai/format';`,
+      `import { lowerMessage } from '#/llm/builtin/protocol/openai/lower';`,
       atHuman('test/llm', 'usage.test.ts'),
     );
     expect(violations).toHaveLength(0);

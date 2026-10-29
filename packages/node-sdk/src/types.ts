@@ -348,7 +348,7 @@ export interface AddAdditionalDirInput {
 }
 
 export interface AddAdditionalDirOptions {
-  /** When true, share the directory through workspace local config. When false,
+  /** When true, remember the directory in the workspace registry. When false,
    * keep it scoped to this session while still restoring it on session resume. */
   readonly persist: boolean;
 }
@@ -500,8 +500,6 @@ export interface SessionSummary {
 
 export interface AddAdditionalDirResult {
   readonly additionalDirs: readonly string[];
-  readonly projectRoot: string;
-  readonly configPath: string;
   readonly persisted: boolean;
 }
 

@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
 import {
   createAssistantMessage,
   createToolMessage,
   createUserMessage,
   type Message,
 } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { ResponseFormat } from '#/llm/response-format';
-import type { LlmClientContext, LlmRequestEvent } from '#/llm/requester/requester';
-import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
-import { createGoogleGenAIRequester } from '#/llm/requester/bases/google-genai/requester';
-import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
-import { createOpenAIResponsesRequester } from '#/llm/requester/bases/openai-responses/requester';
+import type { LlmModel } from '#/llm-requester/model';
+import type { ResponseFormat } from '#/llm-requester/response-format';
+import type { LlmClientContext, LlmRequestEvent } from '#/llm-requester/requester';
+import { createAnthropicRequester } from '#/llm-requester/factories';
+import { createGoogleGenAIRequester } from '#/llm-requester/factories';
+import { createOpenAIRequester } from '#/llm-requester/factories';
+import { createOpenAIResponsesRequester } from '#/llm-requester/factories';
 
 const model: LlmModel = {
   provider: 'test',
@@ -116,6 +116,17 @@ function withResponseStream(chunks: readonly Record<string, unknown>[]): {
   };
 }
 
+function withResponseBody(body: Record<string, unknown>): {
+  withResponse: () => Promise<{ data: Record<string, unknown>; response: Response }>;
+} {
+  return {
+    withResponse: async () => ({
+      data: body,
+      response: new Response(null),
+    }),
+  };
+}
+
 function stubOpenAIClient(chunks: readonly Record<string, unknown>[]): ClientStub {
   return createClientStub((captured) => ({
     chat: {
@@ -163,7 +174,7 @@ function stubGoogleClient(chunks: readonly Record<string, unknown>[]): ClientStu
 }
 
 describe('openai requester responseFormat', () => {
-  it('maps json_object to response_format', async () => {
+  it('maps json_object and json_schema to response_format', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -172,11 +183,7 @@ describe('openai requester responseFormat', () => {
       { signal: new AbortController().signal },
     );
     expect(client.body()['response_format']).toEqual({ type: 'json_object' });
-  });
 
-  it('maps json_schema to response_format.json_schema', async () => {
-    const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
       { model, responseFormat: jsonSchemaFormat },
       { messages },
@@ -300,10 +307,9 @@ describe('requester toolMessageConversion', () => {
 
     const openAIClient = stubOpenAIClient(chatCompletionChunks);
     await createOpenAIRequester({
-      trait: { toolMessageConversion: 'extract_text' },
       clientFactory: openAIClient.clientFactory,
     }).generate(
-      { model },
+      { model, toolMessageConversion: 'extract_text' },
       { messages: toolMessages },
       { signal: new AbortController().signal },
     );
@@ -316,10 +322,9 @@ describe('requester toolMessageConversion', () => {
 
     const responsesClient = stubResponsesClient(responsesStreamEvents);
     await createOpenAIResponsesRequester({
-      trait: { toolMessageConversion: 'extract_text' },
       clientFactory: responsesClient.clientFactory,
     }).generate(
-      { model },
+      { model, toolMessageConversion: 'extract_text' },
       { messages: toolMessages },
       { signal: new AbortController().signal },
     );
@@ -328,5 +333,170 @@ describe('requester toolMessageConversion', () => {
       inputItems.find((item) => item['type'] === 'function_call_output')?.['output'],
     ).toBe(expectedText);
     expect(JSON.stringify(inputItems)).not.toContain('input_image');
+  });
+});
+
+describe('requester stream=false', () => {
+  it('issues non-streaming requests with an isomorphic event sequence', async () => {
+    const nonStream = { model, stream: false, maxCompletionTokens: 500 } as const;
+    const eventTypes = (events: LlmRequestEvent[]): string[] => events.map((event) => event.type);
+
+    const openAIBody = {
+      id: 'chatcmpl-1',
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                function: { name: 'Bash', arguments: '{}' },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+      usage: { prompt_tokens: 3, completion_tokens: 1 },
+    };
+    const openAIClient = createClientStub((captured) => ({
+      chat: {
+        completions: {
+          create: (params: Record<string, unknown>) => {
+            captured.push(params);
+            return withResponseBody(openAIBody);
+          },
+        },
+      },
+    }));
+    let events: LlmRequestEvent[] = [];
+    await createOpenAIRequester({ clientFactory: openAIClient.clientFactory }).generate(
+      nonStream,
+      {
+        messages: [
+          createUserMessage('hi'),
+          createAssistantMessage([], [
+            { type: 'function', id: 'call_1', name: 'Bash', arguments: '{}' },
+          ]),
+          createToolMessage('call_1', 'done'),
+        ],
+      },
+      { signal: new AbortController().signal, onEvent: (event) => events.push(event) },
+    );
+    expect(openAIClient.body()['stream']).toBe(false);
+    expect(openAIClient.body()['stream_options']).toBeUndefined();
+    expect(eventTypes(events)).toEqual([
+      'llm.sent',
+      'llm.streaming.headers',
+      'llm.streaming.message_id',
+      'llm.streaming.usage',
+      'llm.streaming.part',
+      'llm.streaming.finish',
+      'llm.done',
+    ]);
+    const nonStreamParts = events
+      .filter((event) => event.type === 'llm.streaming.part')
+      .map((event) => event.part);
+    expect(nonStreamParts).toHaveLength(1);
+    expect(nonStreamParts[0]).toMatchObject({
+      type: 'function',
+      id: 'call_1__2',
+      rawId: 'call_1',
+    });
+
+    const responsesClient = createClientStub((captured) => ({
+      responses: {
+        create: (params: Record<string, unknown>) => {
+          captured.push(params);
+          return withResponseBody({
+            id: 'resp_1',
+            status: 'completed',
+            output: [
+              {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: 'hi' }],
+              },
+            ],
+            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          });
+        },
+      },
+    }));
+    events = [];
+    await createOpenAIResponsesRequester({ clientFactory: responsesClient.clientFactory }).generate(
+      nonStream,
+      { messages },
+      { signal: new AbortController().signal, onEvent: (event) => events.push(event) },
+    );
+    expect(responsesClient.body()['stream']).toBe(false);
+    expect(events.at(0)).toMatchObject({ type: 'llm.sent' });
+    expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+    expect(eventTypes(events)).toContain('llm.streaming.part');
+    expect(eventTypes(events)).toContain('llm.streaming.finish');
+    expect(eventTypes(events)).not.toContain('llm.failed.syntax');
+    expect(eventTypes(events)).not.toContain('llm.failed.remote');
+
+    const anthropicClient = createClientStub((captured) => ({
+      messages: {
+        create: (params: Record<string, unknown>) => {
+          captured.push(params);
+          return withResponseBody({
+            id: 'msg_1',
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'hi' }],
+            stop_reason: 'end_turn',
+            stop_sequence: null,
+            usage: { input_tokens: 10, output_tokens: 2 },
+          });
+        },
+      },
+    }));
+    events = [];
+    await createAnthropicRequester({ clientFactory: anthropicClient.clientFactory }).generate(
+      nonStream,
+      { messages },
+      { signal: new AbortController().signal, onEvent: (event) => events.push(event) },
+    );
+    expect(anthropicClient.body()['stream']).toBe(false);
+    expect(events.at(0)).toMatchObject({ type: 'llm.sent' });
+    expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+    expect(eventTypes(events)).toContain('llm.streaming.part');
+    expect(eventTypes(events)).toContain('llm.streaming.finish');
+    expect(eventTypes(events)).not.toContain('llm.failed.syntax');
+    expect(eventTypes(events)).not.toContain('llm.failed.remote');
+
+    const googleClient = createClientStub((captured) => ({
+      models: {
+        generateContent: async (params: Record<string, unknown>) => {
+          captured.push(params);
+          return {
+            candidates: [
+              { content: { role: 'model', parts: [{ text: 'hi' }] }, finishReason: 'STOP' },
+            ],
+            usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
+          };
+        },
+      },
+    }));
+    events = [];
+    await createGoogleGenAIRequester({ clientFactory: googleClient.clientFactory }).generate(
+      nonStream,
+      { messages },
+      { signal: new AbortController().signal, onEvent: (event) => events.push(event) },
+    );
+    expect(events.at(0)).toMatchObject({ type: 'llm.sent' });
+    expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+    expect(eventTypes(events)).toContain('llm.streaming.part');
+    expect(eventTypes(events)).toContain('llm.streaming.finish');
+    expect(eventTypes(events)).not.toContain('llm.failed.syntax');
+    expect(eventTypes(events)).not.toContain('llm.failed.remote');
+    expect(openAIClient.body()['max_tokens']).toBe(500);
+    expect(responsesClient.body()['max_output_tokens']).toBe(500);
+    expect(anthropicClient.body()['max_tokens']).toBe(500);
+    expect((googleClient.body()['config'] as Record<string, unknown>)['maxOutputTokens']).toBe(500);
   });
 });

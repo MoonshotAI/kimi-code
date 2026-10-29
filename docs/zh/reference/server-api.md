@@ -1563,28 +1563,31 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 工作区
 
-工作区是已注册的项目目录，会话都落在其中。这组端点管理注册表——列出、注册、重命名、注销——以及控制项目级 MCP 配置是否加载的每工作区信任状态。所有返回工作区的端点都使用 [workspace 对象](#workspace-对象) 中统一说明的传输结构。
+工作区是已注册的项目目录，会话都落在其中。这组端点管理注册表——列出、注册、重命名与更新源文件夹、注销——以及控制项目级 MCP 配置是否加载的每工作区信任状态。所有返回工作区的端点都使用 [workspace 对象](#workspace-对象) 中统一说明的传输结构。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/workspaces` | 列出已注册工作区 |
-| `POST /api/v1/workspaces` | 注册工作区（按根路径幂等） |
-| `PATCH /api/v1/workspaces/{workspace_id}` | 重命名 |
+| `POST /api/v1/workspaces` | 注册工作区（每次调用创建新条目；重试经 `idempotency_key` 去重） |
+| `PATCH /api/v1/workspaces/{workspace_id}` | 重命名或整体替换源文件夹 |
+| `POST /api/v1/workspaces/{workspace_id}/primary` | 将某个源文件夹提升为主目录 |
+| `GET /api/v1/workspaces/project-config-dirs` | 只读获取项目 local.toml 的附加目录 |
 | `DELETE /api/v1/workspaces/{workspace_id}` | 注销（保留磁盘内容） |
 | `GET /api/v1/workspaces/{workspace_id}/trust` | 读取信任状态 |
 | `POST /api/v1/workspaces/{workspace_id}/trust` | 授予信任 |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | 撤销信任 |
-| `POST /api/v1/workspaces/{workspace_id}/add-dir` | 添加附加目录 |
 
 #### workspace 对象
 
-所有返回工作区的端点都使用此传输结构。注册与重命名会广播全局事件 `event.workspace.created` / `event.workspace.updated`。
+所有返回工作区的端点都使用此传输结构。注册与更新会广播全局事件 `event.workspace.created` / `event.workspace.updated`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | string | 工作区 id，由根路径派生的 `wd_<slug>_<hash12>` 字符串 |
-| `root` | string | 项目目录的绝对路径 |
-| `name` | string | 显示名，1–100 个字符；默认取根目录的基名 |
+| `id` | string | 工作区 id：隐式渠道（CLI/VS Code 按目录进入）为 `wd_<slug>_<hash12>`，经 `POST /api/v1/workspaces` 显式创建为 `wm_<uuid>` |
+| `root` | string | 主目录的绝对路径 |
+| `name` | string | 显示名，1–100 个字符；默认取主目录的基名 |
+| `kind` | string | 工作区类别：`managed`（经显式创建，`wm_` id；会话不合并项目 `local.toml`）或 `implicit`（按目录隐式注册，`wd_` id；会话合并项目 `local.toml` 以兼容旧配置） |
+| `additional_dirs` | string[] | 注册表管理的额外源文件夹绝对路径（不含项目 `local.toml` 与临时来源） |
 | `created_at` | string | 注册时间，ISO 8601 |
 | `last_opened_at` | string | 最近一次打开或重新注册工作区的时间，ISO 8601 |
 | `session_count` | integer | 工作区内的会话数 |
@@ -1597,31 +1600,62 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/workspaces`
 
-注册工作区并返回它。注册按根路径幂等：重复注册同一根路径会返回已存在的工作区，仅刷新 `last_opened_at`（保留已存名称），并广播 `event.workspace.updated` 而非 `event.workspace.created`。
+注册一个新工作区并返回它。每次调用都创建新条目（`wm_<uuid>` id）——即使同一路径已是其他工作区的主目录也不会折叠或提示。客户端重复提交（网络重试、重复点击）应携带同一个 `idempotency_key`，服务端按键去重并返回首次创建的条目。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `root` | body | string | **必填。** 已存在目录的绝对路径 |
-| `name` | body | string | 显示名，1–100 个字符。默认根目录的基名 |
+| `root` | body | string | **必填。** 已存在目录的绝对路径，作为主目录 |
+| `name` | body | string | 显示名，1–100 个字符。默认主目录的基名 |
+| `additional_dirs` | body | string[] | 额外源文件夹。每项按 `add-dir` 相同规则解析（绝对路径、相对主目录或 `~` 展开），须已存在且为目录，不得与主目录或彼此重复，最多 64 项 |
+| `idempotency_key` | body | string | 客户端生成的幂等键，1–200 个字符。相同键的重试返回首次创建的工作区 |
 
 成功时 `data` 为 [workspace 对象](#workspace-对象)。
 
-- `40001`：`root` 缺失或不是绝对路径（`details` 会列出该字段）
-- `40409`：`root` 不存在或不是目录
+- `40001`：`root` 缺失或不是绝对路径，或 `additional_dirs` 含重复项、与主目录相同（`details` 会列出该字段）
+- `40409`：`root` 或 `additional_dirs` 中的路径不存在或不是目录
 
 #### `PATCH /api/v1/workspaces/{workspace_id}`
 
-重命名工作区——仅修改显示名，根路径不变。
+更新工作区的显示名与/或源文件夹。`additional_dirs` 为整体替换语义——提交编辑后的完整列表，省略该字段则保持不变；主目录不可修改。`name` 与 `additional_dirs` 至少提供其一。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **必填。** 工作区 id |
-| `name` | body | string | **必填。** 新的显示名，1–100 个字符 |
+| `name` | body | string | 新的显示名，1–100 个字符 |
+| `additional_dirs` | body | string[] | 替换后的完整额外源文件夹列表，解析与校验规则同 `POST /api/v1/workspaces` |
 
 成功时 `data` 为 [workspace 对象](#workspace-对象)。
 
-- `40001`：校验失败（`details` 逐字段说明）
+- `40001`：校验失败（两个字段都缺失，或目录项重复、与主目录相同；`details` 逐字段说明）
+- `40409`：`additional_dirs` 中的路径不存在或不是目录
 - `40410`：工作区不存在
+
+#### `POST /api/v1/workspaces/{workspace_id}/primary`
+
+将目录集内的某个源文件夹提升为主目录。服务端做原子交换：该路径成为新的 `root`，原主目录进入 `additional_dirs`；工作区 id 与会话桶不变，全部会话保留。交换后原主目录 `local.toml` 中的附加目录将不再并入（`local.toml` 跟随主目录生效）。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `workspace_id` | path | string | **必填。** 工作区 id |
+| `path` | body | string | **必填。** 要提升的目录，解析规则同 `add-dir`；必须在当前目录集（`root` ∪ `additional_dirs`）内 |
+
+成功时 `data` 为 [workspace 对象](#workspace-对象)。
+
+- `40001`：`path` 不在目录集内
+- `40409`：`path` 不存在或不是目录
+- `40410`：工作区不存在
+
+#### `GET /api/v1/workspaces/project-config-dirs`
+
+只读返回指定项目 `local.toml` 的 `workspace.additional_dir`：解析为绝对路径、去重、剔除 `root` 自身。不修改注册表，也不修改 `local.toml`；`local.toml` 缺失时返回空数组，TOML 损坏或配置的目录已不存在时请求失败，不会按空配置返回。客户端可凭此把项目旧配置并入新建或编辑工作区的表单，随保存生效。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `root` | query | string | **必填。** 项目主目录的绝对路径 |
+
+成功时 `data` 为 `{ additional_dirs: string[] }`。
+
+- `40001`：`root` 缺失或为空
 
 #### `DELETE /api/v1/workspaces/{workspace_id}`
 
@@ -1671,19 +1705,6 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 - `40410`：工作区不存在
 
-#### `POST /api/v1/workspaces/{workspace_id}/add-dir`
-
-为工作区添加附加目录，语义与 CLI `--add-dir` 及 TUI `/add-dir` 一致。路径支持绝对路径、相对路径（相对工作区根目录解析）与 `~` 展开。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `workspace_id` | path | string | **必填。** 工作区 id |
-| `path` | body | string | **必填。** 要添加的目录 |
-| `persist` | body | boolean | 缺省 `true`：追加到 `<项目根>/.kimi-code/local.toml` 的 `workspace.additional_dir`；为 `false` 时仅加入内存中的临时集合（同一工作区所有会话共享），不写盘 |
-
-成功时 `data` 为 `{ project_root, config_path, additional_dirs, persisted }`，其中 `additional_dirs` 是全部附加目录（含既有目录），`persisted` 表示本次是否写盘。
-
-- `40001`：校验失败（`details` 逐字段说明），或项目本地配置损坏等引擎校验错误
 - `40409`：`path` 不存在或不是目录
 - `40410`：工作区不存在
 

@@ -1,4 +1,4 @@
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';

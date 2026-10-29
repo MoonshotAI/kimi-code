@@ -27,11 +27,10 @@ import {
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
-import type { Message } from '#/llm-adapter/contract/message';
-import { type ThinkingEffort } from '#human/llm/thinking';
-import type { LlmCredentialProvider } from '#human/llm/requester/requester';
-import { isToolCall, type StreamedMessagePart, type ToolDescription as Tool } from '#human/llm/message';
-import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm/usage';
+import { type ThinkingEffort } from '#human/llm-requester/thinking';
+import type { LlmCredentialProvider } from '#human/llm-requester/requester';
+import { type Message, type ToolDescription as Tool } from '#human/llm/message';
+import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import {
@@ -68,10 +67,6 @@ import {
   type PreparedTurnRequestConfig,
 } from './llmRequester';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import {
-  ToolCallIdNormalizer,
-  type ToolCallIdResponseNormalizer,
-} from '#human/llm/toolCallIdNormalizer';
 import {
   LlmRequest,
   llmRequestTraceKey,
@@ -165,7 +160,6 @@ export const llmRequesterLastTurnRequestKey = defineState<AgentLLMTurnRequestSna
 export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   declare readonly _serviceBrand: undefined;
 
-  private readonly toolCallIdNormalizer = new ToolCallIdNormalizer();
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -352,7 +346,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     onRequestTrace: (traceId: string | undefined) => void,
     onAttemptRetry: (() => void) | undefined,
   ): Promise<AgentLLMRequestFinish> {
-    this.toolCallIdNormalizer.seedFrom(this.context.get());
     const cacheProbeBaseline = request.promptCacheProbe?.baseline;
     let cacheProbeReported = false;
     const shaped = this.toolSelect.shapeHistory(request.messages);
@@ -435,65 +428,47 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       const recorded = this.recordRequest(logInput);
       const startedAt = Date.now();
 
-      let message: Message | undefined;
+      let message: Extract<ModelRequestEvent, { type: 'finish' }>['message'] | undefined;
       let usage: TokenUsage | undefined;
       let timing: ModelRequestTiming | undefined;
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
-      const toolCallIds = this.toolCallIdNormalizer.beginResponse();
-
       const setTraceId = (traceId: string | null | undefined): void => {
         const normalized = traceId ?? undefined;
         onRequestTrace(normalized);
       };
 
-      try {
-        for await (const event of request.requester.request(input, signal, {
-          ...request.params,
-          onTraceId: setTraceId,
-        })) {
-          switch (event.type) {
-            case 'part':
-              await onPart(this.normalizeStreamPart(toolCallIds, event.part));
-              break;
-            case 'usage':
-              usage = event.usage;
-              break;
-            case 'finish':
-              finish = event;
-              message = event.message;
-              setTraceId(event.traceId);
-              break;
-            case 'timing': {
-              const { type: _type, ...streamTiming } = event;
-              timing = streamTiming;
-              break;
-            }
+      for await (const event of request.requester.request(input, signal, {
+        ...request.params,
+        onTraceId: setTraceId,
+      })) {
+        switch (event.type) {
+          case 'part':
+            await onPart(event.part);
+            break;
+          case 'usage':
+            usage = event.usage;
+            break;
+          case 'finish':
+            finish = event;
+            message = event.message;
+            setTraceId(event.traceId);
+            break;
+          case 'timing': {
+            const { type: _type, ...streamTiming } = event;
+            timing = streamTiming;
+            break;
           }
         }
-
-        if (message === undefined || finish === undefined) {
-          throw new Error2(
-            ErrorCodes.PROVIDER_API_ERROR,
-            'LLM request stream ended without a finish event.',
-          );
-        }
-
-        const finalizedCalls = toolCallIds.remapFinalizedCalls(message.toolCalls);
-        if (finalizedCalls !== message.toolCalls) {
-          message = { ...message, toolCalls: finalizedCalls };
-        }
-        for (const { raw, assigned } of toolCallIds.remapped) {
-          this.log.warn('Rewrote a duplicate provider tool call id into an agent-unique one.', {
-            raw,
-            assigned,
-            model: request.modelAlias,
-          });
-        }
-      } catch (error) {
-        toolCallIds.rollback();
-        throw error;
       }
 
+      const completedMessage = message;
+      if (completedMessage === undefined || finish === undefined) {
+        throw new Error2(
+          ErrorCodes.PROVIDER_API_ERROR,
+          'LLM request stream ended without a finish event.',
+        );
+      }
+      message = completedMessage;
       if (request.promptCacheProbe?.source === 'compaction' && !cacheProbeReported) {
         cacheProbeReported = true;
         const compared =
@@ -685,15 +660,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     return nextPolicy;
   }
 
-  private normalizeStreamPart(
-    toolCallIds: ToolCallIdResponseNormalizer,
-    part: StreamedMessagePart,
-  ): StreamedMessagePart {
-    if (!isToolCall(part)) return part;
-    const assigned = toolCallIds.remapStreamedId(part.id, part._streamIndex);
-    return assigned === part.id ? part : { ...part, id: assigned, rawId: part.rawId ?? part.id };
-  }
-
   private warnAboutAnthropicThinkingEffort(request: ResolvedLLMRequest): void {
     if (request.model.protocol !== 'anthropic') return;
     const effort = request.thinkingEffort;
@@ -839,7 +805,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       this.log.info('llm config', { ...logFields, ...config });
     }
 
-    const partialMessageCount = input.messages.filter((message) => message.partial === true).length;
+    const partialMessageCount = input.messages.filter(
+      (message) => 'partial' in message && message.partial === true,
+    ).length;
     const requestFields: LogContext = { ...logFields };
     if (partialMessageCount > 0) requestFields['partialMessageCount'] = partialMessageCount;
     this.log.info('llm request', requestFields);

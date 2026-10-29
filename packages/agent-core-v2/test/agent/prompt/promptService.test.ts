@@ -31,7 +31,7 @@ import {
 } from '../../harness';
 
 function message(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
+  return { role: 'user', content: [{ type: 'text', text }], origin: { kind: 'user' } };
 }
 
 function bundledMessage(skillName: string, user: string, extra: readonly ContentPart[] = [], marked = false): ContextMessage {
@@ -46,7 +46,6 @@ function bundledMessage(skillName: string, user: string, extra: readonly Content
       { type: 'text', text: user },
       ...extra,
     ],
-    toolCalls: [],
     origin: { kind: 'user', skillActivations: [{ activationId: `act-${skillName}`, skillName }] },
   };
 }
@@ -577,14 +576,13 @@ describe('prompt queue', () => {
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'seen' });
     vi.spyOn(ctx.get(IAgentProfileService), 'getModelProviderType').mockReturnValue(undefined);
-    const avifUrl = `data:image/avif;base64,${Buffer.from([1, 2, 3]).toString('base64')}`;
+    const url = `data:image/avif;base64,${Buffer.from([1, 2, 3]).toString('base64')}`;
 
     await enqueue(loop, {
       id: 'prompt-img',
       message: {
         role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
-        toolCalls: [],
+        content: [{ type: 'image_url', imageUrl: { url } }],
         origin: { kind: 'user' },
       },
     });
@@ -605,7 +603,7 @@ describe('prompt queue', () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'seen' });
-    const heicUrl = `data:image/heic;base64,${Buffer.from([
+    const url = `data:image/heic;base64,${Buffer.from([
       0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63,
     ]).toString('base64')}`;
 
@@ -613,15 +611,14 @@ describe('prompt queue', () => {
       id: 'prompt-heic',
       message: {
         role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: heicUrl } }],
-        toolCalls: [],
+        content: [{ type: 'image_url', imageUrl: { url } }],
         origin: { kind: 'user' },
       },
     });
     await hold.started;
 
     const parts = ctx.context.get()[0]!.content;
-    expect(parts).toEqual([{ type: 'image_url', imageUrl: { url: heicUrl } }]);
+    expect(parts).toEqual([{ type: 'image_url', imageUrl: { url } }]);
 
     hold.release();
     await loop.settled();
@@ -636,13 +633,12 @@ describe('prompt queue', () => {
 
     await enqueue(loop, { message: message('active') });
     await hold.started;
-    const avifUrl = `data:image/avif;base64,${Buffer.from([4, 5, 6]).toString('base64')}`;
+    const url = `data:image/avif;base64,${Buffer.from([4, 5, 6]).toString('base64')}`;
     const queued = await enqueue(loop, {
       id: 'prompt-steer-img',
       message: {
         role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
-        toolCalls: [],
+        content: [{ type: 'image_url', imageUrl: { url } }],
         origin: { kind: 'user' },
       },
     });
@@ -681,7 +677,6 @@ describe('prompt queue', () => {
       message: {
         role: 'user',
         content: [{ type: 'image_url', imageUrl: { url: 'kimi-file://file_1' } }],
-        toolCalls: [],
         origin: { kind: 'user' },
       },
     });
@@ -848,7 +843,6 @@ describe('prompt queue', () => {
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'one' }],
-        toolCalls: [],
         origin: {
           kind: 'user',
           attachments: [{ name: 'a.txt', mediaType: 'text/plain', size: 1, path: '/data/a.txt' }],
@@ -859,7 +853,6 @@ describe('prompt queue', () => {
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'two' }],
-        toolCalls: [],
         origin: {
           kind: 'user',
           attachments: [{ name: 'b.txt', mediaType: 'text/plain', size: 2, path: '/data/b.txt' }],

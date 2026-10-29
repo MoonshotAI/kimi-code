@@ -1,7 +1,7 @@
 import { getMaxListeners } from 'node:events';
 
 import { type ToolCall } from '#human/llm/message';
-import { emptyUsage } from '#human/llm/usage';
+import { emptyUsage } from '#human/llm-requester/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
@@ -93,9 +93,9 @@ describe('Agent loop', () => {
       [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
       [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
       [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Hello" }
-      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } } ] }
+      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
       [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
-      [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
+      [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] agent.message.appended      { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
       [wire] agent.turn.started          { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
       [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
@@ -187,9 +187,9 @@ describe('Agent loop', () => {
       [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Hello" } ], "createdAt": "<time>" }
       [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Hello" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
       [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Hello" }
-      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } } ] }
+      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
       [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
-      [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
+      [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] agent.message.appended      { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
       [wire] agent.turn.started          { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
       [wire] plugin.session_start        { "agentId": "main", "content": null, "time": "<time>" }
@@ -492,9 +492,9 @@ describe('Agent loop', () => {
       [emit] prompt.submitted                { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up moon" } ], "createdAt": "<time>" }
       [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
       [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Look up moon" }
-      [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } } ] }
+      [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
       [emit] prompt.started                  { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
-      [wire] context.append_message          { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
+      [wire] context.append_message          { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] agent.message.appended          { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up moon" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
       [wire] agent.turn.started              { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
       [wire] plugin.session_start            { "agentId": "main", "content": null, "time": "<time>" }
@@ -718,7 +718,6 @@ describe('Agent loop', () => {
           message: {
             role: 'user',
             content: [{ type: 'text', text: `continue ${continuations}` }],
-            toolCalls: [],
             origin: { kind: 'system_trigger', name: 'stop_hook' },
           },
         });
@@ -984,7 +983,7 @@ describe('Agent loop', () => {
       const real = submitTurn(parkedLoop, 'real').turn;
       let nudgeConsumed = 0;
       parkedLoop.notify({
-        message: { role: 'user', content: [{ type: 'text', text: 'nudge text' }], toolCalls: [] },
+        message: { role: 'user', content: [{ type: 'text', text: 'nudge text' }] },
         onConsume: () => {
           nudgeConsumed += 1;
         },
@@ -1162,12 +1161,24 @@ describe('Agent loop', () => {
     const turn = submitPromptTurn(loop, { message: {
             role: 'user',
             content: [
-              { type: 'image_url', imageUrl: { url: 'kimi-file://file_1', id: 'file_1', name: 'photo.png' } },
-              { type: 'video_url', videoUrl: { url: 'kimi-file://file_2', id: 'file_2', name: 'clip.mp4' } },
+              {
+                type: 'image_url',
+                imageUrl: { url: 'kimi-file://file_1', id: 'file_1', name: 'photo.png' },
+              },
+              {
+                type: 'video_url',
+                videoUrl: { url: 'kimi-file://file_2', id: 'file_2', name: 'clip.mp4' },
+              },
               { type: 'image_url', imageUrl: { url: 'kimi-file://file_3' } },
-              { type: 'image_url', imageUrl: { url: 'kimi-file://file_4', id: 'other' } },
+              {
+                type: 'image_url',
+                imageUrl: { url: 'kimi-file://file_4', id: 'other' },
+              },
               { type: 'image_url', imageUrl: { url: 'https://example.com/no-id.png' } },
-              { type: 'image_url', imageUrl: { url: 'ms://provider-blob', id: 'prov_1' } },
+              {
+                type: 'image_url',
+                imageUrl: { url: 'ms://provider-blob', id: 'prov_1' },
+              },
               { type: 'text', text: 'look' },
             ],
           }, meta: { origin: { kind: 'user' } } }).turn;
@@ -1263,7 +1274,6 @@ describe('Agent loop', () => {
         role: 'user',
         id: 'seed-1',
         content: [{ type: 'text', text: 'wake up' }],
-        toolCalls: [],
       },
     });
     await vi.waitFor(() => {

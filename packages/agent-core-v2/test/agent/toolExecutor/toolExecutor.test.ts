@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { Jimp } from 'jimp';
 
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

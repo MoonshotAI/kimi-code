@@ -4,7 +4,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
-import { type ThinkingEffort } from '#human/llm/thinking';
+import { type ThinkingEffort } from '#human/llm-requester/thinking';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { type ModelOverrides } from '#/llm-adapter/model/model.types';
 import { type ModelRequestParams, type SamplingOptions } from '#/llm-adapter/model/model-requester';

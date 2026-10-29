@@ -60,6 +60,7 @@ function programWorkspace(cwd: string): IWorkspaceContext {
       id: 'workspace',
       name: 'workspace',
       root: cwd,
+      kind: 'implicit',
       createdAt: 0,
       lastOpenedAt: 0,
     },
@@ -92,6 +93,7 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
     lease.dispose();
     const behavior = {
       ready: readiness.get(id) ?? Promise.resolve(),
+      reload: async () => {},
       dispose: () => { order.push(`behavior:${id}`); },
     };
     const catalog = {
@@ -490,6 +492,14 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
       builtinSkills: { _serviceBrand: undefined, id: 'builtin', priority: 0, load: async () => ({ skills: [] }) },
       userSkills,
       telemetry: noopTelemetryService,
+      docs: undefined,
+      workspaces: {
+        _serviceBrand: undefined,
+        list: async () => [],
+        get: async () => undefined,
+        createOrTouch: async () => { throw new Error('unexpected workspace create'); },
+      },
+      workspaceStore: { onDidChange: () => ({ dispose: () => {} }) },
       trustStore,
       createSessionController: (input: ProgramSessionControllerInput) => {
         controllerInputs.push(input);

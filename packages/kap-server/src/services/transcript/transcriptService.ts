@@ -1,4 +1,5 @@
 import type { UserPromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
+import { AgentBlobServiceImpl } from '@moonshot-ai/agent-core-v2/agent/blob/agentBlobServiceImpl';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 
@@ -7,12 +8,14 @@ import {
   IAgentContextMemoryService,
   IFlagService,
   IWireService,
+  IBlobStore,
   ISessionIndex,
   ISessionManager,
   ISessionMetadata,
   IAgentLoopService,
   TOWER_FLAG_ID,
   flattenChain,
+  makeAgentScopeContext,
   followSessionLifecycles,
   getLiveSessionById,
   isTowerFeatureAssembled,
@@ -570,7 +573,16 @@ export class TranscriptService {
       }
       throw error;
     }
-    const messages = [...reduceContextTranscript(records).entries];
+    const agentScope = `${SESSIONS_ROOT}/${summary.workspaceId}/${sessionId}/${AGENTS_DIR}/${agentId}`;
+    const blobs = new AgentBlobServiceImpl(
+      this.deps.core.accessor.get(IBlobStore),
+      makeAgentScopeContext({ agentId, agentScope }),
+    );
+    const messages: ContextMessage[] = [];
+    for (const message of reduceContextTranscript(records).entries) {
+      const content = await blobs.loadParts(message.content);
+      messages.push(content === message.content ? message : { ...message, content: [...content] });
+    }
     const taskOriginTurnTaskIds = new Set<string>();
     const steeredContents = new Map<string, Map<string, number>>();
     const pendingSteers = new Map<string, Map<string, number>>();

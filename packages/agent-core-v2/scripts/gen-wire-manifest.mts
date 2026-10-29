@@ -744,7 +744,9 @@ function friendlyZodExpr(expr: string, ownerFile: string, depth = 0): Sketch {
   if (custom?.[1] !== undefined) {
     const typeName = custom[1].trim();
     if (depth > 1) return typeName;
-    const summary = summarizeTsType(typeName, ownerFile, TS_BUDGET());
+    const summary = typeName === 'ContextMessage'
+      ? summarizeTsType('PersistentContextMessage', join(PKG, 'src/wire/record.ts'), TS_BUDGET())
+      : summarizeTsType(typeName, ownerFile, TS_BUDGET());
     if (summary === undefined) return typeName;
     if (typeof summary !== 'string' && !Array.isArray(summary)) {
       return { [TYPE_KEY]: typeName, ...summary };

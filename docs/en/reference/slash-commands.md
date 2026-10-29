@@ -42,7 +42,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/export-debug-zip` | — | Export the current session as a debug ZIP archive (same behavior as [`kimi export`](./kimi-command.md#kimi-export)) | No |
 | `/import-sessions` | — | Import Claude Code and Codex sessions from the last 15 or 30 days as regular sessions (same behavior as [`kimi import-sessions`](./kimi-command.md#kimi-import-sessions)) | No |
 | `/copy` | — | Copy the last assistant message to the clipboard | No |
-| `/add-dir [<path>]` | — | Add an extra workspace directory to the current session. Run without a path (or with `list`) to list configured directories. When adding, choose whether to remember the directory for the project in `.kimi-code/local.toml` | No |
+| `/add-dir [<path>]` | — | Add an extra workspace directory to the current session. Run without a path (or with `list`) to list configured directories. When adding, choose whether to remember the directory in the workspace registry | No |
 | `/web` | — | Open the current session in the web UI: pick a running server to connect to, or start a new foreground server after the TUI exits. See [`kimi web`](./kimi-command.md#kimi-web) | Yes |
 | `/desktop` | `/install-desktop` | Open the Kimi Code desktop app page in your browser (URL follows the active region: `https://www.kimi.com/code` or `https://www.kimi.ai/code`). See [`kimi install-desktop`](./kimi-command.md#kimi-install-desktop) | Yes |
 

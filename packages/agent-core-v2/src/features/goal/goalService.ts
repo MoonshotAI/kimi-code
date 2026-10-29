@@ -726,7 +726,6 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
           : prompt,
       },
     ],
-    toolCalls: [],
     origin: GOAL_CONTINUATION_ORIGIN,
   };
   const loop = context.runtime.get(IAgentLoopService);

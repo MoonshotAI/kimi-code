@@ -216,6 +216,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
 
       const registry = core.accessor.get(IWorkspaceService);
       let workDir: string;
+      let bucket: { readonly id: string; readonly root: string } | undefined;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
         if (workspace === undefined) {
@@ -243,14 +244,18 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           return;
         }
         workDir = workspace.root;
+        bucket = workspace;
       } else {
         workDir = callerCwd as string;
       }
 
       try {
-        const touched = await registry.createOrTouch(workDir);
+        const resolved =
+          bucket === undefined
+            ? await registry.createOrTouch(workDir)
+            : ((await registry.touch(bucket.id)) ?? bucket);
         const handle = await core.accessor.get(ISessionManager).create({
-          workspaceId: touched.id,
+          workspaceId: resolved.id,
           workDir,
           environmentId: body.environment_id,
           environmentCwd: body.environment_cwd,
@@ -261,8 +266,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         }
         const meta = await handle.accessor.get(ISessionMetadata).read();
         const session = toWireSession(
-          { ...meta, workspaceId: touched.id },
-          touched.root,
+          { ...meta, workspaceId: resolved.id },
+          resolved.root,
           { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
         );
         core.accessor.get(IEventService).publish(
@@ -1112,6 +1117,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
         staleNotifier.notifyAgentsMdChanges(),
         staleNotifier.notifySkillChanges(),
         staleNotifier.notifySubagentChanges({}),
+        staleNotifier.notifyWorkspaceDirsChanges(),
       ]).catch(() => undefined);
     }
     throw error;
@@ -1130,6 +1136,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
     await notifier.notifyAgentsMdChanges();
     await notifier.notifySkillChanges();
     await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
+    await notifier.notifyWorkspaceDirsChanges();
   }
   const meta = await handle.accessor.get(ISessionMetadata).read();
   const sessionCtx = handle.accessor.get(ISessionContext);

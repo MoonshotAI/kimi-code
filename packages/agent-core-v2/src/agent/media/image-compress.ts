@@ -1,7 +1,7 @@
 import type { ContentPart } from '#human/llm/message';
 import type { ImageCompressEvent, ImageCropEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
-import { DEFAULT_INLINE_IMAGE_BYTE_BUDGET } from '#human/llm/media/image-formats';
+import { DEFAULT_INLINE_IMAGE_BYTE_BUDGET } from '#human/llm/protocol/kit/media';
 
 import { sniffImageDimensions } from './file-type';
 import {
@@ -581,7 +581,7 @@ export function buildImageCompressionCaption(input: ImageCompressionCaptionInput
   return `<system>${sentences.join(' ')}</system>`;
 }
 
-export { extractImageCompressionCaptions } from '#human/llm/media/imageCaption';
+export { extractImageCompressionCaptions } from '#human/media/imageCaption';
 
 function describeImageVariant(variant: ImageVariantDescription): string {
   const size = `${variant.mimeType} (${formatByteSize(variant.byteLength)})`;

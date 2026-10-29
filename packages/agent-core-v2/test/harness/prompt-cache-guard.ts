@@ -19,7 +19,7 @@ import type {
   LlmCredentialProvider,
   LlmRequestConfig,
   LlmRequester,
-} from '#human/llm/requester/requester';
+} from '#human/llm-requester/requester';
 
 import { generateCallOf } from './scripted-generate';
 import { findGenerateCallPrefixBreak, type GenerateCall } from './snapshots';

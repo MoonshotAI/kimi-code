@@ -9,6 +9,8 @@ import {
   type ContextMessage as V2ContextMessage,
   type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
+import { fromCoreMessage } from '@moonshot-ai/agent-core-v2/human/message';
+import { fromPersistentWireRecord } from '@moonshot-ai/agent-core-v2/wire/wireService';
 
 import { SurveyTurnCounter } from '@moonshot-ai/kimi-code-product/session-rating/node';
 
@@ -51,7 +53,7 @@ async function foldAgentWireReplayFull(wirePath: string): Promise<FoldedAgentRep
     const userTurns = new SurveyTurnCounter();
     const records = parseWireRecords(await readFile(wirePath, 'utf-8'), userTurns);
     if (records.length === 0) return { ...EMPTY_FOLD, userTurnCount: userTurns.count };
-    const folded = foldWireRecords(records);
+    const folded = foldWireRecords(records, fromPersistentWireRecord);
     return {
       replay: folded.replay.map(mapReplayRecord),
       toolStore: folded.toolStore,
@@ -74,6 +76,17 @@ function mapReplayRecord(record: V2AgentReplayRecord): AgentReplayRecord {
         systemPrompt: record.config.systemPrompt,
       },
     };
+  }
+  if (record.type === 'message') {
+    const message = fromCoreMessage(record.message);
+    return {
+      ...record,
+      message: {
+        ...record.message,
+        ...message,
+        toolCalls: message.role === 'assistant' ? message.toolCalls : [],
+      },
+    } as unknown as AgentReplayRecord;
   }
   return record as unknown as AgentReplayRecord;
 }
@@ -264,7 +277,7 @@ class WireReplayScan {
       if (line.start < windowStart) continue;
       records.push(line.record);
     }
-    const folded = foldWireRecords(records);
+    const folded = foldWireRecords(records, fromPersistentWireRecord);
     if (!boundaryFound || windowStart <= 0) {
       return {
         replay: limitAgentReplayByTurns(folded.replay.map(mapReplayRecord), this.turnLimit),

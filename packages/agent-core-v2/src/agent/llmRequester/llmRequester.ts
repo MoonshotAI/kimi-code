@@ -1,10 +1,14 @@
 import { createDecorator } from '#/_base/di/instantiation';
-import type { FinishReason } from '#human/llm/finish-reason';
-import type { LlmCredentialProvider } from '#human/llm/requester/requester';
-import type { ThinkingEffort } from '#human/llm/thinking';
-import type { Message } from '#/llm-adapter/contract/message';
-import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm/usage';
+import type { FinishReason } from '#human/llm-requester/finish-reason';
+import type { LlmCredentialProvider } from '#human/llm-requester/requester';
+import type { ThinkingEffort } from '#human/llm-requester/thinking';
+import type {
+  AssistantMessage,
+  Message,
+  StreamedMessagePart,
+  ToolDescription as Tool,
+} from '#human/llm/message';
+import type { TokenUsage } from '#human/llm-requester/usage';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import type { LogContext } from '#/_base/log/log';
@@ -26,7 +30,7 @@ export type AgentLLMRequestSource =
     };
 
 export interface AgentLLMRequestFinish {
-  message: Message;
+  message: AssistantMessage;
   usage: TokenUsage;
   model?: string | undefined;
   providerFinishReason?: FinishReason;

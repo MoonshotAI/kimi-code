@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 import type { ContentPart } from '#human/llm/message';
 
-export * from '#human/llm/media/pathTag';
+export * from '#human/media/pathTag';
 
 export const IMAGE_MIME_BY_SUFFIX: Readonly<Record<string, string>> = Object.freeze({
   '.png': 'image/png',
