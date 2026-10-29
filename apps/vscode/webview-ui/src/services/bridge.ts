@@ -43,7 +43,7 @@ class Bridge {
   private webviewId: string;
 
   constructor() {
-    this.webviewId = document.body.getAttribute("data-webviewid") || `unknown_${Date.now()}`;
+    this.webviewId = document.body.dataset.webviewid || `unknown_${Date.now()}`;
 
     if (typeof acquireVsCodeApi === "function") {
       this.vscode = acquireVsCodeApi();
@@ -148,6 +148,14 @@ class Bridge {
 
   openFolder() {
     return this.call<{ ok: boolean }>(Methods.OpenFolder);
+  }
+
+  openInDesktop() {
+    return this.call<{ ok: boolean }>(Methods.OpenInDesktop);
+  }
+
+  installDesktop() {
+    return this.call<{ ok: boolean }>(Methods.InstallDesktop);
   }
 
   getModels() {

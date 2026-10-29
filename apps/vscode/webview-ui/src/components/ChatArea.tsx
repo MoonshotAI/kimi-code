@@ -48,8 +48,10 @@ export function ChatArea() {
 
   if (messageCount === 0) {
     return (
-      <div className="h-full flex items-center justify-center relative">
-        <WelcomeScreen />
+      <div className="h-full overflow-y-auto relative">
+        <div className="flex min-h-full items-center justify-center">
+          <WelcomeScreen />
+        </div>
       </div>
     );
   }
