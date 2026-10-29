@@ -223,14 +223,14 @@ describe('AgentToolExecutorService', () => {
     await execute(
       [toolCall('call_traced', 'echo', { text: 'hi' })],
       undefined,
-      { traceId: 'trace-tool-1' },
+      { requestId: 'trace-tool-1' },
     );
 
     expect(telemetryEvents).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
         tool_call_id: 'call_traced',
-        trace_id: 'trace-tool-1',
+        request_id: 'trace-tool-1',
       }),
     });
   });

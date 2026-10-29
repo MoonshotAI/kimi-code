@@ -15,10 +15,11 @@ import type {
   ToolDescription as Tool,
 } from '#human/llm/message';
 import {
+  errorDiagnostics,
   errorFromLlmMessage,
   isAbortError,
   llmMessageFromError,
-  traceIdFromHeadersRecord,
+  withErrorDiagnostics,
 } from '../contract/errors';
 import { translateProviderError } from '../protocol/errors';
 
@@ -50,7 +51,7 @@ export type ModelRequestEvent =
       readonly providerFinishReason?: FinishReason;
       readonly rawFinishReason?: string;
       readonly id?: string;
-      readonly traceId?: string;
+      readonly requestId?: string;
     }
   | ({ readonly type: 'timing' } & ModelRequestTiming);
 
@@ -63,7 +64,7 @@ export interface ModelRequestParams {
   readonly usedContextTokens?: number;
   readonly maxContextTokens?: number;
   readonly stream?: boolean;
-  readonly onTraceId?: (traceId: string | null) => void;
+  readonly onRequestId?: (requestId: string | undefined) => void;
 }
 
 export interface ModelRequestPolicy {
@@ -115,7 +116,6 @@ async function runModel(
   policy: ModelRequestPolicy | undefined,
   events: ModelEventSink,
 ): Promise<void> {
-  let traceId: string | null | undefined;
   try {
     const requester = initial.with({
       model: { responseFormat: input.responseFormat },
@@ -148,8 +148,7 @@ async function runModel(
         onEvent: (event) => {
           switch (event.type) {
             case 'llm.streaming.headers': {
-              traceId = traceIdFromHeadersRecord(event.headers);
-              params?.onTraceId?.(traceId);
+              params?.onRequestId?.(contentsOf(initial).protocol!.base!.requestId?.(event.headers));
               return;
             }
             case 'llm.streaming.part': {
@@ -179,35 +178,37 @@ async function runModel(
         classified === undefined &&
         outcome.rawError instanceof Error
       ) {
-        throw translateProviderError(outcome.rawError);
+        throw withErrorDiagnostics(translateProviderError(outcome.rawError), outcome.diagnostics);
       }
       const error = classified ?? outcome.error;
-      throw errorFromLlmMessage(error.kind === 'auth' ? { ...error, kind: 'status' as const } : error);
+      throw errorFromLlmMessage(
+        error.kind === 'auth' ? { ...error, kind: 'status' as const } : error,
+        outcome.diagnostics,
+      );
     }
-    pushDone(outcome, events, traceId, contentsOf(initial).model?.spec?.name);
+    pushDone(outcome, events, contentsOf(initial).model?.spec?.name);
   } catch (error) {
     if (isAbortError(error)) throw error;
+    const diagnostics = errorDiagnostics(error);
     const message = llmMessageFromError(error);
-    if (message !== undefined) throw errorFromLlmMessage(message);
-    throw translateProviderError(error);
+    if (message !== undefined) throw errorFromLlmMessage(message, diagnostics);
+    throw withErrorDiagnostics(translateProviderError(error), diagnostics);
   }
 }
 
 function pushDone(
   outcome: Extract<LlmOutcome, { readonly type: 'done' }>,
   events: ModelEventSink,
-  traceId: string | null | undefined,
   model: string | undefined,
 ): void {
   if (outcome.usage !== undefined) events.push({ type: 'usage', usage: outcome.usage, model });
-  const outcomeTraceId = traceId ?? traceIdFromHeadersRecord(outcome.headers ?? {});
   events.push({
     type: 'finish',
     message: outcome.message,
     providerFinishReason: outcome.finish?.finishReason ?? undefined,
     rawFinishReason: outcome.finish?.rawFinishReason ?? undefined,
     id: outcome.messageId,
-    traceId: outcomeTraceId ?? undefined,
+    requestId: outcome.requestId,
   });
   if (outcome.timing !== undefined) events.push({ type: 'timing', ...outcome.timing });
 }

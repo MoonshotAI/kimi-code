@@ -19,6 +19,7 @@ import {
   APIContextOverflowError,
   APIStatusError,
   classifyApiError,
+  errorDiagnostics,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
 import { type ThinkingEffort } from '#human/llm-requester/thinking';
@@ -239,24 +240,25 @@ export class AgentLoopRequester implements LoopRequester {
   ): Promise<AgentLLMRequestFinish> {
     signal?.throwIfAborted();
     const startedAt = Date.now();
-    const setTrace = (traceId: string | undefined): void => {
-      trace.set(traceId);
+    const setRequestId = (requestId: string | undefined): void => {
+      trace.set(requestId);
       if (overrides.source?.type === 'turn') {
-        this.telemetry.setContext({ trace_id: traceId });
+        this.telemetry.setContext({ request_id: requestId });
       }
     };
-    setTrace(undefined);
+    setRequestId(undefined);
     try {
       return await this.runRequest(
         this.resolveRequest(overrides),
         onPart,
         signal,
-        setTrace,
+        setRequestId,
         overrides.onAttemptRetry,
       );
     } catch (error) {
       this.logRequestFailure(error, overrides, signal);
-      setTrace(this.trackApiError(error, startedAt, signal, overrides.source, trace.traceId));
+      this.trackApiError(error, startedAt, signal, overrides.source);
+      setRequestId(undefined);
       throw error;
     }
   }
@@ -271,6 +273,7 @@ export class AgentLoopRequester implements LoopRequester {
       ...logFieldsForSource(overrides.source),
       model: this.profile.data().modelAlias ?? 'unknown',
       ...retryErrorFields(error),
+      diagnostics: errorDiagnostics(error),
     };
     this.log.warn('llm request failed', payload);
   }
@@ -280,12 +283,10 @@ export class AgentLoopRequester implements LoopRequester {
     startedAt: number,
     signal: AbortSignal | undefined,
     source?: AgentLLMRequestSource,
-    requestTraceId?: string,
-  ): string | undefined {
-    if (isAbortError(error) || signal?.aborted === true) return requestTraceId;
+  ): void {
+    if (isAbortError(error) || signal?.aborted === true) return;
     const modelAlias = this.profile.data().modelAlias;
     const model = this.tryGetModel();
-    const traceId = requestTraceId ?? apiTraceId(error);
     const classification = classifyApiError(unwrapErrorCause(error));
     const properties: ApiErrorEvent = {
       error_type: classification.kind,
@@ -297,7 +298,7 @@ export class AgentLoopRequester implements LoopRequester {
       duration_ms: Math.max(0, Date.now() - startedAt),
       turn_id: source?.turnId,
       request_kind: requestKindForTelemetry(source),
-      trace_id: traceId,
+      request_id: apiRequestId(error),
     };
     if (source?.type === 'turn') {
       if (source.step !== undefined) properties['step_no'] = source.step;
@@ -307,7 +308,6 @@ export class AgentLoopRequester implements LoopRequester {
     const currentTurn = this.usage.status(this.scopeContext.agentContext).currentTurn;
     if (currentTurn !== undefined) properties['input_tokens'] = inputTotal(currentTurn);
     this.telemetry.track2('api_error', properties);
-    return traceId;
   }
 
   private tryGetModel(): Model | undefined {
@@ -324,7 +324,7 @@ export class AgentLoopRequester implements LoopRequester {
     request: ResolvedLLMRequest,
     onPart: AgentLLMRequestPartHandler,
     signal: AbortSignal | undefined,
-    onRequestTrace: (traceId: string | undefined) => void,
+    onRequestId: (requestId: string | undefined) => void,
     onAttemptRetry: (() => void) | undefined,
   ): Promise<AgentLLMRequestFinish> {
     let cacheProbeReported = false;
@@ -346,9 +346,9 @@ export class AgentLoopRequester implements LoopRequester {
       let usage: TokenUsage | undefined;
       let timing: ModelRequestTiming | undefined;
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
-      const setTraceId = (traceId: string | null | undefined): void => {
-        const normalized = traceId ?? undefined;
-        onRequestTrace(normalized);
+      const setRequestId = (requestId: string | null | undefined): void => {
+        const normalized = requestId ?? undefined;
+        onRequestId(normalized);
       };
 
       for await (const event of generateModel(
@@ -361,7 +361,7 @@ export class AgentLoopRequester implements LoopRequester {
         signal,
         {
           ...request.params,
-          onTraceId: setTraceId,
+          onRequestId: setRequestId,
         },
         {
           recoveries: [
@@ -376,7 +376,7 @@ export class AgentLoopRequester implements LoopRequester {
           ],
           recoveryLedger,
           onAttempt: (attemptInput, attemptRequest) => {
-            onRequestTrace(undefined);
+            onRequestId(undefined);
             const mediaRecovery = latestMediaRecovery(recoveryLedger.applied);
             const projection = projectionNameOf(recoveryLedger.applied, mediaRecovery);
             const fields =
@@ -480,7 +480,7 @@ export class AgentLoopRequester implements LoopRequester {
           case 'finish':
             finish = event;
             message = event.message;
-            setTraceId(event.traceId);
+            setRequestId(event.requestId);
             break;
           case 'timing': {
             const { type: _type, ...streamTiming } = event;
@@ -527,7 +527,7 @@ export class AgentLoopRequester implements LoopRequester {
         rawFinishReason: finish.rawFinishReason,
         providerMessageId: finish.id,
         timing,
-        traceId: finish.traceId,
+        requestId: finish.requestId,
       };
     };
 
@@ -789,10 +789,10 @@ export class AgentLoopRequester implements LoopRequester {
 }
 
 class MutableLLMRequestTrace implements LLMRequestTrace {
-  traceId: string | undefined;
+  requestId: string | undefined;
 
-  set(traceId: string | undefined): void {
-    this.traceId = traceId;
+  set(requestId: string | undefined): void {
+    this.requestId = requestId;
   }
 }
 
@@ -903,15 +903,8 @@ function apiStatusCode(error: unknown): number | undefined {
   return undefined;
 }
 
-function apiTraceId(error: unknown): string | undefined {
-  const raw = unwrapErrorCause(error);
-  if (raw instanceof APIStatusError && raw.traceId !== null) return raw.traceId;
-  if (typeof error === 'object' && error !== null) {
-    const details = (error as Record<string, unknown>)['details'];
-    if (typeof details === 'object' && details !== null) {
-      const traceId = (details as Record<string, unknown>)['traceId'];
-      if (typeof traceId === 'string') return traceId;
-    }
-  }
-  return undefined;
+function apiRequestId(error: unknown): string | undefined {
+  const diagnostics = errorDiagnostics(error) ?? errorDiagnostics(unwrapErrorCause(error));
+  const requestId = diagnostics?.['requestId'];
+  return typeof requestId === 'string' ? requestId : undefined;
 }

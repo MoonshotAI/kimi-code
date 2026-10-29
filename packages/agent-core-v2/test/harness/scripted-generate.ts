@@ -17,6 +17,7 @@ import type {
 } from '#human/llm-requester/requester';
 import type { AssistantMessage, Message, ToolDescription as Tool } from '#human/llm/message';
 import {
+  errorDiagnostics,
   isAbortError,
   isImageFormatError,
   isRecoverableRequestStructureError,
@@ -66,7 +67,7 @@ export interface LegacyGenerateResult {
   readonly usage: TokenUsage | null;
   readonly finishReason: FinishReason | null;
   readonly rawFinishReason: string | null;
-  readonly traceId?: string | null;
+  readonly requestId?: string | null;
 }
 
 export type LegacyGenerateFn = (
@@ -150,8 +151,8 @@ export function requesterFromGenerateFn(fn: LegacyGenerateFn): LlmRequester {
       emit?.({
         type: 'llm.streaming.headers',
         headers:
-          result.traceId !== undefined && result.traceId !== null
-            ? { 'x-trace-id': result.traceId }
+          result.requestId !== undefined && result.requestId !== null
+            ? { 'x-trace-id': result.requestId }
             : {},
       });
       const streamed =
@@ -182,7 +183,7 @@ interface ScriptedResponse {
   readonly parts?: readonly StreamedMessagePart[] | undefined;
   readonly finishReason?: FinishReason | null | undefined;
   readonly rawFinishReason?: string | null | undefined;
-  readonly traceId?: string | null | undefined;
+  readonly requestId?: string | null | undefined;
   readonly error?: Error | undefined;
 }
 
@@ -199,14 +200,14 @@ export function createScriptedGenerate() {
     readonly parts?: readonly StreamedMessagePart[] | undefined;
     readonly finishReason?: FinishReason | null | undefined;
     readonly rawFinishReason?: string | null | undefined;
-    readonly traceId?: string | null | undefined;
+    readonly requestId?: string | null | undefined;
     readonly error?: Error | undefined;
   }) {
     responses.push({
       ...(input.parts !== undefined ? { parts: structuredClone(input.parts) } : {}),
       ...(input.finishReason !== undefined ? { finishReason: input.finishReason } : {}),
       ...(input.rawFinishReason !== undefined ? { rawFinishReason: input.rawFinishReason } : {}),
-      ...(input.traceId !== undefined ? { traceId: input.traceId } : {}),
+      ...(input.requestId !== undefined ? { requestId: input.requestId } : {}),
       ...(input.error !== undefined ? { error: input.error } : {}),
     });
   }
@@ -230,8 +231,8 @@ export function createScriptedGenerate() {
     emit?.({
       type: 'llm.streaming.headers',
       headers:
-        response.traceId !== undefined && response.traceId !== null
-          ? { 'x-trace-id': response.traceId }
+        response.requestId !== undefined && response.requestId !== null
+          ? { 'x-trace-id': response.requestId }
           : {},
     });
 
@@ -445,10 +446,24 @@ async function runLegacyRequester(
   let decodeEluStart: EventLoopUtilization | undefined;
   let decodeEluEnd: EventLoopUtilization | undefined;
   let headers: Record<string, string> | undefined;
+  let requestId: string | undefined;
   let usage: Parameters<typeof mergeUsagePatch>[0];
   let finish: FinishInfo | undefined;
   let messageId: string | undefined;
   let failure: { readonly error: import('#human/llm/response').LlmErrorMessage; readonly rawError?: unknown } | undefined;
+  const failed = (
+    current: { error: import('#human/llm/response').LlmErrorMessage; rawError?: unknown },
+  ): LlmOutcome => ({
+    type: 'failed',
+    ...current,
+    diagnostics:
+      errorDiagnostics(current.rawError) ??
+      request.protocol.base.diagnoseError?.({
+        error: current.error,
+        rawError: current.rawError,
+        headers,
+      }),
+  });
   const accumulator = createMessageAccumulator();
   try {
     await requester.generate(config, content, {
@@ -462,6 +477,7 @@ async function runLegacyRequester(
             return;
           case 'llm.streaming.headers':
             headers = event.headers;
+            requestId = request.protocol.base.requestId?.(event.headers);
             control.onEvent?.(event);
             return;
           case 'llm.streaming.part': {
@@ -510,18 +526,14 @@ async function runLegacyRequester(
         : classified?.kind === 'status' && isRecoverableRequestStructureError(raw)
           ? { ...classified, kind: 'request_structure' as const }
           : classified;
-    return {
-      type: 'failed',
-      error: normalized ?? toLlmErrorMessage(raw),
-      rawError: error,
-    };
+    return failed({ error: normalized ?? toLlmErrorMessage(raw), rawError: error });
   }
   if (failure !== undefined) {
-    return { type: 'failed', error: failure.error, rawError: failure.rawError };
+    return failed(failure);
   }
   const message = accumulator.finish();
   const empty = emptyResponseError(message, config.model, finish ?? NO_FINISH);
-  if (empty !== null) return { type: 'failed', error: empty };
+  if (empty !== null) return failed({ error: empty });
   const streamEndedAt = Date.now();
   if (firstChunkAt !== undefined) {
     serverDecodeMs += streamEndedAt - lastResumeAt;
@@ -532,6 +544,7 @@ async function runLegacyRequester(
     message,
     usage,
     headers,
+    requestId,
     finish,
     messageId,
     timing:
@@ -591,10 +604,13 @@ export function aRequesterFromModelEvents(requester: ModelEventRequester): LlmRe
         usedContextTokens: content.usedContextTokens,
         maxContextTokens: config.maxContextTokens,
         stream: config.stream,
-        onTraceId: (traceId) => {
+        onRequestId: (requestId) => {
           control.onEvent?.({
             type: 'llm.streaming.headers',
-            headers: traceId === null ? {} : { 'x-trace-id': traceId },
+            headers:
+              requestId === undefined
+                ? {}
+                : { 'x-request-id': requestId, 'x-trace-id': requestId },
           });
         },
       };
@@ -614,10 +630,10 @@ export function aRequesterFromModelEvents(requester: ModelEventRequester): LlmRe
                 control.onEvent?.({ type: 'llm.streaming.part', part });
               }
             }
-            if (event.traceId !== undefined) {
+            if (event.requestId !== undefined) {
               control.onEvent?.({
                 type: 'llm.streaming.headers',
-                headers: { 'x-trace-id': event.traceId },
+                headers: { 'x-request-id': event.requestId, 'x-trace-id': event.requestId },
               });
             }
             control.onEvent?.({

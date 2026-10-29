@@ -32,6 +32,7 @@ import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIStatusError,
+  errorDiagnostics,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
 import { createUserMessage, type Message } from '#human/llm/message';
@@ -94,7 +95,7 @@ interface ActiveCompaction extends FullCompactionTask {
 interface CompactionAttemptResult {
   readonly summary: string;
   readonly usage: TokenUsage | null;
-  readonly traceId?: string;
+  readonly requestId?: string;
 }
 
 class CompactionTruncatedError extends Error {
@@ -243,7 +244,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     if (active !== null) {
       this.telemetry.track2('cancel', {
         from: 'compacting',
-        trace_id: active.traceId,
+        request_id: active.requestId,
       });
     }
     active?.abortController.abort();
@@ -405,8 +406,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         tokenCount,
         originTurnId,
         quiescence,
-        get traceId() {
-          return this.trace?.traceId;
+        get requestId() {
+          return this.trace?.requestId;
         },
         blockedByTurn: false,
       },
@@ -781,7 +782,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         retry_count: retryCount,
         round: 1,
         thinking_effort: thinkingEffort,
-        trace_id: attempt.traceId,
+        request_id: attempt.requestId,
         ...usageTelemetry(attempt.usage),
       };
       this.telemetry.track2('compaction_finished', properties);
@@ -797,7 +798,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         retry_count: retryCount,
         thinking_effort: thinkingEffort,
         error_type: error instanceof Error ? error.name : 'Unknown',
-        trace_id: findAPIStatusError(error)?.traceId ?? active.traceId,
+        request_id: findRequestId(error) ?? active.requestId,
       };
       this.telemetry.track2('compaction_failed', properties);
       if (
@@ -885,6 +886,13 @@ function findAPIStatusError(error: unknown): APIStatusError | undefined {
   return undefined;
 }
 
+function findRequestId(error: unknown): string | undefined {
+  const diagnostics = errorDiagnostics(error);
+  const diagnosticRequestId = diagnostics?.['requestId'];
+  if (typeof diagnosticRequestId === 'string') return diagnosticRequestId;
+  return findAPIStatusError(error)?.requestId ?? undefined;
+}
+
 function collectSummary(finish: AgentLLMRequestFinish): CompactionAttemptResult {
   if (finish.providerFinishReason === 'truncated') {
     throw new CompactionTruncatedError();
@@ -901,7 +909,7 @@ function collectSummary(finish: AgentLLMRequestFinish): CompactionAttemptResult 
     );
   }
 
-  return { summary, usage: finish.usage, traceId: finish.traceId };
+  return { summary, usage: finish.usage, requestId: finish.requestId };
 }
 
 function historySafeToCompact(

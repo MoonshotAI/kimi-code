@@ -125,8 +125,8 @@ import {
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
-export const loopLastRequestTraceIdKey = defineState<string | undefined>(
-  'loop.lastRequestTraceId',
+export const loopLastRequestIdKey = defineState<string | undefined>(
+  'loop.lastRequestId',
   () => undefined as string | undefined,
 );
 export const loopDisposingKey = defineState<boolean>('loop.disposing', () => false);
@@ -190,7 +190,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
     this.requester = requester;
     this.states.contributeState(turnKey);
-    this.states.contributeState(loopLastRequestTraceIdKey);
+    this.states.contributeState(loopLastRequestIdKey);
     this.states.contributeState(loopDisposingKey);
     this.toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
       await this.deliverToolResult(ctx);
@@ -199,12 +199,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this._register(toDisposable(() => this.disarmTurnWatch()));
   }
 
-  private get lastRequestTraceId(): string | undefined {
-    return this.states.get(loopLastRequestTraceIdKey);
+  private get lastRequestId(): string | undefined {
+    return this.states.get(loopLastRequestIdKey);
   }
 
-  private set lastRequestTraceId(value: string | undefined) {
-    this.states.set(loopLastRequestTraceIdKey, value);
+  private set lastRequestId(value: string | undefined) {
+    this.states.set(loopLastRequestIdKey, value);
   }
 
   private get disposing(): boolean {
@@ -547,7 +547,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               activeToolCalls: turn.activeToolCalls,
               since: this.active?.startedAt,
             },
-      activeTraceId: this.activeRequestTrace?.traceId,
+      activeRequestId: this.activeRequestTrace?.requestId,
     };
   }
 
@@ -1051,7 +1051,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     turn.current = step;
     turn.interruptStep = step.number;
     this.activeRequestTrace = undefined;
-    this.telemetry.setContext({ trace_id: undefined });
+    this.telemetry.setContext({ request_id: undefined });
     EventEmitter.setMaxListeners(MAX_STEP_SIGNAL_LISTENERS, turn.controller.signal);
     try {
 
@@ -1582,7 +1582,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           });
         }
         step.contentAppended = true;
-        this.lastRequestTraceId = this.activeRequestTrace?.traceId;
+        this.lastRequestId = this.activeRequestTrace?.requestId;
         const toolCalls = event.entry.message.toolCalls;
         if (toolCalls.length === 0) {
           const finishReason = step.providerFinishReason ?? 'completed';
@@ -2155,8 +2155,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
     }
     const durationMs = Date.now() - turn.startedAt;
-    const traceId =
-      result.type === 'completed' ? this.lastRequestTraceId : this.activeRequestTrace?.traceId;
+    const requestId =
+      result.type === 'completed' ? this.lastRequestId : this.activeRequestTrace?.requestId;
     const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
     const interruptReason = result.type === 'completed' ? undefined : interruptReasonFor(result);
     void this.dispatcher.dispatch(
@@ -2168,7 +2168,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         durationMs,
         interruptReason,
         stopReason: result.type === 'completed' ? result.stopReason : undefined,
-        traceId,
+        requestId,
       }),
     );
     if (error !== undefined) {
@@ -2184,7 +2184,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         interrupt_reason: interruptReason,
         provider_type: turn.providerType,
         protocol: turn.protocol,
-        trace_id: traceId,
+        request_id: requestId,
       };
       this.telemetry.track2('turn_interrupted', interrupted);
     }
@@ -2196,13 +2196,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       error_type: error?.code,
       provider_type: turn.providerType,
       protocol: turn.protocol,
-      trace_id: traceId,
+      request_id: requestId,
       enabled_plugins: this.plugins.enabledPluginIds()?.join(','),
     };
     this.telemetry.track2('turn_ended', ended);
-    this.telemetry.setContext({ turn_id: undefined, trace_id: undefined, thinking_effort: undefined });
+    this.telemetry.setContext({ turn_id: undefined, request_id: undefined, thinking_effort: undefined });
     this.activeRequestTrace = undefined;
-    this.lastRequestTraceId = undefined;
+    this.lastRequestId = undefined;
     turn.result.resolve(result);
     this.maybeSettle();
   }

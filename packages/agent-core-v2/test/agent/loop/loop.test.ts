@@ -1408,14 +1408,14 @@ describe('turn telemetry', () => {
     }
   });
 
-  it('attaches the latest request trace id to turn_ended', async () => {
+  it('attaches the latest request request id to turn_ended', async () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
       local.get(IAgentProfileService).update({ activeToolNames: [] });
       local.mockNextProviderResponse({
         parts: [{ type: 'text', text: 'hi' }],
-        traceId: 'trace-turn-1',
+        requestId: 'trace-turn-1',
       });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
@@ -1425,7 +1425,7 @@ describe('turn telemetry', () => {
         properties: expect.objectContaining({
           turn_id: 0,
           reason: 'completed',
-          trace_id: 'trace-turn-1',
+          request_id: 'trace-turn-1',
         }),
       });
     } finally {
@@ -1433,19 +1433,19 @@ describe('turn telemetry', () => {
     }
   });
 
-  it('clears the ambient trace id when the turn ends', async () => {
+  it('clears the ambient request id when the turn ends', async () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({ telemetry: recordingTelemetry(records) });
     try {
       local.get(IAgentProfileService).update({ activeToolNames: [] });
       local.mockNextProviderResponse({
         parts: [{ type: 'text', text: 'hi' }],
-        traceId: 'trace-turn-clear',
+        requestId: 'trace-turn-clear',
       });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
 
-      expect(local.get(ITelemetryService).getContext()['trace_id']).toBeUndefined();
+      expect(local.get(ITelemetryService).getContext()['request_id']).toBeUndefined();
     } finally {
       await local.dispose();
     }
@@ -1470,15 +1470,15 @@ describe('turn telemetry', () => {
       });
       local.mockNextProviderResponse({
         parts: [{ type: 'text', text: 'first' }],
-        traceId: 'trace-step-1',
+        requestId: 'trace-step-1',
       });
 
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
 
       expect(local.llmCalls).toHaveLength(1);
-      expect(records.find((record) => record.event === 'turn_interrupted')?.properties?.['trace_id']).toBeUndefined();
-      expect(records.find((record) => record.event === 'turn_ended')?.properties?.['trace_id']).toBeUndefined();
+      expect(records.find((record) => record.event === 'turn_interrupted')?.properties?.['request_id']).toBeUndefined();
+      expect(records.find((record) => record.event === 'turn_ended')?.properties?.['request_id']).toBeUndefined();
     } finally {
       await local.dispose();
     }
@@ -1491,7 +1491,7 @@ describe('turn telemetry', () => {
       local.mockNextProviderResponse({
         parts: [{ type: 'text', text: 'blocked' }],
         finishReason: 'filtered',
-        traceId: 'trace-turn-2',
+        requestId: 'trace-turn-2',
       });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
@@ -1505,7 +1505,7 @@ describe('turn telemetry', () => {
           interrupt_reason: 'filtered',
           provider_type: 'kimi',
           protocol: 'openai',
-          trace_id: 'trace-turn-2',
+          request_id: 'trace-turn-2',
         }),
       });
       expect(records).toContainEqual({
@@ -1515,7 +1515,7 @@ describe('turn telemetry', () => {
           reason: 'failed',
           mode: 'agent',
           error_type: 'provider.filtered',
-          trace_id: 'trace-turn-2',
+          request_id: 'trace-turn-2',
         }),
       });
     } finally {
@@ -1523,7 +1523,7 @@ describe('turn telemetry', () => {
     }
   });
 
-  it('carries the last step trace id on the turn.ended event payload', async () => {
+  it('carries the last step request id on the turn.ended event payload', async () => {
     const local = createTestAgent();
     try {
       local.get(IAgentProfileService).update({ activeToolNames: [] });
@@ -1533,24 +1533,24 @@ describe('turn telemetry', () => {
       });
       local.mockNextProviderResponse({
         parts: [{ type: 'text', text: 'hi' }],
-        traceId: 'trace-payload-completed',
+        requestId: 'trace-payload-completed',
       });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
       subscription.dispose();
 
       expect(ended).toHaveLength(1);
-      expect(ended[0]!.traceId).toBe('trace-payload-completed');
+      expect(ended[0]!.requestId).toBe('trace-payload-completed');
       const record = (await local.persistedWireRecords()).find(
         (entry) => entry.type === 'turn.ended',
       );
-      expect(record).toMatchObject({ traceId: 'trace-payload-completed' });
+      expect(record).toMatchObject({ requestId: 'trace-payload-completed' });
     } finally {
       await local.dispose();
     }
   });
 
-  it('carries the in-flight trace id on the turn.ended payload when the turn fails', async () => {
+  it('carries the in-flight request id on the turn.ended payload when the turn fails', async () => {
     const local = createTestAgent();
     try {
       local.get(IAgentProfileService).update({ activeToolNames: [] });
@@ -1561,7 +1561,7 @@ describe('turn telemetry', () => {
       local.mockNextProviderResponse({
         parts: [{ type: 'text', text: 'blocked' }],
         finishReason: 'filtered',
-        traceId: 'trace-payload-failed',
+        requestId: 'trace-payload-failed',
       });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
@@ -1569,13 +1569,13 @@ describe('turn telemetry', () => {
 
       expect(ended).toHaveLength(1);
       expect(ended[0]!.reason).toBe('failed');
-      expect(ended[0]!.traceId).toBe('trace-payload-failed');
+      expect(ended[0]!.requestId).toBe('trace-payload-failed');
     } finally {
       await local.dispose();
     }
   });
 
-  it('carries the in-flight trace id on the turn.ended payload when the turn is cancelled', async () => {
+  it('clears the in-flight request id on the turn.ended payload when the turn is cancelled', async () => {
     let requestStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       requestStarted = resolve;
@@ -1612,13 +1612,13 @@ describe('turn telemetry', () => {
 
       expect(ended).toHaveLength(1);
       expect(ended[0]!.reason).toBe('cancelled');
-      expect(ended[0]!.traceId).toBe('trace-payload-cancelled');
+      expect(ended[0]!.requestId).toBeUndefined();
     } finally {
       await local.dispose();
     }
   });
 
-  it('omits the trace id on the turn.ended payload when the turn saw none', async () => {
+  it('omits the request id on the turn.ended payload when the turn saw none', async () => {
     const local = createTestAgent();
     try {
       local.get(IAgentProfileService).update({ activeToolNames: [] });
@@ -1632,17 +1632,17 @@ describe('turn telemetry', () => {
       subscription.dispose();
 
       expect(ended).toHaveLength(1);
-      expect(ended[0]!.traceId).toBeUndefined();
+      expect(ended[0]!.requestId).toBeUndefined();
       const record = (await local.persistedWireRecords()).find(
         (entry) => entry.type === 'turn.ended',
       );
-      expect(record).not.toHaveProperty('traceId');
+      expect(record).not.toHaveProperty('requestId');
     } finally {
       await local.dispose();
     }
   });
 
-  it('does not leak a compaction request trace id into the turn.ended payload', async () => {
+  it('does not leak a compaction request request id into the turn.ended payload', async () => {
     const local = createTestAgent();
     try {
       local.get(IAgentProfileService).update({ activeToolNames: [] });
@@ -1652,7 +1652,7 @@ describe('turn telemetry', () => {
       });
       local.mockNextProviderResponse({
         parts: [{ type: 'text', text: 'first' }],
-        traceId: 'trace-turn-one',
+        requestId: 'trace-turn-one',
       });
       await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
       await local.untilTurnEnd();
@@ -1660,7 +1660,7 @@ describe('turn telemetry', () => {
       local.appendExchange(2, 'old user two', 'old assistant two', 80);
       local.mockNextProviderResponse({
         parts: [{ type: 'text', text: 'Compacted summary.' }],
-        traceId: 'trace-compaction',
+        requestId: 'trace-compaction',
       });
       expect(local.get(IAgentFullCompactionService).begin({ source: 'manual' })).toBe(true);
       await local.get(IAgentFullCompactionService).compacting?.promise;
@@ -1671,8 +1671,8 @@ describe('turn telemetry', () => {
       subscription.dispose();
 
       expect(ended).toHaveLength(2);
-      expect(ended[0]!.traceId).toBe('trace-turn-one');
-      expect(ended[1]!.traceId).toBeUndefined();
+      expect(ended[0]!.requestId).toBe('trace-turn-one');
+      expect(ended[1]!.requestId).toBeUndefined();
     } finally {
       await local.dispose();
     }
@@ -2421,7 +2421,7 @@ function createTimingRequester(): LoopRequester {
       };
     },
     start(overrides, onPart, signal) {
-      return { trace: { traceId: undefined }, result: this.request(overrides, onPart, signal) };
+      return { trace: { requestId: undefined }, result: this.request(overrides, onPart, signal) };
     },
   };
   return requester;

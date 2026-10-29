@@ -246,7 +246,7 @@ export class SessionRatingHost implements IDisposable {
           mount.observe({ kind: 'turn-started', origin: event.origin });
         }),
         bus.subscribe(TurnEnded, (event) => {
-          mount.observe({ kind: 'turn-ended', traceId: event.traceId });
+          mount.observe({ kind: 'turn-ended', requestId: event.requestId });
         }),
         bus.subscribe(ToolCallStarted, (event) => {
           mount.observe({

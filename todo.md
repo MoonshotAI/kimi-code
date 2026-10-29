@@ -225,6 +225,7 @@
 | 非 `Error` provider 异常 | 已按用户决定恢复 main 行为：`unknown` 且 rawError 为非 `Error` 时映射为 `ChatProviderError(provider.api_error)`，`isRetryableGenerateError` 为 true；本地 14/14、远程 75/75，产品改动未提交。 |
 | sticky mediaPaths | 已修复：每次请求继承媒体 Recovery 时先通过 `displayPaths()` 重算当前消息路径，再以新 replacement 重建 ledger rewrite；degrade/strip 的路径提醒不再使用旧 map。 |
 | 取消时的媒体 metadata 写入 | 已按用户决定在 `documents.set` 前执行 `input.signal?.throwIfAborted()`；same-size 且已取消的 materialize 不再更新 name/key metadata，本地 41/41、远程 100/100，产品改动未提交。 |
+| recovery traceId | 已按用户决定改为 `defineProtocol` 可选 `diagnoseError`：当前 attempt 的 error 和 headers 生成诊断 record；成功响应使用通用 `requestId`，不再对外暴露通用 `traceId`，也不跨 attempt 继承。 |
 
 ### B. 已定稿接受现状，不再作为待修回归
 
@@ -247,7 +248,6 @@
 | --- | --- |
 | turn 配置冻结与 `select_tools` | 已解释 turn 开始时冻结模型上下文、请求参数和 system prompt 的原因；但“请求构造读冻结模型、工具执行读当前模型”的不一致是否修复、采用哪种口径，尚未决定。 |
 | 无凭证 Kimi 上传 | main 本地报错并尝试 inline 回退，313 发 `Bearer unused` 后可能按 401 终止；保留还是恢复本地失败/回退，尚未决定。 |
-| recovery traceId | 后续 attempt 无 headers 或 resolver 提前失败时可能沿用旧 trace；是否每次物理 attempt 都清空，尚未决定。 |
 | `video_upload.model` telemetry | main 记录模型 alias，313 记录 wire model name；按哪种维度恢复或同时保留，尚未决定。 |
 | recovery 中重新计算工具快照 | main 在一次 `start()` 内固定默认工具和动态 history，313 每个 attempt 重算；这是预期刷新还是需冻结，尚未决定。 |
 
@@ -259,4 +259,5 @@
 
 - 缓存诊断简化为当前未提交工作副本改动；typecheck、build、comment-free 通过，聚焦 oxlint 为 0 errors；远程 usage 18/18、compaction 115/115、fork 首请求链路 23/23、compaction 后 fork 诊断 1/1，未据此宣称全量测试通过。
 - sticky mediaPaths 修复为当前未提交工作副本改动；本地 requester 61/61、远程相关 3 文件 91/91，typecheck、build、comment-free 通过，聚焦 oxlint 为 0 errors；未运行全量。
+- `diagnoseError` 改为当前未提交工作副本改动；本地相关测试 658/658；远程 Loop + kap-server 评分复跑 87/90，剩余 3 个为既有 Loop 事件顺序快照差异；agent-core、klient、product typecheck 和 agent-core build、comment-free 通过；kap-server typecheck 仅剩既有 `getRequester` 错误；未运行全量。
 - `lint:imports` 仍只有 main 基线已有的 `human/agent/origin.ts` 违规；此前 Handoff 中的全量失败集合需要在该任务要求全量验证时重新确认。

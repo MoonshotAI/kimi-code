@@ -1210,8 +1210,8 @@ describe('AgentLoopRequester combined recovery projections', () => {
   });
 });
 
-describe('AgentLoopRequester trace id', () => {
-  function createTracedRequester(traceId: string | null): ModelEventRequester {
+describe('AgentLoopRequester request id', () => {
+  function createTracedRequester(requestId: string | null): ModelEventRequester {
     const model: Model = {
       id: 'm',
       name: 'wire-model',
@@ -1227,28 +1227,28 @@ describe('AgentLoopRequester trace id', () => {
     return {
       model,
       request: async function* (_input, _signal, requestOptions) {
-        requestOptions?.onTraceId?.(traceId);
+        requestOptions?.onRequestId?.(requestId ?? undefined);
         yield {
           type: 'finish',
           message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
           providerFinishReason: 'completed',
           rawFinishReason: 'stop',
           id: 'resp-1',
-          traceId: traceId ?? undefined,
+          requestId: requestId ?? undefined,
         };
       },
     };
   }
 
-  it('exposes the request trace and returns it on finish', async () => {
+  it('exposes the request id and returns it on finish', async () => {
     const requester = createTracedRequester('trace-req-1');
     const headersArrived = createControlledPromise<void>();
     const releaseStream = createControlledPromise<void>();
     Object.defineProperty(requester, 'request', {
       value: async function* (_input: unknown, _signal: unknown, requestOptions: {
-        onTraceId?: (traceId: string | null) => void;
+        onRequestId?: (requestId: string | null) => void;
       }) {
-        requestOptions.onTraceId?.('trace-req-1');
+        requestOptions.onRequestId?.('trace-req-1');
         headersArrived.resolve();
         await releaseStream;
         yield {
@@ -1257,19 +1257,19 @@ describe('AgentLoopRequester trace id', () => {
           providerFinishReason: 'completed',
           rawFinishReason: 'stop',
           id: 'resp-1',
-          traceId: 'trace-req-1',
+          requestId: 'trace-req-1',
         } satisfies ModelRequestEvent;
       },
     });
     const { service } = createService(requester);
     const request = service.start({ source: { type: 'turn', turnId: 1, step: 1 } });
     await headersArrived;
-    expect(request.trace.traceId).toBe('trace-req-1');
+    expect(request.trace.requestId).toBe('trace-req-1');
     releaseStream.resolve();
     const finish = await request.result;
 
-    expect(finish.traceId).toBe('trace-req-1');
-    expect(request.trace.traceId).toBe('trace-req-1');
+    expect(finish.requestId).toBe('trace-req-1');
+    expect(request.trace.requestId).toBe('trace-req-1');
   });
 
   it('reports an absent trace before a request that returns none', async () => {
@@ -1277,17 +1277,17 @@ describe('AgentLoopRequester trace id', () => {
     const request = service.start();
     const finish = await request.result;
 
-    expect(finish.traceId).toBeUndefined();
-    expect(request.trace.traceId).toBeUndefined();
+    expect(finish.requestId).toBeUndefined();
+    expect(request.trace.requestId).toBeUndefined();
   });
 
-  it('attaches trace_id, turn_id and step_no to api_error from the failed request', async () => {
+  it('attaches request_id, turn_id and step_no to api_error from the failed request', async () => {
     const requester = createTracedRequester(null);
     Object.defineProperty(requester, 'request', {
       value: async function* () {
         const events: ModelRequestEvent[] = [];
         for (const event of events) yield event;
-        throw new APIStatusError(500, 'boom', 'req-1', null, 'trace-fail-1');
+        throw new APIStatusError(500, 'boom', 'req-1', null, { requestId: 'trace-fail-1' });
       },
     });
     const { service, telemetryRecords } = createService(requester);
@@ -1298,25 +1298,27 @@ describe('AgentLoopRequester trace id', () => {
       event: 'api_error',
       properties: expect.objectContaining({
         error_type: '5xx_server',
-        trace_id: 'trace-fail-1',
+        request_id: 'trace-fail-1',
         turn_id: 3,
         step_no: 2,
       }),
     });
-    expect(request.trace.traceId).toBe('trace-fail-1');
+    expect(request.trace.requestId).toBeUndefined();
   });
 
-  it('keeps the header-captured trace when the request fails after headers arrived', async () => {
+  it('uses protocol diagnostics instead of retaining the header request id on failure', async () => {
     const requester = createTracedRequester(null);
     Object.defineProperty(requester, 'request', {
       value: async function* (...args: unknown[]) {
         const requestOptions = args[2] as
-          | { onTraceId?: (traceId: string | null) => void }
+          | { onRequestId?: (requestId: string | null) => void }
           | undefined;
-        requestOptions?.onTraceId?.('trace-mid-stream');
+        requestOptions?.onRequestId?.('trace-mid-stream');
         const events: ModelRequestEvent[] = [];
         for (const event of events) yield event;
-        throw new APIEmptyResponseError('no content, no tool calls');
+        throw new APIEmptyResponseError('no content, no tool calls', {
+          diagnostics: { requestId: 'trace-mid-stream' },
+        });
       },
     });
     const { service, telemetryRecords } = createService(requester);
@@ -1324,11 +1326,11 @@ describe('AgentLoopRequester trace id', () => {
     await expect(request.result).rejects.toThrow();
 
     const apiError = telemetryRecords.find((record) => record.event === 'api_error');
-    expect(apiError?.properties?.['trace_id']).toBe('trace-mid-stream');
-    expect(request.trace.traceId).toBe('trace-mid-stream');
+    expect(apiError?.properties?.['request_id']).toBe('trace-mid-stream');
+    expect(request.trace.requestId).toBeUndefined();
   });
 
-  it('clears the previous physical request trace before a projection retry', async () => {
+  it('clears the previous physical request id before a projection retry', async () => {
     const requester = createTracedRequester(null);
     let attempts = 0;
     Object.defineProperty(requester, 'request', {
@@ -1337,10 +1339,10 @@ describe('AgentLoopRequester trace id', () => {
         for (const event of events) yield event;
         attempts += 1;
         const requestOptions = args[2] as
-          | { onTraceId?: (traceId: string | null) => void }
+          | { onRequestId?: (requestId: string | null) => void }
           | undefined;
         if (attempts === 1) {
-          requestOptions?.onTraceId?.('trace-first-projection');
+          requestOptions?.onRequestId?.('trace-first-projection');
           throw new APIRequestTooLargeError(413, 'retry with degraded media');
         }
         throw new APIConnectionError('socket hang up');
@@ -1351,57 +1353,59 @@ describe('AgentLoopRequester trace id', () => {
     await expect(request.result).rejects.toThrow('socket hang up');
 
     expect(attempts).toBe(2);
-    expect(request.trace.traceId).toBeUndefined();
+    expect(request.trace.requestId).toBeUndefined();
     expect(
-      telemetryRecords.find((record) => record.event === 'api_error')?.properties?.['trace_id'],
+      telemetryRecords.find((record) => record.event === 'api_error')?.properties?.['request_id'],
     ).toBeUndefined();
   });
 
-  it('mirrors the request trace into the ambient telemetry context', async () => {
+  it('mirrors the request id into the ambient telemetry context', async () => {
     const { service, telemetry } = createService(
       createTracedRequester('trace-ambient-1'),
     );
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
 
-    expect(telemetry.getContext()['trace_id']).toBe('trace-ambient-1');
+    expect(telemetry.getContext()['request_id']).toBe('trace-ambient-1');
   });
 
-  it('clears the ambient trace when the next turn request starts without one', async () => {
-    let nextTrace: string | null = 'trace-ambient-2';
+  it('clears the ambient request id when the next turn request starts without one', async () => {
+    let nextRequestId: string | undefined = 'trace-ambient-2';
     const requester = createTracedRequester(null);
     Object.defineProperty(requester, 'request', {
       value: async function* (_input: unknown, _signal: unknown, requestOptions: {
-        onTraceId?: (traceId: string | null) => void;
+        onRequestId?: (requestId: string | undefined) => void;
       }) {
-        requestOptions?.onTraceId?.(nextTrace);
+        requestOptions?.onRequestId?.(nextRequestId);
         yield {
           type: 'finish',
           message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
           providerFinishReason: 'completed',
           rawFinishReason: 'stop',
           id: 'resp-1',
-          traceId: nextTrace ?? undefined,
+          requestId: nextRequestId,
         } satisfies ModelRequestEvent;
       },
     });
     const { service, telemetry } = createService(requester);
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
-    expect(telemetry.getContext()['trace_id']).toBe('trace-ambient-2');
+    expect(telemetry.getContext()['request_id']).toBe('trace-ambient-2');
 
-    nextTrace = null;
+    nextRequestId = undefined;
     await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
-    expect(telemetry.getContext()['trace_id']).toBeUndefined();
+    expect(telemetry.getContext()['request_id']).toBeUndefined();
   });
 
-  it('mirrors the failing request trace into the ambient telemetry context', async () => {
+  it('clears the ambient request id after a failed request', async () => {
     const requester = createTracedRequester(null);
     Object.defineProperty(requester, 'request', {
       value: async function* () {
         const events: ModelRequestEvent[] = [];
         for (const event of events) yield event;
-        throw new APIStatusError(500, 'boom', 'req-1', null, 'trace-fail-ambient');
+        throw new APIStatusError(500, 'boom', 'req-1', null, {
+          requestId: 'trace-fail-ambient',
+        });
       },
     });
     const { service, telemetry } = createService(requester);
@@ -1410,18 +1414,18 @@ describe('AgentLoopRequester trace id', () => {
       service.request({ source: { type: 'turn', turnId: 1, step: 1 } }),
     ).rejects.toMatchObject({ statusCode: 500 });
 
-    expect(telemetry.getContext()['trace_id']).toBe('trace-fail-ambient');
+    expect(telemetry.getContext()['request_id']).toBeUndefined();
   });
 
-  it('keeps the ambient trace untouched for operation requests', async () => {
+  it('keeps the ambient request id untouched for operation requests', async () => {
     const { service, telemetry } = createService(
       createTracedRequester('trace-operation-1'),
     );
-    telemetry.setContext({ trace_id: 'trace-turn-1' });
+    telemetry.setContext({ request_id: 'trace-turn-1' });
 
     await service.request({ source: { type: 'operation', requestKind: 'full_compaction' } });
 
-    expect(telemetry.getContext()['trace_id']).toBe('trace-turn-1');
+    expect(telemetry.getContext()['request_id']).toBe('trace-turn-1');
   });
 });
 

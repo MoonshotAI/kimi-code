@@ -115,10 +115,17 @@ export async function runLlmRequest(
   try {
     outcome = await runAttempts(request, control, settle);
   } catch (error) {
-    outcome =
-      control.signal.aborted || isAbortError(error)
-        ? { type: 'aborted', message: null, usage: undefined }
-        : { type: 'failed', error: toLlmErrorMessage(error), rawError: error };
+    if (control.signal.aborted || isAbortError(error)) {
+      outcome = { type: 'aborted', message: null, usage: undefined };
+    } else {
+      const llmError = toLlmErrorMessage(error);
+      outcome = {
+        type: 'failed',
+        error: llmError,
+        rawError: error,
+        diagnostics: request.protocol.base.diagnoseError?.({ error: llmError, rawError: error }),
+      };
+    }
   }
   control.onEvent?.({ type: 'llm.ended', outcome });
   return outcome;

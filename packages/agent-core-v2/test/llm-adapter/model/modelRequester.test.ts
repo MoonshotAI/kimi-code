@@ -236,7 +236,7 @@ describe('generateModel request execution', () => {
     requester.handler = (_i, emit) =>
       emitAll(emit, [
         { type: 'llm.sent' },
-        { type: 'llm.streaming.headers', headers: { 'x-trace-id': 'trace-1' } },
+        { type: 'llm.streaming.headers', headers: { 'x-request-id': 'trace-1' } },
         { type: 'llm.streaming.part', part: { type: 'text', text: 'he' } },
         { type: 'llm.streaming.part', part: { type: 'text', text: 'llo' } },
         {
@@ -250,13 +250,13 @@ describe('generateModel request execution', () => {
         { type: 'llm.streaming.message_id', messageId: 'msg-42' },
         { type: 'llm.done' },
       ]);
-    const traceIds: Array<string | null> = [];
+    const requestIds: Array<string | undefined> = [];
     const impl = modelEventRequester(
       modelWith(createStaticCredentialProvider()),
       requester,
     );
     const events = await collect(
-      impl.request(INPUT, undefined, { onTraceId: (id) => traceIds.push(id) }),
+      impl.request(INPUT, undefined, { onRequestId: (id) => requestIds.push(id) }),
     );
 
     expect(events.map((e) => e.type)).toEqual([
@@ -273,7 +273,7 @@ describe('generateModel request execution', () => {
     const finish = events.find((e) => e.type === 'finish');
     expect(finish).toMatchObject({
       id: 'msg-42',
-      traceId: 'trace-1',
+      requestId: 'trace-1',
       providerFinishReason: 'tool_calls',
       rawFinishReason: 'tool_calls',
       message: {
@@ -287,7 +287,7 @@ describe('generateModel request execution', () => {
       firstTokenLatencyMs: expect.any(Number),
       streamDurationMs: expect.any(Number),
     });
-    expect(traceIds).toEqual(['trace-1']);
+    expect(requestIds).toEqual(['trace-1']);
   });
 
   it('surfaces a 401 as provider.auth_error without replaying', async () => {
@@ -351,15 +351,16 @@ describe('generateModel request execution', () => {
           message: 'boom',
           requestId: null,
           retryAfterMs: null,
-          headers: null,
+          headers: { 'x-trace-id': 'trace-error-1' },
         },
       });
     const impl = modelEventRequester(
-      modelWith(createStaticCredentialProvider()),
+      { ...modelWith(createStaticCredentialProvider()), providerType: 'kimi' },
       requester,
     );
     const failure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
     expect((failure as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
+    expect((failure as ChatProviderError).diagnostics).toEqual({ requestId: 'trace-error-1' });
 
     requester.handler = () => Promise.reject('boom');
     const nonErrorFailure = await collect(impl.request(INPUT)).catch((error: unknown) => error);

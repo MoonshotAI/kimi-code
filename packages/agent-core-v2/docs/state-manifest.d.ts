@@ -73,7 +73,7 @@
 //     llmRequester.mediaRecovery                      src/agent/loop/requester.ts
 //     llmRequester.turnConfigs                        src/agent/loop/requester.ts
 //     loop.disposing                                  src/agent/loop/loopService.ts
-//     loop.lastRequestTraceId                         src/agent/loop/loopService.ts
+//     loop.lastRequestId                              src/agent/loop/loopService.ts
 //     mcp.discovery                                   src/agent/mcp/mcpDiscoveryOps.ts
 //     mcp.discoveryWritesReady                        src/agent/mcp/mcpService.ts
 //     mcp.failures                                    src/agent/mcp/mcpFailureOps.ts
@@ -1638,7 +1638,7 @@ export interface AgentStateSnapshot {
   };
   // src/agent/loop/loopService.ts
   'loop.disposing': boolean;
-  'loop.lastRequestTraceId': string | undefined;
+  'loop.lastRequestId': string | undefined;
   // src/agent/loop/projector.ts
   'contextProjector.lastRepairSignature': string | null;
   // src/agent/loop/requester.ts
@@ -1686,7 +1686,7 @@ export interface AgentStateSnapshot {
       readonly usedContextTokens?: number;
       readonly maxContextTokens?: number;
       readonly stream?: boolean;
-      readonly onTraceId?: (traceId: string | null) => void;
+      readonly onRequestId?: (requestId: string | undefined) => void;
     };
     readonly systemPrompt: string;
   }>;

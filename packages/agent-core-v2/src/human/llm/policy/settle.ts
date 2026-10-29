@@ -230,6 +230,21 @@ export async function settleLlmRequest(
     timing: attemptClock.timing(),
   });
 
+  const failed = (
+    failure: { error: LlmErrorMessage; rawError?: unknown },
+    message: AssistantMessage,
+  ): LlmOutcome => ({
+    type: 'failed',
+    ...failure,
+    message,
+    ...extras(),
+    diagnostics: request.protocol.base.diagnoseError?.({
+      error: failure.error,
+      rawError: failure.rawError,
+      headers,
+    }),
+  });
+
   const aborted = (): LlmOutcome => ({
     type: 'aborted',
     message: usableOutputOf(finishMessage()),
@@ -247,28 +262,22 @@ export async function settleLlmRequest(
       return aborted();
     }
     if (failure !== undefined && failure.error.kind !== 'abort') {
-      return { type: 'failed', ...failure, message: finishMessage(), ...extras() };
+      return failed(failure, finishMessage());
     }
-    return {
-      type: 'failed',
-      error: toLlmErrorMessage(error),
-      rawError: error,
-      message: finishMessage(),
-      ...extras(),
-    };
+    return failed({ error: toLlmErrorMessage(error), rawError: error }, finishMessage());
   }
 
   if (signal.aborted || failure?.error.kind === 'abort') {
     return aborted();
   }
   if (failure !== undefined) {
-    return { type: 'failed', ...failure, message: finishMessage(), ...extras() };
+    return failed(failure, finishMessage());
   }
 
   const message = finishMessage();
   const empty = emptyResponseError(message, request.model.spec, finish ?? NO_FINISH);
   if (empty !== null) {
-    return { type: 'failed', error: empty, message, ...extras() };
+    return failed({ error: empty }, message);
   }
   return { type: 'done', message, ...extras() };
 }

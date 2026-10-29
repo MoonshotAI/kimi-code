@@ -36,7 +36,7 @@ export interface AgentLLMRequestFinish {
   rawFinishReason?: string;
   providerMessageId?: string;
   timing?: ModelRequestTiming;
-  traceId?: string;
+  requestId?: string;
 }
 
 export type AgentLLMRequestPartHandler = (part: StreamedMessagePart) => void | Promise<void>;

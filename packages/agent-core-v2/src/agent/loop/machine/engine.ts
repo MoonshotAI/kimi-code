@@ -70,7 +70,7 @@ export type MachineEngineEvent =
       readonly messageId?: string;
       readonly model?: string;
       readonly timing?: ModelRequestTiming;
-      readonly traceId?: string;
+      readonly requestId?: string;
     }
   | { readonly type: 'stepFailed'; readonly step: number; readonly error: LlmErrorMessage; readonly rawError?: unknown }
   | { readonly type: 'delta'; readonly delta: MachineEngineDelta }
@@ -437,7 +437,7 @@ export function attachMachineEngine(
         messageId: finish?.providerMessageId ?? meta?.messageId,
         model: finish?.model ?? meta?.model?.model,
         timing: finish?.timing,
-        traceId: finish?.traceId,
+        requestId: finish?.requestId,
       });
     }),
     ref.on('llm.failed.syntax', (event) => {

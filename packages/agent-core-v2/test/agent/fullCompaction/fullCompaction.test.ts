@@ -671,7 +671,7 @@ describe('FullCompaction', () => {
         source: 'manual',
         tokens_before: expect.any(Number),
         retry_count: 1,
-        trace_id: 'trace-compact-1',
+        request_id: 'trace-compact-1',
       }),
     });
     await ctx.expectResumeMatches();
@@ -1083,7 +1083,7 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('cancels retry backoff with the failed compaction request trace', async () => {
+  it('cancels retry backoff without retaining the failed compaction request id', async () => {
     vi.useFakeTimers();
     const records: TelemetryRecord[] = [];
     const firstAttemptFailed = deferred<void>();
@@ -1093,7 +1093,9 @@ describe('FullCompaction', () => {
       if (attempts === 1) {
         firstAttemptFailed.resolve();
       }
-      throw new APIStatusError(429, 'rate limited', null, null, 'trace-compact-retry');
+      throw new APIStatusError(429, 'rate limited', null, null, {
+        requestId: 'trace-compact-retry',
+      });
     });
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
@@ -1107,10 +1109,7 @@ describe('FullCompaction', () => {
     await ctx.rpc.beginCompaction({});
     await firstAttemptFailed.promise;
     const fullCompaction = ctx.get(IAgentFullCompactionService);
-    for (let i = 0; i < 100 && fullCompaction.compacting?.traceId === undefined; i += 1) {
-      await Promise.resolve();
-    }
-    expect(fullCompaction.compacting?.traceId).toBe('trace-compact-retry');
+    expect(fullCompaction.compacting?.requestId).toBeUndefined();
 
     void ctx.rpc.cancelCompaction({});
     await cancelled;
@@ -1122,7 +1121,6 @@ describe('FullCompaction', () => {
       properties: {
         agent_id: 'main',
         from: 'compacting',
-        trace_id: 'trace-compact-retry',
         mode: 'agent',
         model: 'kimi-code',
         protocol: 'openai',
@@ -1183,10 +1181,12 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('attaches the failed request trace id to compaction_failed', async () => {
+  it('attaches the failed request id to compaction_failed', async () => {
     const records: TelemetryRecord[] = [];
     const generate: GenerateFn = requesterFromGenerateFn(async () => {
-      throw new APIStatusError(400, 'Bad request', null, null, 'trace-compact-fail');
+      throw new APIStatusError(400, 'Bad request', null, null, {
+        requestId: 'trace-compact-fail',
+      });
     });
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
@@ -1205,13 +1205,13 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         source: 'manual',
         error_type: 'APIStatusError',
-        trace_id: 'trace-compact-fail',
+        request_id: 'trace-compact-fail',
       }),
     });
     await ctx.expectResumeMatches();
   });
 
-  it('attributes compaction_failed to the in-flight request trace on a mid-stream failure', async () => {
+  it('attributes compaction_failed to the in-flight request id on a mid-stream failure', async () => {
     const records: TelemetryRecord[] = [];
     const generate = realKosongGenerate(() => {
       const base = mockStreamedMessage([], 'trace-mid-stream');
@@ -1230,22 +1230,22 @@ describe('FullCompaction', () => {
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
-    ctx.get(ITelemetryService).setContext({ trace_id: 'trace-turn-1' });
+    ctx.get(ITelemetryService).setContext({ request_id: 'trace-turn-1' });
     const failed = ctx.once('error');
 
     await ctx.rpc.beginCompaction({});
     await failed;
 
     const apiError = records.find((record) => record.event === 'api_error');
-    expect(apiError?.properties?.['trace_id']).toBe('trace-mid-stream');
+    expect(apiError?.properties?.['request_id']).toBe('trace-mid-stream');
     expect(records).toContainEqual({
       event: 'compaction_failed',
       properties: expect.objectContaining({
         source: 'manual',
-        trace_id: 'trace-mid-stream',
+        request_id: 'trace-mid-stream',
       }),
     });
-    expect(ctx.get(ITelemetryService).getContext().trace_id).toBe('trace-turn-1');
+    expect(ctx.get(ITelemetryService).getContext().request_id).toBe('trace-turn-1');
     await ctx.expectResumeMatches();
   });
 
@@ -3767,7 +3767,7 @@ type MutableKimiConfig = {
   };
 };
 
-function textResult(text: string, traceId: string | null = null): LegacyGenerateResult {
+function textResult(text: string, requestId: string | null = null): LegacyGenerateResult {
   return {
     id: 'mock-compaction-oauth-retry',
     message: {
@@ -3783,7 +3783,7 @@ function textResult(text: string, traceId: string | null = null): LegacyGenerate
     },
     finishReason: 'completed',
     rawFinishReason: 'stop',
-    traceId,
+    requestId,
   };
 }
 
@@ -3792,13 +3792,13 @@ interface ScriptedStream {
   readonly usage: TokenUsage | null;
   readonly finishReason: FinishReason | null;
   readonly rawFinishReason: string | null;
-  readonly traceId: string | null;
+  readonly requestId: string | null;
   [Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart>;
 }
 
 function mockStreamedMessage(
   parts: readonly StreamedMessagePart[],
-  traceId: string | null = null,
+  requestId: string | null = null,
   opts?: { finishReason?: FinishReason | null; rawFinishReason?: string | null },
 ): ScriptedStream {
   return {
@@ -3806,7 +3806,7 @@ function mockStreamedMessage(
     usage: null,
     finishReason: opts?.finishReason ?? null,
     rawFinishReason: opts?.rawFinishReason ?? null,
-    traceId,
+    requestId,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;
@@ -3827,7 +3827,7 @@ function realKosongGenerate(
       emit?.({ type: 'llm.sent' });
       emit?.({
         type: 'llm.streaming.headers',
-        headers: streamed.traceId === null ? {} : { 'x-trace-id': streamed.traceId },
+        headers: streamed.requestId === null ? {} : { 'x-trace-id': streamed.requestId },
       });
       for await (const part of streamed) {
         emit?.({ type: 'llm.streaming.part', part });

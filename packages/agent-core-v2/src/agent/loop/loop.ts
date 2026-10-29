@@ -41,7 +41,7 @@ export interface LoopSnapshot {
   readonly paused: boolean;
   readonly hasPendingRequests: boolean;
   readonly turn?: AgentActivityTurnSnapshot;
-  readonly activeTraceId?: string;
+  readonly activeRequestId?: string;
 }
 
 export type LoopErrorCode = (typeof LoopErrors.codes)[keyof typeof LoopErrors.codes];
