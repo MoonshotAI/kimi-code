@@ -1,4 +1,5 @@
 import { accessSync, constants as fsConstants, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
 import {
@@ -49,7 +50,7 @@ export class FileMentionProvider implements AutocompleteProvider {
     private readonly getInputMode: () => 'prompt' | 'bash' = () => 'prompt',
     private readonly skillCommandNames?: ReadonlySet<string>,
   ) {
-    this.additionalDirs = additionalDirs.map((dir) => normalizePath(resolve(workDir, dir)));
+    this.additionalDirs = additionalDirs.map((dir) => resolveMentionDirectory(workDir, dir));
     // Build an expanded list that includes alias entries so that
     // inner's argument completion can find commands by alias too.
     const expanded: SlashAutocompleteCommand[] = [];
@@ -480,11 +481,14 @@ function collectFsMentionCandidates(
       isAdditionalDir: true,
     })),
   ];
+  const perRootScanBudget = Math.max(1, Math.floor(MAX_FALLBACK_SCAN / roots.length));
+  let totalScanned = 0;
+
   for (const { root, isAdditionalDir } of roots) {
     const stack = [''];
-    let scanned = 0;
+    let rootScanned = 0;
 
-    while (stack.length > 0 && scanned < MAX_FALLBACK_SCAN) {
+    while (stack.length > 0 && totalScanned < MAX_FALLBACK_SCAN && rootScanned < perRootScanBudget) {
       if (signal.aborted) break;
       const relativeDir = stack.pop() ?? '';
       const absoluteDir = relativeDir.length === 0 ? root : join(root, relativeDir);
@@ -496,7 +500,9 @@ function collectFsMentionCandidates(
       }
 
       for (const entry of entries) {
-        if (signal.aborted || scanned >= MAX_FALLBACK_SCAN) break;
+        if (signal.aborted || totalScanned >= MAX_FALLBACK_SCAN || rootScanned >= perRootScanBudget) {
+          break;
+        }
         if (entry.name === '.git') continue;
 
         const relativePath = normalizePath(
@@ -513,7 +519,8 @@ function collectFsMentionCandidates(
           }
         }
 
-        scanned += 1;
+        rootScanned += 1;
+        totalScanned += 1;
         if (!candidatesByAbsolutePath.has(absolutePath)) {
           candidatesByAbsolutePath.set(absolutePath, {
             path: isAdditionalDir ? absolutePath : relativePath,
@@ -585,6 +592,12 @@ function toMentionItem(candidate: FsMentionCandidate, isQuotedPrefix: boolean): 
 
 function normalizePath(path: string): string {
   return path.replaceAll('\\', '/');
+}
+
+export function resolveMentionDirectory(workDir: string, dir: string): string {
+  if (dir === '~') return normalizePath(homedir());
+  if (dir.startsWith('~/')) return normalizePath(join(homedir(), dir.slice(2)));
+  return normalizePath(resolve(workDir, dir));
 }
 
 async function getSlashArgumentSuggestions(

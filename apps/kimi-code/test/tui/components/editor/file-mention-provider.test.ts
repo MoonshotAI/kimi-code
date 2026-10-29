@@ -310,7 +310,7 @@ describe('FileMentionProvider', () => {
     );
   });
 
-  it('scans additionalDirs with an independent fallback budget', async () => {
+  it('scans additionalDirs within a shared bounded fallback budget', async () => {
     for (let i = 0; i < 2000; i++) {
       writeFileSync(join(workDir, `filler-${i}.ts`), 'export {};');
     }
