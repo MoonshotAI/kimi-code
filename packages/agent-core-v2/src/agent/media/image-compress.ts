@@ -581,7 +581,24 @@ export function buildImageCompressionCaption(input: ImageCompressionCaptionInput
   return `<system>${sentences.join(' ')}</system>`;
 }
 
-export { extractImageCompressionCaptions } from '#human/media/imageCaption';
+const CAPTION_OPENING = '<system>Image compressed to fit model limits:';
+
+const CAPTION_PATTERN = /<system>(Image compressed to fit model limits:[\s\S]*?)<\/system>/g;
+
+export interface ImageCompressionCaptionExtraction {
+  readonly captions: readonly string[];
+  readonly text: string;
+}
+
+export function extractImageCompressionCaptions(text: string): ImageCompressionCaptionExtraction {
+  if (!text.includes(CAPTION_OPENING)) return { captions: [], text };
+  const captions: string[] = [];
+  const remainder = text.replace(CAPTION_PATTERN, (_match, body: string) => {
+    captions.push(body);
+    return '';
+  });
+  return { captions, text: remainder };
+}
 
 function describeImageVariant(variant: ImageVariantDescription): string {
   const size = `${variant.mimeType} (${formatByteSize(variant.byteLength)})`;

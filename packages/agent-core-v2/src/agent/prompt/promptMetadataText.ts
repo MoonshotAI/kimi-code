@@ -1,5 +1,6 @@
-import { promptDisplayTextFromContentParts } from '#human/agent/origin';
 import type { ContentPart } from '#human/llm/message';
+import { matchSingleMediaPathTag } from '#/agent/media/mediaRef';
+import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_LAST_PROMPT_LENGTH = 4000;
@@ -23,6 +24,15 @@ export function promptMetadataTextFromContentParts(
   return promptMetadataTextFromText(promptDisplayTextFromContentParts(parts));
 }
 
+export function promptDisplayTextFromContentParts(parts: readonly ContentPart[]): string {
+  const texts: string[] = [];
+  for (const part of parts) {
+    const text = promptPartText(part);
+    if (text !== undefined) texts.push(text);
+  }
+  return texts.join('\n');
+}
+
 export function promptMetadataTextFromText(text: string): string | undefined {
   const sanitized = text
     .replaceAll(
@@ -42,4 +52,22 @@ export function promptMetadataTextFromText(text: string): string | undefined {
 
   if (sanitized.length === 0) return undefined;
   return sanitized.slice(0, MAX_LAST_PROMPT_LENGTH);
+}
+
+function promptPartText(part: ContentPart): string | undefined {
+  switch (part.type) {
+    case 'text': {
+      if (matchSingleMediaPathTag(part.text) !== undefined) return undefined;
+      const { text } = extractImageCompressionCaptions(part.text);
+      return text.trim().length === 0 ? undefined : text;
+    }
+    case 'image_url':
+      return '[image]';
+    case 'audio_url':
+      return '[audio]';
+    case 'video_url':
+      return '[video]';
+    case 'think':
+      return undefined;
+  }
 }

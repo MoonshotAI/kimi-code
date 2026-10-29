@@ -64,11 +64,9 @@ function environmentLayerViolation(absFile, targetAbs, specifier) {
 }
 
 const HUMAN_VOCABULARY = new Set([
-  'agent/historyEntry',
   'agent/origin',
   'message',
   'llm/message',
-  'llm/errorStatus',
   'llm-requester/errors',
   'llm-requester/usage',
   'llm-requester/capability',
@@ -77,8 +75,6 @@ const HUMAN_VOCABULARY = new Set([
   'llm-requester/response-format',
   'llm-requester/requester',
   'media/upload',
-  'media/imageCaption',
-  'media/pathTag',
   'llm/protocol/kit/media',
   'llm/builtin/provider/kimi/protocol',
   'interaction/interaction',

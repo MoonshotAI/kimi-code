@@ -86,7 +86,7 @@ import {
 } from './loop';
 import { mergeSteerMessages, stripBundledSkillBlocks } from '#human/agent/origin';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
-import { createUserEntry, type UserEntry } from '#human/agent/historyEntry';
+import { createUserEntry, type UserEntry } from '#human/agent/turn';
 import {
   AssistantDelta,
   isDisplayablePromptOrigin,
