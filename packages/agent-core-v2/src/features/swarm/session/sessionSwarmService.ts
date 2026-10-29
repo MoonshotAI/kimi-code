@@ -4,6 +4,7 @@ import { Error2, ErrorCodes } from '#/errors';
 import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { Event2 } from '#/app/event/event2';
@@ -43,6 +44,7 @@ import {
   type AgentRunBatchLauncher,
   type AgentRunAttemptHandle,
 } from './agentRunBatch';
+import { SwarmMemberTasks } from './swarmMemberTask';
 
 export interface SubagentSuspendedPayload {
   readonly subagentId: string;
@@ -93,6 +95,11 @@ export class SessionSwarmService implements ISessionSwarmService {
       if (task.signal !== undefined) unlinks.push(linkAbortSignal(task.signal, controller));
       return { ...task, signal: controller.signal };
     });
+    const members = new SwarmMemberTasks(
+      this.agentLifecycle.handleOf(callerAgentId)?.accessor.get(IAgentTaskService),
+      linkedTasks,
+      (reason) => controller.abort(reason),
+    );
     const terminalized = new Set<string>();
     const terminalize: TerminalizeSubagent = (agentId, event) => {
       if (terminalized.has(agentId)) return;
@@ -111,6 +118,7 @@ export class SessionSwarmService implements ISessionSwarmService {
             reason: event.reason,
           }),
         );
+        members.suspended(event.task, event.reason);
       },
       abandoned: (event) => {
         terminalize(
@@ -125,7 +133,17 @@ export class SessionSwarmService implements ISessionSwarmService {
       },
     };
     const maxConcurrency = resolveSwarmMaxConcurrency();
-    const promise = new AgentRunBatch(launcher, linkedTasks, { maxConcurrency }).run();
+    const promise = new AgentRunBatch(launcher, linkedTasks, {
+      maxConcurrency,
+      onStarted: (task, agentId) => members.started(task, agentId),
+      onSettled: (result) => members.settled(result),
+    }).run();
+    void promise.then(
+      (results) => {
+        for (const result of results) members.settled(result);
+      },
+      (error: unknown) => members.failAll(error),
+    );
     void promise
       .finally(() => {
         for (const unlink of unlinks) unlink();

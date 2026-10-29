@@ -41,6 +41,9 @@ import {
 } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import { IAgentTaskService, type RegisterAgentTaskOptions } from '#/agent/task/task';
+import type { AgentTask, AgentTaskSettlement } from '#/agent/task/types';
+import type { SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
 import {
   AgentRunBatch,
   resolveSwarmMaxConcurrency,
@@ -1461,6 +1464,95 @@ describe('SessionSwarmService metadata compatibility', () => {
       expect(published.filter((event) => event.type === 'subagent.suspended')).toHaveLength(1);
       expect(published.some((event) => event.type === 'subagent.cancelled')).toBe(false);
       expect(published.some((event) => event.type === 'subagent.failed')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('registers each member as a foreground task of the caller that follows suspension and completion', async () => {
+    vi.useFakeTimers();
+    try {
+      agents['agent-rl'] = { labels: { parentAgentId: 'main' } };
+      agents['agent-peer'] = { labels: { parentAgentId: 'main' } };
+      handles.set('agent-rl', agentHandle('agent-rl', lifecycle, eventBus));
+      handles.set('agent-peer', agentHandle('agent-peer', lifecycle, eventBus));
+      const registered: Array<{
+        readonly task: AgentTask;
+        readonly detached: boolean | undefined;
+        settlement?: AgentTaskSettlement;
+        readonly refreshed: Array<SubagentTaskInfo>;
+      }> = [];
+      const infoOf = (task: AgentTask): SubagentTaskInfo =>
+        task.toInfo({ taskId: 't', description: task.description, status: 'running', startedAt: 0, endedAt: null }) as SubagentTaskInfo;
+      const callerTasks = {
+        registerTask: (task: AgentTask, options?: RegisterAgentTaskOptions) => {
+          const entry: (typeof registered)[number] = { task, detached: options?.detached, refreshed: [] };
+          registered.push(entry);
+          void task.start({
+            signal: new AbortController().signal,
+            appendOutput: () => {},
+            settle: async (settlement) => {
+              entry.settlement = settlement;
+              return true;
+            },
+          });
+          return `task-${registered.length - 1}`;
+        },
+        refresh: (taskId: string) => {
+          const entry = registered[Number(taskId.slice('task-'.length))]!;
+          entry.refreshed.push(infoOf(entry.task));
+        },
+      } as unknown as IAgentTaskService;
+      handles.set(
+        'main',
+        agentHandle('main', lifecycle, eventBus, {}, new Map<unknown, unknown>([[IAgentTaskService, callerTasks]])),
+      );
+      const rateLimited = createControlledPromise<{ summary: string }>();
+      const peer = createControlledPromise<{ summary: string }>();
+      let rlRuns = 0;
+      runAgent.mockImplementation((agent, _request, options) => {
+        options?.onReady?.();
+        const agentId = (agent as AgentContext).agentId;
+        if (agentId === 'agent-rl') {
+          rlRuns += 1;
+          return {
+            agentId,
+            turn: {} as never,
+            completion: rlRuns === 1 ? rateLimited : Promise.resolve({ summary: 'recovered summary' }),
+          };
+        }
+        return { agentId, turn: {} as never, completion: peer };
+      });
+      const service = ix.get(ISessionSwarmService);
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-rl'), resumeSessionTask('agent-peer')],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      rateLimited.reject(new APIProviderRateLimitError('Rate limited'));
+      await vi.advanceTimersByTimeAsync(0);
+      peer.resolve({ summary: 'peer summary' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await running;
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(registered.map((entry) => entry.detached)).toEqual([false, false]);
+      const [rl, peerTask] = registered;
+      expect(rl!.refreshed.map((info) => info.stateReason)).toContain(
+        'Provider rate limit; subagent requeued for retry.',
+      );
+      expect(rl!.refreshed.at(-1)?.stateReason).toBeUndefined();
+      expect(rl!.settlement).toEqual({ status: 'completed' });
+      expect(infoOf(rl!.task)).toMatchObject({
+        kind: 'agent',
+        agentId: 'agent-rl',
+        parentToolCallId: 'call_swarm',
+        swarmIndex: 1,
+        resultSummary: 'recovered summary',
+      });
+      expect(peerTask!.settlement).toEqual({ status: 'completed' });
+      expect(infoOf(peerTask!.task)).toMatchObject({ agentId: 'agent-peer', resultSummary: 'peer summary' });
     } finally {
       vi.useRealTimers();
     }

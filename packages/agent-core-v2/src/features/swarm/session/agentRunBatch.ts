@@ -99,8 +99,10 @@ type ActiveAttempt<T> = {
   timedOut: boolean;
 };
 
-export type AgentRunBatchOptions = {
+export type AgentRunBatchOptions<T = unknown> = {
   readonly maxConcurrency?: number;
+  readonly onStarted?: (task: QueuedAgentRunTask<T>, agentId: string) => void;
+  readonly onSettled?: (result: AgentRunResult<T>) => void;
 };
 
 export class AgentRunBatch<T> {
@@ -131,7 +133,7 @@ export class AgentRunBatch<T> {
   constructor(
     private readonly launcher: AgentRunBatchLauncher,
     tasks: readonly QueuedAgentRunTask<T>[],
-    options: AgentRunBatchOptions = {},
+    private readonly options: AgentRunBatchOptions<T> = {},
   ) {
     this.maxConcurrency = options.maxConcurrency;
     this.states = tasks.map((task, index) => ({
@@ -312,6 +314,7 @@ export class AgentRunBatch<T> {
     }
 
     attempt.state.agentId = handle.agentId;
+    this.options.onStarted?.(task, handle.agentId);
     try {
       const completion = await handle.completion;
       return {
@@ -370,7 +373,7 @@ export class AgentRunBatch<T> {
     if (this.finished) return;
 
     if ('status' in outcome) {
-      this.results[attempt.state.index] = outcome;
+      this.record(attempt.state.index, outcome);
     } else if (this.isOnlyUnfinishedTask(attempt.state)) {
       this.launcher.abandoned?.({
         task: attempt.state.task,
@@ -378,13 +381,13 @@ export class AgentRunBatch<T> {
         outcome: 'failed',
         error: outcome.error,
       });
-      this.results[attempt.state.index] = {
+      this.record(attempt.state.index, {
         task: attempt.state.task,
         agentId: outcome.agentId,
         status: 'failed',
         state: 'started',
         error: outcome.error,
-      };
+      });
     } else {
       this.requeueRateLimited(attempt, outcome.agentId);
     }
@@ -394,13 +397,18 @@ export class AgentRunBatch<T> {
   private handleAttemptError(attempt: ActiveAttempt<T>, error: unknown): void {
     if (!this.releaseAttempt(attempt)) return;
     if (this.finished) return;
-    this.results[attempt.state.index] = {
+    this.record(attempt.state.index, {
       task: attempt.state.task,
       agentId: attempt.state.agentId,
       status: 'failed',
       error: error instanceof Error ? error.message : String(error),
-    };
+    });
     this.schedule();
+  }
+
+  private record(index: number, result: AgentRunResult<T>): void {
+    this.results[index] = result;
+    this.options.onSettled?.(result);
   }
 
   private releaseAttempt(attempt: ActiveAttempt<T>): boolean {
