@@ -11,7 +11,7 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 
 import {
   WORKSPACE_TRUST_SECTION,
-  type WorkspaceTrustConfig,
+  workspaceTrustRequired,
 } from './configSection';
 import { trustWorkspaceEnvTrusted } from './trustEnv';
 import { deleteWorkspaceTrust, readWorkspaceTrust, writeWorkspaceTrust } from './trustRecord';
@@ -98,8 +98,7 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
   }
 
   private trustGateEnabled(): boolean {
-    return this.config.get<WorkspaceTrustConfig | undefined>(WORKSPACE_TRUST_SECTION)
-      ?.requireTrust ?? true;
+    return workspaceTrustRequired(this.config);
   }
 
   private mutate(trusted: boolean): Promise<void> {
