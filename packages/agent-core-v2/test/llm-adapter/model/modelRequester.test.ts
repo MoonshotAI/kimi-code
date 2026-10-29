@@ -248,7 +248,11 @@ describe('ModelRequesterImpl request execution', () => {
       'timing',
     ]);
     const usage = events.find((e) => e.type === 'usage');
-    expect(usage).toMatchObject({ usage: { inputOther: 10, output: 7 }, model: 'fake-model' });
+    expect(usage).toMatchObject({
+      usage: { inputOther: 10, output: 7, inputCacheRead: 0 },
+      model: 'fake-model',
+      cacheReadReported: false,
+    });
     const finish = events.find((e) => e.type === 'finish');
     expect(finish).toMatchObject({
       id: 'msg-42',
@@ -267,6 +271,47 @@ describe('ModelRequesterImpl request execution', () => {
       streamDurationMs: expect.any(Number),
     });
     expect(traceIds).toEqual(['trace-1']);
+
+    const reportedRequester = new FakeLlmRequester();
+    reportedRequester.handler = (_i, emit) =>
+      emitAll(emit, [
+        { type: 'llm.sent' },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'hi' } },
+        { type: 'llm.streaming.usage', usage: { inputCacheRead: 0 } },
+        { type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } },
+        { type: 'llm.done' },
+      ]);
+    const reportedImpl = new ModelRequesterImpl(
+      modelWith(createStaticCredentialProvider()),
+      gatewayReturning(reportedRequester),
+    );
+    const reportedEvents = await collect(reportedImpl.request(INPUT));
+    expect(reportedEvents.find((event) => event.type === 'usage')).toMatchObject({
+      usage: { inputCacheRead: 0 },
+      cacheReadReported: true,
+    });
+
+    const retryRequester = new FakeLlmRequester();
+    retryRequester.handler = (_i, emit) =>
+      emitAll(emit, [
+        { type: 'llm.sent' },
+        { type: 'llm.streaming.usage', usage: { inputCacheRead: 100 } },
+        { type: 'llm.request.retrying' },
+        { type: 'llm.sent' },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'retry' } },
+        { type: 'llm.streaming.usage', usage: { inputOther: 10 } },
+        { type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } },
+        { type: 'llm.done' },
+      ]);
+    const retryImpl = new ModelRequesterImpl(
+      modelWith(createStaticCredentialProvider()),
+      gatewayReturning(retryRequester),
+    );
+    const retryEvents = await collect(retryImpl.request(INPUT));
+    expect(retryEvents.find((event) => event.type === 'usage')).toMatchObject({
+      usage: { inputOther: 10, inputCacheRead: 0 },
+      cacheReadReported: false,
+    });
   });
 
   it('surfaces a 401 as provider.auth_error without replaying', async () => {

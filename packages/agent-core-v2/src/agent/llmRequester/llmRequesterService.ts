@@ -30,7 +30,7 @@ import {
 import { type ThinkingEffort } from '#human/llm-requester/thinking';
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import { type Message, type ToolDescription as Tool } from '#human/llm/message';
-import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
+import { emptyUsage, grandTotal, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import {
@@ -48,6 +48,7 @@ import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import type {
   ApiErrorEvent,
+  CacheBreakDetectedEvent,
   LlmRequestProjectionFallbackEvent,
 } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -93,6 +94,17 @@ const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
 const noopOnPart: AgentLLMRequestPartHandler = () => {};
 
 export const KIMI_CODE_INFINITE_RETRY_ENV = 'KIMI_CODE_INFINITE_RETRY';
+
+const CACHE_BREAK_MIN_DROP_TOKENS = 2000;
+const CACHE_BREAK_DROP_RATIO = 0.95;
+
+interface MeasuredTurnRequest extends AgentLLMTurnRequestSnapshot {
+  readonly thinkingEffort: ThinkingEffort;
+  readonly turnId: number;
+  readonly step?: number;
+  readonly traceId?: string;
+  readonly usage: TokenUsage;
+}
 
 interface ResolvedLLMRequest {
   readonly requester: ModelRequester;
@@ -156,6 +168,10 @@ export const llmRequesterLastTurnRequestKey = defineState<AgentLLMTurnRequestSna
   'llmRequester.lastTurnRequest',
   () => undefined as AgentLLMTurnRequestSnapshot | undefined,
 );
+export const llmRequesterLastMeasuredTurnRequestKey = defineState<MeasuredTurnRequest | undefined>(
+  'llmRequester.lastMeasuredTurnRequest',
+  () => undefined as MeasuredTurnRequest | undefined,
+);
 
 export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   declare readonly _serviceBrand: undefined;
@@ -186,6 +202,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     this.states.contributeState(llmRequesterMediaRecoveryKey);
     this.states.contributeState(llmRequesterEmittedThinkingEffortWarningsKey);
     this.states.contributeState(llmRequesterLastTurnRequestKey);
+    this.states.contributeState(llmRequesterLastMeasuredTurnRequestKey);
   }
 
   private get lastConfigLogSignature(): string | undefined {
@@ -430,6 +447,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
       let message: Extract<ModelRequestEvent, { type: 'finish' }>['message'] | undefined;
       let usage: TokenUsage | undefined;
+      let cacheReadReported: boolean | undefined;
       let timing: ModelRequestTiming | undefined;
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
       const setTraceId = (traceId: string | null | undefined): void => {
@@ -447,6 +465,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
             break;
           case 'usage':
             usage = event.usage;
+            cacheReadReported = event.cacheReadReported;
             break;
           case 'finish':
             finish = event;
@@ -476,10 +495,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           cacheProbeBaseline.modelAlias === request.modelAlias &&
           cacheProbeBaseline.contextRevision === request.contextRevision;
         const historyPrefixMatch = compared
-          ? cacheProbeBaseline.messageCount <= input.messages.length &&
-            fingerprint(
-              JSON.stringify(input.messages.slice(0, cacheProbeBaseline.messageCount)),
-            ) === cacheProbeBaseline.historyHash
+          ? historyPrefixMatches(cacheProbeBaseline, input.messages)
           : undefined;
         this.telemetry.track2('prompt_cache_probe', {
           source: 'compaction',
@@ -504,7 +520,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         });
       }
       if (request.source?.type === 'turn') {
-        this.states.set(llmRequesterLastTurnRequestKey, {
+        const snapshot: AgentLLMTurnRequestSnapshot = {
           modelAlias: request.modelAlias,
           contextRevision: request.contextRevision,
           toolsHash: recorded.toolsHash,
@@ -514,7 +530,20 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           inputTokens: usage === undefined ? undefined : inputTotal(usage),
           startedAt,
           finishedAt: Date.now(),
-        });
+        };
+        if (usage !== undefined && grandTotal(usage) > 0) {
+          const measured: MeasuredTurnRequest = {
+            ...snapshot,
+            thinkingEffort: request.thinkingEffort,
+            turnId: request.source.turnId,
+            step: request.source.step,
+            traceId: finish.traceId,
+            usage,
+          };
+          this.trackCacheBreak(measured, input.messages, cacheReadReported !== false);
+          this.states.set(llmRequesterLastMeasuredTurnRequestKey, measured);
+        }
+        this.states.set(llmRequesterLastTurnRequestKey, snapshot);
       }
       void this.usage.record(
         this.scopeContext.agentContext,
@@ -589,6 +618,47 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         await sleepForRetry(delayMs, signal);
       }
     }
+  }
+
+  private trackCacheBreak(
+    curr: MeasuredTurnRequest,
+    messages: readonly Message[],
+    cacheReadReported: boolean,
+  ): void {
+    const prev = this.states.get(llmRequesterLastMeasuredTurnRequestKey);
+    if (prev === undefined || prev.contextRevision !== curr.contextRevision) return;
+    const prevRead = prev.usage.inputCacheRead;
+    const currRead = curr.usage.inputCacheRead;
+    if (currRead >= prevRead * CACHE_BREAK_DROP_RATIO) return;
+    if (prevRead - currRead <= CACHE_BREAK_MIN_DROP_TOKENS) return;
+    const properties: CacheBreakDetectedEvent = {
+      turn_id: curr.turnId,
+      step_no: curr.step,
+      trace_id: curr.traceId,
+      prev_turn_id: prev.turnId,
+      prev_step_no: prev.step,
+      prev_trace_id: prev.traceId,
+      prev_model: prev.modelAlias,
+      curr_model: curr.modelAlias,
+      prev_effort: prev.thinkingEffort,
+      curr_effort: curr.thinkingEffort,
+      prev_input_cache_read: prevRead,
+      curr_input_cache_read: currRead,
+      curr_cache_read_reported: cacheReadReported,
+      prev_input_other: prev.usage.inputOther,
+      curr_input_other: curr.usage.inputOther,
+      prev_output: prev.usage.output,
+      curr_output: curr.usage.output,
+      prev_input_cache_creation: prev.usage.inputCacheCreation,
+      curr_input_cache_creation: curr.usage.inputCacheCreation,
+      cache_read_drop_ratio: (prevRead - currRead) / prevRead,
+      tools_match: prev.toolsHash === curr.toolsHash,
+      system_prompt_match: prev.systemPromptHash === curr.systemPromptHash,
+      history_prefix_match: historyPrefixMatches(prev, messages),
+      gap_ms: curr.startedAt - prev.finishedAt,
+      interval_ms: curr.finishedAt - prev.finishedAt,
+    };
+    this.telemetry.track2('cache_break_detected', properties);
   }
 
   private get infiniteRetryEnabled(): boolean {
@@ -994,6 +1064,16 @@ function projectionField(fields: AgentLLMRequestLogFields): LlmRequestProjection
 
 function fingerprint(content: string): string {
   return createHash('sha256').update(content).digest('hex');
+}
+
+function historyPrefixMatches(
+  baseline: AgentLLMTurnRequestSnapshot,
+  messages: readonly Message[],
+): boolean {
+  return (
+    baseline.messageCount <= messages.length &&
+    fingerprint(JSON.stringify(messages.slice(0, baseline.messageCount))) === baseline.historyHash
+  );
 }
 
 function apiStatusCode(error: unknown): number | undefined {

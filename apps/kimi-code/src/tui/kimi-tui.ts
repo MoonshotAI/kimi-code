@@ -17,7 +17,6 @@ import type {
   PromptPart,
   Session,
   SkillSummary,
-  TokenUsage,
   TurnEndedEvent,
   TurnStartedEvent,
   Unsubscribe,
@@ -4464,20 +4463,8 @@ export class KimiTUI {
     this.cacheHint.recordActivity();
   }
 
-  /** Per-step usage for the client-side cache-break detector. */
-  noteStepUsage(usage: TokenUsage | undefined): void {
-    this.cacheHint.noteStepUsage(usage);
-  }
-
-  /** Compaction shrinks the cached prefix — reset the cache-break baseline. */
   noteCompactionFinished(): void {
-    this.cacheHint.resetCacheBreakBaseline();
     this.programStatus.finishCompaction();
-  }
-
-  /** /undo cut the context — the next step's cache drop is expected. */
-  noteContextCut(): void {
-    this.cacheHint.resetCacheBreakBaseline();
   }
 
   private async runMigrationScreen(plan: MigrationPlan): Promise<MigrationScreenResult> {
