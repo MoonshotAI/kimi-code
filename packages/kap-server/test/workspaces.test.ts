@@ -16,7 +16,7 @@ interface Envelope<T> {
   msg: string;
   data: T;
   request_id: string;
-  details?: { path: string; message: string }[];
+  details?: ({ path: string; message: string } | { path: string; directory: string })[];
 }
 
 interface WorkspaceWire {
@@ -252,7 +252,7 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(ws?.additional_dirs).toEqual([extraA, extraB]);
   });
 
-  it('rejects invalid additional_dirs on create (40409 / 40001)', async () => {
+  it('rejects invalid additional_dirs on create (40409 / 40006)', async () => {
     const root = home as string;
     const missing = await postJson<null>('/api/v1/workspaces', {
       root,
@@ -264,8 +264,9 @@ describe('server-v2 /api/v1/workspaces', () => {
       root,
       additional_dirs: [root],
     });
-    expect(dupRoot.body.code).toBe(40001);
-    expect(dupRoot.body.details?.[0]?.path).toBe('additional_dirs.0');
+    expect(dupRoot.body.code).toBe(40006);
+    expect(dupRoot.body.msg).toBe(`Duplicate source folder: ${root}`);
+    expect(dupRoot.body.details).toEqual([{ path: 'additional_dirs.0', directory: root }]);
 
     const extra = join(root, 'extra-dup');
     await mkdir(extra, { recursive: true });
@@ -273,8 +274,9 @@ describe('server-v2 /api/v1/workspaces', () => {
       root,
       additional_dirs: [extra, `${extra}/`],
     });
-    expect(dup.body.code).toBe(40001);
-    expect(dup.body.details?.[0]?.path).toBe('additional_dirs.1');
+    expect(dup.body.code).toBe(40006);
+    expect(dup.body.msg).toBe(`Duplicate source folder: ${extra}`);
+    expect(dup.body.details).toEqual([{ path: 'additional_dirs.1', directory: extra }]);
   });
 
   it('replaces additional_dirs wholesale via PATCH and validates input', async () => {
@@ -312,6 +314,18 @@ describe('server-v2 /api/v1/workspaces', () => {
       additional_dirs: [join(root, 'does-not-exist')],
     });
     expect(missing.body.code).toBe(40409);
+
+    const dupRoot = await patchJson<null>(`/api/v1/workspaces/${id}`, { additional_dirs: [root] });
+    expect(dupRoot.body.code).toBe(40006);
+    expect(dupRoot.body.msg).toBe(`Duplicate source folder: ${root}`);
+    expect(dupRoot.body.details).toEqual([{ path: 'additional_dirs.0', directory: root }]);
+
+    const dup = await patchJson<null>(`/api/v1/workspaces/${id}`, {
+      additional_dirs: [extraB, `${extraB}/`],
+    });
+    expect(dup.body.code).toBe(40006);
+    expect(dup.body.msg).toBe(`Duplicate source folder: ${extraB}`);
+    expect(dup.body.details).toEqual([{ path: 'additional_dirs.1', directory: extraB }]);
 
     const unknown = await patchJson<null>(
       '/api/v1/workspaces/wm_00000000-0000-0000-0000-000000000000',

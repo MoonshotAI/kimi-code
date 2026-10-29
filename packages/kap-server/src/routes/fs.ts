@@ -180,7 +180,7 @@ async function resolveWorkspaceFs(
       return undefined;
     }
   }
-  return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: [] }, required);
+  return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: ws.additionalDirs }, required);
 }
 
 export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
