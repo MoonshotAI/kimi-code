@@ -53,7 +53,7 @@ human/
 
 请求生命周期：Loop 解析 turn 或 side request 的配置与上下文 → `ProtocolAdapterRegistry` 用 protocol、model、endpoint、凭据头、超时 fetch 和可选 `LlmEndpoint.files` 初始化核心 requester → `generateModel` 叠加 profile/content，并携带 ToolSelect/媒体工具/结构/媒体 resolver 与 recovery ledger 执行 `runLlmRequest` → 每个 attempt 先应用继承和新提出的重写，再依次执行 ToolSelect、媒体工具、结构与媒体 resolver，然后发出 `llm.started` 并记录 resolved request → 协议 legalize/pipeline 编码并过滤 deferred 工具 → client 使用 `sendStream`，非流式则 `send` + replay → settle 产生 outcome 与流式事实 → Loop 或 klient 边界发出既有事件词汇。ReadMediaFile 始终注册且只生成 `kimi-file` 引用；模型同时不支持图片和视频时，媒体工具 resolver 隐藏其 schema、调用与结果，媒体 resolver 再把引用转换为模型能力提示、上传后的 file-id 或内联 base64。full compaction、cache probe 和媒体工具共用同一 Loop 门面；klient direct-generate 只创建调用级核心 requester，公开契约不变。
 
-动态工具披露只决定请求视图，不是执行权限。SelectTools 通过 `loop.remind` 的独立消费队列在 tool result 后写入 schema system message，loaded 状态只从 context history 推导。对于不支持动态加载的模型，ToolSelect Resolver 移除 select_tools schema、历史调用与结果、动态 schema system message 和可加载工具公告，再把默认 deferred 工具作为普通顶层 tools 展开；显式 tools override 保持不变。
+动态工具披露只决定请求视图，不是执行权限。Agent 在 MCP 初始化后持久化一份不可变的初始注册表快照，并按顺序保存运行期变更；后续请求把实时注册表协调进这份账本，不再重建初始快照。支持动态加载的模型从当前版本投影，通过 deferred 工具、added/removed 公告和 SelectTools 经 `loop.remind` 写入的 schema system message 获取定义。loaded 状态要求精确匹配当前 schema 版本，因此同名修改会作废旧选择并以 remove+add 触发重选。不支持动态加载的模型只使用初始顶层工具，初始 deferred 仅在 Resolver 副本上提升为普通工具，运行期新增版本继续过滤，变更保留为文字 system-reminder，而不是动态 schema 或 select 指令。模型切换不会改写持久化快照、变更账本或 context history；显式 tools override 保持不变。
 
 ## 已否决方案（勿重新引入）
 

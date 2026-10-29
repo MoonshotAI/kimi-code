@@ -415,6 +415,7 @@ import '#/agent/toolSelect/flag';
 export * from '#/agent/tools/select-tools/select-tools';
 import '#/agent/tools/select-tools/selectToolsTool';
 export * from '#/agent/toolSelect/dynamicTools';
+export * from '#/agent/toolSelect/toolSelectOps';
 export * from '#/agent/toolSelect/toolSelect';
 export * from '#/agent/toolSelect/toolSelectService';
 export * from '#/agent/toolSelect/toolSelectAnnouncements';

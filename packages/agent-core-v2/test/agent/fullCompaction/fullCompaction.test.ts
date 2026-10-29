@@ -1996,9 +1996,10 @@ describe('FullCompaction', () => {
       },
     );
 
+    const turnEnded = ctx.untilTurnEnd();
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start background compaction' }] });
     await compactionRequested.promise;
-    await ctx.untilTurnEnd();
+    await turnEnded;
 
     releaseCompaction.resolve();
     await ctx.once('compaction.completed');

@@ -238,7 +238,8 @@
 | 媒体降级与结构投影顺序 | 用户接受 313 当前顺序：媒体恢复可先按未投影历史计算和重写，随后再执行 strict 结构投影；orphan 媒体影响降级数量及组合恢复顺序不再作为待修回归。 |
 | `llmRequester.mediaRecovery` inspect state | 接受当前 ledger 的 inspect 展示，不补 main 的 `media.degradeCount/strip` 兼容视图；运行时媒体恢复行为不改。 |
 | reasoning-key 缓存 | 接受以 `baseUrl + model` 作为天然共享边界；相同连接的模型 alias 共用 App 级检测结果，不按 alias 或账号额外隔离，不处理该 corner case。 |
-| recovery 中重新计算工具快照 | 接受 313 每个 attempt 重算默认工具和动态 history，不恢复 main 在一次 `start()` 内固定 resolved 工具和动态 history 的行为；原始 messages 与显式 tools override 仍保持固定。 |
+| 会话级工具快照与运行期变更 | 用户定稿：每个 Agent 会话只初始化一次并持久化 initial；运行期新增、删除、修改以追加变更表达。支持 tool-select 的模型按版本重选，不支持的模型仅提升 initial deferred，runtime 版本过滤并转为 reminder；模型分支只在 Resolver。 |
+| 无凭证 Kimi 上传 | 用户明确不做处理：接受 313 当前无凭证上传与认证错误行为，不恢复 main 的本地失败/inline 回退；标准 Kimi 正常请求与上传共用凭证，本项不再作为待修回归。 |
 
 ### C. 已定稿但尚未实施
 
@@ -248,7 +249,6 @@
 
 | 行为 | 当前差异与未决点 |
 | --- | --- |
-| 无凭证 Kimi 上传 | main 本地报错并尝试 inline 回退，313 发 `Bearer unused` 后可能按 401 终止；保留还是恢复本地失败/回退，尚未决定。 |
 | `video_upload.model` telemetry | main 记录模型 alias，313 记录 wire model name；按哪种维度恢复或同时保留，尚未决定。 |
 
 ### E. 完全未回应的行为差异

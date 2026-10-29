@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 71 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 72 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -116,6 +116,7 @@
 //     toolDedupe.turnRepeatCount                      src/agent/toolDedupe/toolDedupeService.ts
 //     toolExecutor.dupTypeTurnId                      src/agent/toolExecutor/toolExecutorService.ts
 //     toolExecutor.toolCallDupTypes                   src/agent/toolExecutor/toolExecutorService.ts
+//     toolSelect                                      src/agent/toolSelect/toolSelectOps.ts
 //     tower                                           src/features/tower/towerOps.ts
 //     tower.owner                                     src/features/tower/towerOps.ts
 //     turn                                            src/agent/loop/turnOps.ts
@@ -1934,6 +1935,44 @@ export interface AgentStateSnapshot {
   // src/agent/toolExecutor/toolExecutorService.ts
   'toolExecutor.dupTypeTurnId': number | undefined;
   'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
+  // src/agent/toolSelect/toolSelectOps.ts
+  // replayable · durable — folds: ToolSelectInitialized, ToolSelectToolsChanged
+  'toolSelect': /* ToolSelectModelState — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+    readonly initial: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly parameters: Record<string, unknown>;
+      readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+      readonly disclosure?: 'deferred' | 'inline';
+      readonly origin: 'initial' | 'runtime';
+    }[] | undefined;
+    readonly current: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly parameters: Record<string, unknown>;
+      readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+      readonly disclosure?: 'deferred' | 'inline';
+      readonly origin: 'initial' | 'runtime';
+    }[];
+    readonly changes: readonly /* ToolSelectChange — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+      readonly added: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+        readonly name: string;
+        readonly description: string;
+        readonly parameters: Record<string, unknown>;
+        readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+        readonly disclosure?: 'deferred' | 'inline';
+        readonly origin: 'initial' | 'runtime';
+      }[];
+      readonly removed: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+        readonly name: string;
+        readonly description: string;
+        readonly parameters: Record<string, unknown>;
+        readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+        readonly disclosure?: 'deferred' | 'inline';
+        readonly origin: 'initial' | 'runtime';
+      }[];
+    }[];
+  };
   // src/agent/userTool/userToolOps.ts
   // replayable · durable — folds: ToolsRegisterUserTool, ToolsUnregisterUserTool
   'userTool': /* UserToolModelState — packages/agent-core-v2/src/agent/userTool/userToolOps.ts */ Map<string, /* UserToolRegistration — packages/agent-core-v2/src/agent/userTool/userTool.ts */ {

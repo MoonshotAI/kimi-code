@@ -27,7 +27,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
+import { shapeUnsupportedDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
@@ -243,6 +243,7 @@ function createService(
   const telemetry = recordingTelemetry(telemetryRecords);
   const toolSelect: Partial<IAgentToolSelectService> = {
     enabled: () => false,
+    prepareForRequest: async () => {},
     defaultTools: () => [],
     shapeHistory: (messages) => messages,
     ...options.toolSelect,
@@ -379,7 +380,7 @@ describe('AgentLoopRequester strict resend', () => {
       contextMessages,
       toolSelect: {
         defaultTools: () => [],
-        shapeHistory: (messages) => stripDynamicToolContext(messages),
+        shapeHistory: (messages) => shapeUnsupportedDynamicToolContext(messages),
       },
     });
 
@@ -389,8 +390,8 @@ describe('AgentLoopRequester strict resend', () => {
     expect(result.usage).toEqual(emptyUsage());
     expect(calls.value).toBe(2);
     expect(inputs.map((input) => input.messages.map((message) => message.role))).toEqual([
-      ['assistant', 'user'],
-      ['user'],
+      ['assistant', 'user', 'user'],
+      ['user', 'user'],
     ]);
   });
 

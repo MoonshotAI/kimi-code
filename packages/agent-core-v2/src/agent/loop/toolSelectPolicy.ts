@@ -6,7 +6,8 @@ export function createToolSelectResolver(toolSelect: IAgentToolSelectService): L
   return {
     id: 'tool-select',
     recoveryRequest: 'resolved',
-    resolve: async (request) => {
+    resolve: async (request, ctl) => {
+      await toolSelect.prepareForRequest(ctl.signal);
       const capabilities =
         withProtocolCapabilities(request.model.spec, request.protocol.base).capability ?? {};
       const disclosure = toolSelect.enabled(capabilities);

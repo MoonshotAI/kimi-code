@@ -24,7 +24,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (67 record types)
+// Index (69 record types)
 //   changeNotifier.snapshot            changeNotifier.snapshot                                                        src/agent/changeNotifier/changeNotifierOps.ts
 //   config.update                      profile                                                                        src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                                            src/agent/contextMemory/contextEvents.ts
@@ -78,6 +78,8 @@
 //   token_counting.rebased             (none)                                                                         src/agent/tokenCounting/tokenCountingOps.ts
 //   token_counting.truncated           (none)                                                                         src/agent/tokenCounting/tokenCountingOps.ts
 //   token_counting.turn_recorded       (none)                                                                         src/agent/tokenCounting/tokenCountingOps.ts
+//   tool_select.initialized            toolSelect                                                                     src/agent/toolSelect/toolSelectOps.ts
+//   tool_select.tools_changed          toolSelect                                                                     src/agent/toolSelect/toolSelectOps.ts
 //   tools.register_user_tool           userTool                                                                       src/agent/userTool/userToolOps.ts
 //   tools.reset_active_tools           profile.activeTools                                                            src/agent/profile/profileOps.ts
 //   tools.set_active_tools             profile.activeTools                                                            src/agent/profile/profileOps.ts
@@ -785,6 +787,27 @@ interface TokenCountingTurnRecordedPayload {
 }
 
 /**
+ * states: toolSelect
+ * owner: src/agent/toolSelect/toolSelectOps.ts
+ */
+interface ToolSelectInitializedPayload {
+  _name: 'tool_select.initialized';
+  agentId: string;
+  tools: ToolSelectTool[];
+}
+
+/**
+ * states: toolSelect
+ * owner: src/agent/toolSelect/toolSelectOps.ts
+ */
+interface ToolSelectToolsChangedPayload {
+  _name: 'tool_select.tools_changed';
+  agentId: string;
+  added: ToolSelectTool[];
+  removed: ToolSelectTool[];
+}
+
+/**
  * states: userTool
  * owner: src/agent/userTool/userToolOps.ts
  */
@@ -1056,6 +1079,8 @@ interface WirePayloadMap {
   "token_counting.rebased": TokenCountingRebasedPayload;
   "token_counting.truncated": TokenCountingTruncatedPayload;
   "token_counting.turn_recorded": TokenCountingTurnRecordedPayload;
+  "tool_select.initialized": ToolSelectInitializedPayload;
+  "tool_select.tools_changed": ToolSelectToolsChangedPayload;
   "tools.register_user_tool": ToolsRegisterUserToolPayload;
   "tools.reset_active_tools": ToolsResetActiveToolsPayload;
   "tools.set_active_tools": ToolsSetActiveToolsPayload;
