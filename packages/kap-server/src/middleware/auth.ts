@@ -57,7 +57,7 @@ function extractBearer(header: string | undefined): string | null {
 export function createAuthHook(
   authTokenService: IAuthTokenService,
   opts?: AuthHookOptions,
-): (req: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply> {
+): (req: FastifyRequest, reply: FastifyReply) => Promise<void> {
   const isBypassed = opts?.isBypassed ?? defaultIsBypassed;
   const validateCredential: CredentialValidator =
     opts?.validateCredential ??
@@ -66,14 +66,15 @@ export function createAuthHook(
 
   return async (req, reply) => {
     if (opts?.limiter?.isBanned(req.ip) === true) {
-      return reply.code(429).send(errEnvelope(AUTH_RATE_LIMIT_CODE, AUTH_RATE_LIMIT_MSG, req.id));
+      await reply.code(429).send(errEnvelope(AUTH_RATE_LIMIT_CODE, AUTH_RATE_LIMIT_MSG, req.id));
+      return;
     }
 
     const header = req.headers.authorization;
     const token = extractBearer(header);
 
     if (isBypassed(req)) {
-      return reply;
+      return;
     }
 
     if (header !== undefined) {
@@ -82,15 +83,16 @@ export function createAuthHook(
 
     if (token === null) {
       opts?.limiter?.recordFailure(req.ip);
-      return reply.code(401).send(errEnvelope(AUTH_ERROR_CODE, AUTH_ERROR_MSG, req.id));
+      await reply.code(401).send(errEnvelope(AUTH_ERROR_CODE, AUTH_ERROR_MSG, req.id));
+      return;
     }
 
     const principal = await validateCredential(token);
     if (principal === undefined) {
       opts?.limiter?.recordFailure(req.ip);
-      return reply.code(401).send(errEnvelope(AUTH_ERROR_CODE, AUTH_ERROR_MSG, req.id));
+      await reply.code(401).send(errEnvelope(AUTH_ERROR_CODE, AUTH_ERROR_MSG, req.id));
+      return;
     }
     req.authPrincipal = principal;
-    return reply;
   };
 }
