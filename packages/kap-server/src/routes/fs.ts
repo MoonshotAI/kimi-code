@@ -24,6 +24,7 @@ import { RuntimeError } from '@moonshot-ai/agent-core-v2/runtime/runtimeRegistry
 import {
   fsDiffRequestSchema,
   fsGitStatusRequestSchema,
+  fsPullRequestRequestSchema,
   fsGrepRequestSchema,
   fsListManyRequestSchema,
   fsListRequestSchema,
@@ -133,6 +134,7 @@ const FS_ACTIONS = [
   'search',
   'grep',
   'git_status',
+  'pull_request',
   'diff',
   'open',
   'open-in',
@@ -432,6 +434,9 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
             return;
           case 'git_status':
             await handleGitStatus(runtimeFs.fs, req, reply);
+            return;
+          case 'pull_request':
+            await handlePullRequest(runtimeFs.fs, req, reply);
             return;
           case 'diff':
             await handleDiff(runtimeFs.fs, req, reply);
@@ -933,6 +938,16 @@ async function handleGitStatus(fs: IWorkspaceFsService, req: Req, reply: Reply):
     return;
   }
   const data = await fs.gitStatus(parsed.data);
+  reply.send(okEnvelope(data, req.id));
+}
+
+async function handlePullRequest(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+  const parsed = fsPullRequestRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
+    return;
+  }
+  const data = await fs.pullRequest(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 

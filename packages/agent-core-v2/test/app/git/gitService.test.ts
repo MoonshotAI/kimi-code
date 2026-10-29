@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
@@ -65,6 +65,7 @@ describe('GitService', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     disposables.dispose();
     rmSync(repo, { recursive: true, force: true });
   });
@@ -86,6 +87,18 @@ describe('GitService', () => {
       expect(result.deletions).toBe(0);
       expect(result.pullRequest).toBeNull();
     }, 15000);
+
+    it('skips the PR process when pull requests are excluded', async () => {
+      writeFileSync(join(repo, 'a.txt'), 'hello\n');
+      commitAll('init');
+      const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+
+      const result = await service.status(repo, { includePullRequest: false });
+
+      expect(result.branch).not.toBe('');
+      expect(result.pullRequest).toBeNull();
+      expect(spawn.mock.calls.some(([command]) => command === 'gh')).toBe(false);
+    });
 
     it('reports a modified file with numstat', async () => {
       writeFileSync(join(repo, 'a.txt'), 'line1\n');

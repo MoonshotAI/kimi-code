@@ -8,6 +8,8 @@ import {
   type FsDiffResponse,
   type FsGitStatusRequest,
   type FsGitStatusResponse,
+  type FsPullRequest,
+  type FsPullRequestRequest,
 } from '#/app/git/git';
 
 export {
@@ -15,8 +17,10 @@ export {
   fsDiffResponseSchema,
   fsGitStatusRequestSchema,
   fsGitStatusResponseSchema,
+  fsPullRequestRequestSchema,
+  fsPullRequestSchema,
 } from '#/app/git/git';
-export type { FsDiffRequest, FsDiffResponse, FsGitStatusRequest, FsGitStatusResponse };
+export type { FsDiffRequest, FsDiffResponse, FsGitStatusRequest, FsGitStatusResponse, FsPullRequest, FsPullRequestRequest };
 
 export const fsKindSchema = z.enum(['file', 'directory', 'symlink']);
 export type FsKind = z.infer<typeof fsKindSchema>;
@@ -261,6 +265,7 @@ export interface IWorkspaceFsService {
   suggest(req: FsSuggestRequest): Promise<FsSuggestResponse>;
   grep(req: FsGrepRequest): Promise<FsGrepResponse>;
   gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse>;
+  pullRequest(req: FsPullRequestRequest): Promise<FsPullRequest | null>;
   diff(req: FsDiffRequest): Promise<FsDiffResponse>;
   resolvePath(relPath: string): Promise<FsPathResolved>;
   resolveDownload(relPath: string, allowExternalSymlinks?: boolean): Promise<FsDownloadResolved>;

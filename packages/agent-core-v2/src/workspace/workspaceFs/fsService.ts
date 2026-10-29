@@ -4,6 +4,8 @@ import {
   type FsEntry,
   type FsGitStatusRequest,
   type FsGitStatusResponse,
+  type FsPullRequest,
+  type FsPullRequestRequest,
   type FsGrepFileHit,
   type FsGrepMatch,
   type FsGrepRequest,
@@ -1032,7 +1034,16 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
 
     const cwd = await this.resolveGitRoot(req.root);
-    return this.git.status(cwd, { pathFilter: filter, scopeToCwd: req.root !== undefined });
+    return this.git.status(cwd, {
+      pathFilter: filter,
+      scopeToCwd: req.root !== undefined,
+      includePullRequest: req.include_pull_request !== false,
+    });
+  }
+
+  async pullRequest(req: FsPullRequestRequest): Promise<FsPullRequest | null> {
+    const cwd = await this.resolveGitRoot(req.root);
+    return this.git.pullRequest(cwd);
   }
 
   async diff(req: FsDiffRequest): Promise<FsDiffResponse> {

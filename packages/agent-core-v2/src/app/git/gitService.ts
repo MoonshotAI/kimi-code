@@ -60,8 +60,12 @@ export class GitService implements IGitService {
       }
     }
 
-    result.pullRequest = await this.readPullRequest(cwd);
+    result.pullRequest = options.includePullRequest === false ? null : await this.readPullRequest(cwd);
     return result;
+  }
+
+  pullRequest(cwd: string): Promise<FsPullRequest | null> {
+    return this.readPullRequest(cwd);
   }
 
   async diff(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse> {

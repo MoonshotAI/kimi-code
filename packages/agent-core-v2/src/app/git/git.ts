@@ -28,12 +28,19 @@ export type FsPullRequest = z.infer<typeof fsPullRequestSchema>;
 export const fsGitStatusRequestSchema = z.object({
   root: z.string().min(1).optional(),
   paths: z.array(z.string().min(1)).optional(),
+  include_pull_request: z.boolean().optional(),
 });
 export type FsGitStatusRequest = z.infer<typeof fsGitStatusRequestSchema>;
+
+export const fsPullRequestRequestSchema = z.object({
+  root: z.string().min(1).optional(),
+});
+export type FsPullRequestRequest = z.infer<typeof fsPullRequestRequestSchema>;
 
 export interface GitStatusOptions {
   pathFilter?: ReadonlySet<string>;
   scopeToCwd?: boolean;
+  includePullRequest?: boolean;
 }
 
 export const fsGitStatusResponseSchema = z.object({
@@ -64,6 +71,7 @@ export interface IGitService {
   readonly _serviceBrand: undefined;
 
   status(cwd: string, options?: GitStatusOptions): Promise<FsGitStatusResponse>;
+  pullRequest(cwd: string): Promise<FsPullRequest | null>;
   diff(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse>;
   findWorkTree(cwd: string): Promise<GitWorkTree | null>;
 }

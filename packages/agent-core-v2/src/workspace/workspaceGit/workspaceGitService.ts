@@ -1,5 +1,5 @@
 import { ref, type LiveRef } from '#/_base/di/instantiation';
-import { type FsDiffResponse, type FsGitStatusResponse, type GitStatusOptions, IGitService } from '#/app/git/git';
+import { type FsDiffResponse, type FsGitStatusResponse, type FsPullRequest, type GitStatusOptions, IGitService } from '#/app/git/git';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 import { IWorkspaceGitService } from './workspaceGit';
@@ -14,6 +14,10 @@ export class WorkspaceGitService implements IWorkspaceGitService {
 
   status(cwd: string, options?: GitStatusOptions): Promise<FsGitStatusResponse> {
     return this.git.current!.status(cwd, options);
+  }
+
+  pullRequest(cwd: string): Promise<FsPullRequest | null> {
+    return this.git.current!.pullRequest(cwd);
   }
 
   diff(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse> {
