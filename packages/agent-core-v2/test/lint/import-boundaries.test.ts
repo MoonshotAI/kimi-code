@@ -224,6 +224,19 @@ import { HostEnvironmentService } from '#/os/backends/node-local/hostEnvironment
       at('remote/server', 'stdioHost.ts'),
     );
     expect(violations).toHaveLength(2);
-    expect(violations.every((violation) => /remote executor stays light/.test(violation.message))).toBe(true);
+    expect(violations.every((violation) => violation.message.includes('remote executor stays light'))).toBe(true);
+  });
+
+  it('keeps the remote os backend free of the remote transport and engine domains', () => {
+    const violations = checkSource(
+      `import type { ExecChannel } from '#/remote/protocol/channel';
+import { type IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { decodeTextWithErrors } from '#/_base/execEnv/decodeText';
+import { RemoteExecConnection } from '#/remote/client/connection';
+import { IEnvironmentService } from '#/app/environment/environment';`,
+      at('os/backends/remote', 'remoteFileSystem.ts'),
+    );
+    expect(violations).toHaveLength(2);
+    expect(violations.every((violation) => violation.message.includes('remote os backend is a sibling of node-local'))).toBe(true);
   });
 });

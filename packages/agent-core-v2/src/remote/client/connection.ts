@@ -1,5 +1,6 @@
 import { encodeFrame, LineFrameDecoder } from '#/remote/protocol/codec';
-import { RpcError, RpcErrorCode } from '#/remote/protocol/errors';
+import type { ConnectionCloseInfo, ExecChannel } from '#/remote/protocol/channel';
+import { ConnectionClosedError, RequestTimeoutError, RpcError, RpcErrorCode } from '#/remote/protocol/errors';
 import {
   classifyMessage,
   isErrorResponse,
@@ -36,18 +37,6 @@ export interface ConnectOptions {
   readonly livenessTimeoutMs?: number;
 }
 
-export interface ConnectionCloseInfo {
-  readonly reason: string;
-  readonly kind?: 'eof' | 'pipe_error' | 'protocol_error' | 'client_closed' | 'liveness' | 'other';
-}
-
-export class ConnectionClosedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ConnectionClosedError';
-  }
-}
-
 export type HandshakeErrorKind = 'timeout' | 'executor-exit' | 'incompatible' | 'authentication';
 
 export interface HandshakeErrorDetails {
@@ -74,23 +63,13 @@ export class HandshakeError extends Error {
   }
 }
 
-export class RequestTimeoutError extends Error {
-  constructor(
-    readonly method: string,
-    readonly timeoutMs: number,
-  ) {
-    super(`request ${method} timed out after ${String(timeoutMs)}ms`);
-    this.name = 'RequestTimeoutError';
-  }
-}
-
 type PendingCall = {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
   timer?: NodeJS.Timeout;
 };
 
-export class RemoteExecConnection {
+export class RemoteExecConnection implements ExecChannel {
   private readonly decoder = new LineFrameDecoder();
   private readonly pending = new Map<RequestId, PendingCall>();
   private readonly notificationHandlers = new Map<string, Set<(params: unknown) => void>>();

@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { ConnectionClosedError } from '#/remote/client/connection';
+import { ConnectionClosedError } from '#/remote/protocol/errors';
 import { RemoteSession } from '#/remote/client/remoteSession';
 import { TEST_VERSION } from './helpers/loopback';
 

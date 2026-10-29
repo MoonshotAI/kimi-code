@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { RemoteExecConnection } from '#/remote/client/connection';
-import { RemoteProcessService } from '#/remote/client/remoteProcess';
+import { RemoteProcessService } from '#/os/backends/remote/remoteProcess';
 import { PROCESS_EXITED_METHOD } from '#/remote/protocol/methods';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { ProcessManager } from '#/remote/server/processManager';

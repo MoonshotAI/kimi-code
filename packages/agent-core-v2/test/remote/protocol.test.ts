@@ -1,12 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  ConnectionClosedError,
-  RemoteExecConnection,
-  RequestTimeoutError,
-} from '#/remote/client/connection';
+import { RemoteExecConnection } from '#/remote/client/connection';
+import { ConnectionClosedError, RequestTimeoutError } from '#/remote/protocol/errors';
 import type { BytePipe } from '#/remote/client/execBridge';
-import { RemoteProcessService } from '#/remote/client/remoteProcess';
+import { RemoteProcessService } from '#/os/backends/remote/remoteProcess';
 import {
   encodeFrame,
   LineFrameDecoder,

@@ -16,6 +16,7 @@ import {
 } from '#/os/interface/hostFsErrors';
 
 import { decodeBase64, encodeBase64 } from '#/remote/protocol/codec';
+import type { ExecChannel } from '#/remote/protocol/channel';
 import { RpcError, RpcErrorCode } from '#/remote/protocol/errors';
 import {
   FS_CANONICALIZE_METHOD,
@@ -34,7 +35,6 @@ import {
   type FsReadFileResult,
   type FsWriteMode,
 } from '#/remote/protocol/methods';
-import type { RemoteExecConnection } from './connection';
 import { rpcDomainError } from './rpcDomainError';
 
 const HOST_FS_CODES: ReadonlySet<string> = new Set(Object.values(OsFsErrors.codes));
@@ -63,7 +63,7 @@ function isUtf8Encoding(encoding: BufferEncoding): boolean {
 export class RemoteFileSystem implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
 
-  constructor(private readonly connection: RemoteExecConnection) {}
+  constructor(private readonly connection: ExecChannel) {}
 
   private async call<T>(method: string, params: unknown): Promise<T> {
     try {

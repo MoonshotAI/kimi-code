@@ -36,3 +36,20 @@ export function toRpcError(error: unknown): RpcError {
   const message = error instanceof Error ? error.message : String(error);
   return new RpcError(RpcErrorCode.InternalError, message);
 }
+
+export class ConnectionClosedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConnectionClosedError';
+  }
+}
+
+export class RequestTimeoutError extends Error {
+  constructor(
+    readonly method: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`request ${method} timed out after ${String(timeoutMs)}ms`);
+    this.name = 'RequestTimeoutError';
+  }
+}

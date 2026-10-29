@@ -2,20 +2,34 @@
 
 Remote execution protocol and bridge: a self-contained NDJSON line-framed RPC
 (codex exec-server dialect) between the local `ExecBridge` and the light
-`kimi exec-server` executor, plus the fs/process RPC stubs behind
-the engine `Environment` interface (`src/environment/`).
+`kimi exec-server` executor, and the provider that registers each declared
+remote target as an engine `Environment` (`src/environment/`).
+
+The fs/process RPC stubs are an OS backend, so they live next to the
+node-local one rather than here:
 
 ```text
-packages/agent-core-v2/src/remote/
-├── protocol/   message types, error codes, NDJSON codec (self-contained)
-├── client/     execBridge, launchers, connection, fs/process stubs, remoteEnvironment,
-│               remoteEnvironmentProvider, connectGuidance (executor detection + guidance)
-└── server/     stdioHost, fsHandler, processManager, environment, entry
+packages/agent-core-v2/src/
+├── os/
+│   ├── interface/            IHostFileSystem / IHostProcessService contracts
+│   └── backends/
+│       ├── node-local/       direct node implementation (host, local environment, executor)
+│       └── remote/           RPC stubs over an ExecChannel (remoteFileSystem, remoteProcess)
+└── remote/
+    ├── protocol/             message types, error codes, NDJSON codec, ExecChannel (self-contained)
+    ├── client/               execBridge, launchers, sshAskpass, connection, remoteSession,
+    │                         remoteEnvironmentProvider, connectGuidance (executor detection + guidance)
+    ├── server/               stdioHost, fsHandler, processManager, environment, entry
+    └── declaration/          [environments] config schema
 ```
+
+`os/backends/remote` may import only `#/remote/protocol`, `#/os/interface` and
+`#/_base`; the connection lifecycle that feeds it an `ExecChannel` stays in
+`remote/client`.
 
 ## Entries
 
-- `@moonshot-ai/agent-core-v2/remote` — client side: protocol + bridge + stubs + `RemoteSession` + `RemoteEnvironmentProviderFactory`.
+- `@moonshot-ai/agent-core-v2/remote` — client side: protocol + bridge + `RemoteSession` + `RemoteEnvironmentProviderFactory`.
 - `@moonshot-ai/agent-core-v2/remote/server` — the executor side: `runExecServer` (light entry), `StdioHost`.
 
 The CLI consumes only the server entry: argv pre-dispatch

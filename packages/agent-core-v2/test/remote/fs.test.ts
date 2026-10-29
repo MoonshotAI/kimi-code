@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { HostFsError } from '#/os/interface/hostFsErrors';
 
 import { RemoteExecConnection } from '#/remote/client/connection';
-import { RemoteFileSystem } from '#/remote/client/remoteFileSystem';
+import { RemoteFileSystem } from '#/os/backends/remote/remoteFileSystem';
 import { FS_READ_DIRECTORY_MAX_ENTRIES, FS_READ_FILE_WHOLE_MAX_BYTES } from '#/remote/protocol/methods';
 import {
   connectSubprocess,

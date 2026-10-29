@@ -17,7 +17,8 @@ import type {
   EnvironmentProviderHost,
 } from '#/environment/environmentProvider';
 
-import { HandshakeError, type ConnectionCloseInfo } from '#/remote/client/connection';
+import { HandshakeError } from '#/remote/client/connection';
+import type { ConnectionCloseInfo } from '#/remote/protocol/channel';
 import {
   RemoteEnvironmentProviderFactory,
   type RemoteEnvironmentProviderFactoryOptions,

@@ -11,7 +11,8 @@ import {
 } from '#/os/interface/hostProcess';
 
 import { decodeBase64 } from '#/remote/protocol/codec';
-import { RpcError } from '#/remote/protocol/errors';
+import type { ExecChannel } from '#/remote/protocol/channel';
+import { ConnectionClosedError, RequestTimeoutError, RpcError } from '#/remote/protocol/errors';
 import {
   PROCESS_CLOSED_METHOD,
   PROCESS_EXITED_METHOD,
@@ -26,7 +27,6 @@ import {
   type ProcessOutputStream,
   type ProcessStartResult,
 } from '#/remote/protocol/methods';
-import { ConnectionClosedError, RequestTimeoutError, type RemoteExecConnection } from './connection';
 import { rpcDomainError } from './rpcDomainError';
 
 const HOST_PROCESS_CODES: ReadonlySet<string> = new Set(Object.values(OsProcessErrors.codes));
@@ -96,7 +96,7 @@ export class RemoteProcess implements IHostProcess {
   private outputFlowPaused = false;
 
   constructor(
-    private readonly connection: RemoteExecConnection,
+    private readonly connection: ExecChannel,
     private readonly processId: string,
     mergeStderr: boolean,
   ) {
@@ -235,7 +235,7 @@ export class RemoteProcessService implements IHostProcessService {
   private readonly processes = new Map<string, RemoteProcess>();
 
   constructor(
-    private readonly connection: RemoteExecConnection,
+    private readonly connection: ExecChannel,
     private readonly defaultCwd: string,
     private readonly shellPath: string,
   ) {

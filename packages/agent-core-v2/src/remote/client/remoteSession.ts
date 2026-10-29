@@ -5,10 +5,11 @@ import type {
 } from '#/os/interface/hostEnvironment';
 
 import { ExecBridge, type ExecBridgeExit } from './execBridge';
+import { RemoteFileSystem } from '#/os/backends/remote/remoteFileSystem';
+import { RemoteProcessService } from '#/os/backends/remote/remoteProcess';
+
 import { HandshakeError, RemoteExecConnection } from './connection';
 import { resolveLauncher, type LauncherSpec } from './launchers';
-import { RemoteFileSystem } from './remoteFileSystem';
-import { RemoteProcessService } from './remoteProcess';
 import { createSshAskpass, type SshAuthOptions } from './sshAskpass';
 
 export interface RemoteEnvironmentProbe extends HostEnvironmentInfo {
