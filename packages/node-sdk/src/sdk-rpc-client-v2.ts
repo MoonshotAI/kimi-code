@@ -1627,7 +1627,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * Through `engineAccessor` (the handler chain's `ISessionLifecycleService.fork`) because the
    * klient facade fork takes no explicit target id. `turnIndex` truncation and
-   * the live-source busy rejection (v1's `SESSION_FORK_ACTIVE_TURN`) are the
+   * live-source history conflicts (v1's `SESSION_FORK_ACTIVE_TURN`) are the
    * engine's own now, so their failures cross the in-process call with v1's
    * codes and details (`request.invalid` with `{turnIndex, availableTurns}` /
    * `session.fork_active_turn`). The default title still differs by design

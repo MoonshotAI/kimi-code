@@ -220,6 +220,8 @@ export interface IAgentLoopService {
 
   tryAcquireQuiescence(): IDisposable | undefined;
 
+  tryAcquireHistorySnapshot(): IDisposable | undefined;
+
   notify(note?: LoopNotify): LoopNotifyHandle;
 
   remind(note?: LoopNotify): LoopNotifyHandle;

@@ -928,7 +928,7 @@ describe('Agent loop', () => {
     expect(ctx.llmCalls).toHaveLength(3);
   });
 
-  it('refuses a quiescence lease while a turn is active without cancelling it', async () => {
+  it('takes a non-pausing history snapshot while a turn runs to natural completion', async () => {
     let started!: () => void;
     const activeStarted = new Promise<void>((resolve) => {
       started = resolve;
@@ -947,12 +947,22 @@ describe('Agent loop', () => {
     await activeStarted;
 
     expect(loop.tryAcquireQuiescence()).toBeUndefined();
+    const snapshot = loop.tryAcquireHistorySnapshot();
+    expect(snapshot).toBeDefined();
+    expect(loop.tryAcquireHistorySnapshot()).toBeUndefined();
+    expect(loop.snapshot().paused).toBe(false);
     expect(active.signal.aborted).toBe(false);
 
-    hook.dispose();
     ctx.mockNextResponse({ type: 'text', text: 'completed normally' });
     release();
     await expect(active.result).resolves.toMatchObject({ type: 'completed' });
+    expect(loop.tryAcquireQuiescence()).toBeUndefined();
+
+    snapshot?.dispose();
+    const quiescence = loop.tryAcquireQuiescence();
+    expect(quiescence).toBeDefined();
+    quiescence?.dispose();
+    hook.dispose();
   });
 
   it('holds new admissions until an idle quiescence lease is released', async () => {

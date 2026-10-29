@@ -151,10 +151,10 @@ export const KIMI_ERROR_INFO = {
     action: 'The session state.json is corrupted; remove the session or repair the file.',
   },
   'session.fork_active_turn': {
-    title: 'Cannot fork session during active turn',
+    title: 'Session history operation in progress',
     retryable: true,
     public: true,
-    action: 'Wait for the active turn to complete before forking.',
+    action: 'Wait for the other session history operation to finish, then retry.',
   },
   'session.occupied': {
     title: 'Session is in use by another client',

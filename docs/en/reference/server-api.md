@@ -773,16 +773,18 @@ Session actions are dispatched through one route: the path tail is parsed as `{s
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. Forking is rejected while any of the session's agents has an active turn.
+Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. The source keeps running. If a turn is active, the fork stops at the last completed turn before it; the active turn, queued input, and later events are excluded.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `title` | body | string | Title for the fork (at least 1 character). Default `Fork: <source title>` |
 | `metadata` | body | object | Custom metadata for the fork |
+| `turn_index` | body | integer | Zero-based user-visible turn to fork through, including that turn. Must be a non-negative safe integer and already complete |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40901`: the session has an active turn and cannot be forked
+- `40001`: `turn_index` is invalid, does not exist, or selects the active turn
+- `40901`: another session history operation is in progress
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
@@ -868,7 +870,7 @@ On success, `data` is `{ items, has_more }` where each item is [the session obje
 
 #### `POST /api/v1/sessions/{session_id}/children`
 
-Creates a child session: a fork of this session recorded as its child, so it shows up under `GET /api/v1/sessions/{session_id}/children`. The same active-turn restriction as `:fork` applies.
+Creates a child session: a fork of this session recorded as its child, so it shows up under `GET /api/v1/sessions/{session_id}/children`. Running sources use the same completed-turn boundary as `:fork`; child creation does not accept a historical `turn_index`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -878,7 +880,7 @@ Creates a child session: a fork of this session recorded as its child, so it sho
 
 On success, `data` is [the session object](#the-session-object) of the new session, and the server broadcasts `event.session.created`.
 
-- `40901`: the session has an active turn and cannot be forked
+- `40901`: another session history operation is in progress
 
 #### `GET /api/v1/sessions/{session_id}/status`
 

@@ -175,6 +175,7 @@ const sessionActionRequestSchema = z.preprocess(
   z.object({
     title: z.string().min(1).optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
+    turn_index: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     instruction: z.string().optional(),
     count: z.number().int().positive().optional(),
     page_size: z.number().int().min(1).max(100).optional(),
@@ -928,6 +929,7 @@ async function forkSessionAction(
       sourceSessionId: id,
       title: body.title,
       metadata: body.metadata,
+      turnIndex: body.turn_index,
     });
     const session = toWireSession(
       { ...meta, workspaceId: lease.instance.program.workspaceId },

@@ -1549,6 +1549,10 @@ describe('server-v2 /api/v1/sessions', () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
+    const invalid = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
+      turn_index: -1,
+    });
+    expect(invalid.body.code).toBe(40001);
     const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
     expect(forked.body.code).toBe(0);
 
@@ -1564,10 +1568,19 @@ describe('server-v2 /api/v1/sessions', () => {
     const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
     expect(session).toBeDefined();
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
-    const cron = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    main.accessor.get(IAgentContextMemoryService).append({
+      role: 'user',
+      content: [{ type: 'text', text: 'selected through REST' }],
+      origin: { kind: 'user' },
+    });
+    await main.accessor.get(IWireService).flush();
+    const cron = main.accessor.get(IAgentCronService);
     const task = cron.addTask({ cron: '0 9 * * *', prompt: 'fork me', recurring: true });
 
-    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
+      turn_index: 0,
+    });
     expect(forked.body.code).toBe(0);
     const forkedId = forked.body.data.id;
 
@@ -1575,7 +1588,12 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const resumed = await resumeSessionById((server as RunningServer).core.accessor, forkedId);
     expect(resumed).toBeDefined();
-    const forkedCron = resumed!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
+    const forkedMain = resumed!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    expect(forkedMain.accessor.get(IAgentContextMemoryService).get()[0]).toMatchObject({
+      role: 'user',
+      content: [{ type: 'text', text: 'selected through REST' }],
+    });
+    const forkedCron = forkedMain.accessor.get(IAgentCronService);
     expect(forkedCron.list()).toEqual([]);
     expect(cron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
       { id: task.id, prompt: 'fork me' },
