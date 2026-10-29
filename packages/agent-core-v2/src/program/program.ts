@@ -1,23 +1,14 @@
-import type { LiveRef } from '#/_base/di/instantiation';
-import { Emitter, Event } from '#/_base/event';
-import type { IGitService } from '#/app/git/git';
-import { GitService } from '#/app/git/gitService';
-import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
+import { Emitter, type Event } from '#/_base/event';
 import type { EnvironmentBinding } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID, environmentBindingId } from '#/environment/environment';
 import { EnvironmentError, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
-import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import type { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
 import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
-import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
 import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
-import { WorkspaceGitService } from '#/workspace/workspaceGit/workspaceGitService';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
-import { WorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructionsService';
 import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { WorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcpService';
 import type { IWorkspaceMcpConfigService } from '#/workspace/workspaceMcpConfig/workspaceMcpConfig';
@@ -35,19 +26,17 @@ import { PluginAgentProfileLoaderService } from '#/workspace/workspaceAgentProfi
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
-import { WorkspaceAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoaderService';
-import { ExplicitFileSkillSource, type IExplicitFileSkillSource } from '#/features/skill/workspace/explicitFileSkillSource';
-import { ExtraFileSkillSource, type IExtraFileSkillSource } from '#/features/skill/workspace/extraFileSkillSource';
-import { PluginSkillSource, type IPluginSkillSource } from '#/features/skill/workspace/pluginSkillSource';
-import { WorkspaceRootSkillSource } from '#/features/skill/workspace/rootFileSkillSource';
+import { ExplicitFileSkillSource } from '#/features/skill/workspace/explicitFileSkillSource';
+import { ExtraFileSkillSource } from '#/features/skill/workspace/extraFileSkillSource';
+import { PluginSkillSource } from '#/features/skill/workspace/pluginSkillSource';
 import { EnvironmentSkillDiscovery } from '#/features/skill/workspace/environmentSkillDiscovery';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
-import { WorkspaceSkillCatalogService } from '#/features/skill/workspace/workspaceSkillCatalogService';
 import type { IEnvironmentService } from '#/app/environment/environment';
-import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { ProgramDependencies } from './programDependencies';
+import { PROGRAM_CAPABILITIES, ProgramWorkdirs, type ProgramHarness } from './programWorkdirs';
+
+export type { ProgramWorkdir } from './programWorkdirs';
 
 export type ProgramStatus = 'preparing' | 'ready' | 'degraded';
 
@@ -88,23 +77,9 @@ export interface ProgramSnapshot {
   readonly environments: readonly EnvironmentGenerationSnapshot[];
 }
 
-interface ProgramHarness {
-  readonly userAgentProfiles: IUserAgentProfileLoader;
-  readonly explicitSkills: IExplicitFileSkillSource;
-  readonly extraSkills: IExtraFileSkillSource;
-  readonly pluginSkills: IPluginSkillSource;
-}
-
-interface ProgramWorkdirEntry {
-  readonly view: ProgramView;
-  readonly disposables: readonly { dispose(): void | Promise<void> }[];
-  references: number;
-}
-
 interface ProgramGeneration extends ProgramHarness {
   readonly id: string;
-  readonly root: ProgramView;
-  readonly workdirs: Map<string, ProgramWorkdirEntry>;
+  readonly workdirs: ProgramWorkdirs;
   readonly mcpConfig: IWorkspaceMcpConfigService;
   readonly mcp: IWorkspaceMcpService;
   readonly trust: IWorkspaceTrust;
@@ -118,42 +93,6 @@ interface ProgramGeneration extends ProgramHarness {
   references: number;
   retired: boolean;
 }
-
-export interface ProgramWorkdir {
-  readonly contextKey: string;
-  readonly dirs: IWorkspaceDirs;
-  readonly fs: IWorkspaceFsService;
-  readonly instructions: IWorkspaceInstructionsService;
-  readonly skills: IWorkspaceSkillCatalog;
-  readonly agentProfiles: IWorkspaceAgentProfileLoader;
-  dispose(): void;
-}
-
-interface ProgramViewInput extends ProgramHarness {
-  readonly context: IWorkspaceContext;
-  readonly hostFs: IHostFileSystem;
-  readonly environmentId: string;
-  readonly homeDir?: string;
-  readonly git: LiveRef<IGitService>;
-  readonly instructionsHost: HostEnvironmentInfo;
-  readonly personalFs?: IHostFileSystem;
-  readonly watch: boolean;
-  readonly projectAgentProfiles: boolean;
-  readonly contextKey: string;
-}
-
-interface ProgramView {
-  readonly state: IWorkspaceStateService;
-  readonly localConfig: FileProjectLocalConfigService;
-  readonly dirs: IWorkspaceDirs;
-  readonly git: IWorkspaceGitService;
-  readonly fs: IWorkspaceFsService;
-  readonly instructions: IWorkspaceInstructionsService;
-  readonly skills: IWorkspaceSkillCatalog;
-  readonly agentProfiles: IWorkspaceAgentProfileLoader;
-}
-
-const PROGRAM_CAPABILITIES = ['fs', 'process'] as const;
 
 export class Program {
   readonly binding: EnvironmentBinding = Object.freeze({ environmentId: LOCAL_ENVIRONMENT_ID });
@@ -179,17 +118,17 @@ export class Program {
   }
 
   get status(): ProgramStatus { return this.currentStatus; }
-  get state(): IWorkspaceStateService { return this.requireGeneration().root.state; }
-  get dirs(): IWorkspaceDirs { return this.requireGeneration().root.dirs; }
-  get fs(): IWorkspaceFsService { return this.requireGeneration().root.fs; }
-  get git(): IWorkspaceGitService { return this.requireGeneration().root.git; }
-  get instructions(): IWorkspaceInstructionsService { return this.requireGeneration().root.instructions; }
+  get state(): IWorkspaceStateService { return this.requireGeneration().workdirs.root.state; }
+  get dirs(): IWorkspaceDirs { return this.requireGeneration().workdirs.root.dirs; }
+  get fs(): IWorkspaceFsService { return this.requireGeneration().workdirs.root.fs; }
+  get git(): IWorkspaceGitService { return this.requireGeneration().workdirs.root.git; }
+  get instructions(): IWorkspaceInstructionsService { return this.requireGeneration().workdirs.root.instructions; }
   get mcpConfig(): IWorkspaceMcpConfigService { return this.requireGeneration().mcpConfig; }
   get mcp(): IWorkspaceMcpService { return this.requireGeneration().mcp; }
   get trust(): IWorkspaceTrust { return this.requireGeneration().trust; }
   get trustDisclosure(): IWorkspaceTrustDisclosure { return this.requireGeneration().trustDisclosure; }
-  get skills(): IWorkspaceSkillCatalog { return this.requireGeneration().root.skills; }
-  get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration().root.agentProfiles; }
+  get skills(): IWorkspaceSkillCatalog { return this.requireGeneration().workdirs.root.skills; }
+  get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration().workdirs.root.agentProfiles; }
   get userAgentProfiles(): IUserAgentProfileLoader { return this.requireGeneration().userAgentProfiles; }
   get sessionControllerGeneration(): string { return this.requireGeneration().id; }
 
@@ -214,7 +153,7 @@ export class Program {
         userAgentProfiles: generation.userAgentProfiles,
         pluginAgentProfiles: generation.pluginAgentProfiles,
         mcp: generation.mcp,
-        acquireWorkdir: (environmentId, cwd) => this.acquireWorkdir(generation, environmentId, cwd),
+        acquireWorkdir: (environmentId, cwd) => generation.workdirs.acquire(environmentId, cwd),
         onDispose: release,
       });
     } catch (error) {
@@ -225,13 +164,13 @@ export class Program {
 
   async reload(): Promise<void> {
     const generation = this.requireGeneration();
-    for (const { view } of generation.workdirs.values()) await reloadView(view);
+    await generation.workdirs.reload();
     await generation.userAgentProfiles.reload().catch(() => undefined);
   }
 
   snapshot(): ProgramSnapshot {
     const generation = this.generation;
-    const skills = generation?.root.skills.catalog.listSkills() ?? [];
+    const skills = generation?.workdirs.root.skills.catalog.listSkills() ?? [];
     const skillsBySource = new Map<string, number>();
     for (const skill of skills) {
       skillsBySource.set(skill.source, (skillsBySource.get(skill.source) ?? 0) + 1);
@@ -258,17 +197,17 @@ export class Program {
       catalog: {
         skills: {
           total: skills.length,
-          invocable: generation?.root.skills.catalog.listInvocableSkills().length ?? 0,
-          skipped: generation?.root.skills.catalog.getSkippedByPolicy().length ?? 0,
+          invocable: generation?.workdirs.root.skills.catalog.listInvocableSkills().length ?? 0,
+          skipped: generation?.workdirs.root.skills.catalog.getSkippedByPolicy().length ?? 0,
         },
         agentProfiles: agentProfiles.reduce((total, source) => total + source.profiles.length, 0),
         mcpServers: mcpServers.length,
       },
       sources: {
         skills: [...skillsBySource].map(([source, count]) => ({ source, count })),
-        skillRoots: generation?.root.skills.catalog.getSkillRoots() ?? [],
+        skillRoots: generation?.workdirs.root.skills.catalog.getSkillRoots() ?? [],
         agentProfiles,
-        instructionPaths: generation?.root.instructions.snapshot.agentsMdPaths ?? [],
+        instructionPaths: generation?.workdirs.root.instructions.snapshot.agentsMdPaths ?? [],
         mcpServers,
       },
       environments: this.environments.snapshot().environments,
@@ -348,22 +287,16 @@ export class Program {
       const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const harness: ProgramHarness = { userAgentProfiles, explicitSkills, extraSkills, pluginSkills };
-      const root = this.buildWorkdir(own, harness, LOCAL_ENVIRONMENT_ID, this.context.cwd);
+      const workdirs = new ProgramWorkdirs(this.environments, this.context, this.dependencies, harness, own);
+      const root = workdirs.root;
       const trust = own(new WorkspaceTrustService(this.context, this.dependencies.trustStore, root.state));
       const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, hostFs, trust, this.dependencies.configStore));
       const mcp = new WorkspaceMcpService(this.context, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager);
       disposables.push({ dispose: () => mcp.disposeAsync() });
       const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, trust, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
-      const workdirs = new Map<string, ProgramWorkdirEntry>([[this.rootKey, { view: root, disposables: [], references: 1 }]]);
-      own({
-        dispose: () => {
-          for (const entry of [...workdirs.values()].toReversed()) disposeAll(entry.disposables);
-          workdirs.clear();
-        },
-      });
+      own(workdirs);
       return {
         id: environment.identity.generation,
-        root,
         workdirs,
         mcpConfig,
         mcp,
@@ -387,115 +320,14 @@ export class Program {
     }
   }
 
-  private async acquireWorkdir(generation: ProgramGeneration, environmentId: string, cwd: string): Promise<ProgramWorkdir> {
-    const contextKey = environmentBindingId(environmentId, cwd);
-    let entry = generation.workdirs.get(contextKey);
-    const stale = entry !== undefined && !watchable(environmentId);
-    if (entry === undefined) {
-      const disposables: { dispose(): void | Promise<void> }[] = [];
-      const own = <T extends { dispose(): void | Promise<void> }>(value: T): T => {
-        disposables.push(value);
-        return value;
-      };
-      try {
-        entry = { view: this.buildWorkdir(own, generation, environmentId, cwd), disposables, references: 0 };
-      } catch (error) {
-        disposeAll(disposables);
-        throw error;
-      }
-      generation.workdirs.set(contextKey, entry);
-    }
-    const acquired = entry;
-    acquired.references += 1;
-    let released = false;
-    const workdir: ProgramWorkdir = {
-      contextKey,
-      dirs: acquired.view.dirs,
-      fs: acquired.view.fs,
-      instructions: acquired.view.instructions,
-      skills: acquired.view.skills,
-      agentProfiles: acquired.view.agentProfiles,
-      dispose: () => {
-        if (released) return;
-        released = true;
-        acquired.references -= 1;
-        if (acquired.references > 0 || generation.workdirs.get(contextKey) !== acquired) return;
-        generation.workdirs.delete(contextKey);
-        disposeAll(acquired.disposables);
-      },
-    };
-    if (stale) {
-      try {
-        await reloadView(acquired.view);
-      } catch (error) {
-        workdir.dispose();
-        throw error;
-      }
-    }
-    return workdir;
-  }
-
-  private buildWorkdir(
-    own: <T extends { dispose(): void | Promise<void> }>(value: T) => T,
-    harness: ProgramHarness,
-    environmentId: string,
-    cwd: string,
-  ): ProgramView {
-    const lease = this.environments.acquire({ environmentId }, PROGRAM_CAPABILITIES);
-    try {
-      const hostFs = lease.environment.fs!;
-      const local = this.environments.inspect(this.binding);
-      const inProcess = watchable(environmentId);
-      const trustCovered = environmentId === LOCAL_ENVIRONMENT_ID;
-      return this.buildView(own, {
-        context: { ...this.context, cwd },
-        hostFs,
-        environmentId,
-        homeDir: lease.environment.host?.homeDir ?? '',
-        git: inProcess
-          ? this.dependencies.git
-          : { current: new GitService(this.environments, hostFs, environmentId), onDidChange: Event.None as Event<void> },
-        instructionsHost: local.host!,
-        personalFs: local.fs,
-        watch: inProcess,
-        projectAgentProfiles: trustCovered,
-        contextKey: environmentBindingId(environmentId, cwd),
-        userAgentProfiles: harness.userAgentProfiles,
-        explicitSkills: harness.explicitSkills,
-        extraSkills: harness.extraSkills,
-        pluginSkills: harness.pluginSkills,
-      });
-    } finally {
-      lease.dispose();
-    }
-  }
-
-  private buildView(
-    own: <T extends { dispose(): void | Promise<void> }>(value: T) => T,
-    input: ProgramViewInput,
-  ): ProgramView {
-    const state = own(new WorkspaceStateService(this.dependencies.appState));
-    const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, input.hostFs, input.homeDir);
-    const dirs = own(new WorkspaceDirsService(input.context, localConfig, this.dependencies.workspaces, this.dependencies.workspaceStore, this.dependencies.log, state));
-    const git = new WorkspaceGitService(input.context, input.git);
-    const fs = new WorkspaceFsService(input.context, dirs, input.hostFs, this.environments, this.dependencies.telemetry, git, input.environmentId);
-    const instructions = own(new WorkspaceInstructionsService(input.context, input.hostFs, input.instructionsHost, this.dependencies.bootstrap, this.dependencies.log, state, input.personalFs, input.watch));
-    const agentProfiles: IWorkspaceAgentProfileLoader = input.projectAgentProfiles
-      ? own(new WorkspaceAgentProfileLoaderService(input.context, input.hostFs, this.dependencies.log, input.userAgentProfiles, this.dependencies.agentProfiles, input.contextKey, input.watch))
-      : { _serviceBrand: undefined, ready: Promise.resolve(), reload: () => Promise.resolve() };
-    const workspaceSkills = own(new WorkspaceRootSkillSource(new EnvironmentSkillDiscovery(this.dependencies.log, input.hostFs), input.context, this.dependencies.config, this.dependencies.bootstrap, input.hostFs, input.watch));
-    const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, this.dependencies.userSkills, input.explicitSkills, input.extraSkills, workspaceSkills, input.pluginSkills, state));
-    return { state, localConfig, dirs, git, fs, instructions, skills, agentProfiles };
-  }
-
   private observeReadiness(generation: ProgramGeneration): void {
     void Promise.all([
-      readiness(generation.root.dirs),
-      readiness(generation.root.instructions),
+      readiness(generation.workdirs.root.dirs),
+      readiness(generation.workdirs.root.instructions),
       readiness(generation.mcpConfig),
       readiness(generation.mcp),
-      readiness(generation.root.skills),
-      readiness(generation.root.agentProfiles),
+      readiness(generation.workdirs.root.skills),
+      readiness(generation.workdirs.root.agentProfiles),
     ]).then(
       () => {
         if (this.generation !== generation) return;
@@ -562,21 +394,6 @@ export class Program {
     else this.currentStatus = local.status === 'ready' ? 'ready' : 'degraded';
     this.changeEmitter.fire(this.snapshot());
   }
-}
-
-function watchable(environmentId: string): boolean {
-  return environmentId === LOCAL_ENVIRONMENT_ID;
-}
-
-async function reloadView(view: ProgramView): Promise<void> {
-  await view.dirs.reload();
-  await view.instructions.reload();
-  await view.skills.reload();
-  await view.agentProfiles.reload().catch(() => undefined);
-}
-
-function disposeAll(disposables: readonly { dispose(): void | Promise<void> }[]): void {
-  for (const disposable of disposables.toReversed()) void disposable.dispose();
 }
 
 function readiness(value: unknown): Promise<void> {

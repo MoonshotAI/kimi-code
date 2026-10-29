@@ -25,7 +25,7 @@ import type { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfil
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import type { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
-import type { ProgramWorkdir } from './program';
+import type { ProgramWorkdir } from './programWorkdirs';
 
 export interface ProgramSessionControllerInput {
   readonly context: IWorkspaceContext;

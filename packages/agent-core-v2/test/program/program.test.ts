@@ -113,8 +113,7 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
     };
     return {
       id,
-      root,
-      workdirs: new Map(),
+      workdirs: { root, reload: async () => {}, dispose: () => {} },
       mcpConfig: { ...behavior, servers: () => ({}) },
       mcp: behavior,
       trust: { ...behavior, isTrusted: () => false },
@@ -218,7 +217,7 @@ describe('Program', () => {
     const { registry, program, create } = setup();
     registry.register(fakeEnvironment('local', 'one'));
     const generation = create.mock.results[0]?.value as unknown as {
-      root: {
+      workdirs: { root: {
         skills: { catalog: {
           listSkills(): unknown[];
           listInvocableSkills(): unknown[];
@@ -226,22 +225,22 @@ describe('Program', () => {
           getSkillRoots(): string[];
         } };
         instructions: { snapshot: { agentsMdPaths?: readonly string[] } };
-      };
+      } };
       mcpConfig: { servers(): Record<string, unknown> };
       mcp: unknown;
     };
     const skill = { source: 'workspace' };
-    generation.root.skills.catalog.listSkills = () => [skill];
-    generation.root.skills.catalog.listInvocableSkills = () => [skill];
-    generation.root.skills.catalog.getSkippedByPolicy = () => [];
-    generation.root.skills.catalog.getSkillRoots = () => ['/workspace/.agents/skills'];
-    generation.root.instructions.snapshot = { agentsMdPaths: ['/workspace/AGENTS.md'] };
+    generation.workdirs.root.skills.catalog.listSkills = () => [skill];
+    generation.workdirs.root.skills.catalog.listInvocableSkills = () => [skill];
+    generation.workdirs.root.skills.catalog.getSkippedByPolicy = () => [];
+    generation.workdirs.root.skills.catalog.getSkillRoots = () => ['/workspace/.agents/skills'];
+    generation.workdirs.root.instructions.snapshot = { agentsMdPaths: ['/workspace/AGENTS.md'] };
     generation.mcpConfig.servers = () => ({ baseline: {} });
     await program.ready;
     await Promise.resolve();
 
-    expect(program.skills).toBe(generation.root.skills);
-    expect(program.instructions).toBe(generation.root.instructions);
+    expect(program.skills).toBe(generation.workdirs.root.skills);
+    expect(program.instructions).toBe(generation.workdirs.root.instructions);
     expect(program.mcpConfig).toBe(generation.mcpConfig);
     expect(program.mcp).toBe(generation.mcp);
     expect(program.snapshot()).toMatchObject({
@@ -529,9 +528,9 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
 
   const local = (): GenerationAccess => {
     const generation = (program as unknown as {
-      generation: { root: GenerationAccess; mcpConfig: IWorkspaceMcpConfigService; userAgentProfiles: IUserAgentProfileLoader };
+      generation: { workdirs: { root: GenerationAccess }; mcpConfig: IWorkspaceMcpConfigService; userAgentProfiles: IUserAgentProfileLoader };
     }).generation;
-    return { ...generation.root, mcpConfig: generation.mcpConfig, userAgentProfiles: generation.userAgentProfiles };
+    return { ...generation.workdirs.root, mcpConfig: generation.mcpConfig, userAgentProfiles: generation.userAgentProfiles };
   };
   const workdirs: ProgramWorkdir[] = [];
   let controller: { dispose(): void } | undefined;
