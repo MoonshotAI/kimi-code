@@ -128,17 +128,6 @@ export type CreateSessionChildResponse = z.infer<typeof createSessionChildRespon
 export const getSessionGoalResponseSchema = goalSnapshotSchema.nullable();
 export type GetSessionGoalResponse = z.infer<typeof getSessionGoalResponseSchema>;
 
-export const compactSessionRequestSchema = z.preprocess(
-  (value) => value === undefined ? {} : value,
-  z.object({
-    instruction: z.string().optional(),
-  }),
-);
-export type CompactSessionRequest = z.infer<typeof compactSessionRequestSchema>;
-
-export const compactSessionResponseSchema = z.object({});
-export type CompactSessionResponse = z.infer<typeof compactSessionResponseSchema>;
-
 export const undoSessionRequestSchema = z.preprocess(
   (value) => value === undefined ? {} : value,
   z.object({

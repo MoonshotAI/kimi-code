@@ -47,8 +47,6 @@ import { pageResponseSchema } from '../protocol/pagination';
 import { toProtocolMessage } from '../services/messages/messageProjection';
 import {
   archiveSessionResponseSchema,
-  compactSessionRequestSchema,
-  compactSessionResponseSchema,
   createSessionChildRequestSchema,
   createSessionRequestSchema,
   deleteSessionResponseSchema,
@@ -175,7 +173,6 @@ const sessionActionRequestSchema = z.preprocess(
   z.object({
     title: z.string().min(1).optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
-    instruction: z.string().optional(),
     count: z.number().int().positive().optional(),
     page_size: z.number().int().min(1).max(100).optional(),
   }),
@@ -618,7 +615,6 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       success: {
         data: z.union([
           sessionSchema,
-          compactSessionResponseSchema,
           undoSessionResponseSchema,
           sessionAbortResponseSchema,
           startBtwSessionResponseSchema,
@@ -632,7 +628,6 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_BUSY]: {},
         ...sessionConflictErrors,
-        [ErrorCode.COMPACTION_UNABLE]: {},
         [ErrorCode.SESSION_UNDO_UNAVAILABLE]: {},
       },
       description: 'Run a session action',
@@ -881,7 +876,6 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
 
 type SessionAction =
   | 'fork'
-  | 'compact'
   | 'undo'
   | 'abort'
   | 'btw'
@@ -904,7 +898,6 @@ type SessionActionCtx<TBody = unknown> = SessionActionExtra & {
 
 const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   fork: { body: forkSessionRequestSchema, handle: forkSessionAction },
-  compact: { body: compactSessionRequestSchema, handle: compactSessionAction },
   undo: { body: undoSessionRequestSchema, handle: undoSessionAction },
   abort: { handle: abortSessionAction },
   btw: { handle: btwSessionAction },
@@ -945,20 +938,6 @@ async function forkSessionAction(
   } finally {
     lease.dispose();
   }
-}
-
-async function compactSessionAction(
-  ctx: SessionActionCtx<z.infer<typeof compactSessionRequestSchema>>,
-): Promise<void> {
-  const { core, req, reply, id, body } = ctx;
-  await reloadOnStale(core.accessor, id, async () => {
-    const agent = await resolveMainAgent(core, id);
-    agent.accessor
-      .get(IAgentFullCompactionService)
-      .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
-  });
-  requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
-  reply.send(okEnvelope({}, req.id));
 }
 
 async function undoSessionAction(
@@ -1250,12 +1229,6 @@ async function resolveMainAgent(core: Scope, sessionId: string): Promise<IAgentS
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
   return ensureMainAgent(session);
-}
-
-function normalizeOptional(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  const trimmed = value.trim();
-  return trimmed.length === 0 ? undefined : trimmed;
 }
 
 const DEFAULT_UNDO_MESSAGE_PAGE_SIZE = 50;

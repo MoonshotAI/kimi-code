@@ -23,6 +23,7 @@ import {
   type AfterStepContext,
   type PromptHandle,
 } from '#/agent/loop/loop';
+import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
@@ -1250,6 +1251,20 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(loopService.launches).toEqual([]);
     expect(loopService.drainNextBatch(context)).toBeDefined();
     expect(context.get().at(-1)?.origin).toEqual(USER_PROMPT_ORIGIN);
+  });
+
+  it('does not launch a continuation while the prompt queue has inputs waiting', async () => {
+    const pending = vi.spyOn(ctx!.get(IAgentPromptQueueService), 'hasPendingInputs').mockReturnValue(true);
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.markBlocked({ reason: 'need credentials' });
+
+    await goals.resumeGoal({ continueIfBlocked: true });
+    expect(loopService.launches).toEqual([]);
+
+    pending.mockReturnValue(false);
+    await goals.markBlocked({ reason: 'need credentials' });
+    await goals.resumeGoal({ continueIfBlocked: true });
+    expect(loopService.launches).toHaveLength(1);
   });
 
   it('launches only one continuation when blocked resume is repeated', async () => {

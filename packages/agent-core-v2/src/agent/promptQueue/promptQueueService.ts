@@ -1,0 +1,325 @@
+import { Disposable } from '#/_base/di/lifecycle';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Emitter } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
+import { WarningIssued } from '#/agent/profile/profileOps';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IEventService } from '#/app/event/event';
+import { LifecycleScope } from '#/app/scopes';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { Error2, ErrorCodes } from '#/errors';
+import type { UserEntry } from '#human/agent/turn';
+
+import {
+  IAgentPromptQueueService,
+  type PromptQueueCompactionRequest,
+  type PromptQueueInputRequest,
+  type PromptQueueSnapshot,
+  type PromptQueueSubmitResult,
+  type QueuedPromptItem,
+} from './promptQueue';
+import { PromptQueueChanged } from './promptQueueEvents';
+
+type QueueEntry = QueuedPromptItem & {
+  readonly prepare?: () => Promise<void>;
+  readonly onDrop?: () => void;
+};
+
+export class AgentPromptQueueService extends Disposable implements IAgentPromptQueueService {
+  declare readonly _serviceBrand: undefined;
+
+  private readonly onDidChangeEmitter = this._register(new Emitter<PromptQueueSnapshot>());
+  readonly onDidChange = this.onDidChangeEmitter.event;
+
+  private entries: QueueEntry[] = [];
+  private paused = false;
+  private busy = false;
+  private pumpScheduled = false;
+  private disposed = false;
+
+  constructor(
+    @IAgentLoopService private readonly loop: IAgentLoopService,
+    @IAgentFullCompactionService private readonly compaction: IAgentFullCompactionService,
+    @IEventService private readonly events: IEventService,
+    @ISessionContext private readonly sessionContext: ISessionContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @ILogService private readonly logger: ILogService,
+  ) {
+    super();
+    this._register(this.loop.onDidChangeActivity(() => {
+      this.schedulePump();
+    }));
+  }
+
+  snapshot(): PromptQueueSnapshot {
+    return {
+      paused: this.paused,
+      items: this.entries.map(({ prepare: _prepare, onDrop: _onDrop, ...item }) => item),
+    };
+  }
+
+  hasPendingInputs(): boolean {
+    return !this.paused && this.entries.length > 0;
+  }
+
+  async submitInput(request: PromptQueueInputRequest): Promise<PromptQueueSubmitResult> {
+    this.assertNewId(request.id);
+    if (request.mode !== undefined && request.delivery === 'steer') {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'a prompt with a mode cannot be steered');
+    }
+    if (request.delivery === 'steer' && !this.paused && !this.busy && this.loop.canSteerPrompt()) {
+      return { acceptedAs: 'steer', handle: await this.handOffSteer(request.entry) };
+    }
+    if (this.canStartNow()) {
+      this.busy = true;
+      try {
+        if (request.prepare !== undefined) await request.prepare();
+        return { acceptedAs: 'turn', handle: this.launch(request.entry) };
+      } finally {
+        this.busy = false;
+        this.schedulePump();
+      }
+    }
+    this.insert({
+      kind: 'input',
+      id: request.id,
+      delivery: request.delivery,
+      entry: request.entry,
+      mode: request.mode,
+      createdAt: request.entry.meta?.createdAt ?? new Date().toISOString(),
+      prepare: request.prepare,
+      onDrop: request.onDrop,
+    });
+    return { acceptedAs: request.delivery };
+  }
+
+  submitCompaction(request: PromptQueueCompactionRequest): PromptQueueSubmitResult {
+    this.assertNewId(request.id);
+    if (this.canStartNow()) {
+      this.startCompaction(request.instruction);
+      return { acceptedAs: 'compact' };
+    }
+    this.insert({
+      kind: 'compact',
+      id: request.id,
+      delivery: 'queue',
+      instruction: request.instruction,
+      createdAt: new Date().toISOString(),
+    });
+    return { acceptedAs: 'queue' };
+  }
+
+  pause(): void {
+    if (this.paused) return;
+    this.paused = true;
+    this.emitChange();
+  }
+
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    this.emitChange();
+    this.schedulePump();
+  }
+
+  steer(id: string): void {
+    const entry = this.find(id);
+    if (entry.kind !== 'input') {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'only an input can be steered');
+    }
+    if (entry.mode !== undefined) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'a prompt with a mode cannot be steered');
+    }
+    if (entry.delivery === 'steer') return;
+    this.entries = this.entries.filter((item) => item !== entry);
+    this.insert({ ...entry, delivery: 'steer' });
+  }
+
+  move(id: string, beforeId?: string): void {
+    const entry = this.find(id);
+    if (entry.delivery === 'steer') {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'steers keep their order ahead of queued prompts');
+    }
+    if (beforeId === id) return;
+    const before = beforeId === undefined ? undefined : this.find(beforeId);
+    if (before?.delivery === 'steer') {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'queued prompts cannot move ahead of steers');
+    }
+    const rest = this.entries.filter((item) => item !== entry);
+    const index = before === undefined ? rest.length : rest.indexOf(before);
+    rest.splice(index, 0, entry);
+    this.entries = rest;
+    this.emitChange();
+    this.schedulePump();
+  }
+
+  cancel(id: string): void {
+    const entry = this.find(id);
+    this.entries = this.entries.filter((item) => item !== entry);
+    this.emitChange();
+    entry.onDrop?.();
+  }
+
+  override dispose(): void {
+    this.disposed = true;
+    const dropped = this.entries;
+    this.entries = [];
+    for (const entry of dropped) entry.onDrop?.();
+    super.dispose();
+  }
+
+  private canStartNow(): boolean {
+    return (
+      !this.busy &&
+      (this.paused || this.entries.length === 0) &&
+      this.loop.canLaunchPrompt()
+    );
+  }
+
+  private insert(entry: QueueEntry): void {
+    if (entry.delivery === 'steer') {
+      const firstQueued = this.entries.findIndex((item) => item.delivery !== 'steer');
+      const index = firstQueued === -1 ? this.entries.length : firstQueued;
+      this.entries = [...this.entries.slice(0, index), entry, ...this.entries.slice(index)];
+    } else {
+      this.entries = [...this.entries, entry];
+    }
+    this.emitChange();
+    this.schedulePump();
+  }
+
+  private find(id: string): QueueEntry {
+    const entry = this.entries.find((item) => item.id === id);
+    if (entry === undefined) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${id} is not in the queue`);
+    }
+    return entry;
+  }
+
+  private assertNewId(id: string): void {
+    if (this.entries.some((item) => item.id === id)) {
+      throw new Error2(ErrorCodes.PROMPT_ID_CONFLICT, `prompt ${id} is already queued`);
+    }
+  }
+
+  private emitChange(): void {
+    if (this.disposed) return;
+    const snapshot = this.snapshot();
+    this.onDidChangeEmitter.fire(snapshot);
+    this.events.publish(
+      new PromptQueueChanged({
+        payload: {
+          sessionId: this.sessionContext.sessionId,
+          agentId: this.scopeContext.agentId,
+          snapshot,
+        },
+      }),
+    );
+  }
+
+  private schedulePump(): void {
+    if (this.pumpScheduled || this.disposed) return;
+    this.pumpScheduled = true;
+    queueMicrotask(() => {
+      this.pumpScheduled = false;
+      void this.pump().catch((error: unknown) => {
+        this.logger.warn('prompt queue failed to advance', { error });
+      });
+    });
+  }
+
+  private async pump(): Promise<void> {
+    if (this.disposed || this.paused || this.busy || this.entries.length === 0) return;
+    const head = this.entries[0]!;
+    if (head.delivery === 'steer' && this.loop.canSteerPrompt()) {
+      await this.runBusy(head, async () => {
+        await this.handOffSteer(head.entry);
+      });
+      return;
+    }
+    if (!this.loop.canLaunchPrompt()) return;
+    if (head.kind === 'compact') {
+      this.take(head);
+      this.startQueuedCompaction(head.instruction);
+      return;
+    }
+    await this.runBusy(head, async () => {
+      if (head.prepare !== undefined) {
+        try {
+          await head.prepare();
+        } catch (error) {
+          this.logger.warn('queued prompt mode could not be applied', { promptId: head.id, error });
+          this.warn('queued-mode-failed', `The queued prompt could not enter its mode and started as a normal prompt: ${reasonOf(error)}`);
+        }
+      }
+      this.launch(head.entry);
+    });
+  }
+
+  private async runBusy(head: QueueEntry & { readonly kind: 'input' }, run: () => Promise<void>): Promise<void> {
+    this.busy = true;
+    this.take(head);
+    try {
+      await run();
+    } finally {
+      this.busy = false;
+      this.schedulePump();
+    }
+  }
+
+  private take(entry: QueueEntry): void {
+    this.entries = this.entries.filter((item) => item !== entry);
+    this.emitChange();
+  }
+
+  private launch(entry: UserEntry): PromptHandle | undefined {
+    const { id } = this.loop.submit(entry);
+    return this.loop.promptHandle(id);
+  }
+
+  private async handOffSteer(entry: UserEntry): Promise<PromptHandle | undefined> {
+    const { id } = this.loop.submit(entry);
+    const handle = this.loop.promptHandle(id);
+    try {
+      await this.loop.steer([id]);
+    } catch (error) {
+      this.logger.debug('steer fell back to the next turn', { promptId: id, error });
+    }
+    return handle;
+  }
+
+  private startCompaction(instruction: string | undefined): void {
+    if (!this.compaction.begin({ source: 'manual', instruction })) {
+      throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'A compaction is already running.');
+    }
+  }
+
+  private startQueuedCompaction(instruction: string | undefined): void {
+    try {
+      this.startCompaction(instruction);
+    } catch (error) {
+      this.logger.warn('queued compaction could not start', { error });
+      this.warn('queued-compaction-failed', `The queued compaction did not start: ${reasonOf(error)}`);
+    }
+  }
+
+  private warn(code: string, message: string): void {
+    void this.dispatcher.dispatch(new WarningIssued({ agentId: this.scopeContext.agentId, code, message }));
+  }
+}
+
+function reasonOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+registerScopedService(
+  LifecycleScope.Agent,
+  IAgentPromptQueueService,
+  AgentPromptQueueService,
+  ScopeActivation.OnDemand,
+  'promptQueue',
+);

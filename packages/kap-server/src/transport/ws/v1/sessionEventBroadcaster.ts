@@ -5,6 +5,8 @@ import type {
   IDisposable,
   Interaction,
   ISessionScopeHandle,
+  PromptQueueChangedPayload,
+  PromptQueueSnapshot,
   QuestionResponse,
   QuestionResult,
   Scope,
@@ -12,6 +14,8 @@ import type {
   Workspace,
 } from '@moonshot-ai/agent-core-v2';
 import {
+  IAgentLifecycleService,
+  IAgentPromptQueueService,
   IEventService,
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
@@ -52,6 +56,8 @@ import {
 } from '@moonshot-ai/transcript';
 
 import type { InteractionEventMessage, InteractionOutcome } from '../../../protocol/interaction';
+import type { QueueEventMessage } from '../../../protocol/rest-prompt';
+import { toWireQueueState } from '../../../routes/prompts';
 import {
   approvalExpiresAt,
   interactionAgentId,
@@ -75,7 +81,7 @@ export interface BroadcastLogger {
 
 export type BroadcastDelivery = 'subscription' | 'immediate';
 
-export type BroadcastFrame = EventEnvelope | InteractionEventMessage;
+export type BroadcastFrame = EventEnvelope | InteractionEventMessage | QueueEventMessage;
 
 export interface BroadcastTarget {
   send(frame: BroadcastFrame, delivery?: BroadcastDelivery): void;
@@ -506,6 +512,10 @@ export class SessionEventBroadcaster {
 
   private onCoreEvent(event: Event2<any>): void {
     const corePayload = (event as { readonly payload?: unknown }).payload;
+    if (event.type === 'prompt_queue.changed') {
+      this.sendQueue(corePayload as PromptQueueChangedPayload);
+      return;
+    }
     if (event.type === 'event.session.created') {
       const payload = sessionCreatedPayload(corePayload);
       if (payload === undefined) return;
@@ -693,6 +703,40 @@ export class SessionEventBroadcaster {
     }
   }
 
+  sendQueueSnapshots(sessionId: string, target: BroadcastTarget): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined || state.detached === true) return;
+    const spec = state.targets.get(target);
+    if (spec === undefined) return;
+    const session = getLiveSessionById(this.opts.core.accessor, sessionId);
+    const lifecycle = session?.accessor.get(IAgentLifecycleService);
+    const agentIds = new Set(
+      Object.keys(spec).filter((agentId) => agentId !== '*' && gradeFor(spec, agentId) !== 'off'),
+    );
+    if (gradeFor(spec, '*') !== 'off') {
+      for (const agent of lifecycle?.list() ?? []) agentIds.add(agent.agentId);
+    }
+    for (const agentId of agentIds) {
+      const handle = lifecycle?.handleOf(agentId);
+      const snapshot = handle?.accessor.get(IAgentPromptQueueService).snapshot() ?? EMPTY_QUEUE;
+      target.send(queueMessage(sessionId, agentId, snapshot), 'immediate');
+    }
+  }
+
+  private sendQueue(payload: PromptQueueChangedPayload | undefined): void {
+    if (payload === undefined) return;
+    const state = this.sessions.get(payload.sessionId);
+    if (state === undefined || state.detached === true) return;
+    const message = queueMessage(payload.sessionId, payload.agentId, payload.snapshot);
+    for (const [target, spec] of state.targets) {
+      if (gradeFor(spec, payload.agentId) === 'off') continue;
+      try {
+        target.send(message);
+      } catch {
+      }
+    }
+  }
+
   private attachInteractions(sessionId: string, state: SessionState): void {
     for (const i of pendingInteractionsOf(sessionId)) {
       state.knownInteractions.set(i.id, i);
@@ -757,6 +801,18 @@ function pendingInteractionsOf(sessionId: string): readonly Interaction[] {
     resolved: false,
     tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
   });
+}
+
+const EMPTY_QUEUE: PromptQueueSnapshot = { paused: false, items: [] };
+
+function queueMessage(sessionId: string, agentId: string, snapshot: PromptQueueSnapshot): QueueEventMessage {
+  return {
+    type: 'queue',
+    session_id: sessionId,
+    agent_id: agentId,
+    event_created_at: new Date().toISOString(),
+    ...toWireQueueState(snapshot),
+  };
 }
 
 function interactionMessage(

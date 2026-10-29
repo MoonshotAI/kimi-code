@@ -5,6 +5,7 @@ import { transcriptGradeSpecSchema, transcriptSeqSchema } from '@moonshot-ai/tra
 
 import { pushEventSchema } from './events-zod';
 import { interactionEventMessageSchema } from './interaction';
+import { queueEventMessageSchema } from './rest-prompt';
 
 export const WS_PROTOCOL_VERSION = 2;
 
@@ -279,11 +280,21 @@ export const interactionEventOperation = {
     'Flat, unsequenced approval or question state for a subscribed session; pending interactions are re-sent after every accepted subscription.',
 } as const satisfies WsOperationDefinition;
 
+export const queueEventOperation = {
+  type: 'queue',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: queueEventMessageSchema,
+  description:
+    'Full queue state for one subscribed agent: inputs and compactions that have not entered a turn yet, steers first; sent after every accepted subscription and whenever the queue changes.',
+} as const satisfies WsOperationDefinition;
+
 export const wsOperations = [
   ...clientControlOperations,
   ...serverSystemOperations,
   sessionEventOperation,
   interactionEventOperation,
+  queueEventOperation,
 ] as const satisfies readonly WsOperationDefinition[];
 
 export function getClientControlOperation(

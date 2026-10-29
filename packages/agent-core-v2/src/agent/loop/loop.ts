@@ -1,6 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
+import type { Event } from '#/_base/event';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
 import type { ContentPart, TextPart } from '#human/llm/message';
@@ -214,6 +215,12 @@ export interface IAgentLoopService {
   snapshot(): LoopSnapshot;
 
   settled(): Promise<void>;
+
+  canLaunchPrompt(): boolean;
+
+  canSteerPrompt(): boolean;
+
+  readonly onDidChangeActivity: Event<void>;
 
   tryAcquireQuiescence(): IDisposable | undefined;
 

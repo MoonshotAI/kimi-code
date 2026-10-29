@@ -28,6 +28,7 @@ import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -749,7 +750,11 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
 function canLaunchContinuation(context: GoalOperationContext): boolean {
   if (context.effects.liveTurnId !== undefined || context.effects.pendingContinuation !== undefined) return false;
   const status = context.runtime.get(IAgentLoopService).snapshot();
-  return status.state === 'idle' && !status.hasPendingRequests;
+  return (
+    status.state === 'idle' &&
+    !status.hasPendingRequests &&
+    !context.runtime.get(IAgentPromptQueueService).hasPendingInputs()
+  );
 }
 
 function isActiveGoal(context: GoalOperationContext, goalId: string): boolean {

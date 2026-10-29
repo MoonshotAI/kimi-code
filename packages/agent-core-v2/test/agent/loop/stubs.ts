@@ -162,6 +162,9 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
       return { id };
     },
     steer: async () => {},
+    canLaunchPrompt: () => active === undefined && !hasPending(),
+    canSteerPrompt: () => active !== undefined,
+    onDidChangeActivity: Event.None as Event<void>,
     notify(note: LoopNotify = {}): LoopNotifyHandle {
       const entry: PendingEntry = {
         kind: note.bypassMaxSteps === true ? 'handoff' : note.message !== undefined ? 'message' : 'continuation',

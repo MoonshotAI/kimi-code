@@ -5,6 +5,7 @@ import { createControlledPromise } from '@antfu/utils';
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { IInstantiationService } from '#/_base/di/instantiation';
+import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -140,6 +141,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     onDidFinishStep: new OrderedHookSlot(),
     onBeforeSubmitPrompt: new OrderedHookSlot(),
   };
+
+  private readonly onDidChangeActivityEmitter = this._register(new Emitter<void>());
+  readonly onDidChangeActivity = this.onDidChangeActivityEmitter.event;
 
   private readonly errorHandlers: LoopErrorHandler[] = [];
   private readonly promptWaiters = new Map<string, PromptWaiter>();
@@ -939,7 +943,28 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     });
   }
 
+  canLaunchPrompt(): boolean {
+    return (
+      !this.disposing &&
+      this.quiescenceDepth === 0 &&
+      this.active === undefined &&
+      this.pendingMachineTurn === undefined &&
+      !this.hasPendingRequests()
+    );
+  }
+
+  canSteerPrompt(): boolean {
+    return (
+      !this.disposing &&
+      this.quiescenceDepth === 0 &&
+      this.engine !== undefined &&
+      this.active !== undefined &&
+      this.active.prompt.tracked
+    );
+  }
+
   private maybeSettle(): void {
+    this.onDidChangeActivityEmitter.fire();
     if (
       this.active !== undefined ||
       this.pendingMachineTurn !== undefined ||
@@ -1298,6 +1323,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       enabled_plugins: this.plugins.enabledPluginIds()?.join(','),
     };
     this.telemetry.track2('turn_started', started);
+    this.onDidChangeActivityEmitter.fire();
     return active;
   }
 

@@ -17,6 +17,7 @@ import {
   IAgentConversationUndoParticipantRegistry,
   IAgentLoopService,
   IAgentProfileService,
+  IAgentPromptQueueService,
   IAgentScopeContext,
   IEventBus,
   IEventService,
@@ -1517,6 +1518,77 @@ describe('SessionEventBroadcaster', () => {
     });
 
     expect(interactionMessages).toHaveLength(0);
+  });
+
+  it('sends queue snapshots on request and forwards queue changes only to subscribers of that agent', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    lc.addAgent('agent-0').set(IAgentPromptQueueService, { snapshot: () => ({ paused: false, items: [] }) });
+    sessions.set('s1', lc);
+    main.set(IAgentPromptQueueService, {
+      snapshot: () => ({
+        paused: true,
+        items: [
+          {
+            kind: 'input',
+            id: 'p1',
+            delivery: 'queue',
+            mode: 'plan',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            entry: {
+              message: { role: 'user', content: [{ type: 'text', text: 'later' }] },
+              meta: {
+                promptId: 'p1',
+                userMessageId: 'p1',
+                origin: { kind: 'user', clientMetadata: [{ display_text: 'later' }] },
+                tracked: true,
+              },
+            },
+          },
+          { kind: 'compact', id: 'c1', delivery: 'queue', createdAt: '2026-01-01T00:00:01.000Z' },
+        ],
+      }),
+    });
+    const mainView = collectingTarget();
+    const otherView = collectingTarget();
+    await bc.subscribe('s1', mainView.target, { main: 'delta' });
+    await bc.subscribe('s1', otherView.target, { main: 'off', 'agent-0': 'delta' });
+    const queueFrames = (view: ReturnType<typeof collectingTarget>) =>
+      view.envelopes.filter((frame) => frame.type === 'queue') as unknown[];
+
+    bc.sendQueueSnapshots('s1', mainView.target);
+    expect(queueFrames(mainView)).toMatchObject([
+      {
+        type: 'queue',
+        session_id: 's1',
+        agent_id: 'main',
+        paused: true,
+        inputs: [
+          {
+            prompt_id: 'p1',
+            user_message_id: 'p1',
+            kind: 'input',
+            delivery: 'queue',
+            mode: 'plan',
+            content: [{ type: 'text', text: 'later' }],
+            client_metadata: { display_text: 'later' },
+            created_at: '2026-01-01T00:00:00.000Z',
+          },
+          { prompt_id: 'c1', kind: 'compact', delivery: 'queue', content: [] },
+        ],
+      },
+    ]);
+    expect(mainView.deliveries.at(-1)).toBe('immediate');
+
+    bc.sendQueueSnapshots('s1', otherView.target);
+    expect(queueFrames(otherView)).toMatchObject([{ agent_id: 'agent-0', paused: false, inputs: [] }]);
+
+    eventBus.emit({
+      type: 'prompt_queue.changed',
+      payload: { sessionId: 's1', agentId: 'main', snapshot: { paused: false, items: [] } },
+    });
+    expect(queueFrames(mainView).at(-1)).toMatchObject({ agent_id: 'main', paused: false, inputs: [] });
+    expect(queueFrames(otherView)).toHaveLength(1);
   });
 
   describe('transcript streaming', () => {
