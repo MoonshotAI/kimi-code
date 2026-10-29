@@ -1524,7 +1524,7 @@ describe('WorkspaceFsService.grep', () => {
     const fs = makeSession(
       { 'src/a.ts': 'hello primary\n', '/extra/b.ts': 'hello extra\n' },
       (args) => {
-        if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
+        if (args[1] === '--version') return { stdout: '', exitCode: 1 };
         return { stdout: '', exitCode: 0 };
       },
       [],

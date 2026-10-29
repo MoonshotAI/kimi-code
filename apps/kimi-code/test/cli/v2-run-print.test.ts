@@ -129,6 +129,7 @@ interface FakeScope {
   readonly id: string;
   readonly accessor: { readonly get: (token: unknown) => unknown };
   readonly dispose: ReturnType<typeof vi.fn>;
+  readonly instantiation: { readonly disposeAsync: ReturnType<typeof vi.fn> };
 }
 
 function fakeScope(id: string, services: Map<unknown, unknown>): FakeScope {
@@ -141,6 +142,7 @@ function fakeScope(id: string, services: Map<unknown, unknown>): FakeScope {
       },
     },
     dispose: vi.fn(),
+    instantiation: { disposeAsync: vi.fn(async () => {}) },
   };
 }
 
