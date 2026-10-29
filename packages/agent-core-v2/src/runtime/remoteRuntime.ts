@@ -151,7 +151,7 @@ export class RemoteRuntimeProviderFactory implements RuntimeProviderFactory {
         if (replacement !== undefined) current = replacement;
       }).catch((error: unknown) => {
         if (error !== STALE_GENERATION) {
-          current.setStatus('disconnected');
+          current.setStatus(error instanceof RemoteRuntimeError && error.code === 'runtime.denied' ? 'degraded' : 'disconnected');
           this.onError(error);
         }
       }).finally(() => {

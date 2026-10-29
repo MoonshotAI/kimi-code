@@ -672,6 +672,9 @@ describe('Desktop device bridge M2', () => {
     const lease = await manager.acquire({ workspaceId: workspaceB });
     const workspace = lease.instance;
     const oldGeneration = deviceB.generation;
+    const created = await call<{ id: string }>(ALICE_TOKEN, 'POST', '/api/v1/sessions', { workspace_id: workspaceB });
+    expect(created.body.code).toBe(0);
+    const sessionB = created.body.data.id;
     await deviceB.unregisterRoot(rootA);
     await deviceB.close();
     await vi.waitFor(() => expect(server.devices.get('dev-b')?.online).toBe(false));
@@ -690,6 +693,15 @@ describe('Desktop device bridge M2', () => {
       expect(runtime.status).toBe('ready');
     });
     await expect(remoteFs(workspaceB).readText(join(rootA, ROOT_FILE))).resolves.toContain('device');
+    const restored = await call<{ content: string }>(ALICE_TOKEN, 'POST', `/api/v1/sessions/${sessionB}/fs:read`, {
+      runtime_id: 'desktop:dev-b',
+      path: ROOT_FILE,
+      encoding: 'utf-8',
+      offset: 0,
+      length: 1000,
+    });
+    expect(restored.body.code).toBe(0);
+    expect(restored.body.data.content).toContain('device');
 
     deviceB.hold('fs.realpath');
     const pending = remoteFs(workspaceB).stat(join(rootA, ROOT_FILE));
@@ -703,10 +715,28 @@ describe('Desktop device bridge M2', () => {
     deviceB.release('fs.realpath');
 
     await deviceB.unregisterRoot(rootA);
-    await vi.waitFor(() => expect(workspace.runtimes.current('desktop:dev-b')?.status).toBe('disconnected'));
+    await vi.waitFor(() => expect(workspace.runtimes.current('desktop:dev-b')?.status).toBe('degraded'), { timeout: 10000 });
+    const denied = await call<null>(ALICE_TOKEN, 'POST', `/api/v1/sessions/${sessionB}/fs:read`, {
+      runtime_id: 'desktop:dev-b',
+      path: ROOT_FILE,
+      encoding: 'utf-8',
+      offset: 0,
+      length: 1000,
+    });
+    expect(denied.body.code).toBe(40301);
+    expect((denied.body.details as { runtime_error: { code: string } }).runtime_error.code).toBe('runtime.denied');
     await expect(remoteFs(workspaceB).readText(join(rootA, ROOT_FILE))).rejects.toMatchObject({ code: 'runtime.denied' });
     await deviceB.close();
     await vi.waitFor(() => expect(server.devices.get('dev-b')?.online).toBe(false));
+    const offline = await call<null>(ALICE_TOKEN, 'POST', `/api/v1/sessions/${sessionB}/fs:read`, {
+      runtime_id: 'desktop:dev-b',
+      path: ROOT_FILE,
+      encoding: 'utf-8',
+      offset: 0,
+      length: 1000,
+    });
+    expect(offline.body.code).toBe(40926);
+    expect((offline.body.details as { runtime_error: { code: string } }).runtime_error.code).toBe('runtime.unavailable');
     await expect(remoteFs(workspaceB).readText(join(rootA, ROOT_FILE))).rejects.toMatchObject({ code: 'runtime.unavailable' });
     lease.dispose();
   }, 30000);
