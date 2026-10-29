@@ -116,6 +116,10 @@ describe('WorkspaceMcpConfigService', () => {
           get ready() {
             return trustReady();
           },
+          get: async () => {
+            await trustReady();
+            return trusted;
+          },
           isTrusted: () => trusted,
           onDidChange: trustFlips.event,
         });

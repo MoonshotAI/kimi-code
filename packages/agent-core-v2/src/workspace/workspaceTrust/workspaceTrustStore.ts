@@ -4,10 +4,15 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigService } from '#/app/config/config';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 
+import {
+  WORKSPACE_TRUST_SECTION,
+  type WorkspaceTrustConfig,
+} from './configSection';
 import { trustWorkspaceEnvTrusted } from './trustEnv';
 import { deleteWorkspaceTrust, readWorkspaceTrust, writeWorkspaceTrust } from './trustRecord';
 import { IWorkspaceTrust, type WorkspaceTrustChange } from './workspaceTrust';
@@ -42,6 +47,7 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
     private readonly docs: IAtomicDocumentStore,
     private readonly telemetry: ITelemetryService,
     bootstrap: IBootstrapService,
+    private readonly config: IConfigService,
   ) {
     super();
     this.root = root;
@@ -69,12 +75,18 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
   }
 
   isTrusted(): boolean {
-    return this.envTrusted || this.trusted;
+    return !this.trustGateEnabled() || this.envTrusted || this.trusted;
   }
 
   async get(): Promise<boolean> {
+    await this.config.ready;
+    if (!this.trustGateEnabled()) return true;
     await this.ready;
     return this.isTrusted();
+  }
+
+  onConfigChange(): void {
+    this.changeEmitter.fire({ trusted: this.trusted });
   }
 
   trust(): Promise<void> {
@@ -83,6 +95,11 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
 
   untrust(): Promise<void> {
     return this.mutate(false);
+  }
+
+  private trustGateEnabled(): boolean {
+    return this.config.get<WorkspaceTrustConfig | undefined>(WORKSPACE_TRUST_SECTION)
+      ?.requireTrust ?? true;
   }
 
   private mutate(trusted: boolean): Promise<void> {
@@ -106,21 +123,26 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
 export class WorkspaceTrustStore extends Disposable implements IWorkspaceTrustStore {
   declare readonly _serviceBrand: undefined;
 
-  private readonly entries = new Map<string, IWorkspaceTrustEntry>();
+  private readonly entries = new Map<string, WorkspaceTrustEntry>();
 
   constructor(
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IConfigService private readonly config: IConfigService,
   ) {
     super();
+    this._register(this.config.onDidSectionChange((event) => {
+      if (event.domain !== WORKSPACE_TRUST_SECTION) return;
+      for (const entry of this.entries.values()) entry.onConfigChange();
+    }));
   }
 
   forRoot(root: string): IWorkspaceTrustEntry {
     const key = canonicalWorkspaceRoot(root);
     const existing = this.entries.get(key);
     if (existing !== undefined) return existing;
-    const entry = this._register(new WorkspaceTrustEntry(root, this.docs, this.telemetry, this.bootstrap));
+    const entry = this._register(new WorkspaceTrustEntry(root, this.docs, this.telemetry, this.bootstrap, this.config));
     this.entries.set(key, entry);
     return entry;
   }

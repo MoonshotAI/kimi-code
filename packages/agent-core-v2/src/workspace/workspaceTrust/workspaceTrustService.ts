@@ -62,7 +62,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
   }
 
   async get(): Promise<boolean> {
-    await this.ready;
+    await this.ready.catch(() => undefined);
     return this.inner.get();
   }
 
