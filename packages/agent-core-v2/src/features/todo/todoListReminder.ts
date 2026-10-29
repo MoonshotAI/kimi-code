@@ -139,7 +139,7 @@ function renderTodoListReminder(todos: readonly TodoItem[], stepsSinceLastWrite:
       ? `${progress}, none in_progress`
       : `${progress}, "${current.title}" still in_progress`;
   return [
-    `The todo list has not been updated in the last ${String(stepsSinceLastWrite)} steps (${status}). If an item is finished, mark it done now; the TodoList call can go in the same response as your next tool call. If the list no longer matches the current work, rewrite or clear it. Never mention this reminder to the user.`,
+    `The todo list has not been updated in the last ${String(stepsSinceLastWrite)} steps (${status}). Never mention this reminder to the user.`,
     '',
     'Current todo list:',
     renderTodoItems(todos),

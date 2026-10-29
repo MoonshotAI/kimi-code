@@ -438,7 +438,7 @@ function agentsMdChangeText(changes: AgentsMdChanges): string {
     sections.push(
       'The following AGENTS.md file(s) exist in your workspace but were not included in your system prompt:\n' +
         changes.added.map((path) => `- ${path}`).join('\n') +
-        '\nRead them before making changes in those directories.',
+        '\nTheir guidance applies to work in those directories.',
     );
   }
   return sections.join('\n\n');

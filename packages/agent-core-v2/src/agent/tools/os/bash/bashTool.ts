@@ -39,7 +39,7 @@ import {
 const MS_PER_SECOND = 1000;
 
 const BACKGROUND_GUIDANCE =
-  'For long-running builds, tests, watchers, or servers that the conversation should not wait on, set `run_in_background=true` with a short `description`; the call returns a task ID. Set `disable_timeout=true` only when the task should run without a timeout. You are notified automatically when the task completes, so return control to the user instead of waiting on it. Use `TaskOutput` only for a non-blocking snapshot, and `TaskStop` only to cancel.';
+  'With `run_in_background=true` and a short `description`, the command runs as a background task and the call returns its task ID, which suits builds, tests, watchers, or servers the conversation should not wait on. You are notified automatically when it completes, so there is no need to poll it; `TaskOutput` gives a snapshot of its output and `TaskStop` cancels it.';
 
 const NO_BACKGROUND_GUIDANCE =
   'Background execution is disabled for this agent. Do not set `run_in_background=true`.';
