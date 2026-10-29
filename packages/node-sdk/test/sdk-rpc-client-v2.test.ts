@@ -65,6 +65,7 @@ import {
   ISessionManager,
   IWorkspaceInstanceManager,
   IEnvironmentService,
+  IWorkspaceService,
   MAIN_AGENT_ID,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
@@ -1503,6 +1504,101 @@ key = "${titleOAuthRef.key}"
     } finally {
       await harness.close();
     }
+  });
+
+  describe('workspace additional directory discovery', () => {
+    it('loads legacy project directories without a session and releases the workspace lease', async () => {
+      const { harness } = await makeHarness();
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+      const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+      tempDirs.push(workDir, extraDir);
+      await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(workDir, '.kimi-code', 'local.toml'),
+        `[workspace]\nadditional_dir = [${JSON.stringify(extraDir)}]\n`,
+      );
+      const client = harness['rpc'] as SDKRpcClientV2;
+      const manager = client.engineAccessor.get(IWorkspaceInstanceManager);
+      const acquireSpy = vi.spyOn(manager, 'acquire');
+      try {
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
+        expect(harness.sessions.size).toBe(0);
+        expect(acquireSpy).toHaveBeenCalledTimes(1);
+        const lease = await acquireSpy.mock.results[0]!.value;
+        expect(manager.get(lease.instance.id)).toBeUndefined();
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it('loads registry directories without a session', async () => {
+      const { harness } = await makeHarness();
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+      const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+      tempDirs.push(workDir, extraDir);
+      const client = harness['rpc'] as SDKRpcClientV2;
+      const workspaces = client.engineAccessor.get(IWorkspaceService);
+      try {
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([]);
+        await workspaces.create({ root: workDir, additionalDirs: [extraDir] });
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
+        expect(harness.sessions.size).toBe(0);
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it('waits for workspace directories before returning them', async () => {
+      const { harness } = await makeHarness();
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+      const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+      tempDirs.push(workDir, extraDir);
+      const client = harness['rpc'] as SDKRpcClientV2;
+      const manager = client.engineAccessor.get(IWorkspaceInstanceManager);
+      const lease = await manager.acquire({ root: workDir });
+      const dirs = lease.instance.program.dirs;
+      let releaseReady!: () => void;
+      const readyGate = new Promise<void>((resolve) => {
+        releaseReady = resolve;
+      });
+      let ready = false;
+      const gatedDirs = Object.create(dirs) as typeof dirs;
+      Object.defineProperties(gatedDirs, {
+        ready: {
+          value: readyGate.then(() => {
+            ready = true;
+          }),
+        },
+        additionalDirs: {
+          get: () => (ready ? [extraDir] : []),
+        },
+      });
+      const dirsSpy = vi.spyOn(lease.instance.program, 'dirs', 'get').mockReturnValue(gatedDirs);
+      try {
+        let settled = false;
+        const pending = harness.getWorkspaceAdditionalDirs(workDir);
+        void pending.then(() => {
+          settled = true;
+        });
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
+        expect(settled).toBe(false);
+        releaseReady();
+        await expect(pending).resolves.toEqual([extraDir]);
+      } finally {
+        releaseReady();
+        dirsSpy.mockRestore();
+        lease.dispose();
+        await harness.close();
+      }
+    });
+
+    it('rejects unsupported directory discovery instead of returning an empty list', async () => {
+      await expect(
+        SDKRpcClientBase.prototype.getWorkspaceAdditionalDirs('/tmp/project'),
+      ).rejects.toMatchObject({ code: ErrorCodes.NOT_IMPLEMENTED });
+    });
   });
 
   it('serves suggestFiles through the workspace handler fs service', async () => {

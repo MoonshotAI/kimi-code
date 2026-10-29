@@ -9,6 +9,7 @@ import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/share
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { Event } from '#/_base/event';
 import { createServices } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -29,6 +30,7 @@ import { IMcpRegistryService } from '#/app/mcpRegistry/mcpRegistry';
 import { McpRegistryService } from '#/app/mcpRegistry/mcpRegistryService';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { PluginMcpServerEntry } from '#/app/plugin/types';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { McpOAuthService, type McpOAuthEvent } from '#/mcpCore/oauth/service';
@@ -44,6 +46,10 @@ import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { WorkspaceInstance } from '#/workspace/workspaceInstance/workspaceInstance';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import {
+  IWorkspaceTrustStore,
+  WorkspaceTrustStore,
+} from '#/workspace/workspaceTrust/workspaceTrustStore';
 
 import { stubLog } from '../../_base/log/stubs';
 import {
@@ -138,12 +144,15 @@ describe('McpManagementService', () => {
           get: async <T>() => (trusted ? ({} as T) : undefined),
           list: async () => [],
         });
+        reg.defineInstance(ITelemetryService, noopTelemetryService);
+        reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
         reg.define(IMcpRegistryService, McpRegistryService);
         reg.defineInstance(IMcpOAuthService, oauth);
         reg.definePartialInstance(IConfigService, {
           get ready() {
             return configReady;
           },
+          onDidSectionChange: Event.None as IConfigService['onDidSectionChange'],
           get: (<T = unknown,>(_domain: string): T => undefined as T) as IConfigService['get'],
         });
         reg.defineInstance(IAgentIdentity, {

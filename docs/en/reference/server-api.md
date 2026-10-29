@@ -1697,13 +1697,13 @@ On success, `data` is `{ trusted: true }`.
 
 #### `POST /api/v1/workspaces/{workspace_id}/untrust`
 
-Revokes workspace trust, unloading its project-level MCP config.
+Revokes the persisted workspace trust record. Unless a process or config override keeps the workspace trusted, its project-level MCP config unloads.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **Required.** Workspace id |
 
-On success, `data` is `{ trusted: false }`.
+On success, `data` is `{ trusted }`, containing the effective trust state after revocation. It is normally `{ trusted: false }`, but remains `true` when `KIMI_CODE_TRUST_WORKSPACE` or [`[workspace] require_trust = false`](../configuration/config-files.md#workspace-trust) applies.
 
 - `40410`: workspace not found
 

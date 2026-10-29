@@ -112,6 +112,7 @@ timeout = 5
 | [`task`](#task) | `table` | — | 后台任务与 Tower Agent 运行参数；`background` 为 legacy 配置节名称 |
 | [`tools`](#tools) | `table` | — | 全局工具开关 |
 | [`image`](#image) | `table` | — | 图片压缩参数 |
+| [`workspace`](#workspace-trust) | `table` | — | 工作区设置，包括信任机制 |
 | [`services`](#services) | `table` | — | 内置外部服务配置 |
 | [`permission`](#permission) | `table` | — | 初始权限规则 |
 | [`environments`](#environments) | `table` | — | 远程环境声明 |
@@ -463,14 +464,15 @@ max_chars = 500000
 
 ## `database`
 
-`database` 控制会话索引和全局搜索背后的嵌入式存储引擎。两个字段默认值都是 `true`，设为 `false` 时回退到旧有行为。
+`database` 控制会话索引和全局搜索背后的嵌入式存储引擎。会话索引默认开启；全局全文搜索索引默认关闭，开启后才会在后台扫描历史会话并提供 `POST /api/v1/search`。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `base` | `boolean` | `true` | 会话索引使用基于 minidb 的读模型；`false` 回退为直接读取会话元数据 |
-| `search` | `boolean` | `true` | 在独立 worker 线程中运行全局搜索索引；`false` 在服务器进程内运行 |
+| `global_search` | `boolean` | `false` | 是否构建全局全文搜索索引并提供 `POST /api/v1/search`；关闭时不扫描会话、不启动搜索 worker，搜索接口返回索引不可用 |
+| `search` | `boolean` | `true` | 全局搜索开启时，在独立 worker 线程中运行索引；`false` 在服务器进程内运行 |
 
-`base` 可被环境变量 `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` 覆盖，`search` 可被 `KIMI_CODE_SEARCH_WORKER` 覆盖，优先级均高于配置文件。
+`base` 可被环境变量 `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` 覆盖，`global_search` 可被 `KIMI_CODE_GLOBAL_SEARCH` 覆盖，`search` 可被 `KIMI_CODE_SEARCH_WORKER` 覆盖，优先级均高于配置文件。
 
 ## `watch`
 
@@ -481,6 +483,25 @@ max_chars = 500000
 | `enabled` | `boolean` | `true` | 是否挂文件系统 watch；`false` 关闭进程内全部 `watch()` |
 
 `enabled` 可被环境变量 `KIMI_CODE_WATCH` 覆盖，优先级高于配置文件。
+
+## `workspace trust`
+
+`workspace` 用于集中存放用户级 `config.toml` 中的工作区设置。其 `require_trust` 字段控制首次打开尚未受信任的工作区时是否要求信任确认；默认要求确认。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `require_trust` | `boolean` | `true` | 首次打开未受信任的工作区时要求信任确认；`false` 将所有工作区视为受信任并跳过启动信任提示 |
+
+```toml
+[workspace]
+require_trust = false
+```
+
+::: warning 注意
+关闭首次打开的信任确认后，项目级 MCP server 和其他受信任机制控制的项目配置都会不经确认直接加载。仅应在所有工作区均已可信时使用该配置。它不会改变权限模式、工具审批或危险命令保护。
+:::
+
+配置变更在 `/reload` 后生效；已经运行的 TUI 不会补弹启动信任提示。`KIMI_CODE_TRUST_WORKSPACE=1` 仍是独立的进程级信任覆盖，假值不会在 `require_trust` 为 `false` 时恢复首次打开的信任确认。已有信任记录会保留，恢复该要求后继续使用。
 
 <!--
 ## `experimental`

@@ -737,6 +737,19 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     });
   }
 
+  override async getWorkspaceAdditionalDirs(workDir: string): Promise<readonly string[]> {
+    const lease = await this.engineAccessor
+      .get(IWorkspaceInstanceManager)
+      .acquire({ root: normalizeRequiredWorkDir('getWorkspaceAdditionalDirs', workDir) });
+    try {
+      const dirs = lease.instance.program.dirs;
+      await dirs.ready;
+      return [...dirs.additionalDirs];
+    } finally {
+      lease.dispose();
+    }
+  }
+
   /**
    * The same engine suggest the kap-server `fs:suggest` routes serve (fuzzy
    * scoring, directories included, gitignore respected), either through the

@@ -445,7 +445,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     get: () => undefined,
     onDidSectionChange: () => ({ dispose: () => {} }),
   };
-  const trustStore = new WorkspaceTrustStore(docs as never, noopTelemetryService, bootstrap as never);
+  const trustStore = new WorkspaceTrustStore(docs as never, noopTelemetryService, bootstrap as never, config as never);
   const userSkills = new UserFileSkillSource(
     new FileSkillDiscovery(noopLogger),
     bootstrap as never,

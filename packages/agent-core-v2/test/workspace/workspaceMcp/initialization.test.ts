@@ -95,6 +95,7 @@ describe('Workspace MCP initialization', () => {
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
         reg.definePartialInstance(IWorkspaceTrust, {
           ready: Promise.resolve(),
+          get: async () => true,
           isTrusted: () => true,
           onDidChange: Event.None as IWorkspaceTrust['onDidChange'],
         });

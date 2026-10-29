@@ -6,9 +6,11 @@ import { join, relative } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { Event } from '#/_base/event';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { createServices } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigService } from '#/app/config/config';
 import {
   IMcpConfigStore,
   McpConfigStore,
@@ -18,13 +20,19 @@ import { IPluginService } from '#/app/plugin/plugin';
 import type { PluginMcpServerEntry } from '#/app/plugin/types';
 import { IMcpRegistryService, mcpServerConfigsEqual } from '#/app/mcpRegistry/mcpRegistry';
 import { McpRegistryService } from '#/app/mcpRegistry/mcpRegistryService';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { WORKSPACE_TRUST_SECTION } from '#/workspace/workspaceTrust/configSection';
 import { TRUST_WORKSPACE_ENV } from '#/workspace/workspaceTrust/workspaceTrustService';
+import {
+  IWorkspaceTrustStore,
+  WorkspaceTrustStore,
+} from '#/workspace/workspaceTrust/workspaceTrustStore';
 
 function stdioServer(name: string, command = 'npx'): GlobalMcpServerConfig {
   return { name, transport: 'stdio', command };
@@ -53,6 +61,7 @@ describe('McpRegistryService', () => {
   let trusted: boolean;
   let trustedKey: string | undefined;
   let env: NodeJS.ProcessEnv;
+  let workspaceTrustEnabled: boolean;
   let registry: IMcpRegistryService;
 
   beforeEach(() => {
@@ -65,6 +74,7 @@ describe('McpRegistryService', () => {
     trusted = true;
     trustedKey = undefined;
     env = {};
+    workspaceTrustEnabled = true;
     const ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
@@ -89,6 +99,16 @@ describe('McpRegistryService', () => {
           },
           list: async () => [],
         });
+        reg.defineInstance(ITelemetryService, noopTelemetryService);
+        reg.definePartialInstance(IConfigService, {
+          ready: Promise.resolve(),
+          onDidSectionChange: Event.None as IConfigService['onDidSectionChange'],
+          get: (<T = unknown,>(domain: string): T =>
+            (domain === WORKSPACE_TRUST_SECTION
+              ? { requireTrust: workspaceTrustEnabled }
+              : undefined) as T) as IConfigService['get'],
+        });
+        reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
         reg.define(IMcpRegistryService, McpRegistryService);
       },
     });
@@ -191,8 +211,11 @@ describe('McpRegistryService', () => {
       });
     });
 
-    it('loads only user and plugin entries when the workspace is untrusted', async () => {
+    it('refreshes workspace trust between registry queries', async () => {
       await store.add(stdioServer('userOnly', 'user-only'));
+      await writeJson(join(home, 'mcp.json'), {
+        mcpServers: { userOnly: { command: 'user-only' } },
+      });
       const { project, sub } = await makeProject();
       await writeJson(join(project, '.mcp.json'), {
         mcpServers: { repoOnly: { command: 'repo-only' } },
@@ -204,16 +227,26 @@ describe('McpRegistryService', () => {
         pluginEntry('demo', 'api', { transport: 'stdio', command: 'plugin-only' }),
       ];
       trusted = false;
+      const hidden = ['plugin-demo:api', 'userOnly'];
 
       const entries = await registry.list({ cwd: sub });
+      expect(entries.map((entry) => entry.name).toSorted()).toEqual(hidden);
 
-      expect(entries.map((entry) => entry.name).toSorted()).toEqual([
+      trusted = true;
+      const trustedEntries = await registry.list({ cwd: sub });
+      expect(trustedEntries.map((entry) => entry.name).toSorted()).toEqual([
+        'localOnly',
         'plugin-demo:api',
+        'repoOnly',
         'userOnly',
       ]);
+
+      trusted = false;
+      const untrustedAgain = await registry.list({ cwd: sub });
+      expect(untrustedAgain.map((entry) => entry.name).toSorted()).toEqual(hidden);
     });
 
-    it('loads project layers for an untrusted workspace when KIMI_CODE_TRUST_WORKSPACE is set', async () => {
+    it('loads project layers for an untrusted workspace with process or config overrides', async () => {
       await writeJson(join(home, 'mcp.json'), {
         mcpServers: { userOnly: { command: 'user-only' } },
       });
@@ -226,14 +259,15 @@ describe('McpRegistryService', () => {
       });
       trusted = false;
       env = { [TRUST_WORKSPACE_ENV]: '1' };
+      const expected = ['localOnly', 'repoOnly', 'userOnly'];
 
       const entries = await registry.list({ cwd: sub });
+      expect(entries.map((entry) => entry.name).toSorted()).toEqual(expected);
 
-      expect(entries.map((entry) => entry.name).toSorted()).toEqual([
-        'localOnly',
-        'repoOnly',
-        'userOnly',
-      ]);
+      env = {};
+      workspaceTrustEnabled = false;
+      const configEntries = await registry.list({ cwd: sub });
+      expect(configEntries.map((entry) => entry.name).toSorted()).toEqual(expected);
     });
 
     it('checks trust at the queried cwd rather than the canonical git root', async () => {
