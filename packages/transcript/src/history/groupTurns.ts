@@ -145,6 +145,7 @@ interface StepDraft {
 
 const HIDDEN_USER_ORIGINS = new Set(['injection', 'system_trigger', 'retry']);
 const LOST_TASK_REMINDER_VARIANT = 'task_resume_termination';
+const LOST_TASK_LINE = /^- (\S+) "(.*)" \(([a-z_]+)\)/;
 const TURN_OPENING_SYSTEM_TRIGGERS = new Set(['goal_continuation', 'subagent']);
 const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
   skill_activation: 'skill',
@@ -389,7 +390,8 @@ export function groupMessagesIntoSnapshot(
         pushMarker('hook', userPromptSubmitHookMarkerPayload(part));
       }
       if (isLostTaskReminder(message)) {
-        pushMarker('notice', { level: 'warning', message: reminderText(textOf(message)) });
+        const text = reminderText(textOf(message));
+        pushMarker('notice', { level: 'warning', message: text, lostTasks: lostTasksOf(text) });
         continue;
       }
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
@@ -684,6 +686,14 @@ function isLostTaskReminder(message: HistoryMessage): boolean {
 
 function reminderText(text: string): string {
   return text.replace(/^<system-reminder>\n/, '').replace(/\n<\/system-reminder>$/, '');
+}
+
+function lostTasksOf(text: string): { taskId: string; description: string; kind: string }[] {
+  return text.split('\n').flatMap((line) => {
+    const match = LOST_TASK_LINE.exec(line);
+    if (match === null) return [];
+    return [{ taskId: match[1]!, description: match[2]!, kind: match[3]! }];
+  });
 }
 
 function textOf(message: HistoryMessage): string {

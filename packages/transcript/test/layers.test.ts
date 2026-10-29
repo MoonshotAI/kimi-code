@@ -1478,7 +1478,19 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'started' }], toolCalls: [] },
       {
         role: 'user',
-        content: [{ type: 'text', text: '<system-reminder>\nThe user exited the application.\n- bash-1: npm run dev\n</system-reminder>' }],
+        content: [
+          {
+            type: 'text',
+            text: [
+              '<system-reminder>',
+              'The user exited the application.',
+              '- bash-1 "npm run dev" (bash)',
+              '- agent-2 "Review the "auth" module" (subagent) — resume it with Agent(resume="a2", prompt="Go on.").',
+              'Check current state.',
+              '</system-reminder>',
+            ].join('\n'),
+          },
+        ],
         toolCalls: [],
         origin: { kind: 'injection', variant: 'task_resume_termination' } as { kind: string },
       },
@@ -1494,8 +1506,15 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(markers).toHaveLength(1);
     expect(markers[0]).toMatchObject({
       marker: 'notice',
-      payload: { level: 'warning', message: 'The user exited the application.\n- bash-1: npm run dev' },
+      payload: {
+        level: 'warning',
+        lostTasks: [
+          { taskId: 'bash-1', description: 'npm run dev', kind: 'bash' },
+          { taskId: 'agent-2', description: 'Review the "auth" module', kind: 'subagent' },
+        ],
+      },
     });
+    expect((markers[0]?.payload as { message: string }).message).toMatch(/^The user exited the application\.\n/);
   });
 
   it('opens a task turn for a notification with a task-origin turn.started in the wire', () => {
