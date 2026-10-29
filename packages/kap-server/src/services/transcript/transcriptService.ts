@@ -213,7 +213,7 @@ export class TranscriptService {
       );
       const overlay = this.liveTurnOverlay(sessionId, agentId, transcript, snapshot);
       if (overlay !== undefined) ops.push(overlay, { op: 'meta.merge', meta: { activity: 'turn' } });
-      ops.push(...this.livePromptBackfill(sessionId, agentId));
+      ops.push(...this.livePromptBackfill(sessionId, agentId, transcript));
       const result = transcript.apply(ops);
       if (result.gap !== undefined) {
         this.deps.logger?.warn({ sessionId, agentId, gap: result.gap }, 'transcript: backfill append gap');
@@ -401,7 +401,7 @@ export class TranscriptService {
     };
   }
 
-  private livePromptBackfill(sessionId: string, agentId: string): TranscriptOperation[] {
+  private livePromptBackfill(sessionId: string, agentId: string, transcript: AgentTranscript): TranscriptOperation[] {
     const agent = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService)
       .handleOf(agentId);
@@ -415,6 +415,7 @@ export class TranscriptService {
         : loop.promptHandle(snapshot.activePromptId);
     if (activeHandle !== undefined) {
       const activeOrigin = activeHandle.message.origin;
+      const current = transcript.getPrompt(activeHandle.id);
       ops.push({
         op: 'prompt.upsert',
         prompt: {
@@ -424,20 +425,27 @@ export class TranscriptService {
           content: projectPromptContentParts(activeHandle.message.content),
           createdAt: activeHandle.createdAt,
           clientMetadata: activeOrigin?.kind === 'user' || activeOrigin?.kind === 'skill_activation' ? activeOrigin.clientMetadata : undefined,
+          actor: (activeOrigin?.kind === 'user' ? activeOrigin.actor : undefined) ?? current?.actor,
+          steeredBy: current?.steeredBy,
         },
       });
     }
     for (const item of snapshot.queue) {
       if (item.meta?.tracked !== true) continue;
+      const promptId = item.meta?.promptId ?? '';
+      const current = transcript.getPrompt(promptId);
+      const origin = item.meta?.origin as UserPromptOrigin | undefined;
       ops.push({
         op: 'prompt.upsert',
         prompt: {
-          promptId: item.meta?.promptId ?? '',
+          promptId,
           status: 'queued',
           userMessageId: item.meta?.userMessageId ?? '',
           content: projectPromptContentParts(item.message.content),
           createdAt: item.meta?.createdAt ?? '',
-          clientMetadata: (item.meta?.origin as UserPromptOrigin | undefined)?.clientMetadata,
+          clientMetadata: origin?.clientMetadata,
+          actor: origin?.actor ?? current?.actor,
+          steeredBy: current?.steeredBy,
         },
       });
     }

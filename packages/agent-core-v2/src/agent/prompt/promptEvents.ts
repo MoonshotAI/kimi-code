@@ -1,4 +1,5 @@
 import type { UserPromptOrigin } from '#/agent/contextMemory/types';
+import type { UserIdentity } from '#/human/interaction/interaction';
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
@@ -66,6 +67,7 @@ export interface PromptSubmittedEvent {
   readonly status: 'running' | 'queued' | 'blocked';
   readonly content: readonly MessageContent[];
   readonly createdAt: string;
+  readonly actor?: UserIdentity;
 }
 
 export interface PromptSteeredEvent {
@@ -75,6 +77,7 @@ export interface PromptSteeredEvent {
   readonly content: readonly MessageContent[];
   readonly steeredAt: string;
   readonly messageId?: string;
+  readonly actor?: UserIdentity;
 }
 
 export interface PromptSteeredPayload {
@@ -84,6 +87,7 @@ export interface PromptSteeredPayload {
   readonly content: ContentPart[];
   readonly steeredAt: string;
   readonly messageId?: string;
+  readonly actor?: UserIdentity;
 }
 
 const promptSteeredSchema = z.object({
@@ -93,6 +97,7 @@ const promptSteeredSchema = z.object({
   content: z.custom<ContentPart[]>(),
   steeredAt: z.string(),
   messageId: z.string().optional(),
+  actor: z.custom<{ userId: string; displayName: string }>().optional(),
 });
 
 export class PromptSteered extends AgentEvent2<z.infer<typeof promptSteeredSchema>> {
@@ -109,6 +114,7 @@ export interface PromptQueuedPayload {
   readonly content: ContentPart[];
   readonly queueLength: number;
   readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
+  readonly actor?: UserIdentity;
 }
 
 export class PromptQueued extends AgentEvent2<PromptQueuedPayload> {
@@ -125,6 +131,7 @@ export interface PromptSubmittedPayload {
   readonly content: ContentPart[];
   readonly createdAt: string;
   readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
+  readonly actor?: UserIdentity;
 }
 
 export class PromptSubmitted extends AgentEvent2<PromptSubmittedPayload> {

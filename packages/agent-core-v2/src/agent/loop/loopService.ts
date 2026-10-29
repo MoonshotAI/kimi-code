@@ -34,6 +34,7 @@ import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { markInTurnOrigin } from '#/agent/contextMemory/conversationTime';
 import { newMessageId } from '#/agent/contextMemory/messageId';
 import { type ContextMessage, type PromptOrigin } from '#/agent/contextMemory/types';
+import type { UserIdentity } from '#/human/interaction/interaction';
 import { gateImageFormatParts } from '#/agent/media/image-compress';
 import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
 import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
@@ -144,6 +145,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly errorHandlers: LoopErrorHandler[] = [];
   private readonly promptWaiters = new Map<string, PromptWaiter>();
   private readonly steered = new Map<string, SteeredPrompt>();
+  private readonly steerActors = new Map<string, UserIdentity>();
   private readonly terminalStates = new Map<string, PromptState>();
   private readonly pendingSubmissions: UserEntry[] = [];
   private readonly nudges: Nudge[] = [];
@@ -296,6 +298,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     this.promptWaiters.clear();
     this.steered.clear();
+    this.steerActors.clear();
     this.pendingSubmissions.length = 0;
     const active = this.active;
     active?.turn.cancel(reason);
@@ -365,12 +368,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.active.prompt.tracked &&
       this.engine !== undefined
     ) {
-      this.machineEngine().steer(id);
+      const actor = origin.kind === 'user' ? origin.actor : undefined;
+      try {
+        if (actor !== undefined) this.steerActors.set(JSON.stringify([id]), actor);
+        this.machineEngine().steer(id);
+      } catch (error) {
+        this.steerActors.delete(JSON.stringify([id]));
+        throw error;
+      }
     }
     return { id };
   }
 
-  async steer(promptIds: readonly string[]): Promise<void> {
+  async steer(promptIds: readonly string[], actor?: UserIdentity): Promise<void> {
     if (this.disposing) throw abortError('Agent loop disposed');
     if (promptIds.length === 0) {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_ids must not be empty');
@@ -395,7 +405,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     ) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
     }
-    engine.steer(promptIds);
+    const steerKey = JSON.stringify([...promptIds].toSorted());
+    try {
+      if (actor !== undefined) this.steerActors.set(steerKey, actor);
+      engine.steer(promptIds);
+    } catch (error) {
+      this.steerActors.delete(steerKey);
+      throw error;
+    }
   }
 
   promptHandle(id: string): PromptHandle | undefined {
@@ -689,6 +706,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         promptId: input.promptId,
         content: stripBundledSkillBlocks(input.message),
         clientMetadata: input.origin.clientMetadata,
+        actor: input.origin.actor,
         queueLength: (this.engine?.snapshot().queue.length ?? 0) + 1,
       }),
     );
@@ -713,6 +731,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         status,
         content: stripBundledSkillBlocks(input.message),
         clientMetadata: input.origin.clientMetadata,
+        actor: input.origin.actor,
         createdAt: input.createdAt,
       }),
     );
@@ -1428,11 +1447,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         );
         const messageId = children.length === 1 ? children[0]!.waiter.id : newMessageId();
         const promptIds = children.map((child) => child.waiter.id);
+        const steerKey = JSON.stringify([...promptIds].toSorted());
+        const originActor = merged.origin.kind === 'user' ? merged.origin.actor : undefined;
+        const steerActor = this.steerActors.get(steerKey) ?? originActor;
+        this.steerActors.delete(steerKey);
+        const mergedOrigin = { ...merged.origin, actor: steerActor };
         this.nudges.push({
           contextMessage: {
             role: 'user',
             content: gatedContent,
-                  origin: markInTurnOrigin(merged.origin),
+            origin: markInTurnOrigin(mergedOrigin),
             id: messageId,
           },
           promptIds,
@@ -1450,6 +1474,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               stripBundledSkillBlocks(child.projection.message),
             ),
             steeredAt: new Date().toISOString(),
+            actor: steerActor,
           }),
         );
         return;

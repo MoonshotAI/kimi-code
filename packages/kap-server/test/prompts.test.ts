@@ -1529,6 +1529,7 @@ describe('server-v2 /api/v1 prompts', () => {
               path: sourcePath,
             },
           ],
+          actor: { userId: 'local-server', displayName: 'Local server' },
         });
       });
     } finally {

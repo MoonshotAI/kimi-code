@@ -1,4 +1,5 @@
 import type { AgentId, AttachmentId, FrameId, InteractionId, TaskId, TodoId } from './ids';
+import type { TranscriptUserIdentity } from './identity';
 
 export type { InteractionKind, InteractionState } from './interaction';
 
@@ -16,12 +17,14 @@ export type TranscriptUserOrigin = {
   readonly kind: 'user';
   readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly skillActivations?: readonly TranscriptSkillActivation[];
+  readonly actor?: TranscriptUserIdentity;
 } | {
   readonly kind: 'skill_activation';
   readonly trigger: 'user-slash';
   readonly skillName: string;
   readonly skillArgs?: string;
   readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
+  readonly actor?: TranscriptUserIdentity;
 };
 
 interface TextFrameBase {

@@ -3,6 +3,9 @@ import type { TokenUsage } from '#human/llm-requester/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
+import type { UserIdentity } from '#/human/interaction/interaction';
+
+export type { UserIdentity } from '#/human/interaction/interaction';
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
@@ -19,6 +22,7 @@ export interface UserPromptOrigin {
   readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly skillActivations?: readonly BundledSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];
+  readonly actor?: UserIdentity;
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };

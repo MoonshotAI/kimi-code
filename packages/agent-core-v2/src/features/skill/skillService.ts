@@ -165,6 +165,7 @@ export class AgentSkillService implements IAgentSkillService {
             skillActivations: prepared.map((activation) => activation.entry),
             clientMetadata: input.clientMetadata,
             attachments: input.attachments,
+            actor: input.actor,
           } as PromptOrigin,
           tracked: true,
         },

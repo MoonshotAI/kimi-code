@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
 
 import { approvalDecisionSchema, approvalResponseSchema, approvalScopeSchema } from './approval';
+import { actorSchema } from './actor';
 import { questionAnswerMethodSchema, questionAnswerSchema, questionItemSchema } from './question';
 
 export const interactionOutcomeSchema = z.enum([
@@ -24,6 +25,7 @@ const interactionEventBaseSchema = z.object({
   outcome: interactionOutcomeSchema.optional(),
   ended_at: isoDateTimeSchema.optional(),
   tool_call_id: z.string().min(1).optional(),
+  resolved_by: actorSchema.optional(),
 });
 
 export const approvalInteractionEventSchema = interactionEventBaseSchema.extend({
@@ -90,5 +92,6 @@ export type InteractionRespondRequest = z.infer<typeof interactionRespondRequest
 export const interactionRespondResultSchema = z.object({
   outcome: interactionOutcomeSchema,
   ended_at: isoDateTimeSchema,
+  resolved_by: actorSchema.optional(),
 });
 export type InteractionRespondResult = z.infer<typeof interactionRespondResultSchema>;

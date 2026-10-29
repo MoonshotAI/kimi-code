@@ -1,3 +1,12 @@
+import { z } from 'zod';
+
+export const userIdentitySchema = z.object({
+  userId: z.string().min(1),
+  displayName: z.string().min(1),
+});
+
+export type UserIdentity = z.infer<typeof userIdentitySchema>;
+
 export type InteractionKind = 'approval' | 'question' | 'user_tool';
 
 export type InteractionTagValue = string | number;
@@ -40,6 +49,7 @@ export function isInteractionCancellation(response: unknown): response is Intera
 export interface InteractionResolution {
   readonly id: string;
   readonly response: unknown;
+  readonly actor?: UserIdentity;
 }
 
 export interface InteractionPendingChangedEvent {

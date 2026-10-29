@@ -63,6 +63,11 @@ export const stepRetrySchema = z.object({
 export const turnStateSchema = z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']);
 export const stepStateSchema = z.enum(['running', 'completed', 'interrupted', 'failed']);
 
+export const transcriptUserIdentitySchema = z.object({
+  userId: z.string().min(1),
+  displayName: z.string().min(1),
+});
+
 export const transcriptSkillActivationSchema = z.object({
   skillName: z.string(),
   skillArgs: z.string().optional(),
@@ -73,6 +78,7 @@ export const transcriptUserOriginSchema = z.discriminatedUnion('kind', [
     kind: z.literal('user'),
     clientMetadata: z.array(z.record(z.string(), z.unknown())).optional(),
     skillActivations: z.array(transcriptSkillActivationSchema).optional(),
+    actor: transcriptUserIdentitySchema.optional(),
   }),
   z.object({
     kind: z.literal('skill_activation'),
@@ -80,6 +86,7 @@ export const transcriptUserOriginSchema = z.discriminatedUnion('kind', [
     skillName: z.string().min(1),
     skillArgs: z.string().optional(),
     clientMetadata: z.array(z.record(z.string(), z.unknown())).optional(),
+    actor: transcriptUserIdentitySchema.optional(),
   }),
 ]);
 
@@ -142,6 +149,7 @@ export const interactionSchema = z.object({
   state: z.enum(['pending', 'approved', 'rejected', 'cancelled', 'answered', 'dismissed']),
   request: z.unknown().optional(),
   response: z.unknown().optional(),
+  resolvedBy: transcriptUserIdentitySchema.optional(),
 });
 
 export const noticeFrameSchema = z.object({
@@ -372,6 +380,8 @@ export const transcriptPromptSchema = z.object({
   userMessageId: z.string().optional(),
   content: z.unknown().optional(),
   clientMetadata: z.array(z.record(z.string(), z.unknown())).optional(),
+  actor: transcriptUserIdentitySchema.optional(),
+  steeredBy: transcriptUserIdentitySchema.optional(),
   createdAt: z.string(),
   finishedAt: z.string().optional(),
   steeredAt: z.string().optional(),

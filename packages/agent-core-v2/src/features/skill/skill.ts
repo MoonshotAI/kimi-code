@@ -1,5 +1,5 @@
 import type { ContentPart } from '#human/llm/message';
-import type { PromptFileAttachment } from '#/agent/contextMemory/types';
+import type { PromptFileAttachment, UserIdentity } from '#/agent/contextMemory/types';
 
 export interface SkillActivationInput {
   readonly name: string;
@@ -20,6 +20,7 @@ export interface PromptWithSkillsInput {
   readonly skills: readonly PromptSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];
   readonly steerIfActive?: boolean;
+  readonly actor?: UserIdentity;
 }
 
 export interface PromptWithSkillsResult {

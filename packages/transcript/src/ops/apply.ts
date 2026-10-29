@@ -479,7 +479,8 @@ function interactionEquals(a: TranscriptInteraction, b: TranscriptInteraction): 
     a.toolCallId === b.toolCallId &&
     a.state === b.state &&
     a.request === b.request &&
-    a.response === b.response
+    a.response === b.response &&
+    a.resolvedBy === b.resolvedBy
   );
 }
 
@@ -529,6 +530,8 @@ function promptEquals(a: TranscriptPrompt, b: TranscriptPrompt): boolean {
     a.status === b.status &&
     a.userMessageId === b.userMessageId &&
     a.content === b.content &&
+    a.actor === b.actor &&
+    a.steeredBy === b.steeredBy &&
     a.createdAt === b.createdAt &&
     a.finishedAt === b.finishedAt &&
     a.steeredAt === b.steeredAt

@@ -52,6 +52,7 @@ import {
 } from '@moonshot-ai/transcript';
 
 import type { InteractionEventMessage, InteractionOutcome } from '../../../protocol/interaction';
+import { toWireActor } from '../../../protocol/actor';
 import {
   approvalExpiresAt,
   interactionAgentId,
@@ -708,11 +709,11 @@ export class SessionEventBroadcaster {
         }),
       ),
       toDisposable(
-        interactions.onDidResolve(({ id, response }) => {
+        interactions.onDidResolve(({ id, response, actor }) => {
           const known = state.knownInteractions.get(id);
           if (known === undefined) return;
           state.knownInteractions.delete(id);
-          this.sendInteraction(state, interactionMessage(known, sessionId, { response }));
+          this.sendInteraction(state, interactionMessage(known, sessionId, { response, actor }));
         }),
       ),
     );
@@ -762,7 +763,10 @@ function pendingInteractionsOf(sessionId: string): readonly Interaction[] {
 function interactionMessage(
   interaction: Interaction,
   sessionId: string,
-  resolution?: { readonly response: unknown },
+  resolution?: {
+    readonly response: unknown;
+    readonly actor?: { readonly userId: string; readonly displayName: string };
+  },
 ): InteractionEventMessage | undefined {
   const kind = interaction.kind;
   if (kind !== 'approval' && kind !== 'question') return undefined;
@@ -779,6 +783,7 @@ function interactionMessage(
     outcome,
     ended_at: outcome === undefined ? undefined : now,
     tool_call_id: interactionToolCallId(interaction),
+    resolved_by: outcome === undefined ? undefined : toWireActor(resolution?.actor),
   };
   if (kind === 'approval') {
     const request = interaction.payload as ApprovalRequest;

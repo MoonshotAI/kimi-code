@@ -13,6 +13,7 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
+import { toWireActor } from '../protocol/actor';
 import {
   interactionRespondParamsSchema,
   interactionRespondRequestSchema,
@@ -96,6 +97,7 @@ export function registerInteractionsRoutes(app: InteractionRouteHost, core: Scop
       }
 
       let outcome: InteractionOutcome;
+      let accepted: boolean;
       if (body.kind === 'approval') {
         const response: ApprovalResponse = {
           decision: body.decision,
@@ -103,21 +105,39 @@ export function registerInteractionsRoutes(app: InteractionRouteHost, core: Scop
           feedback: body.feedback,
           selectedLabel: body.selected_label,
         };
-        interactions.respond(interaction_id, response);
+        accepted = interactions.respond(interaction_id, response, req.authPrincipal);
         outcome = body.decision;
       } else if (body.dismissed === true) {
-        interactions.respond(interaction_id, null);
+        accepted = interactions.respond(interaction_id, null, req.authPrincipal);
         outcome = 'dismissed';
       } else {
         const { questions } = toWireQuestion(pending, session_id);
-        interactions.respond(interaction_id, toQuestionResult(body, questions));
+        accepted = interactions.respond(
+          interaction_id,
+          toQuestionResult(body, questions),
+          req.authPrincipal,
+        );
         outcome = 'answered';
+      }
+      if (!accepted) {
+        reply.send(
+          errEnvelope(
+            ErrorCode.INTERACTION_ENDED,
+            `interaction ${interaction_id} has ended`,
+            req.id,
+          ),
+        );
+        return;
       }
       requestLog(req)?.info(
         { session_id, interaction_id, kind: body.kind, outcome },
         'interaction responded',
       );
-      reply.send(okEnvelope({ outcome, ended_at: new Date().toISOString() }, req.id));
+      reply.send(okEnvelope({
+        outcome,
+        ended_at: new Date().toISOString(),
+        resolved_by: toWireActor(req.authPrincipal),
+      }, req.id));
     },
   );
   app.post(

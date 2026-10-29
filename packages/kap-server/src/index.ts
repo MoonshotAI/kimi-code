@@ -9,6 +9,17 @@ export {
   rotateServerToken,
   serverTokenPath,
 } from './services/auth/persistentToken';
+export {
+  createCentralUserAuthenticator,
+  centralUsersPath,
+  registerCentralUser,
+  INTERNAL_CENTRAL_SERVER_FLAG_ENV,
+  INTERNAL_CENTRAL_SERVER_FLAG_ID,
+} from './services/auth/centralUsers';
+export type { CentralUserRegistration } from './services/auth/centralUsers';
+export type { AuthPrincipal } from './services/auth/principal';
+export { actorSchema, toWireActor } from './protocol/actor';
+export type { Actor } from './protocol/actor';
 export { createServerLogger } from './services/pinoLoggerService';
 export type {
   CreateLoggerOptions,

@@ -67,7 +67,12 @@ function dispatchInteractionEvent(
     return;
   }
   void dispatcher.dispatch(
-    new InteractionResolvedEvent({ agentId, id: emitted.id, response: emitted.response }),
+    new InteractionResolvedEvent({
+      agentId,
+      id: emitted.id,
+      response: emitted.response,
+      actor: emitted.actor,
+    }),
   );
 }
 

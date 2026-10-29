@@ -1,6 +1,6 @@
 import { assign, emit, setup } from '#/xstate2';
 
-import { INTERACTION_TAG_SESSION_ID, type Interaction } from './interaction';
+import { INTERACTION_TAG_SESSION_ID, type Interaction, type UserIdentity } from './interaction';
 
 export interface InteractionRecord extends Interaction {
   readonly resolved: boolean;
@@ -9,13 +9,13 @@ export interface InteractionRecord extends Interaction {
 
 export type InteractionEvent =
   | { type: 'interaction.request'; record: InteractionRecord }
-  | { type: 'interaction.resolve'; id: string; response: unknown }
+  | { type: 'interaction.resolve'; id: string; response: unknown; actor?: UserIdentity }
   | { type: 'interaction.evict'; id: string }
   | { type: 'interaction.purge'; sessionId: string };
 
 export type InteractionEmitted =
   | { type: 'interaction.requested'; record: InteractionRecord }
-  | { type: 'interaction.resolved'; id: string; response: unknown; record: InteractionRecord };
+  | { type: 'interaction.resolved'; id: string; response: unknown; record: InteractionRecord; actor?: UserIdentity };
 
 export interface InteractionMachineContext {
   records: Map<string, InteractionRecord>;
@@ -57,6 +57,7 @@ export function createInteractionMachine() {
             id: event.id,
             response: event.response,
             record: context.records.get(event.id) as InteractionRecord,
+            actor: event.actor,
           })),
         ],
       },

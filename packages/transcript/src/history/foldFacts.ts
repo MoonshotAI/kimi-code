@@ -1,4 +1,5 @@
 import type { AgentRef } from '../model/frame';
+import type { TranscriptUserIdentity } from '../model/identity';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
 import { turnId as exportTurnKey } from '../model/ids';
@@ -48,6 +49,7 @@ interface InteractionRequestPayload {
 interface InteractionResolvedPayload {
   readonly id?: unknown;
   readonly response?: unknown;
+  readonly actor?: TranscriptUserIdentity;
 }
 
 interface PlanRevisionPayload {
@@ -638,6 +640,7 @@ export function foldWireRecordFacts(
           ...entity,
           state: mapInteractionEndState(entity.interactionKind, payload.response),
           response: payload.response,
+          resolvedBy: payload.actor,
         });
         break;
       }

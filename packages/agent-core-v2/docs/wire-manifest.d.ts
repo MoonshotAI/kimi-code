@@ -377,6 +377,10 @@ interface InteractionResolvedPayload {
   agentId: string;
   id: string;
   response: any;
+  actor?: {
+    userId: string;
+    displayName: string;
+  };
 }
 
 /**
@@ -611,6 +615,7 @@ interface PromptSteeredPayload {
   content: ContentPart[];
   steeredAt: string;
   messageId?: string;
+  actor?: { userId: string; displayName: string };
 }
 
 /**

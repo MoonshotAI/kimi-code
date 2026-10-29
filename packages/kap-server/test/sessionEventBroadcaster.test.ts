@@ -1334,7 +1334,11 @@ describe('SessionEventBroadcaster', () => {
       },
       tags: { sessionId: 's1' },
     });
-    interactions.respond('q1', { answers: { q_0: 'opt_0_0' }, method: 'enter' });
+    interactions.respond(
+      'q1',
+      { answers: { q_0: 'opt_0_0' }, method: 'enter' },
+      { userId: 'alice', displayName: 'Alice' },
+    );
 
     for (const message of interactionMessages) {
       expect(interactionEventMessageSchema.parse(message)).toEqual(
@@ -1368,6 +1372,7 @@ describe('SessionEventBroadcaster', () => {
         status: 'ended',
         outcome: 'answered',
         response: { answers: { q_0: 'opt_0_0' }, method: 'enter' },
+        resolved_by: { user_id: 'alice', display_name: 'Alice' },
       },
     ]);
     expect(interactionMessages[0]!.event_created_at).toBeTypeOf('string');

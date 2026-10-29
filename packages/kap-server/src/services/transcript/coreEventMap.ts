@@ -11,6 +11,7 @@ import {
   type ContextUndone,
   type CronFired,
   type GoalUpdated,
+  type UserIdentity,
 } from '@moonshot-ai/agent-core-v2';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
@@ -1485,6 +1486,8 @@ export class AgentTranscriptProjector {
       userMessageId: prev?.userMessageId,
       content: prev?.content ?? projectPromptContentParts(event.content),
       clientMetadata: event.clientMetadata ?? prev?.clientMetadata,
+      actor: event.actor ?? prev?.actor,
+      steeredBy: prev?.steeredBy,
       createdAt: prev?.createdAt ?? nowIso(),
     }));
     return [{ op: 'prompt.upsert', prompt }];
@@ -1497,6 +1500,8 @@ export class AgentTranscriptProjector {
       userMessageId: event.userMessageId,
       content: projectPromptContentParts(event.content),
       clientMetadata: event.clientMetadata ?? prev?.clientMetadata,
+      actor: event.actor ?? prev?.actor,
+      steeredBy: prev?.steeredBy,
       createdAt: prev?.createdAt ?? event.createdAt,
       finishedAt: prev?.finishedAt,
       steeredAt: prev?.steeredAt,
@@ -1511,6 +1516,8 @@ export class AgentTranscriptProjector {
       userMessageId: prev?.userMessageId,
       content: prev?.content,
       clientMetadata: prev?.clientMetadata,
+      actor: prev?.actor,
+      steeredBy: prev?.steeredBy,
       createdAt: prev?.createdAt ?? new Date().toISOString(),
       finishedAt: prev?.finishedAt,
       steeredAt: prev?.steeredAt,
@@ -1525,6 +1532,8 @@ export class AgentTranscriptProjector {
       userMessageId: prev?.userMessageId,
       content: prev?.content,
       clientMetadata: prev?.clientMetadata,
+      actor: prev?.actor,
+      steeredBy: prev?.steeredBy,
       createdAt: prev?.createdAt ?? event.finishedAt,
       finishedAt: event.finishedAt,
       steeredAt: prev?.steeredAt,
@@ -1539,6 +1548,8 @@ export class AgentTranscriptProjector {
       userMessageId: prev?.userMessageId,
       content: prev?.content,
       clientMetadata: prev?.clientMetadata,
+      actor: prev?.actor,
+      steeredBy: prev?.steeredBy,
       createdAt: prev?.createdAt ?? event.abortedAt,
       finishedAt: event.abortedAt,
       steeredAt: prev?.steeredAt,
@@ -1554,6 +1565,8 @@ export class AgentTranscriptProjector {
       userMessageId: prev?.userMessageId,
       content: prev?.content ?? projectPromptContentParts(event.content),
       clientMetadata: prev?.clientMetadata,
+      actor: prev?.actor,
+      steeredBy: event.actor ?? prev?.steeredBy,
       createdAt: prev?.createdAt ?? event.steeredAt,
       finishedAt: prev?.finishedAt,
       steeredAt: event.steeredAt,
@@ -1566,6 +1579,8 @@ export class AgentTranscriptProjector {
         userMessageId: prev?.userMessageId,
         content: prev?.content,
         clientMetadata: prev?.clientMetadata,
+        actor: prev?.actor,
+        steeredBy: event.actor ?? prev?.steeredBy,
         createdAt: prev?.createdAt ?? event.steeredAt,
         finishedAt: event.steeredAt,
         steeredAt: event.steeredAt,
@@ -1701,13 +1716,13 @@ export class AgentTranscriptProjector {
     }
   }
 
-  mapInteractionResolved(id: string, response: unknown): TranscriptOperation[] {
+  mapInteractionResolved(id: string, response: unknown, actor?: UserIdentity): TranscriptOperation[] {
     const record = this.interactions.get(id);
     if (record === undefined) return [];
     this.interactions.delete(id);
     const state = interactionOutcome(record.interactionKind, response);
     const ops: TranscriptOperation[] = [
-      { op: 'interaction.upsert', interaction: { ...record, state, response } },
+      { op: 'interaction.upsert', interaction: { ...record, state, response, resolvedBy: actor ?? record.resolvedBy } },
     ];
     const toolCallId = record.toolCallId;
     if (toolCallId !== undefined) {

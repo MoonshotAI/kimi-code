@@ -217,7 +217,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (token === undefined || this.validateCredential === undefined) return true;
     let ok = false;
     try {
-      ok = await this.validateCredential(token);
+      ok = (await this.validateCredential(token)) !== undefined;
     } catch {
       ok = false;
     }

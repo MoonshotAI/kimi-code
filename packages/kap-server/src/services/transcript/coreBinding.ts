@@ -12,6 +12,7 @@ import {
   interactions,
   toDisposable,
   type AgentMeta,
+  type UserIdentity,
   type IDisposable,
   type IAgentScopeHandle,
   type Interaction,
@@ -55,7 +56,7 @@ export function bindSessionTranscript(
   const interactionAgents = new Map<string, string>();
   const knownInteractions = new Set<string>();
   const unseeded = new Map<string, Interaction>();
-  const earlyResolves = new Map<string, { agentId: string; response: unknown }>();
+  const earlyResolves = new Map<string, { agentId: string; response: unknown; actor?: UserIdentity }>();
   const seededAgents = new Set<string>();
   let seededAll = false;
   const isSeeded = (agentId: string): boolean => seededAll || seededAgents.has(agentId);
@@ -248,7 +249,7 @@ export function bindSessionTranscript(
       earlyResolves.delete(id);
       const projector = projectors.get(early.agentId);
       if (projector !== undefined) {
-        applyOps(early.agentId, projector.mapInteractionResolved(id, early.response));
+        applyOps(early.agentId, projector.mapInteractionResolved(id, early.response, early.actor));
       }
     }
     for (const pending of pendingInteractions()) {
@@ -275,18 +276,18 @@ export function bindSessionTranscript(
       }),
     ),
     toDisposable(
-      interactions.onDidResolve(({ id, response }) => {
+      interactions.onDidResolve(({ id, response, actor }) => {
         knownInteractions.delete(id);
         const agentId = interactionAgents.get(id);
         if (agentId === undefined) return;
         interactionAgents.delete(id);
         if (unseeded.has(id)) {
-          earlyResolves.set(id, { agentId, response });
+          earlyResolves.set(id, { agentId, response, actor });
           return;
         }
         const projector = projectors.get(agentId);
         if (projector === undefined) return;
-        applyOps(agentId, projector.mapInteractionResolved(id, response));
+        applyOps(agentId, projector.mapInteractionResolved(id, response, actor));
       }),
     ),
   );

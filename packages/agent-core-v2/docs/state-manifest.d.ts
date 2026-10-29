@@ -808,6 +808,10 @@ export interface AgentStateSnapshot {
         readonly size: number;
         readonly path: string;
       }[];
+      readonly actor?: {
+        userId: string;
+        displayName: string;
+      };
     } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'skill_activation';
       readonly inTurn?: true;
@@ -1021,6 +1025,10 @@ export interface AgentStateSnapshot {
         readonly size: number;
         readonly path: string;
       }[];
+      readonly actor?: {
+        userId: string;
+        displayName: string;
+      };
     } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'skill_activation';
       readonly inTurn?: true;
@@ -1243,6 +1251,10 @@ export interface AgentStateSnapshot {
         readonly size: number;
         readonly path: string;
       }[];
+      readonly actor?: {
+        userId: string;
+        displayName: string;
+      };
     } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'skill_activation';
       readonly inTurn?: true;
@@ -1457,6 +1469,10 @@ export interface AgentStateSnapshot {
         readonly size: number;
         readonly path: string;
       }[];
+      readonly actor?: {
+        userId: string;
+        displayName: string;
+      };
     } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'skill_activation';
       readonly inTurn?: true;

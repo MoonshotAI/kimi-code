@@ -39,7 +39,9 @@ import {
 import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 import { ErrorCode } from '../protocol/error-codes';
+import { toWireActor } from '../protocol/actor';
 import { projectPromptContentParts } from '../services/messages/messageProjection';
+import type { AuthPrincipal } from '../services/auth/principal';
 import {
   promptAbortResponseSchema,
   promptListResponseSchema,
@@ -319,6 +321,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 clientMetadata,
                 skills: req.body.skills,
                 attachments: promptAttachments,
+                actor: req.authPrincipal,
               });
             } catch (error) {
               settlement.dispose();
@@ -335,6 +338,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                   content: projectPromptContentParts(parts),
                   created_at: result.created_at,
                   metadata: clientMetadata?.[0],
+                  submitted_by: toWireActor(req.authPrincipal),
                 },
                 req.id,
               ),
@@ -351,7 +355,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             message: { role: 'user', content: parts },
             meta: {
               promptId: reservation.id,
-              origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
+              origin: {
+                kind: 'user',
+                attachments: promptAttachments,
+                clientMetadata,
+                actor: req.authPrincipal,
+              } as PromptOrigin,
               tracked: true,
             },
           });
@@ -403,8 +412,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       try {
         const { session_id } = req.params;
         const resolved = await resolvePrompt(core, session_id);
-        await resolved.prompt.steer(req.body.prompt_ids);
-        reply.send(okEnvelope({ steered: true, prompt_ids: [...req.body.prompt_ids] }, req.id));
+        await resolved.prompt.steer(req.body.prompt_ids, req.authPrincipal);
+        reply.send(okEnvelope({
+          steered: true,
+          prompt_ids: [...req.body.prompt_ids],
+          steered_by: toWireActor(req.authPrincipal),
+        }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
       }
@@ -456,7 +469,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
 type PromptActionExtra = {
   readonly resolved: Awaited<ReturnType<typeof resolvePrompt>>;
   readonly session_id: string;
-  readonly req: { readonly id: string };
+  readonly req: { readonly id: string; readonly authPrincipal?: AuthPrincipal };
   readonly reply: { readonly send: (payload: unknown) => unknown };
 };
 
@@ -476,8 +489,12 @@ async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
 
 async function steerPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, req, reply, id } = ctx;
-  await resolved.prompt.steer([id]);
-  reply.send(okEnvelope({ steered: true, prompt_ids: [id] }, req.id));
+  await resolved.prompt.steer([id], req.authPrincipal);
+  reply.send(okEnvelope({
+    steered: true,
+    prompt_ids: [id],
+    steered_by: toWireActor(req.authPrincipal),
+  }, req.id));
 }
 
 function projectPromptList(loop: IAgentLoopService) {
@@ -528,6 +545,7 @@ export function projectPromptSnapshot(prompt: {
     content: projectPromptContentParts(content),
     created_at: prompt.createdAt,
     metadata: origin?.kind === 'user' || origin?.kind === 'skill_activation' ? origin.clientMetadata?.[0] : undefined,
+    submitted_by: origin?.kind === 'user' ? toWireActor(origin.actor) : undefined,
   };
 }
 

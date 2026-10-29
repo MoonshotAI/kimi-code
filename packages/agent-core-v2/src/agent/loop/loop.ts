@@ -1,7 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, UserIdentity } from '#/agent/contextMemory/types';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
 import type { ContentPart, TextPart } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm-requester/usage';
@@ -207,7 +207,7 @@ export interface IAgentLoopService {
 
   submit(input: UserEntry, options?: LoopSubmitOptions): LoopSubmitResult;
 
-  steer(promptIds: readonly string[]): Promise<void>;
+  steer(promptIds: readonly string[], actor?: UserIdentity): Promise<void>;
 
   cancel(target?: LoopCancelTarget, reason?: unknown): boolean;
 

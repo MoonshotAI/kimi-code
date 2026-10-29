@@ -1,4 +1,5 @@
 export * from './model/ids';
+export * from './model/identity';
 export * from './model/turn';
 export * from './model/frame';
 export * from './model/interaction';

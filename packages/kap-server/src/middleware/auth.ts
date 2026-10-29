@@ -3,6 +3,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { errEnvelope } from '../envelope';
 import type { IAuthTokenService } from '../services/auth/authTokenService';
 import type { CredentialValidator } from '../services/auth/credentials';
+import { LEGACY_AUTH_PRINCIPAL } from '../services/auth/principal';
 import {
   AUTH_RATE_LIMIT_CODE,
   AUTH_RATE_LIMIT_MSG,
@@ -56,10 +57,12 @@ function extractBearer(header: string | undefined): string | null {
 export function createAuthHook(
   authTokenService: IAuthTokenService,
   opts?: AuthHookOptions,
-): (req: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply | void> {
+): (req: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply> {
   const isBypassed = opts?.isBypassed ?? defaultIsBypassed;
   const validateCredential: CredentialValidator =
-    opts?.validateCredential ?? ((candidate) => authTokenService.isValid(candidate));
+    opts?.validateCredential ??
+    (async (candidate) =>
+      (await authTokenService.isValid(candidate)) ? LEGACY_AUTH_PRINCIPAL : undefined);
 
   return async (req, reply) => {
     if (opts?.limiter?.isBanned(req.ip) === true) {
@@ -70,7 +73,7 @@ export function createAuthHook(
     const token = extractBearer(header);
 
     if (isBypassed(req)) {
-      return;
+      return reply;
     }
 
     if (header !== undefined) {
@@ -82,9 +85,12 @@ export function createAuthHook(
       return reply.code(401).send(errEnvelope(AUTH_ERROR_CODE, AUTH_ERROR_MSG, req.id));
     }
 
-    if (!(await validateCredential(token))) {
+    const principal = await validateCredential(token);
+    if (principal === undefined) {
       opts?.limiter?.recordFailure(req.ip);
       return reply.code(401).send(errEnvelope(AUTH_ERROR_CODE, AUTH_ERROR_MSG, req.id));
     }
+    req.authPrincipal = principal;
+    return reply;
   };
 }

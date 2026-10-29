@@ -1,5 +1,6 @@
 import { promptDisplayTextFromContentParts } from '../../agent/prompt/promptMetadataText';
 import type { ContentPart, TextPart } from '#/llm/message';
+import type { UserIdentity } from '../interaction/interaction';
 
 export const SKILL_ACTIVATION_PART_SOURCE = 'skill activation';
 
@@ -56,6 +57,7 @@ export interface UserPromptOrigin {
   readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly skillActivations?: readonly BundledSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];
+  readonly actor?: UserIdentity;
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
@@ -98,6 +100,16 @@ export function mergeSteerMessages(messages: readonly SteerMessage[]): {
     (message) => userOriginOf(message.origin)?.skillActivations ?? [],
   );
   const attachments = messages.flatMap((message) => userOriginOf(message.origin)?.attachments ?? []);
+  const messageActors = messages.map((message) => userOriginOf(message.origin)?.actor);
+  const firstActor = messageActors[0];
+  const actor =
+    firstActor !== undefined &&
+    messageActors.every(
+      (candidate) =>
+        candidate?.userId === firstActor.userId && candidate?.displayName === firstActor.displayName,
+    )
+      ? firstActor
+      : undefined;
   return {
     role: 'user',
     content: [
@@ -109,13 +121,14 @@ export function mergeSteerMessages(messages: readonly SteerMessage[]): {
       ...messages.flatMap((message) => stripBundledSkillBlocks(message)),
     ],
     origin:
-      skillActivations.length === 0 && attachments.length === 0 && clientMetadata.length === 0
+      actor === undefined && skillActivations.length === 0 && attachments.length === 0 && clientMetadata.length === 0
         ? USER_PROMPT_ORIGIN
         : {
             kind: 'user',
             clientMetadata: clientMetadata.length === 0 ? undefined : clientMetadata,
             skillActivations: skillActivations.length === 0 ? undefined : skillActivations,
             attachments: attachments.length === 0 ? undefined : attachments,
+            actor,
           },
   };
 }

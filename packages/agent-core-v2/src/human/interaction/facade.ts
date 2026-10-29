@@ -8,6 +8,7 @@ import type {
   InteractionRequest,
   InteractionResolution,
   InteractionTags,
+  UserIdentity,
 } from './interaction';
 import { INTERACTION_TAG_AGENT_ID, INTERACTION_TAG_SESSION_ID } from './interaction';
 import type { InteractionEmitted, InteractionRecord } from './machine';
@@ -29,7 +30,7 @@ interface Waiter {
 export interface InteractionFacade {
   request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse>;
   enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction;
-  respond(id: string, response: unknown): boolean;
+  respond(id: string, response: unknown, actor?: UserIdentity): boolean;
   findAll(query?: InteractionQuery): readonly Interaction[];
   findOne(query: InteractionQuery): Interaction | undefined;
   wait<TResponse>(id: string, opts?: { timeoutMs?: number }): Promise<TResponse>;
@@ -118,7 +119,11 @@ export function createInteractionFacade(
     settleWaiters(event.id, event.response);
     rememberResolved(event.id);
     dispatchToAgent(event.record.tags, event);
-    const resolution: InteractionResolution = { id: event.id, response: event.response };
+    const resolution: InteractionResolution = {
+      id: event.id,
+      response: event.response,
+      actor: event.actor,
+    };
     for (const listener of resolveListeners) listener(resolution);
   });
 
@@ -147,10 +152,10 @@ export function createInteractionFacade(
       return interaction;
     },
 
-    respond(id: string, response: unknown): boolean {
+    respond(id: string, response: unknown, identity?: UserIdentity): boolean {
       const record = records().get(id);
       if (record === undefined || record.resolved) return false;
-      actor.send({ type: 'interaction.resolve', id, response });
+      actor.send({ type: 'interaction.resolve', id, response, actor: identity });
       firePendingChanged();
       return true;
     },

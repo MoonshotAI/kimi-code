@@ -1,10 +1,11 @@
 import { z } from 'zod';
 
+import type { AuthPrincipal } from '../services/auth/principal';
 import { jsonSchema, openApiDocumentJsonSchema } from './schema';
 import { validateBody, validateParams, validateQuery } from './validate';
 
 function toFastifyPath(openApiPath: string): string {
-  return openApiPath.replace(/\{([^}]+)\}/g, ':$1');
+  return openApiPath.replaceAll(/\{([^}]+)\}/g, ':$1');
 }
 
 function buildErrorEnvelopeSchema(
@@ -46,7 +47,7 @@ function buildUnifiedResponseSchema(
 ): Record<string, unknown> {
   const errorEntries = Object.entries(errors)
     .map(([code, cfg]) => [Number(code), cfg] as const)
-    .sort((a, b) => a[0] - b[0]);
+    .toSorted((a, b) => a[0] - b[0]);
 
   if (errorEntries.length === 0) {
     return openApiDocumentJsonSchema(
@@ -118,6 +119,7 @@ export interface RouteDefinition<
       body: InferZod<TBody>;
       params: InferZod<TParams>;
       headers: Record<string, unknown>;
+      authPrincipal?: AuthPrincipal;
     } & (TQuery extends z.ZodTypeAny ? { query: InferZod<TQuery> } : {}),
     reply: { send(payload: unknown): unknown },
   ) => Promise<void> | void;

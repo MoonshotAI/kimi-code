@@ -9,6 +9,7 @@ import {
   IAppendLogStore,
   IConfigService,
   IEventService,
+  IFlagService,
   IMcpOAuthService,
   IOAuthService,
   IProviderDiscoveryService,
@@ -92,6 +93,11 @@ import {
 } from '@moonshot-ai/remote-control';
 
 import { createAuthTokenService, type IAuthTokenService } from './services/auth/authTokenService';
+import {
+  createCentralUserAuthenticator,
+  centralUsersPath,
+  INTERNAL_CENTRAL_SERVER_FLAG_ID,
+} from './services/auth/centralUsers';
 import { createCredentialValidator } from './services/auth/credentials';
 import { resolvePasswordHash } from './services/auth/password';
 import { createTokenStore } from './services/auth/tokenStore';
@@ -198,7 +204,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     passwordConfigured = passwordHash !== undefined;
     authTokenService = createAuthTokenService({ tokenStore, passwordHash });
   }
-  const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   let boundPort = port;
   const localOriginHost = host.includes(':') ? `[${host}]` : host;
@@ -218,6 +223,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
+  const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken, {
+    authenticate: createCentralUserAuthenticator(centralUsersPath(homeDir)),
+    enabled: () => core.accessor.get(IFlagService).enabled(INTERNAL_CENTRAL_SERVER_FLAG_ID),
+  });
 
   const readManagedOAuth = (): { key?: string; oauthHost?: string } | undefined =>
     core.accessor
@@ -548,7 +557,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       let ok = false;
       if (candidate !== null) {
         try {
-          ok = await validateCredential(candidate);
+          ok = (await validateCredential(candidate)) !== undefined;
         } catch (error) {
           logger.warn(
             {

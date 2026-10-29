@@ -2,6 +2,7 @@
 import { z } from 'zod';
 
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
+import { userIdentitySchema, type UserIdentity } from '#/human/interaction/interaction';
 import type { InteractionKind } from '#/human/interaction/interaction';
 
 const interactionRequestSchema = z.object({
@@ -31,6 +32,7 @@ const interactionResolvedSchema = z.object({
   agentId: z.string(),
   id: z.string(),
   response: z.unknown(),
+  actor: userIdentitySchema.optional(),
 });
 
 export class InteractionResolvedEvent extends AgentEvent2<
@@ -44,6 +46,7 @@ export interface InteractionResolvedEvent {
   readonly agentId: string;
   readonly id: string;
   readonly response: unknown;
+  readonly actor?: UserIdentity;
 }
 
 registerEvent2Class(InteractionRequestEvent);

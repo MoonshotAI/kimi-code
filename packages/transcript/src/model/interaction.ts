@@ -1,4 +1,5 @@
 import type { InteractionId } from './ids';
+import type { TranscriptUserIdentity } from './identity';
 
 export type InteractionKind = 'approval' | 'question';
 
@@ -17,4 +18,5 @@ export interface TranscriptInteraction {
   readonly state: InteractionState;
   readonly request?: unknown;
   readonly response?: unknown;
+  readonly resolvedBy?: TranscriptUserIdentity;
 }

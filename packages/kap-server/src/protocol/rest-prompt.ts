@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
 import { messageContentSchema } from './message';
+import { actorSchema } from './actor';
 import {
   promptPermissionModeSchema,
   promptThinkingSchema,
@@ -44,6 +45,7 @@ export const promptItemSchema = z.object({
   content: z.array(messageContentSchema).min(1),
   created_at: isoDateTimeSchema,
   metadata: z.record(z.string(), z.unknown()).optional(),
+  submitted_by: actorSchema.optional(),
 });
 export type PromptItem = z.infer<typeof promptItemSchema>;
 
@@ -64,6 +66,7 @@ export type PromptSteerRequest = z.infer<typeof promptSteerRequestSchema>;
 export const promptSteerResultSchema = z.object({
   steered: z.literal(true),
   prompt_ids: z.array(z.string().min(1)).min(1),
+  steered_by: actorSchema.optional(),
 });
 export type PromptSteerResult = z.infer<typeof promptSteerResultSchema>;
 
