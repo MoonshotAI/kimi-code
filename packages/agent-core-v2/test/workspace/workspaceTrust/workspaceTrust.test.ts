@@ -11,6 +11,7 @@ import { createServices } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService, type ConfigSectionChangedEvent } from '#/app/config/config';
@@ -212,7 +213,7 @@ describe('WorkspaceTrustService', () => {
     await service.untrust();
     expect(states.get(workspaceTrustTrustedKey)).toBe(false);
     expect(service.isTrusted()).toBe(true);
-    expect(events).toEqual([{ trusted: true }, { trusted: false }]);
+    expect(events.map((event) => event.trusted)).toEqual([true, false]);
   });
 
   it('trust() flips the state, fires once, and stays idempotent', async () => {
@@ -225,7 +226,7 @@ describe('WorkspaceTrustService', () => {
 
     expect(service.isTrusted()).toBe(true);
     expect(await service.get()).toBe(true);
-    expect(events).toEqual([{ trusted: true }]);
+    expect(events.map((event) => event.trusted)).toEqual([true]);
   });
 
   it('untrust() revokes the state and both directions stay idempotent', async () => {
@@ -239,7 +240,7 @@ describe('WorkspaceTrustService', () => {
     await service.untrust();
 
     expect(service.isTrusted()).toBe(false);
-    expect(events).toEqual([{ trusted: true }, { trusted: false }]);
+    expect(events.map((event) => event.trusted)).toEqual([true, false]);
   });
 
   it('keeps the marker across a restart', async () => {
@@ -573,6 +574,44 @@ describe('WorkspaceTrustService', () => {
       expect(result.instructionSources.paths).toContain(`${realSkillRoot}/`);
       expect(result.additionalDirs).toContain(realSkillRoot);
       expect(result.additionalDirSources).toContain(realSkillRoot);
+    } finally {
+      await rm(secondary, { recursive: true, force: true });
+    }
+  });
+
+  it('expands home-relative pending dirs without discovering their skills', async () => {
+    const secondary = mkdtempSync(join(tmpdir(), 'kimi-workspace-trust-home-'));
+    const skillRoot = join(secondary, '.kimi-code', 'skills');
+    await mkdir(join(skillRoot, 'home-only'), { recursive: true });
+    await writeFile(
+      join(skillRoot, 'home-only', 'SKILL.md'),
+      '---\nname: home-only\ndescription: Home-only skill\n---\nbody',
+      'utf8',
+    );
+    const fs = new HostFileSystem();
+    const service = new WorkspaceTrustDisclosureService(
+      { cwd, workspaceId: 'wm_test' } as never,
+      fs,
+      stubBootstrap(homeDir),
+      { get: () => true } as never,
+      new FileProjectLocalConfigService(stubBootstrap(homeDir), fs, secondary),
+      { ready: Promise.resolve(), sharedAdditionalDirs: [] } as never,
+      { ready: Promise.resolve(), get: async () => false } as never,
+      { ready: Promise.resolve(), catalog: new InMemorySkillCatalog() } as never,
+      { ready: Promise.resolve() } as never,
+      { entries: () => [] } as never,
+      { ready: Promise.resolve(), snapshot: { agentsMdPaths: [] } } as never,
+      stubLog(),
+    );
+
+    try {
+      const result = await service.describeGatedActivation(['~']);
+      const realSecondary = await fs.realpath(secondary);
+
+      expect(result.additionalDirs).toEqual([realSecondary]);
+      expect(result.additionalDirSources).toEqual([realSecondary]);
+      expect(result.instructionSources.skills).not.toContain('home-only');
+      expect(result.instructionSources.paths).not.toContain(`${await fs.realpath(skillRoot)}/`);
     } finally {
       await rm(secondary, { recursive: true, force: true });
     }

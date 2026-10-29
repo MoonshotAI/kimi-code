@@ -34,6 +34,15 @@ describe('SessionLifecycleService', () => {
       }),
     };
     const ready = Promise.resolve();
+    const workdir = {
+      dirs: workspaceDirs,
+      skills: workspaceSkillCatalog,
+      contextKey: 'local:/workspace',
+      fs: {},
+      instructions: { sessionProvider: () => ({}) },
+      agentProfiles: { ready },
+      dispose: vi.fn(),
+    };
     const handle = {
       accessor: { get: () => ({ ready }) },
       dispose: vi.fn(),
@@ -64,28 +73,34 @@ describe('SessionLifecycleService', () => {
         { ready },
         { ready },
         { ready },
-        { ready },
-        workspaceDirs,
-        workspaceSkillCatalog,
-        { sessionProvider: () => ({}) },
         { sessionHandle: () => ({}) },
         { ready },
         { ready },
+        undefined,
+        async () => workdir,
       ] as unknown as ConstructorParameters<typeof SessionLifecycleService>)
     );
     const materialize = (
       service as unknown as {
-        materializeSession(options: {
-          sessionId: string;
-          workDir: string;
-          additionalDirs: readonly string[];
-        }): Promise<unknown>;
+        materializeSession(
+          options: {
+            sessionId: string;
+            workDir: string;
+            additionalDirs: readonly string[];
+          },
+          environment: undefined,
+          workdir: unknown,
+        ): Promise<unknown>;
       }
-    ).materializeSession({
-      sessionId: 'session_test',
-      workDir: '/workspace',
-      additionalDirs: ['/additional'],
-    });
+    ).materializeSession(
+      {
+        sessionId: 'session_test',
+        workDir: '/workspace',
+        additionalDirs: ['/additional'],
+      },
+      undefined,
+      workdir,
+    );
 
     try {
       await vi.waitFor(() => {

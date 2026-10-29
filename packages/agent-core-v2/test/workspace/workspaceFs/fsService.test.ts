@@ -12,12 +12,13 @@ import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
 import { ErrorCodes, Error2 } from '#/errors';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError } from '#/os/interface/hostFsErrors';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/telemetry';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -161,11 +162,11 @@ function fakeFs(
     },
     writeText: async () => {},
     appendText: async () => {},
-    readBytes: async (p, n) => {
+    readBytes: async (p, n, offset = 0) => {
       const c = fileMap.get(resolveSymlinks(p));
       if (c === undefined) throw enoent(p);
       const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
-      return buf.subarray(0, n ?? buf.length);
+      return buf.subarray(offset, n === undefined ? buf.length : offset + n);
     },
     readLines: async function* (): AsyncGenerator<string> {
     },
@@ -408,13 +409,9 @@ function makeSession(
       ready: Promise.resolve(),
     }),
   ]);
-  const runtime = new FakeRuntime({ workspaceId: 'w', runtimeId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
-  Object.defineProperty(runtime, 'process', { value: runner ?? fakeRunner(handler) });
-  host.app.instantiation.provide(IRuntimeResolver, {
-    _serviceBrand: undefined,
-    inspect: () => runtime,
-    acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-  });
+  const environment = new FakeEnvironment({ environmentId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
+  Object.defineProperty(environment, 'process', { value: runner ?? fakeRunner(handler) });
+  host.app.instantiation.provide(IEnvironmentService, resolverFor(environment));
   const workspace = host.child('program', 'w1', [
     stubPair(IWorkspaceContext, stubWorkspaceContext()),
     stubPair(IWorkspaceDirs, stubWorkspaceDirs(additionalDirs)),
@@ -427,6 +424,40 @@ function makeSession(
 }
 
 const emptyHandler: RunHandler = () => ({ stdout: '', exitCode: 0 });
+
+function resolverFor(environment: FakeEnvironment): EnvironmentResolver {
+  return {
+    _serviceBrand: undefined,
+    inspect: () => environment,
+    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+  };
+}
+
+function makeRemoteSession(
+  files: Record<string, string | Buffer>,
+  handler: RunHandler,
+  events: Array<{ event: string; properties: Record<string, unknown> }> = [],
+  environmentId = 'ssh-dev',
+  homeDir = '/home/target',
+  hostFs?: IHostFileSystem,
+): IWorkspaceFsService {
+  const environment = new FakeEnvironment(
+    { environmentId, generation: 'test' },
+    { capabilities: ['process'], host: { homeDir } },
+  );
+  Object.defineProperty(environment, 'process', { value: fakeRunner(handler) });
+  const resolver = resolverFor(environment);
+  return new WorkspaceFsService(
+    stubWorkspaceContext(),
+    stubWorkspaceDirs(),
+    hostFs ?? fakeFs(files),
+    resolver,
+    telemetryStub(events),
+    workspaceGitStub(defaultGitStub()),
+    environmentId,
+  );
+}
 
 describe('WorkspaceFsService.gitStatus', () => {
   it('delegates to IWorkspaceGitService with the handler root and a confined filter', async () => {
@@ -606,7 +637,7 @@ describe('WorkspaceFsService.suggest', () => {
   }
 
   function rgMissingHandler(args: readonly string[]): { stdout: string; exitCode: number } {
-    if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
+    if (args[1] === '--version') return { stdout: '', exitCode: 1 };
     return { stdout: '', exitCode: 0 };
   }
 
@@ -1272,7 +1303,7 @@ describe('WorkspaceFsService.grep', () => {
     const fs = makeSession(
       { 'src/a.ts': 'hello world\nfoo bar\nhello again\n' },
       (args) => {
-        if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
+        if (args[1] === '--version') return { stdout: '', exitCode: 1 };
         return { stdout: '', exitCode: 0 };
       },
       events,
@@ -1495,7 +1526,7 @@ describe('WorkspaceFsService.grep', () => {
     const fs = makeSession(
       { 'src/a.ts': 'hello primary\n', '/extra/b.ts': 'hello extra\n' },
       (args) => {
-        if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
+        if (args[1] === '--version') return { stdout: '', exitCode: 1 };
         return { stdout: '', exitCode: 0 };
       },
       [],
@@ -1523,6 +1554,27 @@ describe('WorkspaceFsService.grep', () => {
 });
 
 describe('WorkspaceFsService.list', () => {
+  it.each(['list', 'suggest'] as const)('rejects an oversized nested directory during %s', async (operation) => {
+    const backend = fakeFs({ 'huge/hidden.txt': '', 'visible.txt': '' });
+    const readdir = backend.readdir;
+    backend.readdir = async (path) => {
+      if (path === '/repo/huge') {
+        throw new HostFsError('os.fs.directory_too_large', 'Directory /repo/huge exceeds 50000 entries');
+      }
+      return readdir(path);
+    };
+    const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
+
+    const result = operation === 'list'
+      ? fs.list({ path: '.', depth: 2, limit: 200, show_hidden: false, follow_gitignore: false, sort: 'name_asc', include_git_status: false })
+      : fs.suggest({ query: 'hidden', limit: 50, show_hidden: false, follow_gitignore: false });
+
+    await expect(result).rejects.toMatchObject({
+      code: 'fs.too_many_results',
+      message: 'Directory /repo/huge exceeds 50000 entries',
+    });
+  });
+
   it('lists files and directories with kinds', async () => {
     const fs = makeSession(
       { 'src/a.ts': '', 'src/sub/b.ts': '', 'README.md': '' },
@@ -2095,6 +2147,13 @@ describe('WorkspaceFsService.read', () => {
     const result = await fs.read({ path: 'a.txt', offset: 0, length: 5, encoding: 'utf-8' });
     expect(result.content).toBe('hello');
     expect(result.truncated).toBe(true);
+  });
+
+  it('honors a non-zero offset window', async () => {
+    const fs = makeSession({ 'a.txt': 'hello world' }, emptyHandler);
+    const result = await fs.read({ path: 'a.txt', offset: 6, length: 5, encoding: 'utf-8' });
+    expect(result.content).toBe('world');
+    expect(result.truncated).toBe(false);
   });
 
   it('returns base64 for binary content in auto mode', async () => {

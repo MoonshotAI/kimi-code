@@ -1633,17 +1633,15 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     expect(await announce(h, 2)).toBeUndefined();
   });
 
-  it('waits until the next boundary before announcing registry diffs', async () => {
+  it('announces registry diffs before the next step in the same turn', async () => {
     const h = createHarness();
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
     await announce(h);
 
     registerMcp(h, new StubMcpTool(MCP_GAMMA));
-    expect(await announce(h, 2)).toBeUndefined();
-
-    h.eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 99, origin: { kind: 'user' } }));
-    const diff = await announce(h);
+    const diff = await announce(h, 2);
     expect(diff).toContain(`<tools_added>\n${MCP_GAMMA}\n</tools_added>`);
+    expect(await announce(h, 3)).toBeUndefined();
   });
 
   it('diffs registry additions and removals against the folded announcements', async () => {
@@ -1659,11 +1657,27 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
 
     betaRegistration.dispose();
     registerMcp(h, new StubMcpTool(MCP_GAMMA));
-    h.eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 99, origin: { kind: 'user' } }));
-
-    const diff = await announce(h);
+    const diff = await announce(h, 2);
     expect(diff).toContain(`<tools_added>\n${MCP_GAMMA}\n</tools_added>`);
     expect(diff).toContain(`<tools_removed>\n${MCP_BETA}\n</tools_removed>`);
+    expect(await announce(h, 3)).toBeUndefined();
+  });
+
+  it('announces policy changes before the next step without exposing denied tools', async () => {
+    const h = createHarness();
+    registerMcp(h, new StubMcpTool(MCP_ALPHA));
+    registerMcp(h, new StubMcpTool(MCP_BETA));
+    activeToolNames = new Set([MCP_ALPHA]);
+    deniedToolNames = new Set([MCP_BETA]);
+    expect(await announce(h)).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
+
+    activeToolNames = new Set([MCP_BETA]);
+    deniedToolNames = new Set([MCP_ALPHA]);
+    const diff = await announce(h, 2);
+    expect(diff).toContain(`<tools_added>\n${MCP_BETA}\n</tools_added>`);
+    expect(diff).toContain(`<tools_removed>\n${MCP_ALPHA}\n</tools_removed>`);
+    expect(h.sut.load([MCP_ALPHA])).toMatchObject({ policyDenied: [MCP_ALPHA] });
+    expect(await announce(h, 3)).toBeUndefined();
   });
 
   it('re-announces the full set after compaction discards the history', async () => {

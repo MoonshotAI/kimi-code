@@ -27,6 +27,15 @@ interface FsMentionCandidate {
   readonly isDirectory: boolean;
 }
 
+export interface RemoteMentionCandidate {
+  readonly path: string;
+  readonly kind: 'file' | 'directory' | 'symlink';
+}
+
+export type RemoteMentionSuggest = (
+  query: string,
+) => Promise<readonly RemoteMentionCandidate[] | undefined>;
+
 /**
  * Kimi wrapper around pi-tui's combined autocomplete provider.
  *
@@ -49,6 +58,7 @@ export class FileMentionProvider implements AutocompleteProvider {
     additionalDirs: readonly string[] = [],
     private readonly getInputMode: () => 'prompt' | 'bash' = () => 'prompt',
     private readonly skillCommandNames?: ReadonlySet<string>,
+    private readonly remoteSuggest?: RemoteMentionSuggest,
   ) {
     this.additionalDirs = additionalDirs.map((dir) => resolveMentionDirectory(workDir, dir));
     // Build an expanded list that includes alias entries so that
@@ -79,6 +89,9 @@ export class FileMentionProvider implements AutocompleteProvider {
     // runs, so the file list never opens.
     const atPrefix = extractAtPrefix(textBeforeCursor);
     if (atPrefix !== null) {
+      if (this.remoteSuggest !== undefined) {
+        return getRemoteMentionSuggestions(this.remoteSuggest, atPrefix, options.signal);
+      }
       // fd backs `@` completion across every root (cwd + additional dirs). Fall
       // back to the filesystem scanner when fd is unavailable, not executable
       // (e.g. the managed binary was removed or lost execute permission), or if
@@ -444,6 +457,35 @@ function applyPathCompletion(
     cursorLine,
     cursorCol: beforePrefix.length + cursorOffset,
   };
+}
+
+async function getRemoteMentionSuggestions(
+  suggest: RemoteMentionSuggest,
+  atPrefix: string,
+  signal: AbortSignal,
+): Promise<AutocompleteSuggestions | null> {
+  if (signal.aborted) return null;
+  const isQuotedPrefix = atPrefix.startsWith('@"');
+  const query = isQuotedPrefix ? atPrefix.slice(2) : atPrefix.slice(1);
+  try {
+    const candidates = await suggest(query);
+    if (candidates === undefined || candidates.length === 0 || signal.aborted) return null;
+    return {
+      prefix: atPrefix,
+      items: candidates.map((candidate) =>
+        toMentionItem(
+          {
+            path: candidate.path,
+            absolutePath: candidate.path,
+            isDirectory: candidate.kind === 'directory',
+          },
+          isQuotedPrefix,
+        ),
+      ),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function getFsMentionSuggestions(

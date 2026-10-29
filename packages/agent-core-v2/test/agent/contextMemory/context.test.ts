@@ -842,6 +842,14 @@ describe('Agent context', () => {
     });
   });
 
+  it('preserves surrogate pairs when truncating from the end', () => {
+    const suffix = (maxTokens: number) =>
+      selectCompactionUserMessages([userMessage('x😀')], maxTokens, 0, () => 100).tail[0]?.content[0];
+
+    expect(suffix(1)).toMatchObject({ type: 'text', text: '😀' });
+    expect(suffix(2)).toMatchObject({ type: 'text', text: 'x😀' });
+  });
+
   describe('legacy compaction layout', () => {
     it('keeps the verbatim summary followed by the uncompacted tail', () => {
       const history = [userMessage('old'), userMessage('tail')];

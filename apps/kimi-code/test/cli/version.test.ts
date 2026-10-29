@@ -3,12 +3,8 @@ import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  createKimiCodeUserAgent,
-  getHostPackageJsonPath,
-  getHostPackageRoot,
-  getVersion,
-} from '#/cli/version';
+import { createKimiCodeUserAgent } from '#/cli/host-identity';
+import { getHostPackageJsonPath, getHostPackageRoot, getVersion } from '#/cli/version';
 
 describe('cli version helpers', () => {
   it('resolves the host package manifest near apps/kimi-code and reads its version', () => {

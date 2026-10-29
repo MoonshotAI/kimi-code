@@ -1,12 +1,21 @@
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import * as posixPath from 'node:path/posix';
+import * as win32Path from 'node:path/win32';
+
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { isTaskOutputFilePath } from '#/agent/task/persist';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
+import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentPlanService, type PlanFileTarget } from '#/features/plan/plan';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { isDaemonFileUrl } from '#/agent/media/mediaRef';
-import { attachmentFileSource, runtimeFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { attachmentFileSource, environmentFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -119,13 +128,6 @@ function renderLine(entry: ReadLineEntry, lineEndingStyle: LineEndingStyle): str
   return `${String(entry.lineNo)}\t${renderedContent}`;
 }
 
-function isFileNotFoundError(error: unknown): boolean {
-  const unwrapped = unwrapErrorCause(error);
-  if (typeof unwrapped !== 'object' || unwrapped === null) return false;
-  const code = (unwrapped as { code?: unknown })['code'];
-  return code === 'ENOENT' || code === 'ENOTDIR';
-}
-
 function isTextDecodeError(error: unknown): boolean {
   const unwrapped = unwrapErrorCause(error);
   if (typeof unwrapped !== 'object' || unwrapped === null) return false;
@@ -180,7 +182,7 @@ export class ReadTool implements IReadTool {
   }
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentToolResultTruncationService private readonly resultTruncation: IAgentToolResultTruncationService,
@@ -189,6 +191,11 @@ export class ReadTool implements IReadTool {
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @ISessionMediaStore private readonly attachmentStore?: ISessionMediaStore,
+    @IAgentPlanService private readonly planService?: IAgentPlanService,
+    @IHostFileSystem private readonly hostFs?: IHostFileSystem,
+    @IHostEnvironment private readonly hostEnvironment?: IHostEnvironment,
+    @ISessionContext private readonly session?: ISessionContext,
+    @IAgentScopeContext private readonly agent?: IAgentScopeContext,
   ) {}
 
   private limits(): { defaultMaxChars: number; maxChars: number } {
@@ -200,50 +207,92 @@ export class ReadTool implements IReadTool {
     };
   }
 
-  private workspaceConfig(view: RuntimeWorkspaceView): WorkspaceConfig {
+  private workspaceConfig(view: EnvironmentWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  resolveExecution(args: ReadInput): ToolExecution | Promise<ToolExecution> {
+  async resolveExecution(args: ReadInput): Promise<ToolExecution> {
     if (args.column_offset !== undefined && (args.line_offset ?? 1) < 0) {
       return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
     }
     if (isDaemonFileUrl(args.path)) return this.attachmentExecution(args);
-    const inspected = inspectAgentRuntime(this.runtime);
-    const view = new RuntimeWorkspaceView(inspected, {
-      workDir: this.workspaceCtx.workDir,
-      additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
-    });
-    const env = { _serviceBrand: undefined, ...inspected.environment, ready: Promise.resolve() };
-    const workspace = this.workspaceConfig(view);
-    const path = resolvePathAccessPath(args.path, {
-      env,
-      workspace,
-      operation: 'read',
-    });
+    const planTarget = await this.planService?.resolveFile(args.path, 'read');
+    if (planTarget !== undefined) return this.localArtifactExecution(args, planTarget, true);
+    const artifactTarget = this.localOutputTarget(args.path);
+    if (artifactTarget !== undefined) return this.localArtifactExecution(args, artifactTarget, false);
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    try {
+      const inspected = resolutionLease.environment;
+      const expectedGeneration = pinnedGeneration(inspected);
+      const view = new EnvironmentWorkspaceView(inspected, {
+        workDir: this.workspaceCtx.workDir,
+        additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
+      });
+      const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
+      const workspace = this.workspaceConfig(view);
+      const path = resolvePathAccessPath(args.path, {
+        env,
+        workspace,
+        operation: 'read',
+      });
+      return {
+        accesses: ToolAccesses.readFile(path),
+        description: `Reading ${args.path}`,
+        display: { kind: 'file_io', operation: 'read', path },
+        approvalRule: literalRulePattern(this.name, path),
+        matchesRule: (ruleArgs) =>
+          matchesPathRuleSubject(ruleArgs, path, {
+            cwd: workspace.workspaceDir,
+            pathClass: env.pathClass,
+            homeDir: env.homeDir,
+          }),
+        execute: async () => {
+          const lease = await acquireOrWhenReady(this.environment, ['fs']);
+          try {
+            if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
+              return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
+            }
+            const eventLog = this.resultTruncation.isWireJournalPath(path);
+            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog);
+            return { ...result, spillExempt: true };
+          } finally {
+            lease.dispose();
+          }
+        },
+      };
+    } finally {
+      resolutionLease.dispose();
+    }
+  }
+
+  private localOutputTarget(path: string): PlanFileTarget | undefined {
+    if (this.hostFs === undefined || this.hostEnvironment === undefined || path.includes('\0')) return undefined;
+    const environmentPath = this.hostEnvironment.pathClass === 'win32' ? win32Path : posixPath;
+    if (!environmentPath.isAbsolute(path)) return undefined;
+    const normalized = environmentPath.normalize(path);
+    const taskOutput = this.session !== undefined && this.agent !== undefined && (
+      isTaskOutputFilePath(normalized, environmentPath.join(this.session.sessionDir, 'agents', this.agent.agentId), environmentPath) ||
+      (this.agent.agentId === 'main' && isTaskOutputFilePath(normalized, this.session.sessionDir, environmentPath))
+    );
+    if (!taskOutput && !this.resultTruncation.isSpillFilePath(normalized)) return undefined;
+    return { fs: this.hostFs, path: normalized, environmentPath: { ...environmentPath, separator: environmentPath.sep, delimiter: environmentPath.delimiter }, pathClass: this.hostEnvironment.pathClass };
+  }
+
+  private localArtifactExecution(args: ReadInput, target: PlanFileTarget, planFile: boolean): ToolExecution {
+    const { path } = target;
     return {
       accesses: ToolAccesses.readFile(path),
       description: `Reading ${args.path}`,
       display: { kind: 'file_io', operation: 'read', path },
       approvalRule: literalRulePattern(this.name, path),
-      matchesRule: (ruleArgs) =>
-        matchesPathRuleSubject(ruleArgs, path, {
-          cwd: workspace.workspaceDir,
-          pathClass: env.pathClass,
-          homeDir: env.homeDir,
-        }),
+      matchesRule: (ruleArgs) => matchesPathRuleSubject(ruleArgs, path, {
+        cwd: target.environmentPath.dirname(path), pathClass: target.pathClass,
+      }),
       execute: async () => {
-        const lease = this.runtime.acquire(['fs']);
-        try {
-          if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
-          }
-          const eventLog = this.resultTruncation.isWireJournalPath(path);
-          const result = await this.execution(runtimeFileSource(lease.runtime.fs!, path), args, eventLog);
-          return { ...result, spillExempt: true };
-        } finally {
-          lease.dispose();
+        if (planFile && (await this.planService?.resolveFile(path, 'read'))?.path !== path) {
+          return { isError: true, output: 'The active plan changed before execution. Retry the tool call.' };
         }
+        return { ...await this.execution(environmentFileSource(target.fs, path), args, false), spillExempt: true };
       },
     };
   }
@@ -273,7 +322,7 @@ export class ReadTool implements IReadTool {
       try {
         stat = await source.stat();
       } catch (error) {
-        if (isFileNotFoundError(error)) {
+        if (isHostFsNotFound(error) || isHostFsNotDirectory(error)) {
           return { isError: true, output: `"${args.path}" does not exist.` };
         }
         throw error;

@@ -17,7 +17,7 @@ import {
 import type { Command } from 'commander';
 
 import { createCliTelemetryBootstrap } from '#/cli/telemetry';
-import { createKimiCodeHostIdentity } from '#/cli/version';
+import { createKimiCodeHostIdentity } from '#/cli/host-identity';
 
 interface WritableLike {
   write(chunk: string): boolean;
@@ -132,7 +132,7 @@ function formatRow(summary: SessionSummary, showWorkDir: boolean): string {
 }
 
 function sanitizeField(value: string): string {
-  return value.replaceAll(/[\x00-\x1f\x7f]+/g, ' ').trim();
+  return value.replaceAll(/[\u0000-\u001F\u007F]+/g, ' ').trim();
 }
 
 function formatTimestamp(epochMs: number): string {

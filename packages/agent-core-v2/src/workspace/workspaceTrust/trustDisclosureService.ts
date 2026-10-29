@@ -66,11 +66,12 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
 
   async describeGatedActivation(
     pendingAdditionalDirs: readonly string[] = [],
+    baseDir = this.context.cwd,
   ): Promise<TrustGatedActivation> {
     if (await this.trust.get()) return EMPTY_ACTIVATION;
     await this.workspaceDirs.ready;
     const resolvedPendingAdditionalDirs = await this.localConfig.resolveAdditionalDirs(
-      this.context.cwd,
+      baseDir,
       pendingAdditionalDirs,
     );
     const warnings: string[] = [];
@@ -159,6 +160,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       projectRootsForDirs(
         [this.context.cwd, ...this.workspaceDirs.sharedAdditionalDirs],
         { mergeAllAvailableSkills },
+        this.fs,
       ),
       realpathOrSelf(this.fs, projectRoot),
     ]);
@@ -240,6 +242,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       await projectRootsForDirs(
         [this.context.cwd, ...this.workspaceDirs.sharedAdditionalDirs],
         { mergeAllAvailableSkills },
+        this.fs,
       )
     )
       .map((root) => root.path)

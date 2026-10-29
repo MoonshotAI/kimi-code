@@ -18,4 +18,27 @@ describe('ApiKeyInputDialogComponent', () => {
       }
     }
   });
+
+  it('preserves password whitespace when trimming is disabled', () => {
+    let submitted: string | undefined;
+    const dialog = new ApiKeyInputDialogComponent(
+      'dev-box',
+      ['Password'],
+      (result) => {
+        if (result.kind === 'ok') submitted = result.value;
+      },
+      { trimValue: false },
+    );
+    dialog.handleInput(' secret ');
+    dialog.handleInput('\r');
+    expect(submitted).toBe(' secret ');
+  });
+
+  it('does not convert trailing layout padding into password bullets', () => {
+    const dialog = new ApiKeyInputDialogComponent('dev-box', [], () => {});
+    dialog.handleInput('smoke-password');
+    const rendered = dialog.render(60).join('\n');
+    expect(rendered).not.toContain('smoke-password');
+    expect(rendered.match(/•/g)).toHaveLength(14);
+  });
 });

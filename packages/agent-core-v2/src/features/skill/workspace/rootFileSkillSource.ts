@@ -19,6 +19,7 @@ import {
   type ISkillSource,
   type SkillContribution,
 } from '#/features/skill/catalog/skillSource';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { watchCandidates } from '#human/utils/watch';
@@ -53,6 +54,8 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     @IConfigService private readonly config: IConfigService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
+    private readonly fs: IHostFileSystem,
+    private readonly watchEnabled = true,
   ) {
     super();
     this._register(
@@ -86,10 +89,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
     const discover = async () =>
       this.discovery.discover(
-        await projectRootsForDirs(
-          this.workDirs,
-          { mergeAllAvailableSkills },
-        ),
+        await projectRootsForDirs(this.workDirs, { mergeAllAvailableSkills }, this.fs),
       );
     let contribution = await discover();
     while (await this.updateProjectSkillRootWatches(contribution.scannedDirectories)) {
@@ -101,9 +101,10 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
   private async updateProjectSkillRootWatches(
     scannedDirectories: readonly string[],
   ): Promise<boolean> {
+    if (!this.watchEnabled) return false;
     const watches = new Map<string, readonly string[]>();
     for (const workDir of this.workDirs) {
-      const { projectRoot, candidates } = await projectSkillRootCandidates(workDir);
+      const { projectRoot, candidates } = await projectSkillRootCandidates(workDir, this.fs);
       if (!watches.has(projectRoot)) watches.set(projectRoot, candidates);
     }
     const signature = JSON.stringify({

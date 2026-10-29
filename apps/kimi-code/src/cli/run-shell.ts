@@ -32,7 +32,8 @@ import { resolveCommandPath } from '#/utils/process/resolve-command';
 import type { CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
-import { createKimiCodeHostIdentity } from './version';
+import { detectNativeInstall } from './update/source';
+import { createKimiCodeHostIdentity } from './host-identity';
 
 export async function runShell(
   opts: CLIOptions,
@@ -62,6 +63,7 @@ export async function runShell(
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
+  let tui!: KimiTUI;
   const harnessOptions: KimiHarnessOptions = {
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
@@ -79,6 +81,15 @@ export async function runShell(
         outcome: 'error',
         reason: outcome.reason,
       });
+    },
+    sshPassword: {
+      prompt: (environmentId) => tui.promptSshPassword(environmentId),
+      // ssh runs this as SSH_ASKPASS; `src/main.ts` recognises the askpass
+      // environment before argv, so re-entering this binary (SEA) or this
+      // script under the same node flags (npm / tsx dev) lands in the helper.
+      askpassCommand: detectNativeInstall()
+        ? [process.execPath]
+        : [process.execPath, ...process.execArgv, process.argv[1]!],
     },
     sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
   };
@@ -124,7 +135,7 @@ export async function runShell(
   // Resolve --agent/--agent-file once for the startup session; validateOptions
   // has already rejected them alongside --session/--continue.
   const agentProfile = await resolveAgentProfileSelection(opts, workDir);
-  const tui = new KimiTUI(harness, {
+  tui = new KimiTUI(harness, {
     cliOptions: opts,
     agentProfile,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,

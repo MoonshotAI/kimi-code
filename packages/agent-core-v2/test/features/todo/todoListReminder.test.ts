@@ -56,7 +56,7 @@ function priorTodoReminder(): ContextMessage {
 
 describe('todoListStaleReminder', () => {
   it('skips reminder injection when TodoList is not active', async () => {
-    const history = assistantSteps(5);
+    const history = assistantSteps(10);
     const result = todoListStaleReminder({
       history,
       todos: [{ title: 'Investigate todo reminder', status: 'in_progress' }],
@@ -71,17 +71,18 @@ describe('todoListStaleReminder', () => {
       { title: 'Read current TodoList implementation', status: 'in_progress' },
       { title: 'Add reminder injector tests', status: 'pending' },
     ];
-    const history = [todoListWrite(todos), ...assistantSteps(5)];
+    const history = [todoListWrite(todos), ...assistantSteps(10)];
     const result = todoListStaleReminder({ history, todos, active: true });
 
-    expect(result?.stepsSinceLastWrite).toBe(5);
+    expect(result?.stepsSinceLastWrite).toBe(10);
+    expect(result?.text).toContain('If the list still matches your progress, no update is needed');
     expect(result?.text).toContain('1. [in_progress] Read current TodoList implementation');
     expect(result?.text).toContain('2. [pending] Add reminder injector tests');
   });
 
   it('does not inject before the assistant-step threshold', async () => {
     const todos: TodoItem[] = [{ title: 'Read code', status: 'in_progress' }];
-    const history = [todoListWrite(todos), ...assistantSteps(4)];
+    const history = [todoListWrite(todos), ...assistantSteps(9)];
     const result = todoListStaleReminder({ history, todos, active: true });
 
     expect(result).toBeUndefined();
@@ -91,9 +92,9 @@ describe('todoListStaleReminder', () => {
     const todos: TodoItem[] = [{ title: 'Read code', status: 'in_progress' }];
     const history = [
       todoListWrite(todos),
-      ...assistantSteps(5),
+      ...assistantSteps(10),
       priorTodoReminder(),
-      ...assistantSteps(4),
+      ...assistantSteps(9),
     ];
     const result = todoListStaleReminder({ history, todos, active: true });
 
@@ -104,20 +105,20 @@ describe('todoListStaleReminder', () => {
     const todos: TodoItem[] = [{ title: 'Read code', status: 'in_progress' }];
     const history = [
       todoListWrite(todos),
-      ...assistantSteps(5),
+      ...assistantSteps(10),
       priorTodoReminder(),
-      ...assistantSteps(5),
+      ...assistantSteps(10),
     ];
     const result = todoListStaleReminder({ history, todos, active: true });
 
-    expect(result?.stepsSinceLastWrite).toBe(10);
+    expect(result?.stepsSinceLastWrite).toBe(20);
   });
 
   it('does not treat TodoList query mode as a write', async () => {
     const todos: TodoItem[] = [{ title: 'Read code', status: 'in_progress' }];
     const history = [
       todoListWrite(todos),
-      ...assistantSteps(3),
+      ...assistantSteps(8),
       todoListQuery(),
       ...assistantSteps(1),
     ];
