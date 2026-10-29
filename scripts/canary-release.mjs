@@ -207,16 +207,19 @@ function version() {
   }
 }
 
+export function readNpmCanaryVersion(execute = execFileSync) {
+  const npmLatest = execute('npm', ['view', PACKAGE_NAME, 'dist-tags.canary'], { encoding: 'utf8' }).trim();
+  if (npmLatest !== '' && parseCanaryVersion(npmLatest) === null) {
+    throw new Error(`npm canary tag is malformed: ${npmLatest}`);
+  }
+  return npmLatest;
+}
+
 function guard() {
   git(['fetch', '--tags', 'origin']);
   const publishedVersions = canaryVersions(canaryTags());
-  if (process.env.KIMI_CODE_CANARY_NPM_PUBLISH === 'true') {
-    const npmLatest = execFileSync('npm', ['view', PACKAGE_NAME, 'dist-tags.canary'], { encoding: 'utf8' }).trim();
-    if (npmLatest !== '') {
-      if (parseCanaryVersion(npmLatest) === null) throw new Error(`npm canary tag is malformed: ${npmLatest}`);
-      publishedVersions.push(npmLatest);
-    }
-  }
+  const npmLatest = readNpmCanaryVersion();
+  if (npmLatest !== '') publishedVersions.push(npmLatest);
   const version = env('CANARY_VERSION');
   const newer = findNewerCanaryVersion(version, publishedVersions);
   if (newer !== null) throw new Error(`stale canary run: ${version} would replace newer ${newer}`);

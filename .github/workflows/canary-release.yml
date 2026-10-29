@@ -88,7 +88,6 @@ jobs:
       CANARY_VERSION: ${{ needs.prepare.outputs.version }}
       CANARY_TAG: ${{ needs.prepare.outputs.tag }}
       CANARY_PUBLISHED_AT: ${{ needs.prepare.outputs.published_at }}
-      KIMI_CODE_CANARY_NPM_PUBLISH: ${{ vars.KIMI_CODE_CANARY_NPM_PUBLISH }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -103,7 +102,6 @@ jobs:
       - name: Reject stale publish
         run: node scripts/canary-release.mjs guard
       - name: Publish to npm (canary dist-tag)
-        if: vars.KIMI_CODE_CANARY_NPM_PUBLISH == 'true'
         run: |
           if npm view "@moonshot-ai/kimi-code@$CANARY_VERSION" version >/dev/null 2>&1; then
             echo "@moonshot-ai/kimi-code@$CANARY_VERSION is already on npm"

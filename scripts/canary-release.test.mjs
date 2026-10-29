@@ -15,6 +15,7 @@ import {
   PACKAGE_NAME,
   parseCanaryVersion,
   readCanaryRelease,
+  readNpmCanaryVersion,
   requiredCanaryReleaseAssets,
   resolveCanaryBaseVersion,
   selectCanaryCommit,
@@ -227,4 +228,20 @@ await test('an older canary run is stale after a newer run publishes', () => {
   const newer = '2.3.3-canary.20261029012345-0000000';
   assert.equal(findNewerCanaryVersion(CANARY, [older, newer]), newer);
   assert.equal(findNewerCanaryVersion(CANARY, [older, CANARY]), null);
+});
+
+await test('npm canary lookup stays enabled for stale-publish protection', () => {
+  let invocation;
+  const version = readNpmCanaryVersion((command, args, options) => {
+    invocation = { command, args, options };
+    return `${CANARY}\n`;
+  });
+  assert.equal(version, CANARY);
+  assert.deepEqual(invocation, {
+    command: 'npm',
+    args: ['view', PACKAGE_NAME, 'dist-tags.canary'],
+    options: { encoding: 'utf8' },
+  });
+  assert.equal(readNpmCanaryVersion(() => ''), '');
+  assert.throws(() => readNpmCanaryVersion(() => '2.4.0'), /npm canary tag is malformed/);
 });
