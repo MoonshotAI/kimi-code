@@ -96,6 +96,8 @@ The Kimi-specific user Skill directory moves with `KIMI_CODE_HOME`, so isolated 
 - `.kimi-code/skills/`
 - `.agents/skills/`
 
+For a workspace with multiple source directories, Kimi Code CLI discovers project-level Skills for every source directory using the project-root rules above and merges them into one Skill catalog. The primary directory wins duplicate Skill names; additional directories follow their workspace order. Skill changes in any source directory automatically reload the catalog.
+
 **Extra directories**: Declared via `extra_skill_dirs` at the top level of `config.toml`:
 
 ```toml

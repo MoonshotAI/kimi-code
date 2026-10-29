@@ -96,6 +96,8 @@ Kimi 专属用户级 Skill 目录会随 `KIMI_CODE_HOME` 移动，隔离数据�
 - `.kimi-code/skills/`
 - `.agents/skills/`
 
+当工作区包含多个源目录时，Kimi Code CLI 会按上述项目根规则发现每个源目录的项目级 Skills，并合并到同一个 Skill 列表中。出现同名 Skill 时，主目录优先；附加目录之间按工作区中的目录顺序决定优先级。任意源目录中的 Skill 发生变化时，列表都会自动刷新。
+
 **额外目录**：通过 `config.toml` 顶层的 `extra_skill_dirs` 声明：
 
 ```toml
