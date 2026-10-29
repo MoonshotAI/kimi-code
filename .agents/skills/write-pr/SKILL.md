@@ -1,6 +1,6 @@
 ---
 name: write-pr
-description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何把 PR 模板的每一节写得简洁、便于 reviewer 理解，包括"行为变化与受影响人群"表。
+description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何把 PR 模板的每一节写得简洁、便于 reviewer 理解，包括"行为变化与受影响人群"表、可视化大纲，以及 UI/UX 变化的截图和录屏。
 ---
 
 # 写 PR 描述
@@ -23,16 +23,19 @@ description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何把 PR 
    - 读关联的 issue 和相关任务产物。
    - 读完整 diff（`git diff main...HEAD`）和足够的周边代码，理解行为与归属。
    - PR 已存在时，用 `gh pr view` 拿元数据和改动文件列表。
+   - 改动让用户看到的界面或输出变了的，准备视觉证据，见"UI/UX 变化的视觉证据"。
 
 4. 按模板各节写描述。描述用用户当前使用的语言，行为变化表也一样；只有三样固定：PR 标题保持英文 Conventional Commit，changeset 保持英文（见 `gen-changesets` skill），节标题沿用模板原文。
    - **Requirement or Bug**：一句话，或 `Resolve #<number>`。不要多写。
    - **Bug Reproduction Steps**：只有 bug 类 PR 需要；feature 写 `N/A`。步骤已在 issue 里的写 `See linked issue`。
-   - **Root Cause**：只有 bug 类 PR 需要；feature 写 `N/A`。说明根因，以及这是根本修复还是绕过。
+   - **Root Cause**：只有 bug 类 PR 需要；feature 写 `N/A`。说明根因，以及这是根本修复还是绕过。机制要靠时序或状态才说得清的，用图，见"代码变更的可视化大纲"。
    - **Code Changes**：能用可视化大纲说清楚的就不要写散文，见"代码变更的可视化大纲"。
+   - **Screenshots / Recordings**：模板里没有这一节。有可见的 UI/UX 变化时加在 Code Changes 后面，没有就不加，见"UI/UX 变化的视觉证据"。
    - **Behavior Changes and Affected Users**：先填行为变化表，再列受影响模块与测试覆盖，见"行为变化与受影响人群"。
    - **Checklist**：勾上所有适用的项。
 
 5. 发布描述：
+   - 描述里有图片的，先按"UI/UX 变化的视觉证据"上传，换成真实链接。
    - 先存到临时文件，再 `gh pr edit <number> --body-file <path>` 或 `gh pr create --body-file <path>`。
    - 确认更新成功。
 
@@ -112,7 +115,7 @@ description: 在 kimi-code 仓库里创建或更新 PR 时使用：如何把 PR 
 +    <SkillResultCard />
 ```
 
-组件交互、控制流或数据流用 Mermaid，解释 bug 机制时尤其有用：
+组件之间的交互和时序用 Mermaid `sequenceDiagram`，解释 bug 机制时尤其有用：
 
 ```mermaid
 sequenceDiagram
@@ -122,6 +125,15 @@ sequenceDiagram
     User->>UI: choose command
     UI->>Daemon: send expanded prompt
     Daemon-->>UI: stream result
+```
+
+分支判断用 `flowchart`，状态迁移用 `stateDiagram-v2`：
+
+```mermaid
+flowchart TD
+    A[tool output arrives] --> B{hides 2+ lines?}
+    B -- yes --> C[collapse with hint line]
+    B -- no --> D[show all lines]
 ```
 
 关键数据结构或类型变化用对应语言的代码块：
@@ -137,4 +149,43 @@ interface SessionEvents {
 - 重点是"变了什么"且周边形状已存在时，用 `diff` 块。
 - 大部分是新内容，或 diff 记法会掩盖归属和顺序时，用对应语言或 `text` 块给出完整目标形状。
 - 按最容易理解的顺序讲：先文件还是先数据结构，哪个合适用哪个。
+- 图是为了省 reviewer 的时间：一两句话能说清的不画；一张图只讲一件事，节点多到要来回找时拆成几张。
 - 像一个人对另一个人讲话：简单、连贯、简洁。
+
+## UI/UX 变化的视觉证据
+
+用户看到的东西变了，就让 reviewer 直接看到改动前后的样子，不要只用文字描述。涉及范围：TUI（`apps/kimi-code/src/tui`、`packages/pi-tui`）、`apps/vis/web`、`apps/vscode/webview-ui`、`dist-web` 同步，以及用户可见的文本输出（print 模式输出、报错文案、命令行帮助）。
+
+选能说清变化的最低成本形式：
+
+| 形式 | 适用 | 怎么得到 |
+|---|---|---|
+| 终端文本快照（`text` 代码块） | TUI 的布局、文案、对齐、折叠截断 | 用 `packages/pi-tui/test/virtual-terminal.ts` 渲染，或真实运行后复制屏幕内容 |
+| 截图 | 颜色、主题、web 和 webview 界面 | 真实运行后截屏 |
+| GIF | 只用于交互和时序：按键、展开折叠、流式输出、动画 | 本机有录屏工具就录；没有就退回关键帧截图或文本快照，不为此装工具 |
+
+写法：
+- 加在 Code Changes 后面，节标题 `## Screenshots / Recordings`。
+- 改动前后用两列表格并排；全新的界面只放改动后。每组图前用一句话说明该看哪里。
+- 证据来自 PR 分支的真实运行或测试渲染，不要手画示意图冒充。文本快照保持原样，不手工调整对齐。
+- GIF 只录能说明问题的几秒，体积控制在几 MB 内。
+- 素材先放在 `.tmp/pr-media/`，不提交进 PR 分支。
+
+上传：`gh` 不能把图片传成 GitHub 附件，所以把素材推到 origin 上专门放图的孤立分支 `pr-assets/<number>`。在仓库根目录执行：
+
+```bash
+url=$(git remote get-url origin)
+dir=$(mktemp -d) && cp .tmp/pr-media/<files> "$dir"/ && cd "$dir" && git init -q
+git fetch -q "$url" pr-assets/<number> 2>/dev/null && git reset -q --soft FETCH_HEAD  # 分支已存在就接在后面
+git add -A && git commit -qm "chore: add screenshots for #<number>"
+git push -q "$url" HEAD:refs/heads/pr-assets/<number>
+git rev-parse HEAD  # 链接里的 <sha>
+```
+
+引用写成 `![说明](https://github.com/MoonshotAI/kimi-code/blob/<sha>/<file>?raw=true)`。
+
+- 链接用 `<sha>`，不要用分支名：追加的提交只含新文件，按分支名引用会让旧图失效。
+- 只推 `pr-assets/` 分支，不建 release。CI 只在 `main` 和 `release/*` 的 push 上触发，这类分支不会跑 CI。
+- 不要 force push，合入后也不要删这个分支，否则引用的提交不可达，图会失效。
+- 本仓库公开，上传等于公开发布。上传前逐张看一遍：用中性的工作区和示例数据截图，画面里不能出现本机用户名路径、API key、真实会话内容，以及内部域名、未发布的模型名这类内部标识。
+- 会话里有人类协作时，推送前列出要上传的文件，等对方确认。
