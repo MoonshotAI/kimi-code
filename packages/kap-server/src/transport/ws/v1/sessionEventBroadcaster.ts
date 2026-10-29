@@ -710,13 +710,12 @@ export class SessionEventBroadcaster {
     if (spec === undefined) return;
     const session = getLiveSessionById(this.opts.core.accessor, sessionId);
     const lifecycle = session?.accessor.get(IAgentLifecycleService);
-    const agentIds = new Set(
-      Object.keys(spec).filter((agentId) => agentId !== '*' && gradeFor(spec, agentId) !== 'off'),
-    );
-    if (gradeFor(spec, '*') !== 'off') {
-      for (const agent of lifecycle?.list() ?? []) agentIds.add(agent.agentId);
-    }
+    const agentIds = new Set([
+      ...Object.keys(spec).filter((agentId) => agentId !== '*'),
+      ...(lifecycle?.list() ?? []).map((agent) => agent.agentId),
+    ]);
     for (const agentId of agentIds) {
+      if (gradeFor(spec, agentId) === 'off') continue;
       const handle = lifecycle?.handleOf(agentId);
       const snapshot = handle?.accessor.get(IAgentPromptQueueService).snapshot() ?? EMPTY_QUEUE;
       target.send(queueMessage(sessionId, agentId, snapshot), 'immediate');

@@ -28,13 +28,13 @@ export async function applyPromptLaunchMode(
   const plan = agent.accessor.get(IAgentPlanService);
   switch (mode) {
     case 'plan':
-      await agent.accessor.get(IAgentTowerService).exit();
       if ((await plan.status()) === null) await plan.enter();
+      await agent.accessor.get(IAgentTowerService).exit();
       return;
     case 'swarm': {
-      await agent.accessor.get(IAgentTowerService).exit();
       const swarm = agent.accessor.get(IAgentSwarmService);
       if (!swarm.isActive) swarm.enter('manual');
+      await agent.accessor.get(IAgentTowerService).exit();
       return;
     }
     case 'goal':

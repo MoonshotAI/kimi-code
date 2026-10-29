@@ -333,14 +333,31 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(first.body.data.accepted_as).toBe('turn');
     expect(enter).toHaveBeenCalledTimes(1);
     expect(enter).toHaveBeenCalledWith('manual');
-    expect(enter.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[0]!);
-    expect(exitTower.mock.invocationCallOrder[0]!).toBeLessThan(enter.mock.invocationCallOrder[0]!);
+    expect(enter.mock.invocationCallOrder[0]!).toBeLessThan(exitTower.mock.invocationCallOrder[0]!);
+    expect(exitTower.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[0]!);
     expect(swarm.isActive).toBe(true);
 
     await vi.waitFor(() => expect(loop.canLaunchPrompt()).toBe(true));
     const repeated = await post();
     expect(repeated.body.code).toBe(0);
     expect(enter).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves tower mode alone when plan mode cannot be entered', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    vi.spyOn(agent.accessor.get(IAgentPlanService), 'enter').mockRejectedValue(new Error('plan directory is not writable'));
+    const exitTower = vi.spyOn(agent.accessor.get(IAgentTowerService), 'exit');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      mode: 'plan',
+    });
+
+    expect(submitted.body.code).not.toBe(0);
+    expect(exitTower).not.toHaveBeenCalled();
   });
 
   it('creates the goal of a goal-mode prompt from its readable display text', async () => {

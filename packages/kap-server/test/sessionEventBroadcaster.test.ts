@@ -1551,8 +1551,10 @@ describe('SessionEventBroadcaster', () => {
     });
     const mainView = collectingTarget();
     const otherView = collectingTarget();
+    const wildcardView = collectingTarget();
     await bc.subscribe('s1', mainView.target, { main: 'delta' });
     await bc.subscribe('s1', otherView.target, { main: 'off', 'agent-0': 'delta' });
+    await bc.subscribe('s1', wildcardView.target, { '*': 'delta', main: 'off' });
     const queueFrames = (view: ReturnType<typeof collectingTarget>) =>
       view.envelopes.filter((frame) => frame.type === 'queue') as unknown[];
 
@@ -1582,6 +1584,8 @@ describe('SessionEventBroadcaster', () => {
 
     bc.sendQueueSnapshots('s1', otherView.target);
     expect(queueFrames(otherView)).toMatchObject([{ agent_id: 'agent-0', paused: false, inputs: [] }]);
+    bc.sendQueueSnapshots('s1', wildcardView.target);
+    expect(queueFrames(wildcardView)).toMatchObject([{ agent_id: 'agent-0', paused: false, inputs: [] }]);
 
     eventBus.emit({
       type: 'prompt_queue.changed',
@@ -1589,6 +1593,7 @@ describe('SessionEventBroadcaster', () => {
     });
     expect(queueFrames(mainView).at(-1)).toMatchObject({ agent_id: 'main', paused: false, inputs: [] });
     expect(queueFrames(otherView)).toHaveLength(1);
+    expect(queueFrames(wildcardView)).toHaveLength(1);
   });
 
   describe('transcript streaming', () => {
