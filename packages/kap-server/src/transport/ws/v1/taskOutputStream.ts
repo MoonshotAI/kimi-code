@@ -17,7 +17,7 @@ import {
 } from '../../../protocol/ws-task';
 import { ensureMainAgent } from '../../mainAgent';
 
-export const TASK_OUTPUT_TAIL_BYTES = 4096;
+export const TASK_OUTPUT_TAIL_BYTES = 32 * 1024;
 
 const CODE_OK = 0;
 
@@ -46,7 +46,6 @@ export interface TaskOutputSink {
 }
 
 interface Attachment {
-  readonly generation: number;
   subscription?: IDisposable;
 }
 
@@ -56,7 +55,6 @@ export function isTaskOutputMessageType(type: string): boolean {
 
 export class TaskOutputAttachments {
   private readonly attachments = new Map<string, Attachment>();
-  private generation = 0;
   private disposed = false;
 
   constructor(
@@ -99,7 +97,7 @@ export class TaskOutputAttachments {
     const { request_id: requestId, session_id: sessionId, task_id: taskId } = request;
     const key = attachmentKey(sessionId, taskId);
     this.detach(sessionId, taskId);
-    const attachment: Attachment = { generation: ++this.generation };
+    const attachment: Attachment = {};
     this.attachments.set(key, attachment);
     const isCurrent = (): boolean => !this.disposed && this.attachments.get(key) === attachment;
     const fail = (code: number, msg: string): void => {

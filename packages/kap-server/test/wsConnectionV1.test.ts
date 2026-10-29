@@ -797,7 +797,7 @@ describe('WsConnectionV1 task output', () => {
     conn.close();
   });
 
-  it('falls back to the last 4 KiB aligned to a character boundary when since_offset is too old', async () => {
+  it('falls back to the last tail bytes aligned to a character boundary when since_offset is too old', async () => {
     const filler = 'x'.repeat(TASK_OUTPUT_TAIL_BYTES * 2);
     const total = filler + '➜' + 'y'.repeat(TASK_OUTPUT_TAIL_BYTES - 2);
     const output = makeTaskOutput('bash-k3f9x2ab', total);

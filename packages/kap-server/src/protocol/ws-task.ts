@@ -8,7 +8,7 @@ export const taskEventMessageSchema = z.object({
   agent_id: z.string().min(1),
   event_created_at: isoDateTimeSchema,
   task_id: z.string().min(1),
-  kind: z.enum(['shell', 'subagent', 'tool', 'other']),
+  kind: z.enum(['shell', 'subagent', 'other']),
   status: z.enum(['running', 'ended']),
   outcome: z.enum(['completed', 'failed', 'timed_out', 'killed', 'lost']).optional(),
   phase: z.enum(['working', 'suspended']).optional(),
