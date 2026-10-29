@@ -310,6 +310,24 @@ describe('FileMentionProvider', () => {
     );
   });
 
+  it('redistributes unused fallback scan capacity to additional roots', async () => {
+    const extraDir = createExtraDir();
+    for (let i = 0; i < 1500; i++) {
+      writeFileSync(join(extraDir, `entry-${i}.ts`), 'export {};');
+    }
+    writeFileSync(join(extraDir, 'target-needle.ts'), 'export {};');
+    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'), [extraDir]);
+
+    const result = await provider.getSuggestions(['@target-needle'], 0, '@target-needle'.length, {
+      signal: ctrl(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((item) => item.value)).toContain(
+      `@${join(extraDir, 'target-needle.ts').replaceAll('\\', '/')}`,
+    );
+  });
+
   it('scans additionalDirs within a shared bounded fallback budget', async () => {
     for (let i = 0; i < 2000; i++) {
       writeFileSync(join(workDir, `filler-${i}.ts`), 'export {};');
@@ -411,6 +429,7 @@ describe('FileMentionProvider', () => {
       (item) => item.description === join(extraDir, 'src', 'Overlap.ts').replaceAll('\\', '/'),
     );
     expect(overlapItems).toHaveLength(1);
+    expect(overlapItems[0]?.value).toBe('@extra/src/Overlap.ts');
   });
 
   it.runIf(IS_FD_INSTALLED)(

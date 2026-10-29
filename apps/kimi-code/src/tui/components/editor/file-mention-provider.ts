@@ -1,4 +1,4 @@
-import { accessSync, constants as fsConstants, readdirSync, statSync } from 'node:fs';
+import { accessSync, constants as fsConstants, type Dirent, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
@@ -481,56 +481,66 @@ function collectFsMentionCandidates(
       isAdditionalDir: true,
     })),
   ];
-  const perRootScanBudget = Math.max(1, Math.floor(MAX_FALLBACK_SCAN / roots.length));
-  let totalScanned = 0;
+  const pending = roots.map(({ root, isAdditionalDir }) => ({
+    root,
+    isAdditionalDir,
+    stack: [''],
+    relativeDir: '',
+    entries: [] as Dirent[],
+    entryIndex: 0,
+  }));
+  let scanned = 0;
 
-  for (const { root, isAdditionalDir } of roots) {
-    const stack = [''];
-    let rootScanned = 0;
-
-    while (stack.length > 0 && totalScanned < MAX_FALLBACK_SCAN && rootScanned < perRootScanBudget) {
-      if (signal.aborted) break;
-      const relativeDir = stack.pop() ?? '';
-      const absoluteDir = relativeDir.length === 0 ? root : join(root, relativeDir);
-      let entries;
-      try {
-        entries = readdirSync(absoluteDir, { withFileTypes: true });
-      } catch {
-        continue;
+  while (
+    !signal.aborted &&
+    scanned < MAX_FALLBACK_SCAN &&
+    pending.some((state) => state.stack.length > 0 || state.entryIndex < state.entries.length)
+  ) {
+    for (const state of pending) {
+      if (signal.aborted || scanned >= MAX_FALLBACK_SCAN) break;
+      if (state.entryIndex >= state.entries.length) {
+        if (state.stack.length === 0) continue;
+        state.relativeDir = state.stack.pop() ?? '';
+        const absoluteDir =
+          state.relativeDir.length === 0 ? state.root : join(state.root, state.relativeDir);
+        try {
+          state.entries = readdirSync(absoluteDir, { withFileTypes: true });
+        } catch {
+          state.entries = [];
+        }
+        state.entryIndex = 0;
       }
 
-      for (const entry of entries) {
-        if (signal.aborted || totalScanned >= MAX_FALLBACK_SCAN || rootScanned >= perRootScanBudget) {
-          break;
-        }
-        if (entry.name === '.git') continue;
+      const entry = state.entries[state.entryIndex];
+      state.entryIndex += 1;
+      if (entry === undefined || entry.name === '.git') continue;
 
-        const relativePath = normalizePath(
-          relativeDir.length === 0 ? entry.name : join(relativeDir, entry.name),
-        );
-        const absolutePath = normalizePath(join(absoluteDir, entry.name));
-        const isSymlink = entry.isSymbolicLink();
-        let isDirectory = entry.isDirectory();
-        if (!isDirectory && isSymlink) {
-          try {
-            isDirectory = statSync(absolutePath).isDirectory();
-          } catch {
-            // Broken symlink or permission error — keep it as a file candidate.
-          }
+      const relativePath = normalizePath(
+        state.relativeDir.length === 0 ? entry.name : join(state.relativeDir, entry.name),
+      );
+      const absoluteDir =
+        state.relativeDir.length === 0 ? state.root : join(state.root, state.relativeDir);
+      const absolutePath = normalizePath(join(absoluteDir, entry.name));
+      const isSymlink = entry.isSymbolicLink();
+      let isDirectory = entry.isDirectory();
+      if (!isDirectory && isSymlink) {
+        try {
+          isDirectory = statSync(absolutePath).isDirectory();
+        } catch {
+          // Broken symlink or permission error — keep it as a file candidate.
         }
+      }
 
-        rootScanned += 1;
-        totalScanned += 1;
-        if (!candidatesByAbsolutePath.has(absolutePath)) {
-          candidatesByAbsolutePath.set(absolutePath, {
-            path: isAdditionalDir ? absolutePath : relativePath,
-            absolutePath,
-            isDirectory,
-          });
-        }
-        if (isDirectory && !isSymlink) {
-          stack.push(relativePath);
-        }
+      scanned += 1;
+      if (!candidatesByAbsolutePath.has(absolutePath) || !state.isAdditionalDir) {
+        candidatesByAbsolutePath.set(absolutePath, {
+          path: state.isAdditionalDir ? absolutePath : relativePath,
+          absolutePath,
+          isDirectory,
+        });
+      }
+      if (isDirectory && !isSymlink) {
+        state.stack.push(relativePath);
       }
     }
   }
