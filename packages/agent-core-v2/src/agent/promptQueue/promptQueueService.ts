@@ -235,9 +235,10 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   private async pump(): Promise<void> {
     if (this.disposed || this.paused || this.busy || this.entries.length === 0) return;
     const head = this.entries[0]!;
-    if (head.delivery === 'steer' && this.loop.canSteerPrompt()) {
-      await this.runBusy(head, async () => {
-        await this.handOffSteer(head.entry);
+    if (head.kind === 'input' && head.delivery === 'steer' && this.loop.canSteerPrompt()) {
+      await this.runBusy(async () => {
+        const id = this.submitHead(head);
+        if (id !== undefined) await this.steerSubmitted(id);
       });
       return;
     }
@@ -247,7 +248,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       this.startQueuedCompaction(head.instruction);
       return;
     }
-    await this.runBusy(head, async () => {
+    await this.runBusy(async () => {
       if (head.prepare !== undefined) {
         try {
           await head.prepare();
@@ -256,19 +257,34 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
           this.warn('queued-mode-failed', `The queued prompt could not enter its mode and started as a normal prompt: ${reasonOf(error)}`);
         }
       }
-      this.launch(head.entry);
+      this.submitHead(head);
     });
   }
 
-  private async runBusy(head: QueueEntry & { readonly kind: 'input' }, run: () => Promise<void>): Promise<void> {
+  private async runBusy(run: () => Promise<void>): Promise<void> {
     this.busy = true;
-    this.take(head);
     try {
       await run();
     } finally {
       this.busy = false;
       this.schedulePump();
     }
+  }
+
+  private submitHead(head: QueueEntry & { readonly kind: 'input' }): string | undefined {
+    if (!this.entries.includes(head)) return undefined;
+    let id: string;
+    try {
+      ({ id } = this.loop.submit(head.entry));
+    } catch (error) {
+      this.logger.warn('queued prompt could not start', { promptId: head.id, error });
+      this.paused = true;
+      this.emitChange();
+      this.warn('queued-prompt-failed', `The queue was paused because a queued prompt could not start: ${reasonOf(error)}`);
+      return undefined;
+    }
+    this.take(head);
+    return id;
   }
 
   private take(entry: QueueEntry): void {
@@ -284,12 +300,16 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   private async handOffSteer(entry: UserEntry): Promise<PromptHandle | undefined> {
     const { id } = this.loop.submit(entry);
     const handle = this.loop.promptHandle(id);
+    await this.steerSubmitted(id);
+    return handle;
+  }
+
+  private async steerSubmitted(id: string): Promise<void> {
     try {
       await this.loop.steer([id]);
     } catch (error) {
       this.logger.debug('steer fell back to the next turn', { promptId: id, error });
     }
-    return handle;
   }
 
   private startCompaction(instruction: string | undefined): void {

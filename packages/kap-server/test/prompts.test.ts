@@ -15,6 +15,7 @@ import {
   IAgentLoopService,
   IAgentStateService,
   IAgentSwarmService,
+  IAgentToolPolicyService,
   IAgentTowerService,
   IBootstrapService,
   IConfigService,
@@ -410,6 +411,96 @@ describe('server-v2 /api/v1 prompts', () => {
       [field]: value,
     });
     expect(submitted.body.code).toBe(40001);
+  });
+
+  describe('agent profile and disabled tools through the profile route', () => {
+    const writeProfile = (id: string, agentConfig: Record<string, unknown>) =>
+      call<null>('POST', `/api/v1/sessions/${id}/profile`, { agent_config: agentConfig });
+
+    function mainAgentOf(id: string) {
+      const session = getLiveSessionById(server!.core.accessor, id);
+      if (session === undefined) throw new Error(`session ${id} not found`);
+      const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
+      if (main === undefined) throw new Error(`main agent of session ${id} not found`);
+      return main;
+    }
+
+    it('rejects an unknown agent profile with 40001', async () => {
+      const id = await createSession(home as string);
+      await createMainAgent(id);
+
+      const { body } = await writeProfile(id, { profile: 'agent_does_not_exist', model: 'stub' });
+      expect(body.code).toBe(40001);
+      expect(body.msg).toContain('agent_does_not_exist');
+    });
+
+    it('binds a discovered custom agent profile', async () => {
+      const work = await mkdtemp(join(tmpdir(), 'kimi-server-v2-profile-route-'));
+      try {
+        await mkdir(join(home as string, 'agents'), { recursive: true });
+        await writeFile(
+          join(home as string, 'agents', 'route-reviewer.md'),
+          ['---', 'name: route-reviewer', 'description: reviewer defined by a user-level agent file', '---', '', 'You are a route-test reviewer.', ''].join('\n'),
+          'utf-8',
+        );
+        const id = await createSession(work);
+        await createMainAgent(id);
+
+        expect((await writeProfile(id, { profile: 'route-reviewer' })).body.code).toBe(0);
+        expect(mainAgentOf(id).accessor.get(IAgentProfileService).data().profileName).toBe('route-reviewer');
+        expect((await writeProfile(id, { profile: 'route-reviewer' })).body.code).toBe(0);
+      } finally {
+        await rm(work, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects switching to a different profile once bound', async () => {
+      const id = await createSession(home as string);
+      await createMainAgent(id);
+      expect((await writeProfile(id, { model: 'stub' })).body.code).toBe(0);
+
+      const { body } = await writeProfile(id, { profile: 'some-other-agent', model: 'stub' });
+      expect(body.code).toBe(40001);
+      expect(body.msg).toContain('already bound');
+    });
+
+    it('applies a requested thinking effort together with the profile bind', async () => {
+      const id = await createSession(home as string);
+      await createMainAgent(id);
+
+      expect((await writeProfile(id, { profile: 'agent', model: 'stub', thinking: 'high' })).body.code).toBe(0);
+      const profile = mainAgentOf(id).accessor.get(IAgentProfileService);
+      expect(profile.data().profileName).toBe('agent');
+      expect(profile.data().thinkingLevel).toBe('high');
+    });
+
+    it('applies disabled_tools, replaces them on later writes and keeps them across a cold resume', async () => {
+      const id = await createSession(home as string);
+      await createMainAgent(id);
+
+      expect((await writeProfile(id, { model: 'stub', disabled_tools: ['Bash'] })).body.code).toBe(0);
+      const toolPolicy = mainAgentOf(id).accessor.get(IAgentToolPolicyService);
+      expect(toolPolicy.isToolActive('Bash')).toBe(false);
+      expect(toolPolicy.isToolActive('Read')).toBe(true);
+
+      expect((await writeProfile(id, { disabled_tools: ['Write'] })).body.code).toBe(0);
+      expect(toolPolicy.isToolActive('Bash')).toBe(true);
+      expect(toolPolicy.isToolActive('Write')).toBe(false);
+
+      await closeSessionById(server!.core.accessor, id);
+      const resumed = await resumeSessionById(server!.core.accessor, id);
+      await ensureMainAgent(resumed!);
+      const resumedPolicy = mainAgentOf(id).accessor.get(IAgentToolPolicyService);
+      expect(resumedPolicy.isToolActive('Write')).toBe(false);
+      expect(resumedPolicy.isToolActive('Read')).toBe(true);
+    });
+
+    it('rejects disabled_tools before the agent profile is bound', async () => {
+      const id = await createSession(home as string);
+      await createMainAgent(id);
+
+      expect((await writeProfile(id, { disabled_tools: ['Bash'] })).body.code).toBe(40001);
+    });
   });
 
   it('accepts the session-bound model when default_model is not configured', async () => {

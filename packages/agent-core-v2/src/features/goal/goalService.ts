@@ -189,6 +189,11 @@ interface ResumeContinuation {
   readonly goalId: string;
 }
 
+interface DeferredContinuation {
+  readonly goalId: string;
+  readonly stepCapped: boolean;
+}
+
 interface GoalEffectState {
   pendingContinuation?: PendingContinuation;
   liveTurnId?: number;
@@ -203,6 +208,7 @@ interface GoalEffectState {
   readonly exhaustedTurnBudgetGoals: Map<number, string>;
   liveWallClockStartedAt?: number;
   resumeContinuation?: ResumeContinuation;
+  deferredContinuation?: DeferredContinuation;
 }
 
 interface GoalActorContext {
@@ -498,6 +504,7 @@ function incrementGoalTurn(context: GoalOperationContext, goalId?: string): Goal
 
 function handleTurnLaunched(context: GoalOperationContext, turnId: number, origin: TurnStarted['origin']): void {
   context.effects.liveTurnId = turnId;
+  context.effects.deferredContinuation = undefined;
   context.effects.goalTurnTargets.delete(turnId);
   context.effects.exhaustedTurnBudgetGoals.delete(turnId);
   const pending = context.effects.pendingContinuation;
@@ -716,6 +723,10 @@ function isWaitForAvailable(context: GoalOperationContext): boolean {
 function launchContinuationTurn(context: GoalOperationContext, goalId: string, stepCapped = false): void {
   if (!isActiveGoal(context, goalId)) return;
   if (context.effects.pendingContinuation !== undefined) return;
+  if (context.runtime.get(IAgentPromptQueueService).hasPendingInputs()) {
+    context.effects.deferredContinuation = { goalId, stepCapped };
+    return;
+  }
   const prompt = stepCapped ? GOAL_STEP_CAP_CONTINUATION_PROMPT : GOAL_CONTINUATION_PROMPT;
   const message: ContextMessage = {
     role: 'user',
@@ -745,6 +756,17 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
     if (pending.turnId !== undefined) context.effects.pendingContinuationGoals.delete(pending.turnId);
     if (context.effects.pendingContinuation === pending) context.effects.pendingContinuation = undefined;
   });
+}
+
+function launchDeferredContinuation(context: GoalOperationContext): void {
+  const deferred = context.effects.deferredContinuation;
+  if (deferred === undefined || !canLaunchContinuation(context)) return;
+  context.effects.deferredContinuation = undefined;
+  try {
+    launchContinuationTurn(context, deferred.goalId, deferred.stepCapped);
+  } catch (error) {
+    void settleGoalAfterContinuationFailure(context, error, deferred.goalId);
+  }
 }
 
 function canLaunchContinuation(context: GoalOperationContext): boolean {
@@ -1130,6 +1152,11 @@ function createGoalEffectHandlers(runtime: AgentActorContext<GoalRuntimeState>) 
       applyLifecycle(context, state, 'paused', 'Paused after agent closed', 'runtime');
     },
     turnStarted: (event: TurnStarted) => { handleTurnLaunched(context, event.turnId, event.origin); },
+    activityChanged: () => {
+      queueMicrotask(() => {
+        launchDeferredContinuation(context);
+      });
+    },
     usageRecorded: (usage: UsageRecordedContext) => {
       if (usage.agent === runtime.agent) handleUsageRecorded(context, usage);
     },
@@ -1228,6 +1255,8 @@ const goalEffects = fromCallback(({
       },
     ));
     disposables.push(input.runtime.get(IEventBus).subscribe(TurnEnded, handlers.turnEnded));
+    disposables.push(loop.onDidChangeActivity(handlers.activityChanged));
+    disposables.push(input.runtime.get(IAgentPromptQueueService).onDidChange(handlers.activityChanged));
     handlers.normalize();
   }
   input.restore.waitUntil(Promise.resolve());

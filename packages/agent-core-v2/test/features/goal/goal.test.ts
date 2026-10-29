@@ -1311,6 +1311,51 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(goals.getGoal().goal?.status).toBe('active');
   });
 
+  it('defers an automatic continuation behind queued input and launches it once the queue drains', async () => {
+    const queue = ctx!.get(IAgentPromptQueueService);
+    const pending = vi.spyOn(queue, 'hasPendingInputs').mockReturnValue(true);
+    await goals.createGoal({ objective: 'finish the task' });
+
+    const turn = makeTurn(1);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+    await runGoalStep(loopService, turn);
+    endTurn(eventBus, turn);
+    await vi.waitFor(() => expect(goals.getGoal().goal?.turnsUsed).toBe(1));
+    await Promise.resolve();
+    expect(loopService.launches).toEqual([]);
+
+    pending.mockReturnValue(false);
+    queue.pause();
+
+    await vi.waitFor(() => expect(loopService.launches).toHaveLength(1));
+    expect(loopService.drainNextBatch(context)).toBeDefined();
+    expect(context.get().at(-1)?.origin).toEqual({ kind: 'system_trigger', name: 'goal_continuation' });
+  });
+
+  it('drops a deferred continuation once a queued input starts its own goal turn', async () => {
+    const queue = ctx!.get(IAgentPromptQueueService);
+    const pending = vi.spyOn(queue, 'hasPendingInputs').mockReturnValue(true);
+    await goals.createGoal({ objective: 'finish the task' });
+
+    const first = makeTurn(1);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: first.id, origin: USER_PROMPT_ORIGIN }));
+    await runGoalStep(loopService, first);
+    endTurn(eventBus, first);
+    await vi.waitFor(() => expect(goals.getGoal().goal?.turnsUsed).toBe(1));
+
+    const queued = makeTurn(2);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: queued.id, origin: USER_PROMPT_ORIGIN }));
+    pending.mockReturnValue(false);
+    queue.pause();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(loopService.launches).toEqual([]);
+
+    await runGoalStep(loopService, queued);
+    endTurn(eventBus, queued);
+    await vi.waitFor(() => expect(loopService.launches).toHaveLength(1));
+  });
+
   it('counts an active goal turn and launches the next continuation', async () => {
     await goals.createGoal({ objective: 'finish the task' });
 

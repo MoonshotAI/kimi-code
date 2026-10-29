@@ -522,7 +522,8 @@ const promptActions: ActionTable<'abort', PromptActionExtra> = {
 
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, session_id, req, reply, id } = ctx;
-  resolved.prompt.cancel({ promptId: id });
+  if (resolved.queue.snapshot().items.some((item) => item.id === id)) resolved.queue.cancel(id);
+  else resolved.prompt.cancel({ promptId: id });
   requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }

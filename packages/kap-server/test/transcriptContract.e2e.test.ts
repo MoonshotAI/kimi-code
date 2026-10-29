@@ -431,6 +431,13 @@ describe('transcript contract e2e', () => {
     expect(await restCode(server!, base, `${queuePath}/${second.prompt_id}:bogus`)).toBe(40001);
     expect(await restCode(server!, base, `/api/v1/sessions/${sid}/agents/missing/queue:pause`)).toBe(40401);
 
+    const fourth = await submitPrompt(server!, base, sid, 'fourth prompt');
+    expect(order()).toEqual([`${second.prompt_id}:steer`, `${fourth.prompt_id}:queue`]);
+    expect(
+      await rest(server!, base, `/api/v1/sessions/${sid}/prompts/${fourth.prompt_id}:abort`, { method: 'POST', body: {} }),
+    ).toEqual({ aborted: true });
+    expect(order()).toEqual([`${second.prompt_id}:steer`]);
+
     expect(await rest(server!, base, `${queuePath}:resume`, { method: 'POST', body: {} })).toEqual({ paused: false });
     await until('steer handed to the running turn', () => queue.snapshot().items.length === 0);
     await idle(server!, base, sid);
@@ -438,6 +445,7 @@ describe('transcript contract e2e', () => {
     expect(tx.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
     expect(JSON.stringify(tx.items)).toContain('second prompt');
     expect(JSON.stringify(tx.items)).not.toContain('third prompt');
+    expect(JSON.stringify(tx.items)).not.toContain('fourth prompt');
   });
 
   it('queues a compaction submitted through the prompt endpoint behind a running turn', async () => {

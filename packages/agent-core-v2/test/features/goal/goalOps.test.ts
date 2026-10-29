@@ -15,6 +15,7 @@ import { type IAgentGoalService } from '#/features/goal/goalService';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from '#/features/goal/goalDeadlineSchedulerService';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
@@ -51,7 +52,16 @@ function createLoopStub(): IAgentLoopService {
   return {
     _serviceBrand: undefined,
     hooks: { onWillBeginStep: hookSlot(), onDidFinishStep: hookSlot() },
+    onDidChangeActivity: Event.None,
   } as unknown as IAgentLoopService;
+}
+
+function createPromptQueueStub(): IAgentPromptQueueService {
+  return {
+    _serviceBrand: undefined,
+    onDidChange: Event.None,
+    hasPendingInputs: () => false,
+  } as unknown as IAgentPromptQueueService;
 }
 
 function createContextStub(): IAgentContextMemoryService {
@@ -117,6 +127,7 @@ function buildHost(key: string): GoalHost {
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.stub(IAgentLoopService, createLoopStub());
+  ix.stub(IAgentPromptQueueService, createPromptQueueStub());
   ix.stub(IAgentLifecycleService, { onWillClose: Event.None } as IAgentLifecycleService);
   ix.stub(ISessionUsageService, {
     onDidRecord: Event.None,

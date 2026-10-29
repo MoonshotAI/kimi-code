@@ -280,6 +280,53 @@ describe('AgentPromptQueueService', () => {
     }));
   });
 
+  it('keeps a queued prompt and pauses the queue with a warning when it cannot start', async () => {
+    setup();
+    respond(2);
+    const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
+    const release = await startHeldTurn();
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue' });
+    const submit = vi.spyOn(loop, 'submit').mockImplementationOnce(() => {
+      throw new Error('session is stale');
+    });
+
+    release();
+    await vi.waitFor(() => expect(queue.snapshot().paused).toBe(true));
+    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'warning',
+      code: 'queued-prompt-failed',
+      message: expect.stringContaining('session is stale'),
+    }));
+
+    submit.mockRestore();
+    queue.resume();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
+    await loop.settled();
+  });
+
+  it('does not start a queued prompt that was cancelled while its mode was being applied', async () => {
+    setup();
+    respond(1);
+    const release = await startHeldTurn();
+    let finishPrepare!: () => void;
+    const prepare = vi.fn(() => new Promise<void>((resolve) => {
+      finishPrepare = resolve;
+    }));
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'plan', prepare });
+
+    release();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
+    queue.cancel('p2');
+    finishPrepare();
+    await loop.settled();
+    await Promise.resolve();
+
+    expect(launched).toEqual(['first']);
+    expect(queue.snapshot().items).toEqual([]);
+  });
+
   it('emits a snapshot for each change and skips no-op pause and resume', async () => {
     setup();
     respond(1);

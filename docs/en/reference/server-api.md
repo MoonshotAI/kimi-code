@@ -738,11 +738,13 @@ Each `agent_config` field is applied immediately to the main agent:
 
 | Field | Type | Description |
 | --- | --- | --- |
+| `profile` | string | Agent profile to bind the main agent to, together with `model` / `thinking` when given; switching a bound agent to a different profile fails `40001` |
 | `model` | string | Model alias id; an empty string is ignored |
 | `thinking` | string | Thinking-mode effort level |
 | `permission_mode` | string | `manual` / `yolo` / `auto` |
 | `plan_mode` | boolean | Enter or exit Plan mode |
 | `swarm_mode` | boolean | Enter or exit swarm mode |
+| `disabled_tools` | array | Tool names disabled for the whole session, replacing the previous list (`[]` clears it); fails `40001` before the main agent's profile is bound |
 | `goal_objective` | string | Create a goal with this objective |
 | `goal_control` | string | `pause` / `resume` / `cancel` the current goal |
 
@@ -750,6 +752,7 @@ The schema also accepts `system_prompt`, `tools`, `mcp_servers` inside `agent_co
 
 On success, `data` is the updated [session object](#the-session-object).
 
+- `40001`: an unknown or conflicting `profile`, or `disabled_tools` before the profile is bound
 - `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
@@ -1118,7 +1121,7 @@ On success, `data` is `{ prompt_id, user_message_id, status, content, created_at
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort`
 
-Aborts a running prompt. The route is `POST /api/v1/sessions/{session_id}/prompts/{tail}`: the tail is parsed as `{prompt_id}:{action}`, and a missing or unknown action fails `40001` (`unsupported action: ...`). To withdraw a queued prompt, use the queue `:cancel` action instead.
+Aborts a running prompt, or withdraws it from the main agent's queue when it has not started yet (the same as the queue `:cancel` action). The route is `POST /api/v1/sessions/{session_id}/prompts/{tail}`: the tail is parsed as `{prompt_id}:{action}`, and a missing or unknown action fails `40001` (`unsupported action: ...`).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
