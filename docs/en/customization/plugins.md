@@ -277,7 +277,7 @@ Supported fields:
 | --- | --- |
 | `name` | Required; serves as the plugin id. Must match `[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*(@[A-Za-z0-9_-]+)?` |
 | `version`, `description`, `keywords`, `author`, `homepage`, `license` | Display metadata |
-| `interface` | Shown in `/plugins`: `displayName`, `shortDescription`, `longDescription`, `developerName`, `websiteURL` |
+| `interface` | Shown in `/plugins`: `displayName`, `shortDescription`, `longDescription`, `developerName`, `websiteURL`; see capability display overrides below |
 | `skills` | One or more `./` paths within the plugin root; if omitted, root `SKILL.md` is the single Skill root |
 | `agents` | One or more `./` paths within the plugin root, pointing to [agent files](./agents.md#custom-agents); if omitted, `agents/` is auto-discovered |
 | `sessionStart.skill` | Loads the specified plugin Skill into the main Agent when a new or resumed session starts |
@@ -287,6 +287,12 @@ Supported fields:
 | `mcpServers` | MCP server declarations; enabled by default, can be disabled from `/plugins` |
 | `hooks` | Hook rules run on lifecycle events while enabled; see [Hooks in Plugins](#hooks-in-plugins) |
 | `commands` | One or more `./` paths to a directory or `.md` file; registers the Markdown files inside as slash commands. See [Plugin Slash Commands](#plugin-slash-commands) |
+
+`interface.mcpOverrides` is keyed by MCP server names from `mcpServers` and can provide display-only `displayName`, `description`, and `iconUrl` fields. These fields do not change MCP server names or runtime configuration.
+
+`interface.skillOverrides` is keyed by Skill directory names and can provide display-only `displayName` and `description` fields. These fields affect plugin information display only; they do not change Skill invocation names or `SKILL.md` content.
+
+`interface.defaultLocale` declares the language of the default `interface` text. `interface.locales` can point to a translation directory inside the plugin root, such as `./locales/`. Each `<locale>.json` file, such as `en-US.json`, can provide the display fields above and both kinds of overrides. Plugin detail and preview requests can specify a `locale`; matching translations are used for capability display, while fields without a translation fall back to the default `interface`.
 
 Unsupported runtime fields such as `tools`, `apps`, `inject`, and `configFile` appear as diagnostics and are ignored.
 

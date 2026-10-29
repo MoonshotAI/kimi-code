@@ -7,7 +7,9 @@ import {
   createKimiRegionResolver,
   KIMI_CODE_OAUTH_KEY,
   KIMI_REGION_PROFILES,
+  resolveKimiCodeRuntimeAuth,
   type KimiRegion,
+  type ManagedKimiRuntimeAuth,
   type KimiRegionAuthRead,
   type KimiRegionProfile,
   type KimiRegionResolution,
@@ -28,6 +30,15 @@ export function persistedKimiOAuthRef(): PersistedKimiOAuthRef | undefined {
   const oauth = result.config.providers?.[MANAGED_KIMI_CODE_PROVIDER_KEY]?.oauth;
   if (oauth === undefined) return undefined;
   return { key: oauth.key, oauthHost: oauth.oauthHost };
+}
+
+export function currentKimiManagedRuntimeAuth(): ManagedKimiRuntimeAuth {
+  const config = loadRuntimeConfigSafe(resolveConfigPath({})).config;
+  const provider = config.providers?.[MANAGED_KIMI_CODE_PROVIDER_KEY];
+  return resolveKimiCodeRuntimeAuth({
+    configuredBaseUrl: provider?.baseUrl,
+    configuredOAuthRef: provider?.oauth,
+  });
 }
 
 function readAuth(): KimiRegionAuthRead {

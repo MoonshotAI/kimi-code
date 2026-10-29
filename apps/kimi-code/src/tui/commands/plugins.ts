@@ -32,6 +32,11 @@ import { createMarkdownTheme } from '../theme/pi-tui-theme';
 import { formatErrorMessage } from '../utils/event-payload';
 import { createMarkdownOptions } from '../utils/markdown-options';
 import {
+  capabilityIdForMarketplaceEntry,
+  installedPluginForMarketplaceEntry,
+  isCapabilityPluginId,
+} from '../utils/capability-marketplace';
+import {
   formatPluginSourceLabel,
   isOfficialPluginInstall,
   isOfficialPluginSource,
@@ -42,12 +47,8 @@ import {
 } from '#/constant/app';
 import {
   loadPluginMarketplace,
-  withBuiltInEntries,
-  withMarketplaceLatestVersions,
-  type PluginMarketplace,
   type PluginMarketplaceEntry,
 } from '#/utils/plugin-marketplace';
-import { openUrl } from '#/utils/open-url';
 import type { SlashCommandHost } from './dispatch';
 
 interface ShowPluginsPickerOptions {
@@ -262,74 +263,52 @@ async function showPluginsPicker(
     log.warn('capability status unavailable', { error });
   }
 
-  const installedIds = new Set(plugins.map((plugin) => plugin.id));
   for (const capability of capabilities) {
-    logCapabilityStatus(capability, installedIds.has(capability.pluginId ?? capability.id));
+    const installed = installedPluginForMarketplaceEntry(
+      capability.pluginId ?? capability.id,
+      plugins,
+      capability,
+      true,
+    );
+    logCapabilityStatus(capability, installed !== undefined);
   }
 
+  const catalogIsDefault = isDefaultMarketplaceCatalog(options?.marketplaceSource);
   const panel = new PluginsPanelComponent({
     installed: plugins,
-    installedIds,
     capabilities,
-    catalogIsDefault: isDefaultMarketplaceCatalog(options?.marketplaceSource),
+    catalogIsDefault,
     initialTab: options?.initialTab,
     selectedId: options?.selectedId,
     pluginHint: options?.pluginHint,
     onSelect: (selection) => {
-      // Each branch of the handler either mounts the next view or restores the
-      // editor itself, so do not pre-restore here — that would flash the editor
-      // for in-place actions like toggling a plugin.
-      void handlePluginsPanelSelection(host, panel, selection).catch((error: unknown) => {
+      void handlePluginsPanelSelection(
+        host,
+        panel,
+        selection,
+        catalogIsDefault,
+        options?.marketplaceSource !== undefined ||
+        process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] !== undefined
+          ? panel.marketplaceSource()
+          : undefined,
+      ).catch((error: unknown) => {
         host.showError(`/plugins failed: ${formatErrorMessage(error)}`);
       });
     },
     onCancel: () => {
       host.restoreEditor();
     },
-    // Every tab except Custom needs the catalog: Official/Curated list it,
-    // and Installed uses it to show update badges. The Installed/Custom tabs
-    // keep working even when the marketplace is unreachable (badges simply stay
-    // hidden until data arrives).
     onRequestMarketplace: () => {
-      void loadMarketplaceCatalog(host, panel, options?.marketplaceSource, capabilities);
+      void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
     },
   });
   host.mountEditorReplacement(panel);
-  // Kick off the catalog fetch for any tab that needs it: Installed uses it for
-  // update badges, Official/Curated list it. Custom never reads the catalog,
-  // so skip the fetch there. Done here (after `panel` is initialized) rather
-  // than inside the component constructor, because the callback above closes
-  // over `panel`.
   if (options?.initialTab !== 'custom') {
     panel.setMarketplaceLoading();
-    void loadMarketplaceCatalog(host, panel, options?.marketplaceSource, capabilities);
+    void loadMarketplaceCatalog(host, panel, options?.marketplaceSource);
   }
 }
 
-/**
- * Adapt a capability from the engine's registry into a catalog row. The
- * engine is the single source of truth for what the built-in capabilities
- * are — the CLI only renders them. The `capability:<id>` source marker
- * routes installs through the capability flow (never a plain plugin
- * install), so the row needs no real URL.
- */
-function capabilityMarketplaceEntry(capability: CapabilityStatus): PluginMarketplaceEntry {
-  return {
-    id: capability.id,
-    displayName: capability.displayName,
-    description: capability.description,
-    tier: 'official',
-    source: `capability:${capability.id}`,
-    builtIn: true,
-  };
-}
-
-/**
- * Injection is part of the DEFAULT catalog experience only: any explicit
- * replacement (the slash-command source or a user-set env override) opts out
- * wholesale. The dev marketplace server started by scripts/dev.mjs serves
- * this repo's own catalog and marks itself, so it still counts as default.
- */
 function isDefaultMarketplaceCatalog(
   source: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
@@ -343,52 +322,18 @@ async function loadMarketplaceCatalog(
   host: SlashCommandHost,
   panel: PluginsPanelComponent,
   source: string | undefined,
-  capabilities: readonly CapabilityStatus[],
 ): Promise<void> {
-  const builtInEntries = isDefaultMarketplaceCatalog(source)
-    ? capabilities.map(capabilityMarketplaceEntry)
-    : undefined;
-  let marketplace: PluginMarketplace;
-  let catalog: PluginMarketplace;
   try {
-    // Phase 1: render the catalog as soon as it arrives. Version lookups
-    // (GitHub releases/latest round trips) must not gate the first paint.
-    // Keep the raw parsed catalog for phase 2: injecting built-ins first
-    // would mask the matching catalog entries' GitHub sources behind
-    // `capability:<id>` rows, making their versions unresolvable.
-    catalog = await loadPluginMarketplace({
+    const catalog = await loadPluginMarketplace({
       workDir: host.state.appState.workDir,
       source,
-      skipLatestVersions: true,
     });
-    marketplace =
-      builtInEntries !== undefined ? withBuiltInEntries(catalog, builtInEntries) : catalog;
-    panel.setMarketplace(marketplace.plugins, marketplace.source);
+    panel.setMarketplace(catalog.plugins, catalog.source);
     host.state.ui.requestRender();
   } catch (error) {
-    // Any phase-1 failure (unreachable OR malformed catalog) surfaces as an
-    // error: the panel keeps built-in capability rows installable in the
-    // Official tab while the error is shown, and a broken catalog must not
-    // be masked as a successfully loaded, built-ins-only marketplace.
     panel.setMarketplaceError(formatErrorMessage(error));
     host.state.ui.requestRender();
-    return;
   }
-  try {
-    // Phase 2: resolve latest versions in the background (against the raw
-    // catalog), re-apply the built-in injection so resolved versions flow
-    // onto capability rows, then refresh so update badges appear. Failures
-    // degrade to badge-less rows and never clobber the rendered list.
-    const enrichedCatalog = await withMarketplaceLatestVersions(catalog);
-    const enriched =
-      builtInEntries !== undefined
-        ? withBuiltInEntries(enrichedCatalog, builtInEntries)
-        : enrichedCatalog;
-    panel.setMarketplace(enriched.plugins, enriched.source);
-  } catch (error) {
-    log.warn('marketplace version lookup failed', { error });
-  }
-  host.state.ui.requestRender();
 }
 
 async function showPluginMcpPicker(
@@ -470,23 +415,6 @@ async function confirmInstallTrust(
 const CAPABILITY_POLL_INTERVAL_MS = 700;
 const CAPABILITY_POLL_ATTEMPTS = 260; // ~3 minutes of runtime setup budget
 
-/** Client-injected v2 entries install their runtime and plugin together.
- * Trust keys on the parser-proof `builtIn` flag — the `capability:<id>`
- * source string stays purely diagnostic. */
-function isCapabilityEntry(entry: PluginMarketplaceEntry): boolean {
-  return entry.builtIn === true;
-}
-
-/**
- * Closed-set plugin id check for the post-remove note. What must not happen
- * is answering membership by running `listCapabilities()`, which fires every
- * entry's detector (seconds of probes) just to print one hint line.
- */
-function isCapabilityPluginId(id: string): boolean {
-  return id === 'kimi-cu' || id === 'kimi-cu-win' || id === 'kimi-webbridge';
-}
-
-/** Poll a background capability install until it settles (or we run out of budget). */
 async function pollCapabilityInstall(
   host: SlashCommandHost,
   id: string,
@@ -513,8 +441,9 @@ async function pollCapabilityInstall(
 }
 
 export const __pluginsCommandInternals = {
-  isCapabilityEntry,
   installCapabilityFromPanel,
+  installMarketplaceEntryFromPanel,
+  installPluginFromSource,
   isDefaultMarketplaceCatalog,
   pollCapabilityInstall,
   removePlugin,
@@ -524,28 +453,24 @@ async function installCapabilityFromPanel(
   host: SlashCommandHost,
   panel: PluginsPanelComponent,
   entry: PluginMarketplaceEntry,
+  capabilityId: CapabilityStatus['id'],
 ): Promise<void> {
   const label = entry.displayName;
-  // Capability entries are official by construction; the trust prompt is
-  // reserved for unreviewed third-party plugins.
   panel.setInstalling(truncateForStatus(label));
   host.state.ui.requestRender();
   const api = await resolveCapabilityApi(host);
-  log.info('capability install requested', { capabilityId: entry.id });
+  log.info('capability install requested', { capabilityId });
   try {
-    // An install already running (started from another panel or client) is
-    // followed, not restarted — the service rejects duplicate starts even
-    // though the original is healthy.
     const alreadyRunning = await api
-      .getCapability(entry.id)
+      .getCapability(capabilityId)
       .then((status) => status.install.running, () => false);
     if (!alreadyRunning) {
-      await api.installCapability(entry.id);
+      await api.installCapability(capabilityId);
     } else {
-      log.info('following running capability install', { capabilityId: entry.id });
+      log.info('following running capability install', { capabilityId });
     }
   } catch (error) {
-    log.warn('capability install failed to start', { capabilityId: entry.id, error });
+    log.warn('capability install failed to start', { capabilityId, error });
     panel.clearInstalling();
     host.state.ui.requestRender();
     host.showError(`Failed to install ${label}: ${formatErrorMessage(error)}`);
@@ -554,14 +479,12 @@ async function installCapabilityFromPanel(
   }
   let result: CapabilityStatus | undefined;
   try {
-    result = await pollCapabilityInstall(host, entry.id);
+    result = await pollCapabilityInstall(host, capabilityId);
   } catch (error) {
-    log.warn('capability install polling failed', { capabilityId: entry.id, error });
+    log.warn('capability install polling failed', { capabilityId, error });
     result = undefined;
   }
   panel.clearInstalling();
-  // Close the panel so the result lines land in the transcript, matching the
-  // plain plugin install flow.
   host.restoreEditor();
   if (result === undefined) {
     host.showStatus(`${label} installation is still running in the background.`);
@@ -575,8 +498,8 @@ async function installCapabilityFromPanel(
   }
   if (result.state !== 'ready') {
     const permissionsRequired =
-      entry.id === 'kimi-cu' &&
-      result.steps.some((step) => step.id === 'permissions' && step.state !== 'ok');
+      capabilityId === 'kimi-cu' &&
+      result.steps.some((step) => step.id.startsWith('permissions.') && step.state !== 'ok');
     if (permissionsRequired) {
       host.showStatus(
         'Grant Accessibility and Screen Recording in System Settings → Privacy & Security.',
@@ -590,7 +513,7 @@ async function installCapabilityFromPanel(
     host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
     return;
   }
-  if (entry.id === 'kimi-webbridge') {
+  if (capabilityId === 'kimi-webbridge') {
     host.showNotice(`${label} is installed.`);
     host.state.transcriptContainer.addChild(new Spacer(1));
     host.state.transcriptContainer.addChild(
@@ -609,18 +532,15 @@ async function installCapabilityFromPanel(
 async function installFromPanel(
   host: SlashCommandHost,
   panel: PluginsPanelComponent,
-  source: string,
   label: string,
   official: boolean,
+  install: () => Promise<void>,
 ): Promise<void> {
   if (!(await confirmInstallTrust(host, label, official))) {
     host.showStatus(`Install cancelled: ${label}.`);
     host.restoreEditor();
     return;
   }
-  // Official installs keep the panel mounted and show the inline installing
-  // state; third-party installs pass through a trust prompt that replaces the
-  // panel, so fall back to a transcript status for those.
   if (official) {
     panel.setInstalling(truncateForStatus(label));
   } else {
@@ -628,22 +548,44 @@ async function installFromPanel(
   }
   host.state.ui.requestRender();
   try {
-    await installPluginFromSource(host, source);
+    await install();
   } catch (error) {
     if (official) {
       panel.clearInstalling();
       host.state.ui.requestRender();
     } else {
-      // The trust prompt replaced the panel; re-mount it so the user can retry
-      // instead of being dropped back at the editor.
       host.mountEditorReplacement(panel);
     }
     host.showError(`Failed to install ${label}: ${formatErrorMessage(error)}`);
     return;
   }
-  // Close the panel after installing so the result status and the
-  // "/reload or /new" tip are visible in the transcript.
   host.restoreEditor();
+}
+
+async function installMarketplaceEntryFromPanel(
+  host: SlashCommandHost,
+  panel: PluginsPanelComponent,
+  entry: PluginMarketplaceEntry,
+  catalogIsDefault: boolean,
+  marketplaceSource?: string,
+): Promise<void> {
+  if (entry.id === 'kimi-webbridge') {
+    throw new Error(
+      'Marketplace plugin "kimi-webbridge" is legacy; install "kimi-browser-extension" instead',
+    );
+  }
+  const capabilityId = capabilityIdForMarketplaceEntry(entry.id, catalogIsDefault);
+  if (capabilityId !== undefined) {
+    await installCapabilityFromPanel(host, panel, entry, capabilityId);
+    return;
+  }
+  await installFromPanel(
+    host,
+    panel,
+    entry.displayName,
+    isOfficialPluginSource(entry.source),
+    () => installPluginFromMarketplace(host, entry, marketplaceSource),
+  );
 }
 
 async function applyPluginEnabled(
@@ -675,6 +617,8 @@ async function handlePluginsPanelSelection(
   host: SlashCommandHost,
   panel: PluginsPanelComponent,
   selection: PluginsPanelSelection,
+  catalogIsDefault: boolean,
+  marketplaceSource?: string,
 ): Promise<void> {
   switch (selection.kind) {
     case 'toggle': {
@@ -707,16 +651,12 @@ async function handlePluginsPanelSelection(
       await showPluginsPicker(host, { initialTab: 'installed' });
       return;
     case 'install':
-      if (isCapabilityEntry(selection.entry)) {
-        await installCapabilityFromPanel(host, panel, selection.entry);
-        return;
-      }
-      await installFromPanel(
+      await installMarketplaceEntryFromPanel(
         host,
         panel,
-        selection.entry.source,
-        selection.entry.displayName,
-        isOfficialPluginSource(selection.entry.source),
+        selection.entry,
+        catalogIsDefault,
+        marketplaceSource,
       );
       return;
     case 'install-source':
@@ -724,15 +664,9 @@ async function handlePluginsPanelSelection(
         host,
         panel,
         selection.source,
-        selection.source,
         isOfficialPluginSource(selection.source),
+        () => installPluginFromSource(host, selection.source),
       );
-      return;
-    case 'open-url':
-      host.restoreEditor();
-      openUrl(selection.url);
-      host.showStatus(`Opening the ${selection.label} page in your browser…`, 'success');
-      host.showStatus(`If it did not open, visit ${selection.url}`);
       return;
   }
 }
@@ -804,9 +738,33 @@ async function installPluginFromSource(
 ): Promise<void> {
   const session = await resolvePluginApi(host);
   const beforeList = await session.listPlugins();
-  const summary = await session.installPlugin(
-    resolvePluginInstallSource(source, host.state.appState.workDir),
-  );
+  const summary = await session.installPlugin({
+    source: resolvePluginInstallSource(source, host.state.appState.workDir),
+  });
+  showPluginInstallResult(host, beforeList, summary);
+}
+
+async function installPluginFromMarketplace(
+  host: SlashCommandHost,
+  entry: PluginMarketplaceEntry,
+  marketplaceSource?: string,
+): Promise<void> {
+  if (entry.version === undefined) {
+    throw new Error(`Marketplace plugin "${entry.id}" has no version in the current catalog`);
+  }
+  const session = await resolvePluginApi(host);
+  const beforeList = await session.listPlugins();
+  const migrateFrom =
+    entry.id === 'kimi-browser-extension' &&
+    beforeList.some((plugin) => plugin.id === 'kimi-webbridge')
+      ? 'kimi-webbridge'
+      : undefined;
+  const summary = await session.installPlugin({
+    marketplaceId: entry.id,
+    expectedVersion: entry.version,
+    migrateFrom,
+    marketplaceSource,
+  });
   showPluginInstallResult(host, beforeList, summary);
 }
 

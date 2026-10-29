@@ -304,6 +304,7 @@ import type {
   KimiConfigPatch,
   KimiHarnessOptions,
   KimiHostIdentity,
+  InstallPluginInput,
   ListSessionsOptions,
   McpManagedServerInfo,
   McpServerConfig,
@@ -872,8 +873,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.klient.global.plugins.list();
   }
 
-  override async installPlugin(source: string): Promise<PluginSummary> {
-    return this.klient.global.plugins.install(source);
+  override async installPlugin(input: string | InstallPluginInput): Promise<PluginSummary> {
+    return this.klient.global.plugins.install(input);
   }
 
   override async setPluginEnabled(id: string, enabled: boolean): Promise<void> {

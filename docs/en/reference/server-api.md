@@ -1396,7 +1396,9 @@ Capabilities are built-in features with layered readiness — detection steps pl
 | `GET /api/v1/capabilities/{capability_id}` | Read one capability's status |
 | `POST /api/v1/capabilities/{capability_id}:install` | Start a capability install (background; poll GET for progress) |
 | `GET /api/v1/plugins` | List installed plugins |
-| `POST /api/v1/plugins` | Install a plugin from a local path, zip URL, or GitHub repo |
+| `GET /api/v1/plugins/{plugin_id}` | Read an installed plugin and its declared capabilities |
+| `POST /api/v1/plugins` | Install a custom plugin or a marketplace entry at an expected version |
+| `POST /api/v1/plugins/preview` | Inspect a marketplace entry's capabilities without installing it |
 | `GET /api/v1/plugins/marketplace` | Marketplace catalog merged with live install state |
 | `POST /api/v1/plugins/{plugin_id}:{action}` | Plugin actions: `enable` / `disable` / `remove` |
 
@@ -1437,28 +1439,48 @@ On success, `data` is the capability status object documented under `GET /api/v1
 
 Lists installed plugins.
 
-On success, `data` is `{ plugins }` where each item is `{ id, displayName, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`: `state` is `ok` / `error` (load failures also set `hasErrors`), `source` is `local-path` / `zip-url` / `github`, and `github` carries the provenance `{ owner, repo, ref, installedSha? }` with `ref` `{ kind: branch|tag|sha, value }` for GitHub-sourced plugins.
+On success, `data` is `{ plugins }` where each item is `{ id, displayName, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`: `state` is `ok` / `error` (load failures also set `hasErrors`), `source` is `local-path` / `zip-url` / `github`, and `github` carries the provenance `{ owner, repo, ref, installedSha? }` with `ref` `{ kind: branch|tag|sha, value }` for GitHub-sourced plugins. Each item also includes `origin` (`marketplace` / `custom` / `unknown`), optional `catalogId`, and `installedAt` (ISO timestamp).
 
 #### `POST /api/v1/plugins`
 
-Installs a plugin and returns its summary.
+Installs a plugin and returns its summary. The request body has two forms:
 
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `source` | body | string | **Required.** Where to install from: an absolute local path, an `http(s)` URL to a zip archive, or a GitHub URL — `https://github.com/<owner>/<repo>`, optionally pinned with `/tree/<branch-or-sha>`, `/releases/tag/<tag>`, or `/commit/<sha>` |
+- Custom install: `{ "source": "<absolute local path, http(s) ZIP URL, or GitHub URL>" }`. GitHub URLs may pin a ref with `/tree/<branch-or-sha>`, `/releases/tag/<tag>`, or `/commit/<sha>`.
+- Marketplace install: `{ "marketplaceId": "<catalog entry id>", "expectedVersion": "<version shown to the user>" }`. The daemon resolves `source`, `sha256sum`, and the expected plugin ID from the same catalog snapshot, verifies the archive before extraction, and checks the manifest ID.
 
 On success, `data` is the plugin summary documented under `GET /api/v1/plugins` above.
 
 - `40001`: validation failure — for example `source` is neither a URL nor an absolute path, or the plugin failed to load
 - `40409`: the local path does not exist
+- `40933`: the catalog entry changed after the version shown to the user; refresh the catalog and retry
 
 #### `GET /api/v1/plugins/marketplace`
 
-Lists the plugin marketplace catalog merged with live install state. The catalog is fetched per request (10-second timeout) from the configured marketplace URL; with the default catalog, built-in capabilities missing from the catalog are merged in as rows (with `capabilityId` set) and rows whose capability is unsupported on this platform are dropped.
+Lists the plugin marketplace catalog merged with live install state. The default catalog URL is derived from the current managed `baseURL` as `${baseURL}/plugins/marketplace`; built-in capability rows are no longer injected. An entry remains visible when `platforms` includes the daemon platform or contains only `cloud`; a `cloud` entry for another local platform is filtered. Cloud-only entries cannot be installed locally. The legacy `kimi-webbridge` entry is not emitted, and Computer Use exposes only the wiring plugin for the current platform.
 
-On success, `data` is `{ entries }` where each item is `{ id, tier, displayName, description?, homepage?, keywords?, version?, source, installed?, updateAvailable?, capabilityId? }`: `tier` is `official` / `curated` / `third-party`, `installed` is `{ version?, enabled }` when the plugin is installed, and `updateAvailable` marks rows whose catalog version is newer than the installed one. An entry's `source` feeds the `source` field of `POST /api/v1/plugins`.
+On success, `data` is `{ entries }` where each item includes `id`, `tier`, `classification`, `displayName`, `description?`, `cliDescription?`, `homepage?`, `keywords?`, `version?`, `source`, `iconUrl?`, `sha256sum?`, `filename?`, `locale?`, `defaultLocale?`, `platforms?`, `distribution?`, `billing?`, `installed?`, `updateAvailable?`, and `capabilityId?`. `distribution.category` is `official` or `third_party`; `platforms` uses `darwin` / `win32` / `linux` / `cloud`. Marketplace installs use `marketplaceId` and `expectedVersion` rather than passing `source` directly; custom installs pass `source`. Capability rows are marked only by the daemon: `kimi-browser-extension` maps to the `kimi-webbridge` capability, and `kimi-cu` / `kimi-cu-win` maps to `kimi-cu`.
+
+`defaultLocale` declares the language of the top-level `description` and `cliDescription`; `locale` holds per-language `shortDescription`, `longDescription`, and `cliDescription` translations.
 
 - `50001`: the marketplace is unreachable or returned an invalid catalog
+
+#### `GET /api/v1/plugins/{plugin_id}`
+
+Reads an installed plugin's details and capabilities. `skills` contains the discovered Skill invocation names with optional display names and descriptions. `mcpServers` contains the declared MCP servers with their names, runtime names, enabled states, transports, non-secret connection settings, and optional display names, descriptions, and icon URLs. Both lists reflect the plugin's actual files and manifest. `interface.skillOverrides` and `interface.mcpOverrides` override display information only; they do not change invocation names or runtime configuration.
+
+On success, `data` is the plugin summary documented under `GET /api/v1/plugins`, plus `root`, `updatedAt?`, `manifestKind?`, `manifestPath?`, `manifest?`, `skills`, `mcpServers`, `shadowedManifestPath?`, and `diagnostics`. The optional `locale` query parameter, such as `en-US` or `zh-CN`, selects translations from `interface.locales` and affects capability display text only. Fields without a matching translation fall back to the default `interface`.
+
+- `40419`: no installed plugin with that id
+
+#### `POST /api/v1/plugins/preview`
+
+Inspects a marketplace entry without installing it. The body is `{ "marketplaceId": "<catalog entry id>", "expectedVersion": "<version shown to the user>", "locale": "<optional locale>" }`. The daemon downloads the archive into a temporary directory, verifies its SHA-256 before extraction, validates the manifest ID, and discovers its Skills and MCP servers. It does not write an installation record, install a runtime, or retain the extracted plugin.
+
+On success, `data` is `{ "skills": [{ "name": "<skill name>", "description": "<optional description>" }], "mcpServers": [{ "name": "<manifest name>", "runtimeName": "<runtime name>", "enabled": true, "transport": "stdio" }] }`. Both entry types can also include `displayName` and `description` from overrides, and MCP entries can include `iconUrl`. `locale` follows the same selection rules as installed plugin details. MCP entries use the same shape as `GET /api/v1/plugins/{plugin_id}`; the example shows only the common fields.
+
+- `40001`: the request, archive, SHA-256, or manifest is invalid
+- `40419`: no marketplace entry with that id
+- `40933`: the catalog entry changed after the version shown to the user; refresh the catalog and retry
 
 #### `POST /api/v1/plugins/{plugin_id}:enable`
 

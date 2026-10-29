@@ -28,6 +28,8 @@ function makePluginSummary(overrides: Partial<PluginSummary> = {}): PluginSummar
     commandCount: 0,
     hasErrors: false,
     source: 'zip-url',
+    origin: 'custom',
+    installedAt: '2026-01-01T00:00:00.000Z',
     originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
     ...overrides,
   };

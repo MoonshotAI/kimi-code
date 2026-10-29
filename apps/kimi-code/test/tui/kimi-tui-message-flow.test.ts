@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 
 import {
   deleteAllKittyImages,
@@ -10454,9 +10454,9 @@ capabilities = ["image_in", "video_in"]
     confirm.handleInput('\r');
 
     await vi.waitFor(() => {
-      expect(session.installPlugin).toHaveBeenCalledWith(
-        resolve('/tmp/proj-a', './plugins/kimi-datasource'),
-      );
+      expect(session.installPlugin).toHaveBeenCalledWith({
+        source: resolve('/tmp/proj-a', './plugins/kimi-datasource'),
+      });
     });
   });
 
@@ -10555,7 +10555,10 @@ capabilities = ["image_in", "video_in"]
         plugins: [
           {
             id: 'kimi-datasource',
-            tier: 'official',
+            version: '1.0.0',
+            sha256sum: 'a'.repeat(64),
+            platforms: ['macos', 'windows', 'linux'],
+            distribution: { category: 'official' },
             displayName: 'Kimi Datasource',
             description: 'Datasource plugin',
             source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
@@ -10581,9 +10584,12 @@ capabilities = ["image_in", "video_in"]
     panel.handleInput('\r');
 
     await vi.waitFor(() => {
-      expect(session.installPlugin).toHaveBeenCalledWith(
-        'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
-      );
+      expect(session.installPlugin).toHaveBeenCalledWith({
+        marketplaceId: 'kimi-datasource',
+        expectedVersion: '1.0.0',
+        migrateFrom: undefined,
+        marketplaceSource: marketplacePath,
+      });
     });
     await vi.waitFor(() => {
       const transcript = stripSgr(renderTranscript(driver));
@@ -10605,7 +10611,10 @@ capabilities = ["image_in", "video_in"]
         plugins: [
           {
             id: 'kimi-datasource',
-            tier: 'official',
+            version: '1.0.0',
+            sha256sum: 'a'.repeat(64),
+            platforms: ['macos', 'windows', 'linux'],
+            distribution: { category: 'official' },
             displayName: 'Kimi Datasource',
             source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
           },
@@ -10647,7 +10656,10 @@ capabilities = ["image_in", "video_in"]
         plugins: [
           {
             id: 'superpowers',
-            tier: 'curated',
+            version: '1.0.0',
+            sha256sum: 'a'.repeat(64),
+            platforms: ['macos', 'windows', 'linux'],
+            distribution: { category: 'third_party' },
             displayName: 'Superpowers',
             description: 'Curated plugin',
             source: './superpowers',
@@ -10659,7 +10671,9 @@ capabilities = ["image_in", "video_in"]
     const session = makeSession();
     const { driver } = await makeDriver(session);
 
-    driver.handleUserInput(`/plugins marketplace ${marketplacePath}`);
+    driver.handleUserInput(
+      `/plugins marketplace ${relative(driver.state.appState.workDir, marketplacePath)}`,
+    );
 
     await vi.waitFor(() => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(PluginsPanelComponent);
@@ -10680,7 +10694,12 @@ capabilities = ["image_in", "video_in"]
     confirm.handleInput('\r');
 
     await vi.waitFor(() => {
-      expect(session.installPlugin).toHaveBeenCalledWith(join(marketplaceDir, 'superpowers'));
+      expect(session.installPlugin).toHaveBeenCalledWith({
+        marketplaceId: 'superpowers',
+        expectedVersion: '1.0.0',
+        migrateFrom: undefined,
+        marketplaceSource: marketplacePath,
+      });
     });
   });
 
@@ -10693,7 +10712,10 @@ capabilities = ["image_in", "video_in"]
         plugins: [
           {
             id: 'superpowers',
-            tier: 'curated',
+            version: '1.0.0',
+            sha256sum: 'a'.repeat(64),
+            platforms: ['macos', 'windows', 'linux'],
+            distribution: { category: 'third_party' },
             displayName: 'Superpowers',
             source: './superpowers',
           },
@@ -10755,17 +10777,34 @@ capabilities = ["image_in", "video_in"]
 
   it('installs default marketplace entries through plain install', async () => {
     const originalFetch = globalThis.fetch;
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      plugins: [
-        {
-          id: 'kimi-datasource',
-          tier: 'official',
-          displayName: 'Kimi Datasource',
-          description: 'Datasource plugin',
-          source: './official/kimi-datasource.zip',
-        },
-      ],
-    }))));
+    const originalBaseUrl = process.env['KIMI_CODE_BASE_URL'];
+    process.env['KIMI_CODE_BASE_URL'] = 'https://api.example.test/coding/v1';
+    const { KimiOAuthToolkit } = await import('@moonshot-ai/kimi-code-oauth');
+    const tokenProvider = vi.spyOn(KimiOAuthToolkit.prototype, 'tokenProvider').mockReturnValue({
+      getAccessToken: async () => 'managed-token',
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              plugins: [
+                {
+                  id: 'kimi-datasource',
+                  version: '1.0.0',
+                  sha256sum: 'a'.repeat(64),
+                  platforms: ['macos', 'windows', 'linux'],
+                  distribution: { category: 'official' },
+                  displayName: 'Kimi Datasource',
+                  description: 'Datasource plugin',
+                  source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
+                },
+              ],
+            }),
+          ),
+      ),
+    );
     const session = makeSession();
     const { driver } = await makeDriver(session);
 
@@ -10783,12 +10822,24 @@ capabilities = ["image_in", "video_in"]
       panel.handleInput('\r');
 
       await vi.waitFor(() => {
-        expect(session.installPlugin).toHaveBeenCalledWith(
-          'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
-        );
+        expect(session.installPlugin).toHaveBeenCalledWith({
+          marketplaceId: 'kimi-datasource',
+          expectedVersion: '1.0.0',
+          migrateFrom: undefined,
+          marketplaceSource: undefined,
+        });
       });
-      expect(globalThis.fetch).toHaveBeenCalledWith(kimiCodePluginMarketplaceUrl());
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        kimiCodePluginMarketplaceUrl(),
+        expect.objectContaining({ headers: expect.any(Headers) }),
+      );
     } finally {
+      tokenProvider.mockRestore();
+      if (originalBaseUrl === undefined) {
+        delete process.env['KIMI_CODE_BASE_URL'];
+      } else {
+        process.env['KIMI_CODE_BASE_URL'] = originalBaseUrl;
+      }
       vi.stubGlobal('fetch', originalFetch);
     }
   });

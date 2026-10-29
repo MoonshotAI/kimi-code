@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
@@ -15,7 +16,10 @@ const DEFAULT_OUT_DIR = resolve(DEFAULT_PLUGINS_ROOT, 'cdn');
 const SENTINEL = '.kimi-plugin-marketplace-build.json';
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
 const SKIP_FILES = new Set(['.DS_Store']);
-const EXTRA_CDN_PLUGIN_SOURCES = ['./official/kimi-webbridge'];
+
+function sha256(buffer) {
+  return createHash('sha256').update(buffer).digest('hex');
+}
 
 const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
@@ -49,22 +53,13 @@ export async function buildPluginMarketplaceCdn({ pluginsRoot, outDir }) {
       continue;
     }
     const result = await materializeEntrySource(entry.source, pluginsRoot, outDir);
-    let stamped = { ...entry, source: result.source };
+    let stamped = { ...entry, source: result.source, sha256sum: result.sha256sum };
     if (isLocalRelativeSource(entry.source)) {
       // Stamp the version from the plugin's real manifest so "latest" stays truthful.
       const version = await readPluginManifestVersion(resolveInsideRoot(pluginsRoot, entry.source));
       if (version !== undefined) stamped = { ...stamped, version };
     }
     plugins.push(stamped);
-    if (result.archive !== undefined) archives.push(result.archive);
-  }
-
-  // WebBridge is injected by v2 clients rather than listed in the remote
-  // catalog, but its managed plugin still needs a CDN artifact.
-  for (const source of EXTRA_CDN_PLUGIN_SOURCES) {
-    const archive = stripRelativePrefix(withZipExtension(source));
-    if (archives.includes(archive)) continue;
-    const result = await materializeEntrySource(source, pluginsRoot, outDir);
     if (result.archive !== undefined) archives.push(result.archive);
   }
 
@@ -99,7 +94,11 @@ export async function buildPluginMarketplaceCdn({ pluginsRoot, outDir }) {
 }
 
 async function materializeEntrySource(source, pluginsRoot, outDir) {
-  if (!isLocalRelativeSource(source)) return { source };
+  if (!isLocalRelativeSource(source)) {
+    const response = await fetch(source, { signal: AbortSignal.timeout(30_000) });
+    if (!response.ok) throw new Error(`Failed to download marketplace source ${source}: HTTP ${response.status}`);
+    return { source, sha256sum: sha256(Buffer.from(await response.arrayBuffer())) };
+  }
 
   const sourcePath = resolveInsideRoot(pluginsRoot, source);
   const info = await stat(sourcePath).catch(() => undefined);
@@ -110,15 +109,16 @@ async function materializeEntrySource(source, pluginsRoot, outDir) {
   if (info.isDirectory()) {
     const zipSource = withZipExtension(source);
     const zipRel = stripRelativePrefix(zipSource);
-    await zipDirectory(sourcePath, resolveInsideRoot(outDir, zipRel));
-    return { source: zipSource, archive: zipRel };
+    const outputFile = resolveInsideRoot(outDir, zipRel);
+    await zipDirectory(sourcePath, outputFile);
+    return { source: zipSource, archive: zipRel, sha256sum: sha256(await readFile(outputFile)) };
   }
 
   if (info.isFile() && extname(sourcePath) === '.zip') {
     const zipRel = stripRelativePrefix(source);
     await mkdir(dirname(resolveInsideRoot(outDir, zipRel)), { recursive: true });
     await cp(sourcePath, resolveInsideRoot(outDir, zipRel));
-    return { source, archive: zipRel };
+    return { source, archive: zipRel, sha256sum: sha256(await readFile(sourcePath)) };
   }
 
   throw new Error(`Marketplace source must be a directory or .zip file: ${source}`);

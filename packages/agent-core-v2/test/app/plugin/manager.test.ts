@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -7,6 +8,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PluginManager } from '#/app/plugin/manager';
+import { discoverFileSkills } from '#/features/skill/catalog/fileSkillDiscovery';
 
 describe('PluginManager', () => {
   let home: string;
@@ -51,6 +53,81 @@ describe('PluginManager', () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  async function makeZip(
+    id: string,
+    version = '1.0.0',
+    skillName?: string,
+  ): Promise<{ dir: string; buffer: Buffer }> {
+    const dir = await mkdtemp(join(tmpdir(), 'plugin-zip-fixture-'));
+    const sourceRoot = join(dir, 'source');
+    await mkdir(sourceRoot);
+    await writeFile(
+      join(sourceRoot, 'kimi.plugin.json'),
+      JSON.stringify({
+        name: id,
+        version,
+        skills: skillName === undefined ? undefined : ['./skills'],
+      }),
+      'utf8',
+    );
+    if (skillName !== undefined) {
+      const skillDir = join(sourceRoot, 'skills', skillName);
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, 'SKILL.md'),
+        `---\nname: ${skillName}\ndescription: Test skill\n---\n\nBody`,
+        'utf8',
+      );
+    }
+    const zipPath = join(dir, 'plugin.zip');
+    execFileSync('zip', ['-qr', zipPath, '.'], { cwd: sourceRoot });
+    return { dir, buffer: await readFile(zipPath) };
+  }
+
+  async function makeLegacyWebbridge(): Promise<string> {
+    const legacyRoot = await mkdtemp(join(tmpdir(), 'plugin-legacy-webbridge-'));
+    await writeFile(
+      join(legacyRoot, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'kimi-webbridge', version: '1.0.0' }),
+      'utf8',
+    );
+    await writeFile(
+      join(home, 'plugins', 'installed.json'),
+      JSON.stringify({
+        version: 1,
+        plugins: [
+          {
+            id: 'kimi-webbridge',
+            root: legacyRoot,
+            source: 'zip-url',
+            origin: 'marketplace',
+            catalogId: 'kimi-webbridge',
+            enabled: false,
+            installedAt: '2020-01-01T00:00:00.000Z',
+            capabilities: { mcpServers: { mac: { enabled: false } } },
+          },
+        ],
+      }),
+      'utf8',
+    );
+    return legacyRoot;
+  }
+
+  function installWebbridge(
+    manager: PluginManager,
+    fixture: { readonly buffer: Buffer },
+  ): ReturnType<PluginManager['installAndReload']> {
+    return manager.installAndReload('https://example.test/kimi-browser-extension.zip', {
+      expectedSha256: createHash('sha256').update(fixture.buffer).digest('hex'),
+      expectedPluginId: 'kimi-browser-extension',
+      origin: 'marketplace',
+      catalogId: 'kimi-browser-extension',
+      migrateFrom: 'kimi-webbridge',
+      requiredSkill: 'kimi-webbridge',
+      fetchImpl: async () => new Response(fixture.buffer),
+    });
+  }
+
   it('loads installed plugins and exposes summaries, hooks, and commands', async () => {
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();
@@ -59,6 +136,8 @@ describe('PluginManager', () => {
       expect.objectContaining({
         id: 'demo',
         state: 'ok',
+        origin: 'unknown',
+        installedAt: '2026-01-01T00:00:00.000Z',
         commandCount: 1,
         hookCount: 1,
       }),
@@ -74,6 +153,106 @@ describe('PluginManager', () => {
     await expect(manager.enabledCommands()).resolves.toEqual([
       expect.objectContaining({ pluginId: 'demo', name: 'deploy', description: 'Deploy' }),
     ]);
+  });
+
+  it('applies interface overrides and locale translations without changing capability identifiers', async () => {
+    await mkdir(join(root, 'skills', 'directory-skill'), { recursive: true });
+    await writeFile(
+      join(root, 'skills', 'directory-skill', 'SKILL.md'),
+      '---\nname: runtime-skill\ndescription: Original skill description\n---\n\nBody',
+      'utf8',
+    );
+    await writeFile(
+      join(root, 'kimi.plugin.json'),
+      JSON.stringify({
+        name: 'demo',
+        skills: ['./skills'],
+        interface: {
+          defaultLocale: 'zh-CN',
+          locales: './locales/',
+          mcpOverrides: {
+            mac: {
+              displayName: 'Friendly MCP',
+              description: 'Friendly MCP description',
+              iconUrl: 'https://example.com/friendly-mcp.png',
+            },
+          },
+          skillOverrides: {
+            'directory-skill': {
+              displayName: 'Friendly skill',
+              description: 'Friendly skill description',
+            },
+          },
+        },
+        mcpServers: {
+          mac: { command: 'sh', args: ['./bin/kimi-cu-mcp'] },
+        },
+      }),
+      'utf8',
+    );
+    await mkdir(join(root, 'locales'), { recursive: true });
+    await writeFile(
+      join(root, 'locales', 'en-US.json'),
+      JSON.stringify({
+        mcpOverrides: {
+          mac: {
+            displayName: 'English MCP',
+            description: 'English MCP description',
+          },
+        },
+        skillOverrides: {
+          'directory-skill': {
+            displayName: 'English skill',
+            description: 'English skill description',
+          },
+        },
+      }),
+      'utf8',
+    );
+    const manager = new PluginManager({ kimiHomeDir: home });
+
+    await manager.load();
+    const info = manager.info('demo');
+    const english = manager.info('demo', 'en');
+
+    expect(info?.skills).toEqual([
+      {
+        name: 'runtime-skill',
+        displayName: 'Friendly skill',
+        description: 'Friendly skill description',
+      },
+    ]);
+    expect(info?.mcpServers[0]).toMatchObject({
+      name: 'mac',
+      displayName: 'Friendly MCP',
+      description: 'Friendly MCP description',
+      iconUrl: 'https://example.com/friendly-mcp.png',
+      runtimeName: 'plugin-demo:mac',
+      transport: 'stdio',
+      command: 'sh',
+    });
+    expect(english?.skills).toEqual([
+      {
+        name: 'runtime-skill',
+        displayName: 'English skill',
+        description: 'English skill description',
+      },
+    ]);
+    expect(english?.mcpServers[0]).toMatchObject({
+      name: 'mac',
+      displayName: 'English MCP',
+      description: 'English MCP description',
+      iconUrl: 'https://example.com/friendly-mcp.png',
+      runtimeName: 'plugin-demo:mac',
+      transport: 'stdio',
+      command: 'sh',
+    });
+    expect(info?.manifest?.interface?.skillOverrides?.['directory-skill']?.displayName).toBe(
+      'Friendly skill',
+    );
+    expect(info?.manifest?.interface?.mcpOverrides?.['mac']?.iconUrl).toBe(
+      'https://example.com/friendly-mcp.png',
+    );
   });
 
   it('installs a local-path plugin into the managed root', async () => {
@@ -115,6 +294,94 @@ describe('PluginManager', () => {
       await new Promise<void>((resolve, reject) => server.close((err) => (err === undefined ? resolve() : reject(err))));
       await rm(sourceRoot, { recursive: true, force: true });
       await rm(zipPath, { force: true });
+    }
+  });
+
+  it('rejects a SHA mismatch before trying to extract the archive', async () => {
+    const manager = new PluginManager({ kimiHomeDir: home });
+    const fetchImpl = vi.fn(async () => new Response('not a zip')) as unknown as typeof fetch;
+
+    await expect(
+      manager.install('https://example.test/plugin.zip', {
+        expectedSha256: '0'.repeat(64),
+        expectedPluginId: 'demo',
+        origin: 'marketplace',
+        catalogId: 'demo',
+        fetchImpl,
+      }),
+    ).rejects.toThrow('SHA-256 mismatch');
+    expect(manager.get('demo')).toBeUndefined();
+  });
+
+  it('rejects a manifest ID mismatch before publishing the managed copy', async () => {
+    const fixture = await makeZip('actual-id');
+    try {
+      const manager = new PluginManager({ kimiHomeDir: home });
+      const sha256sum = createHash('sha256').update(fixture.buffer).digest('hex');
+      const fetchImpl = vi.fn(async () => new Response(fixture.buffer)) as unknown as typeof fetch;
+
+      await expect(
+        manager.install('https://example.test/plugin.zip', {
+          expectedSha256: sha256sum,
+          expectedPluginId: 'expected-id',
+          origin: 'marketplace',
+          catalogId: 'expected-id',
+          fetchImpl,
+        }),
+      ).rejects.toThrow('Plugin manifest ID mismatch');
+      expect(manager.get('actual-id')).toBeUndefined();
+    } finally {
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('converts marketplace and custom reinstalls while preserving installedAt', async () => {
+    const fixture = await makeZip('demo', '2.0.0');
+    const customSource = await mkdtemp(join(tmpdir(), 'plugin-custom-reinstall-'));
+    try {
+      await writeFile(
+        join(customSource, 'kimi.plugin.json'),
+        JSON.stringify({ name: 'demo', version: '3.0.0' }),
+        'utf8',
+      );
+      const manager = new PluginManager({ kimiHomeDir: home });
+      const sha256sum = createHash('sha256').update(fixture.buffer).digest('hex');
+      const fetchImpl = vi.fn(async () => new Response(fixture.buffer)) as unknown as typeof fetch;
+      const source = 'https://example.test/plugin.zip';
+      const installMarketplace = () =>
+        manager.install(source, {
+          expectedSha256: sha256sum,
+          expectedPluginId: 'demo',
+          origin: 'marketplace',
+          catalogId: 'demo',
+          fetchImpl,
+        });
+
+      const marketplace = await installMarketplace();
+      const custom = await manager.install(customSource);
+      expect(custom).toMatchObject({
+        origin: 'custom',
+        catalogId: undefined,
+        installedAt: marketplace.installedAt,
+        manifest: { version: '3.0.0' },
+      });
+
+      const reinstalled = await installMarketplace();
+      expect(reinstalled).toMatchObject({
+        origin: 'marketplace',
+        catalogId: 'demo',
+        installedAt: marketplace.installedAt,
+        manifest: { version: '2.0.0' },
+      });
+      await manager.reload();
+      expect(manager.summaries()[0]).toMatchObject({
+        origin: 'marketplace',
+        catalogId: 'demo',
+        installedAt: marketplace.installedAt,
+      });
+    } finally {
+      await rm(fixture.dir, { recursive: true, force: true });
+      await rm(customSource, { recursive: true, force: true });
     }
   });
 
@@ -333,6 +600,287 @@ describe('PluginManager', () => {
     await expect(manager.checkUpdates()).resolves.toEqual([
       expect.objectContaining({ id: 'good', updateAvailable: true }),
     ]);
+  });
+
+  it('migrates a plugin atomically while preserving legacy state', async () => {
+    const legacyRoot = await mkdtemp(join(tmpdir(), 'plugin-legacy-'));
+    const fixture = await makeZip('new-plugin', '2.0.0');
+    try {
+      await writeFile(
+        join(legacyRoot, 'kimi.plugin.json'),
+        JSON.stringify({ name: 'legacy', version: '1.0.0' }),
+        'utf8',
+      );
+      await writeFile(
+        join(home, 'plugins', 'installed.json'),
+        JSON.stringify({
+          version: 1,
+          plugins: [
+            {
+              id: 'legacy',
+              root: legacyRoot,
+              source: 'zip-url',
+              origin: 'marketplace',
+              catalogId: 'legacy',
+              enabled: false,
+              installedAt: '2020-01-01T00:00:00.000Z',
+              capabilities: { mcpServers: { mac: { enabled: false } } },
+            },
+          ],
+        }),
+        'utf8',
+      );
+      const manager = new PluginManager({ kimiHomeDir: home });
+      await manager.load();
+      const sha256sum = createHash('sha256').update(fixture.buffer).digest('hex');
+      const fetchImpl = vi.fn(async () => new Response(fixture.buffer)) as unknown as typeof fetch;
+
+      const record = await manager.install('https://example.test/new-plugin.zip', {
+        expectedSha256: sha256sum,
+        expectedPluginId: 'new-plugin',
+        origin: 'marketplace',
+        catalogId: 'new-plugin',
+        migrateFrom: 'legacy',
+        fetchImpl,
+      });
+
+      expect(record).toMatchObject({
+        id: 'new-plugin',
+        enabled: false,
+        installedAt: '2020-01-01T00:00:00.000Z',
+        origin: 'marketplace',
+        catalogId: 'new-plugin',
+        capabilities: { mcpServers: { mac: { enabled: false } } },
+      });
+      expect(manager.get('legacy')).toBeUndefined();
+      const stored = JSON.parse(
+        await readFile(join(home, 'plugins', 'installed.json'), 'utf8'),
+      ) as { plugins: Array<{ id: string }> };
+      expect(stored.plugins.map((plugin) => plugin.id)).toEqual(['new-plugin']);
+    } finally {
+      await rm(legacyRoot, { recursive: true, force: true });
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the legacy plugin when migration validation fails', async () => {
+    const legacyRoot = await mkdtemp(join(tmpdir(), 'plugin-legacy-'));
+    const fixture = await makeZip('new-plugin', '2.0.0');
+    try {
+      await writeFile(
+        join(legacyRoot, 'kimi.plugin.json'),
+        JSON.stringify({ name: 'legacy', version: '1.0.0' }),
+        'utf8',
+      );
+      await writeFile(
+        join(home, 'plugins', 'installed.json'),
+        JSON.stringify({
+          version: 1,
+          plugins: [
+            {
+              id: 'legacy',
+              root: legacyRoot,
+              source: 'zip-url',
+              origin: 'marketplace',
+              catalogId: 'legacy',
+              enabled: false,
+              installedAt: '2020-01-01T00:00:00.000Z',
+            },
+          ],
+        }),
+        'utf8',
+      );
+      const manager = new PluginManager({ kimiHomeDir: home });
+      await manager.load();
+      const fetchImpl = vi.fn(async () => new Response(fixture.buffer)) as unknown as typeof fetch;
+
+      await expect(
+        manager.install('https://example.test/new-plugin.zip', {
+          expectedSha256: '0'.repeat(64),
+          expectedPluginId: 'new-plugin',
+          origin: 'marketplace',
+          catalogId: 'new-plugin',
+          migrateFrom: 'legacy',
+          fetchImpl,
+        }),
+      ).rejects.toThrow('SHA-256 mismatch');
+      expect(manager.get('new-plugin')).toBeUndefined();
+      expect(manager.get('legacy')).toMatchObject({
+        enabled: false,
+        installedAt: '2020-01-01T00:00:00.000Z',
+      });
+    } finally {
+      await rm(legacyRoot, { recursive: true, force: true });
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('materializes the canonical WebBridge plugin and target skill before committing migration', async () => {
+    const legacyRoot = await makeLegacyWebbridge();
+    const fixture = await makeZip('kimi-browser-extension', '2.0.0', 'kimi-webbridge');
+    try {
+      const manager = new PluginManager({ kimiHomeDir: home });
+      await manager.load();
+
+      const { record, summary } = await installWebbridge(manager, fixture);
+
+      expect(record).toMatchObject({
+        id: 'kimi-browser-extension',
+        enabled: false,
+        installedAt: '2020-01-01T00:00:00.000Z',
+        state: 'ok',
+        skillCount: 1,
+        capabilities: { mcpServers: { mac: { enabled: false } } },
+      });
+      expect(summary).toEqual({ added: [], removed: [], errors: [] });
+      expect(manager.get('kimi-webbridge')).toBeUndefined();
+      const stored = JSON.parse(
+        await readFile(join(home, 'plugins', 'installed.json'), 'utf8'),
+      ) as { plugins: Array<{ id: string }> };
+      expect(stored.plugins.map((plugin) => plugin.id)).toEqual(['kimi-browser-extension']);
+    } finally {
+      await rm(legacyRoot, { recursive: true, force: true });
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { label: 'missing', skillName: undefined },
+    { label: 'wrong', skillName: 'other-skill' },
+  ])('keeps the legacy WebBridge record when the new package has a $label target skill', async ({ skillName }) => {
+    const legacyRoot = await makeLegacyWebbridge();
+    const fixture = await makeZip('kimi-browser-extension', '2.0.0', skillName);
+    try {
+      const manager = new PluginManager({ kimiHomeDir: home });
+      await manager.load();
+      const before = await readFile(join(home, 'plugins', 'installed.json'), 'utf8');
+
+      await expect(installWebbridge(manager, fixture)).rejects.toThrow(
+        'does not provide required skill "kimi-webbridge"',
+      );
+
+      expect(manager.get('kimi-browser-extension')).toBeUndefined();
+      expect(manager.get('kimi-webbridge')).toMatchObject({
+        enabled: false,
+        installedAt: '2020-01-01T00:00:00.000Z',
+        capabilities: { mcpServers: { mac: { enabled: false } } },
+      });
+      await expect(readFile(join(home, 'plugins', 'installed.json'), 'utf8')).resolves.toBe(before);
+    } finally {
+      await rm(legacyRoot, { recursive: true, force: true });
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('restores the legacy record and managed copy when WebBridge reload materialization fails', async () => {
+    const legacyRoot = await makeLegacyWebbridge();
+    const fixture = await makeZip('kimi-browser-extension', '2.0.0', 'kimi-webbridge');
+    try {
+      let discoveries = 0;
+      const manager = new PluginManager({
+        kimiHomeDir: home,
+        discoverSkills: async (roots) => {
+          discoveries += 1;
+          if (discoveries === 2) throw new Error('reload materialize failed');
+          return discoverFileSkills(roots);
+        },
+      });
+      await manager.load();
+      const before = await readFile(join(home, 'plugins', 'installed.json'), 'utf8');
+
+      await expect(installWebbridge(manager, fixture)).rejects.toThrow(
+        /failed to reload after installation.*reload materialize failed/,
+      );
+
+      expect(manager.get('kimi-browser-extension')).toBeUndefined();
+      expect(manager.get('kimi-webbridge')).toMatchObject({
+        enabled: false,
+        installedAt: '2020-01-01T00:00:00.000Z',
+      });
+      const restored = await readFile(join(home, 'plugins', 'installed.json'), 'utf8');
+      expect(JSON.parse(restored)).toEqual(JSON.parse(before));
+      await expect(
+        readFile(
+          join(home, 'plugins', 'managed', 'kimi-browser-extension', 'kimi.plugin.json'),
+          'utf8',
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await rm(legacyRoot, { recursive: true, force: true });
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects migration when the target skill is absent from the reloaded canonical plugin', async () => {
+    const legacyRoot = await makeLegacyWebbridge();
+    const fixture = await makeZip('kimi-browser-extension', '2.0.0', 'kimi-webbridge');
+    try {
+      let discoveries = 0;
+      const manager = new PluginManager({
+        kimiHomeDir: home,
+        discoverSkills: async (roots) => {
+          discoveries += 1;
+          if (discoveries === 2) {
+            return { skills: [], skipped: [], scannedRoots: [], scannedDirectories: [] };
+          }
+          return discoverFileSkills(roots);
+        },
+      });
+      await manager.load();
+
+      await expect(installWebbridge(manager, fixture)).rejects.toThrow(
+        /failed to reload after installation.*does not provide required skill "kimi-webbridge"/,
+      );
+
+      expect(manager.get('kimi-browser-extension')).toBeUndefined();
+      expect(manager.get('kimi-webbridge')).toMatchObject({
+        enabled: false,
+        installedAt: '2020-01-01T00:00:00.000Z',
+      });
+      const stored = JSON.parse(
+        await readFile(join(home, 'plugins', 'installed.json'), 'utf8'),
+      ) as { plugins: Array<{ id: string }> };
+      expect(stored.plugins.map((plugin) => plugin.id)).toEqual(['kimi-webbridge']);
+    } finally {
+      await rm(legacyRoot, { recursive: true, force: true });
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports compensation failure while restoring the in-memory legacy WebBridge record', async () => {
+    const legacyRoot = await makeLegacyWebbridge();
+    const fixture = await makeZip('kimi-browser-extension', '2.0.0', 'kimi-webbridge');
+    try {
+      let discoveries = 0;
+      const manager = new PluginManager({
+        kimiHomeDir: home,
+        discoverSkills: async (roots) => {
+          discoveries += 1;
+          if (discoveries === 2) {
+            await mkdir(join(home, 'plugins', 'installed.json.tmp'));
+            throw new Error('reload materialize failed');
+          }
+          return discoverFileSkills(roots);
+        },
+      });
+      await manager.load();
+
+      const failure = await installWebbridge(manager, fixture).catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toContain(
+        'previous plugin state could not be fully restored',
+      );
+      expect((failure as Error).cause).toBeInstanceOf(AggregateError);
+      expect(manager.get('kimi-browser-extension')).toBeUndefined();
+      expect(manager.get('kimi-webbridge')).toMatchObject({
+        enabled: false,
+        installedAt: '2020-01-01T00:00:00.000Z',
+      });
+    } finally {
+      await rm(legacyRoot, { recursive: true, force: true });
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
   });
 
   it('persists enabled state changes', async () => {

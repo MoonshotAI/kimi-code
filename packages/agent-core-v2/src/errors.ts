@@ -189,6 +189,7 @@ export type KimiErrorCode =
   | 'message.not_found'
   | 'plugin.not_found'
   | 'plugin.load_failed'
+  | 'plugin.catalog_changed'
   | 'request.invalid'
   | 'request.work_dir_required'
   | 'request.prompt_input_empty'

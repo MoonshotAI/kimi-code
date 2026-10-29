@@ -43,21 +43,14 @@ const WINDOWS_DOCTOR_SCRIPT =
 
 interface PluginLayerConfig {
   readonly id: string;
-  readonly zipUrl: string;
 }
 
 function macPlugin(): PluginLayerConfig {
-  return {
-    id: MAC_PLUGIN_ID,
-    zipUrl: kimiCdnContentUrl('kimi-computer-use/latest/kimi-cu-plugin.zip'),
-  };
+  return { id: MAC_PLUGIN_ID };
 }
 
 function windowsPlugin(): PluginLayerConfig {
-  return {
-    id: WINDOWS_PLUGIN_ID,
-    zipUrl: kimiCdnContentUrl('kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip'),
-  };
+  return { id: WINDOWS_PLUGIN_ID };
 }
 
 interface PermissionStatus {
@@ -178,7 +171,18 @@ async function installPluginLayer(
   ctx: CapabilityEntryContext,
   config: PluginLayerConfig,
 ): Promise<void> {
-  const summary = await ctx.plugins.installPlugin({ source: config.zipUrl });
+  const marketplace = await ctx.marketplace.listMarketplace();
+  const entry = marketplace.plugins.find((candidate) => candidate.id === config.id);
+  if (entry === undefined) {
+    throw new Error(`Marketplace plugin "${config.id}" was not found in the current catalog`);
+  }
+  if (entry.version === undefined) {
+    throw new Error(`Marketplace plugin "${config.id}" has no version in the current catalog`);
+  }
+  const summary = await ctx.plugins.installPlugin({
+    marketplaceId: config.id,
+    expectedVersion: entry.version,
+  });
   if (!summary.enabled) {
     await ctx.plugins.setPluginEnabled({ id: config.id, enabled: true });
   }
@@ -343,24 +347,21 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       permissionsProbeError = errorMessage(error);
     }
     if (permissionsProbeError !== undefined) {
-      steps.push({ id: 'permissions', state: 'failed', detail: permissionsProbeError });
+      steps.push(
+        { id: 'permissions.accessibility', state: 'failed', detail: permissionsProbeError },
+        { id: 'permissions.screenRecording', state: 'failed', detail: permissionsProbeError },
+      );
     } else {
-      const granted =
-        permissions !== undefined && permissions.accessibility && permissions.screenRecording;
-      const missingPermissions = permissions === undefined
-        ? undefined
-        : [
-            ...(permissions.accessibility ? [] : ['accessibility']),
-            ...(permissions.screenRecording ? [] : ['screenRecording']),
-          ].join(',');
-      steps.push({
-        id: 'permissions',
-        state: granted ? 'ok' : 'missing',
-        detail:
-          granted || missingPermissions === undefined || missingPermissions.length === 0
-            ? undefined
-            : missingPermissions,
-      });
+      steps.push(
+        {
+          id: 'permissions.accessibility',
+          state: permissions?.accessibility === true ? 'ok' : 'missing',
+        },
+        {
+          id: 'permissions.screenRecording',
+          state: permissions?.screenRecording === true ? 'ok' : 'missing',
+        },
+      );
     }
 
     return {
@@ -479,7 +480,10 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
       }
     }
 
-    if (stepStates.get('permissions') !== 'ok') {
+    if (
+      stepStates.get('permissions.accessibility') !== 'ok' ||
+      stepStates.get('permissions.screenRecording') !== 'ok'
+    ) {
       report('permissions');
       await runCommand(
         ctx.hostProcess,

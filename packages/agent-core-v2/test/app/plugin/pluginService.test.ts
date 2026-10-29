@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -12,11 +14,16 @@ import {
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import type { MarketplacePluginInstall } from '#/app/plugin/marketplaceService';
 import { IPluginService } from '#/app/plugin/plugin';
-import { PluginService } from '#/app/plugin/pluginService';
+import {
+  installResolvedMarketplacePlugin,
+  PluginService,
+} from '#/app/plugin/pluginService';
 import * as pluginStore from '#/app/plugin/store';
 import type { InstalledFile, InstalledRecord } from '#/app/plugin/store';
 import type { PluginMutationSummary, ReloadSummary } from '#/app/plugin/types';
+import { IRegionService } from '#/app/region/region';
 import { LifecycleScope } from '#/app/scopes';
 import {
   ITelemetryService,
@@ -51,6 +58,11 @@ function makeHost(
   return createScopedTestHost([
     stubPair(IBootstrapService, stubBootstrap(homeDir, env)),
     stubPair(IProviderService, providers),
+    stubPair(IRegionService, {
+      _serviceBrand: undefined,
+      current: () => ({ region: 'mainland-cn', source: 'default' }),
+      getRegionAsync: async () => 'mainland-cn',
+    } satisfies IRegionService),
     stubPair(ISkillDiscovery, {
       _serviceBrand: undefined,
       discover: async () => ({
@@ -256,6 +268,59 @@ describe('PluginService (plugin boundary)', () => {
       ]);
       expect(reloads).toEqual([{ added: ['recovery-demo'], removed: [], errors: [] }]);
       expect(svc.enabledPluginIds()).toEqual(['recovery-demo']);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('installs a pre-resolved marketplace artifact without resolving the catalog again', async () => {
+    const home = await makeHome();
+    await writeValidInstalledFile(home);
+    const fixtureDir = await mkdtemp(path.join(tmpdir(), 'resolved-plugin-'));
+    createdDirs.push(fixtureDir);
+    const sourceRoot = path.join(fixtureDir, 'source');
+    await mkdir(sourceRoot);
+    await writeFile(
+      path.join(sourceRoot, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'resolved-demo', version: '2.0.0' }),
+      'utf8',
+    );
+    const zipPath = path.join(fixtureDir, 'plugin.zip');
+    execFileSync('zip', ['-qr', zipPath, '.'], { cwd: sourceRoot });
+    const buffer = await readFile(zipPath);
+    const artifactFetch = vi.fn(async () => new Response(buffer)) as unknown as typeof fetch;
+    const catalogFetch = vi.fn();
+    vi.stubGlobal('fetch', catalogFetch);
+    const resolved: MarketplacePluginInstall = {
+      source: 'https://marketplace.example.test/resolved-demo.zip',
+      version: '2.0.0',
+      sha256sum: createHash('sha256').update(buffer).digest('hex'),
+      catalogId: 'resolved-demo',
+      origin: 'marketplace',
+      expectedPluginId: 'resolved-demo',
+      fetchImpl: artifactFetch,
+    };
+    const host = makeHost(home);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      const reloads: ReloadSummary[] = [];
+      svc.onDidReload(({ added, removed, errors }) => reloads.push({ added, removed, errors }));
+
+      const summary = await installResolvedMarketplacePlugin(
+        svc,
+        { marketplaceId: 'resolved-demo', expectedVersion: '2.0.0' },
+        resolved,
+      );
+
+      expect(summary).toMatchObject({
+        id: 'resolved-demo',
+        version: '2.0.0',
+        state: 'ok',
+        origin: 'marketplace',
+      });
+      expect(artifactFetch).toHaveBeenCalledTimes(1);
+      expect(catalogFetch).not.toHaveBeenCalled();
+      expect(reloads).toEqual([{ added: [], removed: [], errors: [] }]);
     } finally {
       host.dispose();
     }

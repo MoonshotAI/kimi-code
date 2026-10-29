@@ -1176,6 +1176,35 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('returns origin and installedAt from a custom plugin install', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const source = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-plugin-'));
+    tempDirs.push(homeDir, source);
+    await writeFile(
+      join(source, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', version: '1.0.0' }),
+    );
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const installed = await rpc.installPlugin({ source });
+      expect(installed).toMatchObject({
+        id: 'demo',
+        origin: 'custom',
+        installedAt: expect.any(String),
+      });
+      expect(installed.catalogId).toBeUndefined();
+      expect(await rpc.listPlugins()).toEqual([
+        expect.objectContaining({
+          id: 'demo',
+          origin: 'custom',
+          installedAt: installed.installedAt,
+        }),
+      ]);
+    } finally {
+      await rpc.close();
+    }
+  });
+
   it('persists removeProvider as one atomic cascade (providers, models, defaults)', async () => {
     const { harness } = await makeHarness();
     try {
