@@ -214,4 +214,16 @@ import type { RemoteEnvironmentEntry } from '#/remote/declaration/remoteEnvironm
     );
     expect(violations).toHaveLength(0);
   });
+
+  it('lets the remote executor reuse only the DI-free node-local fs and process backends', () => {
+    const violations = checkSource(
+      `import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import '#/os/backends/node-local/hostServices';
+import { HostEnvironmentService } from '#/os/backends/node-local/hostEnvironmentService';`,
+      at('remote/server', 'stdioHost.ts'),
+    );
+    expect(violations).toHaveLength(2);
+    expect(violations.every((violation) => /remote executor stays light/.test(violation.message))).toBe(true);
+  });
 });

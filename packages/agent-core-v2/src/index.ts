@@ -81,6 +81,7 @@ export * from '#/os/backends/node-local/hostClockService';
 export * from '#/os/backends/node-local/hostEnvironmentService';
 export * from '#/os/backends/node-local/hostFsService';
 export * from '#/os/backends/node-local/hostProcessService';
+import '#/os/backends/node-local/hostServices';
 export * from '#/agent/tools/os/bash/bash';
 import '#/agent/tools/os/bash/bashTool';
 export * from '#/agent/tools/os/glob/glob';

@@ -19,14 +19,21 @@ packages/agent-core-v2/src/remote/
 - `@moonshot-ai/agent-core-v2/remote/server` — the executor side: `runExecServer` (light entry), `StdioHost`.
 
 The CLI consumes only the server entry: argv pre-dispatch
-(`kimi exec-server --listen stdio`) then `await import('@moonshot-ai/agent-core-v2/remote/server')`
-and `runExecServer({ version })`. The entry composes only node-local OS
-backends and awaits the environment probe; it creates no App scope and starts
-no config/OAuth/telemetry/session services. Logs go to stderr; stdout carries
+(`kimi exec-server --listen stdio`) then `await import('@moonshot-ai/kimi-code-sdk/exec-server')`
+(a light SDK subpath re-exporting this entry) and `runExecServer({ version })`.
+The fs/process handlers are protocol adapters over the same node-local
+`HostFileSystem` / `HostProcessService` implementations the local environment
+uses, so local and remote fs/process behave alike; the handlers keep only wire
+concerns (validation, size limits, error mapping, process ids, output
+notifications, flow control, process-group reaping). The entry awaits the
+environment probe; it creates no App scope and starts no
+config/OAuth/telemetry/session services. Logs go to stderr; stdout carries
 protocol frames only. The light import graph is enforced by
 `scripts/check-import-boundaries.mjs`: `src/remote/server` may import only
-node builtins, relative modules, `#/remote/protocol`,
-`#/os/interface` and `#/_base/execEnv`.
+node builtins, relative modules, `#/remote/protocol`, `#/os/interface`,
+`#/_base/execEnv` and the DI-free node-local `hostFsService` /
+`hostProcessService` modules (their App-scope registration lives in
+`os/backends/node-local/hostServices.ts`).
 
 ## Protocol notes (deviations from codex exec-server)
 
@@ -45,6 +52,8 @@ deviations per the design spec, plus one forced addition:
   rejects a truncated listing with `os.fs.directory_too_large` rather than
   exposing an incomplete directory; the current limit is 50,000 entries.
 - Added `fs/rename` (no codex counterpart).
+- `fs/remove` takes only `path` and always removes recursively and ignores a
+  missing path, matching `IHostFileSystem.remove` (codex has `recursive`/`force`).
 - `process/signal` is three-state (`interrupt|terminate|kill`, codex only
   interrupt); signals act on the whole process group, and group residue is
   cleaned even when the leader has already exited (spec §5.3 — codex no-ops

@@ -240,7 +240,7 @@ export class RemoteFileSystem implements IHostFileSystem {
   }
 
   async remove(path: string): Promise<void> {
-    await this.call(FS_REMOVE_METHOD, { path, recursive: true, force: true });
+    await this.call(FS_REMOVE_METHOD, { path });
   }
 
   async realpath(path: string): Promise<string> {

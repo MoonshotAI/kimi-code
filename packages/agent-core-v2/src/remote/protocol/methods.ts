@@ -111,8 +111,6 @@ export interface FsReadDirectoryResult {
 
 export interface FsRemoveParams {
   readonly path: string;
-  readonly recursive?: boolean;
-  readonly force?: boolean;
 }
 
 export interface FsRenameParams {

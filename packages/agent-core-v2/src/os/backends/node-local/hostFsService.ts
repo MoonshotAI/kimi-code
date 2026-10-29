@@ -12,8 +12,6 @@ import {
   stat as nodeStat,
   writeFile,
 } from 'node:fs/promises';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { decodeTextWithErrors, readUtf8Lines, type TextDecodeErrors } from '#/_base/execEnv/decodeText';
 
 import { type HostDirEntry, type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -69,6 +67,14 @@ export class HostFileSystem implements IHostFileSystem {
   async appendText(path: string, data: string): Promise<void> {
     try {
       await appendFile(path, data, 'utf8');
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'append' });
+    }
+  }
+
+  async appendBytes(path: string, data: Uint8Array): Promise<void> {
+    try {
+      await appendFile(path, data);
     } catch (error) {
       throw toHostFsError(error, { path, op: 'append' });
     }
@@ -218,11 +224,3 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IHostFileSystem,
-  HostFileSystem,
-  ScopeActivation.OnScopeCreated,
-  'hostFs',
-);

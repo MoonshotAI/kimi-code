@@ -31,6 +31,9 @@ import {
   type InitializeResult,
   type RemoteEnvironmentInfo,
 } from '#/remote/protocol/methods';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+
 import { FsHandler } from './fsHandler';
 import { ProcessManager } from './processManager';
 
@@ -129,7 +132,7 @@ export class StdioHost {
   private readonly decoder = new LineFrameDecoder();
   private readonly writer: OutboundWriter;
   private readonly processManager: ProcessManager;
-  private readonly fsHandler = new FsHandler();
+  private readonly fsHandler = new FsHandler(new HostFileSystem());
   private readonly handlers: ReadonlyMap<string, Handler>;
   private state: 'pre-init' | 'ready' = 'pre-init';
   private inFlight = 0;
@@ -141,7 +144,7 @@ export class StdioHost {
   constructor(private readonly options: StdioHostOptions) {
     this.processManager = new ProcessManager((method, params) => {
       this.sendNotification(method, params);
-    });
+    }, new HostProcessService());
     this.writer = new OutboundWriter(
       options.output,
       8 * 1024 * 1024,

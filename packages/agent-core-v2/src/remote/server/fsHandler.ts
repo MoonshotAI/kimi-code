@@ -1,19 +1,7 @@
-import { constants } from 'node:fs';
-import {
-  appendFile,
-  lstat,
-  mkdir,
-  open,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 
-import { OsFsErrors, toHostFsError } from '#/os/interface/hostFsErrors';
+import type { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { HostFsError, OsFsErrors, toHostFsError } from '#/os/interface/hostFsErrors';
 
 import { RpcError, RpcErrorCode } from '#/remote/protocol/errors';
 import {
@@ -92,32 +80,27 @@ function fsDomainError(error: unknown, ctx: { path: string; op: string }): RpcEr
 const EMPTY: Record<string, never> = {};
 
 export class FsHandler {
+  constructor(private readonly fs: HostFileSystem) {}
+
   async readFile(rawParams: unknown): Promise<FsReadFileResult> {
     const params = requireParams(rawParams);
     const path = requireAbsolutePath(params, 'path');
     const offset = optionalInteger(params, 'offset', 0, Number.MAX_SAFE_INTEGER) ?? 0;
     const maxBytes = optionalInteger(params, 'maxBytes', 1, FS_READ_FILE_MAX_BYTES);
     try {
-      const handle = await open(path);
-      try {
-        const size = (await handle.stat()).size;
-        const length = maxBytes ?? size - offset;
-        if (length > FS_READ_FILE_WHOLE_MAX_BYTES) {
-          throw new RpcError(
-            RpcErrorCode.InvalidRequest,
-            `fs/readFile without maxBytes is limited to ${FS_READ_FILE_WHOLE_MAX_BYTES} bytes; use offset/maxBytes`,
-          );
-        }
-        if (offset >= size) {
-          return { dataBase64: '', eof: true };
-        }
-        const buffer = Buffer.alloc(Math.max(0, Math.min(length, size - offset)));
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
-        const data = buffer.subarray(0, bytesRead);
-        return { dataBase64: data.toString('base64'), eof: offset + bytesRead >= size };
-      } finally {
-        await handle.close();
+      const { size } = await this.fs.stat(path);
+      const length = maxBytes ?? size - offset;
+      if (length > FS_READ_FILE_WHOLE_MAX_BYTES) {
+        throw new RpcError(
+          RpcErrorCode.InvalidRequest,
+          `fs/readFile without maxBytes is limited to ${FS_READ_FILE_WHOLE_MAX_BYTES} bytes; use offset/maxBytes`,
+        );
       }
+      if (offset >= size) {
+        return { dataBase64: '', eof: true };
+      }
+      const data = await this.fs.readBytes(path, Math.min(length, size - offset), offset);
+      return { dataBase64: Buffer.from(data).toString('base64'), eof: offset + data.byteLength >= size };
     } catch (error) {
       if (error instanceof RpcError) throw error;
       throw fsDomainError(error, { path, op: 'read' });
@@ -138,20 +121,17 @@ export class FsHandler {
     const data = Buffer.from(dataBase64, 'base64');
     try {
       if (mode === 'truncate') {
-        await writeFile(path, data);
+        await this.fs.writeBytes(path, data);
       } else if (mode === 'append') {
-        await appendFile(path, data);
-      } else {
-        const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL);
-        try {
-          await handle.writeFile(data);
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
+        await this.fs.appendBytes(path, data);
+      } else if (!(await this.fs.createExclusive(path, data))) {
+        throw new HostFsError(OsFsErrors.codes.OS_FS_ALREADY_EXISTS, `${path} already exists`, {
+          details: { path, op: 'create' },
+        });
       }
       return EMPTY;
     } catch (error) {
+      if (error instanceof RpcError) throw error;
       throw fsDomainError(error, { path, op: 'write' });
     }
   }
@@ -161,7 +141,7 @@ export class FsHandler {
     const path = requireAbsolutePath(params, 'path');
     const recursive = optionalBoolean(params, 'recursive') ?? false;
     try {
-      await mkdir(path, { recursive });
+      await this.fs.mkdir(path, { recursive });
       return EMPTY;
     } catch (error) {
       throw fsDomainError(error, { path, op: 'mkdir' });
@@ -173,14 +153,14 @@ export class FsHandler {
     const path = requireAbsolutePath(params, 'path');
     const followSymlinks = optionalBoolean(params, 'followSymlinks') ?? true;
     try {
-      const result = followSymlinks ? await stat(path) : await lstat(path);
+      const result = followSymlinks ? await this.fs.stat(path) : await this.fs.lstat(path);
       return {
-        isDirectory: result.isDirectory(),
-        isFile: result.isFile(),
-        isSymlink: result.isSymbolicLink(),
+        isDirectory: result.isDirectory,
+        isFile: result.isFile,
+        isSymlink: result.isSymbolicLink ?? false,
         size: result.size,
-        modifiedAtMs: result.mtimeMs,
-        mode: result.mode & 0o7777,
+        modifiedAtMs: result.mtimeMs ?? 0,
+        mode: result.mode,
       };
     } catch (error) {
       throw fsDomainError(error, { path, op: 'stat' });
@@ -191,7 +171,7 @@ export class FsHandler {
     const params = requireParams(rawParams);
     const path = requireAbsolutePath(params, 'path');
     try {
-      return { path: await realpath(path) };
+      return { path: await this.fs.realpath(path) };
     } catch (error) {
       throw fsDomainError(error, { path, op: 'realpath' });
     }
@@ -201,13 +181,13 @@ export class FsHandler {
     const params = requireParams(rawParams);
     const path = requireAbsolutePath(params, 'path');
     try {
-      const entries = await readdir(path, { withFileTypes: true });
+      const entries = await this.fs.readdir(path);
       return {
         entries: entries.slice(0, FS_READ_DIRECTORY_MAX_ENTRIES).map((entry) => ({
           fileName: entry.name,
-          isDirectory: entry.isDirectory(),
-          isFile: entry.isFile(),
-          isSymlink: entry.isSymbolicLink(),
+          isDirectory: entry.isDirectory,
+          isFile: entry.isFile,
+          isSymlink: entry.isSymbolicLink ?? false,
         })),
         truncated: entries.length > FS_READ_DIRECTORY_MAX_ENTRIES,
       };
@@ -219,10 +199,8 @@ export class FsHandler {
   async remove(rawParams: unknown): Promise<typeof EMPTY> {
     const params = requireParams(rawParams);
     const path = requireAbsolutePath(params, 'path');
-    const recursive = optionalBoolean(params, 'recursive') ?? false;
-    const force = optionalBoolean(params, 'force') ?? false;
     try {
-      await rm(path, { recursive, force });
+      await this.fs.remove(path);
       return EMPTY;
     } catch (error) {
       throw fsDomainError(error, { path, op: 'remove' });
@@ -234,7 +212,7 @@ export class FsHandler {
     const from = requireAbsolutePath(params, 'from');
     const to = requireAbsolutePath(params, 'to');
     try {
-      await rename(from, to);
+      await this.fs.rename(from, to);
       return EMPTY;
     } catch (error) {
       throw fsDomainError(error, { path: from, op: 'rename' });

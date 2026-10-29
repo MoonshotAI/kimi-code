@@ -3,8 +3,6 @@ import { stat } from 'node:fs/promises';
 import type { Readable, Writable } from 'node:stream';
 
 import { BufferedReadable } from '#/_base/execEnv/bufferedReadable';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import {
   HostProcessError,
@@ -218,11 +216,3 @@ export class HostProcessService implements IHostProcessService {
     return new HostProcess(child, options.mergeStderr ?? false);
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IHostProcessService,
-  HostProcessService,
-  ScopeActivation.OnScopeCreated,
-  'hostProcess',
-);

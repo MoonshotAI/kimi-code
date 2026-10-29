@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { RemoteExecConnection } from '#/remote/client/connection';
 import { RemoteProcessService } from '#/remote/client/remoteProcess';
 import { PROCESS_EXITED_METHOD } from '#/remote/protocol/methods';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { ProcessManager } from '#/remote/server/processManager';
 import {
   connectInProcess,
@@ -496,22 +496,12 @@ describe('process protocol semantics', () => {
 
 describe('shutdown of a process that is still starting', () => {
   it('kills a spawn that finishes after shutdown begins', async () => {
-    const manager = new ProcessManager(() => {});
+    const host = new HostProcessService();
+    const manager = new ProcessManager(() => {}, host);
     const script = join(tmpdir(), `remote-exec-starting-${process.pid}.mjs`);
     await writeFile(script, 'setTimeout(() => {}, 30_000);\n');
-    const child = spawn(process.execPath, [script], {
-      cwd: tmpdir(),
-      detached: true,
-      stdio: 'ignore',
-    });
-    child.unref();
-    const pid = child.pid ?? -1;
-    await new Promise<void>((resolve, reject) => {
-      child.once('spawn', () => {
-        resolve();
-      });
-      child.once('error', reject);
-    });
+    const child = await host.spawn(process.execPath, [script], { cwd: tmpdir(), detached: true });
+    const pid = child.pid;
     let releaseSpawn: (() => void) | undefined;
     const held = new Promise<void>((resolve) => {
       releaseSpawn = resolve;
@@ -520,9 +510,8 @@ describe('shutdown of a process that is still starting', () => {
       startPipe(entry: { child?: typeof child; pid: number }, argv: string[], cwd: string, env: unknown): Promise<void>;
     };
     vi.spyOn(internals, 'startPipe').mockImplementation(async (entry) => {
-      entry.child = child;
-      entry.pid = -1;
       await held;
+      entry.child = child;
       entry.pid = pid;
     });
     try {
@@ -541,13 +530,8 @@ describe('shutdown of a process that is still starting', () => {
       await waitForDeath(pid, 2_000);
     } finally {
       vi.restoreAllMocks();
-      if (isAlive(pid)) {
-        try {
-          process.kill(-pid, 'SIGKILL');
-        } catch {
-          child.kill('SIGKILL');
-        }
-      }
+      if (isAlive(pid)) await child.kill('SIGKILL');
+      await child.dispose();
       manager.dispose();
       await rm(script, { force: true });
     }
@@ -558,7 +542,7 @@ describe('finished process-group ownership', () => {
   it('does not evict live groups at the former cache limit and reaps missing groups', async () => {
     vi.useFakeTimers();
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
-    const manager = new ProcessManager(() => {});
+    const manager = new ProcessManager(() => {}, new HostProcessService());
     const internals = manager as unknown as {
       processes: Map<string, unknown>;
       exitedGroups: Map<string, unknown>;

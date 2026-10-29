@@ -55,6 +55,17 @@ describe('fs group over a subprocess loopback', () => {
     ]))).toBe(true);
   });
 
+  it('round-trips binary data written across chunk boundaries', async () => {
+    const path = join(workDir, 'binary.bin');
+    const data = new Uint8Array(2 * 1024 * 1024 + 7);
+    for (let i = 0; i < data.byteLength; i += 1) data[i] = (i * 131 + 7) % 256;
+    await fs.writeBytes(path, data);
+    await fs.appendText(path, '中'.repeat(400 * 1024));
+
+    const read = await fs.readBytes(path);
+    expect(Buffer.from(read).equals(Buffer.concat([Buffer.from(data), Buffer.from('中'.repeat(400 * 1024))]))).toBe(true);
+  }, 30_000);
+
   it('reads files larger than the whole-file limit in bounded chunks', async () => {
     const path = join(workDir, 'big.bin');
     const size = FS_READ_FILE_WHOLE_MAX_BYTES + 1024 * 1024;

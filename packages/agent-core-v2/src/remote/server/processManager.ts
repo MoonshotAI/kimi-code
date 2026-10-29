@@ -1,6 +1,6 @@
-import { spawn, type ChildProcess } from 'node:child_process';
 import { stat } from 'node:fs/promises';
-import { OsProcessErrors } from '#/os/interface/hostProcess';
+import type { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import { OsProcessErrors, type IHostProcess } from '#/os/interface/hostProcess';
 import { PROCESS_TERMINATION_GRACE_MS } from '../processLifecycle';
 
 import { RpcError, RpcErrorCode } from '#/remote/protocol/errors';
@@ -28,7 +28,7 @@ interface ManagedProcess {
   readonly processId: string;
   state: 'starting' | 'running';
   pid: number;
-  child: ChildProcess | undefined;
+  child: IHostProcess | undefined;
   stdinOpen: boolean;
   terminateAfterStart: boolean;
   clientPaused: boolean;
@@ -53,7 +53,10 @@ export class ProcessManager {
   private shuttingDown = false;
   private disposed = false;
 
-  constructor(private readonly notify: (method: string, params: unknown) => void) {}
+  constructor(
+    private readonly notify: (method: string, params: unknown) => void,
+    private readonly host: HostProcessService,
+  ) {}
 
   async start(rawParams: unknown): Promise<ProcessStartResult> {
     if (this.disposed || this.shuttingDown) {
@@ -123,12 +126,7 @@ export class ProcessManager {
     };
     this.processes.set(processId, entry);
 
-    const spawnEnv =
-      env === undefined
-        ? undefined
-        : { ...(process.env as Record<string, string>), ...(env as Record<string, string>) };
-
-    await this.startPipe(entry, argv as string[], cwd, spawnEnv);
+    await this.startPipe(entry, argv as string[], cwd, env as Record<string, string> | undefined);
     if (this.disposed || this.shuttingDown || entry.terminateAfterStart) {
       this.processes.delete(processId);
       this.killGroup(entry, 'SIGKILL');
@@ -136,7 +134,7 @@ export class ProcessManager {
     }
     entry.state = 'running';
     if (entry.terminateAfterStart) {
-      this.beginTermination(entry);
+      this.beginTermination(entry).catch(() => {});
     }
     return { pid: entry.pid };
   }
@@ -145,64 +143,53 @@ export class ProcessManager {
     entry: ManagedProcess,
     argv: string[],
     cwd: string,
-    spawnEnv: Record<string, string> | undefined,
+    env: Record<string, string> | undefined,
   ): Promise<void> {
-    const child = spawn(argv[0]!, argv.slice(1), {
-      cwd,
-      env: spawnEnv,
-      detached: true,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    entry.child = child;
-    entry.pid = child.pid ?? -1;
-    this.applyOutputPause(entry);
-    const stdout = child.stdout!;
-    const stderr = child.stderr!;
-    stdout.on('data', (chunk: Buffer) => {
-      this.pump(entry, 'stdout', chunk);
-    });
-    stderr.on('data', (chunk: Buffer) => {
-      this.pump(entry, 'stderr', chunk);
-    });
-    stdout.on('end', () => {
-      this.onStreamEnd(entry);
-    });
-    stderr.on('end', () => {
-      this.onStreamEnd(entry);
-    });
-    stdout.on('error', () => {
-      this.onStreamEnd(entry);
-    });
-    stderr.on('error', () => {
-      this.onStreamEnd(entry);
-    });
-    if (child.stdin !== null) {
-      child.stdin.on('error', () => {
-        this.breakStdin(entry);
-      });
-    }
-    child.on('exit', (code) => {
-      this.onExit(entry, code ?? -1);
-    });
-    await new Promise<void>((resolve, reject) => {
-      child.once('spawn', () => {
-        resolve();
-      });
-      child.once('error', (error: NodeJS.ErrnoException) => {
-        reject(error);
-      });
-    }).catch((error: NodeJS.ErrnoException) => {
+    let child: IHostProcess;
+    try {
+      child = await this.host.spawn(argv[0]!, argv.slice(1), { cwd, env, detached: true });
+    } catch (error) {
       this.processes.delete(entry.processId);
+      const cause = (error instanceof Error && error.cause !== undefined ? error.cause : error) as NodeJS.ErrnoException;
       throw new RpcError(
         RpcErrorCode.InternalError,
-        `failed to spawn "${argv[0]}": ${error.message}`,
+        `failed to spawn "${argv[0]}": ${cause.message}`,
         {
           domainCode: OsProcessErrors.codes.OS_PROCESS_SPAWN_FAILED,
-          errno: error.code,
+          errno: cause.code,
         },
       );
+    }
+    entry.child = child;
+    entry.pid = child.pid;
+    this.applyOutputPause(entry);
+    child.stdout.on('data', (chunk: Buffer) => {
+      this.pump(entry, 'stdout', chunk);
     });
+    child.stderr.on('data', (chunk: Buffer) => {
+      this.pump(entry, 'stderr', chunk);
+    });
+    child.stdout.on('end', () => {
+      this.onStreamEnd(entry);
+    });
+    child.stderr.on('end', () => {
+      this.onStreamEnd(entry);
+    });
+    child.stdout.on('error', () => {
+      this.onStreamEnd(entry);
+    });
+    child.stderr.on('error', () => {
+      this.onStreamEnd(entry);
+    });
+    child.stdin.on('error', () => {
+      this.breakStdin(entry);
+    });
+    child.wait().then(
+      (code) => {
+        this.onExit(entry, code);
+      },
+      () => {},
+    );
   }
 
   private pump(entry: ManagedProcess, stream: ProcessOutputStream, chunk: Buffer): void {
@@ -289,7 +276,7 @@ export class ProcessManager {
     const chunk = Buffer.from(chunkBase64, 'base64');
     if (chunk.length > 0) {
       const stdin = entry.child?.stdin;
-      if (stdin === null || stdin === undefined) {
+      if (stdin === undefined) {
         entry.stdinOpen = false;
         return EMPTY;
       }
@@ -353,40 +340,23 @@ export class ProcessManager {
       throw new RpcError(RpcErrorCode.InvalidRequest, `process id ${processId} is starting`);
     }
     if (signal === 'terminate') {
-      this.beginTermination(entry);
+      await this.beginTermination(entry);
       return EMPTY;
     }
-    this.killGroup(entry, signal === 'interrupt' ? 'SIGINT' : 'SIGKILL');
+    await entry.child?.kill(signal === 'interrupt' ? 'SIGINT' : 'SIGKILL');
     return EMPTY;
   }
 
-  private beginTermination(entry: ManagedProcess): void {
-    this.killGroup(entry, 'SIGTERM');
+  private async beginTermination(entry: ManagedProcess): Promise<void> {
+    await entry.child?.kill('SIGTERM');
     entry.killTimer = setTimeout(() => {
-      try {
-        this.killGroup(entry, 'SIGKILL');
-      } catch {
-      }
+      this.killGroup(entry, 'SIGKILL');
     }, PROCESS_TERMINATION_GRACE_MS);
     entry.killTimer.unref?.();
   }
 
   private killGroup(entry: ManagedProcess, signal: NodeJS.Signals): void {
-    if (entry.pid <= 0) return;
-    try {
-      process.kill(-entry.pid, signal);
-      return;
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code === 'ESRCH') return;
-      if (err.code !== 'EPERM') throw error;
-    }
-    try {
-      entry.child?.kill(signal);
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code !== 'ESRCH') throw error;
-    }
+    entry.child?.kill(signal).catch(() => {});
   }
 
   private killOrphanedGroup(pgid: number, signal: NodeJS.Signals): void {
@@ -415,15 +385,9 @@ export class ProcessManager {
     const paused = this.outputPaused || entry.clientPaused;
     const child = entry.child;
     if (child === undefined) return;
-    const stdout = child.stdout;
-    const stderr = child.stderr;
-    if (stdout !== null && stdout !== undefined) {
-      if (paused) stdout.pause();
-      else stdout.resume();
-    }
-    if (stderr !== null && stderr !== undefined) {
-      if (paused) stderr.pause();
-      else stderr.resume();
+    for (const stream of [child.stdout, child.stderr]) {
+      if (paused) stream.pause();
+      else stream.resume();
     }
   }
 
@@ -435,10 +399,7 @@ export class ProcessManager {
       if (entry.state === 'starting') entry.terminateAfterStart = true;
     }
     for (const entry of entries) {
-      try {
-        this.killGroup(entry, 'SIGTERM');
-      } catch {
-      }
+      this.killGroup(entry, 'SIGTERM');
     }
     const orphanedGroups = [...this.exitedGroups.values()];
     for (const group of orphanedGroups) {
@@ -454,10 +415,7 @@ export class ProcessManager {
       }
     }
     for (const entry of entries) {
-      try {
-        this.killGroup(entry, 'SIGKILL');
-      } catch {
-      }
+      this.killGroup(entry, 'SIGKILL');
     }
     for (const group of [...orphanedGroups, ...this.exitedGroups.values()]) {
       this.killOrphanedGroup(group.pid, 'SIGKILL');
