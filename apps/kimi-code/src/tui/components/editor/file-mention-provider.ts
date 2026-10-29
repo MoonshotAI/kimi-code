@@ -1,4 +1,5 @@
-import { accessSync, constants as fsConstants, readdirSync, statSync } from 'node:fs';
+import { accessSync, constants as fsConstants, type Dirent, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
 import {
@@ -49,7 +50,7 @@ export class FileMentionProvider implements AutocompleteProvider {
     private readonly getInputMode: () => 'prompt' | 'bash' = () => 'prompt',
     private readonly skillCommandNames?: ReadonlySet<string>,
   ) {
-    this.additionalDirs = additionalDirs.map((dir) => normalizePath(resolve(workDir, dir)));
+    this.additionalDirs = additionalDirs.map((dir) => resolveMentionDirectory(workDir, dir));
     // Build an expanded list that includes alias entries so that
     // inner's argument completion can find commands by alias too.
     const expanded: SlashAutocompleteCommand[] = [];
@@ -473,58 +474,74 @@ function collectFsMentionCandidates(
   signal: AbortSignal,
 ): FsMentionCandidate[] {
   const candidatesByAbsolutePath = new Map<string, FsMentionCandidate>();
-  const roots = [
-    { root: normalizePath(resolve(workDir)), isAdditionalDir: false },
-    ...additionalDirs.map((dir) => ({
-      root: normalizePath(resolve(workDir, dir)),
-      isAdditionalDir: true,
-    })),
-  ];
+  const workRoot = normalizePath(resolve(workDir));
+  const rootsByPath = new Map([[workRoot, { root: workRoot, isAdditionalDir: false }]]);
+  for (const dir of additionalDirs) {
+    const root = normalizePath(resolve(workDir, dir));
+    if (!rootsByPath.has(root)) {
+      rootsByPath.set(root, { root, isAdditionalDir: true });
+    }
+  }
+  const pending = [...rootsByPath.values()].map(({ root, isAdditionalDir }) => ({
+    root,
+    isAdditionalDir,
+    stack: [''],
+    relativeDir: '',
+    entries: [] as Dirent[],
+    entryIndex: 0,
+  }));
   let scanned = 0;
 
-  for (const { root, isAdditionalDir } of roots) {
-    const stack = [''];
-
-    while (stack.length > 0 && scanned < MAX_FALLBACK_SCAN) {
-      if (signal.aborted) break;
-      const relativeDir = stack.pop() ?? '';
-      const absoluteDir = relativeDir.length === 0 ? root : join(root, relativeDir);
-      let entries;
-      try {
-        entries = readdirSync(absoluteDir, { withFileTypes: true });
-      } catch {
-        continue;
+  while (
+    !signal.aborted &&
+    scanned < MAX_FALLBACK_SCAN &&
+    pending.some((state) => state.stack.length > 0 || state.entryIndex < state.entries.length)
+  ) {
+    for (const state of pending) {
+      if (signal.aborted || scanned >= MAX_FALLBACK_SCAN) break;
+      if (state.entryIndex >= state.entries.length) {
+        if (state.stack.length === 0) continue;
+        state.relativeDir = state.stack.pop() ?? '';
+        const absoluteDir =
+          state.relativeDir.length === 0 ? state.root : join(state.root, state.relativeDir);
+        try {
+          state.entries = readdirSync(absoluteDir, { withFileTypes: true });
+        } catch {
+          state.entries = [];
+        }
+        state.entryIndex = 0;
       }
 
-      for (const entry of entries) {
-        if (signal.aborted || scanned >= MAX_FALLBACK_SCAN) break;
-        if (entry.name === '.git') continue;
+      const entry = state.entries[state.entryIndex];
+      state.entryIndex += 1;
+      if (entry === undefined || entry.name === '.git') continue;
 
-        const relativePath = normalizePath(
-          relativeDir.length === 0 ? entry.name : join(relativeDir, entry.name),
-        );
-        const absolutePath = normalizePath(join(absoluteDir, entry.name));
-        const isSymlink = entry.isSymbolicLink();
-        let isDirectory = entry.isDirectory();
-        if (!isDirectory && isSymlink) {
-          try {
-            isDirectory = statSync(absolutePath).isDirectory();
-          } catch {
-            // Broken symlink or permission error — keep it as a file candidate.
-          }
+      const relativePath = normalizePath(
+        state.relativeDir.length === 0 ? entry.name : join(state.relativeDir, entry.name),
+      );
+      const absoluteDir =
+        state.relativeDir.length === 0 ? state.root : join(state.root, state.relativeDir);
+      const absolutePath = normalizePath(join(absoluteDir, entry.name));
+      const isSymlink = entry.isSymbolicLink();
+      let isDirectory = entry.isDirectory();
+      if (!isDirectory && isSymlink) {
+        try {
+          isDirectory = statSync(absolutePath).isDirectory();
+        } catch {
+          // Broken symlink or permission error — keep it as a file candidate.
         }
+      }
 
-        scanned += 1;
-        if (!candidatesByAbsolutePath.has(absolutePath)) {
-          candidatesByAbsolutePath.set(absolutePath, {
-            path: isAdditionalDir ? absolutePath : relativePath,
-            absolutePath,
-            isDirectory,
-          });
-        }
-        if (isDirectory && !isSymlink) {
-          stack.push(relativePath);
-        }
+      scanned += 1;
+      if (!candidatesByAbsolutePath.has(absolutePath) || !state.isAdditionalDir) {
+        candidatesByAbsolutePath.set(absolutePath, {
+          path: state.isAdditionalDir ? absolutePath : relativePath,
+          absolutePath,
+          isDirectory,
+        });
+      }
+      if (isDirectory && !isSymlink) {
+        state.stack.push(relativePath);
       }
     }
   }
@@ -586,6 +603,12 @@ function toMentionItem(candidate: FsMentionCandidate, isQuotedPrefix: boolean): 
 
 function normalizePath(path: string): string {
   return path.replaceAll('\\', '/');
+}
+
+export function resolveMentionDirectory(workDir: string, dir: string): string {
+  if (dir === '~') return normalizePath(homedir());
+  if (dir.startsWith('~/')) return normalizePath(join(homedir(), dir.slice(2)));
+  return normalizePath(resolve(workDir, dir));
 }
 
 async function getSlashArgumentSuggestions(

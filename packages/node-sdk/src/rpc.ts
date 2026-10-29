@@ -213,6 +213,13 @@ export abstract class SDKRpcClientBase {
 
   abstract listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]>;
 
+  async getWorkspaceAdditionalDirs(_workDir: string): Promise<readonly string[]> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Workspace additional directories are not implemented for this engine',
+    );
+  }
+
   abstract getWorkspaceTrustInfo(
     workDir: string,
     options?: WorkspaceTrustInfoOptions,

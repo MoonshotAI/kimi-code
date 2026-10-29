@@ -1,9 +1,11 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
+import { IConfigService } from '#/app/config/config';
 import { defineState } from '#/state/state';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
+import { workspaceTrustRequired } from './configSection';
 import { IWorkspaceTrust, type WorkspaceTrustChange } from './workspaceTrust';
 import {
   IWorkspaceTrustStore,
@@ -29,6 +31,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     @IWorkspaceContext workspace: IWorkspaceContext,
     @IWorkspaceTrustStore trustStore: IWorkspaceTrustStore,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
+    @IConfigService private readonly config: IConfigService,
   ) {
     super();
     this.states.contributeState(workspaceTrustTrustedKey);
@@ -62,6 +65,8 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
   }
 
   async get(): Promise<boolean> {
+    await this.config.ready;
+    if (!workspaceTrustRequired(this.config)) return true;
     await this.ready;
     return this.inner.get();
   }

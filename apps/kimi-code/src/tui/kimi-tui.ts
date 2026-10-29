@@ -4,7 +4,7 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import { log } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes, log } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -91,6 +91,7 @@ import { SessionPickerComponent, type SessionRow } from './components/dialogs/se
 import { TrustPromptComponent, type TrustPromptChoice } from './components/dialogs/trust-prompt';
 import {
   FileMentionProvider,
+  resolveMentionDirectory,
   type SlashAutocompleteCommand,
 } from './components/editor/file-mention-provider';
 import { AssistantMessageComponent } from './components/messages/assistant-message';
@@ -342,6 +343,7 @@ export class KimiTUI {
   readonly options: KimiTUIOptions;
   session: Session | undefined;
   state: TUIState;
+  private hasSessionHistory = false;
   /** In-flight lazy session creation (v2 engine), shared by concurrent first-use triggers. */
   private ensureSessionPromise: Promise<Session | undefined> | null = null;
   /** In-flight `/new` session replacement, shared by concurrent `/new` triggers. */
@@ -479,6 +481,7 @@ export class KimiTUI {
         auto: startupInput.cliOptions.auto,
         plan: startupInput.cliOptions.plan,
         model: startupInput.cliOptions.model,
+        additionalDirs: startupInput.additionalDirs,
         agentProfile: startupInput.agentProfile,
         agentFiles: startupInput.cliOptions.agentFiles,
         startupNotice: startupInput.startupNotice,
@@ -656,13 +659,14 @@ export class KimiTUI {
     startupTrace('tui:start');
     // Signal handlers must be installed before raw mode to avoid EIO loops.
     this.registerSignalHandlers();
+    let trustPromptStartedLoop = false;
     // Outer try rolls back signal listeners on startup failure.
     try {
       // The workspace trust gate must run before anything else in startup —
       // including the migration branch: a workspace that needs migration is
       // not implicitly trusted, and later startup steps spawn child processes.
       startupTrace('trustPrompt:begin');
-      const trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
+      trustPromptStartedLoop = await this.maybeRunWorkspaceTrustPrompt();
       startupTrace('trustPrompt:end');
 
       if (this.migrationPlan !== null) {
@@ -684,8 +688,10 @@ export class KimiTUI {
           this.startBackgroundFdAutocomplete();
           await this.finishStartup(shouldReplayHistory);
         } catch (error) {
-          this.disposeTerminalTracking();
-          this.state.ui.stop();
+          if (!trustPromptStartedLoop) {
+            this.disposeTerminalTracking();
+            this.state.ui.stop();
+          }
           throw error;
         }
         return;
@@ -708,11 +714,17 @@ export class KimiTUI {
         await this.finishStartup(shouldReplayHistory);
         startupTrace('finishStartup:end');
       } catch (error) {
-        this.disposeTerminalTracking();
-        this.state.ui.stop();
+        if (!trustPromptStartedLoop) {
+          this.disposeTerminalTracking();
+          this.state.ui.stop();
+        }
         throw error;
       }
     } catch (error) {
+      if (trustPromptStartedLoop) {
+        this.disposeTerminalTracking();
+        this.state.ui.stop();
+      }
       this.unregisterSignalHandlers();
       throw error;
     }
@@ -772,6 +784,36 @@ export class KimiTUI {
 
   private async initMainTui(): Promise<boolean> {
     const shouldReplayHistory = await this.init();
+
+    if (this.session === undefined) {
+      const workDir = this.state.appState.workDir;
+      const pendingAdditionalDirs = this.state.appState.additionalDirs;
+      const workspaceAdditionalDirs = await this.harness
+        .getWorkspaceAdditionalDirs(workDir)
+        .catch((error: unknown) => {
+          if (
+            typeof error !== 'object' ||
+            error === null ||
+            !('code' in error) ||
+            error.code !== ErrorCodes.SHELL_GIT_BASH_NOT_FOUND
+          ) {
+            throw error;
+          }
+          this.appendStartupNotice(
+            `Additional workspace directories could not be loaded: ${formatErrorMessage(error)}`,
+          );
+          return [];
+        });
+      this.setAppState({
+        additionalDirs: [
+          ...new Set(
+            [...workspaceAdditionalDirs, ...pendingAdditionalDirs].map((dir) =>
+              resolveMentionDirectory(workDir, dir),
+            ),
+          ),
+        ],
+      });
+    }
 
     // Mount only after init() succeeds; see mountFooter().
     mountFooter(this.state);
@@ -987,8 +1029,9 @@ export class KimiTUI {
       agentProfile: startup.agentProfile,
       agentFiles: startup.agentFiles?.length ? [...startup.agentFiles] : undefined,
     };
-    if (this.state.appState.additionalDirs.length > 0) {
-      createSessionOptions.additionalDirs = [...this.state.appState.additionalDirs];
+    const startupAdditionalDirs = this.options.startup.additionalDirs ?? [];
+    if (startupAdditionalDirs.length > 0) {
+      createSessionOptions.additionalDirs = [...startupAdditionalDirs];
     }
 
     try {
@@ -2797,8 +2840,12 @@ export class KimiTUI {
       permission: this.state.appState.permissionMode,
       planMode: explicitPlanMode ? true : undefined,
     };
-    if (this.state.appState.additionalDirs.length > 0) {
-      options.additionalDirs = [...this.state.appState.additionalDirs];
+    const additionalDirs =
+      this.session === undefined && this.state.appState.sessionId === '' && !this.hasSessionHistory
+        ? (this.options.startup.additionalDirs ?? [])
+        : this.state.appState.additionalDirs;
+    if (additionalDirs.length > 0) {
+      options.additionalDirs = [...additionalDirs];
     }
     if (bindStartupAgent) {
       // The --agent/--agent-file startup binding is consumed by the first
@@ -2903,6 +2950,7 @@ export class KimiTUI {
     // before the engine's intake can read it.
     if (previous !== undefined) this.staging.releaseAll();
     this.session = session;
+    this.hasSessionHistory = true;
     this.surveyController.seedUserTurnCount(initialUserTurnCount);
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);

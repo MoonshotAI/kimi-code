@@ -333,6 +333,10 @@ export class KimiHarness {
     return this.rpc.listWorkspaceSkills(workDir);
   }
 
+  async getWorkspaceAdditionalDirs(workDir: string): Promise<readonly string[]> {
+    return this.rpc.getWorkspaceAdditionalDirs(workDir);
+  }
+
   /**
    * File suggestions for @ mention-style completion under `workDir`, no
    * session required. `undefined` on the v1 engine, which has no equivalent

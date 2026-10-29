@@ -71,8 +71,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   async describeGatedActivation(
     pendingAdditionalDirs: readonly string[] = [],
   ): Promise<TrustGatedActivation> {
-    await this.trust.ready;
-    if (this.trust.isTrusted()) return EMPTY_ACTIVATION;
+    if (await this.trust.get()) return EMPTY_ACTIVATION;
     await this.workspaceDirs.ready;
     const warnings: string[] = [];
     const [mcpServers, configuredDirs, skillRoots, instructionSources] = await Promise.all([

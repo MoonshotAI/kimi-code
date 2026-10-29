@@ -3,15 +3,17 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
+import { Emitter } from '#/_base/event';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigService, type ConfigSectionChangedEvent } from '#/app/config/config';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
@@ -19,6 +21,7 @@ import { projectRootsForDirs } from '#/features/skill/catalog/skillRoots';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { WORKSPACE_TRUST_SECTION } from '#/workspace/workspaceTrust/configSection';
 import {
   IWorkspaceTrust,
   type WorkspaceTrustChange,
@@ -40,6 +43,7 @@ import {
 } from '#/workspace/workspaceTrust/workspaceTrustStore';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { stubConfigService } from '../../app/config/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { stubLog } from '../../_base/log/stubs';
 
@@ -47,11 +51,15 @@ describe('WorkspaceTrustService', () => {
   let homeDir: string;
   let cwd: string;
   let disposables: DisposableStore;
+  let workspaceTrustEnabled: boolean;
+  let configChanges: Emitter<ConfigSectionChangedEvent>;
 
   beforeEach(() => {
     homeDir = mkdtempSync(join(tmpdir(), 'kimi-workspace-trust-home-'));
     cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-trust-cwd-'));
     disposables = new DisposableStore();
+    workspaceTrustEnabled = true;
+    configChanges = disposables.add(new Emitter<ConfigSectionChangedEvent>());
   });
 
   afterEach(async () => {
@@ -61,6 +69,26 @@ describe('WorkspaceTrustService', () => {
       rm(cwd, { recursive: true, force: true }),
     ]);
   });
+
+  function trustConfigService(): IConfigService {
+    return {
+      ...stubConfigService(),
+      get: (<T = unknown,>(domain: string): T =>
+        (domain === WORKSPACE_TRUST_SECTION
+          ? { requireTrust: workspaceTrustEnabled }
+          : undefined) as T) as IConfigService['get'],
+      onDidSectionChange: configChanges.event,
+    };
+  }
+
+  function fireTrustConfigChange(previousEnabled: boolean): void {
+    configChanges.fire({
+      domain: WORKSPACE_TRUST_SECTION,
+      source: 'reload',
+      value: { requireTrust: workspaceTrustEnabled },
+      previousValue: { requireTrust: previousEnabled },
+    });
+  }
 
   function createService(
     root: string,
@@ -74,6 +102,7 @@ describe('WorkspaceTrustService', () => {
         registerStateServices(reg);
         reg.definePartialInstance(IWorkspaceContext, { cwd: root });
         reg.defineInstance(IBootstrapService, stubBootstrap(homeDir, env));
+        reg.defineInstance(IConfigService, trustConfigService());
         reg.defineInstance(
           IAtomicDocumentStore,
           new JsonAtomicDocumentStore(new FileStorageService(homeDir)),
@@ -106,24 +135,68 @@ describe('WorkspaceTrustService', () => {
     expect(await service.get()).toBe(false);
   });
 
-  it('trusts the workspace when KIMI_CODE_TRUST_WORKSPACE is set', async () => {
-    const { service } = createService(cwd, undefined, {
+  it('honors KIMI_CODE_TRUST_WORKSPACE only when it parses as true', async () => {
+    const { service: trusted } = createService(cwd, undefined, {
       [TRUST_WORKSPACE_ENV]: '1',
     });
-    await service.ready;
+    await trusted.ready;
 
-    expect(service.isTrusted()).toBe(true);
-    expect(await service.get()).toBe(true);
-  });
+    expect(trusted.isTrusted()).toBe(true);
+    expect(await trusted.get()).toBe(true);
 
-  it('ignores KIMI_CODE_TRUST_WORKSPACE values that do not parse as true', async () => {
-    const { service } = createService(cwd, undefined, {
+    const { service: untrusted } = createService(cwd, undefined, {
       [TRUST_WORKSPACE_ENV]: '0',
     });
-    await service.ready;
+    await untrusted.ready;
 
+    expect(untrusted.isTrusted()).toBe(false);
+    expect(await untrusted.get()).toBe(false);
+  });
+
+  it('toggles the trust gate from config without changing persistence semantics', async () => {
+    const events: WorkspaceTrustChange[] = [];
+    const { service, states } = createService(cwd, events);
+    await service.ready;
+    expect(service.isTrusted()).toBe(false);
+
+    workspaceTrustEnabled = false;
+    fireTrustConfigChange(true);
+    expect(service.isTrusted()).toBe(true);
+    expect(await service.get()).toBe(true);
+    expect(states.get(workspaceTrustTrustedKey)).toBe(false);
+
+    await service.trust();
+    await service.untrust();
+    expect(service.isTrusted()).toBe(true);
+
+    workspaceTrustEnabled = true;
+    fireTrustConfigChange(false);
     expect(service.isTrusted()).toBe(false);
     expect(await service.get()).toBe(false);
+    expect(states.get(workspaceTrustTrustedKey)).toBe(false);
+    expect(events).toEqual([
+      { trusted: false },
+      { trusted: true },
+      { trusted: false },
+      { trusted: false },
+    ]);
+
+    await writeWorkspaceTrust(
+      new JsonAtomicDocumentStore(new FileStorageService(homeDir)),
+      cwd,
+      1,
+    );
+    workspaceTrustEnabled = false;
+    const restored = createService(cwd);
+    expect(await restored.service.get()).toBe(true);
+    expect(restored.states.get(workspaceTrustTrustedKey)).toBe(false);
+
+    workspaceTrustEnabled = true;
+    fireTrustConfigChange(false);
+    await vi.waitFor(() => {
+      expect(restored.states.get(workspaceTrustTrustedKey)).toBe(true);
+    });
+    expect(await restored.service.get()).toBe(true);
   });
 
   it('keeps persistence semantics under KIMI_CODE_TRUST_WORKSPACE', async () => {
@@ -242,6 +315,7 @@ describe('WorkspaceTrustService', () => {
       docs,
       noopTelemetryService,
       stubBootstrap(homeDir),
+      trustConfigService(),
     ));
     const entry = trustStore.forRoot(cwd);
 
@@ -249,6 +323,9 @@ describe('WorkspaceTrustService', () => {
 
     const { service } = createService(cwd, undefined, {}, trustStore);
     await expect(service.ready).rejects.toBe(failure);
+    workspaceTrustEnabled = false;
+    await expect(service.get()).resolves.toBe(true);
+    workspaceTrustEnabled = true;
     unavailable = false;
 
     await service.ready;
@@ -271,6 +348,7 @@ describe('WorkspaceTrustService', () => {
       docs,
       noopTelemetryService,
       stubBootstrap(homeDir),
+      trustConfigService(),
     ));
     const entry = store.forRoot(cwd);
     const events: WorkspaceTrustChange[] = [];
@@ -382,6 +460,7 @@ describe('WorkspaceTrustService', () => {
       docs,
       noopTelemetryService,
       stubBootstrap(homeDir),
+      trustConfigService(),
     ));
     const entry = store.forRoot(firstRoot);
 
@@ -409,6 +488,7 @@ describe('WorkspaceTrustService', () => {
       docs,
       noopTelemetryService,
       stubBootstrap(homeDir),
+      trustConfigService(),
     ));
     const entry = store.forRoot(cwd);
     const events: WorkspaceTrustChange[] = [];
@@ -435,6 +515,7 @@ describe('WorkspaceTrustService', () => {
       new JsonAtomicDocumentStore(new FileStorageService(homeDir)),
       telemetry,
       stubBootstrap(homeDir),
+      trustConfigService(),
     ));
     const entry = store.forRoot(cwd);
 
@@ -476,7 +557,7 @@ describe('WorkspaceTrustService', () => {
       } as never,
       new FileSkillDiscovery(stubLog()),
       { ready: Promise.resolve(), additionalDirs: [secondary] } as never,
-      { ready: Promise.resolve(), isTrusted: () => false } as never,
+      { ready: Promise.resolve(), get: async () => false } as never,
       { ready: Promise.resolve(), catalog } as never,
       { ready: Promise.resolve() } as never,
       { entries: () => [] } as never,
