@@ -10,17 +10,13 @@ import {
 
 import { ErrorCode } from '../../../protocol/error-codes';
 import {
-  taskAttachMessageSchema,
-  taskDetachMessageSchema,
-  type TaskAttachMessage,
+  TASK_OUTPUT_DEFAULT_TAIL_BYTES,
+  taskUnwatchMessageSchema,
+  taskWatchMessageSchema,
   type TaskOutputMessage,
-  type TaskResponseMessage,
+  type TaskWatchMessage,
 } from '../../../protocol/ws-task';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../../mainAgent';
-
-export const TASK_OUTPUT_TAIL_BYTES = 32 * 1024;
-
-const CODE_OK = 0;
 
 export type TaskOutputSourceResult =
   | { readonly kind: 'session_not_found' }
@@ -48,19 +44,15 @@ export function createTaskOutputSource(core: Scope): TaskOutputSource {
 }
 
 export interface TaskOutputSink {
-  respond(frame: TaskResponseMessage): void;
+  respond(requestId: string, code: number, msg?: string): void;
   output(frame: TaskOutputMessage): void;
-  rejectUnreadable(): void;
 }
 
-type TaskAddress = Pick<TaskAttachMessage, 'session_id' | 'agent_id' | 'task_id'>;
+type TaskAddress = Pick<TaskWatchMessage, 'session_id' | 'agent_id' | 'task_id'>;
 
-export function isTaskOutputMessageType(type: string): boolean {
-  return type === 'task.attach' || type === 'task.detach';
-}
-
-export class TaskOutputAttachments {
-  private readonly attachments = new Map<string, IDisposable>();
+export class TaskOutputWatches {
+  private readonly watches = new Map<string, IDisposable>();
+  private readonly queues = new Map<string, Promise<void>>();
   private disposed = false;
 
   constructor(
@@ -68,43 +60,45 @@ export class TaskOutputAttachments {
     private readonly sink: TaskOutputSink,
   ) {}
 
-  async handle(frame: unknown): Promise<void> {
-    const attach = taskAttachMessageSchema.safeParse(frame);
-    if (attach.success) {
-      await this.attach(attach.data);
+  handle(requestId: string, frame: unknown): void {
+    const watch = taskWatchMessageSchema.safeParse(frame);
+    if (watch.success) {
+      this.enqueue(watchKey(watch.data), () => this.watch(watch.data));
       return;
     }
-    const detach = taskDetachMessageSchema.safeParse(frame);
-    if (detach.success) {
-      this.detach(attachmentKey(detach.data));
-      this.sink.respond({ type: 'response', request_id: detach.data.request_id, code: CODE_OK });
+    const unwatch = taskUnwatchMessageSchema.safeParse(frame);
+    if (unwatch.success) {
+      const key = watchKey(unwatch.data);
+      this.enqueue(key, async () => {
+        this.unwatch(key);
+        this.sink.respond(requestId, ErrorCode.SUCCESS);
+      });
       return;
     }
-    const requestId = readRequestId(frame);
-    if (requestId === undefined) {
-      this.sink.rejectUnreadable();
-      return;
-    }
-    this.sink.respond({
-      type: 'response',
-      request_id: requestId,
-      code: ErrorCode.VALIDATION_FAILED,
-      msg: 'invalid task output message',
-    });
+    this.sink.respond(requestId, ErrorCode.VALIDATION_FAILED, 'invalid task output message');
   }
 
   dispose(): void {
     this.disposed = true;
-    for (const subscription of this.attachments.values()) subscription.dispose();
-    this.attachments.clear();
+    for (const watch of this.watches.values()) watch.dispose();
+    this.watches.clear();
   }
 
-  private async attach(request: TaskAttachMessage): Promise<void> {
+  private enqueue(key: string, run: () => Promise<void>): void {
+    const next = (this.queues.get(key) ?? Promise.resolve()).then(run).catch(() => {
+    });
+    this.queues.set(key, next);
+    void next.then(() => {
+      if (this.queues.get(key) === next) this.queues.delete(key);
+    });
+  }
+
+  private async watch(request: TaskWatchMessage): Promise<void> {
     const { request_id: requestId, session_id: sessionId, agent_id: agentId, task_id: taskId } = request;
-    const key = attachmentKey(request);
-    this.detach(key);
+    const key = watchKey(request);
+    this.unwatch(key);
     const fail = (code: number, msg: string): void => {
-      this.sink.respond({ type: 'response', request_id: requestId, code, msg });
+      this.sink.respond(requestId, code, msg);
     };
 
     let resolved: TaskOutputSourceResult;
@@ -136,7 +130,7 @@ export class TaskOutputAttachments {
         text: chunk.text,
       });
     };
-    this.attachments.set(
+    this.watches.set(
       key,
       resolved.tasks.onDidAppendOutput((chunk) => {
         if (chunk.taskId !== taskId) return;
@@ -147,15 +141,18 @@ export class TaskOutputAttachments {
 
     let tail: AgentTaskOutputTail;
     try {
-      tail = await resolved.tasks.readOutputTail(taskId, TASK_OUTPUT_TAIL_BYTES);
+      tail = await resolved.tasks.readOutputTail(
+        taskId,
+        request.tail_bytes ?? TASK_OUTPUT_DEFAULT_TAIL_BYTES,
+      );
     } catch {
-      this.detach(key);
+      this.unwatch(key);
       fail(ErrorCode.PERSISTENCE_FAILURE, 'task output unavailable');
       return;
     }
     if (this.disposed) return;
 
-    this.sink.respond({ type: 'response', request_id: requestId, code: CODE_OK });
+    this.sink.respond(requestId, ErrorCode.SUCCESS);
     const end = tail.offset + tail.data.byteLength;
     forward(firstChunk(tail.offset, tail.data, request.since_offset));
     for (const chunk of pending) {
@@ -164,9 +161,9 @@ export class TaskOutputAttachments {
     live = true;
   }
 
-  private detach(key: string): void {
-    this.attachments.get(key)?.dispose();
-    this.attachments.delete(key);
+  private unwatch(key: string): void {
+    this.watches.get(key)?.dispose();
+    this.watches.delete(key);
   }
 }
 
@@ -201,12 +198,6 @@ function isUtf8Continuation(byte: number): boolean {
   return (byte & 0xc0) === 0x80;
 }
 
-function attachmentKey(address: TaskAddress): string {
+function watchKey(address: TaskAddress): string {
   return `${address.session_id}\u0000${address.agent_id}\u0000${address.task_id}`;
-}
-
-function readRequestId(frame: unknown): string | undefined {
-  if (typeof frame !== 'object' || frame === null) return undefined;
-  const requestId = (frame as { request_id?: unknown }).request_id;
-  return typeof requestId === 'string' ? requestId : undefined;
 }

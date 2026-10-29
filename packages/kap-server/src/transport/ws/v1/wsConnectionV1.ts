@@ -9,18 +9,14 @@ import type { RawData, WebSocket } from 'ws';
 
 import type { CredentialValidator } from '../../../services/auth/credentials';
 import type { IConnectionRegistry } from '../connectionRegistry';
-import { buildAck, buildPing, buildServerHello } from './protocol';
+import { buildAck, buildPing, buildResponse, buildServerHello } from './protocol';
 import type {
   BroadcastDelivery,
   BroadcastFrame,
   BroadcastTarget,
   SessionEventBroadcaster,
 } from './sessionEventBroadcaster';
-import {
-  isTaskOutputMessageType,
-  TaskOutputAttachments,
-  type TaskOutputSource,
-} from './taskOutputStream';
+import { TaskOutputWatches, type TaskOutputSource } from './taskOutputStream';
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
 const HEARTBEAT_MISS_LIMIT = 2;
@@ -34,13 +30,14 @@ const DEFAULT_BACKPRESSURE_MAX_DELAY_MS = 100;
 interface InboundFrame {
   type: string;
   id?: string;
+  request_id?: unknown;
   payload?: Record<string, unknown>;
 }
 
 export interface WsConnectionV1Options {
   readonly socket: WebSocket;
   readonly broadcaster: SessionEventBroadcaster;
-  readonly taskOutputSource?: TaskOutputSource;
+  readonly taskOutputSource: TaskOutputSource;
   readonly connectionRegistry: IConnectionRegistry;
   readonly validateCredential?: CredentialValidator;
   readonly remoteAddress: string | null;
@@ -64,7 +61,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   private readonly maxBatchSize: number;
   private readonly highWaterMarkBytes: number;
   private readonly heartbeatIntervalMs: number;
-  private readonly taskOutputs?: TaskOutputAttachments;
+  private readonly taskOutputs: TaskOutputWatches;
 
   private closed = false;
   private gotClientHello = false;
@@ -91,19 +88,14 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.maxBatchSize = opts.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
     this.highWaterMarkBytes = opts.highWaterMarkBytes ?? DEFAULT_HIGH_WATER_MARK_BYTES;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
-    if (opts.taskOutputSource !== undefined) {
-      this.taskOutputs = new TaskOutputAttachments(opts.taskOutputSource, {
-        respond: (frame) => {
-          this.sendImmediateFrame(frame);
-        },
-        output: (frame) => {
-          this.sendSubscribedFrame(frame);
-        },
-        rejectUnreadable: () => {
-          this.close(1008, 'invalid message');
-        },
-      });
-    }
+    this.taskOutputs = new TaskOutputWatches(opts.taskOutputSource, {
+      respond: (requestId, code, msg) => {
+        this.sendImmediateFrame(buildResponse(requestId, code, msg));
+      },
+      output: (frame) => {
+        this.sendSubscribedFrame(frame);
+      },
+    });
 
     this.socket.on('message', (data: RawData) => this.onMessage(data));
     this.socket.on('close', () => this.onClose());
@@ -149,10 +141,13 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (typeof frame?.type !== 'string') return;
     this.lastInboundAt = Date.now();
 
-    if (isTaskOutputMessageType(frame.type)) {
-      this.enqueueControl(async () => {
-        await this.taskOutputs?.handle(frame);
-      });
+    if (frame.type === 'task.watch' || frame.type === 'task.unwatch') {
+      const requestId = frame.request_id;
+      if (typeof requestId !== 'string' || requestId.length === 0) {
+        this.close(1008, 'invalid message');
+        return;
+      }
+      this.taskOutputs.handle(requestId, frame);
       return;
     }
 
@@ -340,7 +335,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (this.backpressureRetryTimer !== undefined) clearTimeout(this.backpressureRetryTimer);
     if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
     this.outbound = [];
-    this.taskOutputs?.dispose();
+    this.taskOutputs.dispose();
     this.broadcaster.removeGlobalTarget(this);
     for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);
   }

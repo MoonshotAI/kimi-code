@@ -1230,7 +1230,7 @@ On success, `data` is `{ outcome, ended_at }`, where `outcome` is `approved` / `
 
 ### Background tasks
 
-Background tasks are the session's asynchronous units — background shells, subagents, and long-running tool tasks. The registry is live-only: a session not loaded in this server process reports an empty list. Over the WebSocket, every task change arrives as a `task` frame, and `task.attach` streams a task's output (see [Events](#events)).
+Background tasks are the session's asynchronous units — background shells, subagents, and long-running tool tasks. The registry is live-only: a session not loaded in this server process reports an empty list. Over the WebSocket, every task change arrives as a `task` frame, and `task.watch` streams a task's output (see [Events](#events)).
 
 | Method and path | Description |
 | --- | --- |
@@ -1255,7 +1255,7 @@ On success, `data` is `{ items }` where each item is a task object `{ id, sessio
 
 #### `GET /api/v1/sessions/{session_id}/tasks/{task_id}`
 
-Reads one background task. Its output streams over the WebSocket with `task.attach` (see [Control frames](#control-frames)).
+Reads one background task. Its output streams over the WebSocket with `task.watch` (see [Control frames](#control-frames)).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -2360,17 +2360,17 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 | `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to a session (the only session subscription): its transcript streams and interactions; `transcript` sets per-agent grades |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids`, or detaching the last agent, drops the whole session subscription |
 | `client_hello` | `{ client_id }` | Handshake frame; other fields are ignored |
-| `task.attach` | flat: `{ request_id, session_id, agent_id, task_id, since_offset? }` | Stream one task's output to this connection, no session subscription needed; `agent_id` is the agent that owns the task (the `agent_id` of its `task` frame), and `since_offset` resumes after output the client already has |
-| `task.detach` | flat: `{ request_id, session_id, agent_id, task_id }` | Stop streaming that task's output |
+| `task.watch` | flat: `{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | Stream one task's output to this connection, no session subscription needed; `agent_id` is the agent that owns the task (the `agent_id` of its `task` frame), `since_offset` resumes after output the client already has, and `tail_bytes` caps the size of the first chunk |
+| `task.unwatch` | flat: `{ request_id, session_id, agent_id, task_id }` | Stop streaming that task's output |
 
-`task.attach` and `task.detach` are flat: their fields sit next to `type` instead of under `payload`, `request_id` replaces `id`, and the reply is `{ "type": "response", "request_id", "code", "msg"? }` instead of an ack. Like `subscribe_v2` and `unsubscribe_v2`, they are handled one at a time in the order they arrive on the connection, so a `task.detach` sent while a `task.attach` is still pending takes effect after it. A successful `task.attach` replies with code 0, then sends the last 32 KiB of output (only the part after `since_offset` when it falls inside that window) as one `task.output` frame, with empty `text` when there is nothing to send, followed by live output. Errors: `40001` malformed frame, `40401` session not found, `40406` the agent has no such task, `50003` output unreadable.
+`task.watch` and `task.unwatch` are flat: their fields sit next to `type` instead of under `payload`, `request_id` replaces `id`, and the reply is `{ "type": "response", "request_id", "code", "msg"? }` instead of an ack; a frame without a readable `request_id` closes the socket with code 1008. Watches of the same task are handled one at a time in arrival order, so a `task.unwatch` sent while a `task.watch` is still pending takes effect after it; different tasks, and other control frames, never wait on each other. A successful `task.watch` replies with code 0, then sends the last `tail_bytes` of output (32 KiB by default, at most 1 MiB; only the part after `since_offset` when it falls inside that window) as one `task.output` frame, with empty `text` when there is nothing to send, followed by live output. Errors: `40001` malformed frame (including an out-of-range `tail_bytes`), `40401` session not found, `40406` the agent has no such task, `50003` output unreadable.
 
 ### Events
 
 Event frames look like `{ "type", "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
 
 - **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
-- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2` — `transcript.reset` / `transcript.ops` (see [Transcript protocol](#transcript-protocol)), `task`, and `interaction`. `task.output` goes only to connections attached to that task with `task.attach`.
+- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2` — `transcript.reset` / `transcript.ops` (see [Transcript protocol](#transcript-protocol)), `task`, and `interaction`. `task.output` goes only to connections watching that task with `task.watch`.
 
 `event.session.work_changed` is how clients follow a session's activity without subscribing to it: its payload is `{ busy, main_turn_active?, pending_interaction?, last_turn_reason? }`, carrying the same live facts as [the session object](#the-session-object).
 
@@ -2382,7 +2382,7 @@ Each agent's tasks — background shells, subagents, and other asynchronous work
 
 ### Reconnect and recovery
 
-Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: pass `transcript_since` to resume the transcript streams, or omit it to start from a fresh `transcript.reset`; pending interactions are resent after the ack, and each agent's tasks after its reset or catch-up. Task output attachments are dropped as well: send `task.attach` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
+Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: pass `transcript_since` to resume the transcript streams, or omit it to start from a fresh `transcript.reset`; pending interactions are resent after the ack, and each agent's tasks after its reset or catch-up. Task output watches are dropped as well: send `task.watch` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
 
 ### Transcript protocol
 

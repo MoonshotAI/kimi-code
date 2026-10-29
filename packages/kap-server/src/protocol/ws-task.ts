@@ -35,19 +35,23 @@ export const taskEventMessageSchema = z.object({
 });
 export type TaskEventMessage = z.infer<typeof taskEventMessageSchema>;
 
-export const taskAttachMessageSchema = z.object({
-  type: z.literal('task.attach'),
-  request_id: z.string(),
+export const TASK_OUTPUT_DEFAULT_TAIL_BYTES = 32 * 1024;
+export const TASK_OUTPUT_MAX_TAIL_BYTES = 1024 * 1024;
+
+export const taskWatchMessageSchema = z.object({
+  type: z.literal('task.watch'),
+  request_id: z.string().min(1),
   session_id: z.string().min(1),
   agent_id: z.string().min(1),
   task_id: z.string().min(1),
   since_offset: z.number().int().nonnegative().optional(),
+  tail_bytes: z.number().int().min(1).max(TASK_OUTPUT_MAX_TAIL_BYTES).optional(),
 });
-export type TaskAttachMessage = z.infer<typeof taskAttachMessageSchema>;
+export type TaskWatchMessage = z.infer<typeof taskWatchMessageSchema>;
 
-export const taskDetachMessageSchema = z.object({
-  type: z.literal('task.detach'),
-  request_id: z.string(),
+export const taskUnwatchMessageSchema = z.object({
+  type: z.literal('task.unwatch'),
+  request_id: z.string().min(1),
   session_id: z.string().min(1),
   agent_id: z.string().min(1),
   task_id: z.string().min(1),

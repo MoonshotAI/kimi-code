@@ -664,7 +664,7 @@ describe('transcript contract e2e', () => {
     channel.close();
   });
 
-  it('S9: task.attach streams a running task output and resumes from since_offset', async () => {
+  it('S9: task.watch streams a running task output and resumes from since_offset', async () => {
     const sid = await createSession(server!, base);
     const agents = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(IAgentLifecycleService);
     if (agents.handleOf(MAIN_AGENT_ID) === undefined) await agents.create({ agentId: MAIN_AGENT_ID });
@@ -682,7 +682,7 @@ describe('transcript contract e2e', () => {
     const isOutput = (frame: any): boolean => frame.type === 'task.output';
 
     const first = await openFrameSocket(server!);
-    first.send({ type: 'task.attach', request_id: 'r1', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: taskId });
+    first.send({ type: 'task.watch', request_id: 'r1', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: taskId });
     expect(await first.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r1', code: 0 });
     expect(await first.next(isOutput)).toMatchObject({
       agent_id: MAIN_AGENT_ID,
@@ -698,7 +698,7 @@ describe('transcript contract e2e', () => {
     const since = 13 + Buffer.byteLength('  ➜  Local: http://localhost:5173/\n', 'utf-8');
     const second = await openFrameSocket(server!);
     second.send({
-      type: 'task.attach',
+      type: 'task.watch',
       request_id: 'r2',
       session_id: sid,
       agent_id: MAIN_AGENT_ID,
@@ -710,7 +710,7 @@ describe('transcript contract e2e', () => {
       offset: since,
       text: '4:42:10 PM [vite] hmr update /src/App.vue\n',
     });
-    second.send({ type: 'task.attach', request_id: 'r3', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: 'bash-00000000' });
+    second.send({ type: 'task.watch', request_id: 'r3', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: 'bash-00000000' });
     expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r3', code: 40406 });
 
     const child = await agents.create({ agentId: 'agent-s9-child' });
@@ -723,9 +723,9 @@ describe('transcript contract e2e', () => {
       },
       toInfo: (base) => ({ ...base, kind: 'process', command: 'pnpm test --watch', pid: 0, exitCode: null }),
     });
-    second.send({ type: 'task.attach', request_id: 'r4', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: childTaskId });
+    second.send({ type: 'task.watch', request_id: 'r4', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: childTaskId });
     expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r4', code: 40406 });
-    second.send({ type: 'task.attach', request_id: 'r5', session_id: sid, agent_id: child.agentId, task_id: childTaskId });
+    second.send({ type: 'task.watch', request_id: 'r5', session_id: sid, agent_id: child.agentId, task_id: childTaskId });
     expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r5', code: 0 });
     expect(await second.next(isOutput)).toMatchObject({
       agent_id: child.agentId,

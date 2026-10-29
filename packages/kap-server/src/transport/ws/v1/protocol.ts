@@ -1,3 +1,5 @@
+import type { TaskResponseMessage } from '../../../protocol/ws-task';
+
 export interface ServerHelloPayload {
   ws_connection_id: string;
   protocol_version: number;
@@ -38,4 +40,8 @@ export interface AckFrame<P = unknown> {
 
 export function buildAck<P>(id: string, code: number, msg: string, payload: P): AckFrame<P> {
   return { type: 'ack', id, code, msg, payload };
+}
+
+export function buildResponse(requestId: string, code: number, msg?: string): TaskResponseMessage {
+  return { type: 'response', request_id: requestId, code, msg };
 }

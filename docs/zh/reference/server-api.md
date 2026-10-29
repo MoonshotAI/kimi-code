@@ -1230,7 +1230,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 后台任务
 
-后台任务是会话的异步单元——后台 Shell、subagent 与长时间运行的工具任务。注册表仅包含实时数据：未加载到本服务进程中的会话会返回空列表。在 WebSocket 上，任务的每次变化都以 `task` 帧到达，任务输出通过 `task.attach` 流式获取（见 [事件](#事件)）。
+后台任务是会话的异步单元——后台 Shell、subagent 与长时间运行的工具任务。注册表仅包含实时数据：未加载到本服务进程中的会话会返回空列表。在 WebSocket 上，任务的每次变化都以 `task` 帧到达，任务输出通过 `task.watch` 流式获取（见 [事件](#事件)）。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -1255,7 +1255,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `GET /api/v1/sessions/{session_id}/tasks/{task_id}`
 
-读取单个后台任务。任务输出通过 WebSocket 的 `task.attach` 推送（见[控制帧](#控制帧)）。
+读取单个后台任务。任务输出通过 WebSocket 的 `task.watch` 推送（见[控制帧](#控制帧)）。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -2363,17 +2363,17 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | 订阅会话（唯一的会话订阅方式）：转录流与交互，`transcript` 按 agent 指定粒度 |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | 退订转录流；省略 `agent_ids` 或退订最后一个 agent 时取消整个会话订阅 |
 | `client_hello` | `{ client_id }` | 握手帧，其余字段会被忽略 |
-| `task.attach` | 平铺：`{ request_id, session_id, agent_id, task_id, since_offset? }` | 把某个任务的输出流式推送到本连接，无需订阅会话；`agent_id` 是任务所属的 agent（即该任务 `task` 帧上的 `agent_id`），`since_offset` 从客户端已有输出之后续传 |
-| `task.detach` | 平铺：`{ request_id, session_id, agent_id, task_id }` | 停止推送该任务的输出 |
+| `task.watch` | 平铺：`{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | 把某个任务的输出流式推送到本连接，无需订阅会话；`agent_id` 是任务所属的 agent（即该任务 `task` 帧上的 `agent_id`），`since_offset` 从客户端已有输出之后续传，`tail_bytes` 是首段输出最多包含的字节数 |
+| `task.unwatch` | 平铺：`{ request_id, session_id, agent_id, task_id }` | 停止推送该任务的输出 |
 
-`task.attach` 与 `task.detach` 是平铺帧：字段与 `type` 并列而不放在 `payload` 下，用 `request_id` 代替 `id`，应答为 `{ "type": "response", "request_id", "code", "msg"? }` 而不是 ack。它们和 `subscribe_v2`、`unsubscribe_v2` 一样，按到达本连接的顺序逐个处理，因此在 `task.attach` 尚未应答时发出的 `task.detach` 会在它之后生效。`task.attach` 成功时先应答 `code` 0，再用一个 `task.output` 帧发送最后 32 KiB 输出（`since_offset` 落在这段范围内时只发它之后的部分；没有可发送的输出时 `text` 为空），之后推送实时输出。错误：`40001` 帧格式错误，`40401` 会话不存在，`40406` 该 agent 下没有这个任务，`50003` 输出无法读取。
+`task.watch` 与 `task.unwatch` 是平铺帧：字段与 `type` 并列而不放在 `payload` 下，用 `request_id` 代替 `id`，应答为 `{ "type": "response", "request_id", "code", "msg"? }` 而不是 ack；缺少可读的 `request_id` 时服务端以关闭码 1008 断开连接。同一个任务的 `task.watch` / `task.unwatch` 按到达顺序逐个处理，因此在 `task.watch` 尚未应答时发出的 `task.unwatch` 会在它之后生效；不同任务之间、以及它们与其他控制帧之间互不等待。`task.watch` 成功时先应答 `code` 0，再用一个 `task.output` 帧发送最后 `tail_bytes` 字节的输出（默认 32 KiB，最大 1 MiB；`since_offset` 落在这段范围内时只发它之后的部分；没有可发送的输出时 `text` 为空），之后推送实时输出。错误：`40001` 帧格式错误（含 `tail_bytes` 超出范围），`40401` 会话不存在，`40406` 该 agent 下没有这个任务，`50003` 输出无法读取。
 
 ### 事件
 
 事件帧形状为 `{ "type", "session_id"?, "timestamp", "payload" }`，`type` 即事件类型。按投递范围分两类：
 
 - **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
-- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接——`transcript.reset` / `transcript.ops`（见 [转录协议](#转录协议)）、`task` 与 `interaction`。`task.output` 只发给用 `task.attach` 挂到该任务上的连接。
+- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接——`transcript.reset` / `transcript.ops`（见 [转录协议](#转录协议)）、`task` 与 `interaction`。`task.output` 只发给用 `task.watch` 订阅了该任务输出的连接。
 
 客户端无需订阅会话即可通过 `event.session.work_changed` 跟踪其活动：载荷为 `{ busy, main_turn_active?, pending_interaction?, last_turn_reason? }`，与 [session 对象](#session-对象) 的实时字段一致。
 
@@ -2385,7 +2385,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 ### 断线恢复
 
-订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe_v2`：带 `transcript_since` 可续传转录流，省略则从新的 `transcript.reset` 开始；确认后会补发待处理的交互，每个 agent 的任务则在其 reset 或补漏之后补发。任务输出的挂载同样会丢失：重新发送 `task.attach`，并把 `since_offset` 设为已有输出的末尾。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
+订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe_v2`：带 `transcript_since` 可续传转录流，省略则从新的 `transcript.reset` 开始；确认后会补发待处理的交互，每个 agent 的任务则在其 reset 或补漏之后补发。任务输出的订阅同样会丢失：重新发送 `task.watch`，并把 `since_offset` 设为已有输出的末尾。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
 
 ### 转录协议
 
