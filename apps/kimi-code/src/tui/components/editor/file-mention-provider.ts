@@ -474,14 +474,15 @@ function collectFsMentionCandidates(
   signal: AbortSignal,
 ): FsMentionCandidate[] {
   const candidatesByAbsolutePath = new Map<string, FsMentionCandidate>();
-  const roots = [
-    { root: normalizePath(resolve(workDir)), isAdditionalDir: false },
-    ...additionalDirs.map((dir) => ({
-      root: normalizePath(resolve(workDir, dir)),
-      isAdditionalDir: true,
-    })),
-  ];
-  const pending = roots.map(({ root, isAdditionalDir }) => ({
+  const workRoot = normalizePath(resolve(workDir));
+  const rootsByPath = new Map([[workRoot, { root: workRoot, isAdditionalDir: false }]]);
+  for (const dir of additionalDirs) {
+    const root = normalizePath(resolve(workDir, dir));
+    if (!rootsByPath.has(root)) {
+      rootsByPath.set(root, { root, isAdditionalDir: true });
+    }
+  }
+  const pending = [...rootsByPath.values()].map(({ root, isAdditionalDir }) => ({
     root,
     isAdditionalDir,
     stack: [''],

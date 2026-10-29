@@ -343,6 +343,7 @@ export class KimiTUI {
   readonly options: KimiTUIOptions;
   session: Session | undefined;
   state: TUIState;
+  private hasSessionHistory = false;
   /** In-flight lazy session creation (v2 engine), shared by concurrent first-use triggers. */
   private ensureSessionPromise: Promise<Session | undefined> | null = null;
   /** In-flight `/new` session replacement, shared by concurrent `/new` triggers. */
@@ -2840,7 +2841,7 @@ export class KimiTUI {
       planMode: explicitPlanMode ? true : undefined,
     };
     const additionalDirs =
-      this.session === undefined && this.state.appState.sessionId === ''
+      this.session === undefined && this.state.appState.sessionId === '' && !this.hasSessionHistory
         ? (this.options.startup.additionalDirs ?? [])
         : this.state.appState.additionalDirs;
     if (additionalDirs.length > 0) {
@@ -2949,6 +2950,7 @@ export class KimiTUI {
     // before the engine's intake can read it.
     if (previous !== undefined) this.staging.releaseAll();
     this.session = session;
+    this.hasSessionHistory = true;
     this.surveyController.seedUserTurnCount(initialUserTurnCount);
     this.harness.setTelemetryContext({ sessionId: session.id });
     this.registerSessionHandlers(session);

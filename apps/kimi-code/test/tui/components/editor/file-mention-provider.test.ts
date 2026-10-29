@@ -328,6 +328,22 @@ describe('FileMentionProvider', () => {
     );
   });
 
+  it('deduplicates fallback roots equal to cwd before scanning', async () => {
+    for (let i = 0; i < 1500; i++) {
+      writeFileSync(join(workDir, `entry-${i}.ts`), 'export {};');
+    }
+    mkdirSync(join(workDir, 'deep'));
+    writeFileSync(join(workDir, 'deep', 'target-needle.ts'), 'export {};');
+    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'), [workDir]);
+
+    const result = await provider.getSuggestions(['@target-needle'], 0, '@target-needle'.length, {
+      signal: ctrl(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((item) => item.value)).toContain('@deep/target-needle.ts');
+  });
+
   it('scans additionalDirs within a shared bounded fallback budget', async () => {
     for (let i = 0; i < 2000; i++) {
       writeFileSync(join(workDir, `filler-${i}.ts`), 'export {};');

@@ -1625,6 +1625,7 @@ describe('KimiTUI startup', () => {
 
     await (driver as unknown as { createNewSession(): Promise<void> }).createNewSession();
     expect(driver.state.appState.sessionId).toBe('ses-current');
+    driver.state.appState.additionalDirs = ['/tmp/live-extra'];
     // Contentless current sessions are filtered out of picker rows; fake content so the row exists.
     vi.spyOn(driver as unknown as { hasSessionContent(): boolean }, 'hasSessionContent')
       .mockReturnValue(true);
@@ -1645,6 +1646,10 @@ describe('KimiTUI startup', () => {
     await vi.waitFor(() => {
       expect(harness.createSession).toHaveBeenCalledTimes(2);
     });
+    expect(harness.createSession).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ additionalDirs: ['/tmp/live-extra'] }),
+    );
     expect(session.close).toHaveBeenCalled();
     expect(driver.state.activeDialog).toBeNull();
   });
