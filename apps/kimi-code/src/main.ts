@@ -3,18 +3,22 @@
  *
  * `kimi exec-server` (or the explicit `--listen stdio` spelling) is the
  * remote-executor light entry, and the SSH askpass helper is another light
- * entry. Both dispatch before the CLI's static import chain pulls
+ * entry: the engine's SSH password retry re-enters this binary as
+ * `SSH_ASKPASS`, recognised by its environment rather than argv. Both
+ * dispatch before the CLI's static import chain pulls
  * `@moonshot-ai/kimi-code-sdk` into module evaluation (full registration,
- * config/OAuth/telemetry/session services). Only node builtins and these light
- * helpers are imported statically; the regular CLI lives behind a dynamic
- * import so npm and SEA bundles keep both paths free of the SDK mega-module.
+ * config/OAuth/telemetry/session services). Only node builtins, the light
+ * SDK subpaths and these light helpers are imported statically; the regular
+ * CLI lives behind a dynamic import so npm and SEA bundles keep both paths
+ * free of the SDK mega-module.
  */
 
+import { isSshAskpassEnvironment, runSshAskpass } from '@moonshot-ai/kimi-code-sdk/ssh-askpass';
+
 import { isExecServerArgv, runExecServerCommand } from './cli/exec-server';
-import { isSshAskpassEnvironment, runSshAskpassCommand } from './cli/ssh-askpass';
 
 if (isSshAskpassEnvironment()) {
-  void runSshAskpassCommand().then((code) => {
+  void runSshAskpass().then((code) => {
     process.exitCode = code;
   });
 } else if (isExecServerArgv(process.argv)) {

@@ -348,8 +348,7 @@ describe('SSH password fallback', () => {
     const prompt = vi.fn(async () => 'secret');
     const factory = new RemoteEnvironmentProviderFactory({
       connect,
-      onSshPasswordRequired: prompt,
-      sshAskpass: { binary: '/bin/kimi', command: ['/bin/kimi'] },
+      sshPassword: { prompt, askpassCommand: ['/bin/kimi'] },
     });
     const attachment = await factory.attach(fakeHost(baseServices(registry, { config: config.service }), registry));
     const target = registry.current('dev-box')!;
@@ -359,7 +358,7 @@ describe('SSH password fallback', () => {
     expect(connect).toHaveBeenCalledTimes(2);
     expect(connect.mock.calls[0]![0].sshAuth).toBeUndefined();
     expect(connect.mock.calls[1]![0].sshAuth).toEqual({
-      password: 'secret', binary: '/bin/kimi', command: ['/bin/kimi'],
+      password: 'secret', command: ['/bin/kimi'],
     });
 
     produced[0]!.close({ reason: 'offline' });
@@ -387,7 +386,7 @@ describe('SSH password fallback', () => {
     });
     const factory = new RemoteEnvironmentProviderFactory({
       connect,
-      onSshPasswordRequired: async () => undefined,
+      sshPassword: { prompt: async () => undefined, askpassCommand: ['/bin/kimi'] },
     });
     const attachment = await factory.attach(fakeHost(baseServices(registry), registry));
 

@@ -1,12 +1,15 @@
 import { createConnection } from 'node:net';
 
+export const SSH_ASKPASS_PORT_ENV = 'KIMI_CODE_SSH_ASKPASS_PORT';
+export const SSH_ASKPASS_TOKEN_ENV = 'KIMI_CODE_SSH_ASKPASS_TOKEN';
+
 export function isSshAskpassEnvironment(env: Readonly<Record<string, string | undefined>> = process.env): boolean {
-  return env['KIMI_CODE_SSH_ASKPASS_PORT'] !== undefined && env['KIMI_CODE_SSH_ASKPASS_TOKEN'] !== undefined;
+  return env[SSH_ASKPASS_PORT_ENV] !== undefined && env[SSH_ASKPASS_TOKEN_ENV] !== undefined;
 }
 
-export function runSshAskpassCommand(env: Readonly<Record<string, string | undefined>> = process.env): Promise<number> {
-  const port = Number(env['KIMI_CODE_SSH_ASKPASS_PORT']);
-  const token = env['KIMI_CODE_SSH_ASKPASS_TOKEN'];
+export function runSshAskpass(env: Readonly<Record<string, string | undefined>> = process.env): Promise<number> {
+  const port = Number(env[SSH_ASKPASS_PORT_ENV]);
+  const token = env[SSH_ASKPASS_TOKEN_ENV];
   if (!Number.isInteger(port) || port <= 0 || port > 65535 || token === undefined || token.length === 0) {
     return Promise.resolve(1);
   }

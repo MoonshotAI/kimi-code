@@ -248,10 +248,18 @@ describe('runShell', () => {
     stubTuiStartup();
     await runShell(minimalCliOptions, '1.2.3-test');
     const options = mocks.kimiHarnessConstructor.mock.calls[0]![0] as {
-      onSshPasswordRequired: (environmentId: string) => Promise<string | undefined>;
+      sshPassword: {
+        prompt: (environmentId: string) => Promise<string | undefined>;
+        askpassCommand: readonly string[];
+      };
     };
-    await expect(options.onSshPasswordRequired('dev-box')).resolves.toBe('secret');
+    await expect(options.sshPassword.prompt('dev-box')).resolves.toBe('secret');
     expect(mocks.tuiPromptSshPassword).toHaveBeenCalledExactlyOnceWith('dev-box');
+    expect(options.sshPassword.askpassCommand).toEqual([
+      process.execPath,
+      ...process.execArgv,
+      process.argv[1],
+    ]);
   });
 
   it('constructs KimiHarness and KimiTUI with startup input', async () => {

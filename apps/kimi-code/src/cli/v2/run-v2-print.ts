@@ -116,7 +116,7 @@ import {
   raceWithTimeout,
   requireConfiguredModel,
 } from '../run-prompt';
-import { createKimiCodeHostIdentity } from '../version';
+import { createKimiCodeHostIdentity } from '../host-identity';
 
 import { resolveOutputFormat } from '../options';
 import type { CLIOptions, PromptOutputFormat } from '../options';

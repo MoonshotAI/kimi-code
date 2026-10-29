@@ -239,4 +239,15 @@ import { IEnvironmentService } from '#/app/environment/environment';`,
     expect(violations).toHaveLength(2);
     expect(violations.every((violation) => violation.message.includes('remote os backend is a sibling of node-local'))).toBe(true);
   });
+
+  it('keeps the SSH askpass helper on node builtins only', () => {
+    const violations = checkSource(
+      `import { createConnection } from 'node:net';
+import { shQuote } from './client/launchers';
+import { ErrorCodes } from '#/errors/codes';`,
+      at('remote', 'askpass.ts'),
+    );
+    expect(violations).toHaveLength(2);
+    expect(violations.every((violation) => violation.message.includes('SSH askpass helper stays light'))).toBe(true);
+  });
 });

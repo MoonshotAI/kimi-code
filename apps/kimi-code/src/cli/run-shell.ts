@@ -32,7 +32,8 @@ import { resolveCommandPath } from '#/utils/process/resolve-command';
 import type { CLIOptions } from './options';
 import { resolveAgentProfileSelection } from './agent-selection';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry';
-import { createKimiCodeHostIdentity } from './version';
+import { detectNativeInstall } from './update/source';
+import { createKimiCodeHostIdentity } from './host-identity';
 
 export async function runShell(
   opts: CLIOptions,
@@ -81,7 +82,15 @@ export async function runShell(
         reason: outcome.reason,
       });
     },
-    onSshPasswordRequired: (environmentId) => tui.promptSshPassword(environmentId),
+    sshPassword: {
+      prompt: (environmentId) => tui.promptSshPassword(environmentId),
+      // ssh runs this as SSH_ASKPASS; `src/main.ts` recognises the askpass
+      // environment before argv, so re-entering this binary (SEA) or this
+      // script under the same node flags (npm / tsx dev) lands in the helper.
+      askpassCommand: detectNativeInstall()
+        ? [process.execPath]
+        : [process.execPath, ...process.execArgv, process.argv[1]!],
+    },
     sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
   };
   const harness = createKimiHarness(harnessOptions);

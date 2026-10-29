@@ -4,12 +4,13 @@ import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { SSH_ASKPASS_PORT_ENV, SSH_ASKPASS_TOKEN_ENV } from '#/remote/askpass';
+
 import { shQuote } from './launchers';
 
 export interface SshAuthOptions {
   readonly password: string;
-  readonly binary: string;
-  readonly command?: readonly string[];
+  readonly command: readonly [string, ...string[]];
 }
 
 export interface SshAskpass {
@@ -78,8 +79,8 @@ export async function createSshAskpass(options: SshAuthOptions): Promise<SshAskp
   };
 
   try {
-    let binary = options.binary;
-    if (options.command !== undefined && options.command.length > 1 && process.platform !== 'win32') {
+    let binary = options.command[0];
+    if (options.command.length > 1 && process.platform !== 'win32') {
       directory = await mkdtemp(join(tmpdir(), 'kimi-ssh-askpass-'));
       binary = join(directory, 'askpass');
       await writeFile(binary, `#!/bin/sh\nexec ${options.command.map(shQuote).join(' ')} "$@"\n`, {
@@ -91,8 +92,8 @@ export async function createSshAskpass(options: SshAuthOptions): Promise<SshAskp
         SSH_ASKPASS: binary,
         SSH_ASKPASS_REQUIRE: 'force',
         DISPLAY: process.env['DISPLAY'] || 'kimi',
-        KIMI_CODE_SSH_ASKPASS_PORT: String(address.port),
-        KIMI_CODE_SSH_ASKPASS_TOKEN: token,
+        [SSH_ASKPASS_PORT_ENV]: String(address.port),
+        [SSH_ASKPASS_TOKEN_ENV]: token,
       },
       close,
     };

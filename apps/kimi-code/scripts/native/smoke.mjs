@@ -115,6 +115,50 @@ async function runExecServerSmoke() {
   }
 }
 
+// The SSH password retry points SSH_ASKPASS at this binary itself; the process
+// entry must recognise the askpass environment ahead of argv (ssh passes the
+// prompt as the only argument), fetch the secret over the loopback token
+// channel and print it verbatim on stdout.
+async function runSshAskpassSmoke() {
+  const { createServer } = await import('node:net');
+  const token = 'native-smoke-token';
+  const secret = ' native smoke secret ';
+  const server = createServer((socket) => {
+    let input = '';
+    socket.setEncoding('utf8');
+    socket.on('data', (chunk) => {
+      input += chunk;
+      const end = input.indexOf('\n');
+      if (end < 0) return;
+      if (JSON.parse(input.slice(0, end)).token !== token) {
+        socket.destroy();
+        return;
+      }
+      socket.end(`${JSON.stringify({ value: secret })}\n`);
+    });
+  });
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+  try {
+    const { stdout } = await execFileAsync(executablePath, ['Password:'], {
+      cwd: appRoot,
+      env: {
+        ...process.env,
+        KIMI_CODE_SSH_ASKPASS_PORT: String(server.address().port),
+        KIMI_CODE_SSH_ASKPASS_TOKEN: token,
+      },
+      timeout: 30_000,
+    });
+    if (stdout !== `${secret}\n`) {
+      fail(`ssh askpass smoke printed ${JSON.stringify(stdout)}, expected ${JSON.stringify(`${secret}\n`)}`);
+    }
+    console.log('ssh askpass smoke passed');
+  } catch (error) {
+    fail(`ssh askpass smoke failed: ${error.message}`);
+  } finally {
+    server.close();
+  }
+}
+
 async function runKimi(args) {
   try {
     const { stdout, stderr } = await execFileAsync(executablePath, args, {
@@ -202,5 +246,6 @@ try {
 }
 
 await runExecServerSmoke();
+await runSshAskpassSmoke();
 
 console.log(`Native smoke passed: ${executablePath}`);

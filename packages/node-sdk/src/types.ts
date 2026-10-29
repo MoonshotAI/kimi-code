@@ -260,8 +260,18 @@ export interface KimiHarnessOptions {
   readonly uiCapabilities?: readonly HostUiCapability[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
-  readonly onSshPasswordRequired?: (environmentId: string) => Promise<string | undefined>;
+  /**
+   * Opt into the interactive SSH password retry. `askpassCommand` must
+   * re-enter a process whose entry runs `runSshAskpass` from the
+   * `./ssh-askpass` subpath when `isSshAskpassEnvironment()` holds.
+   */
+  readonly sshPassword?: KimiSshPasswordOptions;
   readonly sessionStartedProperties?: TelemetryProperties;
+}
+
+export interface KimiSshPasswordOptions {
+  readonly prompt: (environmentId: string) => Promise<string | undefined>;
+  readonly askpassCommand: readonly [string, ...string[]];
 }
 
 export interface CreateSessionOptions {

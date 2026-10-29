@@ -220,14 +220,15 @@ class DeclaredRemoteEnvironment implements Environment {
     this.statusEmitter.fire(status);
   }
 }
+export interface SshPasswordOptions {
+  readonly prompt: (environmentId: string) => Promise<string | undefined>;
+  readonly askpassCommand: readonly [string, ...string[]];
+}
+
 export interface RemoteEnvironmentProviderFactoryOptions {
   readonly clientVersion?: string;
   readonly connect?: (options: RemoteSessionOptions) => Promise<RemoteSession>;
-  readonly onSshPasswordRequired?: (environmentId: string) => Promise<string | undefined>;
-  readonly sshAskpass?: {
-    readonly binary: string;
-    readonly command?: readonly string[];
-  };
+  readonly sshPassword?: SshPasswordOptions;
 }
 
 interface DeclaredEnvironmentRecord {
@@ -338,18 +339,16 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
 
   private open(environmentId: string, launcher: LauncherSpec): Promise<RemoteSession> {
     const connect = this.options.connect ?? ((options: RemoteSessionOptions) => RemoteSession.connect(options));
+    const sshPassword = this.options.sshPassword;
     return connectWithGuidance(
       async (spec) => {
         const connectWithPassword = (password: string | undefined) => connect({
           environmentId,
           launcher: spec,
           clientVersion: this.options.clientVersion,
-          sshAuth: password === undefined ? undefined : {
-            password,
-            binary: this.options.sshAskpass?.binary ?? process.execPath,
-            command: this.options.sshAskpass?.command ??
-              (process.argv[1] === undefined ? undefined : [process.execPath, ...process.execArgv, process.argv[1]]),
-          },
+          sshAuth: password === undefined || sshPassword === undefined
+            ? undefined
+            : { password, command: sshPassword.askpassCommand },
         });
         const cached = this.sshPasswords.get(environmentId);
         try {
@@ -359,12 +358,12 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
             spec.type !== 'ssh' ||
             !(error instanceof HandshakeError) ||
             error.kind !== 'authentication' ||
-            this.options.onSshPasswordRequired === undefined
+            sshPassword === undefined
           ) {
             throw error;
           }
           this.sshPasswords.delete(environmentId);
-          const password = await this.options.onSshPasswordRequired(environmentId);
+          const password = await sshPassword.prompt(environmentId);
           if (password === undefined) throw error;
           this.sshPasswords.set(environmentId, { launcher, password });
           try {

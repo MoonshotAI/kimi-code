@@ -37,6 +37,10 @@
     "./exec-server": {
       "types": "./src/exec-server.ts",
       "default": "./src/exec-server.ts"
+    },
+    "./ssh-askpass": {
+      "types": "./src/ssh-askpass.ts",
+      "default": "./src/ssh-askpass.ts"
     }
   },
   "publishConfig": {

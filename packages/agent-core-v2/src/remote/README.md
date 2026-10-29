@@ -20,7 +20,8 @@ packages/agent-core-v2/src/
     ├── client/               execBridge, launchers, sshAskpass, connection, remoteSession,
     │                         remoteEnvironmentProvider, connectGuidance (executor detection + guidance)
     ├── server/               stdioHost, fsHandler, processManager, environment, entry
-    └── declaration/          [environments] config schema
+    ├── declaration/          [environments] config schema
+    └── askpass.ts            SSH_ASKPASS helper process (light entry, node builtins only)
 ```
 
 `os/backends/remote` may import only `#/remote/protocol`, `#/os/interface` and
@@ -31,6 +32,7 @@ packages/agent-core-v2/src/
 
 - `@moonshot-ai/agent-core-v2/remote` — client side: protocol + bridge + `RemoteSession` + `RemoteEnvironmentProviderFactory`.
 - `@moonshot-ai/agent-core-v2/remote/server` — the executor side: `runExecServer` (light entry), `StdioHost`.
+- `@moonshot-ai/agent-core-v2/remote/askpass` — the SSH askpass helper side: env contract and `runSshAskpass` (light entry). The listener half is `remote/client/sshAskpass`; hosts opt into the password retry with `sshPassword: { prompt, askpassCommand }`, where `askpassCommand` re-enters a process whose entry dispatches to `runSshAskpass` when `isSshAskpassEnvironment()` holds.
 
 The CLI consumes only the server entry: argv pre-dispatch
 (`kimi exec-server --listen stdio`) then `await import('@moonshot-ai/kimi-code-sdk/exec-server')`

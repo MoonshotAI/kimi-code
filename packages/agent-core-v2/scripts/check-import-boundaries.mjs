@@ -14,6 +14,7 @@ const REMOTE_SERVER_ROOT = join(SRC_ROOT, 'remote/server');
 const REMOTE_SERVER_ALLOWED_RE =
   /^#\/(?:(?:remote\/protocol|os\/interface|_base\/execEnv)(?:\/|$)|os\/backends\/node-local\/(?:hostFsService|hostProcessService)$)/;
 const REMOTE_SERVER_MODULE_RE = /\/remote\/server(?:\/|$)/;
+const REMOTE_ASKPASS_FILE = join(SRC_ROOT, 'remote/askpass.ts');
 const OS_REMOTE_BACKEND_ROOT = join(SRC_ROOT, 'os/backends/remote');
 const OS_REMOTE_BACKEND_ALLOWED_RE = /^#\/(?:remote\/protocol|os\/interface|_base)(?:\/|$)/;
 const ENVIRONMENT_ROOT = join(SRC_ROOT, 'environment');
@@ -39,6 +40,11 @@ function remoteServerViolation(absFile, specifier) {
   if (specifier.startsWith('.') || specifier.startsWith('node:')) return undefined;
   if (REMOTE_SERVER_ALLOWED_RE.test(specifier)) return undefined;
   return `the remote executor stays light: src/remote/server may import only node builtins, relative modules, #/remote/protocol, #/os/interface, #/_base/execEnv and the node-local hostFsService / hostProcessService implementations ('${specifier}')`;
+}
+
+function remoteAskpassViolation(absFile, specifier) {
+  if (absFile !== REMOTE_ASKPASS_FILE || specifier.startsWith('node:')) return undefined;
+  return `the SSH askpass helper stays light: src/remote/askpass.ts may import only node builtins ('${specifier}') — the CLI process entry loads it before any engine module`;
 }
 
 function osRemoteBackendViolation(absFile, specifier) {
@@ -179,6 +185,11 @@ export function checkSource(source, absFile) {
     const remoteServer = remoteServerViolation(absFile, specifier);
     if (remoteServer !== undefined) {
       violations.push({ file: absFile, line, message: remoteServer });
+      continue;
+    }
+    const remoteAskpass = remoteAskpassViolation(absFile, specifier);
+    if (remoteAskpass !== undefined) {
+      violations.push({ file: absFile, line, message: remoteAskpass });
       continue;
     }
     const osRemoteBackend = osRemoteBackendViolation(absFile, specifier);

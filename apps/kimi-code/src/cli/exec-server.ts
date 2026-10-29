@@ -3,7 +3,7 @@
  * light entry.
  *
  * This module is the argv pre-dispatch target of `src/main.ts` and must stay
- * light: only node builtins plus `./build-info` / `./host-package`. The SDK
+ * light: only node builtins plus `./version` (and its `./build-info`). The SDK
  * root (`@moonshot-ai/kimi-code-sdk`) would pull in full registration
  * (config/OAuth/telemetry/session services) at import time, so the executor
  * reaches its implementation exclusively through a dynamic import of the SDK's
@@ -16,10 +16,7 @@
  * (usage errors, startup failures, executor logs) goes to stderr.
  */
 
-import { readFileSync } from 'node:fs';
-
-import { KIMI_BUILD_INFO } from './build-info';
-import { getHostPackageJsonPath } from './host-package';
+import { getVersion } from './version';
 
 export const EXEC_SERVER_COMMAND = 'exec-server';
 
@@ -48,23 +45,6 @@ function hasExecServerShape(args: readonly string[]): boolean {
 }
 
 /**
- * Executor version reported in the handshake (`executorVersion`): the host
- * CLI package version, so the client's `MIN_EXECUTOR_VERSION` gate and the
- * install/update guidance (spec D9) compare against the same version the
- * binary ships as. Build-info wins when injected (SEA/native bundles);
- * otherwise read the nearest package.json (npm dist, tsx dev).
- */
-export function resolveExecutorVersion(): string {
-  if (KIMI_BUILD_INFO.version !== undefined) {
-    return KIMI_BUILD_INFO.version;
-  }
-  const pkg = JSON.parse(readFileSync(getHostPackageJsonPath(), 'utf-8')) as {
-    version: string;
-  };
-  return pkg.version;
-}
-
-/**
  * Validate the transport and run the executor until the stdio connection
  * closes. Returns the process exit code: 0 on clean shutdown, 1 on startup
  * failure, 2 on an unsupported `--listen` transport.
@@ -76,7 +56,9 @@ export async function runExecServerCommand(listen: string): Promise<number> {
   }
   try {
     const { runExecServer } = await import('@moonshot-ai/kimi-code-sdk/exec-server');
-    return await runExecServer({ version: resolveExecutorVersion() });
+    // The handshake's `executorVersion` is the host CLI version, so the
+    // client's MIN_EXECUTOR_VERSION gate compares against what the binary ships as.
+    return await runExecServer({ version: getVersion() });
   } catch (error) {
     process.stderr.write(
       `error: exec-server failed to start: ${error instanceof Error ? error.message : String(error)}\n`,

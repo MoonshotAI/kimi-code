@@ -49,7 +49,8 @@ import { createCliTelemetryBootstrap, initializeCliTelemetry } from './telemetry
 import { runUpdatePreflight } from './update/preflight';
 import { detectNativeInstall } from './update/source';
 import { maybeRelaunchWithStagedNativeUpdate } from './update/native-swap';
-import { createKimiCodeHostIdentity, getVersion } from './version';
+import { createKimiCodeHostIdentity } from './host-identity';
+import { getVersion } from './version';
 
 /**
  * Outcome of a CLI command run, reported back to the process entrypoint.

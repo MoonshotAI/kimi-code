@@ -28,7 +28,7 @@ import {
 } from '@moonshot-ai/kimi-code-sdk';
 import type { Command } from 'commander';
 
-import { createKimiCodeHostIdentity, createKimiCodeUserAgent } from '#/cli/version';
+import { createKimiCodeHostIdentity, createKimiCodeUserAgent } from '#/cli/host-identity';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
 
 interface WritableLike {

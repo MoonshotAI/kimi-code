@@ -104,13 +104,14 @@ describe('light entry import graph', () => {
   it('keeps the process entry free of the SDK mega-module and heavy CLI modules', () => {
     const { files, externals } = collectStaticGraph(resolve(srcRoot, 'main.ts'));
 
-    expect([...externals].filter((name) => !name.startsWith('node:'))).toEqual([]);
+    expect([...externals].filter((name) => !name.startsWith('node:'))).toEqual([
+      '@moonshot-ai/kimi-code-sdk/ssh-askpass',
+    ]);
     expect(externals).not.toContain('@moonshot-ai/kimi-code-sdk');
     expect([...files].map((file) => file.slice(srcRoot.length + 1)).toSorted()).toEqual([
       'cli/build-info.ts',
       'cli/exec-server.ts',
-      'cli/host-package.ts',
-      'cli/ssh-askpass.ts',
+      'cli/version.ts',
       'main.ts',
     ]);
   });

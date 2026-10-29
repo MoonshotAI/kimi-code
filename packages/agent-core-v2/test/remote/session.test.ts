@@ -150,8 +150,7 @@ exec "$TEST_NODE" "$TEST_TSX" "$TEST_SERVER"
         launcher: { type: 'ssh', host: 'dev-box' },
         sshAuth: {
           password,
-          binary: process.execPath,
-          command: [process.execPath, tsxCli(), join(here, '../../../../apps/kimi-code/src/main.ts')],
+          command: [process.execPath, tsxCli(), join(here, 'fixtures', 'ssh-askpass-child.ts')],
         },
       });
       expect(session.executorVersion).toBe(TEST_VERSION);

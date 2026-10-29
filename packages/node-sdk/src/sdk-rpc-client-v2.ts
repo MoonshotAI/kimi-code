@@ -323,6 +323,7 @@ import type {
   KimiConfigPatch,
   KimiHarnessOptions,
   KimiHostIdentity,
+  KimiSshPasswordOptions,
   ListSessionsOptions,
   McpManagedServerInfo,
   McpServerConfig,
@@ -392,7 +393,7 @@ export interface SDKRpcClientV2Options {
   readonly nonInteractive?: boolean;
   readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
-  readonly onSshPasswordRequired?: (environmentId: string) => Promise<string | undefined>;
+  readonly sshPassword?: KimiSshPasswordOptions;
   readonly uiMode?: string;
   /** UI surfaces this host renders; forwarded as `BootstrapInput.args.uiCapabilities`. */
   readonly uiCapabilities?: readonly HostUiCapability[];
@@ -515,7 +516,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       .addProvider(
         new RemoteEnvironmentProviderFactory({
           clientVersion: identity.version,
-          onSshPasswordRequired: options.onSshPasswordRequired,
+          sshPassword: options.sshPassword,
         }),
       )
       .catch((error) => {
