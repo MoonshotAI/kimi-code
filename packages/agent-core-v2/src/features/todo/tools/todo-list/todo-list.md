@@ -23,6 +23,5 @@ Use this tool to maintain a structured TODO list as you work through a multi-ste
 - Call with no `todos` argument to retrieve the current list without changing it.
 - Call with `todos: []` to clear the list.
 - Keep titles short and actionable (e.g. "Read session-control.ts", "Add planMode flag to TurnManager").
-- Only mark a task `done` when it is fully accomplished.
 - Never mark a task `done` if tests are failing, implementation is partial, unresolved errors remain, or required files/dependencies could not be found.
 - If you encounter a blocker, keep the blocked task `in_progress` or add a new pending task describing what must be resolved.

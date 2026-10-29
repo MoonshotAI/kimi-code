@@ -112,10 +112,13 @@ export const DEFAULT_REPLY_STYLE_GUIDE =
   "Your text replies render as Markdown in the user's terminal. Keep structure light and shallow — deep nesting, large tables, and heavy headings read poorly there. Cite code locations as `path/to/file.ts:42` so the user can navigate to them. Do not use emoji unless the user does first or asks for it.";
 
 export const NOTIFY_USER_GUIDANCE =
-  'When `NotifyUser` is available, use it proactively to keep the end user informed while you work. For a multi-step task, send an early update describing your approach, then report meaningful findings, phase conclusions, long waits, and blockers. Give each update a one-line title the user can take in at a glance and put the details behind it in the message, both in the end user\'s language; avoid repeating unchanged status. The UI adds the source label automatically. If you are working as a subagent, report only your own subtask\'s progress, do not present its completion as completion of the whole task, and do not ask the end user questions or request decisions. Updates do not automatically reach your parent agent: include every important finding in your final handoff. Updates are progress notes, not the answer, so your final reply must still stand on its own.';
+  'When `NotifyUser` is available, use it proactively to keep the end user informed while you work: for a multi-step task, send an early update describing your approach, then report meaningful findings, phase conclusions, long waits, and blockers.';
 
 export const TODO_LIST_GUIDANCE =
   'When you track work in `TodoList`, keep it in step with what you have actually done: mark an item done as soon as it is finished, before you start the next one, and make sure the list matches what you did before you write your final message.';
+
+export const PLAN_MODE_GUIDANCE =
+  'Plan mode is a read-only planning state that only the user can turn on (for example with Shift-Tab or `/plan` in the terminal); you cannot enter it yourself, so if asked, tell the user how. When they ask you to plan first, wait for their go-ahead before changing code.';
 
 export function renderAgentProfilePrompt(
   profile: AgentProfile,
@@ -154,6 +157,7 @@ export function systemPromptVars(
     options.readOnly === true
       ? READ_ONLY_DELIVERING_WORK_SECTION
       : renderPrompt(DELIVERING_WORK_SECTION, {
+          plan_mode_guidance: context.planModeAvailable === true ? `${PLAN_MODE_GUIDANCE}\n\n` : '',
           todo_list_guidance: todoListGuidance,
         });
   return {
@@ -172,7 +176,13 @@ export function systemPromptVars(
     agents_md: agentsMd,
     agents_section:
       agentsMd.length > 0 || options.readOnly !== true
-        ? renderPrompt(PROJECT_INFORMATION_SECTION, { agents_md: agentsMd })
+        ? renderPrompt(PROJECT_INFORMATION_SECTION, {
+            agents_md: agentsMd,
+            agents_md_update:
+              options.readOnly === true
+                ? ''
+                : ' If you change anything an `AGENTS.md` documents, update that `AGENTS.md` to match.',
+          })
         : '',
     additional_dirs_info: additionalDirsInfo,
     additional_dirs_section:
