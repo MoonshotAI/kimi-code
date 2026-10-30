@@ -144,8 +144,6 @@ interface StepDraft {
 }
 
 const HIDDEN_USER_ORIGINS = new Set(['injection', 'system_trigger', 'retry']);
-const LOST_TASK_REMINDER_VARIANT = 'task_resume_termination';
-const LOST_TASK_LINE = /^- (\S+) "(.*)" \(([a-z_]+)\)/;
 const TURN_OPENING_SYSTEM_TRIGGERS = new Set(['goal_continuation', 'subagent']);
 const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
   skill_activation: 'skill',
@@ -388,11 +386,6 @@ export function groupMessagesIntoSnapshot(
     if (message.role === 'user') {
       for (const part of hookParts) {
         pushMarker('hook', userPromptSubmitHookMarkerPayload(part));
-      }
-      if (isLostTaskReminder(message)) {
-        const text = reminderText(textOf(message));
-        pushMarker('notice', { level: 'warning', message: text, lostTasks: lostTasksOf(text) });
-        continue;
       }
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
@@ -677,23 +670,6 @@ function originFileAttachments(message: HistoryMessage): readonly OriginFileAtta
       typeof (attachment as { size?: unknown }).size === 'number' &&
       typeof (attachment as { path?: unknown }).path === 'string',
   );
-}
-
-function isLostTaskReminder(message: HistoryMessage): boolean {
-  const origin = message.origin as { kind?: unknown; variant?: unknown } | undefined;
-  return origin?.kind === 'injection' && origin.variant === LOST_TASK_REMINDER_VARIANT;
-}
-
-function reminderText(text: string): string {
-  return text.replace(/^<system-reminder>\n/, '').replace(/\n<\/system-reminder>$/, '');
-}
-
-function lostTasksOf(text: string): { taskId: string; description: string; kind: string }[] {
-  return text.split('\n').flatMap((line) => {
-    const match = LOST_TASK_LINE.exec(line);
-    if (match === null) return [];
-    return [{ taskId: match[1]!, description: match[2]!, kind: match[3]! }];
-  });
 }
 
 function textOf(message: HistoryMessage): string {
