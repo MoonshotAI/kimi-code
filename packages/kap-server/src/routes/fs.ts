@@ -603,10 +603,11 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 
       r.header('etag', resolved.etag);
       r.header('last-modified', resolved.modifiedAt.toUTCString());
-      r.header(
-        'content-disposition',
-        `attachment; filename="${sanitizeFilename(resolved.relative)}"`,
-      );
+      const base = resolved.relative.split('/').at(-1) ?? resolved.relative;
+      const fallback = base.replace(/[^\x20-\x7e]/g, '_').replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+      const encoded = encodeURIComponent(base).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+      const filenameStar = fallback === base ? '' : `; filename*=UTF-8''${encoded}`;
+      r.header('content-disposition', `attachment; filename="${fallback}"${filenameStar}`);
       r.type(resolved.mime);
 
       const rangeHeader = pickHeader(headers, 'range');
@@ -964,10 +965,4 @@ function buildValidationEnvelope(
     request_id: requestId,
     details,
   };
-}
-
-function sanitizeFilename(rel: string): string {
-  const segs = rel.split('/');
-  const base = segs.at(-1) ?? rel;
-  return base.replaceAll('"', '\\"');
 }
