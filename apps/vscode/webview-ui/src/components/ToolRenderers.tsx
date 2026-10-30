@@ -332,8 +332,8 @@ function TaskTool({ call, result, subagentSteps }: ToolRendererProps) {
     if (!hasSubagentSteps) {
       return result ? formatOutput(result.output) : "";
     }
-    const lastStep = subagentSteps[subagentSteps.length - 1];
-    const textItems = lastStep.items.filter((i) => i.type === "text");
+    const lastStep = subagentSteps.at(-1);
+    const textItems = (lastStep?.items ?? []).filter((i) => i.type === "text");
     if (textItems.length > 0) {
       return textItems.map((i) => (i as { type: "text"; content: string }).content).join("\n");
     }
@@ -359,12 +359,12 @@ function TaskTool({ call, result, subagentSteps }: ToolRendererProps) {
           </button>
           {showProcess && (
             <div className="mt-2 space-y-3">
-              {subagentSteps.map((step) => (
-                <div key={step.n} className="space-y-2">
+              {subagentSteps.map((step, index) => (
+                <div key={index} className="space-y-2">
                   <div className="text-[0.75rem] text-muted-foreground uppercase tracking-wider">Step {step.n}</div>
                   <div className="space-y-2">
                     {step.items.map((item, idx) => (
-                      <SubagentStepItemRenderer key={`${step.n}-${idx}`} item={item} />
+                      <SubagentStepItemRenderer key={idx} item={item} />
                     ))}
                   </div>
                 </div>
