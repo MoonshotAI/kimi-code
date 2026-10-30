@@ -441,15 +441,15 @@ disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `default_max_chars` | `integer` | `100000` | 工具调用未指定 `max_chars` 时的字符额度 |
-| `max_chars` | `integer` | `500000` | 单次工具调用可申请的最大字符额度 |
+| `max_chars` | `integer` | `100000` | 单次工具调用可申请的最大字符额度 |
 
 ```toml
 [read]
 default_max_chars = 100000
-max_chars = 500000
+max_chars = 100000
 ```
 
-两个值都必须是正整数。调用中的 `max_chars` 覆盖默认值，但不会超过配置的最大值；结果会说明实际生效的额度。如果配置的默认值超过最大值，默认读取也会按最大值执行。如果希望较大的文档默认就能一次返回，无需 Agent 主动申请更大额度，可以提高 `default_max_chars`。
+两个值都必须是正整数。调用中的 `max_chars` 覆盖默认值，但不会超过配置的最大值；结果会说明实际生效的额度。如果配置的默认值超过最大值，默认读取也会按最大值执行。单次调用还会在估算 token 数达到 `max_chars` 的四分之一时停止（每个非 ASCII 字符计 1 个 token，每 4 个 ASCII 字符计 1 个），因此中文等非 ASCII 字符较多的文本每次返回的字符更少。如果希望单次调用返回超过 100000 个字符或约 25000 个 token，需要提高 `max_chars`；如果还希望较大的文档默认就能一次返回，无需 Agent 主动申请更大额度，再同时提高 `default_max_chars`。
 
 ## `image`
 
