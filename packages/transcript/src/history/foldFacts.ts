@@ -94,19 +94,6 @@ interface TurnCancelPayload {
   readonly reason?: unknown;
 }
 
-function isVisibleTurnOrigin(origin: unknown): boolean {
-  const kind = (origin as { kind?: unknown } | undefined)?.kind;
-  if (kind === 'system_trigger') {
-    const name = (origin as { name?: unknown } | undefined)?.name;
-    return name === 'goal_continuation' || name === 'subagent';
-  }
-  if (kind === 'skill_activation' || kind === 'plugin_command') {
-    return (origin as { trigger?: unknown } | undefined)?.trigger === 'user-slash';
-  }
-  if (kind === 'injection' || kind === 'retry' || kind === 'compaction_summary') return false;
-  return true;
-}
-
 function isUndoAnchorTurnOrigin(origin: unknown): boolean {
   const payload = origin as { kind?: unknown; trigger?: unknown } | undefined;
   if (payload?.kind === undefined || payload.kind === 'user') return true;
@@ -260,6 +247,8 @@ export function foldWireRecordFacts(
     readonly activeWireTurnId?: number;
   },
 ): AgentTranscriptSnapshot {
+  const materializedTurnIds = new Set<number>();
+  let currentTurnId: number | undefined;
   const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
   const endedTurns = new Map<number, HistoryWireRecord>();
@@ -570,15 +559,26 @@ export function foldWireRecordFacts(
             hiddenTurnIds.add(turnId);
           }
         }
+        currentTurnId = undefined;
         break;
       }
       case 'context.clear':
       case 'context.apply_compaction': {
         undoAnchorFloor = undoAnchors.length;
+        currentTurnId = undefined;
         break;
       }
       case 'context.append_message': {
         const message = (record as ContextAppendMessagePayload).message;
+        const originKind = (message?.origin as { kind?: unknown } | undefined)?.kind;
+        if (
+          currentTurnId !== undefined &&
+          message?.role === 'user' &&
+          originKind !== 'injection' &&
+          originKind !== 'compaction_summary'
+        ) {
+          materializedTurnIds.add(currentTurnId);
+        }
         if (message?.role !== 'user' || !isUndoAnchorTurnOrigin(message.origin)) break;
         const matchingIndex =
           typeof message.id === 'string'
@@ -647,6 +647,7 @@ export function foldWireRecordFacts(
           endedTurns.set(payload.turnId, record);
           const pendingIndex = pendingUndoAnchorTurnIds.indexOf(payload.turnId);
           if (pendingIndex >= 0) pendingUndoAnchorTurnIds.splice(pendingIndex, 1);
+          if (currentTurnId === payload.turnId) currentTurnId = undefined;
         }
         break;
       }
@@ -655,6 +656,8 @@ export function foldWireRecordFacts(
         const at = recordTimeIso(record);
         if (typeof turnId === 'number' && Number.isInteger(turnId) && at !== undefined) {
           turnStartedTimes.set(turnId, at);
+          materializedTurnIds.add(turnId);
+          currentTurnId = turnId;
         }
         break;
       }
@@ -680,13 +683,13 @@ export function foldWireRecordFacts(
         const payload = record as TurnPromptPayload;
         const turnId = typeof payload.turnId === 'number' ? payload.turnId : nextTurnId;
         hasExplicitTurnId ||= typeof payload.turnId === 'number';
+        currentTurnId = turnId;
         nextTurnId = Math.max(nextTurnId, turnId + 1);
         turnOrigins.set(turnId, payload.origin);
         const promptAt = recordTimeIso(record);
         if (promptAt !== undefined) turnPromptTimes.set(turnId, promptAt);
         if (typeof payload.promptId === 'string') turnPromptIds.set(turnId, payload.promptId);
         if (isUndoAnchorTurnOrigin(payload.origin)) pendingUndoAnchorTurnIds.push(turnId);
-        if (!isVisibleTurnOrigin(payload.origin)) hiddenTurnIds.add(turnId);
         break;
       }
       default:
@@ -853,8 +856,8 @@ export function foldWireRecordFacts(
     }
   }
   const wedgedTurnIds = new Set<number>();
-  if (wireIdByOrdinal.size > 0) {
-    let latestPromptTurnId: number | undefined;
+  let latestPromptTurnId: number | undefined;
+  if (hasExplicitTurnId) {
     for (const rawTurnId of turnOrigins.keys()) {
       if (latestPromptTurnId === undefined || rawTurnId > latestPromptTurnId) {
         latestPromptTurnId = rawTurnId;
@@ -866,7 +869,23 @@ export function foldWireRecordFacts(
       wedgedTurnIds.add(rawTurnId);
     }
   }
-  const realignedItems =
+  const missingTurnIds = rawTurnIds.filter(
+    (rawTurnId) =>
+      !ordinalByRawTurnId.has(rawTurnId) &&
+      turnOrigins.has(rawTurnId) &&
+      (endedTurns.has(rawTurnId) ||
+        interruptedSteps.has(rawTurnId) ||
+        (wedgedTurnIds.has(rawTurnId) &&
+          rawTurnId !== latestPromptTurnId &&
+          materializedTurnIds.has(rawTurnId)) ||
+        options?.activeWireTurnId === rawTurnId),
+  );
+  if (!hasExplicitTurnId && missingTurnIds.length > 0) {
+    for (const [rawTurnId, ordinal] of ordinalByRawTurnId) {
+      wireIdByOrdinal.set(ordinal, rawTurnId);
+    }
+  }
+  const realignedBaseItems =
     wireIdByOrdinal.size === 0
       ? items
       : (() => {
@@ -896,6 +915,43 @@ export function foldWireRecordFacts(
             };
           });
         })();
+  const realignedItems: TranscriptItem[] =
+    missingTurnIds.length === 0 ? (realignedBaseItems as TranscriptItem[]) : [...realignedBaseItems];
+  const occupiedOrdinals = new Set(
+    realignedItems.flatMap((item) => item.kind === 'turn' ? [item.ordinal] : []),
+  );
+  const occupiedTurnIds = new Set(
+    realignedItems.flatMap((item) => item.kind === 'turn' ? [item.turnId] : []),
+  );
+  for (const rawTurnId of missingTurnIds) {
+    let ordinal = rawTurnId;
+    while (occupiedOrdinals.has(ordinal) || occupiedTurnIds.has(exportTurnKey(ordinal))) {
+      ordinal += 1;
+    }
+    const nextTurnId = exportTurnKey(ordinal);
+    occupiedOrdinals.add(ordinal);
+    occupiedTurnIds.add(nextTurnId);
+    const ended = endedTurns.get(rawTurnId) as TurnEndedPayload | undefined;
+    const wedged = wedgedTurnIds.has(rawTurnId);
+    const turn: TranscriptTurn = {
+      kind: 'turn',
+      turnId: nextTurnId,
+      ordinal,
+      state: mapTurnEndReason(ended?.reason) ?? (wedged ? 'failed' : 'running'),
+      origin: { kind: turnOriginKind(turnOrigins.get(rawTurnId)) } as TranscriptTurn['origin'],
+      triggerPromptId: turnPromptIds.get(rawTurnId),
+      steps: [],
+      startedAt: turnStartedTimes.get(rawTurnId) ?? turnPromptTimes.get(rawTurnId),
+      endedAt: ended === undefined ? undefined : recordTimeIso(ended as HistoryWireRecord),
+      durationMs: typeof ended?.durationMs === 'number' ? ended.durationMs : undefined,
+      error: readTurnErrorMessage(ended?.error),
+      wedged: wedged ? true : undefined,
+    };
+    const insertAt = realignedItems.findIndex(
+      (item) => item.kind === 'turn' && item.ordinal > ordinal,
+    );
+    realignedItems.splice(insertAt === -1 ? realignedItems.length : insertAt, 0, turn);
+  }
 
   const modesTouched = planActive !== undefined || swarmActive !== undefined || towerActive !== undefined;
   const meta: TranscriptMeta = {

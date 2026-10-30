@@ -375,7 +375,7 @@ export interface ForkSessionInput {
   readonly title?: string;
   readonly metadata?: JsonObject;
   /**
-   * Zero-based index of the user-visible turn to retain through. Omit it to
+   * Persistent engine turnId to retain through; gaps are allowed. Omit it to
    * preserve the existing full-session fork behavior.
    */
   readonly turnIndex?: number;

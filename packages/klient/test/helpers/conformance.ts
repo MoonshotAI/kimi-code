@@ -17,7 +17,9 @@ import { ToolResultEvent } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/t
 import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
+import { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
+import { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
@@ -146,6 +148,18 @@ export function defineKlientConformance(
         title: 'conformance parent',
       });
       try {
+        const parentHandle = getLiveSessionById(target.app.accessor, parent.id)!;
+        const main = await parentHandle.accessor
+          .get(IAgentLifecycleService)
+          .create({ agentId: 'main' });
+        const mainHandle = parentHandle.accessor.get(IAgentLifecycleService).handleOf(main.agentId)!;
+        mainHandle.accessor.get(IAgentContextMemoryService).append({
+          role: 'user',
+          content: [{ type: 'text', text: 'fork through this turn' }],
+          origin: { kind: 'user' },
+        });
+        await mainHandle.accessor.get(IWireService).flush();
+
         const child = await target.klient.session(parent.id).createChild();
         try {
           expect(child.custom?.['parent_session_id']).toBe(parent.id);
@@ -154,10 +168,11 @@ export function defineKlientConformance(
         } finally {
           await target.klient.session(child.id).close();
         }
-        const forked = await target.klient.session(parent.id).fork();
+        const forked = await target.klient.session(parent.id).fork({ turnIndex: 0 });
         try {
           expect(forked.custom?.['parent_session_id']).toBeUndefined();
           expect(forked.custom?.['child_session_kind']).toBeUndefined();
+          expect(forked.lastPrompt).toBe('fork through this turn');
         } finally {
           await target.klient.session(forked.id).close();
         }

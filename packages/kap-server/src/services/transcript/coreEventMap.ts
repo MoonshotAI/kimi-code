@@ -197,8 +197,8 @@ export function allocateExportTurn(
       return { turnId: candidate, ordinal, highWater: Math.max(highWater, ordinal) };
     }
   }
-  if (existing === undefined && wireId > highWater) {
-    return { turnId: candidate, ordinal: wireId, highWater: wireId };
+  if (existing === undefined) {
+    return { turnId: candidate, ordinal: wireId, highWater: Math.max(highWater, wireId) };
   }
   const ordinal = Math.max(highWater, wireId) + 1;
   return { turnId: exportTurnKey(ordinal), ordinal, highWater: ordinal };
