@@ -13,6 +13,7 @@ import type { PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 
 const USER_CONFIGURED_SCOPES = new Set<PermissionRuleScope>([
   'turn-override',
+  'session-runtime',
   'project',
   'user',
 ]);

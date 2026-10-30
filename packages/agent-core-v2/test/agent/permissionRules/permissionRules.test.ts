@@ -1,19 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { ToolCall } from '#human/llm/message';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
+import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IAgentPermissionRulesService, type PermissionApprovalResultRecord, type PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { AgentPermissionRulesService } from '#/agent/permissionRules/permissionRulesService';
 import { permissionRulesKey } from '#/agent/permissionRules/permissionRulesOps';
+import { IAgentStateService } from '#/agent/state/agentState';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
+import { createTestAgent } from '../../harness';
 import {
   registerTestAgentWire,
   registerTestEventDispatcher,
@@ -156,5 +162,106 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     }
     expect(written[0]).toMatchObject({ type: 'metadata' });
     expect(written.slice(1)).toEqual(records);
+  });
+});
+
+function toolContext(toolName: string): ResolvedToolExecutionHookContext {
+  const toolCall: ToolCall = {
+    type: 'function',
+    id: `call-${toolName}`,
+    name: toolName,
+    arguments: '{}',
+  };
+  return {
+    turnId: 1,
+    signal: new AbortController().signal,
+    toolCall,
+    toolCalls: [toolCall],
+    args: {},
+    execution: {
+      description: `Call ${toolName}`,
+      approvalRule: toolName,
+      execute: () => Promise.resolve({ output: '' }),
+    },
+  };
+}
+
+describe('PermissionRulesConfigBridge', () => {
+  it('loads permission rules from the permission config section', async () => {
+    const rule: PermissionRule = { decision: 'deny', scope: 'user', pattern: 'Bash' };
+    const ctx = createTestAgent({ initialConfig: { permission: { rules: [rule] } } });
+    try {
+      expect(ctx.get(IAgentPermissionRulesService).rules).toEqual([rule]);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('lets configured deny rules win over auto-mode approval', async () => {
+    const rule: PermissionRule = { decision: 'deny', scope: 'user', pattern: 'Bash' };
+    const ctx = createTestAgent({ initialConfig: { permission: { rules: [rule] } } });
+    try {
+      ctx.get(IAgentPermissionModeService).setMode('auto');
+      const evaluation = await ctx
+        .get(IAgentPermissionPolicyService)
+        .evaluate(toolContext('Bash'));
+
+      expect(evaluation).toEqual({
+        policyName: 'user-configured-deny',
+        result: { kind: 'deny', message: 'Tool "Bash" was denied by permission rule.' },
+      });
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('leaves the rules empty when the section is absent', async () => {
+    const ctx = createTestAgent();
+    try {
+      expect(ctx.get(IAgentPermissionRulesService).rules).toEqual([]);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('enforces configured rules with the session-runtime scope', async () => {
+    const rule: PermissionRule = {
+      decision: 'deny',
+      scope: 'session-runtime',
+      pattern: 'Bash',
+    };
+    const ctx = createTestAgent({ initialConfig: { permission: { rules: [rule] } } });
+    try {
+      ctx.get(IAgentPermissionModeService).setMode('auto');
+      const evaluation = await ctx
+        .get(IAgentPermissionPolicyService)
+        .evaluate(toolContext('Bash'));
+
+      expect(evaluation?.policyName).toBe('user-configured-deny');
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('reseeds configured rules after an undo replay resets them', async () => {
+    const rule: PermissionRule = { decision: 'deny', scope: 'user', pattern: 'Bash' };
+    const ctx = createTestAgent({ initialConfig: { permission: { rules: [rule] } } });
+    try {
+      await ctx.restorePersisted();
+      await ctx.dispatcher.restore();
+      expect(ctx.get(IAgentPermissionRulesService).rules).toEqual([]);
+
+      const participant = ctx
+        .get(IAgentConversationUndoParticipantRegistry)
+        .list()
+        .find((entry) => entry.id === 'permissionRules.config');
+      expect(participant).toBeDefined();
+      await participant!.reconcileAfterUndo();
+      await ctx.dispatcher.flush();
+
+      expect(ctx.get(IAgentPermissionRulesService).rules).toEqual([rule]);
+    } finally {
+      await ctx.dispose();
+    }
   });
 });
