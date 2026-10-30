@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -9,8 +9,14 @@ import { IAgentPermissionRulesService, type PermissionApprovalResultRecord, type
 import { AgentPermissionRulesService } from '#/agent/permissionRules/permissionRulesService';
 import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
 import { ProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRulesService';
-import { PERMISSION_SECTION, type PermissionConfig } from '#/agent/permissionRules/configSection';
+import {
+  PERMISSION_SECTION,
+  PermissionConfigSchema,
+  readUserPermissionRules,
+  type PermissionConfig,
+} from '#/agent/permissionRules/configSection';
 import { permissionRulesKey } from '#/agent/permissionRules/permissionRulesOps';
+import { UserConfiguredDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/user-configured-deny';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -47,6 +53,7 @@ function sessionApproval(pattern: string): PermissionApprovalResultRecord {
 
 class InMemoryConfigStub {
   permission: PermissionConfig | undefined;
+  replaceError: Error | undefined;
   readonly replaced: PermissionConfig[] = [];
   private instance: IConfigService | undefined;
 
@@ -55,8 +62,14 @@ class InMemoryConfigStub {
       _serviceBrand: undefined,
       get: <T>(domain: string): T =>
         (domain === PERMISSION_SECTION ? this.permission : undefined) as T,
+      assertValid: (domain: string): void => {
+        if (domain === PERMISSION_SECTION && this.permission !== undefined) {
+          PermissionConfigSchema.parse(this.permission);
+        }
+      },
       replace: async (domain: string, value: unknown): Promise<void> => {
         await Promise.resolve();
+        if (this.replaceError !== undefined) throw this.replaceError;
         if (domain === PERMISSION_SECTION) {
           this.permission = value as PermissionConfig;
           this.replaced.push(this.permission);
@@ -130,37 +143,65 @@ async function readRecords(): Promise<WireRecord[]> {
 }
 
 describe('AgentPermissionRulesService (wire-backed)', () => {
-  it('merges state, project, and config rules and persists durable scopes', async () => {
-    const configRule: PermissionRule = { decision: 'deny', scope: 'user', pattern: 'Bash(git push *)' };
+  it('loads startup deny rules and awaits durable writeback without copying it into state', async () => {
+    const configRule = { decision: 'deny', scope: 'user', pattern: 'Bash' } as const;
     const projectRule: PermissionRule = { decision: 'allow', scope: 'project', pattern: 'Read(**)' };
     config.permission = { rules: [configRule] };
     project.rules = [projectRule];
 
-    expect(svc.rules).toEqual([projectRule, configRule]);
+    const startup = new AgentPermissionRulesService(
+      { dispatch: async () => undefined } as never,
+      { agentId: 'startup-agent' } as never,
+      new AgentStateService(),
+      config.asService(),
+      project.service,
+    );
+    expect(startup.rules).toEqual([projectRule, configRule]);
+    expect(new UserConfiguredDenyPermissionPolicyService(startup).evaluate({
+      toolCall: { name: 'Bash' },
+      execution: {},
+    } as never)).toMatchObject({ kind: 'deny' });
 
     const userRule: PermissionRule = { decision: 'allow', scope: 'user', pattern: 'Write(**)' };
     const otherUserRule: PermissionRule = { decision: 'ask', scope: 'user', pattern: 'Glob(**)' };
     const newProjectRule: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash(rm -rf *)' };
+    await svc.addRules([allowRule, userRule, newProjectRule, configRule]);
+
+    expect(svc.rules).toEqual([allowRule, projectRule, newProjectRule, configRule, userRule]);
+    expect(ix.get(IAgentStateService).get(permissionRulesKey).rules).toEqual([allowRule]);
+    expect(project.appended).toEqual([newProjectRule]);
+
     const other = new AgentPermissionRulesService(
       { dispatch: async () => undefined } as never,
       { agentId: 'other-agent' } as never,
       new AgentStateService(),
       config.asService(),
       project.service,
-      stubLog(),
     );
-    svc.addRules([allowRule, userRule, newProjectRule, configRule]);
+    await other.addRules([otherUserRule]);
+    await svc.addRules([]);
+    expect(config.permission?.rules).toEqual([configRule, userRule, otherUserRule]);
 
-    expect(svc.rules).toEqual([allowRule, userRule, newProjectRule, configRule, projectRule]);
+    config.replaceError = new Error('write failed');
+    await expect(svc.addRules([
+      { decision: 'deny', scope: 'user', pattern: 'Edit(**)' },
+    ])).rejects.toThrow('write failed');
+    expect(config.permission?.rules).toEqual([configRule, userRule, otherUserRule]);
 
-    other.addRules([otherUserRule]);
-    await vi.waitFor(() => {
-      expect(config.permission?.rules).toEqual([configRule, userRule, otherUserRule]);
-      expect(project.appended).toEqual([newProjectRule]);
-    });
-
-    svc.addRules([]);
-    expect(svc.rules).toEqual([allowRule, userRule, newProjectRule, configRule, projectRule, otherUserRule]);
+    const restarted = new AgentPermissionRulesService(
+      { dispatch: async () => undefined } as never,
+      { agentId: 'restarted-agent' } as never,
+      new AgentStateService(),
+      config.asService(),
+      project.service,
+    );
+    expect(restarted.rules).toEqual([
+      projectRule,
+      newProjectRule,
+      configRule,
+      userRule,
+      otherUserRule,
+    ]);
   });
 
   it('records session approval patterns only for session approvals', () => {
@@ -180,35 +221,82 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
   });
 
-  it('uses the actual session workdir for project rule IO', async () => {
+  it('loads trusted project rules once from the actual workdir and fails closed', async () => {
     const remoteRule: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash' };
+    const appendedRule: PermissionRule = { decision: 'allow', scope: 'project', pattern: 'Write' };
+    const invalidRule = { decision: 'deny', scope: 'session-runtime', pattern: 'Bash' };
     const calls: string[] = [];
+    let rawRules: unknown[] = [invalidRule];
+    let trusted = false;
+    let failAppend = false;
     const localConfig = {
       readPermissionRules: async (cwd: string) => {
         calls.push(cwd);
-        return { projectRoot: cwd, configPath: `${cwd}/.kimi-code/local.toml`, rules: [remoteRule] };
+        return { projectRoot: cwd, configPath: `${cwd}/.kimi-code/local.toml`, rules: rawRules };
       },
       appendPermissionRules: async (cwd: string, rules: readonly unknown[]) => {
         calls.push(cwd);
-        return { projectRoot: cwd, configPath: `${cwd}/.kimi-code/local.toml`, rules };
+        if (failAppend) throw new Error('append failed');
+        rawRules = [...rawRules, ...rules];
+        return { projectRoot: cwd, configPath: `${cwd}/.kimi-code/local.toml`, rules: rawRules };
       },
     } as never;
+    const trust = { get: async () => trusted } as never;
+    const untrusted = new ProjectPermissionRulesService(
+      { cwd: '/local-association' } as never,
+      { environmentId: 'ssh', cwd: '/remote/project' } as never,
+      localConfig,
+      trust,
+    );
+    await untrusted.ready;
+    expect(untrusted.rules).toEqual([]);
+    expect(calls).toEqual([]);
+
+    trusted = true;
+    rawRules = [remoteRule];
     const remote = new ProjectPermissionRulesService(
       { cwd: '/local-association' } as never,
       { environmentId: 'ssh', cwd: '/remote/project' } as never,
       localConfig,
-      stubLog(),
+      trust,
     );
-
     await remote.ready;
     expect(remote.rules).toEqual([remoteRule]);
-    await remote.appendRules([remoteRule]);
-    expect(calls).toEqual(['/remote/project', '/remote/project']);
-    remote.dispose();
+
+    rawRules = [remoteRule, appendedRule];
+    expect(remote.rules).toEqual([remoteRule]);
+    rawRules = [remoteRule];
+    failAppend = true;
+    await expect(remote.appendRules([appendedRule])).rejects.toThrow('append failed');
+    expect(remote.rules).toEqual([remoteRule]);
+
+    failAppend = false;
+    await remote.appendRules([appendedRule]);
+    expect(remote.rules).toEqual([remoteRule, appendedRule]);
+    expect(calls).toHaveLength(3);
+    expect(calls.every((cwd) => cwd === '/remote/project')).toBe(true);
+
+    rawRules = [invalidRule];
+    const invalid = new ProjectPermissionRulesService(
+      { cwd: '/local-association' } as never,
+      { environmentId: 'ssh', cwd: '/remote/project' } as never,
+      localConfig,
+      trust,
+    );
+    await expect(invalid.ready).rejects.toThrow('Invalid project permission rule');
+    expect(calls).toEqual([
+      '/remote/project',
+      '/remote/project',
+      '/remote/project',
+      '/remote/project',
+    ]);
+
+    config.permission = { rules: [invalidRule] } as unknown as PermissionConfig;
+    expect(() => readUserPermissionRules(config.asService())).toThrow();
   });
 
   it('only persists approval records (permission.rules.add is live-only)', async () => {
-    svc.addRules([allowRule]);
+    await svc.addRules([allowRule]);
     svc.recordApprovalResult(sessionApproval('Bash(rm *)'));
 
     const records = await readRecords();
@@ -231,7 +319,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
   });
 
   it('replay rebuilds session approval patterns only (rules are not persisted)', async () => {
-    svc.addRules([allowRule, denyRule]);
+    await svc.addRules([allowRule, denyRule]);
     svc.recordApprovalResult(sessionApproval('Bash(rm *)'));
     const records = await readRecords();
 

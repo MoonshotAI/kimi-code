@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { z } from 'zod';
@@ -70,21 +72,52 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     const projectRoot = await this.findProjectRoot(workDir);
     const configPath = this.getProjectLocalConfigPath(projectRoot);
     return enqueuePermissionWrite(configPath, async () => {
+      await this.assertNoSymlinks(projectRoot, configPath);
       const file = (await this.readProjectLocalToml(configPath)) ?? { raw: {}, parsed: {} };
       const existing = readRawPermissionRules(file.raw);
       const permission = cloneRecord(file.raw['permission']);
       permission['rules'] = [...existing, ...rules];
       file.raw['permission'] = permission;
 
+      if (this.fs.rename === undefined) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          'Project local config filesystem does not support atomic replacement',
+        );
+      }
+      const tempPath = `${configPath}.tmp.${process.pid}.${randomUUID()}`;
+      let renamed = false;
       try {
         await this.fs.mkdir(dirname(configPath), { recursive: true });
-        await this.fs.writeText(configPath, `${stringifyToml(file.raw)}\n`);
+        await this.fs.writeText(tempPath, `${stringifyToml(file.raw)}\n`);
+        await this.fs.rename(tempPath, configPath);
+        renamed = true;
       } catch (error: unknown) {
         throw toStorageIoError(error, { path: configPath, op: 'write' });
+      } finally {
+        if (!renamed) await this.fs.remove(tempPath).catch(() => undefined);
       }
 
       return { projectRoot, configPath, rules: permission['rules'] as unknown[] };
     });
+  }
+
+  private async assertNoSymlinks(projectRoot: string, configPath: string): Promise<void> {
+    for (const path of [projectRoot, dirname(configPath), configPath]) {
+      let stat: Awaited<ReturnType<IHostFileSystem['lstat']>>;
+      try {
+        stat = await this.fs.lstat(path);
+      } catch (error: unknown) {
+        if (isPathMissing(error)) continue;
+        throw toStorageIoError(error, { path, op: 'stat' });
+      }
+      if (stat.isSymbolicLink === true) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `Refusing to write project permission rules through symlink ${path}`,
+        );
+      }
+    }
   }
 
   private getProjectLocalConfigPath(projectRoot: string): string {
@@ -283,9 +316,16 @@ function cloneRecord(value: unknown): Record<string, unknown> {
 
 function readRawPermissionRules(raw: Record<string, unknown> | undefined): unknown[] {
   const permission = raw?.['permission'];
-  if (!isPlainObject(permission)) return [];
+  if (permission === undefined) return [];
+  if (!isPlainObject(permission)) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, 'permission must be a table');
+  }
   const rules = permission['rules'];
-  return Array.isArray(rules) ? [...rules] : [];
+  if (rules === undefined) return [];
+  if (!Array.isArray(rules)) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, 'permission.rules must be an array');
+  }
+  return [...rules];
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

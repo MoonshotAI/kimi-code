@@ -28,19 +28,48 @@ describe('FileProjectLocalConfigService.readAdditionalDirs', () => {
 });
 
 describe('FileProjectLocalConfigService permissionRules', () => {
-  it('appends rules without dropping other config and reads them back', async () => {
+  it('serializes atomic appends and rejects unsafe or invalid config without losing the last valid file', async () => {
     const existing = { decision: 'deny', scope: 'project', pattern: 'Bash(git push *)' };
     const added = { decision: 'allow', scope: 'project', pattern: 'Read(**)' };
     const concurrentAdded = { decision: 'ask', scope: 'project', pattern: 'Edit(**)' };
+    const configPath = '/repo/.kimi-code/local.toml';
     let text = `[workspace]\nadditional_dir = []\n\n[[permission.rules]]\ndecision = "deny"\nscope = "project"\npattern = "Bash(git push *)"\n`;
+    const staged = new Map<string, string>();
+    const writes: string[] = [];
+    const renames: string[] = [];
+    const symlinks = new Set<string>();
+    let failRename = false;
+    const missing = () => new HostFsError(OsFsErrors.codes.OS_FS_NOT_FOUND, 'missing');
     const fs = {
       _serviceBrand: undefined,
-      readText: async () => text,
-      lstat: async (_path: string) => ({}),
+      readText: async (path: string) => {
+        if (path === configPath) return text;
+        const value = staged.get(path);
+        if (value === undefined) throw missing();
+        return value;
+      },
+      lstat: async (path: string) => {
+        if (['/repo', '/repo/.git', '/repo/.kimi-code', configPath].includes(path)) {
+          return { isSymbolicLink: symlinks.has(path) };
+        }
+        throw missing();
+      },
       mkdir: async (_path: string, _options: unknown) => undefined,
-      writeText: async (_path: string, value: string) => {
+      writeText: async (path: string, value: string) => {
         await Promise.resolve();
+        writes.push(path);
+        staged.set(path, value);
+      },
+      rename: async (from: string, to: string) => {
+        if (failRename) throw new Error('rename failed');
+        const value = staged.get(from);
+        if (value === undefined) throw missing();
         text = value;
+        staged.delete(from);
+        renames.push(to);
+      },
+      remove: async (path: string) => {
+        staged.delete(path);
       },
     } as unknown as IHostFileSystem;
     const service = new FileProjectLocalConfigService(
@@ -61,6 +90,25 @@ describe('FileProjectLocalConfigService permissionRules', () => {
     await expect(service.readPermissionRules('/repo')).resolves.toMatchObject({
       rules: [existing, added, concurrentAdded],
     });
+    expect(writes.every((path) => path !== configPath)).toBe(true);
+    expect(renames).toEqual([configPath, configPath]);
+
+    const validText = text;
+    failRename = true;
+    await expect(service.appendPermissionRules('/repo', [added])).rejects.toThrow();
+    expect(text).toBe(validText);
+    failRename = false;
+    for (const path of [configPath, '/repo/.kimi-code']) {
+      symlinks.add(path);
+      await expect(service.appendPermissionRules('/repo', [added])).rejects.toThrow('symlink');
+      symlinks.clear();
+    }
+    expect(text).toBe(validText);
+
+    text = '[permission]\nrules = "invalid"\n';
+    await expect(service.readPermissionRules('/repo')).rejects.toThrow('permission.rules must be an array');
+    text = '[permission\nrules = []\n';
+    await expect(service.readPermissionRules('/repo')).rejects.toThrow('Invalid TOML');
   });
 });
 

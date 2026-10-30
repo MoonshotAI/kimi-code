@@ -24,6 +24,7 @@ import {
   touchForkedFileHistory,
 } from '#/features/fileHistory/fileHistoryRetention';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { readUserPermissionRules } from '#/agent/permissionRules/configSection';
 import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { LifecycleScope } from '#/app/scopes';
@@ -89,6 +90,7 @@ import { flattenChain } from '#/wire/tree/index';
 import { IModelService } from '#/llm-adapter/model/model';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import {
@@ -204,6 +206,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IModelService private readonly models: IModelService,
     @IProviderService private readonly providers: IProviderService,
     private readonly environments: IEnvironmentService,
+    private readonly trust: IWorkspaceTrust,
     private readonly acquireWorkdir: (environmentId: string, cwd: string) => Promise<ProgramWorkdir>,
     onDispose?: () => void,
   ) {
@@ -283,6 +286,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const dirs = workdir.dirs;
     try {
       await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
+      readUserPermissionRules(this.config);
       await dirs.ready;
       await dirs.mergeAdditionalDirs(environment?.cwd ?? opts.workDir, opts.additionalDirs ?? []);
     } catch (error) {
@@ -313,6 +317,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           seeds: [
             ...sessionContextSeed(ctx),
             [IProjectLocalConfigService, workdir.localConfig],
+            [IWorkspaceTrust, this.trust],
             [ITelemetryService, telemetryBinding.telemetry],
             ...sessionAgentProfileCatalogSeed({
               _serviceBrand: undefined,
