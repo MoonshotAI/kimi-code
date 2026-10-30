@@ -657,11 +657,13 @@ describe('WsConnectionV1 task output', () => {
     failTailRead(): void;
     corruptTailRead(): void;
     withholdTailBytes(count: number): void;
+    refuseDetach(): void;
   }
 
   function makeTaskOutput(taskId: string, initial = '', ownerAgentId = 'main'): FakeTaskOutput {
     let bytes = Buffer.from(initial, 'utf-8');
     const listeners = new Set<(chunk: AgentTaskOutputChunk) => void>();
+    let detachable = true;
     let gate: Promise<void> | undefined;
     let sourceGate: Promise<void> | undefined;
     let sourceCalls = 0;
@@ -690,7 +692,7 @@ describe('WsConnectionV1 task output', () => {
       },
       detach: (id: string) => {
         if (id !== taskId) return undefined;
-        info = { ...info, detached: true };
+        if (detachable) info = { ...info, detached: true };
         return info;
       },
       onDidAppendOutput: (listener: (chunk: AgentTaskOutputChunk) => void) => {
@@ -749,6 +751,9 @@ describe('WsConnectionV1 task output', () => {
       },
       failTailRead: () => {
         tailReadFails = true;
+      },
+      refuseDetach: () => {
+        detachable = false;
       },
     };
   }
@@ -1258,6 +1263,25 @@ describe('WsConnectionV1 task output', () => {
       task: { status: 'ended', outcome: 'killed', detached: true },
     });
     expect(responses.get('r3')).toMatchObject({ code: 40406 });
+    conn.close();
+  });
+
+  it('refuses to move a task to the background when it stays in the foreground', async () => {
+    const output = makeTaskOutput('agent-member');
+    output.refuseDetach();
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskSource: output.source });
+
+    send(socket, { type: 'task.background', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'agent-member' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
+
+    expect(taskFrames(socket)[0]).toMatchObject({
+      type: 'response',
+      request_id: 'r1',
+      code: 40933,
+      msg: 'task cannot be moved to the background',
+      task: { status: 'running', detached: false },
+    });
     conn.close();
   });
 

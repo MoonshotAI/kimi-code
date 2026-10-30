@@ -90,7 +90,15 @@ export class TaskRequests {
     const background = taskBackgroundMessageSchema.safeParse(frame);
     if (background.success) {
       this.enqueue(watchKey(background.data), () =>
-        this.command(requestId, background.data, async (tasks, taskId) => tasks.detach(taskId)),
+        this.command(
+          requestId,
+          background.data,
+          async (tasks, taskId) => tasks.detach(taskId),
+          (info) =>
+            info.status === 'running' && info.detached === false
+              ? { code: ErrorCode.TASK_NOT_DETACHABLE, msg: 'task cannot be moved to the background' }
+              : undefined,
+        ),
       );
       return;
     }
@@ -190,6 +198,7 @@ export class TaskRequests {
     requestId: string,
     request: TaskAddress,
     run: (tasks: IAgentTaskService, taskId: string) => Promise<AgentTaskInfo | undefined>,
+    refuse?: (info: AgentTaskInfo) => { readonly code: number; readonly msg: string } | undefined,
   ): Promise<void> {
     if (this.disposed) return;
     try {
@@ -203,7 +212,13 @@ export class TaskRequests {
         return;
       }
       const info = (await run(resolved.tasks, request.task_id)) ?? resolved.tasks.getTask(request.task_id);
-      this.sink.respond(requestId, ErrorCode.SUCCESS, undefined, info === undefined ? undefined : toTaskState(info));
+      const state = info === undefined ? undefined : toTaskState(info);
+      const refusal = info === undefined ? undefined : refuse?.(info);
+      if (refusal !== undefined) {
+        this.sink.respond(requestId, refusal.code, refusal.msg, state);
+        return;
+      }
+      this.sink.respond(requestId, ErrorCode.SUCCESS, undefined, state);
     } catch {
       this.sink.respond(requestId, ErrorCode.INTERNAL_ERROR, 'internal error');
     }
