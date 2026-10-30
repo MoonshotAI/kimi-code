@@ -439,41 +439,55 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     const cursor = await this.resolveCursor(generation, query);
     if (cursor === undefined) return { items: [] };
     const queued = this.mirror.pending();
+    const queuedIds = new Set(queued.map((summary) => summary.id));
     const limit = query.limit ?? UNBOUNDED;
-    const base = { ...this.baseFilter(query), ...cursor.filter };
-    const filter =
-      queued.length === 0 ? base : { ...base, id: { $nin: queued.map((summary) => summary.id) } };
+    const filter = { ...this.baseFilter(query), ...cursor.filter };
     const column = recencyColumn(generation);
-    const strip = (records: SessionSummary[]): SessionSummary[] =>
-      records.map((record) => stripRecencyField(generation, record));
+    const notQueued = (record: SessionSummary): boolean => !queuedIds.has(record.id);
+    const strip = (record: SessionSummary): SessionSummary => stripRecencyField(generation, record);
+    const fetchVisible = async (
+      fetch: (fetchLimit: number) => Promise<SessionSummary[]>,
+      fetchLimit: number,
+    ): Promise<SessionSummary[]> => {
+      const rows = await fetch(fetchLimit);
+      const visible = rows.filter(notQueued);
+      if (visible.length === rows.length || rows.length < fetchLimit) return visible.map(strip);
+      const widened = await fetch(fetchLimit + queuedIds.size);
+      return widened.filter(notQueued).slice(0, fetchLimit).map(strip);
+    };
 
     const page =
       query.childOf !== undefined
         ? await this.windowedPage(
-            (bounds, fetchLimit) => {
-              const base = this.queryStore
-                .query<SessionSummary>(collection)
-                .where(filter)
-                .orderBy('updatedAt', 'desc')
-                .limit(fetchLimit);
-              const q =
-                Object.keys(bounds).length > 0 ? base.whereColumn(column, bounds) : base;
-              return q.execute().then((p) => strip([...p.items]));
-            },
+            (bounds, fetchLimit) =>
+              fetchVisible((rowLimit) => {
+                const base = this.queryStore
+                  .query<SessionSummary>(collection)
+                  .where(filter)
+                  .orderBy('updatedAt', 'desc')
+                  .limit(rowLimit);
+                const q =
+                  Object.keys(bounds).length > 0 ? base.whereColumn(column, bounds) : base;
+                return q.execute().then((p) => [...p.items]);
+              }, fetchLimit),
             cursor.bounds,
             limit,
           )
         : await this.windowedPage(
             (bounds, fetchLimit) =>
-              this.queryStore
-                .pageByColumn<SessionSummary>(collection, {
-                  column,
-                  dir: 'desc',
-                  filter,
-                  bounds,
-                  limit: fetchLimit,
-                })
-                .then((p) => strip([...p.items])),
+              fetchVisible(
+                (rowLimit) =>
+                  this.queryStore
+                    .pageByColumn<SessionSummary>(collection, {
+                      column,
+                      dir: 'desc',
+                      filter,
+                      bounds,
+                      limit: rowLimit,
+                    })
+                    .then((p) => [...p.items]),
+                fetchLimit,
+              ),
             cursor.bounds,
             limit,
           );
