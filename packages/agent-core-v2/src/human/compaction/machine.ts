@@ -184,9 +184,9 @@ function replayPendingDelta(
   }
   const snapReminders = new Set(snap.reminders);
   for (const entry of pending.reminders) {
-    if (snapReminders.has(entry) || entry.meta?.key === undefined) continue;
+    if (snapReminders.has(entry)) continue;
     if (entry.message.role !== 'system' && entry.message.role !== 'user') continue;
-    deps.actor.send({ type: 'input.remind', key: entry.meta.key, entry: entry as SystemEntry | UserEntry });
+    deps.actor.send({ type: 'input.remind', entry: entry as SystemEntry | UserEntry });
   }
 }
 

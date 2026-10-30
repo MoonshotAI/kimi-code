@@ -1,17 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
 import { ILogService, type ILogger } from '#/_base/log/log';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
-import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { AgentLoopProjector } from '#/agent/loop/projector';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import type { Message } from '#human/llm/message';
+import type { ContentPart, MediaPart, Message } from '#human/llm/message';
 import { mediaUrlOf } from '#human/llm/protocol/kit/media';
+import {
+  MEDIA_DEGRADE_KEEP_RECENT,
+  captureMediaKeys,
+  countMediaParts,
+  degradeLeadingMediaParts,
+  degradeOlderMediaParts,
+  stripMediaParts,
+} from '#human/llm/builtin/policy/media-degrade';
+import { buildMediaPathTag, mediaKindOfPart } from '#/agent/media/mediaRef';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
@@ -93,7 +98,7 @@ function schemaMessage(name: string): ContextMessage {
 
 describe('projector tool-exchange normalization', () => {
   let disposables: DisposableStore;
-  let projector: IAgentContextProjectorService;
+  let projector: AgentLoopProjector;
   let warnings: WarningCall[];
   let telemetryRecords: TelemetryRecord[];
 
@@ -101,16 +106,11 @@ describe('projector tool-exchange normalization', () => {
     disposables = new DisposableStore();
     warnings = [];
     telemetryRecords = [];
-    const ix = disposables.add(new TestInstantiationService());
-    ix.set(ILogService, createCapturingLog(warnings));
-    ix.set(ITelemetryService, recordingTelemetry(telemetryRecords));
-    ix.set(IAgentStateService, new AgentStateService());
-    ix.set(
-      IAgentScopeContext,
-      makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+    projector = new AgentLoopProjector(
+      createCapturingLog(warnings),
+      recordingTelemetry(telemetryRecords),
+      new AgentStateService(),
     );
-    ix.set(IAgentContextProjectorService, new SyncDescriptor(AgentContextProjectorService));
-    projector = ix.get(IAgentContextProjectorService);
   });
 
   afterEach(() => disposables.dispose());
@@ -130,7 +130,7 @@ describe('projector tool-exchange normalization', () => {
   }
 
   function projectStrict(history: readonly ContextMessage[]): readonly Message[] {
-    return projector.project(history, { structure: 'strict' });
+    return projector.project(history, true);
   }
 
   it('leaves a fully resolved exchange untouched', () => {
@@ -646,6 +646,16 @@ describe('projector tool-exchange normalization', () => {
     });
   });
 
+  function mediaReplacement(mediaPaths?: ReadonlyMap<string, string>) {
+    return (part: MediaPart): ContentPart | undefined => {
+      const path = mediaPaths?.get(mediaUrlOf(part));
+      if (path === undefined) return undefined;
+      const kind = mediaKindOfPart(part);
+      if (kind === undefined) return undefined;
+      return { type: 'text', text: buildMediaPathTag(kind, path) };
+    };
+  }
+
   describe('project with media: degraded policy', () => {
     function imageMessage(url: string): ContextMessage {
       return {
@@ -659,10 +669,10 @@ describe('projector tool-exchange normalization', () => {
       history: readonly ContextMessage[],
       mediaPaths?: ReadonlyMap<string, string>,
     ): readonly Message[] {
-      return projector.project(
-        history,
-        { media: { degradeCount: projector.captureMediaDegradeCount(history) } },
-        mediaPaths,
+      return degradeOlderMediaParts(
+        project(history),
+        MEDIA_DEGRADE_KEEP_RECENT,
+        mediaReplacement(mediaPaths),
       );
     }
 
@@ -672,11 +682,14 @@ describe('projector tool-exchange normalization', () => {
         imageMessage('data:image/png;base64,MID'),
         imageMessage('data:image/png;base64,NEW'),
       ];
-      const degradeCount = projector.captureMediaDegradeCount(history);
+      const degradeCount = Math.max(
+        0,
+        countMediaParts(project(history)) - MEDIA_DEGRADE_KEEP_RECENT,
+      );
 
-      const projected = projector.project(
-        [...history, imageMessage('data:image/png;base64,FRESH')],
-        { media: { degradeCount } },
+      const projected = degradeLeadingMediaParts(
+        project([...history, imageMessage('data:image/png;base64,FRESH')]),
+        degradeCount,
       );
 
       const urls = projected
@@ -788,9 +801,10 @@ describe('projector tool-exchange normalization', () => {
 
     function projectStripped(
       history: readonly ContextMessage[],
-      snapshot = projector.captureMediaStripSnapshot(history),
+      snapshot = captureMediaKeys(project(history)),
+      mediaPaths?: ReadonlyMap<string, string>,
     ): readonly Message[] {
-      return projector.project(history, { media: { strip: snapshot } });
+      return stripMediaParts(project(history), snapshot, mediaReplacement(mediaPaths));
     }
 
     it('replaces every media part with a text marker, keeping the surrounding text', () => {
@@ -838,11 +852,9 @@ describe('projector tool-exchange normalization', () => {
 
     it('replaces stripped media with path tags when display paths are provided', () => {
       const history = [imageMessage('kimi-file://f_old', 'old-id')];
-      const snapshot = projector.captureMediaStripSnapshot(history);
-
-      const projected = projector.project(
+      const projected = projectStripped(
         history,
-        { media: { strip: snapshot } },
+        captureMediaKeys(project(history)),
         new Map([['kimi-file://f_old', '/session/media/f_old.png']]),
       );
 
@@ -856,7 +868,7 @@ describe('projector tool-exchange normalization', () => {
 
     it('preserves media introduced after the rejected-media snapshot', () => {
       const rejected = imageMessage('data:image/png;base64,OLD', 'old-id');
-      const snapshot = projector.captureMediaStripSnapshot([rejected]);
+      const snapshot = captureMediaKeys(project([rejected]));
 
       const projected = projectStripped(
         [rejected, imageMessage('data:image/png;base64,NEW', 'new-id')],
@@ -882,11 +894,7 @@ describe('projector tool-exchange normalization', () => {
         ],
         toolCallId: 'ghost',
       };
-      const snapshot = projector.captureMediaStripSnapshot([
-        user('go'),
-        assistant('done'),
-        orphan,
-      ]);
+      const snapshot = captureMediaKeys(project([user('go'), assistant('done'), orphan]));
 
       const projected = projectStripped(
         [imageMessage(url, 'orphan-id')],
@@ -901,9 +909,9 @@ describe('projector tool-exchange normalization', () => {
     });
 
     it('strips a new media container with the same provider-visible identity', () => {
-      const snapshot = projector.captureMediaStripSnapshot([
-        imageMessage('data:image/png;base64,SAME', 'same-id'),
-      ]);
+      const snapshot = captureMediaKeys(
+        project([imageMessage('data:image/png;base64,SAME', 'same-id')]),
+      );
 
       const projected = projectStripped(
         [imageMessage('data:image/png;base64,SAME', 'same-id')],
@@ -919,7 +927,7 @@ describe('projector tool-exchange normalization', () => {
 
     it('preserves a matching URL when its provider-visible id is different', () => {
       const url = 'https://example.test/media/image.png';
-      const snapshot = projector.captureMediaStripSnapshot([imageMessage(url, 'old-id')]);
+      const snapshot = captureMediaKeys(project([imageMessage(url, 'old-id')]));
 
       const projected = projectStripped(
         [imageMessage(url, 'new-id')],

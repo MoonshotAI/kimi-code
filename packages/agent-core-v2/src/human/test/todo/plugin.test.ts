@@ -36,17 +36,17 @@ function pluginTool(plugin: TodoPlugin): ToolDefinition {
 function createTarget(store: AgentEventStore) {
   const handlers: ((event: AgentEmitted) => void)[] = [];
   const notified: UserMessage[] = [];
-  const reminded: { key: string; message: UserMessage | SystemMessage }[] = [];
+  const reminded: { key: string | undefined; message: UserMessage | SystemMessage }[] = [];
   const target: AgentPluginTarget = {
     kind: 'agent',
     on: (_type, handler) => {
       handlers.push(handler);
     },
-    notify: (message) => {
-      notified.push(message);
+    notify: (entry) => {
+      notified.push(entry.message);
     },
-    remind: (key, message) => {
-      reminded.push({ key, message });
+    remind: (entry) => {
+      reminded.push({ key: entry.meta?.key, message: entry.message });
     },
   };
   let turnId = 0;
@@ -172,7 +172,7 @@ describe('connectPlugins notify channel', () => {
       tools: () => [],
       connect(target) {
         if (target.kind !== 'agent') return;
-        target.notify({ role: 'user', content: [{ type: 'text', text: 'hello' }] });
+        target.notify({ message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } });
       },
     };
     connectPlugins(

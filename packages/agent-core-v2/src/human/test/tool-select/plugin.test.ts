@@ -162,15 +162,15 @@ describe('deferTool', () => {
 
 function createTarget() {
   const handlers = new Map<string, ((event: AgentEmitted) => void)[]>();
-  const reminded: { key: string; message: UserMessage | SystemMessage }[] = [];
+  const reminded: { key: string | undefined; message: UserMessage | SystemMessage }[] = [];
   const target: AgentPluginTarget = {
     kind: 'agent',
     on: (type, handler) => {
       handlers.set(type, [...(handlers.get(type) ?? []), handler]);
     },
     notify: () => undefined,
-    remind: (key, message) => {
-      reminded.push({ key, message });
+    remind: (entry) => {
+      reminded.push({ key: entry.meta?.key, message: entry.message });
     },
   };
   const emit = (event: AgentEmitted) => {

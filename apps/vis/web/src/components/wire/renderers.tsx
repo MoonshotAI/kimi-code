@@ -1224,6 +1224,34 @@ export const WIRE_RENDERERS: RendererMap = {
     }),
   },
 
+  'tool_select.initialized': {
+    tone: 'tools',
+    label: 'tools·init',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.tools.length} tool{r.tools.length === 1 ? '' : 's'}</Mono>
+          <Dim>initial snapshot</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'tool_select.tools_changed': {
+    tone: 'tools',
+    label: 'tools·delta',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>
+            +{r.added.length} / −{r.removed.length}
+          </Mono>
+          <Dim>runtime change</Dim>
+        </span>
+      ),
+    }),
+  },
+
   'turn.ended': {
     tone: 'turn',
     label: 'turn✓',

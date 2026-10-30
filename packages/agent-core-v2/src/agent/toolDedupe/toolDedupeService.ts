@@ -431,7 +431,7 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
       tool_name: toolName,
       turn_repeat_count: this.turnRepeatCount,
       args_hash: argsHash(args),
-      trace_id: trace?.traceId,
+      request_id: trace?.requestId,
     };
     this.telemetry.track2('tool_call_turn_repeat', properties);
   }
@@ -495,7 +495,7 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
       tool_name: toolName,
       dup_type: dupType,
       args_hash: argsHash(args),
-      trace_id: trace?.traceId,
+      request_id: trace?.requestId,
     };
     this.telemetry.track2('tool_call_dedup_detected', properties);
   }
@@ -557,7 +557,7 @@ export class AgentToolDedupeService extends Service implements IAgentToolDedupeS
         tool_name: toolName,
         repeat_count: streak,
         action,
-        trace_id: trace?.traceId,
+        request_id: trace?.requestId,
       };
       this.telemetry.track2('tool_call_repeat', properties);
     }
