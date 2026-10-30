@@ -1137,7 +1137,7 @@ On success, `data` is `{ aborted: true }`.
 
 The queue lists steers first, in the order they became steers, then queued prompts and compactions in their queue order. Every change is pushed as a `queue` frame. All operations take `session_id` and `agent_id` in the path, and fail `40401` for an unknown session or agent and `40402` when the prompt is no longer in the queue (it already entered a turn or was withdrawn).
 
-- `queue:pause` — nothing leaves the queue until it is resumed: steers do not enter the running turn and queued prompts do not start new turns. The running turn keeps going, and an input submitted while the agent is idle still starts a turn right away. `data` is `{ paused: true }`.
+- `queue:pause` — nothing leaves the queue until it is resumed: steers do not enter the running turn and queued prompts do not start new turns. The running turn keeps going, and an input or a compaction submitted while the agent is idle still starts right away. `data` is `{ paused: true }`.
 - `queue:resume` — resumes the queue. `data` is `{ paused: false }`.
 - `queue/{prompt_id}:steer` — turns a queued input into a steer, placed after existing steers; a prompt submitted with a `mode` or a compaction cannot be steered (`40001`). `data` is `{}`.
 - `queue/{prompt_id}:move` — body `{ before_prompt_id? }`; moves a queued prompt before another queued prompt, or to the end when omitted. Steers keep their place (`40001`). `data` is `{}`.
