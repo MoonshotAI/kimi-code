@@ -722,6 +722,8 @@ import '#/agent/permissionRules/configSection';
 export * from '#/agent/permissionRules/permissionRules';
 export * from '#/agent/permissionRules/matchesRule';
 export * from '#/agent/permissionRules/permissionRulesService';
+export * from '#/agent/permissionRules/projectPermissionRules';
+export * from '#/agent/permissionRules/projectPermissionRulesService';
 export * from '#/agent/pluginCommand/pluginCommand';
 export * from '#/agent/pluginCommand/pluginCommandService';
 export * from '#/agent/profile/profile';
