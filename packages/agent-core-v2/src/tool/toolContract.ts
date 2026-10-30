@@ -94,6 +94,14 @@ export type ToolExecution = RunnableToolExecution | ExecutableToolErrorResult;
 
 export interface ExecutableTool<Input = unknown> extends Tool {
   resolveExecution(input: Input): ToolExecution | Promise<ToolExecution>;
+  /**
+   * Maps well-known argument aliases to their canonical names before runtime
+   * validation. Models trained on other agent/file-reading tools frequently
+   * emit `offset`/`limit` where this tool's schema declares `line_offset`/
+   * `n_lines`. An alias is only applied when the canonical argument is absent,
+   * so an explicitly provided canonical value always wins.
+   */
+  readonly argAliases?: Readonly<Record<string, string>>;
 }
 
 export type ToolSource = 'builtin' | 'user' | 'mcp';
