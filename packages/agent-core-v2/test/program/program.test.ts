@@ -614,7 +614,7 @@ describe('Program local generation and remote workdirs', () => {
       expect(fixture.profileRegistry.entries().find((entry) => entry.sourceId === 'workspace')?.contextKey)
         .toBe(environmentBindingId('local', fixture.localRoot));
 
-      await local.git.status(fixture.localRoot);
+      await local.git.status();
       expect(fixture.localGitCalls).toEqual([fixture.localRoot]);
 
       const listed = await local.fs.list({ path: '.', depth: 1, limit: 100, show_hidden: false, follow_gitignore: false, sort: 'name_asc', include_git_status: false });

@@ -133,9 +133,13 @@ describe('GitService', () => {
       writeFileSync(join(repo, 'a/file.txt'), 'one\ntwo\n');
       writeFileSync(join(repo, 'b/file.txt'), 'one\ntwo\nthree\n');
 
-      const result = await service.status(join(repo, 'a'), { scopeToCwd: true });
+      const result = await service.status(join(repo, 'a'), {
+        scopeToCwd: true,
+        pathFilter: new Set(['file.txt']),
+        includePullRequest: false,
+      });
 
-      expect(result.entries).toEqual({ 'a/file.txt': 'modified' });
+      expect(result.entries).toEqual({ 'file.txt': 'modified' });
       expect(result.additions).toBe(1);
       expect(result.deletions).toBe(0);
     });

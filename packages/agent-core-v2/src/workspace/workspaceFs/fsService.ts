@@ -35,11 +35,16 @@ import {
 } from './fs';
 
 const FsWireErrorCode = {
+  VALIDATION_FAILED: 40001,
   FS_PATH_NOT_FOUND: 40409,
+  ENVIRONMENT_NOT_FOUND: 40420,
+  SESSION_BUSY: 40901,
   FS_IS_DIRECTORY: 40906,
   FS_IS_BINARY: 40907,
+  ENVIRONMENT_UNAVAILABLE: 40926,
   FS_TOO_LARGE: 41302,
   FS_TOO_MANY_RESULTS: 41303,
+  FS_PATH_ESCAPES_SESSION: 41304,
   INTERNAL_ERROR: 50001,
 } as const;
 import ignore, { type Ignore } from 'ignore';
@@ -53,6 +58,8 @@ import {
   guessMime,
 } from '#/_base/utils/fileMeta';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
+import { EnvironmentError } from '#/environment/environmentRegistry';
+import { HandshakeError } from '#/remote/client/connection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
@@ -1080,7 +1087,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
 
     const cwd = await this.resolveGitRoot(req.root);
-    return this.git.status(cwd, {
+    return this.git.statusAt(cwd, {
       pathFilter: filter,
       scopeToCwd: req.root !== undefined,
       includePullRequest: req.include_pull_request !== false,
@@ -1097,7 +1104,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   async pullRequest(req: FsPullRequestRequest): Promise<FsPullRequest | null> {
     const cwd = await this.resolveGitRoot(req.root);
-    return this.git.pullRequest(cwd);
+    return this.git.pullRequestAt(cwd);
   }
 
   private async batchGitValues<T>(
@@ -1105,8 +1112,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     read: (root: string) => Promise<T>,
   ): Promise<{ results: Record<string, T>; errors: Record<string, FsBatchError> }> {
     const roots = [...new Set(inputRoots)];
-    const results: Record<string, T> = {};
-    const errors: Record<string, FsBatchError> = {};
+    const results = Object.create(null) as Record<string, T>;
+    const errors = Object.create(null) as Record<string, FsBatchError>;
     let cursor = 0;
     const worker = async (): Promise<void> => {
       while (cursor < roots.length) {
@@ -1132,7 +1139,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         details: { cwd, path: req.path },
       });
     }
-    return this.git.diff(cwd, rel, abs);
+    return this.git.diffAt(cwd, rel, abs);
   }
 
   private async resolveGitRoot(root?: string): Promise<string> {
@@ -1713,8 +1720,27 @@ function mapFsError(err: unknown, inputPath: string): Error {
 }
 
 function toGitBatchError(err: unknown): FsBatchError {
-  if (err instanceof Error2 && err.code === ErrorCodes.FS_GIT_UNAVAILABLE) {
-    return { code: 40908, msg: err.message };
+  if (err instanceof EnvironmentError) {
+    switch (err.code) {
+      case 'environment.not_found':
+        return { code: FsWireErrorCode.ENVIRONMENT_NOT_FOUND, msg: err.message };
+      case 'environment.invalid_cwd':
+        return { code: FsWireErrorCode.VALIDATION_FAILED, msg: err.message };
+      case 'environment.conflict':
+        return { code: FsWireErrorCode.SESSION_BUSY, msg: err.message };
+      case 'environment.unavailable':
+      case 'environment.capability_unavailable':
+        return { code: FsWireErrorCode.ENVIRONMENT_UNAVAILABLE, msg: err.message };
+    }
+  }
+  if (err instanceof HandshakeError) {
+    return { code: FsWireErrorCode.ENVIRONMENT_UNAVAILABLE, msg: err.message };
+  }
+  if (err instanceof Error2) {
+    if (err.code === ErrorCodes.FS_GIT_UNAVAILABLE) return { code: 40908, msg: err.message };
+    if (err.code === ErrorCodes.FS_PATH_ESCAPES) {
+      return { code: FsWireErrorCode.FS_PATH_ESCAPES_SESSION, msg: err.message };
+    }
   }
   return toWireError(err);
 }

@@ -35,6 +35,14 @@ export class GitService implements IGitService {
       throw this.gitUnavailable(cwd, inside.stderr.trim() || `git rev-parse exit ${inside.exitCode}`);
     }
 
+    let pathPrefix = '';
+    if (options.scopeToCwd === true) {
+      const prefix = await this.runCommand('git', ['rev-parse', '--show-prefix'], cwd);
+      if (prefix.exitCode !== 0) {
+        throw this.gitUnavailable(cwd, prefix.stderr.trim() || `git rev-parse exit ${prefix.exitCode}`);
+      }
+      pathPrefix = prefix.stdout.trim();
+    }
     const statusArgs = ['status', '--porcelain=v1', '--branch', '-z'];
     if (options.scopeToCwd === true) statusArgs.push('--', '.');
     const porc = await this.runCommand('git', statusArgs, cwd);
@@ -42,7 +50,7 @@ export class GitService implements IGitService {
       throw this.gitUnavailable(cwd, porc.stderr.trim() || `git status exit ${porc.exitCode}`);
     }
 
-    const result = parsePorcelain(porc.stdout, options.pathFilter);
+    const result = parsePorcelain(porc.stdout, options.pathFilter, pathPrefix);
 
     const dirty = porc.stdout
       .split('\0')

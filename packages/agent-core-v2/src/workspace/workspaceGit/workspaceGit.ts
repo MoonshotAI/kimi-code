@@ -4,9 +4,11 @@ import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest, GitStatusOptio
 export interface IWorkspaceGitService {
   readonly _serviceBrand: undefined;
 
-  status(cwd: string, options?: GitStatusOptions): Promise<FsGitStatusResponse>;
-  pullRequest(cwd: string): Promise<FsPullRequest | null>;
-  diff(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse>;
+  status(pathFilter?: ReadonlySet<string>): Promise<FsGitStatusResponse>;
+  statusAt(cwd: string, options?: GitStatusOptions): Promise<FsGitStatusResponse>;
+  pullRequestAt(cwd: string): Promise<FsPullRequest | null>;
+  diff(relPath: string, absPath: string): Promise<FsDiffResponse>;
+  diffAt(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse>;
 }
 
 export const IWorkspaceGitService: ServiceIdentifier<IWorkspaceGitService> =

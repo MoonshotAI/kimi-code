@@ -12,15 +12,23 @@ export class WorkspaceGitService implements IWorkspaceGitService {
     @ref(IGitService) private readonly git: LiveRef<IGitService>,
   ) {}
 
-  status(cwd: string, options?: GitStatusOptions): Promise<FsGitStatusResponse> {
+  status(pathFilter?: ReadonlySet<string>): Promise<FsGitStatusResponse> {
+    return this.git.current!.status(this.workspace.cwd, { pathFilter });
+  }
+
+  statusAt(cwd: string, options?: GitStatusOptions): Promise<FsGitStatusResponse> {
     return this.git.current!.status(cwd, options);
   }
 
-  pullRequest(cwd: string): Promise<FsPullRequest | null> {
+  pullRequestAt(cwd: string): Promise<FsPullRequest | null> {
     return this.git.current!.pullRequest(cwd);
   }
 
-  diff(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse> {
+  diff(relPath: string, absPath: string): Promise<FsDiffResponse> {
+    return this.git.current!.diff(this.workspace.cwd, relPath, absPath);
+  }
+
+  diffAt(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse> {
     return this.git.current!.diff(cwd, relPath, absPath);
   }
 }
