@@ -1096,7 +1096,7 @@ Submits an input or a manual compaction. The body only describes the input: agen
 | `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, args? }`; every skill must exist and be user-activatable |
 | `metadata` | body | object | Opaque client data, echoed back as `client_metadata` |
 | `delivery` | body | string | Where the input goes while the agent is busy: `queue` (default) waits for the running turn to end, `steer` enters the running turn at the next safe point. Ignored when the agent is idle |
-| `mode` | body | string | `plan` / `swarm` / `goal` — the mode the input starts its turn in, applied right before that turn starts; `plan` and `swarm` also leave tower mode, `goal` uses the input's `metadata.display_text` (or its text) as the objective. Main agent only; cannot be combined with `delivery: "steer"` |
+| `mode` | body | string | `plan` / `swarm` / `goal` — the mode the input starts its turn in. It is applied once the input reaches the head of the queue and the agent is idle, while the input stays in the queue, and the input then starts like any other; a mode that is already on is left as is. `plan` and `swarm` also leave tower mode, `goal` uses the input's `metadata.display_text` (or its text) as the objective and is skipped when a goal appeared while the input waited. Main agent only; cannot be combined with `delivery: "steer"` |
 
 Each `content` part is an object discriminated by `type`:
 
@@ -1116,7 +1116,7 @@ On success, `data` is `{ prompt_id, user_message_id, status, content, created_at
 - `40415`: a `skills` entry names an unknown skill
 - `40910`: the compaction cannot start, for example because the history has nothing to compact
 - `40912`: the skill exists but cannot be activated by the user
-- `40913`: `mode: "goal"` while the agent already has a goal
+- `40913`: `mode: "goal"` while the agent already has a goal at submission
 - `40927`: `prompt_id` is already used in the session
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort`
@@ -1135,7 +1135,7 @@ On success, `data` is `{ aborted: true }`.
 
 #### Queue operations
 
-The queue lists steers first, in the order they became steers, then queued prompts and compactions in their queue order. Every change is pushed as a `queue` frame. All operations take `session_id` and `agent_id` in the path, and fail `40401` for an unknown session or agent and `40402` when the prompt is no longer in the queue (it already entered a turn or was withdrawn).
+The queue lists steers first, in the order they became steers, then queued prompts and compactions in their queue order. Every change is pushed as a `queue` frame. When an input at the head cannot start, for example because its mode cannot be applied, the queue pauses with that input left at its head and the session receives a warning. All operations take `session_id` and `agent_id` in the path, and fail `40401` for an unknown session or agent and `40402` when the prompt is no longer in the queue (it already entered a turn or was withdrawn).
 
 - `queue:pause` — nothing leaves the queue until it is resumed: steers do not enter the running turn and queued prompts do not start new turns. The running turn keeps going, and an input or a compaction submitted while the agent is idle still starts right away. `data` is `{ paused: true }`.
 - `queue:resume` — resumes the queue. `data` is `{ paused: false }`.

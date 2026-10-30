@@ -36,7 +36,6 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   readonly onDidChange = this.onDidChangeEmitter.event;
 
   private entries: QueueEntry[] = [];
-  private starting: QueueEntry | undefined;
   private paused = false;
   private busy = false;
   private pumpScheduled = false;
@@ -61,16 +60,16 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   snapshot(): PromptQueueSnapshot {
     return {
       paused: this.paused,
-      items: this.listed().map(({ prepare: _prepare, onDrop: _onDrop, ...item }) => item),
+      items: this.entries.map(({ prepare: _prepare, onDrop: _onDrop, ...item }) => item),
     };
   }
 
   hasPendingInputs(): boolean {
-    return this.starting !== undefined || (!this.paused && this.entries.some((item) => item.kind === 'input'));
+    return !this.paused && this.entries.some((item) => item.kind === 'input');
   }
 
   hasPendingItems(): boolean {
-    return this.starting !== undefined || (!this.paused && this.entries.length > 0);
+    return !this.paused && this.entries.length > 0;
   }
 
   async submitInput(request: PromptQueueInputRequest): Promise<PromptQueueSubmitResult> {
@@ -81,20 +80,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     if (request.delivery === 'steer' && !this.paused && !this.busy && this.loop.canSteerPrompt()) {
       return { acceptedAs: 'steer', handle: await this.handOffSteer(request.entry) };
     }
-    if (this.canStartNow()) {
-      this.busy = true;
-      try {
-        if (request.prepare !== undefined) {
-          this.runGate.begin();
-          await request.prepare();
-        }
-        return { acceptedAs: 'turn', handle: this.launch(request.entry) };
-      } finally {
-        this.busy = false;
-        this.schedulePump();
-      }
-    }
-    this.insert({
+    const entry: QueueEntry = {
       kind: 'input',
       id: request.id,
       delivery: request.delivery,
@@ -103,8 +89,28 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       createdAt: request.entry.meta?.createdAt ?? new Date().toISOString(),
       prepare: request.prepare,
       onDrop: request.onDrop,
-    });
-    return { acceptedAs: request.delivery };
+    };
+    if (!this.canStartNow()) {
+      this.insert(entry);
+      return { acceptedAs: request.delivery };
+    }
+    if (request.prepare === undefined) {
+      return { acceptedAs: 'turn', handle: this.launch(request.entry) };
+    }
+    this.busy = true;
+    try {
+      this.runGate.begin();
+      await request.prepare();
+      if (this.loop.canLaunchPrompt()) {
+        return { acceptedAs: 'turn', handle: this.launch(request.entry) };
+      }
+      this.restoreAtHead({ ...entry, prepare: undefined });
+      this.emitChange();
+      return { acceptedAs: 'queue' };
+    } finally {
+      this.busy = false;
+      this.schedulePump();
+    }
   }
 
   submitCompaction(request: PromptQueueCompactionRequest): PromptQueueSubmitResult {
@@ -168,8 +174,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   }
 
   cancel(id: string): void {
-    const entry = this.starting?.id === id ? this.starting : this.find(id);
-    if (entry === this.starting) this.starting = undefined;
+    const entry = this.find(id);
     this.entries = this.entries.filter((item) => item !== entry);
     this.emitChange();
     entry.onDrop?.();
@@ -177,8 +182,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
 
   override dispose(): void {
     this.disposed = true;
-    const dropped = this.listed();
-    this.starting = undefined;
+    const dropped = this.entries;
     this.entries = [];
     for (const entry of dropped) entry.onDrop?.();
     super.dispose();
@@ -212,12 +216,8 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     return entry;
   }
 
-  private listed(): QueueEntry[] {
-    return this.starting === undefined ? this.entries : [this.starting, ...this.entries];
-  }
-
   private assertNewId(id: string): void {
-    if (this.listed().some((item) => item.id === id)) {
+    if (this.entries.some((item) => item.id === id)) {
       throw new Error2(ErrorCodes.PROMPT_ID_CONFLICT, `prompt ${id} is already queued`);
     }
   }
@@ -266,36 +266,23 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       this.schedulePump();
       return;
     }
-    await this.runBusy(async () => {
-      if (head.prepare !== undefined) {
-        try {
-          this.runGate.begin();
-        } catch (error) {
-          this.pauseAfterFailedStart(head, error);
-          return;
-        }
-      }
-      this.entries = this.entries.filter((item) => item !== head);
-      this.starting = head;
-      if (head.prepare !== undefined) {
-        try {
-          await head.prepare();
-        } catch (error) {
-          this.logger.warn('queued prompt mode could not be applied', { promptId: head.id, error });
-          this.warn('queued-mode-failed', `The queued prompt could not enter its mode and started as a normal prompt: ${reasonOf(error)}`);
-        }
-      }
-      if (this.starting !== head) return;
-      this.starting = undefined;
-      const prepared = { ...head, prepare: undefined };
-      if (this.paused) {
-        this.restoreAtHead(prepared);
-        this.emitChange();
-        return;
-      }
-      this.emitChange();
-      this.submitTaken(prepared);
-    });
+    if (head.prepare !== undefined) {
+      await this.runBusy(() => this.applyMode(head));
+      return;
+    }
+    this.take(head);
+    this.submitTaken(head);
+  }
+
+  private async applyMode(entry: QueueEntry): Promise<void> {
+    try {
+      this.runGate.begin();
+      await entry.prepare?.();
+    } catch (error) {
+      if (this.entries.includes(entry)) this.pauseAfterFailedStart(entry, error);
+      return;
+    }
+    this.entries = this.entries.map((item) => (item === entry ? { ...item, prepare: undefined } : item));
   }
 
   private async runBusy(run: () => Promise<void>): Promise<void> {

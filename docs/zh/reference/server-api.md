@@ -1096,7 +1096,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `skills` | body | array | 随输入一起激活的技能，至少 1 项 `{ name, args? }`；每个技能都必须存在且可由用户激活 |
 | `metadata` | body | object | 客户端不透明数据，以 `client_metadata` 原样回显 |
 | `delivery` | body | string | agent 正在运行时的去向：`queue`（默认）等当前这一轮结束，`steer` 在下一个安全时机插进当前这一轮。agent 空闲时不起作用 |
-| `mode` | body | string | `plan` / `swarm` / `goal`：这条输入以什么模式开启它的那一轮，在那一轮开始前才生效；`plan` 和 `swarm` 同时退出 tower 模式，`goal` 以输入的 `metadata.display_text`（没有时用输入文字）为目标。只支持 main agent，不能与 `delivery: "steer"` 同时使用 |
+| `mode` | body | string | `plan` / `swarm` / `goal`：这条输入以什么模式开启它的那一轮。等它排到队首且 agent 空闲时先应用模式，应用期间它仍留在排队区，之后像普通输入一样开始；已开启的模式保持不变。`plan` 和 `swarm` 同时退出 tower 模式；`goal` 以输入的 `metadata.display_text`（没有时用输入文字）为目标，排队期间已出现目标时跳过。只支持 main agent，不能与 `delivery: "steer"` 同时使用 |
 
 每个 `content` 段是按 `type` 区分的对象：
 
@@ -1116,7 +1116,7 @@ schema 也接受共享消息格式中的 `tool_use`、`tool_result`、`thinking`
 - `40415`：`skills` 中有未知技能
 - `40910`：压缩无法开始，例如历史中没有可压缩的内容
 - `40912`：技能存在但不能由用户激活
-- `40913`：使用 `mode: "goal"` 时 agent 已经有目标
+- `40913`：提交 `mode: "goal"` 时 agent 已经有目标
 - `40927`：`prompt_id` 在会话中已被使用
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort`
@@ -1135,7 +1135,7 @@ schema 也接受共享消息格式中的 `tool_use`、`tool_result`、`thinking`
 
 #### 排队区操作
 
-排队区中插话在前，按改为插话的先后排列；排队的输入和压缩在后，按排队顺序排列。每次变化都会推送一次 `queue` 帧。所有操作的路径都带 `session_id` 和 `agent_id`；会话或 agent 不存在时返回 `40401`，输入已不在排队区（已进入一轮或已撤回）时返回 `40402`。
+排队区中插话在前，按改为插话的先后排列；排队的输入和压缩在后，按排队顺序排列。每次变化都会推送一次 `queue` 帧。队首的输入无法开始时（例如模式无法应用），排队区暂停，这条输入留在队首，会话里会出现一条警告。所有操作的路径都带 `session_id` 和 `agent_id`；会话或 agent 不存在时返回 `40401`，输入已不在排队区（已进入一轮或已撤回）时返回 `40402`。
 
 - `queue:pause`：暂停后，排队区里的内容都不送出：插话不进入当前这一轮，排队的输入不开启新的一轮。当前这一轮照常运行；agent 空闲时提交的输入或压缩仍然立即开始。`data` 为 `{ paused: true }`。
 - `queue:resume`：恢复排队区。`data` 为 `{ paused: false }`。

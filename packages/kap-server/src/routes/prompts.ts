@@ -7,6 +7,7 @@ import {
   IAgentProfileService,
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
+  IAgentGoalService,
   IAgentPromptQueueService,
   IAgentSkillService,
   IEventBus,
@@ -221,6 +222,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           const mode = req.body.mode;
           if (mode !== undefined && resolved.agentId !== MAIN_AGENT_ID) {
             throw new Error2(ErrorCodes.REQUEST_INVALID, 'mode is only supported for the main agent');
+          }
+          if (mode === 'goal' && resolved.agent.accessor.get(IAgentGoalService).getGoal().goal !== null) {
+            throw new Error2(ErrorCodes.GOAL_ALREADY_EXISTS, 'A goal already exists');
           }
           reservation = reservePromptId(session_id, req.body.prompt_id);
 

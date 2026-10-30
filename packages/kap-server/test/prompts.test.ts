@@ -39,6 +39,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 import { type RunningServer, startServer } from '../src/start';
 import { projectPromptSnapshot, watchPromptSettlements } from '../src/routes/prompts';
+import { applyPromptLaunchMode } from '../src/routes/sessionAgentConfig';
 import { ensureMainAgent } from '../src/transport/mainAgent';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
@@ -392,6 +393,24 @@ describe('server-v2 /api/v1 prompts', () => {
     });
 
     expect(submitted.body.code).not.toBe(0);
+  });
+
+  it('leaves an existing goal and plan mode alone when a queued goal-mode prompt reaches its turn', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const goals = agent.accessor.get(IAgentGoalService);
+    const plan = agent.accessor.get(IAgentPlanService);
+    await goals.createGoal({ objective: 'Existing goal' });
+    await plan.enter();
+    const createGoal = vi.spyOn(goals, 'createGoal');
+
+    await applyPromptLaunchMode(agent, 'goal', 'Another goal');
+
+    expect(createGoal).not.toHaveBeenCalled();
+    expect(goals.getGoal().goal?.objective).toBe('Existing goal');
+    expect(await plan.status()).not.toBeNull();
   });
 
   it('keeps plan mode when a goal-mode prompt is rejected because a goal already exists', async () => {
