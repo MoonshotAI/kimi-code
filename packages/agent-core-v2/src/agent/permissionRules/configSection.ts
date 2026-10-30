@@ -41,7 +41,7 @@ export const PersistedPermissionRuleSchema = PermissionRuleSchema.extend({
 });
 
 export const PermissionConfigSchema = z.object({
-  rules: z.array(PersistedPermissionRuleSchema).optional(),
+  rules: z.array(PermissionRuleSchema).optional(),
   dangerousCommandGuard: z.boolean().optional(),
 });
 
@@ -49,7 +49,8 @@ export type PermissionConfig = z.infer<typeof PermissionConfigSchema>;
 
 export function readUserPermissionRules(config: IConfigService): readonly PermissionRule[] {
   config.assertValid(PERMISSION_SECTION);
-  return config.get<PermissionConfig | undefined>(PERMISSION_SECTION)?.rules ?? [];
+  const rules = config.get<PermissionConfig | undefined>(PERMISSION_SECTION)?.rules ?? [];
+  return rules.filter((rule) => rule.scope === 'project' || rule.scope === 'user');
 }
 
 export const DANGEROUS_COMMAND_GUARD_ENV = 'KIMI_CODE_DANGEROUS_COMMAND_GUARD';

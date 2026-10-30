@@ -66,7 +66,7 @@ export class AgentPermissionRulesService implements IAgentPermissionRulesService
     }
     if (userRules.length > 0) {
       writes.push(enqueueUserConfigWrite(this.config, async () => {
-        const current = this.config.get<PermissionConfig | undefined>(PERMISSION_SECTION);
+        const current = this.config.inspect<PermissionConfig | undefined>(PERMISSION_SECTION).userValue;
         const existing = current?.rules ?? [];
         const appended = missingPermissionRules(existing, userRules);
         if (appended.length > 0) {
