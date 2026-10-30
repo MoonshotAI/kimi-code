@@ -1296,6 +1296,36 @@ describe('ReadTool', () => {
     expect(nextReadArgs(result)).toMatchObject({ line_offset: 1, n_lines: 1 });
   });
 
+  it('rejects a named range that exceeds the estimated token limit and suggests one that fits', async () => {
+    const tool = toolWithContent(Array.from({ length: 600 }, () => '文'.repeat(100)).join('\n'));
+    const result = await execute(tool, { path: '/tmp/doc.md', line_offset: 1, n_lines: 400 });
+
+    expect(result.isError).toBe(true);
+    expect(toolContentString(result)).toContain('Lines 1-400 are more than one Read can return');
+    const suggestion = ReadInputSchema.parse(JSON.parse(/for example (\{[^}]*\})/.exec(toolContentString(result))![1]!));
+    expect(suggestion).toMatchObject({ path: '/tmp/doc.md', line_offset: 1 });
+    expect(suggestion.n_lines).toBeLessThan(400);
+
+    const page = await execute(tool, suggestion);
+    expect(page.isError).not.toBe(true);
+    expect(page.truncated).toBeUndefined();
+    expect(estimateTokens(`${toolContentString(page)}\n${page.note ?? ''}`)).toBeLessThanOrEqual(25_000);
+  });
+
+  it('rejects a tail range that exceeds the estimated token limit and suggests the newest lines that fit', async () => {
+    const tool = toolWithContent(Array.from({ length: 600 }, () => '文'.repeat(100)).join('\n'));
+    const result = await execute(tool, { path: '/tmp/doc.md', line_offset: -400 });
+
+    expect(result.isError).toBe(true);
+    expect(toolContentString(result)).toContain('Lines 201-600 are more than one Read can return');
+    const suggestion = ReadInputSchema.parse(JSON.parse(/for example (\{[^}]*\})/.exec(toolContentString(result))![1]!));
+    expect(suggestion.line_offset! + suggestion.n_lines! - 1).toBe(600);
+
+    const page = await execute(tool, suggestion);
+    expect(page.isError).not.toBe(true);
+    expect(page.truncated).toBeUndefined();
+  });
+
   it('shortens a page of non-ASCII text to the estimated token limit and keeps the budget for Next Read', async () => {
     const line = '文'.repeat(2_000);
     const tool = toolWithContent(Array.from({ length: 80 }, () => line).join('\n'));

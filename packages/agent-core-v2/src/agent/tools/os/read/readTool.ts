@@ -12,7 +12,7 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
-import { countTokenChars, tokensForCharCounts } from '#/llm-adapter/contract/tokens';
+import { countTokenChars, tokensForCharCounts, type TokenCharCounts } from '#/llm-adapter/contract/tokens';
 import {
   ToolAccesses,
   type ExecutableToolResult,
@@ -98,6 +98,33 @@ function cutForTokens(text: string, end: number, overflow: number): number {
     removed += code <= 127 ? 0.25 : 1;
   }
   return index;
+}
+
+const RANGE_STATUS_TOKENS = 256;
+
+function rangeTooLarge(page: ReadPage, lineCounts: readonly TokenCharCounts[], tokenLimit: number): ExecutableToolResult {
+  const indexes = page.renderedLines.map((_, index) => index);
+  if (page.fromTail) indexes.reverse();
+  let ascii = 0;
+  let nonAscii = 0;
+  let fit = 0;
+  for (const index of indexes) {
+    const counts = lineCounts[index]!;
+    ascii += counts.ascii + (fit > 0 ? 1 : 0);
+    nonAscii += counts.nonAscii;
+    if (tokensForCharCounts({ ascii, nonAscii }) > tokenLimit - RANGE_STATUS_TOKENS) break;
+    fit += 1;
+  }
+  const lines = Math.max(1, fit);
+  const suggestion = {
+    path: page.request.args.path,
+    line_offset: page.fromTail ? page.rangeEnd - lines + 1 : page.rangeStart,
+    n_lines: lines,
+  };
+  return {
+    isError: true,
+    output: `Lines ${String(page.rangeStart)}-${String(page.rangeEnd)} are more than one Read can return (about ${String(tokenLimit)} estimated tokens). Read at most ${String(lines)} lines at a time, for example ${JSON.stringify(suggestion)}, or find the section with Grep.`,
+  };
 }
 
 function updateLineEndingFlags(flags: LineEndingFlags, text: string): void {
@@ -539,6 +566,12 @@ export class ReadTool implements IReadTool {
         ascii: contentAscii + count - 1 + (noteCounts === undefined ? 0 : 1 + noteCounts.ascii),
         nonAscii: contentNonAscii + (noteCounts?.nonAscii ?? 0),
       }) - tokenLimit;
+      if (
+        overTokens > 0 && count > 1 && first === 0 && end === page.renderedLines.length &&
+        firstColumn === 0 && (args.n_lines !== undefined || page.fromTail)
+      ) {
+        return rangeTooLarge(page, lineCounts, tokenLimit);
+      }
       if (renderedChars <= maxChars && overTokens <= 0 && (complete || count > 0)) {
         return {
           output: fragmentEnd !== undefined
