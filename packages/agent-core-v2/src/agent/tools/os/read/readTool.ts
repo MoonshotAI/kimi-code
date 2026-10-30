@@ -567,7 +567,7 @@ export class ReadTool implements IReadTool {
         nonAscii: contentNonAscii + (noteCounts?.nonAscii ?? 0),
       }) - tokenLimit;
       if (
-        overTokens > 0 && count > 1 && first === 0 && end === page.renderedLines.length &&
+        renderedChars <= maxChars && overTokens > 0 && count > 1 &&
         firstColumn === 0 && (args.n_lines !== undefined || page.fromTail)
       ) {
         return rangeTooLarge(page, lineCounts, tokenLimit);

@@ -1326,6 +1326,41 @@ describe('ReadTool', () => {
     expect(page.truncated).toBeUndefined();
   });
 
+  it('rejects a non-ASCII named range when the lines that fit max_chars still exceed the token limit', async () => {
+    const tool = toolWithContent(Array.from({ length: 2000 }, () => '文'.repeat(100)).join('\n'));
+    const result = await execute(tool, { path: '/tmp/doc.md', line_offset: 1, n_lines: 2000 });
+
+    expect(result.isError).toBe(true);
+    expect(toolContentString(result)).toContain('Lines 1-2000 are more than one Read can return');
+    const suggestion = ReadInputSchema.parse(JSON.parse(/for example (\{[^}]*\})/.exec(toolContentString(result))![1]!));
+    const page = await execute(tool, suggestion);
+    expect(page.isError).not.toBe(true);
+    expect(page.truncated).toBeUndefined();
+  });
+
+  it('keeps paging named ASCII ranges that exceed only the character limit', async () => {
+    const tool = toolWithContent(
+      Array.from({ length: 2000 }, (_, index) => `${String(index).padStart(6, '0')}${'a'.repeat(94)}`).join('\n'),
+    );
+    const forward = await execute(tool, { path: '/tmp/code.ts', line_offset: 1, n_lines: 2000 });
+    const forwardLines = toolContentString(forward).split('\n');
+    const lastLine = Number(forwardLines.at(-1)!.split('\t')[0]);
+
+    expect(forward.isError).not.toBe(true);
+    expect(forward.truncated).toBe(true);
+    expect(forwardLines[0]).toMatch(/^1\t/);
+    expect(nextReadArgs(forward)).toMatchObject({ line_offset: lastLine + 1, n_lines: 2000 - lastLine, max_chars: 100_000 });
+
+    const tail = await execute(tool, { path: '/tmp/code.ts', line_offset: -2000 });
+    const tailLines = toolContentString(tail).split('\n');
+    const firstLine = Number(tailLines[0]!.split('\t')[0]);
+
+    expect(tail.isError).not.toBe(true);
+    expect(tail.truncated).toBe(true);
+    expect(tailLines.at(-1)).toMatch(/^2000\t/);
+    expect(nextReadArgs(tail)).toMatchObject({ line_offset: 1, n_lines: firstLine - 1, max_chars: 100_000 });
+  });
+
   it('shortens a page of non-ASCII text to the estimated token limit and keeps the budget for Next Read', async () => {
     const line = '文'.repeat(2_000);
     const tool = toolWithContent(Array.from({ length: 80 }, () => line).join('\n'));
