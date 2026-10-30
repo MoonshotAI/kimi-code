@@ -38,7 +38,6 @@ import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import type { SkillContribution } from '#/features/skill/catalog/skillSource';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
-import type { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import type { ISessionWorkdir, SessionEnvironmentWorkdir } from '#/session/workdir/workdir';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import { stubSkill } from '../../features/skill/catalog/stubs';
@@ -632,14 +631,18 @@ const ROSTER_GUIDANCE =
 
 function stubMounts(results: Record<string, EnvironmentMount> = {}) {
   const calls: { readonly environmentId: string; readonly cwd: string }[] = [];
+  const unmounted: string[] = [];
   const mounts: ISessionEnvironmentMounts = {
     _serviceBrand: undefined,
     mount: (environmentId: string, cwd: string) => {
       calls.push({ environmentId, cwd });
       return Promise.resolve(results[environmentId] ?? { status: 'mounted', agentsMdPaths: [] });
     },
+    unmount: (environmentId: string) => {
+      unmounted.push(environmentId);
+    },
   };
-  return { mounts, calls };
+  return { mounts, calls, unmounted };
 }
 
 describe('AgentEnvironmentRosterService', () => {
@@ -752,6 +755,23 @@ describe('AgentEnvironmentRosterService', () => {
     });
   });
 
+  it('unmounts an environment once it leaves the roster', async () => {
+    const { agentEnvironment, registry } = setup({
+      multiEnvironment: { declarations: [{ id: 'remote', defaultCwd: '/srv/app' }, { id: 'staging' }] },
+    });
+    registry.register(environment('staging', 'staging-one', 'pending'));
+    const { mounts, unmounted } = stubMounts();
+    const { provide } = rosterProvider(agentEnvironment, mounts);
+    const injected = { role: 'user' as const, content: [] };
+
+    const first = await provide({});
+    await registry.remove('remote');
+    const update = await provide({ lastInjection: injected, lastDisclosure: first?.disclosure });
+
+    expect(update?.content).toBe(['Execution environment updates:', '- `remote` is no longer available.'].join('\n'));
+    expect(unmounted).toEqual(['remote']);
+  });
+
   it('reports an environment whose project context could not be loaded', async () => {
     const { agentEnvironment } = setup({
       multiEnvironment: { declarations: [{ id: 'remote', defaultCwd: '/srv/app' }] },
@@ -785,7 +805,6 @@ describe('AgentEnvironmentRosterService', () => {
 describe('SessionEnvironmentMountsService', () => {
   function setupMounts(options: {
     readonly acquire?: (environmentId: string, cwd: string) => Promise<SessionEnvironmentWorkdir>;
-    readonly primaryAgentsMdPaths?: readonly string[];
   } = {}) {
     const contributions = new Map<string, SkillContribution>();
     const acquired: { readonly environmentId: string; readonly cwd: string }[] = [];
@@ -800,7 +819,8 @@ describe('SessionEnvironmentMountsService', () => {
         snapshot: {
           agentsMd: undefined,
           agentsMdWarning: undefined,
-          agentsMdPaths: ['/kimi-home/AGENTS.md', '/srv/app/AGENTS.md'],
+          agentsMdPaths: ['/kimi-home/AGENTS.md', '/workspace/AGENTS.md'],
+          agentsMdProjectPaths: ['/workspace/AGENTS.md'],
         },
       } as unknown as IWorkspaceInstructionsService,
       dispose: () => {
@@ -819,12 +839,11 @@ describe('SessionEnvironmentMountsService', () => {
       set: (id: string, contribution: SkillContribution) => {
         contributions.set(id, contribution);
       },
+      remove: (id: string) => {
+        contributions.delete(id);
+      },
     } as unknown as ISessionSkillCatalog;
-    const instructions = {
-      ready: Promise.resolve(),
-      agentsMdPaths: options.primaryAgentsMdPaths ?? ['/kimi-home/AGENTS.md', '/workspace/AGENTS.md'],
-    } as unknown as ISessionInstructionsProvider;
-    const service = new SessionEnvironmentMountsService(workdir, catalog, instructions);
+    const service = new SessionEnvironmentMountsService(workdir, catalog);
     return { service, contributions, acquired, disposedWorkdirs: () => disposedWorkdirs };
   }
 
@@ -839,13 +858,53 @@ describe('SessionEnvironmentMountsService', () => {
     ]);
   });
 
-  it('lists only the AGENTS.md files the primary environment did not already load', async () => {
+  it('lists the project AGENTS.md files of the environment even when the primary has the same path', async () => {
     const { service } = setupMounts();
 
-    await expect(service.mount('remote', '/srv/app')).resolves.toEqual({
+    await expect(service.mount('remote', '/workspace')).resolves.toEqual({
       status: 'mounted',
-      agentsMdPaths: ['/srv/app/AGENTS.md'],
+      agentsMdPaths: ['/workspace/AGENTS.md'],
     });
+  });
+
+  it('drops the skills and workdir of an unmounted environment and mounts it again on return', async () => {
+    const { service, contributions, acquired, disposedWorkdirs } = setupMounts();
+
+    const first = service.mount('remote', '/srv/app');
+    await first;
+    service.unmount('remote', first);
+    expect(contributions.has('environment:remote')).toBe(false);
+    expect(disposedWorkdirs()).toBe(1);
+
+    const second = service.mount('remote', '/srv/app');
+    await second;
+    service.unmount('remote', first);
+    expect(contributions.has('environment:remote')).toBe(true);
+    expect(acquired).toHaveLength(2);
+  });
+
+  it('adds no skills when the environment is unmounted while its workdir is still loading', async () => {
+    let open!: () => void;
+    const opened = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const { service, contributions } = setupMounts({
+      acquire: async () => {
+        await opened;
+        return {
+          skills: { catalog: new InMemorySkillCatalog(), load: async () => {} } as unknown as IWorkspaceSkillCatalog,
+          instructions: { ready: Promise.resolve(), snapshot: {} } as unknown as IWorkspaceInstructionsService,
+          dispose: () => {},
+        };
+      },
+    });
+
+    const pending = service.mount('remote', '/srv/app');
+    service.unmount('remote', pending);
+    open();
+
+    expect((await pending).status).toBe('failed');
+    expect(contributions.size).toBe(0);
   });
 
   it('loads each environment once and releases its workdir with the session', async () => {

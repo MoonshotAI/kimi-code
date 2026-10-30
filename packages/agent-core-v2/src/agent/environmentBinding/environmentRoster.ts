@@ -88,6 +88,11 @@ export class AgentEnvironmentRosterService extends Disposable implements IAgentE
     this._register(
       reminder.register<RosterDisclosure>(ENVIRONMENT_ROSTER_REMINDER_VARIANT, async ({ lastInjection, lastDisclosure }) => {
         const targets = environment.targets();
+        for (const [environmentId, pending] of mounted) {
+          if (targets.some((target) => target.environmentId === environmentId)) continue;
+          mounted.delete(environmentId);
+          mounts.unmount(environmentId, pending.mount);
+        }
         if (targets.length < 2) {
           if (lastInjection === undefined || lastDisclosure === SINGLE_ENVIRONMENT_DISCLOSURE) return undefined;
           return {

@@ -5,7 +5,6 @@ import { LifecycleScope } from '#/app/scopes';
 import { SKILL_SOURCE_PRIORITY } from '#/features/skill/catalog/skillSource';
 import type { SkillDefinition } from '#/features/skill/catalog/types';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionWorkdir, type SessionEnvironmentWorkdir } from '#/session/workdir/workdir';
 
 export type EnvironmentMount =
@@ -15,6 +14,7 @@ export type EnvironmentMount =
 export interface ISessionEnvironmentMounts {
   readonly _serviceBrand: undefined;
   mount(environmentId: string, cwd: string): Promise<EnvironmentMount>;
+  unmount(environmentId: string, mount: Promise<EnvironmentMount>): void;
 }
 
 export const ISessionEnvironmentMounts: ServiceIdentifier<ISessionEnvironmentMounts> =
@@ -24,46 +24,72 @@ export function environmentSkillName(name: string, environmentId: string): strin
   return `${name}@${environmentId}`;
 }
 
+interface MountHandle {
+  released: boolean;
+  workdir?: SessionEnvironmentWorkdir;
+  contributed: boolean;
+}
+
+interface MountEntry {
+  readonly result: Promise<EnvironmentMount>;
+  readonly handle: MountHandle;
+}
+
 export class SessionEnvironmentMountsService extends Disposable implements ISessionEnvironmentMounts {
   declare readonly _serviceBrand: undefined;
 
-  private readonly mounts = new Map<string, Promise<EnvironmentMount>>();
-  private disposed = false;
+  private readonly mounts = new Map<string, MountEntry>();
 
   constructor(
     @ISessionWorkdir private readonly workdir: ISessionWorkdir,
     @ISessionSkillCatalog private readonly catalog: ISessionSkillCatalog,
-    @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
   ) {
     super();
     this._register(toDisposable(() => {
-      this.disposed = true;
+      for (const { handle } of this.mounts.values()) {
+        handle.released = true;
+        handle.workdir?.dispose();
+      }
+      this.mounts.clear();
     }));
   }
 
   mount(environmentId: string, cwd: string): Promise<EnvironmentMount> {
-    let pending = this.mounts.get(environmentId);
-    if (pending === undefined) {
-      pending = this.load(environmentId, cwd);
-      this.mounts.set(environmentId, pending);
-    }
-    return pending;
+    const existing = this.mounts.get(environmentId);
+    if (existing !== undefined) return existing.result;
+    const handle: MountHandle = { released: false, contributed: false };
+    const result = this.load(environmentId, cwd, handle);
+    this.mounts.set(environmentId, { result, handle });
+    return result;
   }
 
-  private async load(environmentId: string, cwd: string): Promise<EnvironmentMount> {
+  unmount(environmentId: string, mount: Promise<EnvironmentMount>): void {
+    const entry = this.mounts.get(environmentId);
+    if (entry === undefined || entry.result !== mount) return;
+    this.mounts.delete(environmentId);
+    entry.handle.released = true;
+    entry.handle.workdir?.dispose();
+    if (entry.handle.contributed) this.catalog.remove(catalogContributionId(environmentId));
+  }
+
+  private async load(environmentId: string, cwd: string, handle: MountHandle): Promise<EnvironmentMount> {
     let workdir: SessionEnvironmentWorkdir;
     try {
       workdir = await this.workdir.acquireEnvironmentWorkdir(environmentId, cwd);
     } catch (error) {
       return { status: 'failed', error: errorMessage(error) };
     }
-    this._register(toDisposable(() => workdir.dispose()));
+    if (handle.released) {
+      workdir.dispose();
+      return { status: 'failed', error: `environment ${environmentId} is no longer available` };
+    }
+    handle.workdir = workdir;
     try {
-      await Promise.all([workdir.skills.load(), workdir.instructions.ready, this.instructions.ready]);
+      await Promise.all([workdir.skills.load(), workdir.instructions.ready]);
     } catch (error) {
       return { status: 'failed', error: errorMessage(error) };
     }
-    if (this.disposed) return { status: 'failed', error: 'session closed' };
+    if (handle.released) return { status: 'failed', error: `environment ${environmentId} is no longer available` };
     const skills = workdir.skills.catalog
       .listSkills()
       .filter((skill) => skill.source === 'project')
@@ -73,12 +99,15 @@ export class SessionEnvironmentMountsService extends Disposable implements ISess
         environmentId,
       }));
     if (skills.length > 0) {
-      this.catalog.set(`environment:${environmentId}`, { skills }, { priority: SKILL_SOURCE_PRIORITY.workspace });
+      this.catalog.set(catalogContributionId(environmentId), { skills }, { priority: SKILL_SOURCE_PRIORITY.workspace });
+      handle.contributed = true;
     }
-    const primaryPaths = new Set(this.instructions.agentsMdPaths ?? []);
-    const agentsMdPaths = (workdir.instructions.snapshot.agentsMdPaths ?? []).filter((path) => !primaryPaths.has(path));
-    return { status: 'mounted', agentsMdPaths };
+    return { status: 'mounted', agentsMdPaths: workdir.instructions.snapshot.agentsMdProjectPaths ?? [] };
   }
+}
+
+function catalogContributionId(environmentId: string): string {
+  return `environment:${environmentId}`;
 }
 
 function errorMessage(error: unknown): string {

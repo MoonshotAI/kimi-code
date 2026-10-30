@@ -22,7 +22,7 @@ const WATCH_DEBOUNCE_MS = 200;
 
 export const workspaceInstructionsCurrentKey = defineState<WorkspaceInstructionsSnapshot>(
   'workspaceInstructions.current',
-  () => ({ agentsMd: undefined, agentsMdWarning: undefined, agentsMdPaths: undefined }),
+  () => ({ agentsMd: undefined, agentsMdWarning: undefined, agentsMdPaths: undefined, agentsMdProjectPaths: undefined }),
 );
 
 export class WorkspaceInstructionsService
@@ -79,6 +79,7 @@ export class WorkspaceInstructionsService
         agentsMd: result.content,
         agentsMdWarning: result.warning,
         agentsMdPaths: result.paths,
+        agentsMdProjectPaths: result.projectPaths,
       };
       const changed =
         next.agentsMd !== this.current.agentsMd ||

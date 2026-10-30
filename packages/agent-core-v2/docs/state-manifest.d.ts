@@ -405,6 +405,7 @@ export interface WorkspaceStateSnapshot {
     readonly agentsMd: string | undefined;
     readonly agentsMdWarning: string | undefined;
     readonly agentsMdPaths: readonly string[] | undefined;
+    readonly agentsMdProjectPaths: readonly string[] | undefined;
   };
   // src/workspace/workspaceTrust/workspaceTrustService.ts
   'workspaceTrust.trusted': boolean;

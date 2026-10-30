@@ -52,6 +52,20 @@ describe('loadAgentsMd user-level discovery', () => {
     expect(result.indexOf('user generic')).toBeLessThan(result.indexOf('project instructions'));
   });
 
+  it('reports only the files found from the work dir as project paths', async () => {
+    await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'user branded', 'utf-8');
+    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
+
+    const result = await loadAgentsMdDetailed({ fs, homeDir }, workDir);
+
+    expect(result.paths).toEqual([
+      normalize(join(homeDir, '.kimi-code', 'AGENTS.md')),
+      normalize(join(workDir, 'AGENTS.md')),
+    ]);
+    expect(result.projectPaths).toEqual([normalize(join(workDir, 'AGENTS.md'))]);
+  });
+
   it('loads generic user-level .agents/AGENTS.md', async () => {
     await mkdir(join(homeDir, '.agents'), { recursive: true });
     await writeFile(join(homeDir, '.agents', 'AGENTS.md'), 'dot-agents generic', 'utf-8');
