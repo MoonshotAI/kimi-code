@@ -132,7 +132,7 @@ function formatRow(summary: SessionSummary, showWorkDir: boolean): string {
 }
 
 function sanitizeField(value: string): string {
-  return value.replaceAll(/[\x00-\x1F\x7F]+/g, ' ').trim();
+  return value.replaceAll(/[\u0000-\u001F\u007F]+/g, ' ').trim();
 }
 
 function formatTimestamp(epochMs: number): string {

@@ -97,6 +97,41 @@ describe('Session skills', () => {
     }
   });
 
+  it('does not merge skills from session-only additional dirs', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-work-');
+    const additionalDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-additional-');
+    await writeSkill(additionalDir, 'session-only', [
+      '---',
+      'name: session-only',
+      'description: Session-only skill',
+      '---',
+      '',
+      'Do not load this skill.',
+    ]);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const first = await harness.createSession({
+        id: 'ses_sdk_session_only_skills_a',
+        workDir,
+        additionalDirs: [additionalDir],
+      });
+      const second = await harness.createSession({
+        id: 'ses_sdk_session_only_skills_b',
+        workDir,
+      });
+      const hasSessionOnlySkill = (skills: readonly SkillSummary[]) =>
+        skills.some((skill) => skill.name === 'session-only');
+
+      expect(hasSessionOnlySkill(await first.listSkills())).toBe(false);
+      expect(hasSessionOnlySkill(await second.listSkills())).toBe(false);
+      expect(hasSessionOnlySkill(await harness.listWorkspaceSkills(workDir))).toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('lists session skills without exposing content', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
     const workDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-work-');
