@@ -1117,6 +1117,8 @@ schema 也接受共享消息格式中的 `tool_use`、`tool_result`、`thinking`
 - `40910`：压缩无法开始，例如历史中没有可压缩的内容
 - `40912`：技能存在但不能由用户激活
 - `40913`：提交 `mode: "goal"` 时 agent 已经有目标
+- `40917`：`mode: "goal"` 的目标为空
+- `40918`：`mode: "goal"` 的目标超过 4000 个字符
 - `40927`：`prompt_id` 在会话中已被使用
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort`
@@ -1140,7 +1142,7 @@ schema 也接受共享消息格式中的 `tool_use`、`tool_result`、`thinking`
 - `queue:pause`：暂停后，排队区里的内容都不送出：插话不进入当前这一轮，排队的输入不开启新的一轮。当前这一轮照常运行；agent 空闲时提交的输入或压缩仍然立即开始。`data` 为 `{ paused: true }`。
 - `queue:resume`：恢复排队区。`data` 为 `{ paused: false }`。
 - `queue/{prompt_id}:steer`：把排队的输入改为插话，排到已有插话之后；带 `mode` 提交的输入和压缩不能改为插话（`40001`）。`data` 为 `{}`。
-- `queue/{prompt_id}:move`：请求体 `{ before_prompt_id? }`；把排队的输入移到另一条排队输入之前，省略时移到末尾。插话不参与调整（`40001`）。`data` 为 `{}`。
+- `queue/{prompt_id}:move`：可选请求体 `{ before_prompt_id? }`；把排队的输入移到另一条排队输入之前，省略时移到末尾。插话不参与调整（`40001`）。`data` 为 `{}`。
 - `queue/{prompt_id}:cancel`：撤回排队的输入、插话或压缩。`data` 为 `{}`。
 
 ### 审批与提问

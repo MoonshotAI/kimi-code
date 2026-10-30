@@ -175,6 +175,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
         [ErrorCode.COMPACTION_UNABLE]: {},
         [ErrorCode.GOAL_ALREADY_EXISTS]: {},
+        [ErrorCode.GOAL_OBJECTIVE_EMPTY]: {},
+        [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         ...sessionConflictErrors,
@@ -485,6 +487,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/sessions/{session_id}/agents/{agent_id}/queue/{tail}',
+      body: z.preprocess((value) => (value === undefined ? {} : value), queueMoveRequestSchema),
       success: { data: z.object({}) },
       errors: queueErrors,
       description: 'Steer, move or cancel one queued input',

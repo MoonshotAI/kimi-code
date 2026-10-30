@@ -1117,6 +1117,8 @@ On success, `data` is `{ prompt_id, user_message_id, status, content, created_at
 - `40910`: the compaction cannot start, for example because the history has nothing to compact
 - `40912`: the skill exists but cannot be activated by the user
 - `40913`: `mode: "goal"` while the agent already has a goal at submission
+- `40917`: `mode: "goal"` with an empty objective
+- `40918`: `mode: "goal"` with an objective longer than 4,000 characters
 - `40927`: `prompt_id` is already used in the session
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort`
@@ -1140,7 +1142,7 @@ The queue lists steers first, in the order they became steers, then queued promp
 - `queue:pause` — nothing leaves the queue until it is resumed: steers do not enter the running turn and queued prompts do not start new turns. The running turn keeps going, and an input or a compaction submitted while the agent is idle still starts right away. `data` is `{ paused: true }`.
 - `queue:resume` — resumes the queue. `data` is `{ paused: false }`.
 - `queue/{prompt_id}:steer` — turns a queued input into a steer, placed after existing steers; a prompt submitted with a `mode` or a compaction cannot be steered (`40001`). `data` is `{}`.
-- `queue/{prompt_id}:move` — body `{ before_prompt_id? }`; moves a queued prompt before another queued prompt, or to the end when omitted. Steers keep their place (`40001`). `data` is `{}`.
+- `queue/{prompt_id}:move` — optional body `{ before_prompt_id? }`; moves a queued prompt before another queued prompt, or to the end when omitted. Steers keep their place (`40001`). `data` is `{}`.
 - `queue/{prompt_id}:cancel` — withdraws a queued prompt, steer or compaction. `data` is `{}`.
 
 ### Approvals and questions
