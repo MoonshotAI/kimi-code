@@ -94,6 +94,7 @@ export class WriteTool implements IWriteTool {
       const bytesWritten = Buffer.byteLength(args.content, 'utf8');
       return {
         output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
+        note: '<system>The change is applied; there is no need to Read the file back to check it.</system>',
       };
     } catch (error) {
       const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;

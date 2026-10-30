@@ -2,17 +2,30 @@ import type { ContentPart, Message, Tool } from './message';
 
 const messageTokenEstimateCache = new WeakMap<Message, number>();
 
-export function estimateTokens(text: string): number {
-  let asciiCount = 0;
-  let nonAsciiCount = 0;
+export interface TokenCharCounts {
+  readonly ascii: number;
+  readonly nonAscii: number;
+}
+
+export function countTokenChars(text: string): TokenCharCounts {
+  let ascii = 0;
+  let nonAscii = 0;
   for (const char of text) {
     if (char.codePointAt(0)! <= 127) {
-      asciiCount++;
+      ascii++;
     } else {
-      nonAsciiCount++;
+      nonAscii++;
     }
   }
-  return Math.ceil(asciiCount / 4) + nonAsciiCount;
+  return { ascii, nonAscii };
+}
+
+export function tokensForCharCounts(counts: TokenCharCounts): number {
+  return Math.ceil(counts.ascii / 4) + counts.nonAscii;
+}
+
+export function estimateTokens(text: string): number {
+  return tokensForCharCounts(countTokenChars(text));
 }
 
 export function estimateTokensForMessages(messages: readonly Message[]): number {

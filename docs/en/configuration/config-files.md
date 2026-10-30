@@ -452,15 +452,15 @@ Like the `tools` / `disallowedTools` fields of an agent file, this section shape
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `default_max_chars` | `integer` | `100000` | Character budget when the tool call omits `max_chars` |
-| `max_chars` | `integer` | `500000` | Maximum character budget a tool call may request |
+| `max_chars` | `integer` | `100000` | Maximum character budget a tool call may request |
 
 ```toml
 [read]
 default_max_chars = 100000
-max_chars = 500000
+max_chars = 100000
 ```
 
-Both values must be positive integers. A call's `max_chars` overrides the default, but is capped at the configured maximum; the result reports the effective budget. If the configured default exceeds the maximum, the maximum also limits default reads. Raise `default_max_chars` when you want larger documents to be returned in one call without the agent requesting a larger budget.
+Both values must be positive integers. A call's `max_chars` overrides the default, but is capped at the configured maximum; the result reports the effective budget. If the configured default exceeds the maximum, the maximum also limits default reads. Each call also stops at about `max_chars` / 4 estimated tokens, counting one token per non-ASCII character and per four ASCII characters, so text with many non-ASCII characters, such as Chinese, returns fewer characters per call. Raise `max_chars` to let a call return more than 100000 characters or about 25000 tokens, and raise `default_max_chars` as well when you want larger documents to be returned in one call without the agent requesting a larger budget.
 
 ## `image`
 

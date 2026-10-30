@@ -1190,6 +1190,8 @@ describe('truncation pipeline', () => {
   });
 
   it('recovers an expanded Glob listing beyond spill retention using complete saved pages', async () => {
+    await readConfig.set('read', { maxChars: 500_000 });
+    await readConfig.reload();
     const root = await mkdtemp(join(tmpdir(), 'r'.repeat(180)));
     try {
       const names = Array.from({ length: 60_000 }, (_, i) => `file-${String(i).padStart(6, '0')}.ts`);
@@ -1532,7 +1534,7 @@ describe('truncation pipeline', () => {
     expect(result.output.length).toBeGreaterThan(50_000);
     expect(result.output.replaceAll(/^\d+\t/gm, '')).toBe(content.trimEnd());
     expect(result.truncated).toBeUndefined();
-    expect(result.note).toContain('Requested range complete.');
+    expect(result.note).toBeUndefined();
     expect(result.output).not.toContain('output_path:');
   });
 
