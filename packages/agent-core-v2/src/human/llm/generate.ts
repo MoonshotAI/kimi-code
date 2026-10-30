@@ -28,9 +28,13 @@ function moduleOf(request: LlmRequest): LlmModule {
   };
 }
 
-function remoteErrorOf(request: LlmRequest, error: unknown): LlmRemoteErrorMessage {
+function remoteErrorOf(
+  request: LlmRequest,
+  error: unknown,
+  source?: 'stream',
+): LlmRemoteErrorMessage {
   if (isAbortError(error)) return toLlmErrorMessage(error);
-  return request.protocol.base.decodeError(error);
+  return request.protocol.base.decodeError(error, source);
 }
 
 interface EventSink extends DecodeSink {
@@ -81,6 +85,7 @@ export async function generate(request: LlmRequest, control: LlmAttemptControl):
     onEvent?.({ type: 'attempt.failed', error: toLlmSyntaxErrorMessage(error) });
     return;
   }
+  let streamStarted = false;
   try {
     const endpoint = await resolveEndpoint(request.endpoint);
     const clientFactory = request.endpoint?.clientFactory;
@@ -93,6 +98,7 @@ export async function generate(request: LlmRequest, control: LlmAttemptControl):
     const chunks = stream
       ? receive(await base.sendStream(client, encodedRequest, signal), onEvent)
       : base.replay(receive(await base.send(client, encodedRequest, signal), onEvent));
+    streamStarted = stream;
     const decoder = base.decoder(module, sink);
     for await (const chunk of chunks) {
       decoder.push(chunk);
@@ -100,6 +106,10 @@ export async function generate(request: LlmRequest, control: LlmAttemptControl):
     }
     decoder.end();
   } catch (error) {
-    onEvent?.({ type: 'attempt.failed', error: remoteErrorOf(request, error), rawError: error });
+    onEvent?.({
+      type: 'attempt.failed',
+      error: remoteErrorOf(request, error, streamStarted ? 'stream' : undefined),
+      rawError: error,
+    });
   }
 }

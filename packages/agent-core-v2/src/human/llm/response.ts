@@ -58,10 +58,11 @@ export type LlmStatusErrorKind =
   | 'image_format';
 
 export interface LlmStatusErrorInfo {
-  readonly statusCode: number;
+  readonly statusCode?: number;
   readonly requestId: string | null;
   readonly retryAfterMs: number | null;
   readonly headers: Record<string, string> | null;
+  readonly retryable?: boolean;
 }
 
 export type LlmErrorMessage<T extends LlmErrorKind = LlmErrorKind> =

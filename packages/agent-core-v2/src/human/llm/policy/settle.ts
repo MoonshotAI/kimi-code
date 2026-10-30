@@ -5,9 +5,12 @@ import {
   type AssistantMessage,
 } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
+import { parseRetryAfterMs } from '#/llm/protocol/kit/http';
+import { withoutUndefinedStatusCode } from '#/llm/protocol/rules/status';
 import { createToolCallIdNormalizer } from '#/llm/protocol/rules/tool-call-ids';
 import type { LlmModelSpec, LlmRequest } from '#/llm/request';
 import {
+  llmStatusErrorMessage,
   NO_FINISH,
   type FinishInfo,
   type LlmErrorMessage,
@@ -215,9 +218,23 @@ export async function settleLlmRequest(
         messageId = event.messageId;
         onEvent?.(event);
         return;
-      case 'attempt.failed':
-        failure = { error: event.error, rawError: event.rawError };
+      case 'attempt.failed': {
+        const statusError = llmStatusErrorMessage(event.error);
+        const error =
+          statusError === null
+            ? event.error
+            : withoutUndefinedStatusCode({
+                ...statusError,
+                requestId: statusError.requestId ?? requestId ?? null,
+                retryAfterMs: statusError.retryAfterMs ?? parseRetryAfterMs(headers),
+                headers:
+                  statusError.headers === null
+                    ? (headers ?? null)
+                    : { ...headers, ...statusError.headers },
+              });
+        failure = { error, rawError: event.rawError };
         return;
+      }
     }
   };
 

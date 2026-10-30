@@ -9,7 +9,7 @@ import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/index';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
-import { APIProviderRateLimitError } from '#/llm-adapter/contract/errors';
+import { APIProviderRateLimitError, APIStatusError } from '#/llm-adapter/contract/errors';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
@@ -761,6 +761,68 @@ describe('Agent loop', () => {
         origin: { kind: 'system_trigger', name: 'stop_hook' },
       }),
     );
+  });
+
+  it('keeps the terminal real 503 after an earlier real 429', async () => {
+    const local = createTestAgent({
+      initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } },
+    });
+    try {
+      local.mockNextProviderResponse({
+        error: new APIProviderRateLimitError(
+          'first attempt rate limited',
+          'req-first-429',
+          1,
+          'trace-first-429',
+        ),
+      });
+      local.mockNextProviderResponse({
+        error: new APIStatusError(
+          503,
+          'final attempt unavailable',
+          'req-final-503',
+          null,
+          'trace-final-503',
+        ),
+      });
+
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+
+      const retries = local.allEvents.filter(
+        (event) => event.type === '[rpc]' && event.event === 'turn.step.retrying',
+      );
+      expect(retries).toHaveLength(1);
+      expect(retries[0]?.args).toMatchObject({
+        failedAttempt: 1,
+        nextAttempt: 2,
+        errorMessage: 'first attempt rate limited',
+        statusCode: 429,
+      });
+      const ended = local.allEvents.find(
+        (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+      );
+      expect(ended?.args).toMatchObject({
+        reason: 'failed',
+        error: {
+          code: 'provider.api_error',
+          name: 'APIStatusError',
+          message: 'final attempt unavailable',
+          details: {
+            statusCode: 503,
+            requestId: 'req-final-503',
+            traceId: 'trace-final-503',
+          },
+        },
+      });
+      expect((ended?.args as TurnEnded).error?.details).toEqual({
+        statusCode: 503,
+        requestId: 'req-final-503',
+        traceId: 'trace-final-503',
+      });
+    } finally {
+      await local.dispose();
+    }
   });
 
   it('raises the abort-listener ceiling on the step signal for parallel tool bursts', async () => {

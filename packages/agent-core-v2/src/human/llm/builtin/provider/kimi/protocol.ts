@@ -132,8 +132,13 @@ function hoistKimiUsage(chunk: OpenAIRawChunk): OpenAIRawChunk {
 
 const kimiImageMimes = providerImagePolicy('kimi').acceptedMimes;
 
-function withKimiErrors(base: { readonly decodeError: (error: unknown) => LlmRemoteErrorMessage }) {
-  return (error: unknown) => classifyKimiQuotaError(error) ?? base.decodeError(error);
+function withKimiErrors(base: {
+  readonly decodeError: (error: unknown, source?: 'stream') => LlmRemoteErrorMessage;
+}) {
+  return (error: unknown, source?: 'stream') =>
+    source === 'stream'
+      ? base.decodeError(error, source)
+      : (classifyKimiQuotaError(error) ?? base.decodeError(error, source));
 }
 
 export const kimiOpenAIProtocol = openAIProtocol.with((base) => ({

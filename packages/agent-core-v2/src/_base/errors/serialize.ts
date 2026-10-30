@@ -69,7 +69,7 @@ function toShallowErrorPayload(error: unknown): ErrorPayload {
       code: error.code,
       message: error.message,
       name: error.name,
-      details: error.details,
+      details: detailsForErrorPayload(error),
       retryable: errorInfo(error.code).retryable,
     };
   }
@@ -77,6 +77,22 @@ function toShallowErrorPayload(error: unknown): ErrorPayload {
     return makeErrorPayload(CoreErrors.codes.INTERNAL, error.message, { name: error.name });
   }
   return makeErrorPayload(CoreErrors.codes.INTERNAL, String(error));
+}
+
+function detailsForErrorPayload(
+  error: CodedErrorShape,
+): Readonly<Record<string, unknown>> | undefined {
+  const details = error.details;
+  if (details === undefined || details === null) return undefined;
+  if (!Object.prototype.hasOwnProperty.call(details, 'statusCode')) {
+    return details;
+  }
+  const directStatusCode = (error as { readonly statusCode?: unknown }).statusCode;
+  if (typeof directStatusCode === 'number' && details['statusCode'] === directStatusCode) {
+    return details;
+  }
+  const { statusCode: _statusCode, ...remaining } = details;
+  return remaining;
 }
 
 function readErrorCause(error: unknown): unknown {
@@ -89,9 +105,22 @@ function readErrorCause(error: unknown): unknown {
 export const toKimiErrorPayload = toErrorPayload;
 
 export function fromErrorPayload(payload: ErrorPayload): Error2 {
-  return new Error2(payload.code, payload.message, {
+  const error = new Error2(payload.code, payload.message, {
     name: payload.name,
     details: payload.details,
     cause: payload.cause === undefined ? undefined : fromErrorPayload(payload.cause),
   });
+  const statusCode = payload.details?.['statusCode'];
+  if (
+    typeof statusCode === 'number' &&
+    (payload.name === 'APIStatusError' ||
+      payload.name === 'APIContextOverflowError' ||
+      payload.name === 'APIRequestTooLargeError' ||
+      payload.name === 'APIProviderRateLimitError' ||
+      payload.name === 'APIProviderQuotaExhaustedError' ||
+      payload.name === 'APIProviderOverloadedError')
+  ) {
+    return Object.assign(error, { statusCode });
+  }
+  return error;
 }

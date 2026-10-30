@@ -58,10 +58,11 @@ export type LlmStatusErrorKind =
   | 'image_format';
 
 export interface LlmStatusErrorInfo {
-  readonly statusCode: number;
+  readonly statusCode?: number;
   readonly requestId: string | null;
   readonly retryAfterMs: number | null;
   readonly headers: Record<string, string> | null;
+  readonly retryable?: boolean;
 }
 
 export type LlmErrorMessage<T extends LlmErrorKind = LlmErrorKind> =
@@ -208,44 +209,51 @@ The provider rejected the configured thinking effort. Non-Kimi providers receive
 }
 
 export interface LlmStatusErrorInput {
-  readonly statusCode: number;
+  readonly statusCode?: number;
   readonly message: string;
   readonly requestId?: string | null;
   readonly retryAfterMs?: number | null;
   readonly headers?: Record<string, string> | null;
+  readonly retryable?: boolean;
 }
 
 export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteErrorMessage {
-  const info: LlmStatusErrorInfo = {
-    statusCode: input.statusCode,
-    requestId: input.requestId ?? null,
-    retryAfterMs: input.retryAfterMs ?? null,
-    headers: input.headers ?? null,
-  };
-  const message = sanitizeStatusErrorMessage(input.message);
+  const statusInfo: LlmStatusErrorInfo =
+    input.statusCode === undefined
+      ? {
+          requestId: input.requestId ?? null,
+          retryAfterMs: input.retryAfterMs ?? null,
+          headers: input.headers ?? null,
+        }
+      : {
+          statusCode: input.statusCode,
+          requestId: input.requestId ?? null,
+          retryAfterMs: input.retryAfterMs ?? null,
+          headers: input.headers ?? null,
+        };
+  const info =
+    input.retryable === undefined ? statusInfo : { ...statusInfo, retryable: input.retryable };
   if (input.statusCode === 429) {
-    return { kind: 'rate_limit', message, ...info };
+    return { kind: 'rate_limit', message: input.message, ...info };
   }
-  if (isContextOverflowStatusError(input.statusCode, input.message)) {
-    return { kind: 'context_overflow', message, ...info };
+  if (input.statusCode !== undefined) {
+    if (isContextOverflowStatusError(input.statusCode, input.message)) {
+      return { kind: 'context_overflow', message: input.message, ...info };
+    }
+    if (isRequestTooLargeStatusError(input.statusCode, input.message)) {
+      return { kind: 'request_too_large', message: input.message, ...info };
+    }
+    if (isProviderOverloadStatusError(input.statusCode, input.message)) {
+      return { kind: 'overloaded', message: input.message, ...info };
+    }
+    if (isRequestStructureStatusError(input.statusCode, input.message)) {
+      return { kind: 'request_structure', message: input.message, ...info };
+    }
+    if (isImageFormatStatusError(input.statusCode, input.message)) {
+      return { kind: 'image_format', message: input.message, ...info };
+    }
   }
-  if (isRequestTooLargeStatusError(input.statusCode, input.message)) {
-    return { kind: 'request_too_large', message, ...info };
-  }
-  if (isProviderOverloadStatusError(input.statusCode, input.message)) {
-    return { kind: 'overloaded', message, ...info };
-  }
-  if (isRequestStructureStatusError(input.statusCode, input.message)) {
-    return { kind: 'request_structure', message, ...info };
-  }
-  if (isImageFormatStatusError(input.statusCode, input.message)) {
-    return { kind: 'image_format', message, ...info };
-  }
-  return {
-    kind: 'status',
-    message: appendThinkingEffortConfigHint(input.statusCode, message),
-    ...info,
-  };
+  return { kind: 'status', message: input.message, ...info };
 }
 
 export function parseRetryAfterMs(headers: unknown): number | null {

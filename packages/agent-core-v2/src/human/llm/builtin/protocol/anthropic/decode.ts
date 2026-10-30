@@ -5,7 +5,11 @@ import {
 } from '@anthropic-ai/sdk';
 
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
-import { toLlmStatusErrorMessage, toLlmTransportErrorMessage } from '#/llm/protocol/rules/status';
+import {
+  toLlmStatusErrorMessage,
+  toLlmStreamErrorMessage,
+  toLlmTransportErrorMessage,
+} from '#/llm/protocol/rules/status';
 import type { LlmRemoteErrorMessage } from '#/llm/response';
 import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/response';
 import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
@@ -222,21 +226,51 @@ export function createDecoder(sink: DecodeSink): Decoder<RawChunk> {
   return { push, end: () => {} };
 }
 
-export function decodeError(error: unknown): LlmRemoteErrorMessage {
+export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMessage {
   if (error instanceof RawAnthropicSDKConnectionTimeoutError) {
     return { kind: 'timeout', message: error.message };
   }
   if (error instanceof RawAnthropicSDKConnectionError) {
     return { kind: 'connection', message: error.message };
   }
-  if (error instanceof RawAnthropicSDKAPIError && typeof error.status === 'number') {
-    return toLlmStatusErrorMessage({
-      statusCode: error.status,
-      message: error.message,
+  if (error instanceof RawAnthropicSDKAPIError) {
+    const body = error.error as
+      | { error?: { type?: unknown; message?: unknown } }
+      | undefined;
+    const message = typeof body?.error?.message === 'string' ? body.error.message : '';
+    const type =
+      (typeof body?.error?.type === 'string' ? body.error.type : undefined) ?? error.type;
+    const statusCode = source === 'stream' ? undefined : error.status;
+    const statusInfo = {
       requestId: error.requestID ?? null,
       retryAfterMs: parseRetryAfterMs(error.headers),
       headers: headersToRecord(error.headers),
-    });
+    };
+    if (type === 'insufficient_quota' || type === 'exceeded_current_quota_error') {
+      return { kind: 'quota_exhausted', message, statusCode, ...statusInfo };
+    }
+    if (type === 'overloaded_error' || type === 'engine_overloaded_error') {
+      return { kind: 'overloaded', message, statusCode, ...statusInfo };
+    }
+    if (
+      type === 'rate_limit_error' ||
+      type === 'rate_limit_reached_error' ||
+      type === 'rate_limit_exceeded'
+    ) {
+      return { kind: 'rate_limit', message, statusCode, ...statusInfo };
+    }
+    if (type === 'context_length_exceeded') {
+      return { kind: 'context_overflow', message, statusCode, ...statusInfo };
+    }
+    if (statusCode !== undefined) {
+      return toLlmStatusErrorMessage({ statusCode, message, ...statusInfo });
+    }
+    if (body !== undefined) {
+      return toLlmStreamErrorMessage({ businessCode: error.status, message, ...statusInfo });
+    }
+    if (source === 'stream') {
+      return toLlmStreamErrorMessage({ businessCode: error.status, message: '', ...statusInfo });
+    }
   }
   if (error instanceof Error) {
     return toLlmTransportErrorMessage(error.message);

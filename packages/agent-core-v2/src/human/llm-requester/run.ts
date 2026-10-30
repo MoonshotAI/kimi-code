@@ -47,6 +47,28 @@ function toV2RemoteError(error: CoreLlmRemoteErrorMessage): LlmRemoteErrorMessag
   return toV2Error(error) as LlmRemoteErrorMessage;
 }
 
+function withoutHttpStatus(error: LlmRemoteErrorMessage): LlmRemoteErrorMessage {
+  if (!('statusCode' in error)) return error;
+  const { statusCode: _statusCode, ...withoutStatus } = error;
+  return withoutStatus;
+}
+
+function withDecodedDiagnostics(
+  error: LlmRemoteErrorMessage,
+  decoded: LlmRemoteErrorMessage,
+): LlmRemoteErrorMessage {
+  if (!('requestId' in error) || !('requestId' in decoded)) return error;
+  return {
+    ...error,
+    requestId: error.requestId ?? decoded.requestId,
+    retryAfterMs: error.retryAfterMs ?? decoded.retryAfterMs,
+    headers:
+      error.headers === null
+        ? decoded.headers
+        : { ...decoded.headers, ...error.headers },
+  };
+}
+
 function translateEvent(
   event: LlmRunEvent,
   onEvent: (event: LlmRequestEvent) => void,
@@ -184,11 +206,20 @@ export function createRunRequester<TOptions>(
         onEvent({ type: 'llm.failed.syntax', error: outcome.error });
         return;
       }
+      const decoded = toV2RemoteError(outcome.error);
       const classified =
         outcome.rawError === undefined ? undefined : options?.classifyError?.(outcome.rawError);
+      let error = decoded;
+      if (classified !== undefined && classified.kind !== outcome.error.kind) {
+        const converted = withDecodedDiagnostics(toV2RemoteError(classified), decoded);
+        error =
+          'statusCode' in decoded && decoded.statusCode !== undefined
+            ? converted
+            : withoutHttpStatus(converted);
+      }
       onEvent({
         type: 'llm.failed.remote',
-        error: classified === undefined ? toV2RemoteError(outcome.error) : toV2RemoteError(classified),
+        error,
         rawError: outcome.rawError,
       });
     },

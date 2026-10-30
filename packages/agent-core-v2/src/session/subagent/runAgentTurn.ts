@@ -177,7 +177,10 @@ function stringifyRunError(value: unknown): string {
 function providerRateLimitErrorFromPayload(error: KimiErrorPayload): APIProviderRateLimitError {
   const requestId =
     typeof error.details?.['requestId'] === 'string' ? error.details['requestId'] : null;
-  return new APIProviderRateLimitError(error.message, requestId);
+  const statusCode = error.details?.['statusCode'];
+  return new APIProviderRateLimitError(error.message, requestId, null, null, {
+    statusCode: typeof statusCode === 'number' ? statusCode : undefined,
+  });
 }
 
 function latestAssistantText(messages: readonly ContextMessage[]): string {

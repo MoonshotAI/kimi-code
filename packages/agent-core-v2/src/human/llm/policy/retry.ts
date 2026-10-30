@@ -46,7 +46,10 @@ function isDefaultRetryable(error: LlmErrorMessage): boolean {
     case 'empty_response':
       return error.finishReason !== 'filtered';
     case 'status':
-      return RETRYABLE_STATUS_CODES.has(error.statusCode);
+      return (
+        error.retryable ??
+        (error.statusCode !== undefined && RETRYABLE_STATUS_CODES.has(error.statusCode))
+      );
     case 'auth':
     case 'connection':
     case 'timeout':
