@@ -88,6 +88,7 @@ export class SessionSwarmService implements ISessionSwarmService {
 
   run<T>(args: SessionSwarmRunArgs<T>): Promise<readonly SessionSwarmRunResult<T>[]> {
     const { callerAgentId, tasks } = args;
+    const maxConcurrency = resolveSwarmMaxConcurrency();
     const controller = new AbortController();
     this.inFlight.set(callerAgentId, controller);
     const unlinks: Array<() => void> = [];
@@ -137,7 +138,6 @@ export class SessionSwarmService implements ISessionSwarmService {
         );
       },
     };
-    const maxConcurrency = resolveSwarmMaxConcurrency();
     const promise = new AgentRunBatch(launcher, linkedTasks, {
       maxConcurrency,
       signal: controller.signal,

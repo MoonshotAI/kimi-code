@@ -1604,7 +1604,9 @@ describe('SessionSwarmService metadata compatibility', () => {
         agentId,
         turn: {} as never,
         completion: new Promise((_resolve, reject) => {
-          options?.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+          options?.signal.addEventListener('abort', () => {
+            reject(options.signal.reason);
+          }, { once: true });
         }),
       };
     });
@@ -1613,7 +1615,9 @@ describe('SessionSwarmService metadata compatibility', () => {
       callerAgentId: 'main',
       tasks: [resumeSessionTask('agent-stop'), resumeSessionTask('agent-keep')],
     });
-    await vi.waitFor(() => expect(runAgent).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => {
+      expect(runAgent).toHaveBeenCalledTimes(2);
+    });
     members[0]!.stop.abort(userCancellationReason());
     kept.resolve({ summary: 'kept summary' });
     const results = await running;
@@ -1623,6 +1627,91 @@ describe('SessionSwarmService metadata compatibility', () => {
       ['agent-keep', 'completed'],
     ]);
     expect(members.map((member) => member.settlement?.status)).toEqual(['killed', 'completed']);
+  });
+
+  it('settles a stopped member that is still queued without waiting for a free slot', async () => {
+    vi.stubEnv('KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY', '1');
+    try {
+      agents['agent-run'] = { labels: { parentAgentId: 'main' } };
+      agents['agent-queued'] = { labels: { parentAgentId: 'main' } };
+      handles.set('agent-run', agentHandle('agent-run', lifecycle, eventBus));
+      handles.set('agent-queued', agentHandle('agent-queued', lifecycle, eventBus));
+      const members: Array<{ readonly stop: AbortController; settlement?: AgentTaskSettlement }> = [];
+      const callerTasks = {
+        registerTask: (task: AgentTask) => {
+          const member: (typeof members)[number] = { stop: new AbortController() };
+          members.push(member);
+          void task.start({
+            signal: member.stop.signal,
+            appendOutput: () => {},
+            settle: async (settlement) => {
+              member.settlement = settlement;
+              return true;
+            },
+          });
+          return `task-${members.length - 1}`;
+        },
+        refresh: () => {},
+      } as unknown as IAgentTaskService;
+      handles.set(
+        'main',
+        agentHandle('main', lifecycle, eventBus, {}, new Map<unknown, unknown>([[IAgentTaskService, callerTasks]])),
+      );
+      const running = createControlledPromise<{ summary: string }>();
+      runAgent.mockImplementation((agent, _request, options) => {
+        options?.onReady?.();
+        return { agentId: (agent as AgentContext).agentId, turn: {} as never, completion: running };
+      });
+
+      const swarm = ix.get(ISessionSwarmService).run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-run'), resumeSessionTask('agent-queued')],
+      });
+      await vi.waitFor(() => {
+        expect(runAgent).toHaveBeenCalledTimes(1);
+      });
+      members[1]!.stop.abort(userCancellationReason());
+      await vi.waitFor(() => {
+        expect(members[1]!.settlement?.status).toBe('killed');
+      });
+      expect(runAgent).toHaveBeenCalledTimes(1);
+
+      running.resolve({ summary: 'done' });
+      const results = await swarm;
+      expect(results.map((result) => [result.status, result.state, result.error])).toEqual([
+        ['completed', undefined, undefined],
+        ['aborted', 'not_started', 'The user stopped this subagent.'],
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('rejects an invalid concurrency setting before registering any member task', async () => {
+    vi.stubEnv('KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY', 'many');
+    try {
+      const registerTask = vi.fn(() => 'task-0');
+      handles.set(
+        'main',
+        agentHandle(
+          'main',
+          lifecycle,
+          eventBus,
+          {},
+          new Map<unknown, unknown>([[IAgentTaskService, { registerTask, refresh: () => {} }]]),
+        ),
+      );
+
+      expect(() =>
+        ix.get(ISessionSwarmService).run({
+          callerAgentId: 'main',
+          tasks: [resumeSessionTask('agent-one')],
+        }),
+      ).toThrow(/KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY/);
+      expect(registerTask).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('emits subagent.cancelled for a rate-limit-suspended child when the batch is cancelled', async () => {

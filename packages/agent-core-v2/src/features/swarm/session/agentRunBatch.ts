@@ -45,6 +45,7 @@ const RATE_LIMIT_RETRY_FACTOR = 2;
 const RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS = 2000;
 const RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS = 3 * 60 * 1000;
 const RATE_LIMIT_SUSPENDED_REASON = 'Provider rate limit; subagent requeued for retry.';
+const MEMBER_STOPPED_MESSAGE = 'The user stopped this subagent.';
 
 const AGENT_SWARM_MAX_CONCURRENCY_ENV = 'KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY';
 
@@ -116,6 +117,7 @@ export class AgentRunBatch<T> {
   private readonly controller = new AbortController();
   private readonly batchSignal: AbortSignal | undefined;
   private readonly batchAbortListener: () => void;
+  private readonly pendingStopUnlinks: Array<() => void> = [];
   private readonly maxConcurrency: number | undefined;
   private normalLaunchCount = 0;
   private normalLaunchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -180,6 +182,7 @@ export class AgentRunBatch<T> {
       }
 
       this.batchSignal?.addEventListener('abort', this.batchAbortListener, { once: true });
+      for (const state of this.states) this.watchPendingStop(state);
       this.schedule();
     });
   }
@@ -414,6 +417,42 @@ export class AgentRunBatch<T> {
     this.options.onSettled?.(result);
   }
 
+  private watchPendingStop(state: TaskState<T>): void {
+    const signal = state.task.signal;
+    if (signal === undefined || signal === this.batchSignal) return;
+    const stop = (): void => {
+      this.stopPending(state);
+    };
+    if (signal.aborted) {
+      stop();
+      return;
+    }
+    signal.addEventListener('abort', stop, { once: true });
+    this.pendingStopUnlinks.push(() => {
+      signal.removeEventListener('abort', stop);
+    });
+  }
+
+  private stopPending(state: TaskState<T>): void {
+    if (this.finished || this.batchSignal?.aborted === true) return;
+    const index = this.pending.indexOf(state);
+    if (index === -1) return;
+    this.pending.splice(index, 1);
+    if (state.agentId !== undefined) {
+      this.launcher.abandoned?.({ task: state.task, agentId: state.agentId, outcome: 'cancelled' });
+    }
+    const reason = state.task.signal?.reason;
+    const stoppedByUser = isUserCancellation(reason);
+    this.record(state.index, {
+      task: state.task,
+      agentId: state.agentId,
+      status: stoppedByUser ? 'aborted' : 'failed',
+      state: state.started || state.agentId !== undefined ? 'started' : 'not_started',
+      error: stoppedByUser ? MEMBER_STOPPED_MESSAGE : reason instanceof Error ? reason.message : String(reason),
+    });
+    this.schedule();
+  }
+
   private releaseAttempt(attempt: ActiveAttempt<T>): boolean {
     if (!this.active.delete(attempt)) return false;
     attempt.cleanup();
@@ -608,6 +647,8 @@ export class AgentRunBatch<T> {
 
   private cleanup(): void {
     this.batchSignal?.removeEventListener('abort', this.batchAbortListener);
+    for (const unlink of this.pendingStopUnlinks) unlink();
+    this.pendingStopUnlinks.length = 0;
     this.clearNormalTimer();
     this.clearRateLimitTimer();
     for (const attempt of this.active.values()) {
@@ -665,7 +706,9 @@ export class AgentRunBatch<T> {
     if (attempt.timedOut && attempt.state.task.timeout !== undefined) {
       return 'Subagent timed out.';
     }
-    if (status === 'aborted') return 'The user manually interrupted this subagent batch.';
+    if (status === 'aborted') {
+      return this.controller.signal.aborted ? 'The user manually interrupted this subagent batch.' : MEMBER_STOPPED_MESSAGE;
+    }
     return error instanceof Error ? error.message : String(error);
   }
 }
