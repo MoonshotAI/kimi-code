@@ -8,6 +8,7 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPluginService,
+  IAgentPromptQueueService,
   IAuthSummaryService,
   IConfigService,
   IPluginService,
@@ -1057,6 +1058,13 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
         throw new Error2(
           ErrorCodes.SESSION_BUSY,
           `Session "${id}" cannot be reloaded while compaction is running`,
+          { details: { sessionId: id } },
+        );
+      }
+      if (agentHandle.accessor.get(IAgentPromptQueueService).snapshot().items.length > 0) {
+        throw new Error2(
+          ErrorCodes.SESSION_BUSY,
+          `Session "${id}" cannot be reloaded while prompts are queued`,
           { details: { sessionId: id } },
         );
       }
