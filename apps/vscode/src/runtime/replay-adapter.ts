@@ -499,7 +499,10 @@ function sumUsage(
     (total, usage) => ({
       inputOther: total.inputOther + usage.inputOther,
       output: total.output + usage.output,
-      inputCacheRead: total.inputCacheRead + usage.inputCacheRead,
+      inputCacheRead:
+        total.inputCacheRead === undefined || usage.inputCacheRead === undefined
+          ? undefined
+          : total.inputCacheRead + usage.inputCacheRead,
       inputCacheCreation: total.inputCacheCreation + usage.inputCacheCreation,
     }),
     { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 },

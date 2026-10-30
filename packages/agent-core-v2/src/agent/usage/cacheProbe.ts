@@ -22,7 +22,10 @@ export function cacheProbeUsage(usage: TokenUsage | undefined): PromptCacheUsage
     input_cache_creation: usage?.inputCacheCreation,
     output_tokens: usage?.output,
     cache_hit_rate:
-      usage === undefined || inputTokens === undefined || inputTokens === 0
+      usage === undefined ||
+      usage.inputCacheRead === undefined ||
+      inputTokens === undefined ||
+      inputTokens === 0
         ? undefined
         : usage.inputCacheRead / inputTokens,
   };

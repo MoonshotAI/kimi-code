@@ -113,7 +113,8 @@ export interface AppState {
   environment?: EnvironmentSlotState;
 }
 
-export function sumTokenUsage(total: TokenUsage): number {
+export function sumTokenUsage(total: TokenUsage): number | undefined {
+  if (total.inputCacheRead === undefined) return undefined;
   return total.inputOther + total.output + total.inputCacheRead + total.inputCacheCreation;
 }
 

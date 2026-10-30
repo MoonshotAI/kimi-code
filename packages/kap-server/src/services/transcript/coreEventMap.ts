@@ -637,12 +637,15 @@ export class AgentTranscriptProjector {
     if (usages === undefined || usages.length === 0) return undefined;
     let inputOther = 0;
     let output = 0;
-    let inputCacheRead = 0;
+    let inputCacheRead: number | undefined = 0;
     let inputCacheCreation = 0;
     for (const usage of usages) {
       inputOther += usage.inputOther;
       output += usage.output;
-      inputCacheRead += usage.inputCacheRead;
+      inputCacheRead =
+        inputCacheRead === undefined || usage.inputCacheRead === undefined
+          ? undefined
+          : inputCacheRead + usage.inputCacheRead;
       inputCacheCreation += usage.inputCacheCreation;
     }
     return {
