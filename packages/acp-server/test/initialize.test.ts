@@ -99,6 +99,40 @@ describe('acp-server initialize handshake', () => {
   );
 
   it(
+    'answers an initialize request sent before startup completes',
+    async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), 'acp-server-early-init-'));
+      const toAgent = new PassThrough();
+      const toClient = new PassThrough();
+      try {
+        const stream = ndJsonStream(Writable.toWeb(toClient), Readable.toWeb(toAgent));
+        const serverPromise = runAcpServerWithStream(stream, { homeDir });
+        toAgent.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: { protocolVersion: 1, clientCapabilities: {} },
+          })}\n`,
+        );
+
+        const response = await readOneMessage(toClient);
+        const server = await serverPromise;
+        await server.close();
+        toAgent.end();
+        toClient.end();
+
+        expect(response.id).toBe(1);
+        expect(response.error).toBeUndefined();
+        expect(response.result).toMatchObject({ protocolVersion: 1 });
+      } finally {
+        await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    },
+    30_000,
+  );
+
+  it(
     'negotiates down to the highest supported version when the client advertises a newer one',
     async () => {
       const homeDir = await mkdtemp(join(tmpdir(), 'acp-server-neg-'));
