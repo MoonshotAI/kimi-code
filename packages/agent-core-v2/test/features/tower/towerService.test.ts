@@ -18,6 +18,7 @@ import { createReminderStub } from '../reminder/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptSubmitted } from '#/agent/prompt/promptEvents';
@@ -3562,6 +3563,44 @@ describe('AgentTowerService', () => {
       await flushWake();
 
       expect(loop.cancels).toEqual([]);
+    });
+
+    it('waits for queued user input before re-arming an interrupted wake', async () => {
+      let pendingInputs = true;
+      ix.stub(IAgentPromptQueueService, {
+        hasPendingInputs: () => pendingInputs,
+      } as unknown as IAgentPromptQueueService);
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'need review', messageId: 'msg-queued' });
+      await flushWake();
+      expect(drainWakeMessages()).toHaveLength(1);
+
+      const wakeTurn = loop.startTurn();
+      publishAsMain(
+        ix,
+        new TurnStarted({
+          agentId: 'main',
+          turnId: wakeTurn.id,
+          origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
+        }),
+      );
+      publishUserPrompt('p1');
+      await flushWake();
+      expect(loop.cancels).toHaveLength(1);
+
+      publishAsMain(ix, new TurnEnded({ agentId: 'main', turnId: wakeTurn.id, reason: 'cancelled' }));
+      publishAsMain(ix, new TurnEnded({ agentId: 'main', turnId: 99, reason: 'completed' }));
+      await flushWake();
+      expect(drainWakeMessages()).toEqual([]);
+
+      pendingInputs = false;
+      publishAsMain(ix, new TurnEnded({ agentId: 'main', turnId: 100, reason: 'completed' }));
+      await flushWake();
+      const rearmed = drainWakeMessages();
+      expect(rearmed).toHaveLength(1);
+      expect(wakeText(rearmed[0]!)).toContain('messageId=msg-queued');
     });
 
     it('re-arms the inbox wake after the interrupting user turn ends', async () => {

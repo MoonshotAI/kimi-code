@@ -224,18 +224,19 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
     this._register(
       eventBus.subscribe(PromptSubmitted, (event) => {
+        if (this.agentCtx.agentId !== 'main') return;
+        if (!this.isActive) return;
         if (event.agentId !== this.agentCtx.agentId) return;
-        this.abortWakeForUserPrompt();
+        const turnId = this.wakeTurnId;
+        if (turnId === undefined) return;
+        queueMicrotask(() => {
+          if (this.wakeDisposed || !this.isActive || this.loop === undefined) return;
+          if (this.loop.cancel({ turnId }, userCancellationReason())) {
+            this.wakeAbortedForUserPrompt = true;
+          }
+        });
       }),
     );
-    if (this.promptQueue !== undefined) {
-      const promptQueue = this.promptQueue;
-      this._register(
-        promptQueue.onDidChange(() => {
-          if (promptQueue.hasPendingInputs()) this.abortWakeForUserPrompt();
-        }),
-      );
-    }
     this._register(
       toDisposable(() => {
         this.wakeDisposed = true;
@@ -758,18 +759,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       this.inboxWakeItems.shift();
       this.inboxWakeOmitted += 1;
     }
-  }
-
-  private abortWakeForUserPrompt(): void {
-    if (this.agentCtx.agentId !== 'main' || !this.isActive) return;
-    const turnId = this.wakeTurnId;
-    if (turnId === undefined) return;
-    queueMicrotask(() => {
-      if (this.wakeDisposed || !this.isActive || this.loop === undefined) return;
-      if (this.loop.cancel({ turnId }, userCancellationReason())) {
-        this.wakeAbortedForUserPrompt = true;
-      }
-    });
   }
 
   private requeueInboxWake(batch: InboxWakeBatch): void {
