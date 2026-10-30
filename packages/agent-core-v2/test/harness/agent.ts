@@ -2404,10 +2404,7 @@ function createPermissionRulesStub(
     get rules() {
       return rules;
     },
-    get sessionApprovalRulePatterns() {
-      return [];
-    },
-    environmentSessionApprovalRulePatterns: () => [],
+    sessionApprovalRulePatterns: () => [],
     addRules: (nextRules) => {
       rules = [...rules, ...nextRules];
     },

@@ -195,11 +195,7 @@ class GrepTool extends ProductionGrepTool {
       workDir: workspaceConfig.workspaceDir,
       additionalDirs: workspaceConfig.additionalDirs,
     });
-    super(
-      environmentService,
-      stubWorkspaceContext(workspaceConfig.workspaceDir, workspaceConfig.additionalDirs),
-      telemetry,
-    );
+    super(environmentService, telemetry);
   }
 }
 

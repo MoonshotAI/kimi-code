@@ -90,11 +90,11 @@ export class AgentToolRegistryService implements IAgentToolRegistryService {
   }
 
   routeEnvironment(name: string, args: unknown): ToolEnvironmentRoute {
-    if (this.tools.get(name)?.environmentScoped !== true || !isPlainRecord(args) || !Object.hasOwn(args, ENVIRONMENT_ARGUMENT)) {
-      return { args };
-    }
+    if (this.tools.get(name)?.environmentScoped !== true) return { args };
     const targets = this.environment?.current?.targets() ?? [];
-    if (targets.length < 2) return { args };
+    if (targets.length < 2 || !isPlainRecord(args) || !Object.hasOwn(args, ENVIRONMENT_ARGUMENT)) {
+      return { args, environment: targets[0] };
+    }
     const { [ENVIRONMENT_ARGUMENT]: requested, ...rest } = args;
     const target = targets.find((candidate) => candidate.environmentId === requested);
     if (target === undefined) {
@@ -103,7 +103,7 @@ export class AgentToolRegistryService implements IAgentToolRegistryService {
         .join(', ');
       return { args, error: `Unknown environment ${JSON.stringify(requested)}. Available environments: ${available}.` };
     }
-    return { args: rest, environmentId: target.primary ? undefined : target.environmentId };
+    return { args: rest, environment: target };
   }
 
   private unregisterTool(name: string): ToolEntry | undefined {

@@ -7,7 +7,7 @@ import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/env
 import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease, EnvironmentPath, EnvironmentWorkspaceRoots } from '#/environment/environment';
+import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease, EnvironmentPath, EnvironmentTarget, EnvironmentWorkspaceRoots } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { normalizeRemoteCwd } from '#/environment/environmentDefaults';
 import { EnvironmentError, environmentIsReady, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
@@ -30,16 +30,10 @@ export interface AgentEnvironmentBindingSnapshot {
   readonly environment?: EnvironmentGenerationSnapshot;
 }
 
-export interface AgentEnvironmentTarget {
-  readonly environmentId: string;
-  readonly primary: boolean;
-  readonly cwd?: string;
-}
-
 export interface IAgentEnvironmentService {
   readonly _serviceBrand: undefined;
   readonly onDidChange: Event<void>;
-  targets(): readonly AgentEnvironmentTarget[];
+  targets(): readonly EnvironmentTarget[];
   inspect(environmentId?: string): Environment;
   isAvailable(required?: readonly EnvironmentCapability[], environmentId?: string): boolean;
   acquire(required?: readonly EnvironmentCapability[], environmentId?: string): EnvironmentLease;
@@ -143,9 +137,9 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     });
   }
 
-  targets(): readonly AgentEnvironmentTarget[] {
+  targets(): readonly EnvironmentTarget[] {
     const current = this.binding.current;
-    const primary: AgentEnvironmentTarget = { environmentId: current.environmentId, primary: true, cwd: current.cwd };
+    const primary: EnvironmentTarget = { environmentId: current.environmentId, primary: true, cwd: current.cwd };
     if (this.declarations === undefined || this.flags?.enabled(MULTI_ENVIRONMENT_FLAG_ID) !== true) return [primary];
     const declared = new Map(
       this.declarations.snapshot().entries.map((declaration) => [declaration.id, declaration.entry.defaultCwd]),
@@ -154,7 +148,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     const secondary = [LOCAL_ENVIRONMENT_ID, ...declared.keys()]
       .filter((environmentId) => environmentId !== current.environmentId && this.resolver.current(environmentId) !== undefined)
       .toSorted((left, right) => left.localeCompare(right))
-      .map((environmentId): AgentEnvironmentTarget => ({
+      .map((environmentId): EnvironmentTarget => ({
         environmentId,
         primary: false,
         cwd: environmentId === LOCAL_ENVIRONMENT_ID ? this.session.cwd : declared.get(environmentId),

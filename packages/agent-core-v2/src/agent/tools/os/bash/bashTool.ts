@@ -4,8 +4,8 @@ import { IConfigService } from '#/app/config/config';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { acquireOrWhenReady, pinnedGeneration, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { EnvironmentTarget } from '#/environment/environment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
@@ -102,7 +102,6 @@ export class BashTool implements IBashTool {
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionContext private readonly ctx: ISessionContext,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
@@ -136,8 +135,8 @@ export class BashTool implements IBashTool {
   }
 
   resolveExecution(args: BashInput, context?: ToolResolutionContext): ToolExecution {
-    const environmentId = context?.environmentId;
-    const expectedGeneration = this.reviewedGeneration(environmentId);
+    const environment = context?.environment;
+    const expectedGeneration = this.reviewedGeneration(environment?.environmentId);
     const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
     return {
       description: args.run_in_background
@@ -146,14 +145,14 @@ export class BashTool implements IBashTool {
       display: {
         kind: 'command',
         command: args.command,
-        cwd: this.executionCwd(args, environmentId),
+        cwd: this.executionCwd(args, environment),
         description: args.description,
         language: 'bash',
       },
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
       execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
-        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration, environmentId),
+        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration, environment?.environmentId),
     };
   }
 
@@ -165,15 +164,15 @@ export class BashTool implements IBashTool {
     }
   }
 
-  private executionCwd(args: BashInput, environmentId: string | undefined): string | undefined {
+  private executionCwd(args: BashInput, environment: EnvironmentTarget | undefined): string | undefined {
     try {
       const view = new EnvironmentWorkspaceView(
-        this.environment.inspect(environmentId),
-        environmentId === undefined ? this.workspaceCtx : this.environment.workspaceRoots(environmentId),
+        this.environment.inspect(environment?.environmentId),
+        this.environment.workspaceRoots(environment?.environmentId),
       );
       return view.resolve(args.cwd ?? view.workDir);
     } catch {
-      return environmentId === undefined ? args.cwd ?? this.ctx.cwd : args.cwd;
+      return args.cwd ?? (environment?.primary === false ? undefined : this.ctx.cwd);
     }
   }
 
@@ -214,10 +213,7 @@ export class BashTool implements IBashTool {
       lease.dispose();
       return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
     }
-    const view = new EnvironmentWorkspaceView(
-      lease.environment,
-      environmentId === undefined ? this.workspaceCtx : this.environment.workspaceRoots(environmentId),
-    );
+    const view = new EnvironmentWorkspaceView(lease.environment, this.environment.workspaceRoots(environmentId));
     const env = view.host;
     const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
     const effectiveCwd = view.resolve(args.cwd ?? view.workDir);

@@ -14,10 +14,7 @@ export class SessionApprovalHistoryPermissionPolicyService implements Permission
   ) {}
 
   evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
-    const patterns = context.environmentId === undefined
-      ? this.rulesService.sessionApprovalRulePatterns
-      : this.rulesService.environmentSessionApprovalRulePatterns(context.environmentId);
-    for (const pattern of patterns) {
+    for (const pattern of this.rulesService.sessionApprovalRulePatterns(context.environment)) {
       const match = matchPermissionRule({
         rule: {
           decision: 'allow',

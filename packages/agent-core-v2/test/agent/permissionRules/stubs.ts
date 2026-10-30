@@ -11,8 +11,7 @@ export function stubPermissionRulesService(
     get rules() {
       return rules();
     },
-    sessionApprovalRulePatterns: [],
-    environmentSessionApprovalRulePatterns: () => [],
+    sessionApprovalRulePatterns: () => [],
     addRules: () => {},
     recordApprovalResult: () => {},
   };

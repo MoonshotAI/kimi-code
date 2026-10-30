@@ -26,6 +26,7 @@ import {
 } from '#/agent/permissionRules/permissionRules';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { EnvironmentTarget } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IConfigService } from '#/app/config/config';
 import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
@@ -87,9 +88,9 @@ describe('AgentPermissionPolicyService chain', () => {
         );
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub({
           rules: () => rules,
-          sessionApprovalRulePatterns: () => sessionApprovalRulePatterns,
-          environmentSessionApprovalRulePatterns: (environmentId) =>
-            environmentSessionApprovalRulePatterns[environmentId] ?? [],
+          sessionApprovalRulePatterns: (environment) => environment?.primary === false
+            ? environmentSessionApprovalRulePatterns[environment.environmentId] ?? []
+            : sessionApprovalRulePatterns,
         }));
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
@@ -123,7 +124,7 @@ describe('AgentPermissionPolicyService chain', () => {
             dispose: () => {},
           }),
           acquireWhenReady() { return Promise.resolve((this as IAgentEnvironmentService).acquire()); },
-          workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
+          workspaceRoots: () => ({ workDir: workspace.stub.workDir, additionalDirs: workspace.stub.additionalDirs }),
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
@@ -238,7 +239,7 @@ describe('AgentPermissionPolicyService chain', () => {
     const routed = {
       toolName: 'Bash',
       args: { command: 'printf first', timeout: 60 },
-      environmentId: 'gpu',
+      environment: { environmentId: 'gpu', primary: false },
     };
 
     await expect(evaluate(routed)).resolves.toMatchObject({
@@ -251,7 +252,7 @@ describe('AgentPermissionPolicyService chain', () => {
       policyName: 'session-approval-history',
       result: { kind: 'approve' },
     });
-    await expect(evaluate({ ...routed, environmentId: 'staging' })).resolves.toMatchObject({
+    await expect(evaluate({ ...routed, environment: { environmentId: 'staging', primary: false } })).resolves.toMatchObject({
       policyName: 'user-configured-ask',
     });
   });
@@ -590,7 +591,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
                   dirname: (path: string) => dirname(path),
                 },
                 workspace: { mapRoots: (roots) => roots },
-                fs: environmentId !== undefined
+                fs: environmentId !== undefined && environmentId !== 'local'
                   ? ({ stat: async () => { throw new Error('missing'); } } as unknown as typeof hostFs)
                   : environmentFsAvailable ? hostFs : undefined,
               },
@@ -598,10 +599,9 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
             };
           },
           acquireWhenReady() { return Promise.resolve((this as IAgentEnvironmentService).acquire()); },
-          workspaceRoots: (environmentId) => ({
-            workDir: environmentId === undefined ? '/workspace' : workspaceDir,
-            additionalDirs: [],
-          }),
+          workspaceRoots: (environmentId) => environmentId === undefined || environmentId === 'local'
+            ? { workDir: workspace.stub.workDir, additionalDirs: workspace.stub.additionalDirs }
+            : { workDir: workspaceDir, additionalDirs: [] },
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, {
@@ -652,13 +652,26 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       toolName: 'Write',
       args: { path: 'src/a.ts', content: 'x' },
       accesses: ToolAccesses.writeFile(join(workspaceDir, 'src/a.ts')),
-      environmentId: 'gpu',
+      environment: { environmentId: 'gpu', primary: false },
     })).resolves.toMatchObject({
       policyName: 'fallback-ask',
       result: { kind: 'ask' },
     });
     expect(acquiredEnvironments).toContain('gpu');
     expect(acquiredEnvironments).not.toContain(undefined);
+  });
+
+  it('judges a Write routed to the primary by name like an unrouted one', async () => {
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: 'src/a.ts', content: 'x' },
+      accesses: ToolAccesses.writeFile(join(workspaceDir, 'src/a.ts')),
+      environment: { environmentId: 'local', primary: true },
+    })).resolves.toMatchObject({
+      policyName: 'git-cwd-write-approve',
+      result: { kind: 'approve' },
+    });
+    expect([...new Set(acquiredEnvironments)]).toEqual(['local']);
   });
 
   it('approves Edit on an additionalDir path in manual mode', async () => {
@@ -776,23 +789,18 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
 
 interface MutablePermissionRulesStubOptions {
   readonly rules?: () => readonly PermissionRule[];
-  readonly sessionApprovalRulePatterns?: () => readonly string[];
-  readonly environmentSessionApprovalRulePatterns?: (environmentId: string) => readonly string[];
+  readonly sessionApprovalRulePatterns?: (environment?: EnvironmentTarget) => readonly string[];
 }
 
 function permissionRulesStub(
   options: MutablePermissionRulesStubOptions = {},
 ): Partial<PermissionRulesServiceContract> {
   const rules = options.rules ?? (() => []);
-  const sessionApprovalRulePatterns = options.sessionApprovalRulePatterns ?? (() => []);
   return {
     get rules() {
       return rules();
     },
-    get sessionApprovalRulePatterns() {
-      return sessionApprovalRulePatterns();
-    },
-    environmentSessionApprovalRulePatterns: options.environmentSessionApprovalRulePatterns ?? (() => []),
+    sessionApprovalRulePatterns: options.sessionApprovalRulePatterns ?? (() => []),
     addRules: () => {},
     recordApprovalResult: () => {},
   };
@@ -803,7 +811,7 @@ interface PolicyContextInput {
   readonly toolName: string;
   readonly args: Record<string, unknown>;
   readonly accesses?: ToolAccessList;
-  readonly environmentId?: string;
+  readonly environment?: EnvironmentTarget;
 }
 
 function policyContext(input: PolicyContextInput): ResolvedToolExecutionHookContext {
@@ -815,7 +823,7 @@ function policyContext(input: PolicyContextInput): ResolvedToolExecutionHookCont
     toolCall,
     toolCalls: [toolCall],
     args: input.args,
-    environmentId: input.environmentId,
+    environment: input.environment,
     execution: {
       description: description(input.toolName),
       display: display(input.toolName, input.args),

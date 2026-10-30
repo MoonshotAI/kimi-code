@@ -18,7 +18,6 @@ import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '
 import type { Environment } from '#/environment/environment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   resolvePathAccessPath,
   type PathClass,
@@ -72,7 +71,6 @@ export class GrepTool implements IGrepTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GrepInputSchema);
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
     @IOAuthService private readonly auth?: IOAuthService,
@@ -83,18 +81,20 @@ export class GrepTool implements IGrepTool {
   }
 
   async resolveExecution(args: GrepInput, context?: ToolResolutionContext): Promise<ToolExecution> {
-    const environmentId = context?.environmentId;
+    const environmentId = context?.environment?.environmentId;
+    const primary = context?.environment?.primary !== false;
     const resolutionLease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, environmentId === undefined ? {
-        workDir: this.workspaceCtx.workDir,
+      const roots = this.environment.workspaceRoots(environmentId);
+      const view = new EnvironmentWorkspaceView(inspected, {
+        workDir: roots.workDir,
         additionalDirs: [
-          ...this.workspaceCtx.additionalDirs,
-          ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+          ...(roots.additionalDirs ?? []),
+          ...(primary ? this.skillCatalog?.catalog.getSkillRoots() ?? [] : []),
         ],
-      } : this.environment.workspaceRoots(environmentId));
+      });
       const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
       const workspace = this.workspace(view);
       let path: string | undefined;

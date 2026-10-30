@@ -15,7 +15,7 @@ import type { ToolCall } from '#human/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
-import type { Environment } from '#/environment/environment';
+import type { Environment, EnvironmentTarget } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { stubAgentEnvironment } from '../../environment/stubs';
@@ -273,7 +273,7 @@ function didCtx(
     readonly result?: ExecutableToolResult;
     readonly preflightRejected?: boolean;
     readonly accesses?: ToolAccessesType;
-    readonly environmentId?: string;
+    readonly environment?: EnvironmentTarget;
   } = {},
 ): ToolDidExecuteContext {
   const toolCall: ToolCall = {
@@ -288,7 +288,7 @@ function didCtx(
     toolCall,
     toolCalls: [toolCall],
     args,
-    environmentId: options.environmentId,
+    environment: options.environment,
     tool: options.preflightRejected === true ? undefined : ({} as ExecutableTool),
     outcome: options.preflightRejected === true ? 'preflight-rejected' : 'executed',
     accesses:
@@ -1563,10 +1563,24 @@ describe('agentsMdReminder environment degradation', () => {
       throw new Error('primary environment must not be read');
     };
 
-    await fire(h, didCtx('Read', { path: '/srv/app/AGENTS.md' }, { environmentId: 'gpu' }));
+    await fire(h, didCtx('Read', { path: '/srv/app/AGENTS.md' }, { environment: { environmentId: 'gpu', primary: false } }));
 
     expect(agentsMdMessages(h)).toHaveLength(0);
     expect(h.reminders).toHaveLength(0);
+  });
+
+  it('inspects the primary environment for calls that name it', async () => {
+    const h = createHarness();
+    const subDir = join(workDir, 'packages', 'named');
+    const subAgentsMd = await writeAgentsMd(subDir, 'package instructions');
+    h.reminder.seedInjected([], workDir);
+
+    await fire(
+      h,
+      didCtx('Read', { path: join(subDir, 'index.ts') }, { environment: { environmentId: 'local', primary: true } }),
+    );
+
+    expect(reminderText(h)).toContain(subAgentsMd);
   });
 });
 

@@ -6,7 +6,6 @@ import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '
 import { IAgentPlanService } from '#/features/plan/plan';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   ToolAccesses,
   type ExecutableToolResult,
@@ -31,7 +30,6 @@ export class WriteTool implements IWriteTool {
 
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
     @IAgentPlanService private readonly planService?: IAgentPlanService,
   ) {}
@@ -41,8 +39,9 @@ export class WriteTool implements IWriteTool {
   }
 
   async resolveExecution(args: WriteInput, context?: ToolResolutionContext): Promise<ToolExecution> {
-    const environmentId = context?.environmentId;
-    const planTarget = environmentId === undefined ? await this.planService?.resolveFile(args.path) : undefined;
+    const environmentId = context?.environment?.environmentId;
+    const primary = context?.environment?.primary !== false;
+    const planTarget = primary ? await this.planService?.resolveFile(args.path) : undefined;
     if (planTarget !== undefined) {
       const path = planTarget.path;
       return {
@@ -64,13 +63,14 @@ export class WriteTool implements IWriteTool {
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, environmentId === undefined ? {
-        workDir: this.workspaceCtx.workDir,
+      const roots = this.environment.workspaceRoots(environmentId);
+      const view = new EnvironmentWorkspaceView(inspected, {
+        workDir: roots.workDir,
         additionalDirs: [
-          ...this.workspaceCtx.additionalDirs,
-          ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+          ...(roots.additionalDirs ?? []),
+          ...(primary ? this.skillCatalog?.catalog.getSkillRoots() ?? [] : []),
         ],
-      } : this.environment.workspaceRoots(environmentId));
+      });
       const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
       const workspace = this.workspaceConfig(view);
       const path = resolvePathAccessPath(args.path, {

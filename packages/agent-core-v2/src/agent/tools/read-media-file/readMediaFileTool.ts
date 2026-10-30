@@ -229,7 +229,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
   }
 
   async resolveExecution(args: ReadMediaFileInput, context?: ToolResolutionContext): Promise<ToolExecution> {
-    const environmentId = context?.environmentId;
+    const environmentId = context?.environment?.environmentId;
+    const primary = context?.environment?.primary !== false;
     if (!args.path) {
       return { isError: true, output: 'File path cannot be empty.' };
     }
@@ -240,10 +241,11 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, environmentId === undefined ? {
-        workDir: this.workspace.workspaceDir,
-        additionalDirs: this.workspace.additionalDirs,
-      } : this.environment.workspaceRoots(environmentId));
+      const roots = this.environment.workspaceRoots(environmentId);
+      const view = new EnvironmentWorkspaceView(inspected, {
+        workDir: roots.workDir,
+        additionalDirs: primary ? this.workspace.additionalDirs : roots.additionalDirs,
+      });
       const env = view.host;
       const workspace = { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
       const path = resolvePathAccessPath(args.path, {
@@ -258,7 +260,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         approvalRule: literalRulePattern(this.name, path),
         matchesRule: (ruleArgs) =>
           matchesPathRuleSubject(ruleArgs, path, {
-            cwd: environmentId === undefined ? this.workspace.workspaceDir : workspace.workspaceDir,
+            cwd: workspace.workspaceDir,
             pathClass: env.pathClass,
             homeDir: env.homeDir,
           }),

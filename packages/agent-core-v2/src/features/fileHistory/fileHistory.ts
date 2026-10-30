@@ -27,6 +27,7 @@ export type FileHistoryChangeStatus = 'added' | 'modified' | 'deleted';
 
 export interface FileHistoryChange {
   readonly path: string;
+  readonly environmentId?: string;
   readonly status: FileHistoryChangeStatus;
   readonly additions: number;
   readonly deletions: number;
@@ -52,6 +53,7 @@ export interface IAgentFileHistoryService {
     turnId: number,
     path: string,
     phase?: FileHistoryCheckpointPhase,
+    environmentId?: string,
   ): Promise<FileHistoryContent | undefined>;
 }
 

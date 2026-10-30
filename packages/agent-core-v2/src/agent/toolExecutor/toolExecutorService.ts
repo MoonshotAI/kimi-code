@@ -5,6 +5,7 @@ import { AsyncEmitter, type Event } from '#/_base/event';
 import { defineState } from '#/state/state';
 import type { ContentPart, ToolCall } from '#human/llm/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { EnvironmentTarget } from '#/environment/environment';
 
 import {
   compileToolArgsValidator,
@@ -388,7 +389,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
     let execution: ToolExecution;
     try {
-      execution = await call.tool.resolveExecution(call.input, { environmentId: call.environmentId });
+      execution = await call.tool.resolveExecution(call.input, { environment: call.environment });
     } catch (error) {
       const output =
         error instanceof PathSecurityError
@@ -397,11 +398,11 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       return settleError(call.args, output, 'resolution-failed');
     }
     if (
-      call.environmentId !== undefined &&
+      call.environment?.primary === false &&
       execution.isError !== true &&
       (execution.display?.kind === 'command' || execution.display?.kind === 'file_io')
     ) {
-      execution = { ...execution, display: { ...execution.display, environment: call.environmentId } };
+      execution = { ...execution, display: { ...execution.display, environment: call.environment.environmentId } };
     }
 
     const displayFields = toolCallDisplayFieldsFromExecution(execution);
@@ -434,7 +435,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         toolCall: call.toolCall,
         execution,
         args: call.args,
-        environmentId: call.environmentId,
+        environment: call.environment,
       },
       options.signal,
     );
@@ -648,7 +649,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       toolCalls: [call.toolCall],
       tool: call.kind === 'runnable' ? call.tool : undefined,
       args: call.args,
-      environmentId: call.kind === 'runnable' ? call.environmentId : undefined,
+      environment: call.kind === 'runnable' ? call.environment : undefined,
       outcome,
       accesses: resolvedAccesses,
       result: result as ExecutableToolResult,
@@ -699,7 +700,7 @@ interface RunnableToolCall {
   readonly tool: ExecutableTool;
   readonly args: unknown;
   readonly input: unknown;
-  readonly environmentId?: string;
+  readonly environment?: EnvironmentTarget;
 }
 
 interface RejectedToolCall {
@@ -736,7 +737,7 @@ function buildBeforeExecuteContext(
     toolCalls: allCalls,
     tool: call.tool,
     args: call.args,
-    environmentId: call.environmentId,
+    environment: call.environment,
     execution,
   };
 }
@@ -817,7 +818,7 @@ function preflightToolCall(
     tool,
     args: parsedArgs.data,
     input: route.args,
-    environmentId: route.environmentId,
+    environment: route.environment,
   };
 }
 

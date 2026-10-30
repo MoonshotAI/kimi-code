@@ -18,7 +18,6 @@ import { attachmentFileSource, environmentFileSource, withAttachmentLocation, ty
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import {
@@ -184,7 +183,6 @@ export class ReadTool implements IReadTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentToolResultTruncationService private readonly resultTruncation: IAgentToolResultTruncationService,
     @IConfigService private readonly config: IConfigService,
@@ -213,12 +211,13 @@ export class ReadTool implements IReadTool {
   }
 
   async resolveExecution(args: ReadInput, context?: ToolResolutionContext): Promise<ToolExecution> {
-    const environmentId = context?.environmentId;
+    const environmentId = context?.environment?.environmentId;
+    const primary = context?.environment?.primary !== false;
     if (args.column_offset !== undefined && (args.line_offset ?? 1) < 0) {
       return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
     }
     if (isDaemonFileUrl(args.path)) return this.attachmentExecution(args);
-    if (environmentId === undefined) {
+    if (primary) {
       const planTarget = await this.planService?.resolveFile(args.path, 'read');
       if (planTarget !== undefined) return this.localArtifactExecution(args, planTarget, true);
       const artifactTarget = this.localOutputTarget(args.path);
@@ -228,10 +227,11 @@ export class ReadTool implements IReadTool {
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, environmentId === undefined ? {
-        workDir: this.workspaceCtx.workDir,
-        additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
-      } : this.environment.workspaceRoots(environmentId));
+      const roots = this.environment.workspaceRoots(environmentId);
+      const view = new EnvironmentWorkspaceView(inspected, {
+        workDir: roots.workDir,
+        additionalDirs: [...(roots.additionalDirs ?? []), ...(primary ? this.skillCatalog.catalog.getSkillRoots() : [])],
+      });
       const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
       const workspace = this.workspaceConfig(view);
       const path = resolvePathAccessPath(args.path, {

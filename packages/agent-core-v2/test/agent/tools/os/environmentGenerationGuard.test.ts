@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { IFileEditService } from '#/app/edit/fileEdit';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
-import type { Environment, EnvironmentBinding, EnvironmentCapability } from '#/environment/environment';
+import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentTarget } from '#/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import {
   EnvironmentRegistry,
@@ -30,7 +30,6 @@ import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
 import { stubConfigService } from '../../../app/config/stubs';
 import { stubToolResultTruncationService } from '../../toolResultTruncation/stubs';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
-import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
 
 vi.mock('#/os/backends/node-local/tools/rgLocator', async (importOriginal) => {
   const original = await importOriginal<typeof import('#/os/backends/node-local/tools/rgLocator')>();
@@ -186,7 +185,6 @@ const editService = {
 } as unknown as IFileEditService;
 
 function toolCases(): readonly ToolCase[] {
-  const workspace = stubWorkspaceContext('/workspace');
   return [
     {
       name: 'Read',
@@ -194,7 +192,6 @@ function toolCases(): readonly ToolCase[] {
       resolve: (service, path = '/workspace/a.txt') =>
         new ReadTool(
           service,
-          workspace,
           skillCatalog,
           stubToolResultTruncationService(),
           stubConfigService(),
@@ -211,7 +208,7 @@ function toolCases(): readonly ToolCase[] {
       name: 'Write',
       fs: writableFs(),
       resolve: (service, path = '/workspace/a.txt') =>
-        new WriteTool(service, workspace).resolveExecution({ path, content: 'hello' }),
+        new WriteTool(service).resolveExecution({ path, content: 'hello' }),
       expectOutcome: (result) => {
         expect(result.isError).not.toBe(true);
         expect(result.output).toContain('Wrote 5 bytes');
@@ -221,7 +218,7 @@ function toolCases(): readonly ToolCase[] {
       name: 'Edit',
       fs: createFakeHostFs(),
       resolve: (service, path = '/workspace/a.txt') =>
-        new EditTool(editService, service, workspace).resolveExecution({
+        new EditTool(editService, service).resolveExecution({
           path,
           old_string: 'foo',
           new_string: 'bar',
@@ -235,7 +232,7 @@ function toolCases(): readonly ToolCase[] {
       name: 'Grep',
       fs: createFakeHostFs(),
       resolve: (service) =>
-        new GrepTool(service, workspace, noopTelemetryService).resolveExecution({ pattern: 'needle' }),
+        new GrepTool(service, noopTelemetryService).resolveExecution({ pattern: 'needle' }),
       expectOutcome: (result) => {
         expect(outputText(result)).toContain('ripgrep');
       },
@@ -244,7 +241,7 @@ function toolCases(): readonly ToolCase[] {
       name: 'Glob',
       fs: writableFs(),
       resolve: (service) =>
-        new GlobTool(service, workspace, noopTelemetryService).resolveExecution({ pattern: '**/*.ts' }),
+        new GlobTool(service, noopTelemetryService).resolveExecution({ pattern: '**/*.ts' }),
       expectOutcome: (result) => {
         expect(outputText(result)).toContain('ripgrep');
       },
@@ -351,7 +348,7 @@ describe('tilde resolution against the reconnected host', () => {
 
   it('resolves ~ against the reconnected host home instead of /', async () => {
     const { service, calls } = pendingThenReadyHarness({ homeDir: '/home/me' });
-    const tool = new GlobTool(service, stubWorkspaceContext('/workspace'), noopTelemetryService);
+    const tool = new GlobTool(service, noopTelemetryService);
     const execution = await tool.resolveExecution({ pattern: '**/*.ts', path: '~/projects' });
     expect(calls).toEqual(['connect']);
     expect((execution as Extract<ToolExecution, { execute: unknown }>).accesses).toEqual(
@@ -374,7 +371,7 @@ describe('tilde resolution against the reconnected host', () => {
       },
     );
     registry.register(pending);
-    const tool = new GlobTool(registryBackedService(registry), stubWorkspaceContext('/workspace'), noopTelemetryService);
+    const tool = new GlobTool(registryBackedService(registry), noopTelemetryService);
     await expect(tool.resolveExecution({ pattern: '**/*.ts', path: '~/projects' })).rejects.toThrow(
       'connection refused',
     );
@@ -392,7 +389,6 @@ describe('Bash environment generation guard', () => {
         sessionScope: 'ses',
         cwd: '/workspace',
       }),
-      stubWorkspaceContext('/workspace'),
       {} as never,
       toolPolicy,
       stubConfigService(),
@@ -457,7 +453,7 @@ describe('tool environment routing', () => {
       acquire: (required = [], environmentId) => registry.acquire(binding(environmentId), required),
       acquireWhenReady: (required = [], environmentId) => registry.acquireWhenReady(binding(environmentId), required),
       workspaceRoots: (environmentId) => ({
-        workDir: environmentId === undefined ? '/workspace' : '/gpu',
+        workDir: binding(environmentId).environmentId === 'local' ? '/workspace' : '/gpu',
         additionalDirs: [],
       }),
     };
@@ -466,25 +462,28 @@ describe('tool environment routing', () => {
 
   it('reads from the requested environment and resolves relative paths against its working directory', async () => {
     const { service } = routedHarness();
-    const read = (environmentId?: string) =>
+    const read = (environment?: EnvironmentTarget) =>
       new ReadTool(
         service,
-        stubWorkspaceContext('/workspace'),
         skillCatalog,
         stubToolResultTruncationService(),
         stubConfigService(),
         profile,
         toolPolicy,
         toolRegistry,
-      ).resolveExecution({ path: 'notes.txt' }, { environmentId });
+      ).resolveExecution({ path: 'notes.txt' }, { environment });
 
-    const routed = await read('gpu');
+    const routed = await read({ environmentId: 'gpu', primary: false });
     expect(routed).toMatchObject({ display: { kind: 'file_io', operation: 'read', path: '/gpu/notes.txt' } });
     expect(outputText(await finish(routed))).toContain('gpu content');
 
     const primary = await read();
     expect(primary).toMatchObject({ display: { path: '/workspace/notes.txt' } });
     expect(outputText(await finish(primary))).toContain('local content');
+
+    const named = await read({ environmentId: 'local', primary: true });
+    expect(named).toMatchObject({ display: { path: '/workspace/notes.txt' } });
+    expect(outputText(await finish(named))).toContain('local content');
   });
 
   it('runs Bash on the requested environment in its working directory', async () => {
@@ -498,13 +497,12 @@ describe('tool environment routing', () => {
         sessionScope: 'ses',
         cwd: '/workspace',
       }),
-      stubWorkspaceContext('/workspace'),
       {} as never,
       toolPolicy,
       stubConfigService(),
     );
 
-    const resolved = bash.resolveExecution({ command: 'pwd' }, { environmentId: 'gpu' });
+    const resolved = bash.resolveExecution({ command: 'pwd' }, { environment: { environmentId: 'gpu', primary: false } });
     expect(resolved).toMatchObject({ display: { kind: 'command', cwd: '/gpu' } });
     const result = await finish(resolved);
 

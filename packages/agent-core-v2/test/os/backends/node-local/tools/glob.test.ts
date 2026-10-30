@@ -101,6 +101,7 @@ function createEnvironment(
   fs: IHostFileSystem,
   environment: IHostEnvironment,
   process: IHostProcessService,
+  workspaceContext: ISessionWorkspaceContext = workspace,
 ): IAgentEnvironmentService {
   const backend = Object.assign(
     new FakeEnvironment(
@@ -109,7 +110,10 @@ function createEnvironment(
     ),
     { fs, host: environment, process },
   );
-  return stubAgentEnvironment(backend);
+  return stubAgentEnvironment(backend, {
+    workDir: workspaceContext.workDir,
+    additionalDirs: workspaceContext.additionalDirs,
+  });
 }
 
 function createRealRgProbe(processService: IHostProcessService): RgProbe {
@@ -230,8 +234,7 @@ function makeTool(
   const processService = createTestProcessService(exec);
   const env = createTestEnv({ home: opts.home, pathClass: opts.pathClass });
   const tool = new GlobTool(
-    createEnvironment(fs, env, processService),
-    workspaceConfig,
+    createEnvironment(fs, env, processService, workspaceConfig),
     opts.telemetry ?? noopTelemetryService,
   );
   return { tool, exec, withCwd: withCwdOf(exec) };
@@ -610,7 +613,10 @@ describe('GlobTool', () => {
       ),
       { fs, host: createTestEnv({ home: '/home/remote' }), process: processService },
     );
-    const tool = new GlobTool(stubAgentEnvironment(backend), workspace, noopTelemetryService);
+    const tool = new GlobTool(
+      stubAgentEnvironment(backend, { workDir: workspace.workDir, additionalDirs: workspace.additionalDirs }),
+      noopTelemetryService,
+    );
 
     const result = await execute(tool, { pattern: '**/*.ts' });
 
@@ -967,7 +973,7 @@ describe('GlobTool integration (real ripgrep)', () => {
     };
     realProcessService = new HostProcessService();
     realFs = new HostFileSystem();
-    tool = new GlobTool(createEnvironment(realFs, realEnv, realProcessService), stubWorkspaceContext(tmpDir!), noopTelemetryService);
+    tool = new GlobTool(createEnvironment(realFs, realEnv, realProcessService, stubWorkspaceContext(tmpDir)), noopTelemetryService);
   });
 
   afterEach(async () => {

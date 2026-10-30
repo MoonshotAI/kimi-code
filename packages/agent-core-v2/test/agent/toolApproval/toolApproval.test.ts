@@ -116,8 +116,7 @@ describe('AgentToolApprovalService', () => {
         reg.defineInstance(IAgentPermissionRulesService, {
           _serviceBrand: undefined,
           rules: [],
-          sessionApprovalRulePatterns: [],
-          environmentSessionApprovalRulePatterns: () => [],
+          sessionApprovalRulePatterns: () => [],
           addRules: () => {},
           recordApprovalResult: (record) => {
             recorded.push(record);

@@ -53,9 +53,9 @@ import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import { IAgentEnvironmentService, type AgentEnvironmentTarget } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { EnvironmentTarget } from '#/environment/environment';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
 import { stubAgentEnvironment } from '../../environment/stubs';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
@@ -94,7 +94,7 @@ let events: ToolExecutorEvent[];
 let protocolEvents: ProtocolEvent[];
 let telemetryEvents: TelemetryRecord[];
 let truncateForModel: IAgentToolResultTruncationService['truncateForModel'];
-let environmentTargets: AgentEnvironmentTarget[];
+let environmentTargets: EnvironmentTarget[];
 
 let durations: number[];
 
@@ -1109,11 +1109,10 @@ describe('truncation pipeline', () => {
       { environmentId: 'local', generation: 'test' },
       { capabilities: ['fs', 'process'] },
     ), { fs: new HostFileSystem(), process: globProcess });
-    const binding = stubAgentEnvironment(environment);
+    const binding = stubAgentEnvironment(environment, { workDir: homeDir });
     mediaEnvironment = binding;
     registry.register(new ReadTool(
       binding,
-      stubWorkspaceContext(homeDir),
       { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
       truncation,
       readConfig,
@@ -1124,7 +1123,7 @@ describe('truncation pipeline', () => {
       { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
       attachmentStore,
     ));
-    registry.register(new GlobTool(binding, stubWorkspaceContext(homeDir), noopTelemetryService));
+    registry.register(new GlobTool(binding, noopTelemetryService));
   });
 
   afterEach(async () => {
@@ -1647,9 +1646,9 @@ describe('AgentToolExecutorService environment routing', () => {
   it('routes a call to the named environment, hands the tool its own arguments, and stamps the display', async () => {
     const tool = new RoutedTool('scoped', textSchema);
     registry.register(tool, { environmentScoped: true });
-    const observed: { readonly environmentId: string | undefined; readonly args: unknown }[] = [];
+    const observed: { readonly environment: EnvironmentTarget | undefined; readonly args: unknown }[] = [];
     executor.onBeforeExecuteTool((event) => {
-      observed.push({ environmentId: event.environmentId, args: event.args });
+      observed.push({ environment: event.environment, args: event.args });
     });
 
     await execute([
@@ -1658,15 +1657,16 @@ describe('AgentToolExecutorService environment routing', () => {
       toolCall('call_default', 'scoped', { text: 'c' }),
     ]);
 
+    const [local, gpu] = environmentTargets;
     expect(tool.resolutions).toEqual([
-      { args: { text: 'a' }, environmentId: 'gpu' },
-      { args: { text: 'b' }, environmentId: undefined },
-      { args: { text: 'c' }, environmentId: undefined },
+      { args: { text: 'a' }, environment: gpu },
+      { args: { text: 'b' }, environment: local },
+      { args: { text: 'c' }, environment: local },
     ]);
     expect(observed).toEqual([
-      { environmentId: 'gpu', args: { text: 'a', environment: 'gpu' } },
-      { environmentId: undefined, args: { text: 'b', environment: 'local' } },
-      { environmentId: undefined, args: { text: 'c' } },
+      { environment: gpu, args: { text: 'a', environment: 'gpu' } },
+      { environment: local, args: { text: 'b', environment: 'local' } },
+      { environment: local, args: { text: 'c' } },
     ]);
     const displays = protocolEvents
       .filter((event): event is ToolCallStarted => event.type === 'tool.call.started')
@@ -1753,7 +1753,6 @@ describe('AgentToolExecutorService environment routing', () => {
       registry.register(
         new ReadTool(
           ix.get(IAgentEnvironmentService),
-          stubWorkspaceContext('/workspace'),
           { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
           stubToolResultTruncationService(),
           stubConfigService(),
@@ -1784,7 +1783,7 @@ describe('AgentToolExecutorService environment routing', () => {
 
 class RoutedTool implements ExecutableTool<Record<string, unknown>> {
   readonly description = 'Routed tool.';
-  readonly resolutions: Array<{ readonly args: Record<string, unknown>; readonly environmentId: string | undefined }> = [];
+  readonly resolutions: Array<{ readonly args: Record<string, unknown>; readonly environment: EnvironmentTarget | undefined }> = [];
 
   constructor(
     readonly name: string,
@@ -1792,7 +1791,7 @@ class RoutedTool implements ExecutableTool<Record<string, unknown>> {
   ) {}
 
   resolveExecution(args: Record<string, unknown>, context?: ToolResolutionContext): ToolExecution {
-    this.resolutions.push({ args, environmentId: context?.environmentId });
+    this.resolutions.push({ args, environment: context?.environment });
     return {
       approvalRule: this.name,
       display: { kind: 'command', command: String(args['text']) },
