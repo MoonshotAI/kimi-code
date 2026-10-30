@@ -4,6 +4,13 @@ import {
   type FsEntry,
   type FsGitStatusRequest,
   type FsGitStatusResponse,
+  type FsGitStatusBatchRequest,
+  type FsGitStatusBatchResponse,
+  type FsBatchError,
+  type FsPullRequest,
+  type FsPullRequestRequest,
+  type FsPullRequestBatchRequest,
+  type FsPullRequestBatchResponse,
   type FsGrepFileHit,
   type FsGrepMatch,
   type FsGrepRequest,
@@ -28,11 +35,16 @@ import {
 } from './fs';
 
 const FsWireErrorCode = {
+  VALIDATION_FAILED: 40001,
   FS_PATH_NOT_FOUND: 40409,
+  ENVIRONMENT_NOT_FOUND: 40420,
+  SESSION_BUSY: 40901,
   FS_IS_DIRECTORY: 40906,
   FS_IS_BINARY: 40907,
+  ENVIRONMENT_UNAVAILABLE: 40926,
   FS_TOO_LARGE: 41302,
   FS_TOO_MANY_RESULTS: 41303,
+  FS_PATH_ESCAPES_SESSION: 41304,
   INTERNAL_ERROR: 50001,
 } as const;
 import ignore, { type Ignore } from 'ignore';
@@ -46,6 +58,8 @@ import {
   guessMime,
 } from '#/_base/utils/fileMeta';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
+import { EnvironmentError } from '#/environment/environmentRegistry';
+import { HandshakeError } from '#/remote/client/connection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
@@ -1064,20 +1078,88 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   async gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse> {
+    const cwd = await this.resolveGitRoot(req.root);
     let filter: Set<string> | undefined;
     if (req.paths !== undefined && req.paths.length > 0) {
       filter = new Set();
       for (const p of req.paths) {
-        filter.add(this.toRel(await this.resolveWithin(p)));
+        const inputPath = req.root !== undefined && !this.path.isAbsolute(p) ? this.path.join(cwd, p) : p;
+        const abs = await this.resolveWithin(inputPath);
+        const rel = this.path.relative(cwd, abs).split(this.path.separator).join('/');
+        if (req.root !== undefined && (rel === '..' || rel.startsWith('../') || this.path.isAbsolute(rel))) {
+          throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${p}" escapes git root`, {
+            details: { cwd, path: p },
+          });
+        }
+        filter.add(rel);
       }
     }
 
-    return this.git.status(filter);
+    return this.git.statusAt(cwd, {
+      pathFilter: filter,
+      scopeToCwd: req.root !== undefined,
+      includePullRequest: req.include_pull_request !== false,
+    });
+  }
+
+  gitStatusBatch(req: FsGitStatusBatchRequest): Promise<FsGitStatusBatchResponse> {
+    return this.batchGitValues(req.roots, (root) => this.gitStatus({ root, include_pull_request: req.include_pull_request }));
+  }
+
+  pullRequestBatch(req: FsPullRequestBatchRequest): Promise<FsPullRequestBatchResponse> {
+    return this.batchGitValues(req.roots, (root) => this.pullRequest({ root }));
+  }
+
+  async pullRequest(req: FsPullRequestRequest): Promise<FsPullRequest | null> {
+    const cwd = await this.resolveGitRoot(req.root);
+    return this.git.pullRequestAt(cwd);
+  }
+
+  private async batchGitValues<T>(
+    inputRoots: readonly string[],
+    read: (root: string) => Promise<T>,
+  ): Promise<{ results: Record<string, T>; errors: Record<string, FsBatchError> }> {
+    const roots = [...new Set(inputRoots)];
+    const results = Object.create(null) as Record<string, T>;
+    const errors = Object.create(null) as Record<string, FsBatchError>;
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < roots.length) {
+        const root = roots[cursor++]!;
+        try {
+          results[root] = await read(root);
+        } catch (error) {
+          errors[root] = toGitBatchError(error);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(2, roots.length) }, () => worker()));
+    return { results, errors };
   }
 
   async diff(req: FsDiffRequest): Promise<FsDiffResponse> {
-    const abs = await this.resolveWithin(req.path);
-    return this.git.diff(this.toRel(abs), abs);
+    const cwd = await this.resolveGitRoot(req.root);
+    const inputPath = req.root !== undefined && !this.path.isAbsolute(req.path) ? this.path.join(cwd, req.path) : req.path;
+    const abs = await this.resolveWithin(inputPath);
+    const rel = this.path.relative(cwd, abs).split(this.path.separator).join('/');
+    if (req.root !== undefined && (rel === '..' || rel.startsWith('../') || this.path.isAbsolute(rel))) {
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${req.path}" escapes git root`, {
+        details: { cwd, path: req.path },
+      });
+    }
+    return this.git.diffAt(cwd, rel, abs);
+  }
+
+  private async resolveGitRoot(root?: string): Promise<string> {
+    if (root === undefined) return this.workDir;
+    const cwd = root === '/' && this.isWithinWorkspace(root) ? this.path.resolve(root) : await this.resolveWithin(root);
+    const stat = await this.hostFs.stat(cwd).catch(() => undefined);
+    if (stat?.isDirectory !== true) {
+      throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, `git root is not a directory: ${root}`, {
+        details: { cwd, path: root },
+      });
+    }
+    return cwd;
   }
 
   private async grepWithRg(
@@ -1643,6 +1725,32 @@ function mapFsError(err: unknown, inputPath: string): Error {
     });
   }
   return err instanceof Error ? err : new Error(String(err));
+}
+
+function toGitBatchError(err: unknown): FsBatchError {
+  if (err instanceof EnvironmentError) {
+    switch (err.code) {
+      case 'environment.not_found':
+        return { code: FsWireErrorCode.ENVIRONMENT_NOT_FOUND, msg: err.message };
+      case 'environment.invalid_cwd':
+        return { code: FsWireErrorCode.VALIDATION_FAILED, msg: err.message };
+      case 'environment.conflict':
+        return { code: FsWireErrorCode.SESSION_BUSY, msg: err.message };
+      case 'environment.unavailable':
+      case 'environment.capability_unavailable':
+        return { code: FsWireErrorCode.ENVIRONMENT_UNAVAILABLE, msg: err.message };
+    }
+  }
+  if (err instanceof HandshakeError) {
+    return { code: FsWireErrorCode.ENVIRONMENT_UNAVAILABLE, msg: err.message };
+  }
+  if (err instanceof Error2) {
+    if (err.code === ErrorCodes.FS_GIT_UNAVAILABLE) return { code: 40908, msg: err.message };
+    if (err.code === ErrorCodes.FS_PATH_ESCAPES) {
+      return { code: FsWireErrorCode.FS_PATH_ESCAPES_SESSION, msg: err.message };
+    }
+  }
+  return toWireError(err);
 }
 
 function toWireError(err: unknown): { code: number; msg: string } {

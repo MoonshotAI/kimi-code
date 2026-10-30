@@ -3548,7 +3548,7 @@ describe('KimiTUI startup', () => {
       }));
     const harness = makeHarness(makeSession(), { getWorkspaceTrustInfo });
     const driver = makeDriver(harness, {
-      ...makeStartupInput(),
+      ...makeStartupInput({ environment: 'fake-box', environmentCwd: '/remote/work' }),
       migrationPlan: MIGRATION_PLAN,
       migrateOnly: true,
     }) as unknown as MigrateExitDriver;
@@ -3563,7 +3563,11 @@ describe('KimiTUI startup', () => {
 
     await driver.start();
 
-    expect(getWorkspaceTrustInfo).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(getWorkspaceTrustInfo).toHaveBeenCalledWith('/tmp/proj-a', {
+      additionalDirs: [],
+      environmentId: 'fake-box',
+      environmentCwd: '/remote/work',
+    });
     expect(getWorkspaceTrustInfo.mock.invocationCallOrder[0]!).toBeLessThan(
       migrationSpy.mock.invocationCallOrder[0]!,
     );

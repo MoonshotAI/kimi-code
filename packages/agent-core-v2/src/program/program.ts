@@ -34,7 +34,7 @@ import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspac
 import type { IEnvironmentService } from '#/app/environment/environment';
 
 import type { ProgramDependencies } from './programDependencies';
-import { PROGRAM_CAPABILITIES, ProgramWorkdirs, type ProgramHarness } from './programWorkdirs';
+import { PROGRAM_CAPABILITIES, ProgramWorkdirs, type ProgramHarness, type ProgramWorkdir } from './programWorkdirs';
 
 export type { ProgramWorkdir } from './programWorkdirs';
 
@@ -159,6 +159,16 @@ export class Program {
     } catch (error) {
       release();
       throw error;
+    }
+  }
+
+  async acquireWorkdir(environmentId: string, cwd: string): Promise<ProgramWorkdir> {
+    const generation = this.requireGeneration();
+    const lease = await this.environments.acquireWhenReady({ environmentId }, ['fs']);
+    try {
+      return await generation.workdirs.acquire(environmentId, cwd);
+    } finally {
+      lease.dispose();
     }
   }
 
@@ -293,7 +303,7 @@ export class Program {
       const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, hostFs, trust, this.dependencies.configStore));
       const mcp = new WorkspaceMcpService(this.context, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager);
       disposables.push({ dispose: () => mcp.disposeAsync() });
-      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, trust, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
+      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, root.localConfig, root.dirs, trust, root.skills, root.agentProfiles, this.dependencies.agentProfiles, root.instructions, this.dependencies.log);
       own(workdirs);
       return {
         id: environment.identity.generation,

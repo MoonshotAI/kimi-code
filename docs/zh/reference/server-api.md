@@ -1712,7 +1712,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 文件系统
 
-会话内文件操作走 `POST /api/v1/sessions/{session_id}/fs:{action}`，请求体为 JSON；动作包括 `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`。动作在会话创建时所在的环境上执行；`open`、`open-in` 与 `reveal` 仅对 `local` 环境上的会话可用。另有：
+会话内文件操作走 `POST /api/v1/sessions/{session_id}/fs:{action}`，请求体为 JSON；动作包括 `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `git_status:batch` / `pull_request` / `pull_request:batch` / `diff` / `open` / `open-in` / `reveal`。动作在会话创建时所在的环境上执行；`open`、`open-in` 与 `reveal` 仅对 `local` 环境上的会话可用。另有：
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -1877,27 +1877,76 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/fs:git_status`
 
-读取会话工作区的 git 状态，可选限定在一组路径内。
+读取 git 状态，可选限定在一组路径内。提供 `root` 时，返回条目的路径相对于该目录；省略时，查询整个 Git worktree，条目路径相对于仓库根目录。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `paths` | body | string[] | 将状态限定在这些路径；省略表示整个工作区 |
+| `root` | body | string | 要限定查询范围的工作区目录；省略时查询整个 Git worktree，相对路径从会话工作目录解析 |
+| `paths` | body | string[] | 将状态限定在这些路径；相对路径在提供 `root` 时从该目录解析，否则从会话工作目录解析 |
+| `include_pull_request` | body | boolean | 是否包含关联的 Pull Request。默认 `true` |
 
 成功时 `data` 为 `{ branch, ahead, behind, entries, additions, deletions, pullRequest }`，其中 `entries` 把每个变更路径映射到其状态（`clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted`），`pullRequest` 为 `{ number, state, url }`（`state` 为 `open` / `merged` / `closed` / `draft`）或 `null`。
 
 - `40001`：请求体校验失败
 - `40401`：会话不存在
 - `40908`：git 不可用（不是仓库，或没有 git 可执行文件）
+- `41304`：路径越出会话工作区
 
-#### `POST /api/v1/sessions/{session_id}/fs:diff`
+#### `POST /api/v1/sessions/{session_id}/fs:git_status:batch`
 
-返回会话工作区内单个文件的 unified git diff。
+一次调用读取多个工作区目录的 git 状态；失败的目录会折进 `errors`，而不是让整个请求失败。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `path` | body | string | **必填。** 要 diff 的文件，相对于会话工作目录 |
+| `roots` | body | string[] | **必填。** 要查询的工作区目录，1–32 条 |
+| `include_pull_request` | body | boolean | 是否在每项结果中包含关联的 Pull Request。默认 `true` |
+
+成功时 `data` 为 `{ results, errors }`。`results` 把每个成功的 root 映射到与 `fs:git_status` 相同的状态对象；`errors` 把每个失败的 root 映射到其 `{ code, msg }` 错误，错误码与单目录动作一致。
+
+- `40001`：请求体校验失败
+- `40401`：会话不存在
+
+#### `POST /api/v1/sessions/{session_id}/fs:pull_request`
+
+读取会话工作区中指定目录关联的 Pull Request。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `root` | body | string | 要查询的工作区目录，默认是会话工作目录；相对路径从会话工作目录解析 |
+
+成功时 `data` 为 `{ number, state, url }`（`state` 为 `open` / `merged` / `closed` / `draft`）；未找到 Pull Request 时为 `null`。
+
+- `40001`：请求体校验失败
+- `40401`：会话不存在
+- `40908`：git 不可用（不是仓库，或没有 git 可执行文件）
+- `41304`：路径越出会话工作区
+
+#### `POST /api/v1/sessions/{session_id}/fs:pull_request:batch`
+
+一次调用读取多个工作区目录关联的 Pull Request；失败的目录会折进 `errors`，而不是让整个请求失败。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `roots` | body | string[] | **必填。** 要查询的工作区目录，1–32 条 |
+
+成功时 `data` 为 `{ results, errors }`。`results` 把每个成功的 root 映射到与 `fs:pull_request` 相同的对象或 `null`；`errors` 把每个失败的 root 映射到其 `{ code, msg }` 错误。
+
+- `40001`：请求体校验失败
+- `40401`：会话不存在
+
+#### `POST /api/v1/sessions/{session_id}/fs:diff`
+
+返回会话工作区中指定目录内单个文件的 unified git diff。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `path` | body | string | **必填。** 要 diff 的文件，相对于 `root` |
+| `root` | body | string | 要查询的工作区目录，默认是会话工作目录；相对路径从会话工作目录解析 |
 
 成功时 `data` 为 `{ path, diff, truncated }`，其中 `diff` 为 unified diff 文本，`truncated` 表示过长的 diff 被截断。
 

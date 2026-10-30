@@ -192,6 +192,12 @@ export interface WorkspaceTrustInfo {
   readonly instructionSources: WorkspaceTrustInstructionSources;
 }
 
+export interface WorkspaceTrustInfoOptions {
+  readonly additionalDirs?: readonly string[];
+  readonly environmentId?: string;
+  readonly environmentCwd?: string;
+}
+
 /**
  * File-suggestion query against a workspace root, no session required. Only
  * meaningful on the agent-core-v2 engine; the v1 engine has no equivalent

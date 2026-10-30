@@ -72,6 +72,20 @@ describe('parsePullRequest', () => {
     });
   });
 
+  it('normalizes an open draft PR', () => {
+    const out = '{"number":13,"url":"https://github.com/acme/repo/pull/13","state":"OPEN","isDraft":true}';
+    expect(parsePullRequest(out)).toEqual({
+      number: 13,
+      state: 'draft',
+      url: 'https://github.com/acme/repo/pull/13',
+    });
+  });
+
+  it('keeps an open PR when isDraft is false', () => {
+    const out = '{"number":12,"url":"https://github.com/acme/repo/pull/12","state":"OPEN","isDraft":false}';
+    expect(parsePullRequest(out)?.state).toBe('open');
+  });
+
   it('returns null for malformed json', () => {
     expect(parsePullRequest('not json')).toBeNull();
   });

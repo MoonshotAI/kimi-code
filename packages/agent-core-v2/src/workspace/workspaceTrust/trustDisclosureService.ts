@@ -12,12 +12,13 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   type MergeAllAvailableSkillsConfig,
 } from '#/features/skill/catalog/configSection';
-import { projectRoots } from '#/features/skill/catalog/skillRoots';
+import { projectRootsForDirs } from '#/features/skill/catalog/skillRoots';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 
 import type {
@@ -54,6 +55,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     private readonly bootstrap: IBootstrapService,
     private readonly config: IConfigService,
     private readonly localConfig: IProjectLocalConfigService,
+    private readonly workspaceDirs: IWorkspaceDirs,
     private readonly trust: IWorkspaceTrust,
     private readonly skills: IWorkspaceSkillCatalog,
     private readonly agentProfilesLoader: IWorkspaceAgentProfileLoader,
@@ -62,16 +64,25 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     private readonly log: ILogService,
   ) {}
 
-  async describeGatedActivation(): Promise<TrustGatedActivation> {
+  async describeGatedActivation(
+    pendingAdditionalDirs: readonly string[] = [],
+    baseDir = this.context.cwd,
+    pendingAdditionalDirsResolved = false,
+  ): Promise<TrustGatedActivation> {
     if (await this.trust.get()) return EMPTY_ACTIVATION;
+    await this.workspaceDirs.ready;
+    const resolvedPendingAdditionalDirs = pendingAdditionalDirsResolved
+      ? pendingAdditionalDirs
+      : await this.localConfig.resolveAdditionalDirs(baseDir, pendingAdditionalDirs);
     const warnings: string[] = [];
+    await this.skills.reloadSources(['workspace']).catch(() => undefined);
     const [mcpServers, configuredDirs, skillRoots, instructionSources] = await Promise.all([
       this.describeGatedMcpServers().catch((error: unknown) => {
         this.log.warn(`trust disclosure: MCP scan failed: ${String(error)}`);
         warnings.push('Could not inspect MCP configuration.');
         return [];
       }),
-      this.readGatedAdditionalDirs().catch((error: unknown) => {
+      this.readGatedAdditionalDirs(resolvedPendingAdditionalDirs).catch((error: unknown) => {
         this.log.warn(`trust disclosure: additional dirs scan failed: ${String(error)}`);
         warnings.push('Could not inspect additional directory configuration.');
         return { dirs: [], sources: [] };
@@ -115,7 +126,9 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     );
   }
 
-  private async readGatedAdditionalDirs(): Promise<{
+  private async readGatedAdditionalDirs(
+    pendingAdditionalDirs: readonly string[],
+  ): Promise<{
     dirs: readonly string[];
     sources: readonly string[];
   }> {
@@ -127,10 +140,15 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       if (isInsideOrEqualDir(realPath, realRoot)) continue;
       dirs.push(realPath);
     }
-    return {
-      dirs,
-      sources: dirs.length > 0 ? [await realpathOrSelf(this.fs, result.configPath)] : [],
-    };
+    const sources =
+      dirs.length > 0 ? [await realpathOrSelf(this.fs, result.configPath)] : [];
+    for (const dir of pendingAdditionalDirs) {
+      const realPath = await realpathOrSelf(this.fs, dir);
+      if (isInsideOrEqualDir(realPath, realRoot)) continue;
+      dirs.push(realPath);
+      sources.push(realPath);
+    }
+    return { dirs, sources };
   }
 
   private async readGatedSkillRoots(): Promise<readonly string[]> {
@@ -140,7 +158,11 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     const projectRoot =
       (await findGitWorkTree(this.fs, this.context.cwd))?.root ?? this.context.cwd;
     const [roots, realRoot] = await Promise.all([
-      projectRoots(this.context.cwd, { mergeAllAvailableSkills }),
+      projectRootsForDirs(
+        [this.context.cwd, ...this.workspaceDirs.sharedAdditionalDirs],
+        { mergeAllAvailableSkills },
+        this.fs,
+      ),
       realpathOrSelf(this.fs, projectRoot),
     ]);
     return roots
@@ -164,7 +186,10 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     if (this.instructions.snapshot.agentsMdWarning !== undefined) {
       warnings.push(this.instructions.snapshot.agentsMdWarning);
     }
-    const skills = this.skills.catalog.listSkills().filter((skill) => skill.source === 'project');
+    const skills = this.skills.catalog
+      .listSkills()
+      .filter((skill) => skill.source === 'project');
+    const skillRoots = this.skills.catalog.getSkillRoots();
     const profiles = this.effectiveWorkspaceProfiles();
     const agentsMdPaths: string[] = [];
     for (const path of this.instructions.snapshot.agentsMdPaths ?? []) {
@@ -180,10 +205,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
       );
     const [skillPaths, profilePaths] = await Promise.all([
       skillsReady
-        ? this.sourceLocations(
-            skills.map((skill) => skill.path),
-            this.skills.catalog.getSkillRoots(),
-          )
+        ? this.sourceLocations(skills.map((skill) => skill.path), skillRoots)
         : this.projectSkillRootPaths(),
       Promise.all(
         (profiles.length > 0 ? workspaceProfiles?.contribution.scannedRoots ?? [] : [])
@@ -217,7 +239,13 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   private async projectSkillRootPaths(): Promise<readonly string[]> {
     const mergeAllAvailableSkills =
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
-    return (await projectRoots(this.context.cwd, { mergeAllAvailableSkills }))
+    return (
+      await projectRootsForDirs(
+        [this.context.cwd, ...this.workspaceDirs.sharedAdditionalDirs],
+        { mergeAllAvailableSkills },
+        this.fs,
+      )
+    )
       .map((root) => root.path)
       .toSorted();
   }

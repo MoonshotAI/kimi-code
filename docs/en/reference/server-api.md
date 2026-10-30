@@ -1709,7 +1709,7 @@ On success, `data` is `{ trusted }`, containing the effective trust state after 
 
 ### File system
 
-In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{action}` with JSON bodies; actions are `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`. Actions run on the environment the session was created on; `open`, `open-in`, and `reveal` only work for sessions on the `local` environment. In addition:
+In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{action}` with JSON bodies; actions are `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `git_status:batch` / `pull_request` / `pull_request:batch` / `diff` / `open` / `open-in` / `reveal`. Actions run on the environment the session was created on; `open`, `open-in`, and `reveal` only work for sessions on the `local` environment. In addition:
 
 | Method and path | Description |
 | --- | --- |
@@ -1874,27 +1874,76 @@ On success, `data` is `{ files, files_scanned, truncated, elapsed_ms }` where ea
 
 #### `POST /api/v1/sessions/{session_id}/fs:git_status`
 
-Reads the git status of the session workspace, optionally restricted to a set of paths.
+Reads git status, optionally restricted to a set of paths. When `root` is provided, entry paths are relative to that directory; when omitted, status covers the whole Git worktree and entry paths are relative to the repository root.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `paths` | body | string[] | Restrict the status to these paths; omitted means the whole workspace |
+| `root` | body | string | Workspace directory to scope to. When omitted, status covers the whole Git worktree; a relative value is resolved from the session work directory |
+| `paths` | body | string[] | Restrict the status to these paths. Relative paths are resolved from `root` when provided, otherwise from the session work directory |
+| `include_pull_request` | body | boolean | Include the associated pull request. Default `true` |
 
 On success, `data` is `{ branch, ahead, behind, entries, additions, deletions, pullRequest }` where `entries` maps each changed path to its status (`clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted`) and `pullRequest` is `{ number, state, url }` (`state` is `open` / `merged` / `closed` / `draft`) or `null`.
 
 - `40001`: body validation failure
 - `40401`: session not found
 - `40908`: git is unavailable (not a repository, or no git binary)
+- `41304`: path escapes the session workspace
 
-#### `POST /api/v1/sessions/{session_id}/fs:diff`
+#### `POST /api/v1/sessions/{session_id}/fs:git_status:batch`
 
-Returns the unified git diff of one file in the session workspace.
+Reads git status for several workspace directories in one call. A failing directory folds into `errors` instead of failing the whole request.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `path` | body | string | **Required.** File to diff, relative to the session work directory |
+| `roots` | body | string[] | **Required.** Workspace directories to inspect, 1–32 entries |
+| `include_pull_request` | body | boolean | Include the associated pull request in each result. Default `true` |
+
+On success, `data` is `{ results, errors }`. `results` maps each successful root to the same status object as `fs:git_status`; `errors` maps each failed root to its `{ code, msg }` error, using the same error codes as the single-directory action.
+
+- `40001`: body validation failure
+- `40401`: session not found
+
+#### `POST /api/v1/sessions/{session_id}/fs:pull_request`
+
+Reads the pull request associated with a session workspace directory.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `root` | body | string | Workspace directory to inspect. Defaults to the session work directory; a relative value is resolved from it |
+
+On success, `data` is `{ number, state, url }` (`state` is `open` / `merged` / `closed` / `draft`) or `null` when no pull request is found.
+
+- `40001`: body validation failure
+- `40401`: session not found
+- `40908`: git is unavailable (not a repository, or no git binary)
+- `41304`: path escapes the session workspace
+
+#### `POST /api/v1/sessions/{session_id}/fs:pull_request:batch`
+
+Reads pull requests for several workspace directories in one call. A failing directory folds into `errors` instead of failing the whole request.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `roots` | body | string[] | **Required.** Workspace directories to inspect, 1–32 entries |
+
+On success, `data` is `{ results, errors }`. `results` maps each successful root to the same pull request object as `fs:pull_request`, or `null`; `errors` maps each failed root to its `{ code, msg }` error.
+
+- `40001`: body validation failure
+- `40401`: session not found
+
+#### `POST /api/v1/sessions/{session_id}/fs:diff`
+
+Returns the unified git diff of one file in a session workspace directory.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `path` | body | string | **Required.** File to diff, relative to `root` |
+| `root` | body | string | Workspace directory to inspect. Defaults to the session work directory; a relative value is resolved from it |
 
 On success, `data` is `{ path, diff, truncated }` where `diff` is the unified diff text and `truncated` reports an over-long diff cut short.
 

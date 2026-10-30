@@ -4796,7 +4796,11 @@ export class KimiTUI {
     const workDir = this.state.appState.workDir;
     let info: WorkspaceTrustInfo;
     try {
-      info = await this.harness.getWorkspaceTrustInfo(workDir);
+      info = await this.harness.getWorkspaceTrustInfo(workDir, {
+        additionalDirs: this.state.appState.additionalDirs,
+        environmentId: this.options.startup.environment,
+        environmentCwd: this.options.startup.environmentCwd,
+      });
     } catch {
       info = {
         trusted: false,
