@@ -438,8 +438,11 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
     const cursor = await this.resolveCursor(generation, query);
     if (cursor === undefined) return { items: [] };
+    const queued = this.mirror.pending();
     const limit = query.limit ?? UNBOUNDED;
-    const filter = { ...this.baseFilter(query), ...cursor.filter };
+    const base = { ...this.baseFilter(query), ...cursor.filter };
+    const filter =
+      queued.length === 0 ? base : { ...base, id: { $nin: queued.map((summary) => summary.id) } };
     const column = recencyColumn(generation);
     const strip = (records: SessionSummary[]): SessionSummary[] =>
       records.map((record) => stripRecencyField(generation, record));
@@ -474,7 +477,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
             cursor.bounds,
             limit,
           );
-    return this.mergePending(page, query, cursor.position);
+    return this.mergePending(page, query, queued, cursor.position);
   }
 
   private async countFromReadModel(
@@ -529,22 +532,21 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   private mergePending(
     page: Page<SessionSummary>,
     query: SessionListQuery,
+    queued: readonly SessionSummary[],
     position?: { u: number; id: string; before: boolean },
   ): Page<SessionSummary> {
-    const pending = this.mirror
-      .pending()
-      .filter(
-        (summary) =>
-          (query.workspaceIds === undefined || query.workspaceIds.includes(summary.workspaceId)) &&
-          (query.includeArchived === true || !summary.archived) &&
-          summaryMatchesChildOf(summary, query.childOf) &&
-          (position === undefined ||
-            (position.before
-              ? summary.updatedAt < position.u ||
-                (summary.updatedAt === position.u && summary.id < position.id)
-              : summary.updatedAt > position.u ||
-                (summary.updatedAt === position.u && summary.id > position.id))),
-      );
+    const pending = queued.filter(
+      (summary) =>
+        (query.workspaceIds === undefined || query.workspaceIds.includes(summary.workspaceId)) &&
+        (query.includeArchived === true || !summary.archived) &&
+        summaryMatchesChildOf(summary, query.childOf) &&
+        (position === undefined ||
+          (position.before
+            ? summary.updatedAt < position.u ||
+              (summary.updatedAt === position.u && summary.id < position.id)
+            : summary.updatedAt > position.u ||
+              (summary.updatedAt === position.u && summary.id > position.id))),
+    );
     if (pending.length === 0) return page;
     const merged = new Map<string, SessionSummary>();
     for (const summary of pending) merged.set(summary.id, summary);

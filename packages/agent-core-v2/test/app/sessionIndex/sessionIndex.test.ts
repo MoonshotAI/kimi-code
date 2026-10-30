@@ -844,6 +844,41 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.count({ workspaceIds: [workspaceId], includeArchived: true })).toBe(3);
   });
 
+  it('listRecent hides a session archived in the mirror queue before the flush lands', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { createdAt: 2, updatedAt: 3 });
+    const store = build();
+    await store.prepare();
+
+    mirror.record(summary('a', { archived: true, updatedAt: 5 }));
+    const active = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(active.items.map((s) => s.id)).toEqual(['b']);
+    const everything = await store.listRecent({
+      workspaceIds: [workspaceId],
+      includeArchived: true,
+    });
+    expect(everything.items.map((s) => [s.id, s.archived])).toEqual([
+      ['a', true],
+      ['b', false],
+    ]);
+
+    await mirror.drain();
+    const settled = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(settled.items.map((s) => s.id)).toEqual(['b']);
+  });
+
+  it('pages past stored rows whose queued summary no longer matches the query', async () => {
+    for (let i = 1; i <= 4; i++) {
+      await seedSession(`s${i}`, { createdAt: i, updatedAt: i });
+    }
+    const store = build();
+    await store.prepare();
+
+    mirror.record(summary('s4', { archived: true, createdAt: 4, updatedAt: 5 }));
+    mirror.record(summary('s3', { archived: true, createdAt: 3, updatedAt: 6 }));
+    expect(await walkPages(store, { workspaceIds: [workspaceId] }, 1)).toEqual(['s2', 's1']);
+  });
+
   it('a crashed or rebuilt mid-flight projection falls back to disk and recovers on retry', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
