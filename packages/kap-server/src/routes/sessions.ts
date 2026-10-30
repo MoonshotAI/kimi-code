@@ -21,6 +21,7 @@ import {
   ISessionLegacyService,
   ISessionTitleService,
   IEventService,
+  IWireService,
   SessionCreated,
   IWorkspaceAliases,
   ISessionManager,
@@ -1044,6 +1045,9 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
     live === undefined ? await core.accessor.get(ISessionIndex).get(id) : undefined;
   if (live !== undefined) {
     const agentLifecycle = live.accessor.get(IAgentLifecycleService);
+    const stale = agentLifecycle
+      .list()
+      .some((agent) => agentLifecycle.handleOf(agent.agentId)?.accessor.get(IWireService).externallyModified() ?? false);
     for (const agent of agentLifecycle.list()) {
       const agentHandle = agentLifecycle.handleOf(agent.agentId);
       if (agentHandle === undefined) continue;
@@ -1061,7 +1065,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
           { details: { sessionId: id } },
         );
       }
-      if (agentHandle.accessor.get(IAgentPromptQueueService).snapshot().items.length > 0) {
+      if (!stale && agentHandle.accessor.get(IAgentPromptQueueService).snapshot().items.length > 0) {
         throw new Error2(
           ErrorCodes.SESSION_BUSY,
           `Session "${id}" cannot be reloaded while prompts are queued`,

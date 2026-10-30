@@ -831,7 +831,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 成功时，`data` 为 [session 对象](#session-对象)。
 
-- `40901`：会话有正在运行的轮次、正在进行的压缩或排队中的 prompt，无法重新加载
+- `40901`：会话有正在运行的轮次、正在进行的压缩或排队中的 prompt，无法重新加载。会话被其他客户端修改过时，排队中的 prompt 不阻止重新加载，重新加载会丢弃它们
 
 #### `POST /api/v1/sessions/{session_id}:takeover`
 

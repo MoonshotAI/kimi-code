@@ -1516,6 +1516,34 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('reloads a session that another client changed even while prompts are queued', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor
+      .get(IAgentLifecycleService)
+      .create({ agentId: MAIN_AGENT_ID });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const snapshot = vi
+      .spyOn(agent.accessor.get(IAgentPromptQueueService), 'snapshot')
+      .mockReturnValue({
+        paused: true,
+        items: [{ kind: 'compact', id: 'compact-queued', delivery: 'queue', createdAt: new Date().toISOString() }],
+      });
+    const stale = vi.spyOn(agent.accessor.get(IWireService), 'externallyModified').mockReturnValue(true);
+
+    try {
+      const response = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`);
+      expect(response.body.code).toBe(0);
+    } finally {
+      snapshot.mockRestore();
+      stale.mockRestore();
+    }
+  });
+
   it('creates a child session tagged with parent_session_id and child_session_kind', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
