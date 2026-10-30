@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { configuredRoots, projectRoots, userRoots } from '#/features/skill/catalog/skillRoots';
+import {
+  configuredRoots,
+  projectRoots,
+  projectRootsForDirs,
+  userRoots,
+} from '#/features/skill/catalog/skillRoots';
 
 describe('skillRoots', () => {
   let root: string;
@@ -84,6 +89,24 @@ describe('skillRoots', () => {
       const roots = await projectRoots(remoteRoot, {}, fs);
 
       expect(roots).toEqual([{ path: '/remote/project/.kimi-code/skills', source: 'project' }]);
+    });
+  });
+
+  describe('projectRootsForDirs', () => {
+    it('preserves directory priority and deduplicates resolved skill roots', async () => {
+      const primary = join(root, 'primary');
+      const secondary = join(root, 'secondary');
+      const primarySkills = join(primary, '.kimi-code/skills');
+      const secondarySkills = join(secondary, '.kimi-code/skills');
+      await mkdir(primarySkills, { recursive: true });
+      await mkdir(secondarySkills, { recursive: true });
+
+      const roots = await projectRootsForDirs([primary, secondary, primary]);
+
+      expect(roots.map((entry) => entry.path)).toEqual([
+        await realpath(primarySkills),
+        await realpath(secondarySkills),
+      ]);
     });
   });
 
