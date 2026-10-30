@@ -508,6 +508,30 @@ describe('AgentPromptQueueService', () => {
     expect(launched).toEqual(['first']);
   });
 
+  it('rejects inputs and compactions once the queue is disposed', async () => {
+    setup();
+    (queue as unknown as { dispose(): void }).dispose();
+
+    await expect(queue.submitInput({ id: 'p1', entry: entry('p1', 'late'), delivery: 'queue' }))
+      .rejects.toMatchObject({ code: ErrorCodes.SESSION_CLOSED });
+    expect(() => queue.submitCompaction({ id: 'c1' })).toThrow(expect.objectContaining({ code: ErrorCodes.SESSION_CLOSED }));
+  });
+
+  it('rejects an idle input whose queue is disposed while its mode is applied', async () => {
+    setup();
+    let finishPrepare!: () => void;
+    const prepare = vi.fn(() => new Promise<void>((resolve) => {
+      finishPrepare = resolve;
+    }));
+    const submitted = queue.submitInput({ id: 'p1', entry: entry('p1', 'hello'), delivery: 'queue', mode: 'plan', prepare });
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    (queue as unknown as { dispose(): void }).dispose();
+    finishPrepare();
+
+    await expect(submitted).rejects.toMatchObject({ code: ErrorCodes.SESSION_CLOSED });
+    expect(launched).toEqual([]);
+  });
+
   it('emits a snapshot for each change and skips no-op pause and resume', async () => {
     setup();
     respond(1);

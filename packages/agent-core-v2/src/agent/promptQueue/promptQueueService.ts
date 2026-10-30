@@ -73,6 +73,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   }
 
   async submitInput(request: PromptQueueInputRequest): Promise<PromptQueueSubmitResult> {
+    this.assertOpen();
     this.assertNewId(request.id);
     if (request.mode !== undefined && request.delivery === 'steer') {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'a prompt with a mode cannot be steered');
@@ -101,6 +102,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     try {
       this.runGate.begin();
       await request.prepare();
+      this.assertOpen();
       if (this.loop.canLaunchPrompt()) {
         return { acceptedAs: 'turn', handle: this.launch(request.entry) };
       }
@@ -114,6 +116,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   }
 
   submitCompaction(request: PromptQueueCompactionRequest): PromptQueueSubmitResult {
+    this.assertOpen();
     this.assertNewId(request.id);
     if (this.canStartNow()) {
       this.startCompaction(request.instruction);
@@ -214,6 +217,12 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, `prompt ${id} is not in the queue`);
     }
     return entry;
+  }
+
+  private assertOpen(): void {
+    if (this.disposed) {
+      throw new Error2(ErrorCodes.SESSION_CLOSED, 'the agent was closed before the prompt was accepted');
+    }
   }
 
   private assertNewId(id: string): void {
