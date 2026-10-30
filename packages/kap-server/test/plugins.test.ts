@@ -153,6 +153,7 @@ describe('server-v2 /api/v1 plugins', () => {
     catalog = createCatalog();
     artifact = undefined;
     artifactAuthorizations = [];
+    await rm(join(home!, 'plugins', 'cache', 'archives'), { recursive: true, force: true });
     const realFetch = globalThis.fetch;
     vi.stubGlobal(
       'fetch',
