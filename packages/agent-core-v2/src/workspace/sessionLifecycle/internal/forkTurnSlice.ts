@@ -76,11 +76,7 @@ export function sliceMainRecordsAtLatestTurn(
     return sliceMainRecordsAtLegacyTurn(records, sourceSessionId, latestLegacy.turnIndex);
   }
   if (latest !== undefined) return sliceMainRecordsAtTurn(records, sourceSessionId, latest.id);
-  throw new Error2(
-    ErrorCodes.REQUEST_INVALID,
-    `Session "${sourceSessionId}" has no completed turn to fork`,
-    { details: { availableTurns: 0 } },
-  );
+  return { records: [] };
 }
 
 export function sliceMainRecordsAtTurn(
