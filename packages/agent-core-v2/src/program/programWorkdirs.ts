@@ -41,6 +41,7 @@ export interface ProgramHarness {
 export interface ProgramView {
   readonly state: IWorkspaceStateService;
   readonly localConfig: FileProjectLocalConfigService;
+  readonly hostFs: IHostFileSystem;
   readonly dirs: IWorkspaceDirs;
   readonly git: IWorkspaceGitService;
   readonly fs: IWorkspaceFsService;
@@ -51,6 +52,8 @@ export interface ProgramView {
 
 export interface ProgramWorkdir {
   readonly contextKey: string;
+  readonly hostFs: IHostFileSystem;
+  readonly localConfig: FileProjectLocalConfigService;
   readonly dirs: IWorkspaceDirs;
   readonly fs: IWorkspaceFsService;
   readonly instructions: IWorkspaceInstructionsService;
@@ -121,6 +124,8 @@ export class ProgramWorkdirs {
     let released = false;
     const workdir: ProgramWorkdir = {
       contextKey,
+      hostFs: acquired.view.hostFs,
+      localConfig: acquired.view.localConfig,
       dirs: acquired.view.dirs,
       fs: acquired.view.fs,
       instructions: acquired.view.instructions,
@@ -195,9 +200,9 @@ export class ProgramWorkdirs {
     const agentProfiles: IWorkspaceAgentProfileLoader = input.projectAgentProfiles
       ? own(new WorkspaceAgentProfileLoaderService(input.context, input.hostFs, this.dependencies.log, input.userAgentProfiles, this.dependencies.agentProfiles, input.contextKey, input.watch))
       : { _serviceBrand: undefined, ready: Promise.resolve(), reload: () => Promise.resolve() };
-    const workspaceSkills = own(new WorkspaceRootSkillSource(new EnvironmentSkillDiscovery(this.dependencies.log, input.hostFs), input.context, this.dependencies.config, this.dependencies.bootstrap, input.hostFs, input.watch));
+    const workspaceSkills = own(new WorkspaceRootSkillSource(new EnvironmentSkillDiscovery(this.dependencies.log, input.hostFs), input.context, this.dependencies.config, this.dependencies.bootstrap, dirs, input.hostFs, this.dependencies.log, input.watch));
     const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, this.dependencies.userSkills, input.explicitSkills, input.extraSkills, workspaceSkills, input.pluginSkills, state));
-    return { state, localConfig, dirs, git, fs, instructions, skills, agentProfiles };
+    return { state, localConfig, hostFs: input.hostFs, dirs, git, fs, instructions, skills, agentProfiles };
   }
 }
 
