@@ -1426,9 +1426,8 @@ describe('ReadTool', () => {
     expect(output.split('\n').length).toBeGreaterThan(1);
     expect(output.split('\n').every((entry) => entry.replace(/^\d+\t/, '') === line)).toBe(true);
     expect(result.truncated).toBe(true);
-    expect(result.note).toContain('shortened to stay within about 25000 estimated tokens');
     expect(result.note).toContain('"max_chars":100000');
-    expect(result.note).toContain('Grep can find a specific section instead.');
+    expect(result.note).toContain('find the section with Grep instead of answering from this page alone');
   });
 
   it('reads through bounded byte preflight and streams line iteration without full readText', async () => {
@@ -1509,12 +1508,11 @@ describe('ReadTool', () => {
     expect(output).not.toContain('Max');
   });
 
-  it('interpolates the cap constants into the description and references the Grep tool', () => {
+  it('keeps the description free of configured limits', () => {
     const tool = toolWithContent('');
-    expect(tool.description).toContain('100000');
     expect(tool.description).not.toContain('${');
-    expect(toolWithMaxChars('', 250_000).description).toContain('250000');
-    expect(tool.description).toContain('Grep');
+    expect(tool.description).not.toContain('100000');
+    expect(toolWithMaxChars('', 250_000).description).toBe(tool.description);
   });
 
   it('reads files inside additional_dirs via absolute path', async () => {

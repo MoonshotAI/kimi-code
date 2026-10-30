@@ -40,7 +40,6 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject, matchesPathRuleSubject } from '#/tool/rule-match';
 import { makeCarriageReturnsVisible, splitLinesKeepingTerminator, type LineEndingStyle } from '#/_base/text/line-endings';
 import { detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
-import { renderPrompt } from '#/_base/utils/render-prompt';
 import {
   DEFAULT_MAX_CHARS,
   DEFAULT_MAX_CHARS_LIMIT,
@@ -95,10 +94,6 @@ interface ReadPage {
 
 function stripTrailingLf(line: string): string {
   return line.endsWith('\n') ? line.slice(0, -1) : line;
-}
-
-function tokenLimitFor(maxChars: number): number {
-  return Math.floor(maxChars / 4);
 }
 
 function readResultText(result: ExecutableToolResult): string {
@@ -191,14 +186,7 @@ function notUtf8DecodableFileOutput(path: string): string {
 export class ReadTool implements IReadTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'Read' as const;
-  get description(): string {
-    const limits = this.limits();
-    return renderPrompt(readDescriptionTemplate, {
-      DEFAULT_MAX_CHARS: limits.defaultMaxChars,
-      MAX_CHARS: limits.maxChars,
-      MAX_TOKENS: tokenLimitFor(limits.maxChars),
-    });
-  }
+  readonly description = readDescriptionTemplate;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
@@ -424,7 +412,7 @@ export class ReadTool implements IReadTool {
         lossyDecoding,
         eventLog,
       };
-      const tokenLimit = tokenLimitFor(limits.maxChars);
+      const tokenLimit = Math.floor(limits.maxChars / 4);
       const lineOffset = args.line_offset ?? 1;
       if (lineOffset >= 0) {
         const result = await this.fitTokenLimit((page) => this.readForward(readLines(), page), request, tokenLimit);
@@ -601,9 +589,6 @@ export class ReadTool implements IReadTool {
       if (args.max_chars !== undefined && args.max_chars > maxCharsLimit) {
         notices.push(`Requested max_chars=${String(args.max_chars)} was capped at the configured maximum ${String(maxCharsLimit)}.`);
       }
-      if (tokenLimit !== undefined) {
-        notices.push(`This page was shortened to stay within about ${String(tokenLimit)} estimated tokens; non-ASCII text such as Chinese counts as more tokens per character.`);
-      }
       if (!complete && (count > 0 || page.fromTail)) {
         const nextStart = page.fromTail ? page.rangeStart : lineIncomplete ? startLine : endLine + 1;
         const nextEnd = page.fromTail && count > 0 ? startLine - 1 : page.rangeEnd;
@@ -616,7 +601,7 @@ export class ReadTool implements IReadTool {
         };
         notices.push(`Next Read: ${JSON.stringify(next)}`);
         if (count > 0) {
-          notices.push('Continue only if what you need may be further on; Grep can find a specific section instead.');
+          notices.push('If the answer may be further on, continue with Next Read or find the section with Grep instead of answering from this page alone.');
         }
       }
       if (eventLog) {
