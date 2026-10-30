@@ -1355,6 +1355,21 @@ describe('AgentGoalService core workflow hooks', () => {
     await vi.waitFor(() => expect(loopService.launches).toHaveLength(1));
   });
 
+  it('defers an explicitly requested continuation behind queued work', async () => {
+    const queue = ctx!.get(IAgentPromptQueueService);
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.pauseGoal();
+    const pending = vi.spyOn(queue, 'hasPendingItems').mockReturnValue(true);
+
+    await goals.resumeGoal({ continueIfPaused: true });
+    await Promise.resolve();
+    expect(loopService.launches).toEqual([]);
+
+    pending.mockReturnValue(false);
+    queue.pause();
+    await vi.waitFor(() => expect(loopService.launches).toHaveLength(1));
+  });
+
   it('drops a deferred continuation when the goal is paused before the queue drains', async () => {
     const queue = ctx!.get(IAgentPromptQueueService);
     const pending = vi.spyOn(queue, 'hasPendingItems').mockReturnValue(true);

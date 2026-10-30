@@ -376,6 +376,8 @@ async function resumeGoal(context: GoalOperationContext, input: ResumeGoalInput 
     }
   } else if (continuePaused && context.effects.liveTurnId !== undefined) {
     context.effects.resumeContinuation = { turnId: context.effects.liveTurnId, goalId: state.goalId };
+  } else if (context.runtime.get(IAgentPromptQueueService).hasPendingItems()) {
+    context.effects.deferredContinuation = { goalId: state.goalId, stepCapped: false };
   }
   return snapshot;
 }
