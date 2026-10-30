@@ -20,9 +20,16 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
+import { countTokenChars, tokensForCharCounts } from '#/llm-adapter/contract/tokens';
+import { Disposable } from '#/_base/di/lifecycle';
+import { IEventBus } from '#/app/event/eventBus';
+import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
+import type { HostFileStat } from '#/os/interface/hostFileSystem';
 import {
   ToolAccesses,
+  type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
@@ -36,7 +43,6 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject, matchesPathRuleSubject } from '#/tool/rule-match';
 import { makeCarriageReturnsVisible, splitLinesKeepingTerminator, type LineEndingStyle } from '#/_base/text/line-endings';
 import { detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
-import { renderPrompt } from '#/_base/utils/render-prompt';
 import {
   DEFAULT_MAX_CHARS,
   DEFAULT_MAX_CHARS_LIMIT,
@@ -47,7 +53,10 @@ import {
 } from './read';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { READ_SECTION, type ReadConfig } from './configSection';
+import { ReadActivity, type ReadPageFacts } from './readActivity';
 import readDescriptionTemplate from './read.md?raw';
+
+const readPageFacts = new WeakMap<ExecutableToolResult, ReadPageFacts>();
 
 interface LineEndingFlags {
   hasCrLf: boolean;
@@ -67,6 +76,7 @@ interface ReadTailEntry extends ReadLineEntry {
 interface ReadRequest {
   readonly args: ReadInput;
   readonly maxChars: number;
+  readonly tokenLimit: number;
   readonly maxCharsLimit: number;
   readonly detectedEncoding?: UtfTextEncoding;
   readonly lossyDecoding: boolean;
@@ -88,12 +98,28 @@ function stripTrailingLf(line: string): string {
   return line.endsWith('\n') ? line.slice(0, -1) : line;
 }
 
+function readResultText(result: ExecutableToolResult): string {
+  const output = typeof result.output === 'string' ? result.output : '';
+  return result.note === undefined ? output : `${output}\n${result.note}`;
+}
+
 function splitsSurrogatePair(text: string, offset: number): boolean {
   // oxlint-disable-next-line unicorn/prefer-code-point -- raw UTF-16 halves are the point here
   const previous = text.charCodeAt(offset - 1);
   // oxlint-disable-next-line unicorn/prefer-code-point -- raw UTF-16 halves are the point here
   const next = text.charCodeAt(offset);
   return previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
+}
+
+function cutForTokens(text: string, end: number, overflow: number): number {
+  let index = end;
+  let removed = 0;
+  while (index > 0 && removed < overflow) {
+    const code = text.codePointAt(index - 1)!;
+    index -= code >= 0xdc00 && code <= 0xdfff && index > 1 ? 2 : 1;
+    removed += code <= 127 ? 0.25 : 1;
+  }
+  return index;
 }
 
 function updateLineEndingFlags(flags: LineEndingFlags, text: string): void {
@@ -170,16 +196,10 @@ function notUtf8DecodableFileOutput(path: string): string {
   );
 }
 
-export class ReadTool implements IReadTool {
+export class ReadTool extends Disposable implements IReadTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'Read' as const;
-  get description(): string {
-    const limits = this.limits();
-    return renderPrompt(readDescriptionTemplate, {
-      DEFAULT_MAX_CHARS: limits.defaultMaxChars,
-      MAX_CHARS: limits.maxChars,
-    });
-  }
+  readonly description = readDescriptionTemplate;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
@@ -196,7 +216,18 @@ export class ReadTool implements IReadTool {
     @IHostEnvironment private readonly hostEnvironment?: IHostEnvironment,
     @ISessionContext private readonly session?: ISessionContext,
     @IAgentScopeContext private readonly agent?: IAgentScopeContext,
-  ) {}
+    @ITelemetryService private readonly telemetry?: ITelemetryService,
+    @IEventBus eventBus?: IEventBus,
+  ) {
+    super();
+    if (eventBus !== undefined) {
+      this._register(eventBus.subscribe(CompactionCompleted, (event) => {
+        if (event.agentId === this.agent?.agentId) this.activity.reset();
+      }));
+    }
+  }
+
+  private readonly activity = new ReadActivity();
 
   private limits(): { defaultMaxChars: number; maxChars: number } {
     const section = this.config.get<ReadConfig | undefined>(READ_SECTION);
@@ -246,14 +277,15 @@ export class ReadTool implements IReadTool {
             pathClass: env.pathClass,
             homeDir: env.homeDir,
           }),
-        execute: async () => {
+        execute: async (ctx) => {
           const lease = await acquireOrWhenReady(this.environment, ['fs']);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
             }
             const eventLog = this.resultTruncation.isWireJournalPath(path);
-            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog);
+            const fileKey = `${lease.environment.identity.environmentId}:${path}`;
+            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog, ctx, fileKey);
             return { ...result, spillExempt: true };
           } finally {
             lease.dispose();
@@ -288,11 +320,11 @@ export class ReadTool implements IReadTool {
       matchesRule: (ruleArgs) => matchesPathRuleSubject(ruleArgs, path, {
         cwd: target.environmentPath.dirname(path), pathClass: target.pathClass,
       }),
-      execute: async () => {
+      execute: async (ctx) => {
         if (planFile && (await this.planService?.resolveFile(path, 'read'))?.path !== path) {
           return { isError: true, output: 'The active plan changed before execution. Retry the tool call.' };
         }
-        return { ...await this.execution(environmentFileSource(target.fs, path), args, false), spillExempt: true };
+        return { ...await this.execution(environmentFileSource(target.fs, path), args, false, ctx, `host:${path}`), spillExempt: true };
       },
     };
   }
@@ -305,8 +337,8 @@ export class ReadTool implements IReadTool {
       display: { kind: 'file_io', operation: 'read', path: source.localPath ?? args.path },
       approvalRule: literalRulePattern(this.name, args.path),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.path),
-      execute: async () => ({
-        ...withAttachmentLocation(await this.execution(source, args, false), source),
+      execute: async (ctx) => ({
+        ...withAttachmentLocation(await this.execution(source, args, false, ctx, args.path), source),
         spillExempt: true,
       }),
     };
@@ -316,6 +348,8 @@ export class ReadTool implements IReadTool {
     source: FileReadSource,
     args: ReadInput,
     eventLog: boolean,
+    ctx: ExecutableToolContext,
+    fileKey: string,
   ): Promise<ExecutableToolResult> {
     try {
       let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
@@ -394,13 +428,18 @@ export class ReadTool implements IReadTool {
       const request: ReadRequest = {
         args,
         maxChars: Math.min(args.max_chars ?? limits.defaultMaxChars, limits.maxChars),
+        tokenLimit: Math.ceil(limits.maxChars / 4),
         maxCharsLimit: limits.maxChars,
         detectedEncoding,
         lossyDecoding,
         eventLog,
       };
       const lineOffset = args.line_offset ?? 1;
-      if (lineOffset >= 0) return await this.readForward(readLines(), request);
+      if (lineOffset >= 0) {
+        const result = await this.readForward(readLines(), request);
+        this.trackRead(ctx, fileKey, source, args, stat, result);
+        return result;
+      }
       const rereadsFile = detectedEncoding === undefined && (args.n_lines ?? Infinity) < -lineOffset;
       const result = await this.readTail(readLines, request);
       if (!result.isError && rereadsFile) {
@@ -410,6 +449,7 @@ export class ReadTool implements IReadTool {
           return { isError: true, output: 'File changed while reading its tail. Retry Read with the updated file.' };
         }
       }
+      this.trackRead(ctx, fileKey, source, args, stat, result);
       return result;
     } catch (error) {
       if (isTextDecodeError(error)) {
@@ -420,6 +460,28 @@ export class ReadTool implements IReadTool {
         output: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  private trackRead(
+    ctx: ExecutableToolContext,
+    fileKey: string,
+    source: FileReadSource,
+    args: ReadInput,
+    stat: HostFileStat,
+    result: ExecutableToolResult,
+  ): void {
+    const facts = readPageFacts.get(result);
+    if (this.telemetry === undefined || facts === undefined) return;
+    this.telemetry.track2('read_file', this.activity.observe({
+      turnId: ctx.turnId,
+      toolCallId: ctx.toolCallId,
+      file: fileKey,
+      name: source.name,
+      args,
+      stat,
+      text: readResultText(result),
+      facts,
+    }));
   }
 
   private async readForward(
@@ -495,14 +557,18 @@ export class ReadTool implements IReadTool {
   }
 
   private finishPage(page: ReadPage): ExecutableToolResult {
-    const { args, maxChars, maxCharsLimit, eventLog, detectedEncoding, lossyDecoding } = page.request;
+    const { args, maxChars, tokenLimit, maxCharsLimit, eventLog, detectedEncoding, lossyDecoding } = page.request;
     let first = 0;
     let end = page.renderedLines.length;
     let contentChars = page.renderedLines.reduce((sum, line) => sum + line.length + 1, -1);
+    const lineCounts = page.renderedLines.map(countTokenChars);
+    let contentAscii = lineCounts.reduce((sum, counts) => sum + counts.ascii, 0);
+    let contentNonAscii = lineCounts.reduce((sum, counts) => sum + counts.nonAscii, 0);
     const firstColumn = page.fromTail ? 0 : args.column_offset ?? 0;
     const firstPrefix = `${String(page.startLine)}\t`;
     const firstText = page.renderedLines[0]?.slice(firstPrefix.length) ?? '';
     let fragmentEnd: number | undefined;
+    let tokenLimited = false;
 
     while (true) {
       const count = end - first;
@@ -511,7 +577,7 @@ export class ReadTool implements IReadTool {
       const lineIncomplete = fragmentEnd !== undefined;
       const complete = page.rangeStart > page.rangeEnd ||
         (count > 0 && startLine === page.rangeStart && endLine === page.rangeEnd && !lineIncomplete);
-      const parts = [
+      const summary = [
         count > 0
           ? `${String(count)} ${count === 1 ? 'line' : 'lines'} read from file starting from line ${String(startLine)}.`
           : 'No lines read from file.',
@@ -520,62 +586,91 @@ export class ReadTool implements IReadTool {
         `Effective max_chars: ${String(maxChars)}.`,
       ];
       if (!lineIncomplete && ((count > 0 && endLine === page.totalLines) || page.rangeStart > page.totalLines)) {
-        parts.push('End of file reached.');
+        summary.push('End of file reached.');
       }
+      const notices: string[] = [];
       if (count > 0 && !page.fromTail && (firstColumn > 0 || fragmentEnd !== undefined)) {
-        parts.push(`Line ${String(startLine)} fragment: columns [${String(firstColumn)}, ${String(firstColumn + (fragmentEnd ?? firstText.length))}) of ${String(firstColumn + firstText.length)}. ${lineIncomplete ? 'Line continues.' : 'Line complete.'}`);
+        notices.push(`Line ${String(startLine)} fragment: columns [${String(firstColumn)}, ${String(firstColumn + (fragmentEnd ?? firstText.length))}) of ${String(firstColumn + firstText.length)}. ${lineIncomplete ? 'Line continues.' : 'Line complete.'}`);
       }
       if (args.max_chars !== undefined && args.max_chars > maxCharsLimit) {
-        parts.push(`Requested max_chars=${String(args.max_chars)} was capped at the configured maximum ${String(maxCharsLimit)}.`);
+        notices.push(`Requested max_chars=${String(args.max_chars)} was capped at the configured maximum ${String(maxCharsLimit)}.`);
       }
+      let next: { readonly line: number; readonly column: number } | undefined;
       if (!complete && (count > 0 || page.fromTail)) {
         const nextStart = page.fromTail ? page.rangeStart : lineIncomplete ? startLine : endLine + 1;
         const nextEnd = page.fromTail && count > 0 ? startLine - 1 : page.rangeEnd;
-        const next = {
+        const nextColumn = fragmentEnd !== undefined ? firstColumn + fragmentEnd : undefined;
+        next = { line: nextStart, column: nextColumn ?? 0 };
+        notices.push(`Next Read: ${JSON.stringify({
           path: args.path,
           line_offset: nextStart,
-          column_offset: fragmentEnd !== undefined ? firstColumn + fragmentEnd : undefined,
+          column_offset: nextColumn,
           n_lines: page.fromTail || args.n_lines !== undefined ? nextEnd - nextStart + 1 : undefined,
           max_chars: maxChars,
-        };
-        parts.push(`Next Read: ${JSON.stringify(next)}`);
+        })}`);
+        if (count > 0) {
+          notices.push('If the answer may be further on, continue with Next Read or find the section with Grep instead of answering from this page alone.');
+        }
       }
       if (eventLog) {
-        parts.push('Kimi Code agent event log: read one record at a time (n_lines=1); increase max_chars for a longer record or extract fields with Bash.');
+        notices.push('Kimi Code agent event log: read one record at a time (n_lines=1); follow Next Read for the rest of a longer record or extract fields with Bash.');
       }
       if (page.lineEndingStyle === 'mixed') {
-        parts.push('Mixed or lone carriage-return line endings are shown as \\r. Use exact \\r\\n or \\r escapes in Edit.old_string for those lines.');
+        notices.push('Mixed or lone carriage-return line endings are shown as \\r. Use exact \\r\\n or \\r escapes in Edit.old_string for those lines.');
       }
       if (detectedEncoding !== undefined) {
-        parts.push(`Detected file encoding: ${encodingDisplayName(detectedEncoding)}; content transcoded to UTF-8 for display. Edit and Write expect UTF-8 — convert the file's encoding first (e.g. \`iconv\` via Bash).`);
+        notices.push(`Detected file encoding: ${encodingDisplayName(detectedEncoding)}; content transcoded to UTF-8 for display. Edit and Write expect UTF-8 — convert the file's encoding first (e.g. \`iconv\` via Bash).`);
       }
       if (lossyDecoding) {
-        parts.push('Lossy UTF-16 decoding: malformed sequences were replaced with U+FFFD. The decoded text may differ from the original file.');
+        notices.push('Lossy UTF-16 decoding: malformed sequences were replaced with U+FFFD. The decoded text may differ from the original file.');
       }
-      const note = `<system>${parts.join(' ')}</system>`;
+      const wholeFile = complete && count > 0 && firstColumn === 0 && startLine === 1 && endLine === page.totalLines;
+      const note = wholeFile && notices.length === 0
+        ? undefined
+        : `<system>${[...summary, ...notices].join(' ')}</system>`;
       const renderedChars = count === 0
         ? renderToolResultForModel({ output: '', note }).reduce(
           (sum, part) => sum + (part.type === 'text' ? part.text.length : 0),
           0,
         )
-        : contentChars + 1 + note.length;
-      if (renderedChars <= maxChars && (complete || count > 0)) {
-        return {
+        : contentChars + (note === undefined ? 0 : 1 + note.length);
+      const noteCounts = note === undefined ? undefined : countTokenChars(note);
+      const overTokens = count === 0 ? 0 : tokensForCharCounts({
+        ascii: contentAscii + count - 1 + (noteCounts === undefined ? 0 : 1 + noteCounts.ascii),
+        nonAscii: contentNonAscii + (noteCounts?.nonAscii ?? 0),
+      }) - tokenLimit;
+      if (renderedChars <= maxChars && overTokens <= 0 && (complete || count > 0)) {
+        const result: ExecutableToolResult = {
           output: fragmentEnd !== undefined
             ? firstPrefix + firstText.slice(0, fragmentEnd)
             : page.renderedLines.slice(first, end).join('\n'),
           note,
           truncated: complete ? undefined : true,
         };
+        const fullStart = firstColumn > 0 ? startLine + 1 : startLine;
+        readPageFacts.set(result, {
+          totalLines: page.totalLines,
+          returnedLines: count,
+          wholeFile,
+          complete,
+          tokenLimited,
+          lines: fragmentEnd === undefined && count > 0 && fullStart <= endLine ? { start: fullStart, end: endLine } : undefined,
+          next,
+        });
+        return result;
       }
+      const tokensOnly = renderedChars <= maxChars && overTokens > 0;
+      if (tokensOnly) tokenLimited = true;
       if (count === 1 && !page.fromTail) {
         const previousEnd = fragmentEnd ?? firstText.length;
         fragmentEnd = Math.min(previousEnd - 1, previousEnd - (renderedChars - maxChars));
+        if (overTokens > 0) fragmentEnd = Math.min(fragmentEnd, cutForTokens(firstText, previousEnd, overTokens));
         if (splitsSurrogatePair(firstText, fragmentEnd)) fragmentEnd -= 1;
         if (fragmentEnd <= 0) {
           return { isError: true, output: `max_chars=${String(maxChars)} is too small for file text and the Read status. Increase max_chars.` };
         }
         contentChars = firstPrefix.length + fragmentEnd;
+        ({ ascii: contentAscii, nonAscii: contentNonAscii } = countTokenChars(firstPrefix + firstText.slice(0, fragmentEnd)));
         continue;
       }
       if (count === 0) {
@@ -594,8 +689,15 @@ export class ReadTool implements IReadTool {
         }
         return { isError: true, output: `max_chars=${String(maxChars)} is too small for the Read status. Increase max_chars.` };
       }
-      const dropped = page.fromTail ? first++ : --end;
-      contentChars -= page.renderedLines[dropped]!.length + 1;
+      let remainingTokens = tokensOnly ? overTokens : 0;
+      do {
+        const dropped = page.fromTail ? first++ : --end;
+        const counts = lineCounts[dropped]!;
+        contentChars -= page.renderedLines[dropped]!.length + 1;
+        contentAscii -= counts.ascii;
+        contentNonAscii -= counts.nonAscii;
+        remainingTokens -= counts.nonAscii + (counts.ascii + 1) / 4;
+      } while (remainingTokens > 0 && end - first > (page.fromTail ? 0 : 1));
     }
   }
 

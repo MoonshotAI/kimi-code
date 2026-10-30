@@ -4,7 +4,7 @@ import { createDecorator } from '#/_base/di/instantiation';
 import { type AgentTool } from '#/tool/toolContract';
 
 export const DEFAULT_MAX_CHARS = 100_000;
-export const DEFAULT_MAX_CHARS_LIMIT = 500_000;
+export const DEFAULT_MAX_CHARS_LIMIT = 100_000;
 
 export const TRANSCODE_MAX_BYTES: number = 10 * 1024 * 1024;
 
@@ -15,16 +15,16 @@ export const ReadInputSchema = z.object({
   path: z
     .string()
     .describe(
-      'Path to a text file or a kimi-file:// attachment reference in the current session. Relative filesystem paths resolve against the working directory; a path outside the working directory must be absolute. Directories are not supported; use `ls` via Bash for a known directory, or Glob for pattern search.',
+      'File path, absolute or relative to the working directory (a path outside it must be absolute), or a kimi-file:// attachment reference.',
     ),
   line_offset: z
     .union([PositiveLineOffsetSchema, TailLineOffsetSchema])
     .optional()
     .describe(
-      'The line number to start reading from. Omit to start at line 1. Negative values read from the end of the file (for example, -100 reads the last 100 lines).',
+      'Line to start from, 1-based; omit to start at line 1. Negative values count from the end: -100 reads the last 100 lines.',
     ),
   column_offset: z.number().int().nonnegative().optional().describe(
-    'Zero-based character offset within the first line of a forward read, excluding its line-number prefix. Uses JavaScript string length in the displayed text. Copy continuation arguments from the previous result to resume a long line.',
+    'Zero-based offset within the first line, used to resume a long line; copy it from Next Read.',
   ),
   n_lines: z
     .number()
@@ -32,10 +32,10 @@ export const ReadInputSchema = z.object({
     .positive()
     .optional()
     .describe(
-      'The number of lines to read. Omit to read toward the end of the file. Results are bounded by max_chars, with continuation arguments when the requested range is incomplete.',
+      'Number of lines to read; omit to read to the end of the file.',
     ),
   max_chars: z.number().int().positive().optional().describe(
-    'Maximum characters in the returned text, including line numbers and status. Omit for the configured default; requests above the configured maximum are capped.',
+    'Maximum characters to return, including line numbers; omit for the default.',
   ),
 });
 

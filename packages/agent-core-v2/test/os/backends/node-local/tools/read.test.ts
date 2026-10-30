@@ -12,7 +12,13 @@ import {
   TRANSCODE_MAX_BYTES,
 } from '#/agent/tools/os/read/read';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
+import { READ_SECTION } from '#/agent/tools/os/read/configSection';
+import type { IConfigService } from '#/app/config/config';
+import { noopTelemetryService, type ITelemetryService } from '#/app/telemetry/telemetry';
+import type { IEventBus } from '#/app/event/eventBus';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
+import { estimateTokens } from '#/llm-adapter/contract/tokens';
 import { stubToolResultTruncationService } from '../../../../agent/toolResultTruncation/stubs';
 import { stubConfigService } from '../../../../app/config/stubs';
 import type { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -89,6 +95,10 @@ function createReadTool(
   profile: IAgentProfileService = stubProfileService({ image_in: true, video_in: true }),
   toolPolicy: IAgentToolPolicyService = { isToolActive: () => true } as unknown as IAgentToolPolicyService,
   toolRegistry: IAgentToolRegistryService = { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
+  config: IConfigService = stubConfigService(),
+  telemetry?: ITelemetryService,
+  eventBus?: IEventBus,
+  agent?: IAgentScopeContext,
 ): ReadTool {
   const environment = Object.assign(
     new FakeEnvironment(
@@ -98,7 +108,55 @@ function createReadTool(
     { host: env, fs },
   );
   const resolver = stubAgentEnvironment(environment);
-  return new ReadTool(resolver, workspace, skillCatalog, truncation, stubConfigService(), profile, toolPolicy, toolRegistry);
+  return new ReadTool(
+    resolver,
+    workspace,
+    skillCatalog,
+    truncation,
+    config,
+    profile,
+    toolPolicy,
+    toolRegistry,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    agent,
+    telemetry,
+    eventBus,
+  );
+}
+
+function telemetrySpy() {
+  const events: { event: string; properties: unknown }[] = [];
+  const telemetry: ITelemetryService = {
+    ...noopTelemetryService,
+    track2: (event, properties) => {
+      events.push({ event, properties });
+    },
+  };
+  return { events, telemetry };
+}
+
+function compactionBus() {
+  const handlers: ((event: { agentId: string }) => void)[] = [];
+  const bus = {
+    subscribe: (_type: unknown, handler: (event: { agentId: string }) => void) => {
+      handlers.push(handler);
+      return { dispose: () => {} };
+    },
+  } as unknown as IEventBus;
+  return {
+    bus,
+    compact: (agentId: string) => {
+      for (const handler of handlers) handler({ agentId });
+    },
+  };
+}
+
+function nextReadArgs(result: ExecutableToolResult): ReadInput {
+  return ReadInputSchema.parse(JSON.parse(/Next Read: (\{[^\n]*\})/.exec(result.note ?? '')![1]!));
 }
 
 function createSpiedFs(content: string) {
@@ -157,6 +215,24 @@ function createSpiedMapFs(files: Record<string, FakeFile>) {
 
 function toolWithContent(content: string, workspace = PERMISSIVE_WORKSPACE) {
   return createReadTool(createSpiedFs(content).fs, createTestEnv(), workspace);
+}
+
+function readConfig(maxChars: number): IConfigService {
+  return stubConfigService({ [READ_SECTION]: { maxChars } });
+}
+
+function toolWithMaxChars(content: string, maxChars: number) {
+  return createReadTool(
+    createSpiedFs(content).fs,
+    createTestEnv(),
+    PERMISSIVE_WORKSPACE,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    readConfig(maxChars),
+  );
 }
 
 function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is Promise<ToolExecution> {
@@ -235,11 +311,12 @@ async function connectingReadExecution(status?: 'connecting') {
 }
 
 describe('ReadTool', () => {
-  it('reads a 4621-line document in full when the requested character budget fits', async () => {
-    const content = Array.from({ length: 4621 }, (_, index) =>
-      `section ${String(index + 1)} ${'x'.repeat(55)}`,
-    ).join('\n');
-    const tool = toolWithContent(content);
+  const paper = Array.from({ length: 4621 }, (_, index) =>
+    `section ${String(index + 1)} ${'x'.repeat(55)}`,
+  ).join('\n');
+
+  it('reads a 4621-line document in full when the configured maximum fits the requested budget', async () => {
+    const tool = toolWithMaxChars(paper, 500_000);
 
     const result = await execute(tool, ReadInputSchema.parse({
       path: '/tmp/paper.md',
@@ -249,8 +326,23 @@ describe('ReadTool', () => {
 
     expect(result.isError).not.toBe(true);
     expect(output.split('\n')).toHaveLength(4621);
-    expect(output.replaceAll(/^\d+\t/gm, '')).toBe(content);
+    expect(output.replaceAll(/^\d+\t/gm, '')).toBe(paper);
     expect(output.length + 1 + (result.note?.length ?? 0)).toBeLessThanOrEqual(500_000);
+  });
+
+  it('caps a requested budget at 100000 characters by default and continues with Next Read', async () => {
+    const tool = toolWithContent(paper);
+
+    const result = await execute(tool, ReadInputSchema.parse({
+      path: '/tmp/paper.md',
+      max_chars: 500_000,
+    }));
+    const output = toolContentString(result);
+
+    expect(result.isError).not.toBe(true);
+    expect(output.length + 1 + (result.note?.length ?? 0)).toBeLessThanOrEqual(100_000);
+    expect(result.note).toContain('Requested max_chars=500000 was capped at the configured maximum 100000.');
+    expect(result.note).toContain('Next Read');
   });
 
   it('recovers a line above the maximum request size through fixed-budget column continuations', async () => {
@@ -447,12 +539,132 @@ describe('ReadTool', () => {
 
     const result = await execute(tool, { path: '/tmp/a.txt' });
 
-    expect(result).toMatchObject({
-      output: '1\talpha\n2\tbeta',
-      note: readNote(
-        '2 lines read from file starting from line 1. Total lines in file: 2. Requested range complete. Effective max_chars: 100000. End of file reached.',
-      ),
+    expect(result).toMatchObject({ output: '1\talpha\n2\tbeta' });
+  });
+
+  it('reports each Read to telemetry with paging, re-read, change, and compaction signals', async () => {
+    const path = '/tmp/notes.md';
+    const lines = Array.from({ length: 40 }, (_, index) => `line ${String(index + 1)} ${'x'.repeat(40)}`);
+    const files: Record<string, FakeFile> = {
+      [path]: { bytes: Buffer.from(lines.join('\n')) },
+      '/tmp/small.ts': { bytes: Buffer.from('export {};\n') },
+    };
+    const { events, telemetry } = telemetrySpy();
+    const { bus, compact } = compactionBus();
+    const tool = createReadTool(
+      createSpiedMapFs(files).fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      telemetry,
+      bus,
+      { agentId: 'main' } as IAgentScopeContext,
+    );
+
+    const first = await execute(tool, { path, max_chars: 800 });
+    const next = nextReadArgs(first);
+    await execute(tool, next);
+    await execute(tool, next);
+    await execute(tool, { path, n_lines: 5 });
+    await execute(tool, { path, n_lines: 5, max_chars: 2000 });
+    files[path] = { bytes: Buffer.from(lines.slice(0, 30).join('\n')) };
+    await execute(tool, { path, n_lines: 5 });
+    compact('subagent');
+    await execute(tool, { path, n_lines: 5 });
+    compact('main');
+    await execute(tool, { path, n_lines: 5 });
+    await execute(tool, { path: '/tmp/small.ts' });
+    await execute(tool, { path: '/tmp/missing.md' });
+
+    expect(events.map((entry) => entry.event)).toEqual(Array.from({ length: 9 }, () => 'read_file'));
+    const second = events[1]?.properties as { returned_lines: number };
+    expect(events[0]?.properties).toMatchObject({
+      turn_id: 0,
+      ext: 'md',
+      whole_file: false,
+      complete: false,
+      ranged: false,
+      requested_max_chars: 800,
+      reread: false,
+      continues_previous_page: false,
     });
+    expect(events[1]?.properties).toMatchObject({
+      ranged: true,
+      reread: true,
+      reread_unchanged: false,
+      repeated_lines: 0,
+      changed_since_last_read: false,
+      continues_previous_page: true,
+    });
+    expect(events[2]?.properties).toMatchObject({ reread_unchanged: false, repeated_lines: second.returned_lines });
+    expect(events[3]?.properties).toMatchObject({ complete: true, reread_unchanged: false, repeated_lines: 5 });
+    expect(events[4]?.properties).toMatchObject({ reread_unchanged: true, repeated_lines: 5 });
+    expect(events[5]?.properties).toMatchObject({ changed_since_last_read: true, reread_unchanged: false, repeated_lines: 0 });
+    expect(events[6]?.properties).toMatchObject({ reread: true, reread_unchanged: true, repeated_lines: 5 });
+    expect(events[7]?.properties).toMatchObject({ reread: false, reread_unchanged: false, repeated_lines: 0 });
+    expect(events[8]?.properties).toMatchObject({
+      ext: 'ts',
+      whole_file: true,
+      complete: true,
+      returned_lines: 1,
+      total_lines: 1,
+      returned_chars: '1\texport {};'.length,
+      estimated_tokens: 3,
+      token_limited: false,
+      reread: false,
+    });
+  });
+
+  it('tracks the full continuation cursor and never counts a column continuation as a whole-file read', async () => {
+    const files: Record<string, FakeFile> = {
+      '/tmp/line.txt': { bytes: Buffer.from('y'.repeat(3000)) },
+      '/tmp/tail.txt': { bytes: Buffer.from(Array.from({ length: 50 }, (_, index) => `row ${String(index + 1)} ${'z'.repeat(30)}`).join('\n')) },
+    };
+    const { events, telemetry } = telemetrySpy();
+    const tool = createReadTool(
+      createSpiedMapFs(files).fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      telemetry,
+    );
+
+    let page = await execute(tool, { path: '/tmp/line.txt', max_chars: 1000 });
+    await execute(tool, { path: '/tmp/line.txt', max_chars: 1000 });
+    while (page.truncated === true) page = await execute(tool, nextReadArgs(page));
+    const tail = await execute(tool, { path: '/tmp/tail.txt', line_offset: -40, max_chars: 600 });
+    await execute(tool, nextReadArgs(tail));
+
+    const properties = events.map((entry) => entry.properties as { whole_file: boolean; continues_previous_page: boolean });
+    expect(properties[1]?.continues_previous_page).toBe(false);
+    expect(properties.slice(2, -2).every((entry) => entry.continues_previous_page)).toBe(true);
+    expect(properties.at(-3)?.whole_file).toBe(false);
+    expect(properties.at(-1)?.continues_previous_page).toBe(true);
+  });
+
+  it('omits the status block when the whole file is returned with nothing to report', async () => {
+    const tool = toolWithContent('alpha\nbeta\n');
+
+    const whole = await execute(tool, { path: '/tmp/a.txt' });
+    const ranged = await execute(tool, { path: '/tmp/a.txt', n_lines: 1 });
+
+    expect(whole.note).toBeUndefined();
+    expect(renderToolResultForModel(whole)).toEqual([{ type: 'text', text: '1\talpha\n2\tbeta' }]);
+    expect(ranged.note).toBe(
+      readNote(
+        '1 line read from file starting from line 1. Total lines in file: 2. Requested range complete. Effective max_chars: 100000.',
+      ),
+    );
   });
 
   it('stats the resolved target so symlinked files stay readable', async () => {
@@ -471,11 +683,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/a.txt' });
 
     expect(result.output).toBe(['1\talpha', '2\tbeta'].join('\n'));
-    expect(result.note).toBe(
-      readNote(
-        '2 lines read from file starting from line 1. Total lines in file: 2. Requested range complete. Effective max_chars: 100000. End of file reached.',
-      ),
-    );
+    expect(result.note).toBeUndefined();
   });
 
   it('makes mixed carriage returns visible instead of normalizing them', async () => {
@@ -675,11 +883,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/external.txt' });
 
     expect(result.output).toBe('1\texternal');
-    expect(result.note).toBe(
-      readNote(
-        '1 line read from file starting from line 1. Total lines in file: 1. Requested range complete. Effective max_chars: 100000. End of file reached.',
-      ),
-    );
+    expect(result.note).toBeUndefined();
     expect(readBytes).toHaveBeenCalledWith('/tmp/external.txt', MEDIA_SNIFF_BYTES);
     expect(readLines).toHaveBeenCalledWith('/tmp/external.txt', { errors: 'strict' });
   });
@@ -721,11 +925,7 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '~/notes/today.txt' });
 
     expect(result.output).toBe('1\thome note');
-    expect(result.note).toBe(
-      readNote(
-        '1 line read from file starting from line 1. Total lines in file: 1. Requested range complete. Effective max_chars: 100000. End of file reached.',
-      ),
-    );
+    expect(result.note).toBeUndefined();
     expect(readBytes).toHaveBeenCalledWith('/home/test/notes/today.txt', MEDIA_SNIFF_BYTES);
     expect(readLines).toHaveBeenCalledWith('/home/test/notes/today.txt', { errors: 'strict' });
   });
@@ -1008,7 +1208,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).not.toBe(true);
     expect(result.output).toBe(`1\t${content}`);
-    expect(result.note).not.toContain('Lossy');
+    expect(result.note ?? '').not.toContain('Lossy');
   });
 
   it.each([2, -2])('preserves the lossy warning and budget through Read continuation from offset %i', async (lineOffset) => {
@@ -1158,7 +1358,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).not.toBe(true);
     expect(result.output).toBe(`1\t${long}\n2\tshort\n3\t${long}`);
-    expect(result.note).toContain('Requested range complete.');
+    expect(result.note).toBeUndefined();
     expect(result.truncated).toBeUndefined();
   });
 
@@ -1224,13 +1424,23 @@ describe('ReadTool', () => {
     expect(result.spillExempt).toBe(true);
   });
 
-  it('reads a whole long event log record with an explicit character budget', async () => {
+  it('reads a whole long event log record with an explicit character budget under a raised maximum', async () => {
     const huge = 'y'.repeat(150_100);
     const truncation: IAgentToolResultTruncationService = {
       ...stubToolResultTruncationService(),
       isWireJournalPath: (path) => path.endsWith('/wire.jsonl'),
     };
-    const tool = createReadTool(createSpiedFs(`${huge}\nshort`).fs, createTestEnv(), PERMISSIVE_WORKSPACE, undefined, truncation);
+    const tool = createReadTool(
+      createSpiedFs(`${huge}\nshort`).fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      truncation,
+      undefined,
+      undefined,
+      undefined,
+      readConfig(500_000),
+    );
     const result = await execute(tool, {
       path: '/home/user/.kimi-code/sessions/ws/session/agents/main/wire.jsonl',
       line_offset: 1,
@@ -1244,9 +1454,9 @@ describe('ReadTool', () => {
     expect(result.spillExempt).toBe(true);
   });
 
-  it('returns a whole large final event log record within the requested character budget', async () => {
+  it('returns a whole large final event log record within a requested budget the raised maximum allows', async () => {
     const huge = 'z'.repeat(105_000);
-    const tool = toolWithContent(`first\n${huge}`);
+    const tool = toolWithMaxChars(`first\n${huge}`, 500_000);
     const result = await execute(tool, {
       path: '/tmp/wire.jsonl',
       line_offset: -1,
@@ -1270,7 +1480,7 @@ describe('ReadTool', () => {
 
   it('fits complete lines and status within the default character budget', async () => {
     const line = '文'.repeat(2_000);
-    const tool = toolWithContent(Array.from({ length: 80 }, () => line).join('\n'));
+    const tool = toolWithMaxChars(Array.from({ length: 80 }, () => line).join('\n'), 500_000);
     const result = await execute(tool, { path: '/tmp/characters.txt' });
     const output = toolContentString(result);
 
@@ -1280,6 +1490,42 @@ describe('ReadTool', () => {
     expect(output.split('\n').every((entry) => entry.replace(/^\d+\t/, '') === line)).toBe(true);
     expect(result.truncated).toBe(true);
     expect(result.note).toContain('Next Read:');
+  });
+
+  it('fragments a single long non-ASCII line to stay within the estimated token limit', async () => {
+    const line = '文'.repeat(30_000);
+    const result = await execute(toolWithContent(line), { path: '/tmp/long.md' });
+    const output = toolContentString(result);
+
+    expect(result.isError).not.toBe(true);
+    expect(estimateTokens(`${output}\n${result.note ?? ''}`)).toBeLessThanOrEqual(25_000);
+    expect(output.length).toBeLessThan(line.length);
+    expect(result.note).toContain('Line 1 fragment');
+    expect(nextReadArgs(result)).toMatchObject({ line_offset: 1, max_chars: 100_000 });
+    expect(nextReadArgs(result).column_offset).toBeGreaterThan(0);
+  });
+
+  it('returns the bounded forward recovery when a tail read of a long non-ASCII line exceeds the token limit', async () => {
+    const result = await execute(toolWithContent('文'.repeat(60_000)), { path: '/tmp/long.md', line_offset: -1 });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toBe('No complete line fits. Continue with the forward Next Read.');
+    expect(nextReadArgs(result)).toMatchObject({ line_offset: 1, n_lines: 1 });
+  });
+
+  it('shortens a page of non-ASCII text to the estimated token limit and keeps the budget for Next Read', async () => {
+    const line = '文'.repeat(2_000);
+    const tool = toolWithContent(Array.from({ length: 80 }, () => line).join('\n'));
+    const result = await execute(tool, { path: '/tmp/characters.txt' });
+    const output = toolContentString(result);
+
+    expect(result.isError).not.toBe(true);
+    expect(estimateTokens(`${output}\n${result.note ?? ''}`)).toBeLessThanOrEqual(25_000);
+    expect(output.split('\n').length).toBeGreaterThan(1);
+    expect(output.split('\n').every((entry) => entry.replace(/^\d+\t/, '') === line)).toBe(true);
+    expect(result.truncated).toBe(true);
+    expect(result.note).toContain('"max_chars":100000');
+    expect(result.note).toContain('find the section with Grep instead of answering from this page alone');
   });
 
   it('reads through bounded byte preflight and streams line iteration without full readText', async () => {
@@ -1310,8 +1556,7 @@ describe('ReadTool', () => {
     expect(result.isError).toBeFalsy();
     expect(output).toContain('1\tline 1');
     expect(output).toContain(`${String(1_000)}\tline ${String(1_000)}`);
-    expect(result.note).toContain(`Total lines in file: ${String(1_000 + 5)}.`);
-    expect(result.note).toContain('Requested range complete.');
+    expect(result.note).toBeUndefined();
     expect(consumed).toBe(1_000 + 5);
     expect(readBytes).toHaveBeenCalledWith('/tmp/large.txt', MEDIA_SNIFF_BYTES);
     expect(readText).not.toHaveBeenCalled();
@@ -1323,7 +1568,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).not.toBe(true);
     expect(result.output).toContain('1001\tline 1001');
-    expect(result.note).toContain('Requested range complete.');
+    expect(result.note).toBeUndefined();
     expect(result.truncated).toBeUndefined();
   });
 
@@ -1361,11 +1606,11 @@ describe('ReadTool', () => {
     expect(output).not.toContain('Max');
   });
 
-  it('interpolates the cap constants into the description and references the Grep tool', () => {
+  it('keeps the description free of configured limits', () => {
     const tool = toolWithContent('');
-    expect(tool.description).toContain('100000');
-    expect(tool.description).toContain('500000');
-    expect(tool.description).toContain('Grep');
+    expect(tool.description).not.toContain('${');
+    expect(tool.description).not.toContain('100000');
+    expect(toolWithMaxChars('', 250_000).description).toBe(tool.description);
   });
 
   it('reads files inside additional_dirs via absolute path', async () => {
@@ -1462,7 +1707,7 @@ describe('ReadTool', () => {
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('1\ta');
     expect(result.output).toContain('5\te');
-    expect(result.note).toContain('Total lines in file: 5. Requested range complete. Effective max_chars: 100000.');
+    expect(result.note).toBeUndefined();
   });
 
   it('tail mode on an empty file returns empty output without erroring', async () => {

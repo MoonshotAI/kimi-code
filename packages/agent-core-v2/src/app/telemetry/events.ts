@@ -118,6 +118,27 @@ export interface ToolCallEvent {
   trace_id?: string;
 }
 
+export interface ReadFileEvent {
+  turn_id: number;
+  tool_call_id: string;
+  ext: string;
+  returned_chars: number;
+  estimated_tokens: number;
+  returned_lines: number;
+  total_lines: number;
+  whole_file: boolean;
+  complete: boolean;
+  ranged: boolean;
+  from_tail: boolean;
+  token_limited: boolean;
+  requested_max_chars?: number;
+  reread: boolean;
+  reread_unchanged: boolean;
+  repeated_lines: number;
+  changed_since_last_read: boolean;
+  continues_previous_page: boolean;
+}
+
 export interface ApiErrorEvent {
   error_type: string;
   model: string;
@@ -763,6 +784,34 @@ export const telemetryEventDefinitions = {
       error_type: 'Error category when the call failed',
       trace_id:
         'Trace id of the LLM request that produced this tool call; absent for non-Kimi protocols',
+    },
+  }),
+  read_file: defineAgentTelemetryEvent<ReadFileEvent>({
+    owner: 'kimi-code',
+    comment: 'A Read tool call returns file text to the model.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      tool_call_id: 'Provider-assigned tool call id; joins the matching tool_call event',
+      ext: 'Lowercase file extension without the dot; empty when the file name has none',
+      returned_chars: 'Characters returned to the model, including line numbers and any status block',
+      estimated_tokens:
+        'Estimated tokens of the returned text: one per non-ASCII character and one per four ASCII characters',
+      returned_lines: 'Lines or line fragments returned',
+      total_lines: 'Total lines in the file',
+      whole_file: 'Whether one call returned the whole file',
+      complete: 'Whether the requested range was returned completely',
+      ranged: 'Whether the call set line_offset or n_lines',
+      from_tail: 'Whether the call read from the end of the file with a negative line_offset',
+      token_limited: 'Whether the page was shortened to stay within the estimated token limit',
+      requested_max_chars: 'max_chars requested by the call; absent when the call omitted it',
+      reread: 'Whether this agent read the same file earlier since its last compaction',
+      reread_unchanged:
+        'Whether this agent already read the same requested range of the file in full since its last compaction and the file has not changed on disk; max_chars and an n_lines that reaches the end of the file are ignored',
+      repeated_lines:
+        'Whole lines in this result that this agent already received from the same unchanged file since its last compaction',
+      changed_since_last_read: 'Whether the file changed on disk since this agent last read it',
+      continues_previous_page:
+        "Whether the call starts at the line and column where this agent's previous incomplete read of the file stopped",
     },
   }),
   api_error: defineAgentTelemetryEvent<ApiErrorEvent>({
