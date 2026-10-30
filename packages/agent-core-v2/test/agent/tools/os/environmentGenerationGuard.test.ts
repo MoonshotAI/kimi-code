@@ -5,6 +5,7 @@ import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentTarget } from '#/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import {
+  EnvironmentError,
   EnvironmentRegistry,
   environmentIsReady,
   type EnvironmentRegistrationHandle,
@@ -397,7 +398,7 @@ describe('Bash environment generation guard', () => {
 
   it('rejects execution when the generation changes after a ready resolve', async () => {
     const harness = readyHarness(createFakeHostFs());
-    const resolved = bashTool(harness.service).resolveExecution({ command: 'echo hi' });
+    const resolved = await bashTool(harness.service).resolveExecution({ command: 'echo hi' });
 
     await harness.registration.remove();
     harness.registry.register(replacementReadyEnvironment());
@@ -502,11 +503,100 @@ describe('tool environment routing', () => {
       stubConfigService(),
     );
 
-    const resolved = bash.resolveExecution({ command: 'pwd' }, { environment: { environmentId: 'gpu', primary: false } });
+    const resolved = await bash.resolveExecution({ command: 'pwd' }, { environment: { environmentId: 'gpu', primary: false } });
     expect(resolved).toMatchObject({ display: { kind: 'command', cwd: '/gpu' } });
     const result = await finish(resolved);
 
     expect(spawns).toEqual([{ environmentId: 'gpu', cwd: '/gpu' }]);
     expect(outputText(result)).toContain('spawned on gpu');
+  });
+
+  it('connects an unready secondary environment before the approval preview', async () => {
+    const registry = new EnvironmentRegistry();
+    const calls: string[] = [];
+    let registration: EnvironmentRegistrationHandle;
+    const ready = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'gpu', generation: 'gpu-one' },
+        { status: 'ready', capabilities: ['process'], host: { cwd: '/srv/app' } },
+      ),
+      { process: {} },
+    );
+    const pending = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'gpu', generation: 'gpu-pending' },
+        { status: 'pending', capabilities: [] },
+      ),
+      {
+        host: undefined,
+        connect: async () => {
+          calls.push('connect');
+          await registration.remove();
+          registry.register(ready);
+        },
+      },
+    );
+    registration = registry.register(pending);
+    const binding = (environmentId?: string): EnvironmentBinding => ({ environmentId: environmentId ?? 'local' });
+    const service: IAgentEnvironmentService = {
+      _serviceBrand: undefined,
+      onDidChange: () => ({ dispose: () => {} }),
+      targets: () => [
+        { environmentId: 'local', primary: true },
+        { environmentId: 'gpu', primary: false },
+      ],
+      isAvailable: (required = [], environmentId) => {
+        try {
+          const environment = registry.inspect(binding(environmentId));
+          return environmentIsReady(environment) && required.every((capability) => environment.capabilities.has(capability));
+        } catch {
+          return false;
+        }
+      },
+      inspect: (environmentId) => registry.inspect(binding(environmentId)),
+      acquire: (required = [], environmentId) => registry.acquire(binding(environmentId), required),
+      acquireWhenReady: async (required = [], environmentId) => {
+        const environment = registry.inspect(binding(environmentId));
+        if (!environmentIsReady(environment) && typeof environment.connect === 'function') await environment.connect();
+        return registry.acquireWhenReady(binding(environmentId), required);
+      },
+      workspaceRoots: (environmentId) => {
+        const workDir = environmentId === 'gpu' ? registry.inspect(binding(environmentId)).host?.cwd : '/workspace';
+        if (workDir === undefined) {
+          throw new EnvironmentError('environment.unavailable', 'environment gpu has no working directory until it connects');
+        }
+        return { workDir, additionalDirs: [] };
+      },
+    };
+    const bash = new BashTool(
+      service,
+      makeSessionContext({
+        sessionId: 'ses',
+        workspaceId: 'ws',
+        sessionDir: '/tmp/ses',
+        sessionScope: 'ses',
+        cwd: '/workspace',
+      }),
+      {} as never,
+      toolPolicy,
+      stubConfigService(),
+    );
+
+    const resolved = await bash.resolveExecution({ command: 'pwd' }, { environment: { environmentId: 'gpu', primary: false } });
+
+    expect(calls).toEqual(['connect']);
+    expect(resolved).toMatchObject({ display: { kind: 'command', cwd: '/srv/app' } });
+
+    await registration.remove();
+    registry.register(Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'gpu', generation: 'gpu-two' },
+        { status: 'ready', capabilities: ['process'], host: { cwd: '/srv/app' } },
+      ),
+      { process: {} },
+    ));
+    const result = await finish(resolved);
+    expect(result.isError).toBe(true);
+    expect(result.output).toBe(ENVIRONMENT_CHANGED_OUTPUT);
   });
 });

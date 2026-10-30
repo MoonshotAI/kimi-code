@@ -5,7 +5,6 @@ import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { acquireOrWhenReady, pinnedGeneration, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import type { EnvironmentTarget } from '#/environment/environment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
@@ -134,45 +133,34 @@ export class BashTool implements IBashTool {
     return renderedDescription;
   }
 
-  resolveExecution(args: BashInput, context?: ToolResolutionContext): ToolExecution {
-    const environment = context?.environment;
-    const expectedGeneration = this.reviewedGeneration(environment?.environmentId);
-    const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
-    return {
-      description: args.run_in_background
-        ? `Starting background: ${preview}`
-        : `Running: ${preview}`,
-      display: {
-        kind: 'command',
-        command: args.command,
-        cwd: this.executionCwd(args, environment),
-        description: args.description,
-        language: 'bash',
-      },
-      approvalRule: literalRulePattern(this.name, args.command),
-      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
-      execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
-        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration, environment?.environmentId),
-    };
-  }
-
-  private reviewedGeneration(environmentId: string | undefined): string | undefined {
+  async resolveExecution(args: BashInput, context?: ToolResolutionContext): Promise<ToolExecution> {
+    const environmentId = context?.environment?.environmentId;
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['process'], environmentId);
     try {
-      return pinnedGeneration(this.environment.inspect(environmentId));
-    } catch {
-      return undefined;
-    }
-  }
-
-  private executionCwd(args: BashInput, environment: EnvironmentTarget | undefined): string | undefined {
-    try {
+      const expectedGeneration = pinnedGeneration(resolutionLease.environment);
       const view = new EnvironmentWorkspaceView(
-        this.environment.inspect(environment?.environmentId),
-        this.environment.workspaceRoots(environment?.environmentId),
+        resolutionLease.environment,
+        this.environment.workspaceRoots(environmentId),
       );
-      return view.resolve(args.cwd ?? view.workDir);
-    } catch {
-      return args.cwd ?? (environment?.primary === false ? undefined : this.ctx.cwd);
+      const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
+      return {
+        description: args.run_in_background
+          ? `Starting background: ${preview}`
+          : `Running: ${preview}`,
+        display: {
+          kind: 'command',
+          command: args.command,
+          cwd: view.resolve(args.cwd ?? view.workDir),
+          description: args.description,
+          language: 'bash',
+        },
+        approvalRule: literalRulePattern(this.name, args.command),
+        matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
+        execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
+          this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration, environmentId),
+      };
+    } finally {
+      resolutionLease.dispose();
     }
   }
 
