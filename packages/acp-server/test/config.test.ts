@@ -5,6 +5,13 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { AcpSession } from '../src/session';
+import {
+  getLiveSessionById,
+  IAgentLifecycleService,
+  IAgentPlanService,
+  IEventBus,
+} from '@moonshot-ai/agent-core-v2';
+import { ToolCallStarted } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { FAKE_MODEL_ALT_ID, writeFakeModelConfig } from './_helpers/fakeModelConfig';
 
@@ -148,6 +155,56 @@ describe('acp-server config surface', () => {
       await expect(session.setMode('plan')).rejects.toThrow('plan toggle failed');
       expect((session as unknown as { currentModeId: string }).currentModeId).toBe('default');
       expect(updates).toEqual([]);
+    },
+    30_000,
+  );
+
+  it(
+    'plan mode emits plan updates from the plan service',
+    async () => {
+      await boot();
+      const { sessionId } = await newSession();
+      await client!.send('session/set_mode', { sessionId, modeId: 'plan' });
+
+      const session = getLiveSessionById(client!.server.core.accessor, sessionId);
+      const agentHandle = session?.accessor.get(IAgentLifecycleService).handleOf('main');
+      expect(agentHandle).toBeDefined();
+      const planService = agentHandle!.accessor.get(IAgentPlanService);
+      const plan = await planService.status();
+      expect(plan).not.toBeNull();
+      await writeFile(plan!.path, 'Plan: ship the typed errors\n');
+
+      const planPromise = client!.waitForSessionUpdate('plan');
+      const bus = agentHandle!.accessor.get(IEventBus);
+      bus.publish(
+        new ToolCallStarted({
+          agentId: 'main',
+          turnId: 1,
+          toolCallId: 'exit-plan-1',
+          name: 'ExitPlanMode',
+          args: {},
+        }),
+      );
+      const notification = await planPromise;
+      const update = (
+        notification.params as {
+          update?: { entries?: ReadonlyArray<{ content: string; status: string }> };
+        }
+      ).update;
+      expect(update?.entries?.[0]?.content).toBe('Plan: ship the typed errors\n');
+      expect(update?.entries?.[0]?.status).toBe('pending');
+
+      await client!.send('session/set_mode', { sessionId, modeId: 'default' });
+      await expect.poll(() => {
+        const plans = client!.sessionUpdates().filter(
+          (m) =>
+            (m.params as { update?: { sessionUpdate?: string } }).update?.sessionUpdate ===
+            'plan',
+        );
+        return (
+          plans.at(-1)?.params as { update?: { entries?: readonly unknown[] } } | undefined
+        )?.update?.entries;
+      }, { timeout: 5000 }).toEqual([]);
     },
     30_000,
   );
