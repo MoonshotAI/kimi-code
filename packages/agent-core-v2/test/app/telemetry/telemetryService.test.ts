@@ -299,7 +299,7 @@ describe('TelemetryService (layered ambient)', () => {
     });
     agent.telemetry.setContext({
       turn_id: 3,
-      trace_id: 'trace-1',
+      request_id: 'trace-1',
       thinking_effort: 'high',
       provider_type: 'kimi',
       protocol: 'openai',
@@ -312,7 +312,7 @@ describe('TelemetryService (layered ambient)', () => {
       agent_id: 'a1',
       mode: 'plan',
       turn_id: 3,
-      trace_id: 'trace-1',
+      request_id: 'trace-1',
       thinking_effort: 'high',
       provider_type: 'kimi',
       protocol: 'openai',
@@ -332,13 +332,13 @@ describe('TelemetryService (layered ambient)', () => {
       skill_name: 'review',
       trigger: 'user-slash',
       turn_id: 3,
-      trace_id: 'trace-1',
+      request_id: 'trace-1',
     } as never);
     expect(appender.records[0]?.properties).toEqual({
       agent_id: 'a1',
       mode: 'agent',
       turn_id: 3,
-      trace_id: 'trace-1',
+      request_id: 'trace-1',
       skill_name: 'review',
       trigger: 'user-slash',
     });

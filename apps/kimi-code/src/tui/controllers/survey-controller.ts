@@ -136,8 +136,8 @@ export class SurveyController {
     this.rating.observe({ kind: 'turn-started', origin });
   }
 
-  notifyTurnEnded(traceId?: string): void {
-    this.rating.observe({ kind: 'turn-ended', traceId });
+  notifyTurnEnded(requestId?: string): void {
+    this.rating.observe({ kind: 'turn-ended', requestId });
     this.clearIdleTimer();
     this.idleTimer = this.setT(() => {
       this.idleTimer = undefined;

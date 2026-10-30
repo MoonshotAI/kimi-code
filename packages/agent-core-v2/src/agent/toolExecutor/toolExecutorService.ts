@@ -329,7 +329,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       outcome,
       duration_ms: durationMs,
       dup_type: dupType,
-      trace_id: options.trace?.traceId,
+      request_id: options.trace?.requestId,
     };
     if (result.isError === true) properties['error_type'] = toolTelemetryErrorType(outcome);
     this.telemetry.track2('tool_call', properties);
@@ -529,6 +529,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         metadata,
         signal,
         steerSignal: options.steerSignal,
+        remind: options.remind,
         onUpdate: (update) => {
           if (signal.aborted) return;
           this.dispatchToolProgress(call, update, options);

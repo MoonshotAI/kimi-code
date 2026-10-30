@@ -1307,6 +1307,7 @@ describe('AgentTaskService', () => {
       }),
     );
     await expect(manager.wait(warmupId, 60_000)).resolves.toMatchObject({ status: 'completed' });
+    await vi.advanceTimersByTimeAsync(0);
     const baselineTimerCount = vi.getTimerCount();
     const taskId = manager.registerTask(
       agentTask(Promise.resolve({ result: 'done' }), 'fast deadline task', {

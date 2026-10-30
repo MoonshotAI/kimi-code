@@ -112,6 +112,8 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'subagent.cancelled',
   'mcp.server_failed',
   'mcp.server_failure_resolved',
+  'tool_select.initialized',
+  'tool_select.tools_changed',
 ]);
 
 describe('v1 wire vocabulary', () => {

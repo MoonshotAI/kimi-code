@@ -1,8 +1,8 @@
-import type { IAgentLLMRequesterService, AgentLLMRequestFinish, AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { LoopRequester, AgentLLMRequestFinish, AgentLLMRequestSource } from '../requesterContract';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
-import type { ToolInfo, ToolResult as AgentToolResult, ToolUpdate as AgentToolUpdate } from '#/tool/toolContract';
+import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
+import type { ToolInfo, ToolRemind, ToolResult as AgentToolResult, ToolUpdate as AgentToolUpdate } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { createAgentMachine, type PromptGate, type PromptGateVerdict } from '#human/agent/machine';
 import { createTurnMachine, type AssistantEntry, type HistoryMessage, type SystemEntry, type UserEntry } from '#human/agent/turn';
@@ -70,7 +70,7 @@ export type MachineEngineEvent =
       readonly messageId?: string;
       readonly model?: string;
       readonly timing?: ModelRequestTiming;
-      readonly traceId?: string;
+      readonly requestId?: string;
     }
   | { readonly type: 'stepFailed'; readonly step: number; readonly error: LlmErrorMessage; readonly rawError?: unknown }
   | { readonly type: 'delta'; readonly delta: MachineEngineDelta }
@@ -117,7 +117,7 @@ export type MachineEngineEvent =
 export interface CreateMachineEngineOptions {
   readonly model: LlmModel;
   readonly systemPrompt?: string;
-  readonly llmRequester: IAgentLLMRequesterService;
+  readonly llmRequester: LoopRequester;
   readonly toolExecutor: IAgentToolExecutorService;
   readonly toolInfos: () => readonly ToolInfo[];
   readonly maxAttemptsPerStep?: number;
@@ -129,6 +129,7 @@ export interface CreateMachineEngineOptions {
   readonly source?: () => AgentLLMRequestSource | undefined;
   readonly toolTurnId?: () => number | undefined;
   readonly steerSignal?: () => AbortSignal | undefined;
+  readonly remind?: ToolRemind;
   readonly gate?: (signal: AbortSignal) => Promise<MachineRequesterGateDecision>;
   readonly promptGate?: PromptGate;
   readonly onTrace?: (trace: LLMRequestTrace) => void;
@@ -176,7 +177,7 @@ export interface MachineEngine {
   submit(entry: UserEntry): void;
   steer(id: string | readonly string[]): void;
   notify(entry: UserEntry): void;
-  remind(key: string, entry: SystemEntry | UserEntry): void;
+  remind(entry: SystemEntry | UserEntry): void;
   cancelQueueItem(id: string): void;
   abort(reason?: unknown): void;
   pause(): void;
@@ -296,6 +297,7 @@ export function machineEngineAttachBundle(options: CreateMachineEngineOptions): 
     turnId: () => options.toolTurnId?.() ?? 0,
     steerSignal: options.steerSignal,
     trace: options.trace,
+    remind: options.remind,
     onToolCall: (payload) => {
       publish({
         type: 'toolStarted',
@@ -437,7 +439,7 @@ export function attachMachineEngine(
         messageId: finish?.providerMessageId ?? meta?.messageId,
         model: finish?.model ?? meta?.model?.model,
         timing: finish?.timing,
-        traceId: finish?.traceId,
+        requestId: finish?.requestId,
       });
     }),
     ref.on('llm.failed.syntax', (event) => {
@@ -514,9 +516,9 @@ export function attachMachineEngine(
       tools.sync();
       ref.send({ type: 'input.notify', entry });
     },
-    remind: (key, entry) => {
+    remind: (entry) => {
       tools.sync();
-      ref.send({ type: 'input.remind', key, entry });
+      ref.send({ type: 'input.remind', entry });
     },
     cancelQueueItem: (id) => {
       ref.send({ type: 'input.cancel', id });

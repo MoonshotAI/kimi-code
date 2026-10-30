@@ -1,5 +1,5 @@
 import type { LlmEndpoint, LlmRequest } from '#/llm/request';
-import type { LlmRemoteErrorMessage } from '#/llm/response';
+import type { LlmErrorMessage } from '#/llm/response';
 
 export interface LlmRecoveryRecord {
   readonly strategy: string;
@@ -7,7 +7,7 @@ export interface LlmRecoveryRecord {
 }
 
 export interface LlmRecoveryContext {
-  readonly error: LlmRemoteErrorMessage;
+  readonly error: LlmErrorMessage;
   readonly request: LlmRequest;
   readonly appliedRecoveries: readonly LlmRecoveryRecord[];
   readonly endpoint?: LlmEndpoint;
@@ -31,18 +31,26 @@ export interface LlmRecoveryLedger {
   readonly applied: readonly LlmRecoveryRecord[];
   apply(request: LlmRequest): LlmRequest;
   record(entry: LlmRecoveryEntry): void;
+  fork(filter?: (entry: LlmRecoveryEntry) => boolean): LlmRecoveryLedger;
+  map(mapper: (entry: LlmRecoveryEntry) => LlmRecoveryEntry): LlmRecoveryLedger;
 }
 
-export function createRecoveryLedger(): LlmRecoveryLedger {
-  const applied: LlmRecoveryRecord[] = [];
-  const rewrites: LlmRequestRewrite[] = [];
+export function createRecoveryLedger(
+  seed: readonly LlmRecoveryEntry[] = [],
+): LlmRecoveryLedger {
+  const entries = [...seed];
+  const applied: LlmRecoveryRecord[] = entries.map(({ strategy, action }) => ({ strategy, action }));
+  const rewrites = entries.flatMap(({ rewrite }) => (rewrite === undefined ? [] : [rewrite]));
   return {
     applied,
     apply: (request) => rewrites.reduce((current, rewrite) => rewrite(current), request),
-    record: ({ strategy, action, rewrite }) => {
-      applied.push({ strategy, action });
-      if (rewrite !== undefined) rewrites.push(rewrite);
+    record: (entry) => {
+      entries.push(entry);
+      applied.push({ strategy: entry.strategy, action: entry.action });
+      if (entry.rewrite !== undefined) rewrites.push(entry.rewrite);
     },
+    fork: (filter) => createRecoveryLedger(filter === undefined ? entries : entries.filter(filter)),
+    map: (mapper) => createRecoveryLedger(entries.map(mapper)),
   };
 }
 

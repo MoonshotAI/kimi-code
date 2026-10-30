@@ -8,6 +8,7 @@ import type { ContentPart, TextPart } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm-requester/usage';
 import type { Hooks } from '#/hooks';
 import type { UserEntry } from '#human/agent/turn';
+import type { LoopRequester } from './requesterContract';
 import { LoopErrors } from './errors';
 import type {
   MachineEngine,
@@ -41,7 +42,7 @@ export interface LoopSnapshot {
   readonly paused: boolean;
   readonly hasPendingRequests: boolean;
   readonly turn?: AgentActivityTurnSnapshot;
-  readonly activeTraceId?: string;
+  readonly activeRequestId?: string;
 }
 
 export type LoopErrorCode = (typeof LoopErrors.codes)[keyof typeof LoopErrors.codes];
@@ -206,6 +207,8 @@ export interface LoopNotifyHandle {
 export interface IAgentLoopService {
   readonly _serviceBrand: undefined;
 
+  readonly requester: LoopRequester;
+
   submit(input: UserEntry, options?: LoopSubmitOptions): LoopSubmitResult;
 
   steer(promptIds: readonly string[]): Promise<void>;
@@ -225,6 +228,8 @@ export interface IAgentLoopService {
   tryAcquireQuiescence(): IDisposable | undefined;
 
   notify(note?: LoopNotify): LoopNotifyHandle;
+
+  remind(note?: LoopNotify): LoopNotifyHandle;
 
   buildAttachBundle(): MachineEngineAttachBundle;
 

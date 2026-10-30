@@ -25,6 +25,7 @@ import {
   TODO_LIST_GUIDANCE,
   withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
+import NOTIFY_USER_DESCRIPTION from '../../../src/features/notify/tools/notify-user/notify-user.md?raw';
 
 type AssertFalse<T extends false> = T;
 
@@ -201,8 +202,44 @@ describe('renderSystemPromptResult', () => {
     expect(prompt).toContain('ROLE_TEXT');
     expect(prompt).toContain('AGENTS');
     expect(prompt).toContain('/work');
+    expect(prompt).toContain('# Project information');
     expect(prompt).toContain('# Skills');
     expect(prompt).toContain('SKILLS');
+  });
+
+  it('omits the empty project information section only for read-only profiles', () => {
+    const full = renderSystemPromptResult('', {}, { skillActive: false }).text;
+    const readOnly = renderSystemPromptResult('', {}, { skillActive: false, readOnly: true }).text;
+
+    expect(full).toContain('# Project information');
+    expect(full).toContain('The applicable `AGENTS.md` instructions are:');
+    expect(readOnly).not.toContain('# Project information');
+    expect(readOnly).not.toContain('The applicable `AGENTS.md` instructions are:');
+  });
+
+  it('switches coding and change-work guidance for read-only profiles', () => {
+    const full = renderSystemPromptResult('', {}, { skillActive: false }).text;
+    const readOnly = renderSystemPromptResult('', {}, { skillActive: false, readOnly: true }).text;
+
+    expect(full).toContain('# Coding');
+    expect(full).toContain('Before you call a change done');
+    expect(readOnly).not.toContain('# Coding');
+    expect(readOnly).not.toContain('Before you call a change done');
+    expect(readOnly).not.toContain('When the standard way is blocked');
+    expect(readOnly).not.toContain('After you run tests or builds');
+    expect(readOnly).toContain('# Delivering work');
+    expect(readOnly).toContain('distinguish confirmed findings from hypotheses');
+    expect(readOnly).toContain('# Context management');
+  });
+
+  it('keeps the AGENTS.md maintenance sentence only for profiles that can change files', () => {
+    const full = renderSystemPromptResult('', { agentsMd: 'AGENTS' }, { skillActive: false }).text;
+    const readOnly = renderSystemPromptResult('', { agentsMd: 'AGENTS' }, { skillActive: false, readOnly: true }).text;
+
+    expect(full).toContain('If you change anything an `AGENTS.md` documents, update that `AGENTS.md` to match.');
+    expect(readOnly).not.toContain('If you change anything an `AGENTS.md` documents');
+    expect(readOnly).toContain('with more specific guidance.\n');
+    expect(readOnly).toContain('AGENTS');
   });
 
   it('omits the skills section when the profile disables the Skill tool', () => {
@@ -520,8 +557,9 @@ describe('systemPromptVars notify_user_guidance', () => {
   it('injects the NotifyUser guidance only when the context marks the tool active', () => {
     const active = systemPromptVars({ notifyUserActive: true }, { skillActive: false });
     expect(active['notify_user_guidance']).toBe(` ${NOTIFY_USER_GUIDANCE}`);
-    expect(NOTIFY_USER_GUIDANCE).toContain('If you are working as a subagent');
-    expect(NOTIFY_USER_GUIDANCE).toContain('do not automatically reach your parent agent');
+    expect(NOTIFY_USER_GUIDANCE).toContain('use it proactively');
+    expect(NOTIFY_USER_DESCRIPTION).toContain('When working as a subagent, describe only your own subtask');
+    expect(NOTIFY_USER_DESCRIPTION).toContain('does not automatically send a message to your parent agent');
 
     expect(systemPromptVars({ notifyUserActive: false }, { skillActive: false })['notify_user_guidance']).toBe('');
     expect(systemPromptVars({}, { skillActive: false })['notify_user_guidance']).toBe('');
@@ -548,28 +586,23 @@ describe('systemPromptVars todo_list_guidance', () => {
 });
 
 describe('systemPromptVars plan_mode_guidance', () => {
-  it('adds the plan mode guidance paragraph only when the context marks plan mode available', () => {
-    expect(systemPromptVars({ planModeAvailable: true }, { skillActive: false })['plan_mode_guidance']).toBe(
-      `${PLAN_MODE_GUIDANCE}\n\n`,
-    );
-    expect(systemPromptVars({ planModeAvailable: false }, { skillActive: false })['plan_mode_guidance']).toBe('');
-    expect(systemPromptVars({}, { skillActive: false })['plan_mode_guidance']).toBe('');
-  });
-
-  it('places the guidance as its own paragraph right after the opening of Delivering work', () => {
+  it('places the plan mode guidance after the opening of Delivering work only when plan mode is available', () => {
     const withPlan = renderSystemPromptResult('', { planModeAvailable: true }, { skillActive: false }).text;
     const withoutPlan = renderSystemPromptResult('', {}, { skillActive: false }).text;
+    const readOnly = renderSystemPromptResult('', { planModeAvailable: true }, { skillActive: false, readOnly: true }).text;
 
     expect(withPlan).toContain(
       `only if the user asked for a fix.\n\n${PLAN_MODE_GUIDANCE}\n\nBefore you call a change done`,
     );
     expect(withoutPlan).not.toContain(PLAN_MODE_GUIDANCE);
     expect(withoutPlan).toContain('only if the user asked for a fix.\n\nBefore you call a change done');
+    expect(readOnly).not.toContain(PLAN_MODE_GUIDANCE);
   });
 
-  it('tells the model that only the user turns plan mode on', () => {
+  it('tells the model that only the user turns plan mode on and to wait after planning first', () => {
     expect(PLAN_MODE_GUIDANCE).toContain('only the user can turn on');
     expect(PLAN_MODE_GUIDANCE).toContain('you cannot enter it yourself');
+    expect(PLAN_MODE_GUIDANCE).toContain('wait for their go-ahead before changing code');
     expect(PLAN_MODE_GUIDANCE).not.toContain('EnterPlanMode');
   });
 });

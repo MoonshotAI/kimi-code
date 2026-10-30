@@ -8,11 +8,12 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
-import { IAgentToolSelectSchemasService } from '#/agent/toolSelect/toolSelectSchemas';
 import { LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
+import { toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
@@ -119,7 +120,6 @@ describe('progressive tool disclosure end-to-end', () => {
     }));
     ctx.get(IAgentToolSelectService);
     ctx.get(IAgentToolSelectAnnouncementsService);
-    ctx.get(IAgentToolSelectSchemasService);
     ctx.get(IAgentToolExecutorService);
     ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
     await ctx.restorePersisted();
@@ -176,7 +176,7 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(ctx.llmCalls).toHaveLength(0);
   });
 
-  it('announces the manifest, loads by name, keeps the top-level table byte-stable, and dispatches on the next step', async () => {
+  it('announces the manifest, loads by name, keeps the top-level table byte-stable, and dispatches across model switches', async () => {
     ctx.mockNextResponse(selectToolsCall('call_select_1', [MCP_ALPHA]));
     ctx.mockNextResponse({
       type: 'function',
@@ -188,10 +188,27 @@ describe('progressive tool disclosure end-to-end', () => {
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'try the srv alpha tool' }] });
     await ctx.untilTurnEnd();
+    const initialTools = ctx.get(IAgentStateService).get(toolSelectKey).initial;
+    const runtimeTool = 'mcp__srv__runtime';
+    ctx.get(IAgentToolRegistryService).register(new StubMcpTool(runtimeTool), {
+      source: 'mcp',
+      disclosure: 'deferred',
+    });
+    await ctx.restorePersisted();
+    expect(ctx.get(IAgentStateService).get(toolSelectKey).initial).toEqual(initialTools);
+    ctx.configure({
+      provider: { type: 'kimi', model: 'no-dynamic-tools' },
+      modelCapabilities: { ...DISCLOSURE_CAPABILITIES, dynamically_loaded_tools: false },
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'after switch' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue after the model switch' }] });
+    await ctx.untilTurnEnd();
 
-    expect(ctx.llmCalls).toHaveLength(3);
+    expect(ctx.llmCalls).toHaveLength(4);
 
     const firstWire = ctx.llmCalls[0]!;
+    expect(ctx.get(IAgentStateService).get(toolSelectKey).initial?.map((tool) => tool.name))
+      .toContain(MCP_ALPHA);
     expect(toolNames(firstWire.tools)).not.toContain(MCP_ALPHA);
     expect(toolNames(firstWire.tools)).toContain('select_tools');
     const announcementText = firstWire.history
@@ -205,10 +222,8 @@ describe('progressive tool disclosure end-to-end', () => {
     const requests = wireEvents(ctx, 'llm.request').filter(
       (event) => (event.args as { kind?: string }).kind === 'loop',
     );
-    expect(requests.length).toBeGreaterThan(0);
-    for (const request of requests) {
-      expect((request.args as { toolSelect?: boolean }).toolSelect).toBe(true);
-    }
+    expect(requests.map((request) => (request.args as { toolSelect?: boolean }).toolSelect))
+      .toEqual([true, true, true, false]);
 
     const secondWire = ctx.llmCalls[1]!;
     const schemaMessages = secondWire.history.filter(
@@ -220,7 +235,23 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(alphaFromSchema.parameters).toEqual(alpha.parameters);
 
     expect(secondWire.tools).toEqual(firstWire.tools);
-    expect(wireEvents(ctx, 'llm.tools_snapshot')).toHaveLength(1);
+    expect(ctx.llmCalls[2]!.tools).toEqual(firstWire.tools);
+
+    const fourthWire = ctx.llmCalls[3]!;
+    expect(ctx.get(IAgentProfileService).data().activeToolNames).toBeUndefined();
+    expect(ctx.get(IAgentToolSelectService).defaultTools(false).map((tool) => tool.name))
+      .toContain(MCP_ALPHA);
+    expect(ctx.get(IAgentToolSelectService).defaultTools(false).find((tool) => tool.name === MCP_ALPHA)
+      ?.deferred).toBeUndefined();
+    expect(toolNames(fourthWire.tools)).toContain(MCP_ALPHA);
+    expect(toolNames(fourthWire.tools)).not.toContain(runtimeTool);
+    expect(toolNames(fourthWire.tools)).not.toContain('select_tools');
+    expect(historyText(fourthWire.history)).toContain(runtimeTool);
+    expect(historyText(fourthWire.history)).toContain('The available tools changed during this session.');
+    expect(historyText(fourthWire.history)).not.toContain('Use the select_tools tool');
+    expect(wireEvents(ctx, 'llm.tools_snapshot')).toHaveLength(2);
+    expect(ctx.get(IAgentContextMemoryService).get().some((message) =>
+      message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT)).toBe(true);
 
     expect(alpha.calls).toBe(1);
   });
@@ -449,7 +480,6 @@ describe('same-turn MCP tool replacement', () => {
     try {
       ctx.get(IAgentToolSelectService);
       ctx.get(IAgentToolSelectAnnouncementsService);
-      ctx.get(IAgentToolSelectSchemasService);
       ctx.get(IAgentToolExecutorService);
       ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
       await ctx.restorePersisted();
@@ -460,7 +490,7 @@ describe('same-turn MCP tool replacement', () => {
 
       if (deferred) ctx.mockNextResponse(selectToolsCall('select_authenticate', [authenticate]));
       ctx.mockNextResponse({ type: 'function', id: 'authenticate', name: authenticate, arguments: '{}' });
-      if (deferred) ctx.mockNextResponse(selectToolsCall('select_echo', [echo]));
+      ctx.mockNextResponse(selectToolsCall('select_echo', [echo]));
       ctx.mockNextResponse({
         type: 'function', id: 'echo', name: echo, arguments: JSON.stringify({ text: 'authorized echo' }),
       });
@@ -475,9 +505,9 @@ describe('same-turn MCP tool replacement', () => {
       expect(manager.get('srv')?.status).toBe('connected');
       expect(ctx.get(IAgentToolRegistryService).resolve(authenticate)).toBeUndefined();
       expect(ctx.get(IAgentToolRegistryService).resolve(echo)).toBeDefined();
-      expect(ctx.llmCalls).toHaveLength(deferred ? 5 : 3);
+      expect(ctx.llmCalls).toHaveLength(deferred ? 5 : 4);
       const afterAuthentication = ctx.llmCalls[deferred ? 2 : 1]!;
-      const beforeEcho = ctx.llmCalls[deferred ? 3 : 1]!;
+      const beforeEcho = ctx.llmCalls[deferred ? 3 : 2]!;
       const context = ctx.get(IAgentContextMemoryService).get();
       expect(context.filter((message) => message.origin?.kind === 'user')).toHaveLength(1);
       expect(context.some((message) => message.role === 'tool' &&
@@ -485,28 +515,20 @@ describe('same-turn MCP tool replacement', () => {
       const announcements = context.filter((message) =>
         message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT);
       const catalog = historyText(afterAuthentication.history);
-      if (deferred) {
-        expect([...catalog.matchAll(/<tools_added>\n([\s\S]*?)\n<\/tools_added>/g)]
-          .map((match) => match[1])).toEqual([authenticate, echo]);
-        expect([...catalog.matchAll(/<tools_removed>\n([\s\S]*?)\n<\/tools_removed>/g)]
-          .map((match) => match[1])).toEqual([authenticate]);
-        expect(announcements).toHaveLength(2);
-        expect(afterAuthentication.history.flatMap((message) => toolsOf(message) ?? [])
-          .some((tool) => tool.name === echo)).toBe(false);
-        const schema = beforeEcho.history.flatMap((message) => toolsOf(message) ?? [])
-          .find((tool) => tool.name === echo);
-        expect(schema).toBeDefined();
-        expect(schema!.parameters).toEqual(manager.resolved('srv')?.tools[0]?.parameters);
-        expect(toolNames(beforeEcho.tools)).not.toContain(echo);
-        expect(ctx.llmCalls.every((call) => JSON.stringify(call.tools) ===
-          JSON.stringify(ctx.llmCalls[0]!.tools))).toBe(true);
-      } else {
-        expect(announcements).toHaveLength(1);
-        expect(catalog).not.toContain('<tools_added>\n');
-        expect(catalog).not.toContain('<tools_removed>\n');
-        expect(toolNames(afterAuthentication.tools)).toContain(echo);
-        expect(toolNames(afterAuthentication.tools)).not.toContain(authenticate);
-      }
+      expect([...catalog.matchAll(/<tools_added>\n([\s\S]*?)\n<\/tools_added>/g)]
+        .map((match) => match[1])).toEqual(deferred ? [authenticate, echo] : [echo]);
+      expect([...catalog.matchAll(/<tools_removed>\n([\s\S]*?)\n<\/tools_removed>/g)]
+        .map((match) => match[1])).toEqual([authenticate]);
+      expect(announcements).toHaveLength(2);
+      expect(afterAuthentication.history.flatMap((message) => toolsOf(message) ?? [])
+        .some((tool) => tool.name === echo)).toBe(false);
+      const schema = beforeEcho.history.flatMap((message) => toolsOf(message) ?? [])
+        .find((tool) => tool.name === echo);
+      expect(schema).toBeDefined();
+      expect(schema!.parameters).toEqual(manager.resolved('srv')?.tools[0]?.parameters);
+      expect(toolNames(beforeEcho.tools)).not.toContain(echo);
+      expect(ctx.llmCalls.every((call) => JSON.stringify(call.tools) ===
+        JSON.stringify(ctx.llmCalls[0]!.tools))).toBe(true);
     } finally {
       authorized.resolve();
       await ctx.dispose();

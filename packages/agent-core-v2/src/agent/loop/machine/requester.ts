@@ -1,8 +1,8 @@
 import type {
   AgentLLMRequestFinish,
   AgentLLMRequestSource,
-  IAgentLLMRequesterService,
-} from '#/agent/llmRequester/llmRequester';
+  LoopRequester,
+} from '../requesterContract';
 import { unwrapErrorCause } from '#/errors';
 import { llmMessageFromError } from '#/llm-adapter/contract/errors';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
@@ -47,7 +47,7 @@ function toRemoteErrorMessage(error: unknown, signal: AbortSignal): LlmRemoteErr
 }
 
 export function createMachineRequester(
-  service: IAgentLLMRequesterService,
+  service: LoopRequester,
   options?: MachineRequesterOptions,
 ): MachineRequester {
   let lastFinish: AgentLLMRequestFinish | undefined;

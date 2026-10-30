@@ -209,7 +209,7 @@ export class AgentAgentsMdReminderService
           turn_id: ctx.turnId,
           tool_name: ctx.toolCall.name,
           reminded_count: untracked.length,
-          trace_id: ctx.trace?.traceId,
+          request_id: ctx.trace?.requestId,
         };
         this.telemetry.track2('agents_md_reminder_shown', properties);
         for (const path of untracked) this.telemetryFired.add(path);

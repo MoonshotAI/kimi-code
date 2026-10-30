@@ -93,7 +93,7 @@ interface HarnessOptions {
 
 interface FakeHost {
   turnStarted(user: boolean): void;
-  turnEnded(traceId?: string): void;
+  turnEnded(requestId?: string): void;
   toolCallStarted(toolCallId: string, toolName: string): void;
   toolCallEnded(toolCallId: string): void;
   subagentSpawned(fact: Omit<Extract<SessionFact, { kind: 'subagent-spawned' }>, 'kind'>): void;
@@ -202,8 +202,8 @@ function createHarness(options: HarnessOptions = {}): Harness {
       offer = undefined;
       harness.mount.observe({ kind: 'turn-started', origin: user ? USER_ORIGIN : SYSTEM_ORIGIN });
     },
-    turnEnded: (traceId) => {
-      harness.mount.observe({ kind: 'turn-ended', traceId });
+    turnEnded: (requestId) => {
+      harness.mount.observe({ kind: 'turn-ended', requestId });
       if (options.manualEvaluation === true) return;
       if (idleTimer !== undefined) scheduler.clearTimer(idleTimer);
       idleTimer = scheduler.setTimer(() => {
