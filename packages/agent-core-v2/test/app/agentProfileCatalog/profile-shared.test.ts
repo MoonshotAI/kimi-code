@@ -200,6 +200,9 @@ describe('renderSystemPromptResult', () => {
     ).text;
 
     expect(prompt).toContain('ROLE_TEXT');
+    expect(prompt).toContain(
+      'Do not launch subagents with Agent unless the user, AGENTS.md, or a skill asks for them',
+    );
     expect(prompt).toContain('AGENTS');
     expect(prompt).toContain('/work');
     expect(prompt).toContain('# Project information');
