@@ -520,6 +520,34 @@ describe('WorkspaceFsService.gitStatus', () => {
     ]);
   });
 
+  it('resolves status filters from the selected root', async () => {
+    const calls: Array<{ options: { pathFilter?: ReadonlySet<string> } | undefined }> = [];
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async (_cwd, options) => {
+        calls.push({ options });
+        return { branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
+      },
+      diff: async () => ({ path: '', diff: '', truncated: false }),
+      pullRequest: async () => null,
+      findWorkTree: async () => null,
+    };
+    const fs = makeSession(
+      { 'sub/link/file.ts': '', '/outside/file.ts': '' },
+      emptyHandler,
+      [],
+      git,
+      ['/repo/link'],
+      undefined,
+      { '/repo/link': '/outside' },
+    );
+
+    await fs.gitStatus({ root: 'sub', paths: ['link/file.ts'] });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.options?.pathFilter).toEqual(new Set(['link/file.ts']));
+  });
+
   it('rejects roots outside the workspace and roots that are files', async () => {
     const fs = makeSession({ 'src/a.ts': '' }, emptyHandler);
 
@@ -686,6 +714,26 @@ describe('WorkspaceFsService.diff', () => {
 
     expect(calls).toEqual([{ cwd: '/extra', rel: 'src/a.ts', abs: '/extra/src/a.ts' }]);
     expect(result.path).toBe('src/a.ts');
+  });
+
+  it('preserves rootless diffs for allowed sibling directories', async () => {
+    const calls: Array<{ cwd: string; rel: string; abs: string }> = [];
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async () => ({ branch: '', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null }),
+      diff: async (cwd, rel, abs) => {
+        calls.push({ cwd, rel, abs });
+        return { path: rel, diff: '-old\n+new\n', truncated: false };
+      },
+      pullRequest: async () => null,
+      findWorkTree: async () => null,
+    };
+    const fs = makeSession({ '/extra/src/a.ts': 'content' }, emptyHandler, [], git, [], undefined, {}, ['/extra']);
+
+    const result = await fs.diff({ path: '/extra/src/a.ts' });
+
+    expect(calls).toEqual([{ cwd: WORK_DIR, rel: '../extra/src/a.ts', abs: '/extra/src/a.ts' }]);
+    expect(result.diff).toContain('+new');
   });
 
   it('rejects paths that escape the workspace', async () => {

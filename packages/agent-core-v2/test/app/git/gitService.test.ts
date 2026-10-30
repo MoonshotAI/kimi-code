@@ -144,6 +144,21 @@ describe('GitService', () => {
       expect(result.deletions).toBe(0);
     });
 
+    it('preserves whitespace in the selected cwd prefix', async () => {
+      mkdirSync(join(repo, ' lead'), { recursive: true });
+      writeFileSync(join(repo, ' lead/file.txt'), 'one\n');
+      commitAll('init');
+      writeFileSync(join(repo, ' lead/file.txt'), 'one\ntwo\n');
+
+      const result = await service.status(join(repo, ' lead'), {
+        scopeToCwd: true,
+        pathFilter: new Set(['file.txt']),
+        includePullRequest: false,
+      });
+
+      expect(result.entries).toEqual({ 'file.txt': 'modified' });
+    });
+
     it('reports a non-ASCII path without quoting', async () => {
       const name = 'output/2026-08-31-bilibili-BV175t86pEre-26.8.31-总能等到回踩的.md';
       mkdirSync(join(repo, 'output'), { recursive: true });
@@ -168,6 +183,19 @@ describe('GitService', () => {
       const notRepo = mkdtempSync(join(tmpdir(), 'not-repo-'));
       try {
         await expect(service.status(notRepo)).rejects.toMatchObject({
+          code: ErrorCodes.FS_GIT_UNAVAILABLE,
+        });
+      } finally {
+        rmSync(notRepo, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('pullRequest', () => {
+    it('throws FS_GIT_UNAVAILABLE when not a repo', async () => {
+      const notRepo = mkdtempSync(join(tmpdir(), 'not-repo-'));
+      try {
+        await expect(service.pullRequest(notRepo)).rejects.toMatchObject({
           code: ErrorCodes.FS_GIT_UNAVAILABLE,
         });
       } finally {

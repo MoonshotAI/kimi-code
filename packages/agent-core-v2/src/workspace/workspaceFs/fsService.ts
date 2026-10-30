@@ -1078,15 +1078,23 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   async gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse> {
+    const cwd = await this.resolveGitRoot(req.root);
     let filter: Set<string> | undefined;
     if (req.paths !== undefined && req.paths.length > 0) {
       filter = new Set();
       for (const p of req.paths) {
-        filter.add(this.toRel(await this.resolveWithin(p)));
+        const inputPath = req.root !== undefined && !this.path.isAbsolute(p) ? this.path.join(cwd, p) : p;
+        const abs = await this.resolveWithin(inputPath);
+        const rel = this.path.relative(cwd, abs).split(this.path.separator).join('/');
+        if (req.root !== undefined && (rel === '..' || rel.startsWith('../') || this.path.isAbsolute(rel))) {
+          throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${p}" escapes git root`, {
+            details: { cwd, path: p },
+          });
+        }
+        filter.add(rel);
       }
     }
 
-    const cwd = await this.resolveGitRoot(req.root);
     return this.git.statusAt(cwd, {
       pathFilter: filter,
       scopeToCwd: req.root !== undefined,
@@ -1134,7 +1142,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const inputPath = req.root !== undefined && !this.path.isAbsolute(req.path) ? this.path.join(cwd, req.path) : req.path;
     const abs = await this.resolveWithin(inputPath);
     const rel = this.path.relative(cwd, abs).split(this.path.separator).join('/');
-    if (rel === '..' || rel.startsWith('../') || this.path.isAbsolute(rel)) {
+    if (req.root !== undefined && (rel === '..' || rel.startsWith('../') || this.path.isAbsolute(rel))) {
       throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${req.path}" escapes git root`, {
         details: { cwd, path: req.path },
       });

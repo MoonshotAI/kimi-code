@@ -41,7 +41,7 @@ export class GitService implements IGitService {
       if (prefix.exitCode !== 0) {
         throw this.gitUnavailable(cwd, prefix.stderr.trim() || `git rev-parse exit ${prefix.exitCode}`);
       }
-      pathPrefix = prefix.stdout.trim();
+      pathPrefix = prefix.stdout.replace(/\r?\n$/, '');
     }
     const statusArgs = ['status', '--porcelain=v1', '--branch', '-z'];
     if (options.scopeToCwd === true) statusArgs.push('--', '.');
@@ -73,7 +73,11 @@ export class GitService implements IGitService {
     return result;
   }
 
-  pullRequest(cwd: string): Promise<FsPullRequest | null> {
+  async pullRequest(cwd: string): Promise<FsPullRequest | null> {
+    const inside = await this.runCommand('git', ['rev-parse', '--is-inside-work-tree'], cwd);
+    if (inside.exitCode !== 0 || inside.stdout.trim() !== 'true') {
+      throw this.gitUnavailable(cwd, inside.stderr.trim() || `git rev-parse exit ${inside.exitCode}`);
+    }
     return this.readPullRequest(cwd);
   }
 
