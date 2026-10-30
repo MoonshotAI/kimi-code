@@ -15,6 +15,8 @@ import { ReadTool } from '#/agent/tools/os/read/readTool';
 import { READ_SECTION } from '#/agent/tools/os/read/configSection';
 import type { IConfigService } from '#/app/config/config';
 import { noopTelemetryService, type ITelemetryService } from '#/app/telemetry/telemetry';
+import type { IEventBus } from '#/app/event/eventBus';
+import type { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { estimateTokens } from '#/llm-adapter/contract/tokens';
 import { stubToolResultTruncationService } from '../../../../agent/toolResultTruncation/stubs';
@@ -95,6 +97,8 @@ function createReadTool(
   toolRegistry: IAgentToolRegistryService = { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
   config: IConfigService = stubConfigService(),
   telemetry?: ITelemetryService,
+  eventBus?: IEventBus,
+  agent?: IAgentScopeContext,
 ): ReadTool {
   const environment = Object.assign(
     new FakeEnvironment(
@@ -118,9 +122,41 @@ function createReadTool(
     undefined,
     undefined,
     undefined,
-    undefined,
+    agent,
     telemetry,
+    eventBus,
   );
+}
+
+function telemetrySpy() {
+  const events: { event: string; properties: unknown }[] = [];
+  const telemetry: ITelemetryService = {
+    ...noopTelemetryService,
+    track2: (event, properties) => {
+      events.push({ event, properties });
+    },
+  };
+  return { events, telemetry };
+}
+
+function compactionBus() {
+  const handlers: ((event: { agentId: string }) => void)[] = [];
+  const bus = {
+    subscribe: (_type: unknown, handler: (event: { agentId: string }) => void) => {
+      handlers.push(handler);
+      return { dispose: () => {} };
+    },
+  } as unknown as IEventBus;
+  return {
+    bus,
+    compact: (agentId: string) => {
+      for (const handler of handlers) handler({ agentId });
+    },
+  };
+}
+
+function nextReadArgs(result: ExecutableToolResult): ReadInput {
+  return ReadInputSchema.parse(JSON.parse(/Next Read: (\{[^\n]*\})/.exec(result.note ?? '')![1]!));
 }
 
 function createSpiedFs(content: string) {
@@ -506,20 +542,15 @@ describe('ReadTool', () => {
     expect(result).toMatchObject({ output: '1\talpha\n2\tbeta' });
   });
 
-  it('reports each Read to telemetry with paging, re-read, and change signals', async () => {
+  it('reports each Read to telemetry with paging, re-read, change, and compaction signals', async () => {
     const path = '/tmp/notes.md';
     const lines = Array.from({ length: 40 }, (_, index) => `line ${String(index + 1)} ${'x'.repeat(40)}`);
     const files: Record<string, FakeFile> = {
       [path]: { bytes: Buffer.from(lines.join('\n')) },
       '/tmp/small.ts': { bytes: Buffer.from('export {};\n') },
     };
-    const events: { event: string; properties: unknown }[] = [];
-    const telemetry: ITelemetryService = {
-      ...noopTelemetryService,
-      track2: (event, properties) => {
-        events.push({ event, properties });
-      },
-    };
+    const { events, telemetry } = telemetrySpy();
+    const { bus, compact } = compactionBus();
     const tool = createReadTool(
       createSpiedMapFs(files).fs,
       createTestEnv(),
@@ -531,18 +562,27 @@ describe('ReadTool', () => {
       undefined,
       undefined,
       telemetry,
+      bus,
+      { agentId: 'main' } as IAgentScopeContext,
     );
 
     const first = await execute(tool, { path, max_chars: 800 });
-    const next = ReadInputSchema.parse(JSON.parse(/Next Read: (\{[^\n]*\})/.exec(first.note ?? '')![1]!));
+    const next = nextReadArgs(first);
     await execute(tool, next);
     await execute(tool, next);
+    await execute(tool, { path, n_lines: 5 });
+    await execute(tool, { path, n_lines: 5, max_chars: 2000 });
     files[path] = { bytes: Buffer.from(lines.slice(0, 30).join('\n')) };
-    await execute(tool, next);
+    await execute(tool, { path, n_lines: 5 });
+    compact('subagent');
+    await execute(tool, { path, n_lines: 5 });
+    compact('main');
+    await execute(tool, { path, n_lines: 5 });
     await execute(tool, { path: '/tmp/small.ts' });
     await execute(tool, { path: '/tmp/missing.md' });
 
-    expect(events.map((entry) => entry.event)).toEqual(Array.from({ length: 5 }, () => 'read_file'));
+    expect(events.map((entry) => entry.event)).toEqual(Array.from({ length: 9 }, () => 'read_file'));
+    const second = events[1]?.properties as { returned_lines: number };
     expect(events[0]?.properties).toMatchObject({
       turn_id: 0,
       ext: 'md',
@@ -557,12 +597,17 @@ describe('ReadTool', () => {
       ranged: true,
       reread: true,
       reread_unchanged: false,
+      repeated_lines: 0,
       changed_since_last_read: false,
       continues_previous_page: true,
     });
-    expect(events[2]?.properties).toMatchObject({ reread_unchanged: true, changed_since_last_read: false });
-    expect(events[3]?.properties).toMatchObject({ reread_unchanged: false, changed_since_last_read: true });
-    expect(events[4]?.properties).toMatchObject({
+    expect(events[2]?.properties).toMatchObject({ reread_unchanged: false, repeated_lines: second.returned_lines });
+    expect(events[3]?.properties).toMatchObject({ complete: true, reread_unchanged: false, repeated_lines: 5 });
+    expect(events[4]?.properties).toMatchObject({ reread_unchanged: true, repeated_lines: 5 });
+    expect(events[5]?.properties).toMatchObject({ changed_since_last_read: true, reread_unchanged: false, repeated_lines: 0 });
+    expect(events[6]?.properties).toMatchObject({ reread: true, reread_unchanged: true, repeated_lines: 5 });
+    expect(events[7]?.properties).toMatchObject({ reread: false, reread_unchanged: false, repeated_lines: 0 });
+    expect(events[8]?.properties).toMatchObject({
       ext: 'ts',
       whole_file: true,
       complete: true,
@@ -573,6 +618,38 @@ describe('ReadTool', () => {
       token_limited: false,
       reread: false,
     });
+  });
+
+  it('tracks the full continuation cursor and never counts a column continuation as a whole-file read', async () => {
+    const files: Record<string, FakeFile> = {
+      '/tmp/line.txt': { bytes: Buffer.from('y'.repeat(3000)) },
+      '/tmp/tail.txt': { bytes: Buffer.from(Array.from({ length: 50 }, (_, index) => `row ${String(index + 1)} ${'z'.repeat(30)}`).join('\n')) },
+    };
+    const { events, telemetry } = telemetrySpy();
+    const tool = createReadTool(
+      createSpiedMapFs(files).fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      telemetry,
+    );
+
+    let page = await execute(tool, { path: '/tmp/line.txt', max_chars: 1000 });
+    await execute(tool, { path: '/tmp/line.txt', max_chars: 1000 });
+    while (page.truncated === true) page = await execute(tool, nextReadArgs(page));
+    const tail = await execute(tool, { path: '/tmp/tail.txt', line_offset: -40, max_chars: 600 });
+    await execute(tool, nextReadArgs(tail));
+
+    const properties = events.map((entry) => entry.properties as { whole_file: boolean; continues_previous_page: boolean });
+    expect(properties[1]?.continues_previous_page).toBe(false);
+    expect(properties.slice(2, -2).every((entry) => entry.continues_previous_page)).toBe(true);
+    expect(properties.at(-3)?.whole_file).toBe(false);
+    expect(properties.at(-1)?.continues_previous_page).toBe(true);
   });
 
   it('omits the status block when the whole file is returned with nothing to report', async () => {
@@ -1413,6 +1490,27 @@ describe('ReadTool', () => {
     expect(output.split('\n').every((entry) => entry.replace(/^\d+\t/, '') === line)).toBe(true);
     expect(result.truncated).toBe(true);
     expect(result.note).toContain('Next Read:');
+  });
+
+  it('fragments a single long non-ASCII line to stay within the estimated token limit', async () => {
+    const line = '文'.repeat(30_000);
+    const result = await execute(toolWithContent(line), { path: '/tmp/long.md' });
+    const output = toolContentString(result);
+
+    expect(result.isError).not.toBe(true);
+    expect(estimateTokens(`${output}\n${result.note ?? ''}`)).toBeLessThanOrEqual(25_000);
+    expect(output.length).toBeLessThan(line.length);
+    expect(result.note).toContain('Line 1 fragment');
+    expect(nextReadArgs(result)).toMatchObject({ line_offset: 1, max_chars: 100_000 });
+    expect(nextReadArgs(result).column_offset).toBeGreaterThan(0);
+  });
+
+  it('returns the bounded forward recovery when a tail read of a long non-ASCII line exceeds the token limit', async () => {
+    const result = await execute(toolWithContent('文'.repeat(60_000)), { path: '/tmp/long.md', line_offset: -1 });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toBe('No complete line fits. Continue with the forward Next Read.');
+    expect(nextReadArgs(result)).toMatchObject({ line_offset: 1, n_lines: 1 });
   });
 
   it('shortens a page of non-ASCII text to the estimated token limit and keeps the budget for Next Read', async () => {

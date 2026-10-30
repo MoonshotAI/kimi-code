@@ -22,7 +22,10 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
-import { estimateTokens } from '#/llm-adapter/contract/tokens';
+import { countTokenChars, tokensForCharCounts } from '#/llm-adapter/contract/tokens';
+import { Disposable } from '#/_base/di/lifecycle';
+import { IEventBus } from '#/app/event/eventBus';
+import { CompactionCompleted } from '#/agent/fullCompaction/compactionOps';
 import type { HostFileStat } from '#/os/interface/hostFileSystem';
 import {
   ToolAccesses,
@@ -73,8 +76,7 @@ interface ReadTailEntry extends ReadLineEntry {
 interface ReadRequest {
   readonly args: ReadInput;
   readonly maxChars: number;
-  readonly nextMaxChars: number;
-  readonly tokenLimit?: number;
+  readonly tokenLimit: number;
   readonly maxCharsLimit: number;
   readonly detectedEncoding?: UtfTextEncoding;
   readonly lossyDecoding: boolean;
@@ -107,6 +109,17 @@ function splitsSurrogatePair(text: string, offset: number): boolean {
   // oxlint-disable-next-line unicorn/prefer-code-point -- raw UTF-16 halves are the point here
   const next = text.charCodeAt(offset);
   return previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
+}
+
+function cutForTokens(text: string, end: number, overflow: number): number {
+  let index = end;
+  let removed = 0;
+  while (index > 0 && removed < overflow) {
+    const code = text.codePointAt(index - 1)!;
+    index -= code >= 0xdc00 && code <= 0xdfff && index > 1 ? 2 : 1;
+    removed += code <= 127 ? 0.25 : 1;
+  }
+  return index;
 }
 
 function updateLineEndingFlags(flags: LineEndingFlags, text: string): void {
@@ -183,7 +196,7 @@ function notUtf8DecodableFileOutput(path: string): string {
   );
 }
 
-export class ReadTool implements IReadTool {
+export class ReadTool extends Disposable implements IReadTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'Read' as const;
   readonly description = readDescriptionTemplate;
@@ -204,7 +217,15 @@ export class ReadTool implements IReadTool {
     @ISessionContext private readonly session?: ISessionContext,
     @IAgentScopeContext private readonly agent?: IAgentScopeContext,
     @ITelemetryService private readonly telemetry?: ITelemetryService,
-  ) {}
+    @IEventBus eventBus?: IEventBus,
+  ) {
+    super();
+    if (eventBus !== undefined) {
+      this._register(eventBus.subscribe(CompactionCompleted, (event) => {
+        if (event.agentId === this.agent?.agentId) this.activity.reset();
+      }));
+    }
+  }
 
   private readonly activity = new ReadActivity();
 
@@ -263,7 +284,8 @@ export class ReadTool implements IReadTool {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
             }
             const eventLog = this.resultTruncation.isWireJournalPath(path);
-            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog, ctx);
+            const fileKey = `${lease.environment.identity.environmentId}:${path}`;
+            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog, ctx, fileKey);
             return { ...result, spillExempt: true };
           } finally {
             lease.dispose();
@@ -302,7 +324,7 @@ export class ReadTool implements IReadTool {
         if (planFile && (await this.planService?.resolveFile(path, 'read'))?.path !== path) {
           return { isError: true, output: 'The active plan changed before execution. Retry the tool call.' };
         }
-        return { ...await this.execution(environmentFileSource(target.fs, path), args, false, ctx), spillExempt: true };
+        return { ...await this.execution(environmentFileSource(target.fs, path), args, false, ctx, `host:${path}`), spillExempt: true };
       },
     };
   }
@@ -316,7 +338,7 @@ export class ReadTool implements IReadTool {
       approvalRule: literalRulePattern(this.name, args.path),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.path),
       execute: async (ctx) => ({
-        ...withAttachmentLocation(await this.execution(source, args, false, ctx), source),
+        ...withAttachmentLocation(await this.execution(source, args, false, ctx, args.path), source),
         spillExempt: true,
       }),
     };
@@ -327,6 +349,7 @@ export class ReadTool implements IReadTool {
     args: ReadInput,
     eventLog: boolean,
     ctx: ExecutableToolContext,
+    fileKey: string,
   ): Promise<ExecutableToolResult> {
     try {
       let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
@@ -402,25 +425,23 @@ export class ReadTool implements IReadTool {
       }
 
       const limits = this.limits();
-      const maxChars = Math.min(args.max_chars ?? limits.defaultMaxChars, limits.maxChars);
       const request: ReadRequest = {
         args,
-        maxChars,
-        nextMaxChars: maxChars,
+        maxChars: Math.min(args.max_chars ?? limits.defaultMaxChars, limits.maxChars),
+        tokenLimit: Math.ceil(limits.maxChars / 4),
         maxCharsLimit: limits.maxChars,
         detectedEncoding,
         lossyDecoding,
         eventLog,
       };
-      const tokenLimit = Math.floor(limits.maxChars / 4);
       const lineOffset = args.line_offset ?? 1;
       if (lineOffset >= 0) {
-        const result = await this.fitTokenLimit((page) => this.readForward(readLines(), page), request, tokenLimit);
-        this.trackRead(ctx, source, args, stat, result);
+        const result = await this.readForward(readLines(), request);
+        this.trackRead(ctx, fileKey, source, args, stat, result);
         return result;
       }
       const rereadsFile = detectedEncoding === undefined && (args.n_lines ?? Infinity) < -lineOffset;
-      const result = await this.fitTokenLimit((page) => this.readTail(readLines, page), request, tokenLimit);
+      const result = await this.readTail(readLines, request);
       if (!result.isError && rereadsFile) {
         const currentStat = await source.stat();
         if (!currentStat.isFile || currentStat.size !== stat.size ||
@@ -428,7 +449,7 @@ export class ReadTool implements IReadTool {
           return { isError: true, output: 'File changed while reading its tail. Retry Read with the updated file.' };
         }
       }
-      this.trackRead(ctx, source, args, stat, result);
+      this.trackRead(ctx, fileKey, source, args, stat, result);
       return result;
     } catch (error) {
       if (isTextDecodeError(error)) {
@@ -443,6 +464,7 @@ export class ReadTool implements IReadTool {
 
   private trackRead(
     ctx: ExecutableToolContext,
+    fileKey: string,
     source: FileReadSource,
     args: ReadInput,
     stat: HostFileStat,
@@ -453,33 +475,13 @@ export class ReadTool implements IReadTool {
     this.telemetry.track2('read_file', this.activity.observe({
       turnId: ctx.turnId,
       toolCallId: ctx.toolCallId,
-      file: isDaemonFileUrl(args.path) ? args.path : source.name,
+      file: fileKey,
+      name: source.name,
       args,
       stat,
       text: readResultText(result),
       facts,
     }));
-  }
-
-  private async fitTokenLimit(
-    read: (request: ReadRequest) => Promise<ExecutableToolResult>,
-    request: ReadRequest,
-    tokenLimit: number,
-  ): Promise<ExecutableToolResult> {
-    let page = request;
-    let result = await read(page);
-    for (let attempt = 0; attempt < 6 && result.isError !== true; attempt += 1) {
-      const tokens = estimateTokens(readResultText(result));
-      if (tokens <= tokenLimit) return result;
-      const maxChars = Math.min(page.maxChars - 1, Math.floor((page.maxChars * tokenLimit) / tokens));
-      if (maxChars <= 0) return result;
-      const shorterPage = { ...page, maxChars, tokenLimit };
-      const shorter = await read(shorterPage);
-      if (shorter.isError === true) return result;
-      page = shorterPage;
-      result = shorter;
-    }
-    return result;
   }
 
   private async readForward(
@@ -555,14 +557,18 @@ export class ReadTool implements IReadTool {
   }
 
   private finishPage(page: ReadPage): ExecutableToolResult {
-    const { args, maxChars, nextMaxChars, tokenLimit, maxCharsLimit, eventLog, detectedEncoding, lossyDecoding } = page.request;
+    const { args, maxChars, tokenLimit, maxCharsLimit, eventLog, detectedEncoding, lossyDecoding } = page.request;
     let first = 0;
     let end = page.renderedLines.length;
     let contentChars = page.renderedLines.reduce((sum, line) => sum + line.length + 1, -1);
+    const lineCounts = page.renderedLines.map(countTokenChars);
+    let contentAscii = lineCounts.reduce((sum, counts) => sum + counts.ascii, 0);
+    let contentNonAscii = lineCounts.reduce((sum, counts) => sum + counts.nonAscii, 0);
     const firstColumn = page.fromTail ? 0 : args.column_offset ?? 0;
     const firstPrefix = `${String(page.startLine)}\t`;
     const firstText = page.renderedLines[0]?.slice(firstPrefix.length) ?? '';
     let fragmentEnd: number | undefined;
+    let tokenLimited = false;
 
     while (true) {
       const count = end - first;
@@ -589,17 +595,19 @@ export class ReadTool implements IReadTool {
       if (args.max_chars !== undefined && args.max_chars > maxCharsLimit) {
         notices.push(`Requested max_chars=${String(args.max_chars)} was capped at the configured maximum ${String(maxCharsLimit)}.`);
       }
+      let next: { readonly line: number; readonly column: number } | undefined;
       if (!complete && (count > 0 || page.fromTail)) {
         const nextStart = page.fromTail ? page.rangeStart : lineIncomplete ? startLine : endLine + 1;
         const nextEnd = page.fromTail && count > 0 ? startLine - 1 : page.rangeEnd;
-        const next = {
+        const nextColumn = fragmentEnd !== undefined ? firstColumn + fragmentEnd : undefined;
+        next = { line: nextStart, column: nextColumn ?? 0 };
+        notices.push(`Next Read: ${JSON.stringify({
           path: args.path,
           line_offset: nextStart,
-          column_offset: fragmentEnd !== undefined ? firstColumn + fragmentEnd : undefined,
+          column_offset: nextColumn,
           n_lines: page.fromTail || args.n_lines !== undefined ? nextEnd - nextStart + 1 : undefined,
-          max_chars: nextMaxChars,
-        };
-        notices.push(`Next Read: ${JSON.stringify(next)}`);
+          max_chars: maxChars,
+        })}`);
         if (count > 0) {
           notices.push('If the answer may be further on, continue with Next Read or find the section with Grep instead of answering from this page alone.');
         }
@@ -616,7 +624,7 @@ export class ReadTool implements IReadTool {
       if (lossyDecoding) {
         notices.push('Lossy UTF-16 decoding: malformed sequences were replaced with U+FFFD. The decoded text may differ from the original file.');
       }
-      const wholeFile = complete && count > 0 && startLine === 1 && endLine === page.totalLines;
+      const wholeFile = complete && count > 0 && firstColumn === 0 && startLine === 1 && endLine === page.totalLines;
       const note = wholeFile && notices.length === 0
         ? undefined
         : `<system>${[...summary, ...notices].join(' ')}</system>`;
@@ -626,7 +634,12 @@ export class ReadTool implements IReadTool {
           0,
         )
         : contentChars + (note === undefined ? 0 : 1 + note.length);
-      if (renderedChars <= maxChars && (complete || count > 0)) {
+      const noteCounts = note === undefined ? undefined : countTokenChars(note);
+      const overTokens = count === 0 ? 0 : tokensForCharCounts({
+        ascii: contentAscii + count - 1 + (noteCounts === undefined ? 0 : 1 + noteCounts.ascii),
+        nonAscii: contentNonAscii + (noteCounts?.nonAscii ?? 0),
+      }) - tokenLimit;
+      if (renderedChars <= maxChars && overTokens <= 0 && (complete || count > 0)) {
         const result: ExecutableToolResult = {
           output: fragmentEnd !== undefined
             ? firstPrefix + firstText.slice(0, fragmentEnd)
@@ -634,24 +647,30 @@ export class ReadTool implements IReadTool {
           note,
           truncated: complete ? undefined : true,
         };
+        const fullStart = firstColumn > 0 ? startLine + 1 : startLine;
         readPageFacts.set(result, {
           totalLines: page.totalLines,
           returnedLines: count,
           wholeFile,
           complete,
-          tokenLimited: tokenLimit !== undefined,
-          nextLine: complete || page.fromTail ? undefined : lineIncomplete ? startLine : endLine + 1,
+          tokenLimited,
+          lines: fragmentEnd === undefined && count > 0 && fullStart <= endLine ? { start: fullStart, end: endLine } : undefined,
+          next,
         });
         return result;
       }
+      const tokensOnly = renderedChars <= maxChars && overTokens > 0;
+      if (tokensOnly) tokenLimited = true;
       if (count === 1 && !page.fromTail) {
         const previousEnd = fragmentEnd ?? firstText.length;
         fragmentEnd = Math.min(previousEnd - 1, previousEnd - (renderedChars - maxChars));
+        if (overTokens > 0) fragmentEnd = Math.min(fragmentEnd, cutForTokens(firstText, previousEnd, overTokens));
         if (splitsSurrogatePair(firstText, fragmentEnd)) fragmentEnd -= 1;
         if (fragmentEnd <= 0) {
           return { isError: true, output: `max_chars=${String(maxChars)} is too small for file text and the Read status. Increase max_chars.` };
         }
         contentChars = firstPrefix.length + fragmentEnd;
+        ({ ascii: contentAscii, nonAscii: contentNonAscii } = countTokenChars(firstPrefix + firstText.slice(0, fragmentEnd)));
         continue;
       }
       if (count === 0) {
@@ -670,8 +689,15 @@ export class ReadTool implements IReadTool {
         }
         return { isError: true, output: `max_chars=${String(maxChars)} is too small for the Read status. Increase max_chars.` };
       }
-      const dropped = page.fromTail ? first++ : --end;
-      contentChars -= page.renderedLines[dropped]!.length + 1;
+      let remainingTokens = tokensOnly ? overTokens : 0;
+      do {
+        const dropped = page.fromTail ? first++ : --end;
+        const counts = lineCounts[dropped]!;
+        contentChars -= page.renderedLines[dropped]!.length + 1;
+        contentAscii -= counts.ascii;
+        contentNonAscii -= counts.nonAscii;
+        remainingTokens -= counts.nonAscii + (counts.ascii + 1) / 4;
+      } while (remainingTokens > 0 && end - first > (page.fromTail ? 0 : 1));
     }
   }
 

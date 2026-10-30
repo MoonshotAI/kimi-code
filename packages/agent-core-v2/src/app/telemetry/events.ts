@@ -134,6 +134,7 @@ export interface ReadFileEvent {
   requested_max_chars?: number;
   reread: boolean;
   reread_unchanged: boolean;
+  repeated_lines: number;
   changed_since_last_read: boolean;
   continues_previous_page: boolean;
 }
@@ -803,12 +804,14 @@ export const telemetryEventDefinitions = {
       from_tail: 'Whether the call read from the end of the file with a negative line_offset',
       token_limited: 'Whether the page was shortened to stay within the estimated token limit',
       requested_max_chars: 'max_chars requested by the call; absent when the call omitted it',
-      reread: 'Whether this agent read the same file earlier',
+      reread: 'Whether this agent read the same file earlier since its last compaction',
       reread_unchanged:
-        'Whether this agent read the same file and range earlier and the file has not changed on disk since',
+        'Whether this agent already read the same requested range of the file in full since its last compaction and the file has not changed on disk; max_chars and an n_lines that reaches the end of the file are ignored',
+      repeated_lines:
+        'Whole lines in this result that this agent already received from the same unchanged file since its last compaction',
       changed_since_last_read: 'Whether the file changed on disk since this agent last read it',
       continues_previous_page:
-        "Whether the call starts on the line where this agent's previous incomplete read of the file stopped",
+        "Whether the call starts at the line and column where this agent's previous incomplete read of the file stopped",
     },
   }),
   api_error: defineAgentTelemetryEvent<ApiErrorEvent>({
