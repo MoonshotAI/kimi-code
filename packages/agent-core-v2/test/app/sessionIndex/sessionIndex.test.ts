@@ -844,6 +844,155 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.count({ workspaceIds: [workspaceId], includeArchived: true })).toBe(3);
   });
 
+  it('listRecent hides a session archived in the mirror queue before the flush lands', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { createdAt: 2, updatedAt: 3 });
+    const store = build();
+    await store.prepare();
+
+    mirror.record(summary('a', { archived: true, updatedAt: 5 }));
+    const active = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(active.items.map((s) => s.id)).toEqual(['b']);
+    const everything = await store.listRecent({
+      workspaceIds: [workspaceId],
+      includeArchived: true,
+    });
+    expect(everything.items.map((s) => [s.id, s.archived])).toEqual([
+      ['a', true],
+      ['b', false],
+    ]);
+
+    await mirror.drain();
+    const settled = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(settled.items.map((s) => s.id)).toEqual(['b']);
+  });
+
+  it('pages past stored rows whose queued summary no longer matches the query', async () => {
+    for (let i = 1; i <= 4; i++) {
+      await seedSession(`s${i}`, { createdAt: i, updatedAt: i });
+    }
+    const store = build();
+    await store.prepare();
+
+    mirror.record(summary('s4', { archived: true, createdAt: 4, updatedAt: 5 }));
+    mirror.record(summary('s3', { archived: true, createdAt: 3, updatedAt: 6 }));
+    expect(await walkPages(store, { workspaceIds: [workspaceId] }, 1)).toEqual(['s2', 's1']);
+  });
+
+  it('lists around a mirror queue that cannot flush without handing its ids to the store', async () => {
+    const filters: unknown[] = [];
+    let failWrites = false;
+    class StalledQueryStore extends MiniDbQueryStore {
+      override async batch(ops: readonly WriteOp[]): Promise<void> {
+        if (failWrites) throw new Error('disk full');
+        return super.batch(ops);
+      }
+
+      override async pageByColumn<T>(collection: string, query: ColumnPageQuery): Promise<Page<T>> {
+        filters.push(query.filter);
+        return super.pageByColumn<T>(collection, query);
+      }
+    }
+    overrideScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      StalledQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    const ids = Array.from({ length: 40 }, (_, i) => `s${String(i + 1).padStart(2, '0')}`);
+    for (const [i, id] of ids.entries()) {
+      await seedSession(id, { createdAt: i + 1, updatedAt: i + 1 });
+    }
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+
+    failWrites = true;
+    for (const [i, id] of ids.slice(20).entries()) {
+      mirror.record(summary(id, { archived: true, createdAt: 21 + i, updatedAt: 100 + i }));
+    }
+    await mirror.drain();
+    expect(mirror.pending()).toHaveLength(20);
+
+    const active = ids.slice(0, 20).toReversed();
+    expect(await walkPages(store, { workspaceIds: [workspaceId] }, 3)).toEqual(active);
+    const unbounded = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(unbounded.items.map((s) => s.id)).toEqual(active);
+    expect(filters.length).toBeGreaterThan(0);
+    expect(filters.filter((filter) => JSON.stringify(filter).includes('$nin'))).toEqual([]);
+  });
+
+  it('drops a child session archived in the mirror queue from childOf listings', async () => {
+    const custom = { parent_session_id: 'parent', child_session_kind: 'child' };
+    await seedSession('child-a', { createdAt: 2, updatedAt: 9, custom });
+    await seedSession('child-b', { createdAt: 3, updatedAt: 8, custom });
+    const store = build();
+    await store.prepare();
+
+    mirror.record(summary('child-a', { archived: true, createdAt: 2, updatedAt: 10, custom }));
+    const page = await store.listRecent({ childOf: 'parent' });
+    expect(page.items.map((s) => s.id)).toEqual(['child-b']);
+  });
+
+  it('pages same-millisecond ties around stored rows the mirror queue superseded', async () => {
+    const specs: [string, number][] = [
+      ['a', 100],
+      ['b', 100],
+      ['c', 100],
+      ['d', 100],
+      ['e', 100],
+      ['f', 90],
+    ];
+    for (const [id, updatedAt] of specs) {
+      await seedSession(id, { createdAt: updatedAt - 1, updatedAt });
+    }
+    const store = build();
+    await store.prepare();
+
+    mirror.record(summary('b', { archived: true, createdAt: 99, updatedAt: 120 }));
+    mirror.record(summary('d', { archived: true, createdAt: 99, updatedAt: 121 }));
+    const visible = specs
+      .filter(([id]) => id !== 'b' && id !== 'd')
+      .map(([id, updatedAt]) => summary(id, { updatedAt }));
+    expect(await walkPages(store, { workspaceIds: [workspaceId] }, 2)).toEqual(canonicalIds(visible));
+  });
+
+  it('widens a page fetch only when stale rows of queued sessions fall inside it', async () => {
+    const limits: number[] = [];
+    class LimitRecordingQueryStore extends MiniDbQueryStore {
+      override async pageByColumn<T>(collection: string, query: ColumnPageQuery): Promise<Page<T>> {
+        limits.push(query.limit ?? Number.POSITIVE_INFINITY);
+        return super.pageByColumn<T>(collection, query);
+      }
+    }
+    overrideScopedService(
+      LifecycleScope.App,
+      IQueryStore,
+      LimitRecordingQueryStore,
+      ScopeActivation.OnDemand,
+      'storage',
+    );
+    for (let i = 1; i <= 10; i++) {
+      await seedSession(`s${String(i).padStart(2, '0')}`, { createdAt: i, updatedAt: i });
+    }
+    const store = build();
+    await store.prepare();
+
+    mirror.record(summary('s01', { archived: true, createdAt: 1, updatedAt: 50 }));
+    limits.length = 0;
+    const untouched = await store.listRecent({ workspaceIds: [workspaceId], limit: 3 });
+    expect(untouched.items.map((s) => s.id)).toEqual(['s10', 's09', 's08']);
+    expect(limits[0]).toBe(4);
+    expect(limits).not.toContain(4 + 1);
+
+    mirror.record(summary('s09', { archived: true, createdAt: 9, updatedAt: 51 }));
+    limits.length = 0;
+    const widened = await store.listRecent({ workspaceIds: [workspaceId], limit: 3 });
+    expect(widened.items.map((s) => s.id)).toEqual(['s10', 's08', 's07']);
+    expect(limits.slice(0, 2)).toEqual([4, 4 + 2]);
+  });
+
   it('a crashed or rebuilt mid-flight projection falls back to disk and recovers on retry', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
