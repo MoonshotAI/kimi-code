@@ -6,6 +6,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import type { ContentPart } from '#human/llm/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
+import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { codePointBoundaryStart } from '#/_base/text/code-points';
 import { defineState } from '#/state/state';
@@ -56,7 +57,9 @@ import {
   type AgentTaskLoadOptions,
   type AgentTask,
   type AgentTaskInfo,
+  type AgentTaskOutputChunk,
   type AgentTaskOutputSnapshot,
+  type AgentTaskOutputTail,
   type AgentTaskStatus,
   type AgentTaskTrackOptions,
   type AgentTaskWaitDelivery,
@@ -153,8 +156,6 @@ interface ManagedTask {
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 
-const TERMINAL_OUTPUT_TAIL_BYTES = 4 * 1024;
-
 const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 function outputLimitReason(): string {
@@ -214,6 +215,11 @@ export const taskActiveTaskReminderPendingKey = defineState<boolean>(
 
 export class AgentTaskService extends Disposable implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
+
+  private readonly _onDidAppendOutput = this._register(new Emitter<AgentTaskOutputChunk>());
+  readonly onDidAppendOutput: Event<AgentTaskOutputChunk> = this._onDidAppendOutput.event;
+  private readonly _onDidChangeTask = this._register(new Emitter<AgentTaskInfo>());
+  readonly onDidChangeTask: Event<AgentTaskInfo> = this._onDidChangeTask.event;
 
   private readonly tasks = new Map<string, ManagedTask>();
   private exitSuppressionArmed = false;
@@ -357,6 +363,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const timeoutMs = options.timeoutMs ?? task.timeoutMs;
     const entryOptions: RegisterAgentTaskOptions = {
       detached,
+      detachable: options.detachable,
       timeoutMs,
       detachTimeoutMs: options.detachTimeoutMs,
       autoBackgroundOnTimeout: options.autoBackgroundOnTimeout,
@@ -426,6 +433,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       void this.persistLive(entry);
       this.recordTaskStarted(this.toInfo(entry));
     }
+    this.fireChange(entry);
     return entry.taskId;
   }
 
@@ -498,6 +506,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       void this.persistLive(entry);
       this.recordTaskStarted(this.toInfo(entry));
     }
+    this.fireChange(entry);
 
     return {
       taskId,
@@ -508,6 +517,16 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   getTask(taskId: string): AgentTaskInfo | undefined {
     const entry = this.tasks.get(taskId);
     return entry === undefined ? this.ghosts.get(taskId) : this.toInfo(entry);
+  }
+
+  refresh(taskId: string): void {
+    const entry = this.tasks.get(taskId);
+    if (entry === undefined || TERMINAL_STATUSES.has(entry.status)) return;
+    this.fireChange(entry);
+  }
+
+  private fireChange(entry: ManagedTask): void {
+    this._onDidChangeTask.fire(this.toInfo(entry));
   }
 
   list(activeOnly = true, limit?: number): readonly AgentTaskInfo[] {
@@ -609,6 +628,25 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     };
   }
 
+  async readOutputTail(taskId: string, maxBytes: number): Promise<AgentTaskOutputTail> {
+    if (this.getTask(taskId) === undefined) return { offset: 0, data: new Uint8Array() };
+
+    await this.tasks.get(taskId)?.outputWriteQueue;
+
+    const persisted = await this.persistence.readTaskOutputTail(taskId, maxBytes);
+    if (persisted !== undefined) return persisted;
+
+    const entry = this.tasks.get(taskId);
+    if (entry === undefined) return { offset: 0, data: new Uint8Array() };
+
+    const available = Buffer.from(entry.outputChunks.join(''), 'utf-8');
+    const tailBytes = Math.min(Math.max(0, Math.trunc(maxBytes)), available.byteLength);
+    return {
+      offset: entry.outputSizeBytes - tailBytes,
+      data: available.subarray(available.byteLength - tailBytes),
+    };
+  }
+
   async readOutput(taskId: string, tail?: number): Promise<string> {
     const output = (await this.getOutputSnapshot(taskId, Number.MAX_SAFE_INTEGER)).preview;
     if (tail === undefined) return output;
@@ -657,6 +695,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private detachEntry(entry: ManagedTask, viaTimeout: boolean): AgentTaskInfo | undefined {
     if (TERMINAL_STATUSES.has(entry.status)) return this.toInfo(entry);
+    if (entry.options.detachable === false) return this.toInfo(entry);
 
     const foregroundRelease = entry.foregroundRelease;
     if (foregroundRelease === undefined) return this.toInfo(entry);
@@ -676,6 +715,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     void this.persistLive(entry);
     this.recordTaskStarted(this.toInfo(entry));
     foregroundRelease.resolve(viaTimeout ? 'timeout_detached' : 'detached');
+    this.fireChange(entry);
     return this.toInfo(entry);
   }
 
@@ -971,6 +1011,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       this.ghosts.set(taskId, updated);
       await persistence.writeTask(updated);
       lostTasks.push(updated);
+      this._onDidChangeTask.fire(updated);
     }
     return lostTasks;
   }
@@ -986,6 +1027,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private appendOutput(entry: ManagedTask, chunk: string): void {
     const chunkBytes = Buffer.byteLength(chunk, 'utf-8');
+    const offset = entry.outputSizeBytes;
     entry.outputSizeBytes += chunkBytes;
     this.appendRetainedOutput(entry, chunk, chunkBytes);
 
@@ -999,6 +1041,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     }
 
     if (entry.outputLimitTripped) return;
+    this._onDidAppendOutput.fire({ taskId: entry.taskId, offset, text: chunk });
 
     if (!entry.outputPersistStarted) {
       entry.pendingOutput.push(chunk);
@@ -1085,6 +1128,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.fireTerminalEffects(entry);
     foregroundRelease?.resolve('terminal');
     this.resolveWaiters(entry);
+    this.fireChange(entry);
     return true;
   }
 
@@ -1096,14 +1140,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     void this.notifyAgentTask(info).catch((error) => {
       this.log.error('task notification delivery failed', { taskId: info.taskId, error });
     });
-    this.recordTaskTerminated(info, this.retainedOutputTail(entry));
-  }
-
-  private retainedOutputTail(entry: ManagedTask): string | undefined {
-    if (entry.outputChunks.length === 0) return undefined;
-    const retained = Buffer.from(entry.outputChunks.join(''), 'utf-8');
-    const offset = Math.max(0, retained.byteLength - TERMINAL_OUTPUT_TAIL_BYTES);
-    return retained.subarray(offset).toString('utf-8');
+    this.recordTaskTerminated(info);
   }
 
   private recordTaskStarted(info: AgentTaskInfo): void {
@@ -1118,10 +1155,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     });
   }
 
-  private recordTaskTerminated(info: AgentTaskInfo, outputTail?: string): void {
+  private recordTaskTerminated(info: AgentTaskInfo): void {
     if (this.lifecycleActive()) {
       void this.dispatcher.dispatch(
-        new TaskTerminated({ agentId: this.scopeContext.agentId, info, outputTail }),
+        new TaskTerminated({ agentId: this.scopeContext.agentId, info }),
       );
     } else {
       this.log.warn('task terminal event dropped: agent lifecycle inactive', {

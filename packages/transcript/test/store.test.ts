@@ -13,9 +13,7 @@ import type { TranscriptInteraction } from '#/model/interaction';
 import type { TranscriptItem } from '#/model/item';
 
 function itemLabel(item: TranscriptItem): string {
-  if (item.kind === 'turn') return item.turnId;
-  if (item.kind === 'marker') return item.markerId;
-  return item.refId;
+  return item.kind === 'turn' ? item.turnId : item.markerId;
 }
 
 const turn1: TurnUpsertOp = {
@@ -303,27 +301,6 @@ describe('AgentTranscript', () => {
     expect(frame?.kind === 'tool' && frame.progress).toEqual({ kind: 'progress', percent: 50 });
   });
 
-  it('task upserts carry resultSummary/error/stateReason/usage', () => {
-    const tx = new AgentTranscript('main');
-    tx.apply([
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'subagent', state: 'running', detached: false, outputTail: '' } },
-    ]);
-    const done = tx.apply([
-      {
-        op: 'task.upsert',
-        task: {
-          taskId: 'task1', kind: 'subagent', state: 'completed', detached: false, outputTail: '',
-          resultSummary: 'scanned 12 files',
-          usage: { inputOther: 100, output: 40, inputCacheRead: 10, inputCacheCreation: 5 },
-        },
-      },
-    ]);
-    expect(done.accepted).toHaveLength(1);
-    const task = tx.getTask('task1');
-    expect(task?.resultSummary).toBe('scanned 12 files');
-    expect(task?.usage?.inputOther).toBe(100);
-  });
-
   it('items.remove clears anchored interactions and their pending entries', () => {
     const tx = new AgentTranscript('main');
     tx.apply([
@@ -387,18 +364,6 @@ describe('AgentTranscript', () => {
     });
     tx.apply([turn1, turn1]);
     expect(seen).toEqual(['turn.upsert']);
-  });
-
-  it('task upsert + append keeps output tail globally, detached flips freely', () => {
-    const tx = new AgentTranscript('main');
-    tx.apply([
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: false, outputTail: '' } },
-      { op: 'append', target: { type: 'task', taskId: 'task1' }, offset: 0, text: 'line1\n' },
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: true, outputTail: 'line1\n' } },
-    ]);
-    const task = tx.getTask('task1');
-    expect(task?.detached).toBe(true);
-    expect(task?.outputTail).toBe('line1\n');
   });
 
   it('meta.merge merges goal/modes shallowly', () => {
@@ -477,12 +442,12 @@ describe('AgentTranscript', () => {
         turn: { kind: 'turn', turnId: 't1', ordinal: 1, state: 'completed', origin: { kind: 'user' } },
       },
       {
-        op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: 'r1', taskId: 'bash-1' },
+        op: 'marker.upsert',
+        item: { kind: 'marker', markerId: 'm2', marker: 'notice' },
         beforeTurn: 2,
       },
     ]);
-    expect(tx.getItems().map(itemLabel)).toEqual(['t0', 'm1', 't1', 'r1', 't2']);
+    expect(tx.getItems().map(itemLabel)).toEqual(['t0', 'm1', 't1', 'm2', 't2']);
   });
 
   it('anchors a standalone item before the very first turn; re-applies stay in place', () => {

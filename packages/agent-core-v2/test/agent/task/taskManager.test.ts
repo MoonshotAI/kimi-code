@@ -599,6 +599,17 @@ describe('AgentTaskService', () => {
     }).toThrow('Too many background tasks are already running.');
   });
 
+  it('keeps a task registered as not detachable in the foreground when asked to detach', () => {
+    const { manager } = createAgentTaskService();
+    const taskId = manager.registerTask(agentTask(new Promise(() => {}), 'swarm member'), {
+      detached: false,
+      detachable: false,
+    });
+
+    expect(manager.detach(taskId)).toMatchObject({ status: 'running', detached: false });
+    expect(manager.getTask(taskId)).toMatchObject({ detached: false });
+  });
+
   it('lists active tasks by default', () => {
     const { manager } = createAgentTaskService();
     registerProcess(manager, pendingProcess().proc, 'sleep 60', 'task 1');
@@ -749,6 +760,64 @@ describe('AgentTaskService', () => {
 
       expect(info).toMatchObject({ status: 'killed' });
       expect(output.outputSizeBytes).toBeLessThanOrEqual(LIMIT_BYTES);
+    } finally {
+      await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
+  it('publishes a task change on register, refresh, detach and end, foreground tasks included', async () => {
+    const { manager } = createAgentTaskService();
+    const changes: Array<[string, string, boolean | undefined]> = [];
+    const subscription = manager.onDidChangeTask((info) => {
+      changes.push([info.taskId, info.status, info.detached]);
+    });
+    let finish!: (value: { result: string }) => void;
+    const taskId = manager.registerTask(
+      agentTask(new Promise((resolve) => { finish = resolve; }), 'foreground child'),
+      { detached: false, signal: new AbortController().signal },
+    );
+
+    manager.refresh(taskId);
+    manager.detach(taskId);
+    finish({ result: 'done' });
+    await waitForTerminal(manager, taskId);
+    manager.refresh(taskId);
+    subscription.dispose();
+
+    expect(changes).toEqual([
+      [taskId, 'running', false],
+      [taskId, 'running', false],
+      [taskId, 'running', true],
+      [taskId, 'completed', true],
+    ]);
+  });
+
+  it('publishes only the output that is kept once the output limit trips', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-limit-publish-'));
+    try {
+      const { manager } = createAgentTaskService({ sessionDir });
+      const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
+      const { proc } = sigtermIgnoringProcess(chunks);
+      let publishedEnd = 0;
+      const subscription = manager.onDidAppendOutput(({ offset, text }) => {
+        publishedEnd = offset + Buffer.byteLength(text, 'utf-8');
+      });
+
+      const taskId = manager.registerTask(
+        new ProcessTask(proc, 'runaway', 'hash', () => {}),
+        {
+          detached: false,
+          signal: new AbortController().signal,
+          timeoutMs: 60_000,
+        },
+      );
+
+      await waitForTerminal(manager, taskId);
+      subscription.dispose();
+      const tail = await manager.readOutputTail(taskId, 1);
+
+      expect(publishedEnd).toBeLessThanOrEqual(LIMIT_BYTES);
+      expect(publishedEnd).toBe(tail.offset + tail.data.byteLength);
     } finally {
       await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }

@@ -44,6 +44,9 @@ export interface SubagentTaskInfo extends AgentTaskInfoBase {
   readonly model?: string;
   readonly thinkingEffort?: string;
   readonly stopCode?: string;
+  readonly swarmIndex?: number;
+  readonly stateReason?: string;
+  readonly resultSummary?: string;
 }
 
 declare module '#/agent/task/types' {
