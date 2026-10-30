@@ -3,8 +3,26 @@ import { bridge } from "@/services";
 import { toast } from "@/components/ui/sonner";
 import type { ExtensionConfig } from "shared/types";
 import type { ModelConfig, ThinkingMode, SlashCommandInfo } from "shared/legacy-sdk";
+import {
+  defaultEffortForModel,
+  getModelById,
+  getModelThinkingMode,
+  supportsThinkingEffort,
+} from "shared/model-resolution";
+
+export {
+  getModelById,
+  getModelThinkingMode,
+  getModelsForMedia,
+  isImageModel,
+  isVideoModel,
+  resolveSendModel,
+  resolveThinkingEffortForSend,
+} from "shared/model-resolution";
+export type { MediaRequirements } from "shared/model-resolution";
 
 let settingsSaveRevision = 0;
+let pendingRollbackModel: string | undefined;
 const MANAGED_KIMI_CODE_PROVIDER = "managed:kimi-code";
 
 function saveConfigWithRollback(
@@ -13,11 +31,15 @@ function saveConfigWithRollback(
   set: (state: Partial<SettingsState>) => void,
 ): void {
   const revision = ++settingsSaveRevision;
-  void bridge.saveConfig(config).catch((error: unknown) => {
+  pendingRollbackModel = rollback.currentModel;
+  void bridge.saveConfig(config).then(() => {
+    if (revision === settingsSaveRevision) pendingRollbackModel = undefined;
+  }).catch((error: unknown) => {
     // A later selection supersedes this request; rolling an older request back
     // would overwrite the user's latest choice.
     if (revision !== settingsSaveRevision) return;
     set(rollback);
+    pendingRollbackModel = undefined;
     toast.error(`Failed to save model settings: ${error instanceof Error ? error.message : String(error)}`);
   });
 }
@@ -31,20 +53,6 @@ export const DEFAULT_EXTENSION_CONFIG: ExtensionConfig = {
   showThinkingExpanded: true,
   version: "",
 };
-
-/** Metadata-driven only; mirrors the TUI's thinkingAvailability rules. */
-export function getModelThinkingMode(model: ModelConfig): ThinkingMode {
-  if ((model.support_efforts?.length ?? 0) > 0) {
-    return "effort";
-  }
-  if (model.capabilities.includes("always_thinking")) {
-    return "always";
-  }
-  if (model.capabilities.includes("thinking") || model.adaptive_thinking === true) {
-    return "switch";
-  }
-  return "none";
-}
 
 export function providerDisplayName(provider: string): string {
   if (provider === MANAGED_KIMI_CODE_PROVIDER) return "Kimi Code";
@@ -87,21 +95,6 @@ export function requiresManagedProviderLogin(
   return activeModel?.provider === MANAGED_KIMI_CODE_PROVIDER;
 }
 
-function defaultEffortForModel(model: ModelConfig, defaultThinking: boolean, configuredEffort?: string): string {
-  const mode = getModelThinkingMode(model);
-  if (mode === "none") return "off";
-  const efforts = model.support_efforts ?? [];
-  if (efforts.length > 0) {
-    const alwaysOn = model.capabilities.includes("always_thinking");
-    if (!defaultThinking && !alwaysOn) return "off";
-    if (configuredEffort && efforts.includes(configuredEffort)) return configuredEffort;
-    if (model.default_effort && efforts.includes(model.default_effort)) return model.default_effort;
-    return efforts[Math.floor(efforts.length / 2)] ?? "off";
-  }
-  if (mode === "always") return "on";
-  return defaultThinking ? "on" : "off";
-}
-
 /**
  * Whether picking `effort` persists it as the global default — mirrors the
  * extension host's thinkingConfig gate: a pick above the model's effective
@@ -117,35 +110,6 @@ function persistsAsDefaultEffort(model: ModelConfig, effort: string): boolean {
       ? efforts.indexOf(declared)
       : efforts.length - 2;
   return efforts.indexOf(effort) <= ceiling;
-}
-
-export function isImageModel(model: ModelConfig): boolean {
-  return model.capabilities.includes("image_in");
-}
-
-export function isVideoModel(model: ModelConfig): boolean {
-  return model.capabilities.includes("video_in");
-}
-
-export function getModelById(models: ModelConfig[], id: string): ModelConfig | undefined {
-  return models.find((m) => m.id === id);
-}
-
-export interface MediaRequirements {
-  image: boolean;
-  video: boolean;
-}
-
-export function getModelsForMedia(models: ModelConfig[], mediaReq: MediaRequirements): ModelConfig[] {
-  return models.filter((m) => {
-    if (mediaReq.image && !isImageModel(m)) {
-      return false;
-    }
-    if (mediaReq.video && !isVideoModel(m)) {
-      return false;
-    }
-    return true;
-  });
 }
 
 export function getMediaFallbackModel(
@@ -184,6 +148,13 @@ interface SettingsState {
   setCurrentWorkDir: (workDir: string | null) => void;
   setWorkspaceRoot: (root: string | null) => void;
   initModels: (models: ModelConfig[], defaultModel: string | null, defaultThinking: boolean, defaultThinkingEffort?: string) => void;
+  syncModels: (
+    models: ModelConfig[],
+    defaultModel: string | null,
+    defaultThinking: boolean,
+    defaultThinkingEffort?: string,
+    retiredDefault?: { from: string; to: string },
+  ) => void;
   setWireSlashCommands: (commands: SlashCommandInfo[]) => void;
   setIsLoggedIn: (loggedIn: boolean) => void;
   getCurrentThinkingMode: () => ThinkingMode;
@@ -315,7 +286,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   initModels: (models, defaultModel, defaultThinking, defaultThinkingEffort) => {
     settingsSaveRevision += 1;
-    const initialModel = defaultModel || models[0]?.id || "";
+    pendingRollbackModel = undefined;
+    const initialModel = defaultModel ?? "";
     const model = getModelById(models, initialModel);
 
     const thinkingEffort = model ? defaultEffortForModel(model, defaultThinking, defaultThinkingEffort) : "off";
@@ -327,6 +299,41 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       defaultThinkingEffort,
       modelsLoaded: true,
       currentModel: initialModel,
+      thinkingEffort,
+    });
+  },
+
+  syncModels: (models, defaultModel, defaultThinking, defaultThinkingEffort, retiredDefault) => {
+    if (pendingRollbackModel !== undefined && getModelById(models, pendingRollbackModel) === undefined) {
+      settingsSaveRevision += 1;
+      pendingRollbackModel = undefined;
+    }
+    const state = get();
+    const hasSelection = state.modelsLoaded && state.currentModel.length > 0;
+    const selectionMissing = hasSelection && getModelById(models, state.currentModel) === undefined;
+    const replacement = selectionMissing && retiredDefault?.from === state.currentModel
+      ? getModelById(models, retiredDefault.to)?.id
+      : undefined;
+    const currentModel = hasSelection
+      ? replacement ?? state.currentModel
+      : getModelById(models, defaultModel ?? "")?.id ?? "";
+    const model = getModelById(models, currentModel);
+    const preserveThinkingEffort = hasSelection && (model === undefined
+      || supportsThinkingEffort(model, state.thinkingEffort));
+    const thinkingEffort = preserveThinkingEffort
+      ? state.thinkingEffort
+      : model ? defaultEffortForModel(model, defaultThinking, defaultThinkingEffort) : "off";
+    if (replacement !== undefined || (hasSelection && thinkingEffort !== state.thinkingEffort)) {
+      settingsSaveRevision += 1;
+    }
+
+    set({
+      models,
+      defaultModel,
+      defaultThinking,
+      defaultThinkingEffort,
+      modelsLoaded: true,
+      currentModel,
       thinkingEffort,
     });
   },

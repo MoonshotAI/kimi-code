@@ -1,4 +1,5 @@
 import { heicTo } from "heic-to/csp";
+import type { ContentPart } from "shared/legacy-sdk";
 
 import { IMAGE_CONFIG, VIDEO_CONFIG, MEDIA_CONFIG, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from "@/services/config";
 
@@ -57,6 +58,51 @@ export function getMediaTypeFromDataUri(dataUri: string): MediaType | null {
     return "video";
   }
   return null;
+}
+
+export interface PendingDraftMedia {
+  id: string;
+  dataUri?: string;
+}
+
+function rollbackRequestKey(content: readonly ContentPart[]): string {
+  const serialized = String(JSON.stringify(content));
+  let hash = 0;
+  for (const byte of new TextEncoder().encode(serialized)) {
+    hash = (hash * 31 + byte) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+/** Merge a failed prompt's media with newer draft items without losing order or duplicates. */
+export function mergePendingDraftMedia(
+  existing: readonly PendingDraftMedia[],
+  content: string | ContentPart[],
+  originalDraftMedia?: readonly PendingDraftMedia[],
+): PendingDraftMedia[] {
+  const requested = originalDraftMedia === undefined ? [] : [...originalDraftMedia];
+  if (originalDraftMedia === undefined && Array.isArray(content)) {
+    const requestKey = rollbackRequestKey(content);
+    for (const [index, part] of content.entries()) {
+      if (part.type !== "image_url" && part.type !== "video_url") continue;
+      requested.push({
+        id: (part.type === "image_url" ? part.image_url.id : part.video_url.id) || `pending:${requestKey}:${index}`,
+        dataUri: part.type === "image_url" ? part.image_url.url : part.video_url.url,
+      });
+    }
+  }
+
+  const remaining = [...existing];
+  const restored: PendingDraftMedia[] = [];
+  for (const item of requested) {
+    const existingIndex = remaining.findIndex((candidate) => candidate.id === item.id);
+    if (existingIndex >= 0) {
+      restored.push(...remaining.splice(existingIndex, 1));
+    } else {
+      restored.push(item);
+    }
+  }
+  return restored.length === 0 ? [...existing] : [...restored, ...remaining];
 }
 
 export function getDataUriByteSize(dataUri: string): number {

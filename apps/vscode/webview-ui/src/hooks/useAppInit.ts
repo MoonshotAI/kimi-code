@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { bridge, Events } from "@/services";
-import { requiresManagedProviderLogin, useSettingsStore } from "@/stores";
+import { requiresManagedProviderLogin, resolveSendModel, useSettingsStore } from "@/stores";
+import type { KimiConfig as WebviewKimiConfig, ModelCatalogChangedEvent } from "shared/legacy-sdk";
 import type { ExtensionConfig } from "shared/types";
 
 export type AppStatus = "loading" | "no-workspace" | "runtime-error" | "not-logged-in" | "no-models" | "ready";
+export type ModelCatalogStatus = "not-logged-in" | "no-models" | "ready";
 
 export type ConfigErrorStatus = "loading" | "no-workspace" | "runtime-error" | "no-models";
 
@@ -44,6 +46,16 @@ export function resolveAppView(input: {
   return { view: "main" };
 }
 
+export function resolveModelCatalogStatus(
+  config: WebviewKimiConfig,
+  loggedIn: boolean,
+): ModelCatalogStatus {
+  if (config.models.length === 0) return loggedIn ? "no-models" : "not-logged-in";
+  return requiresManagedProviderLogin(config.models, config.defaultModel, loggedIn)
+    ? "not-logged-in"
+    : "ready";
+}
+
 export interface AppInitState {
   status: AppStatus;
   errorMessage: string | null;
@@ -58,7 +70,15 @@ export function useAppInit(): AppInitState {
     modelsCount: 0,
   });
   const [initKey, setInitKey] = useState(0);
-  const { initModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
+  const modelCatalogRevision = useRef(0);
+  const {
+    initModels,
+    syncModels,
+    setExtensionConfig,
+    setWireSlashCommands,
+    setIsLoggedIn,
+    setWorkspaceRoot,
+  } = useSettingsStore();
 
   const refresh = useCallback(() => {
     setState({ status: "loading", errorMessage: null, modelsCount: 0 });
@@ -72,7 +92,38 @@ export function useAppInit(): AppInitState {
   }, [setExtensionConfig, refresh]);
 
   useEffect(() => {
+    return bridge.on<ModelCatalogChangedEvent>(Events.ModelCatalogChanged, ({ config, retiredDefault }) => {
+      modelCatalogRevision.current += 1;
+      syncModels(
+        config.models,
+        config.defaultModel,
+        config.defaultThinking,
+        config.defaultThinkingEffort,
+        retiredDefault,
+      );
+      const synced = useSettingsStore.getState();
+      const syncedConfig = {
+        ...config,
+        models: synced.models,
+        defaultModel: resolveSendModel(synced.models, synced.currentModel, synced.defaultModel)?.id ?? null,
+      };
+      setState((current) => {
+        const modelsCount = syncedConfig.models.length;
+        if (current.status !== "ready" && current.status !== "no-models" && current.status !== "not-logged-in") {
+          return { ...current, modelsCount };
+        }
+        return {
+          status: resolveModelCatalogStatus(syncedConfig, synced.isLoggedIn),
+          errorMessage: null,
+          modelsCount,
+        };
+      });
+    });
+  }, [syncModels]);
+
+  useEffect(() => {
     let cancelled = false;
+    const catalogRevisionAtStart = modelCatalogRevision.current;
 
     async function init() {
       try {
@@ -107,31 +158,35 @@ export function useAppInit(): AppInitState {
         console.log("[AppInit] Login status:", loginStatus, "kimiConfig:", kimiConfig);
 
         setIsLoggedIn(loginStatus.loggedIn);
+        if (modelCatalogRevision.current !== catalogRevisionAtStart) {
+          const synced = useSettingsStore.getState();
+          const syncedConfig = {
+            ...kimiConfig,
+            models: synced.models,
+            defaultModel: resolveSendModel(synced.models, synced.currentModel, synced.defaultModel)?.id ?? null,
+          };
+          const modelsCount = syncedConfig.models.length;
+          setState({
+            status: resolveModelCatalogStatus(syncedConfig, synced.isLoggedIn),
+            errorMessage: null,
+            modelsCount,
+          });
+          return;
+        }
+
         initModels(kimiConfig.models, kimiConfig.defaultModel, kimiConfig.defaultThinking, kimiConfig.defaultThinkingEffort);
 
-        const modelsCount = kimiConfig.models?.length ?? 0;
-
-        if (modelsCount === 0 && !loginStatus.loggedIn) {
-          setState({ status: "not-logged-in", errorMessage: null, modelsCount });
-          return;
-        }
-
-        if (modelsCount === 0) {
-          setState({ status: "no-models", errorMessage: null, modelsCount: 0 });
-          return;
-        }
-
-        if (requiresManagedProviderLogin(kimiConfig.models, kimiConfig.defaultModel, loginStatus.loggedIn)) {
-          setState({ status: "not-logged-in", errorMessage: null, modelsCount });
-          return;
-        }
-
-        setState({ status: "ready", errorMessage: null, modelsCount });
-      } catch (err) {
+        const modelsCount = kimiConfig.models.length;
+        setState({
+          status: resolveModelCatalogStatus(kimiConfig, loginStatus.loggedIn),
+          errorMessage: null,
+          modelsCount,
+        });
+      } catch (error) {
         if (!cancelled) {
           setState({
             status: "runtime-error",
-            errorMessage: err instanceof Error ? err.message : "Failed to initialize",
+            errorMessage: error instanceof Error ? error.message : "Failed to initialize",
             modelsCount: 0,
           });
         }

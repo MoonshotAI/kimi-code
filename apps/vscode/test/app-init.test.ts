@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Scenario: App-level view routing after init, across login state transitions.
  * Responsibilities: the sign-in screen must stay reachable from every state — in
@@ -8,17 +9,67 @@
  * Wiring: resolveAppView is pure; the bridge and toast boundaries are mocked away.
  * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts test/app-init.test.ts
  */
-import { describe, expect, it, vi } from "vitest";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const boundary = vi.hoisted(() => ({
+  listeners: new Map<string, (data: unknown) => void>(),
+  on: vi.fn(),
+  checkWorkspace: vi.fn(),
+  getExtensionConfig: vi.fn(),
+  getSlashCommands: vi.fn(),
+  checkLoginStatus: vi.fn(),
+  getModels: vi.fn(),
+}));
 
 vi.mock("@/services", () => ({
-  bridge: {},
-  Events: {},
+  bridge: {
+    on: boundary.on,
+    checkWorkspace: boundary.checkWorkspace,
+    getExtensionConfig: boundary.getExtensionConfig,
+    getSlashCommands: boundary.getSlashCommands,
+    checkLoginStatus: boundary.checkLoginStatus,
+    getModels: boundary.getModels,
+  },
+  Events: {
+    ExtensionConfigChanged: "extensionConfigChanged",
+    ModelCatalogChanged: "modelCatalogChanged",
+  },
 }));
 vi.mock("@/components/ui/sonner", () => ({
   toast: { error: vi.fn(), warning: vi.fn() },
 }));
 
-import { resolveAppView, type AppStatus } from "../webview-ui/src/hooks/useAppInit";
+import {
+  resolveAppView,
+  useAppInit,
+  type AppStatus,
+} from "../webview-ui/src/hooks/useAppInit";
+
+const { useSettingsStore } = await import("../webview-ui/src/stores/settings.store");
+
+beforeEach(() => {
+  boundary.listeners.clear();
+  boundary.on.mockReset().mockImplementation((event: string, handler: (data: unknown) => void) => {
+    boundary.listeners.set(event, handler);
+    return () => boundary.listeners.delete(event);
+  });
+  boundary.checkWorkspace.mockReset().mockResolvedValue({ hasWorkspace: true, workspaceRoot: "/workspace" });
+  boundary.getExtensionConfig.mockReset().mockResolvedValue({});
+  boundary.getSlashCommands.mockReset().mockResolvedValue([]);
+  boundary.checkLoginStatus.mockReset().mockResolvedValue({ loggedIn: true });
+  boundary.getModels.mockReset().mockResolvedValue({
+    defaultModel: null,
+    defaultThinking: false,
+    models: [],
+  });
+  useSettingsStore.getState().initModels([], null, false);
+  useSettingsStore.getState().setIsLoggedIn(false);
+});
+
+afterEach(() => {
+  cleanup();
+});
 
 function resolve(
   status: AppStatus,
@@ -82,5 +133,226 @@ describe("resolveAppView", () => {
     for (const status of ["loading", "no-workspace", "runtime-error"] as const) {
       expect(resolve(status)).toEqual({ view: "status", status, canGoToLogin: false });
     }
+  });
+});
+
+describe("useAppInit model catalog events", () => {
+  it("enters the ready state when a background refresh provides the first models", async () => {
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(result.current.status).toBe("no-models");
+    });
+
+    const config = {
+      defaultModel: "new-model",
+      defaultThinking: false,
+      models: [
+        { id: "new-model", name: "New Model", provider: "managed:kimi-code", capabilities: [] },
+      ],
+    };
+    const listener = boundary.listeners.get("modelCatalogChanged");
+    expect(listener).toBeTypeOf("function");
+    act(() => listener?.({ config }));
+
+    expect(result.current).toMatchObject({ status: "ready", modelsCount: 1 });
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "new-model",
+      thinkingEffort: "off",
+    });
+  });
+
+  it("keeps selection context but requires a model when its last catalog entry disappears", async () => {
+    const initialModel = {
+      id: "current-model",
+      name: "Current Model",
+      provider: "managed:kimi-code",
+      capabilities: ["thinking"],
+    };
+    boundary.getModels.mockResolvedValue({
+      defaultModel: initialModel.id,
+      defaultThinking: true,
+      models: [initialModel],
+    });
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+
+    const listener = boundary.listeners.get("modelCatalogChanged");
+    expect(listener).toBeTypeOf("function");
+    act(() => listener?.({
+      config: { defaultModel: null, defaultThinking: false, models: [] },
+      retiredDefault: undefined,
+    }));
+
+    expect(result.current).toMatchObject({ status: "no-models", modelsCount: 0 });
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: initialModel.id,
+      thinkingEffort: "on",
+      models: [],
+    });
+  });
+
+  it("does not overwrite a newer catalog event with an older initialization snapshot", async () => {
+    const staleConfig = { defaultModel: null, defaultThinking: false, models: [] };
+    let resolveLogin!: (value: { loggedIn: boolean }) => void;
+    let resolveModels!: (value: typeof staleConfig) => void;
+    boundary.checkLoginStatus.mockReturnValue(new Promise((resolve) => {
+      resolveLogin = resolve;
+    }));
+    boundary.getModels.mockReturnValue(new Promise((resolve) => {
+      resolveModels = resolve;
+    }));
+
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(boundary.getModels).toHaveBeenCalled();
+    });
+    await act(async () => {
+      resolveModels(staleConfig);
+      await Promise.resolve();
+    });
+
+    const listener = boundary.listeners.get("modelCatalogChanged");
+    expect(listener).toBeTypeOf("function");
+    const config = {
+      defaultModel: "new-model",
+      defaultThinking: false,
+      models: [
+        { id: "new-model", name: "New Model", provider: "managed:kimi-code", capabilities: [] },
+      ],
+    };
+    act(() => listener?.({ config }));
+    expect(useSettingsStore.getState().currentModel).toBe("new-model");
+
+    await act(async () => {
+      resolveLogin({ loggedIn: true });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+    expect(result.current).toMatchObject({ status: "ready", modelsCount: 1 });
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "new-model",
+      models: config.models,
+    });
+  });
+
+  it("uses the latest login state when a stale catalog listener fires", async () => {
+    boundary.checkLoginStatus.mockResolvedValue({ loggedIn: false });
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(result.current.status).toBe("not-logged-in");
+    });
+    const staleListener = boundary.listeners.get("modelCatalogChanged");
+    expect(staleListener).toBeTypeOf("function");
+
+    act(() => {
+      useSettingsStore.getState().setIsLoggedIn(true);
+    });
+    const config = {
+      defaultModel: "new-model",
+      defaultThinking: false,
+      models: [
+        { id: "new-model", name: "New Model", provider: "managed:kimi-code", capabilities: [] },
+      ],
+    };
+    act(() => staleListener?.({ config }));
+
+    expect(result.current).toMatchObject({ status: "ready", modelsCount: 1 });
+  });
+
+  it("uses the valid default model instead of a removed managed alias for login routing", async () => {
+    const removed = {
+      id: "managed-old",
+      name: "Managed Old",
+      provider: "managed:kimi-code",
+      capabilities: [],
+    };
+    boundary.getModels.mockResolvedValue({
+      defaultModel: removed.id,
+      defaultThinking: false,
+      models: [removed],
+    });
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+    act(() => {
+      useSettingsStore.getState().setIsLoggedIn(false);
+    });
+
+    const config = {
+      defaultModel: "custom/default",
+      defaultThinking: false,
+      models: [
+        { id: "managed/a", name: "A Managed", provider: "managed:kimi-code", capabilities: [] },
+        { id: "custom/default", name: "Z Custom Default", provider: "openai", capabilities: [] },
+      ],
+    };
+    const listener = boundary.listeners.get("modelCatalogChanged");
+    expect(listener).toBeTypeOf("function");
+    act(() => listener?.({ config }));
+
+    expect(result.current).toMatchObject({ status: "ready", modelsCount: 2 });
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: removed.id,
+      defaultModel: "custom/default",
+    });
+  });
+
+  it("uses the valid default model after an initialization race for login routing", async () => {
+    const removed = {
+      id: "managed-old",
+      name: "Managed Old",
+      provider: "managed:kimi-code",
+      capabilities: [],
+    };
+    useSettingsStore.getState().initModels([removed], removed.id, false);
+    const staleConfig = { defaultModel: removed.id, defaultThinking: false, models: [removed] };
+    let resolveLogin!: (value: { loggedIn: boolean }) => void;
+    let resolveModels!: (value: typeof staleConfig) => void;
+    boundary.checkLoginStatus.mockReturnValue(new Promise((resolve) => {
+      resolveLogin = resolve;
+    }));
+    boundary.getModels.mockReturnValue(new Promise((resolve) => {
+      resolveModels = resolve;
+    }));
+
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(boundary.getModels).toHaveBeenCalled();
+    });
+    await act(async () => {
+      resolveModels(staleConfig);
+      await Promise.resolve();
+    });
+
+    const config = {
+      defaultModel: "custom/default",
+      defaultThinking: false,
+      models: [
+        { id: "managed/a", name: "A Managed", provider: "managed:kimi-code", capabilities: [] },
+        { id: "custom/default", name: "Z Custom Default", provider: "openai", capabilities: [] },
+      ],
+    };
+    const listener = boundary.listeners.get("modelCatalogChanged");
+    expect(listener).toBeTypeOf("function");
+    act(() => listener?.({ config }));
+    await act(async () => {
+      resolveLogin({ loggedIn: false });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+    expect(result.current).toMatchObject({ status: "ready", modelsCount: 2 });
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: removed.id,
+      defaultModel: "custom/default",
+    });
   });
 });

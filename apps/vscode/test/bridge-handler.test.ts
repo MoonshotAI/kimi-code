@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type * as vscode from "vscode";
 
-import { Methods } from "../shared/bridge";
+import { Events, Methods } from "../shared/bridge";
 import { BridgeHandler } from "../src/bridge-handler";
 
 const host = vi.hoisted(() => {
@@ -25,6 +25,7 @@ const host = vi.hoisted(() => {
     homeDir: "/tmp/kimi-code-test-home",
     close: vi.fn(async () => undefined),
     getConfig: vi.fn(),
+    refreshProviderModels: vi.fn(),
     setConfig: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     resumeSession: vi.fn(),
@@ -86,6 +87,7 @@ let bridge: BridgeHandler;
 let root: string;
 let showLogs: Mock<() => void>;
 let writeLog: Mock<(message: string) => void>;
+let broadcast: Mock<(event: string, data: unknown, webviewId?: string) => void>;
 let workspaceState: { get: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
 
 beforeEach(async () => {
@@ -93,15 +95,18 @@ beforeEach(async () => {
   host.workspaceFolders.splice(0, host.workspaceFolders.length, { uri: new host.Uri(root) });
   showLogs = vi.fn();
   writeLog = vi.fn();
+  broadcast = vi.fn();
   host.harness.resumeSession.mockReset();
   host.harness.getConfig.mockReset();
   host.harness.getConfig.mockResolvedValue({ models: {} });
+  host.harness.refreshProviderModels.mockReset();
+  host.harness.refreshProviderModels.mockResolvedValue({ changed: [], unchanged: [], failed: [] });
   host.createKimiHarness.mockImplementation(() => host.harness);
   host.showWarningMessage.mockReset();
   host.showWarningMessage.mockResolvedValue(undefined);
   workspaceState = { get: vi.fn((_key, fallback) => fallback), update: vi.fn() };
   bridge = new BridgeHandler(
-    vi.fn(),
+    broadcast,
     workspaceState as unknown as vscode.Memento,
     join(root, "global-storage"),
     vi.fn(),
@@ -135,6 +140,66 @@ describe("Engine startup", () => {
     });
 
     expect(constructBridge).toThrow(/^Failed to start the Kimi engine: engine boom\.$/);
+  });
+});
+
+describe("Model catalog auto-refresh", () => {
+  it("broadcasts refreshed public model config", async () => {
+    vi.stubEnv("KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS", "0");
+    host.harness.getConfig.mockResolvedValue({
+      providers: { "managed:kimi-code": { type: "kimi" } },
+      defaultModel: "new-model",
+      models: {
+        "new-model": {
+          provider: "managed:kimi-code",
+          model: "new-model",
+          displayName: "New Model",
+          maxContextSize: 128_000,
+        },
+      },
+    });
+
+    host.harness.refreshProviderModels.mockResolvedValue({
+      changed: [],
+      unchanged: [],
+      failed: [],
+      retired_default: { from: "old-model", to: "new-model", from_display_name: "Old Model" },
+    });
+    await bridge.startModelCatalogRefresh();
+
+    await vi.waitFor(() => {
+      expect(broadcast).toHaveBeenCalledWith(Events.ModelCatalogChanged, {
+        config: expect.objectContaining({
+          defaultModel: "new-model",
+          models: [expect.objectContaining({
+            id: "new-model",
+            name: "New Model",
+            strict_thinking_validation: true,
+          })],
+        }),
+        retiredDefault: { from: "old-model", to: "new-model", from_display_name: "Old Model" },
+      });
+    });
+    expect(host.harness.refreshProviderModels).toHaveBeenCalledWith({ scope: "all" });
+    expect(host.harness.setConfig).not.toHaveBeenCalled();
+  });
+
+  it("preserves an absent default when broadcasting refreshed models", async () => {
+    vi.stubEnv("KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS", "0");
+    host.harness.getConfig.mockResolvedValue({
+      models: {
+        "other-model": { provider: "other", model: "other-model", capabilities: [] },
+      },
+    });
+
+    await bridge.startModelCatalogRefresh();
+
+    await vi.waitFor(() => {
+      expect(broadcast).toHaveBeenCalledWith(Events.ModelCatalogChanged, {
+        config: expect.objectContaining({ defaultModel: null }),
+        retiredDefault: undefined,
+      });
+    });
   });
 });
 
@@ -272,9 +337,30 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
           name: "claude-sonnet",
           provider: "anthropic",
           adaptive_thinking: true,
+          strict_thinking_validation: false,
         }],
       },
     });
+  });
+
+  it("merges protocol-detected media capabilities without duplicating declared values", async () => {
+    host.harness.getConfig.mockResolvedValueOnce({
+      providers: { custom: { type: "anthropic" } },
+      defaultModel: "custom/claude",
+      models: {
+        "custom/claude": {
+          provider: "custom",
+          model: "claude-sonnet-4",
+          capabilities: [" IMAGE_IN "],
+        },
+      },
+    });
+
+    const result = await bridge.handle({ id: "rpc-models", method: Methods.GetModels }, "view-1");
+    const models = (result as { result: { models: Array<{ capabilities: string[] }> } }).result.models;
+
+    expect(models[0]?.capabilities).toContain("image_in");
+    expect(models[0]?.capabilities.filter((capability) => capability === "image_in")).toHaveLength(1);
   });
 
   it("resolves the fallback-profile default effort with the provider type", async () => {
@@ -602,7 +688,10 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
   });
 
   it("persists the concrete effort when the model's levels are unknown", async () => {
-    host.harness.getConfig.mockResolvedValue({ defaultModel: "other/model", models: {} });
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "other/model",
+      models: { "custom/model": { provider: "custom", model: "model" } },
+    });
 
     await bridge.handle(
       { id: "rpc-1", method: Methods.SaveConfig, params: { model: "custom/model", thinking: true, effort: "max" } },

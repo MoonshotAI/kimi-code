@@ -47,8 +47,15 @@ const MODELS = [
     capabilities: ["thinking"],
     support_efforts: ["low", "high"],
     default_effort: "high",
+    strict_thinking_validation: true,
   },
-  { id: "always", name: "Always", provider: "managed:kimi-code", capabilities: ["always_thinking"] },
+  {
+    id: "always",
+    name: "Always",
+    provider: "managed:kimi-code",
+    capabilities: ["always_thinking"],
+    strict_thinking_validation: true,
+  },
 ];
 
 beforeEach(() => {
@@ -197,12 +204,607 @@ describe("Webview model metadata", () => {
   });
 });
 
+describe("Webview background model catalog synchronization", () => {
+  it("adds new models without changing the current model or thinking effort", () => {
+    useSettingsStore.getState().initModels(MODELS, "plain", false);
+    useSettingsStore.setState({ currentModel: "reasoning", thinkingEffort: "low" });
+    boundary.saveConfig.mockClear();
+
+    useSettingsStore.getState().syncModels([
+      ...MODELS,
+      { id: "new-model", name: "New Model", provider: "managed:kimi-code", capabilities: [] },
+    ], "plain", false);
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "reasoning",
+      thinkingEffort: "low",
+      defaultModel: "plain",
+      modelsLoaded: true,
+    });
+    expect(useSettingsStore.getState().models.map((model) => model.id)).toContain("new-model");
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("keeps removed selection context without retaining it in the catalog", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    boundary.saveConfig.mockClear();
+
+    useSettingsStore.getState().syncModels([MODELS[2]], "always", true);
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "reasoning",
+      thinkingEffort: "high",
+      defaultModel: "always",
+      models: [MODELS[2]],
+    });
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("follows a declared retirement replacement without resetting thinking effort", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    boundary.saveConfig.mockClear();
+    const successor = {
+      id: "successor",
+      name: "Successor",
+      provider: "managed:kimi-code",
+      strict_thinking_validation: true,
+      capabilities: ["thinking"],
+      support_efforts: ["low", "high"],
+      default_effort: "low",
+    };
+
+    useSettingsStore.getState().syncModels(
+      [successor],
+      "successor",
+      false,
+      undefined,
+      { from: "reasoning", to: "successor" },
+    );
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "successor",
+      thinkingEffort: "high",
+      defaultModel: "successor",
+      models: [successor],
+    });
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("normalizes an effort removed from the selected model's refreshed metadata", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    boundary.saveConfig.mockClear();
+    const refreshed = { ...MODELS[1], support_efforts: ["low"], default_effort: "low" };
+
+    useSettingsStore.getState().syncModels([refreshed], "reasoning", true, "low");
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "reasoning",
+      thinkingEffort: "low",
+      models: [refreshed],
+    });
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("preserves an unlisted session effort for a permissive provider", () => {
+    const permissive = {
+      id: "permissive",
+      name: "Permissive",
+      provider: "openai",
+      capabilities: ["thinking"],
+      support_efforts: ["low", "high"],
+      default_effort: "low",
+      strict_thinking_validation: false,
+    };
+    useSettingsStore.getState().initModels([permissive], "permissive", true, "low");
+    useSettingsStore.getState().setThinkingEffort("max");
+    boundary.saveConfig.mockClear();
+
+    useSettingsStore.getState().syncModels([permissive], "permissive", true, "low");
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "permissive",
+      thinkingEffort: "max",
+    });
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("normalizes effort when a retirement successor cannot use it", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    boundary.saveConfig.mockClear();
+    const successor = {
+      id: "successor",
+      name: "Successor",
+      provider: "managed:kimi-code",
+      strict_thinking_validation: true,
+      capabilities: [],
+    };
+
+    useSettingsStore.getState().syncModels(
+      [successor],
+      "successor",
+      false,
+      undefined,
+      { from: "reasoning", to: "successor" },
+    );
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "successor",
+      thinkingEffort: "off",
+      models: [successor],
+    });
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("does not let a pending save rollback restore an unsupported effort", async () => {
+    let rejectSave!: (error: Error) => void;
+    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    useSettingsStore.getState().initModels(MODELS, "plain", true);
+    useSettingsStore.getState().updateModel("reasoning");
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "reasoning",
+      thinkingEffort: "high",
+    });
+    const refreshed = { ...MODELS[1], support_efforts: ["low"], default_effort: "low" };
+    useSettingsStore.getState().syncModels([refreshed], "reasoning", true, "low");
+    expect(useSettingsStore.getState().thinkingEffort).toBe("low");
+
+    rejectSave(new Error("stale save failed"));
+    await Promise.resolve();
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "reasoning",
+      thinkingEffort: "low",
+    });
+    expect(boundary.toastError).not.toHaveBeenCalled();
+  });
+
+  it("cancels a stale rollback when its captured model disappears", async () => {
+    let rejectSave!: (error: Error) => void;
+    const models = [
+      { id: "plain", name: "Plain", provider: "managed:kimi-code", capabilities: [] },
+      { id: "removed", name: "Removed", provider: "managed:kimi-code", capabilities: [] },
+      { id: "current", name: "Current", provider: "managed:kimi-code", capabilities: [] },
+    ];
+    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    useSettingsStore.getState().initModels(models, "plain", false);
+    useSettingsStore.getState().updateModel("removed");
+    useSettingsStore.getState().updateModel("current");
+    useSettingsStore.getState().syncModels([models[0], models[2]], "current", false);
+
+    rejectSave(new Error("stale save failed"));
+    await Promise.resolve();
+
+    expect(useSettingsStore.getState().currentModel).toBe("current");
+  });
+
+  it("does not cancel a pending save rollback when the selection is preserved", async () => {
+    let rejectSave!: (error: Error) => void;
+    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    useSettingsStore.getState().updateModel("reasoning");
+    expect(useSettingsStore.getState().currentModel).toBe("reasoning");
+
+    useSettingsStore.getState().syncModels(MODELS, "plain", false);
+    rejectSave(new Error("config.toml is read-only"));
+
+    await vi.waitFor(() => {
+      expect(useSettingsStore.getState().currentModel).toBe("plain");
+    });
+  });
+});
+
+describe("Webview model selection without a default", () => {
+  it("keeps model selection empty when no default exists during init and refresh", () => {
+    useSettingsStore.getState().initModels(MODELS, null, false);
+    expect(useSettingsStore.getState().currentModel).toBe("");
+
+    useSettingsStore.getState().initModels([], null, false);
+    useSettingsStore.getState().syncModels([MODELS[0]], null, false);
+
+    expect(useSettingsStore.getState().currentModel).toBe("");
+    expect(useSettingsStore.getState().defaultModel).toBeNull();
+  });
+});
+
+describe("Webview model resolution before sending", () => {
+  it("uses the valid default model when the current selection was removed", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[2]], "always", true);
+
+    useChatStore.getState().sendMessage("use fallback");
+
+    expect(boundary.streamChat).toHaveBeenCalledWith(
+      "use fallback",
+      "always",
+      "on",
+      false,
+      undefined,
+      { image: false, video: false },
+    );
+  });
+
+  it("normalizes effort against the fallback model instead of the removed selection", () => {
+    const fallback = {
+      id: "fallback",
+      name: "Fallback",
+      provider: "managed:kimi-code",
+      capabilities: ["thinking"],
+      support_efforts: ["low"],
+      default_effort: "low",
+      strict_thinking_validation: true,
+    };
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([fallback], "fallback", true, "low");
+    useChatStore.setState({ sessionId: "session-1" });
+
+    useChatStore.getState().sendMessage("normalize fallback effort");
+
+    expect(boundary.streamChat).toHaveBeenCalledWith(
+      "normalize fallback effort",
+      "fallback",
+      "low",
+      false,
+      "session-1",
+      { image: false, video: false },
+    );
+  });
+
+  it("does not send or pick an arbitrary remaining model when the default is also missing", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[2]], null, false);
+
+    useChatStore.getState().sendMessage("keep for retry");
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState()).toMatchObject({
+      isStreaming: false,
+      pendingInput: { content: "keep for retry", model: "reasoning" },
+    });
+    expect(boundary.toastError).toHaveBeenCalledWith(
+      "The selected model is no longer available. Choose another model before sending.",
+    );
+  });
+
+  it("blocks attachments when the fallback model lacks media capabilities", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+    const dataUri = "data:image/png;base64,AA";
+    useChatStore.getState().addDraftMedia("image-1", dataUri);
+
+    useChatStore.getState().sendMessage("image attached");
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().draftMedia).toEqual([{ id: expect.any(String), dataUri }]);
+    expect(boundary.toastError).toHaveBeenCalledWith(
+      "The selected model does not support these attachments. Choose another model before sending.",
+    );
+  });
+
+  it("includes conversation media when resolving a queued fallback", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    useSettingsStore.getState().initModels([vision, MODELS[0]], "vision", false);
+    useChatStore.setState({
+      messages: [{
+        id: "history-image",
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA" } }],
+        timestamp: 1,
+      }],
+    });
+    const chat = useChatStore.getState();
+    chat.enqueue("text follow-up", "vision");
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+
+    chat.sendNextQueued();
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState().queue).toHaveLength(1);
+    expect(useChatStore.getState().pendingInput).toEqual({
+      content: "text follow-up",
+      model: "vision",
+      queueId: useChatStore.getState().queue[0]?.id,
+    });
+  });
+
+  it("passes conversation media requirements to the extension host", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    useSettingsStore.getState().initModels([vision], "vision", false);
+    useChatStore.setState({
+      messages: [{
+        id: "history-image",
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA" } }],
+        timestamp: 1,
+      }],
+    });
+
+    useChatStore.getState().sendMessage("text follow-up");
+
+    expect(boundary.streamChat).toHaveBeenCalledWith(
+      "text follow-up",
+      "vision",
+      "off",
+      false,
+      undefined,
+      { image: true, video: false },
+    );
+  });
+
+  it("keeps prior history and the current input when no history-compatible model remains", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    useSettingsStore.getState().initModels([vision, MODELS[0]], "vision", false);
+    useChatStore.setState({
+      messages: [{
+        id: "history-image",
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA" } }],
+        timestamp: 1,
+      }],
+    });
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+
+    useChatStore.getState().sendMessage("direct follow-up");
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState().messages).toHaveLength(1);
+    expect(useChatStore.getState().pendingInput).toEqual({ content: "direct follow-up", model: "vision", draftMedia: [] });
+  });
+
+  it("allows model-free slash commands on an active session with incompatible history", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    useSettingsStore.getState().initModels([vision, MODELS[0]], "vision", false);
+    useChatStore.setState({
+      sessionId: "session-1",
+      messages: [{
+        id: "history-image",
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA" } }],
+        timestamp: 1,
+      }],
+    });
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+
+    useChatStore.getState().sendMessage("/clear");
+
+    expect(boundary.streamChat).toHaveBeenCalledWith(
+      "/clear",
+      "vision",
+      "off",
+      false,
+      "session-1",
+      { image: true, video: false },
+    );
+  });
+
+  it("keeps prompt-producing slash commands behind model validation", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    useSettingsStore.getState().initModels([vision, MODELS[0]], "vision", false);
+    useChatStore.setState({
+      sessionId: "session-1",
+      messages: [{
+        id: "history-image",
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA" } }],
+        timestamp: 1,
+      }],
+    });
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+
+    useChatStore.getState().sendMessage("/compact");
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(boundary.toastError).toHaveBeenCalledWith(
+      "The selected model is no longer available. Choose another model before sending.",
+    );
+  });
+
+  it("resets media requirements after context_cleared", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    useSettingsStore.getState().initModels([vision, MODELS[0]], "vision", false);
+    useChatStore.setState({
+      messages: [{
+        id: "history-image",
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA" } }],
+        timestamp: 1,
+      }],
+    });
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+    useChatStore.getState().sendMessage("follow-up");
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+
+    useChatStore.getState().processEvent({ type: "context_cleared", payload: {} });
+
+    expect(useChatStore.getState().messages).toHaveLength(1);
+    expect(useChatStore.getState().draftMedia).toEqual([]);
+    useChatStore.getState().sendMessage("follow-up");
+    expect(boundary.streamChat).toHaveBeenCalledWith(
+      "follow-up",
+      "plain",
+      "off",
+      false,
+      undefined,
+      { image: false, video: false },
+    );
+  });
+
+  it("preserves new draft attachments on context_cleared", () => {
+    const image = "data:image/png;base64,AA";
+    useChatStore.getState().addDraftMedia("next-image", image);
+
+    useChatStore.getState().processEvent({ type: "context_cleared", payload: {} });
+
+    expect(useChatStore.getState().messages).toHaveLength(1);
+    expect(useChatStore.getState().draftMedia).toEqual([{ id: "next-image", dataUri: image }]);
+  });
+
+  it("keeps queued messages in order when no valid model remains", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[2]], null, false);
+    const chat = useChatStore.getState();
+    chat.enqueue("first", "reasoning");
+    chat.enqueue("second", "reasoning");
+
+    chat.sendNextQueued();
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState()).toMatchObject({
+      isStreaming: false,
+      pendingInput: { content: "first", model: "reasoning" },
+    });
+    expect(useChatStore.getState().queue.map((item) => item.content)).toEqual(["first", "second"]);
+  });
+
+  it("keeps an attachment queued when the fallback lacks media capabilities", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+    const content = [{ type: "image_url" as const, image_url: { url: "data:image/png;base64,AA" } }];
+    useChatStore.getState().enqueue(content, "reasoning");
+
+    useChatStore.getState().sendNextQueued();
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState().queue).toHaveLength(1);
+    expect(useChatStore.getState().pendingInput).toEqual({
+      content,
+      model: "reasoning",
+      queueId: useChatStore.getState().queue[0]?.id,
+    });
+    expect(boundary.toastError).toHaveBeenCalledWith(
+      "The selected model does not support these attachments. Choose another model before sending.",
+    );
+  });
+
+  it("continues the queue with a valid default model", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[2]], "always", true);
+    useChatStore.getState().enqueue("queued", "reasoning");
+
+    useChatStore.getState().sendNextQueued();
+
+    expect(boundary.streamChat).toHaveBeenCalledWith(
+      "queued",
+      "always",
+      "on",
+      false,
+      undefined,
+      { image: false, video: false },
+    );
+    expect(useChatStore.getState().queue).toEqual([]);
+  });
+
+  it("consumes a blocked queue head when its retry succeeds", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[2]], null, false);
+    const chat = useChatStore.getState();
+    chat.enqueue("first", "reasoning");
+    chat.enqueue("second", "reasoning");
+    chat.sendNextQueued();
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    useSettingsStore.getState().syncModels([MODELS[2]], "always", true);
+    vi.useFakeTimers();
+
+    try {
+      useChatStore.getState().retryLastMessage();
+      expect(useChatStore.getState().queue.map((item) => item.content)).toEqual(["second"]);
+      useChatStore.getState().processEvent({ type: "stream_complete", result: { status: "finished" } });
+      vi.advanceTimersByTime(60);
+
+      expect(boundary.streamChat.mock.calls.map((call) => call[0])).toEqual(["first", "second"]);
+      expect(useChatStore.getState().queue).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a blocked queue head when sending a different draft", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[2]], null, false);
+    const chat = useChatStore.getState();
+    chat.enqueue("first", "reasoning");
+    chat.enqueue("second", "reasoning");
+    chat.sendNextQueued();
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    useSettingsStore.getState().syncModels([MODELS[2]], "always", true);
+
+    useChatStore.getState().sendMessage("different follow-up");
+
+    expect(boundary.streamChat).toHaveBeenCalledOnce();
+    expect(boundary.streamChat.mock.calls[0]?.[0]).toBe("different follow-up");
+    expect(useChatStore.getState().queue.map((item) => item.content)).toEqual(["first", "second"]);
+  });
+
+  it("restores a blocked queued attachment and consumes it on composer retry", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    const image = "data:image/png;base64,AA";
+    const content = [{ type: "image_url" as const, image_url: { url: image } }];
+    useSettingsStore.getState().initModels([vision, MODELS[0]], "vision", false);
+    const chat = useChatStore.getState();
+    chat.enqueue(content, "vision");
+    chat.enqueue("second", "vision");
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+    chat.sendNextQueued();
+    expect(useChatStore.getState().draftMedia.map((item) => item.dataUri)).toEqual([image]);
+    useSettingsStore.getState().syncModels([vision], "vision", false);
+    vi.useFakeTimers();
+
+    try {
+      useChatStore.getState().sendMessage("");
+      expect(useChatStore.getState().queue.map((item) => item.content)).toEqual(["second"]);
+      useChatStore.getState().processEvent({ type: "stream_complete", result: { status: "finished" } });
+      vi.advanceTimersByTime(60);
+
+      expect(boundary.streamChat.mock.calls.map((call) => call[0])).toEqual([
+        [{ type: "image_url", image_url: expect.objectContaining({ url: image }) }],
+        "second",
+      ]);
+      expect(useChatStore.getState().queue).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["model.not_configured", "config.invalid", "internal"])(
+    "keeps the failed and remaining prompts after host %s preflight rejection",
+    (code) => {
+      useSettingsStore.getState().initModels(MODELS, "plain", false);
+      const chat = useChatStore.getState();
+      chat.enqueue("first", "plain");
+      chat.enqueue("second", "plain");
+      vi.useFakeTimers();
+
+      try {
+        chat.sendNextQueued();
+        useChatStore.getState().processEvent({
+          type: "error",
+          code,
+          message: "The request could not start. Fix the problem before retrying.",
+          phase: "preflight",
+        });
+        vi.advanceTimersByTime(100);
+
+        expect(boundary.streamChat).toHaveBeenCalledTimes(1);
+        expect(useChatStore.getState().pendingInput).toEqual({ content: "first", model: "plain" });
+        expect(useChatStore.getState().queue.map((item) => item.content)).toEqual(["second"]);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
 describe("Webview MCP update bridge", () => {
   it("sends a lossless structured MCP edit request to the extension host", async () => {
     const posted: unknown[] = [];
     let receiveMessage: ((event: { data: unknown }) => void) | undefined;
     vi.stubGlobal("document", {
-      body: { getAttribute: () => "mcp-test-view" },
+      body: { dataset: { webviewid: "mcp-test-view" } },
     });
     vi.stubGlobal("window", {
       addEventListener: (_type: string, listener: (event: { data: unknown }) => void) => {
@@ -248,6 +850,99 @@ describe("Webview MCP update bridge", () => {
 });
 
 describe("Webview chat error recovery", () => {
+  it("keeps local attachment ids out of outgoing provider content", () => {
+    const media = { id: "media", name: "Media", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    const image = "data:image/png;base64,AA";
+    useSettingsStore.getState().initModels([media], "media", false);
+    useChatStore.getState().addDraftMedia("local-uuid", image);
+
+    useChatStore.getState().sendMessage("image");
+
+    const content = boundary.streamChat.mock.calls[0]?.[0] as Array<{ type: string; image_url: { url: string; id?: string } }>;
+    expect(content.find((part) => part.type === "image_url")?.image_url).toEqual({ url: image });
+    expect(useChatStore.getState().pendingInput?.draftMedia).toEqual([{ id: "local-uuid", dataUri: image }]);
+  });
+
+  it("recreates the clear confirmation after resetting messages", () => {
+    useChatStore.getState().processEvent({ type: "context_cleared", payload: {} });
+    useChatStore.getState().processEvent({ type: "ContentPart", payload: { type: "text", text: "The context has been cleared." } });
+
+    expect(useChatStore.getState().messages.at(-1)?.steps?.[0]?.items).toContainEqual({
+      type: "text",
+      content: "The context has been cleared.",
+    });
+  });
+
+  it("restores media in its original order and multiplicity after preflight failure", () => {
+    const media = { id: "media", name: "Media", provider: "managed:kimi-code", capabilities: ["image_in", "video_in"] };
+    const image = "data:image/png;base64,AA";
+    const video = "data:video/mp4;base64,BB";
+    useSettingsStore.getState().initModels([media], "media", false);
+    useChatStore.getState().addDraftMedia("first-image", image);
+    useChatStore.getState().addDraftMedia("video", video);
+    useChatStore.getState().addDraftMedia("second-image", image);
+    useChatStore.getState().sendMessage("mixed attachments");
+
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "internal",
+      message: "Unable to send the message.",
+      phase: "preflight",
+    });
+
+    expect(useChatStore.getState().draftMedia.map((item) => item.dataUri)).toEqual([image, video, image]);
+  });
+
+  it("merges failed media with attachments added after the failure", () => {
+    const media = { id: "media", name: "Media", provider: "managed:kimi-code", capabilities: ["image_in", "video_in"] };
+    const image = "data:image/png;base64,AA";
+    const video = "data:video/mp4;base64,BB";
+    useSettingsStore.getState().initModels([media], "media", false);
+    useChatStore.getState().addDraftMedia("original-image", image);
+    useChatStore.getState().sendMessage("original");
+
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "internal",
+      message: "Unable to send the message.",
+      phase: "preflight",
+    });
+    useChatStore.getState().addDraftMedia("new-video", video);
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "internal",
+      message: "Unable to send the message.",
+      phase: "preflight",
+    });
+
+    expect(useChatStore.getState().draftMedia.map((item) => item.dataUri)).toEqual([image, video]);
+  });
+
+  it("keeps distinct attachments with the same URI on repeated rollback", () => {
+    const media = { id: "media", name: "Media", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    const image = "data:image/png;base64,AA";
+    useSettingsStore.getState().initModels([media], "media", false);
+    useChatStore.getState().addDraftMedia("original-image", image);
+    useChatStore.getState().sendMessage("original");
+
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "internal",
+      message: "Unable to send the message.",
+      phase: "preflight",
+    });
+    useChatStore.getState().addDraftMedia("new-duplicate", image);
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "internal",
+      message: "Unable to send the message.",
+      phase: "preflight",
+    });
+
+    expect(useChatStore.getState().draftMedia.map((item) => item.id)).toEqual(["original-image", "new-duplicate"]);
+    expect(useChatStore.getState().draftMedia.map((item) => item.dataUri)).toEqual([image, image]);
+  });
+
   it("stops the pending state and keeps the input available when session setup fails", () => {
     useChatStore.getState().sendMessage("retry this request");
 

@@ -169,6 +169,7 @@ export interface ModelConfig {
   adaptive_thinking?: boolean;
   support_efforts?: string[];
   default_effort?: string;
+  strict_thinking_validation?: boolean;
 }
 
 export interface KimiConfig {
@@ -176,6 +177,11 @@ export interface KimiConfig {
   defaultThinking: boolean;
   defaultThinkingEffort?: string;
   models: ModelConfig[];
+}
+
+export interface ModelCatalogChangedEvent {
+  config: KimiConfig;
+  retiredDefault?: { from: string; to: string; from_display_name: string };
 }
 
 /** Placeholder returned to the Webview instead of a stored MCP credential. */

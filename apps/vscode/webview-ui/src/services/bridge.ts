@@ -9,6 +9,7 @@ import type {
   LoginResult,
   UpdateMCPServerRequest,
 } from "shared/legacy-sdk";
+import type { MediaRequirements } from "shared/model-resolution";
 import type {
   FileChange,
   SessionConfig,
@@ -43,7 +44,7 @@ class Bridge {
   private webviewId: string;
 
   constructor() {
-    this.webviewId = document.body.getAttribute("data-webviewid") || `unknown_${Date.now()}`;
+    this.webviewId = document.body.dataset.webviewid || `unknown_${Date.now()}`;
 
     if (typeof acquireVsCodeApi === "function") {
       this.vscode = acquireVsCodeApi();
@@ -183,8 +184,22 @@ class Bridge {
     return this.call<MCPTestResult>(Methods.TestMCP, { name });
   }
 
-  streamChat(content: string | ContentPart[], model: string, effort: string, planMode: boolean, sessionId?: string) {
-    return this.call<{ done: boolean }>(Methods.StreamChat, { content, model, effort, planMode, sessionId });
+  streamChat(
+    content: string | ContentPart[],
+    model: string,
+    effort: string,
+    planMode: boolean,
+    sessionId?: string,
+    mediaRequirements?: MediaRequirements,
+  ) {
+    return this.call<{ done: boolean }>(Methods.StreamChat, {
+      content,
+      model,
+      effort,
+      planMode,
+      sessionId,
+      mediaRequirements,
+    });
   }
 
   abortChat() {

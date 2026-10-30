@@ -88,6 +88,7 @@ export type RpcMessageValidation =
 
 export const Events = {
   ExtensionConfigChanged: "extensionConfigChanged",
+  ModelCatalogChanged: "modelCatalogChanged",
   MCPServersChanged: "mcpServersChanged",
   StreamEvent: "streamEvent",
   FocusInput: "focusInput",
@@ -227,7 +228,14 @@ function isStreamChatParams(value: unknown): boolean {
     && isOptionalType(value["effort"], "string")
     && isOptionalType(value["thinking"], "boolean")
     && isOptionalType(value["planMode"], "boolean")
-    && isOptionalType(value["sessionId"], "string");
+    && isOptionalType(value["sessionId"], "string")
+    && (value["mediaRequirements"] === undefined || isMediaRequirements(value["mediaRequirements"]));
+}
+
+function isMediaRequirements(value: unknown): boolean {
+  return isPlainObject(value)
+    && typeof value["image"] === "boolean"
+    && typeof value["video"] === "boolean";
 }
 
 function isContent(value: unknown): boolean {

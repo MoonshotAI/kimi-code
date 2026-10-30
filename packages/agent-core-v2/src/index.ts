@@ -120,6 +120,7 @@ export * from '#/agent/state/agentState';
 import '#/agent/state/agentStateService';
 export * from '#/llm-adapter/contract/capability';
 export * from '#/llm-adapter/contract/errors';
+export { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 export {
   createAssistantMessage,
   createToolMessage,
