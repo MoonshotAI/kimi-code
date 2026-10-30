@@ -116,7 +116,7 @@ describe('AcpHostFileSystem', () => {
     expect(writes).toEqual(['你好']);
   });
 
-  it('keeps invalid UTF-8 writeBytes on the local binary backend', async () => {
+  it('keeps non-text writeBytes on the local binary backend', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'acp-fs-'));
     const path = join(tempDir, 'binary.dat');
     const fs = makeFileSystem({
@@ -126,9 +126,134 @@ describe('AcpHostFileSystem', () => {
       },
     });
 
-    await fs.writeBytes(path, Uint8Array.from([0xff, 0xfe]));
+    await fs.writeBytes(path, Uint8Array.from([0x00, 0xd8]));
 
-    expect(Array.from(await readFile(path))).toEqual([0xff, 0xfe]);
+    expect(Array.from(await readFile(path))).toEqual([0x00, 0xd8]);
+  });
+
+  it('bridges a BOM-less UTF-8 writeBytes through client text write', async () => {
+    const writes: string[] = [];
+    const fs = makeFileSystem({
+      readTextFile: async () => ({ content: '' }),
+      writeTextFile: async ({ content }) => {
+        writes.push(content);
+      },
+    });
+
+    await fs.writeBytes('/buffer.txt', new TextEncoder().encode('你好'));
+
+    expect(writes).toEqual(['你好']);
+  });
+
+  it('bridges a UTF-8 BOM writeBytes through client text write without the BOM', async () => {
+    const writes: string[] = [];
+    const fs = makeFileSystem({
+      readTextFile: async () => ({ content: '' }),
+      writeTextFile: async ({ content }) => {
+        writes.push(content);
+      },
+    });
+    const payload = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('hi', 'utf8')]);
+
+    await fs.writeBytes('/buffer.txt', payload);
+
+    expect(writes).toEqual(['hi']);
+  });
+
+  it('bridges a UTF-16LE BOM writeBytes through client text write', async () => {
+    const writes: string[] = [];
+    const fs = makeFileSystem({
+      readTextFile: async () => ({ content: '' }),
+      writeTextFile: async ({ content }) => {
+        writes.push(content);
+      },
+    });
+    const payload = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('你好', 'utf16le')]);
+
+    await fs.writeBytes('/buffer.txt', payload);
+
+    expect(writes).toEqual(['你好']);
+  });
+
+  it('bridges a UTF-16BE BOM writeBytes through client text write', async () => {
+    const writes: string[] = [];
+    const fs = makeFileSystem({
+      readTextFile: async () => ({ content: '' }),
+      writeTextFile: async ({ content }) => {
+        writes.push(content);
+      },
+    });
+    const le = Buffer.from('hi', 'utf16le');
+    const be = Buffer.alloc(le.length);
+    for (let i = 0; i + 1 < le.length; i += 2) {
+      be[i] = le[i + 1]!;
+      be[i + 1] = le[i]!;
+    }
+    const payload = Buffer.concat([Buffer.from([0xfe, 0xff]), be]);
+
+    await fs.writeBytes('/buffer.txt', payload);
+
+    expect(writes).toEqual(['hi']);
+  });
+
+  it('bridges a UTF-32LE BOM writeBytes through client text write', async () => {
+    const writes: string[] = [];
+    const fs = makeFileSystem({
+      readTextFile: async () => ({ content: '' }),
+      writeTextFile: async ({ content }) => {
+        writes.push(content);
+      },
+    });
+    const units = Array.from('hi 🚀');
+    const body = Buffer.alloc(units.length * 4);
+    units.forEach((u, i) => body.writeUInt32LE(u.codePointAt(0)!, i * 4));
+    const payload = Buffer.concat([Buffer.from([0xff, 0xfe, 0x00, 0x00]), body]);
+
+    await fs.writeBytes('/buffer.txt', payload);
+
+    expect(writes).toEqual(['hi 🚀']);
+  });
+
+  it('bridges a UTF-32BE BOM writeBytes through client text write', async () => {
+    const writes: string[] = [];
+    const fs = makeFileSystem({
+      readTextFile: async () => ({ content: '' }),
+      writeTextFile: async ({ content }) => {
+        writes.push(content);
+      },
+    });
+    const units = Array.from('hi');
+    const body = Buffer.alloc(units.length * 4);
+    units.forEach((u, i) => body.writeUInt32BE(u.codePointAt(0)!, i * 4));
+    const payload = Buffer.concat([Buffer.from([0x00, 0x00, 0xfe, 0xff]), body]);
+
+    await fs.writeBytes('/buffer.txt', payload);
+
+    expect(writes).toEqual(['hi']);
+  });
+
+  it('keeps a truncated BOM payload on the local binary backend', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'acp-fs-'));
+    const path = join(tempDir, 'truncated.dat');
+    const fs = makeFileSystem({
+      readTextFile: async () => ({ content: '' }),
+      writeTextFile: async () => {
+        throw new Error('must not use client text write');
+      },
+    });
+
+    await fs.writeBytes(path, Uint8Array.from([0xff, 0xfe, 0x61]));
+
+    expect(Array.from(await readFile(path))).toEqual([0xff, 0xfe, 0x61]);
+  });
+
+  it('reports clientBackedText only when the readTextFile capability is negotiated', () => {
+    const client = {
+      readTextFile: async () => ({ content: '' }),
+      writeTextFile: async () => undefined,
+    };
+    expect(makeFileSystem(client).clientBackedText).toBe(true);
+    expect(makeFileSystem(client, { read: false, write: true }).clientBackedText).toBe(false);
   });
 
   it('falls back to the local filesystem when text capabilities are unavailable', async () => {
