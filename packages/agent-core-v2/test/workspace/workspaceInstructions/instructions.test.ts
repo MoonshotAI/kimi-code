@@ -216,4 +216,39 @@ describe('WorkspaceInstructionsService', () => {
 
     expect(states.get(workspaceInstructionsCurrentKey).agentsMd).toContain('updated instructions');
   });
+
+  it('registers local watchers only when watchEnabled is set', async () => {
+    const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+    const make = (watchEnabled: boolean) => {
+      const ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+        },
+      });
+      const states = ix.get(IWorkspaceStateService);
+      return disposables.add(
+        new WorkspaceInstructionsService(
+          { cwd: workDir } as unknown as IWorkspaceContext,
+          new HostFileSystem(),
+          { homeDir: osHomeDir } as unknown as IHostEnvironment,
+          { homeDir: brandHomeDir } as unknown as IBootstrapService,
+          stubLog(),
+          states,
+          undefined,
+          watchEnabled,
+        ),
+      );
+    };
+
+    const disabled = make(false);
+    await disabled.ready;
+    await flush();
+    expect(watchFires.size).toBe(0);
+
+    const enabled = make(true);
+    await enabled.ready;
+    await flush();
+    expect(watchFires.size).toBeGreaterThan(0);
+  });
 });

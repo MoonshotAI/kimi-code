@@ -16,14 +16,21 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
+import { AgentWorkspaceContextService } from '#/session/workspaceContext/agentWorkspaceContextService';
+import { SessionStateService } from '#/session/state/sessionStateService';
+import {
+  workspaceContextAdditionalDirsKey,
+  workspaceContextWorkDirKey,
+} from '#/session/workspaceContext/workspaceContextService';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
 const posixEnv: IHostEnvironment = {
@@ -723,24 +730,14 @@ function bashTool(
     spawn: async (command, args = [], options) => runner.spawn(command, args, options),
   };
   const backend = Object.assign(
-    new FakeRuntime(
-      { workspaceId: ctx.workspaceId, runtimeId: 'local', generation: 'test' },
+    new FakeEnvironment(
+      { environmentId: 'local', generation: 'test' },
       { capabilities: ['process'], pathClass: env.pathClass },
     ),
-    { environment: env, process: processService },
+    { host: env, process: processService },
   );
-  const runtime: IAgentRuntimeService = {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: () => true,
-    inspect: () => backend,
-    acquire: () => ({
-      runtime: backend,
-      track: (resource) => resource,
-      dispose: () => {},
-    }),
-  };
-  return new BashTool(runtime, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
+  const environment = stubAgentEnvironment(backend, { workDir: ctx.cwd });
+  return new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
 }
 
 describe('BashTool', () => {
@@ -844,12 +841,35 @@ describe('BashTool', () => {
     expect(execOptions?.env).toMatchObject({
       NO_COLOR: '1',
       TERM: 'dumb',
+      GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
     });
     expect(proc.stdin.end).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
       output: 'ok\n',
       isError: false,
     });
+  });
+
+  it('keeps an explicit GIT_TERMINAL_PROMPT and defaults an unset one to 0', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput({ stdout: 'ok\n' }));
+    const tool = bashTool(runner);
+    vi.stubEnv('GIT_TERMINAL_PROMPT', '1');
+    try {
+      await executeTool(tool, context({ command: 'git status', timeout: 60 }));
+      expect(exec.mock.calls[0]?.[2]?.env).toMatchObject({ GIT_TERMINAL_PROMPT: '1' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    exec.mockClear();
+    const previous = process.env['GIT_TERMINAL_PROMPT'];
+    delete process.env['GIT_TERMINAL_PROMPT'];
+    try {
+      await executeTool(tool, context({ command: 'git status', timeout: 60 }));
+      expect(exec.mock.calls[0]?.[2]?.env).toMatchObject({ GIT_TERMINAL_PROMPT: '0' });
+    } finally {
+      if (previous === undefined) delete process.env['GIT_TERMINAL_PROMPT'];
+      else process.env['GIT_TERMINAL_PROMPT'] = previous;
+    }
   });
 
   it('uses args.cwd when provided', async () => {
@@ -883,6 +903,43 @@ describe('BashTool', () => {
 
     expect(exec.mock.calls[0]?.[0]).toBe('/bin/bash');
     expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/var/app' && pwd"]);
+  });
+
+  it('resolves an omitted cwd from the bound environment workspace, not the host session cwd', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput({ stdout: '' }));
+    const ctx = createTestCtx('/host/session/cwd');
+    const processService: IHostProcessService = {
+      _serviceBrand: undefined,
+      spawn: async (command, args = [], options) => runner.spawn(command, args, options),
+    };
+    const backend = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'docker-dev', generation: 'remote-one' },
+        { capabilities: ['process'], pathClass: 'posix' },
+      ),
+      { host: createTestEnv(), process: processService },
+    );
+    const environment = stubAgentEnvironment(backend, { workDir: '/remote-work' });
+    const sessionState = new SessionStateService();
+    sessionState.contributeState(workspaceContextWorkDirKey);
+    sessionState.contributeState(workspaceContextAdditionalDirsKey);
+    sessionState.set(workspaceContextWorkDirKey, ctx.cwd);
+    const shadow = new AgentWorkspaceContextService(sessionState, {
+      current: environment,
+      onDidChange: () => ({ dispose: () => {} }),
+    });
+    const tool = new BashTool(
+      environment,
+      ctx,
+      shadow,
+      createFakeTaskService().service,
+      stubToolPolicy(),
+      stubConfig(),
+    );
+
+    await executeTool(tool, context({ command: 'pwd', timeout: 60 }));
+
+    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/remote-work' && pwd"]);
   });
 
   it('uses Git Bash semantics on Windows', async () => {
@@ -1379,6 +1436,76 @@ describe('BashTool', () => {
   });
 });
 
+describe('BashTool display cwd', () => {
+  function environmentService(environment: FakeEnvironment): IAgentEnvironmentService {
+    return stubAgentEnvironment(environment, { workDir: '' });
+  }
+
+  function displayCwdTool(environment: IAgentEnvironmentService, ctx: ISessionContext, workDir: string): BashTool {
+    return new BashTool(
+      environment,
+      ctx,
+      stubWorkspaceContext(workDir),
+      {} as unknown as IAgentTaskService,
+      {} as unknown as IAgentToolPolicyService,
+      {} as unknown as IConfigService,
+    );
+  }
+
+  async function displayCwd(tool: BashTool, args: BashInput): Promise<string | undefined> {
+    const resolved: ToolExecution = await Promise.resolve(tool.resolveExecution(args));
+    if (resolved.isError === true) return undefined;
+    const display = resolved.display;
+    return display?.kind === 'command' ? display.cwd : undefined;
+  }
+
+  it('resolves a relative cwd argument against the binding cwd on the bound environment', async () => {
+    const environment = new FakeEnvironment({ environmentId: 'dev-box', generation: 'g' });
+    const tool = displayCwdTool(environmentService(environment), createTestCtx('/Users/mac/project'), '/home/deploy/app');
+
+    await expect(displayCwd(tool, { command: 'ls', cwd: 'src/lib' })).resolves.toBe(
+      '/home/deploy/app/src/lib',
+    );
+  });
+});
+
+describe('BashTool spawn cwd', () => {
+  function spawnCwdBackend(runner: IHostProcessService): FakeEnvironment {
+    const processService: IHostProcessService = {
+      _serviceBrand: undefined,
+      spawn: async (command, args = [], options) => runner.spawn(command, args, options),
+    };
+    return Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'dev-box', generation: 'g' },
+        { capabilities: ['process'], pathClass: 'posix' },
+      ),
+      { host: createTestEnv(), process: processService },
+    );
+  }
+
+  function spawnCwdTool(backend: FakeEnvironment, workDir: string): BashTool {
+    return new BashTool(
+      stubAgentEnvironment(backend),
+      createTestCtx('/Users/mac/project'),
+      stubWorkspaceContext(workDir),
+      createFakeTaskService().service,
+      stubToolPolicy(),
+      stubConfig(),
+    );
+  }
+
+  it('spawns each session command with its own workDir on a shared environment', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput());
+    const backend = spawnCwdBackend(runner);
+
+    await executeTool(spawnCwdTool(backend, '/remote/a'), context({ command: 'ls', timeout: 60 }));
+    await executeTool(spawnCwdTool(backend, '/remote/b'), context({ command: 'ls', cwd: 'src', timeout: 60 }));
+
+    expect(exec.mock.calls.map((call) => call[2]?.cwd)).toEqual(['/remote/a', '/remote/b/src']);
+  });
+});
+
 describe('BashTool background mode', () => {
   it('can detach a foreground command through the background service', async () => {
     const { proc, finish } = pendingProcess();
@@ -1870,7 +1997,7 @@ describe('BashTool background mode', () => {
   });
 });
 
-describe('BashTool prompt / runtime consistency', () => {
+describe('BashTool prompt / environment consistency', () => {
   it('reports unavailable background using only tools the prompt documents', async () => {
     const { runner } = createTestRunner(processWithOutput());
 

@@ -61,7 +61,7 @@ export async function listMessages(
   query: MessageListQuery,
 ): Promise<PageResponse<Message>> {
   const all = await loadMessages(core, sessionId);
-  const desc = [...all].reverse();
+  const desc = [...all].toReversed();
 
   let pivotIndex = -1;
   if (query.before_id !== undefined) {

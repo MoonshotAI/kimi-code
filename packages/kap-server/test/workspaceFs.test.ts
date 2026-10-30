@@ -1,12 +1,18 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
+import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { IModelCatalog, IWorkspaceInstanceManager, IWorkspaceService } from '@moonshot-ai/agent-core-v2';
+import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
+import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
+import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
+import { fakeModelCatalog } from './helpers/fakeModelCatalog';
 
 interface Envelope<T> {
   code: number;
@@ -118,7 +124,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
     );
     expect(body.code).toBe(0);
     expect(body.data.path).toBe(await realpath(root));
-    const names = body.data.entries.map((e) => e.name).sort();
+    const names = body.data.entries.map((e) => e.name).toSorted();
     expect(names).toEqual(['alpha', 'beta']);
     for (const entry of body.data.entries) {
       expect(entry.is_dir).toBe(true);
@@ -433,5 +439,142 @@ describe('server-v2 /api/v1 fs:content', () => {
       headers: authHeaders(server as RunningServer),
     } as never);
     expect(res.status).toBe(404);
+  });
+});
+
+function mappingHostFs(remoteRoot: string): IHostFileSystem {
+  const inner = new HostFileSystem();
+  const map = (path: string): string => join(remoteRoot, path);
+  const unmap = (path: string): string =>
+    path === remoteRoot
+      ? '/'
+      : path.startsWith(`${remoteRoot}/`)
+        ? path.slice(remoteRoot.length)
+        : path;
+  return {
+    _serviceBrand: undefined,
+    readText: (path, options) => inner.readText(map(path), options),
+    writeText: (path, data) => inner.writeText(map(path), data),
+    appendText: (path, data) => inner.appendText(map(path), data),
+    readBytes: (path, n, offset) => inner.readBytes(map(path), n, offset),
+    writeBytes: (path, data) => inner.writeBytes(map(path), data),
+    readLines: (path, options) => inner.readLines(map(path), options),
+    createExclusive: (path, data) => inner.createExclusive(map(path), data),
+    stat: (path) => inner.stat(map(path)),
+    lstat: (path) => inner.lstat(map(path)),
+    readdir: (path) => inner.readdir(map(path)),
+    mkdir: (path, options) => inner.mkdir(map(path), options),
+    remove: (path) => inner.remove(map(path)),
+    realpath: async (path) => unmap(await inner.realpath(map(path))),
+  };
+}
+
+describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let localRoot: string | undefined;
+  let remoteRoot: string | undefined;
+  let provider: { dispose(): void | Promise<void> } | undefined;
+  let base: string;
+  const remoteRoots = new Map<string, string>();
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-home-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds: [[IModelCatalog, fakeModelCatalog()]],
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  beforeEach(async () => {
+    localRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-local-')));
+    remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fsrt-remote-')));
+    remoteRoots.set(localRoot, remoteRoot);
+    provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
+      id: 'remote-test-provider',
+      attach: async (host) => {
+        const environment = Object.assign(
+          new FakeEnvironment(
+            { environmentId: 'remote-test', generation: 'remote-generation' },
+            { capabilities: ['fs'] },
+          ),
+          { fs: mappingHostFs(remoteRoot as string) },
+        );
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
+  });
+
+  afterEach(async () => {
+    if (provider !== undefined) {
+      await provider.dispose();
+      provider = undefined;
+    }
+    for (const root of [...remoteRoots.keys(), ...remoteRoots.values()]) {
+      await rm(root, { recursive: true, force: true });
+    }
+    remoteRoots.clear();
+    localRoot = undefined;
+    remoteRoot = undefined;
+  });
+
+  afterAll(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  function contentUrl(path: string, environmentId?: string): string {
+    const query = new URLSearchParams({ path });
+    if (environmentId !== undefined) query.set('environment_id', environmentId);
+    return `${base}/api/v1/fs:content?${query.toString()}`;
+  }
+
+  async function postMkdir(body: unknown): Promise<Envelope<{ path: string } | null>> {
+    const res = await fetch(`${base}/api/v1/fs:mkdir`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    } as never);
+    return (await res.json()) as Envelope<{ path: string } | null>;
+  }
+
+  it('reads stat, sample, and body from the environment fs when the path exists on both filesystems', async () => {
+    const requestPath = join(localRoot as string, 'shared.txt');
+    const remoteFile = join(remoteRoot as string, requestPath);
+    await mkdir(dirname(remoteFile), { recursive: true });
+    await writeFile(remoteFile, 'remote-bytes');
+    await writeFile(requestPath, 'local-decoy');
+
+    const res = await fetch(contentUrl(requestPath, 'remote-test'), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
+    } as never);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-length')).toBe('12');
+    expect(await res.text()).toBe('remote-bytes');
+  });
+
+  it('creates directories on the environment fs, never on the server-local disk', async () => {
+    const requestPath = join(localRoot as string, 'made-remote');
+    await mkdir(join(remoteRoot as string, localRoot as string), { recursive: true });
+
+    const body = await postMkdir({ path: requestPath, environment_id: 'remote-test' });
+    expect(body.code).toBe(0);
+    expect(body.data?.path).toBe(requestPath);
+
+    const remoteStat = await stat(join(remoteRoot as string, requestPath));
+    expect(remoteStat.isDirectory()).toBe(true);
+    await expect(stat(requestPath)).rejects.toThrow();
   });
 });

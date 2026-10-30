@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -34,6 +35,35 @@ export function findNewerCanaryVersion(version, publishedVersions) {
     .filter((published) => compareCanaryVersions(published, version) > 0)
     .toSorted(compareCanaryVersions)
     .at(-1) ?? null;
+}
+
+export function computeCanaryBaseVersion({ releasePlan, packageVersion }) {
+  if (releasePlan === null || typeof releasePlan !== 'object' || !Array.isArray(releasePlan.releases)) {
+    throw new Error('changeset status output must contain a releases array');
+  }
+  for (const release of releasePlan.releases) {
+    if (release === null || typeof release !== 'object' || typeof release.name !== 'string') {
+      throw new Error('changeset status output contains an invalid release');
+    }
+  }
+  const release = releasePlan.releases.find((candidate) => candidate.name === PACKAGE_NAME);
+  if (release !== undefined) {
+    if (typeof release.newVersion !== 'string' || !BASE_RE.test(release.newVersion)) {
+      throw new Error(`invalid canary base from changeset release plan: ${release.newVersion}`);
+    }
+    return release.newVersion;
+  }
+  if (typeof packageVersion !== 'string' || !BASE_RE.test(packageVersion)) {
+    throw new Error(`canary package version must be a plain x.y.z version, got ${packageVersion}`);
+  }
+  const [major, minor, patch] = packageVersion.split('.').map(Number);
+  return `${major}.${minor}.${patch + 1}`;
+}
+
+export function resolveCanaryBaseVersion({ outputFile, packageVersion, execute = execFileSync }) {
+  execute('pnpm', ['changeset', 'status', '--output', outputFile], { stdio: 'inherit' });
+  const releasePlan = JSON.parse(readFileSync(outputFile, 'utf8'));
+  return computeCanaryBaseVersion({ releasePlan, packageVersion });
 }
 
 export function computeCanaryVersion({ baseVersion, publishedAt, sha }) {
@@ -157,28 +187,39 @@ function select() {
 
 function version() {
   const run = JSON.parse(execFileSync('gh', ['api', `repos/${env('GITHUB_REPOSITORY')}/actions/runs/${env('GITHUB_RUN_ID')}`], { encoding: 'utf8' }));
-  const result = computeCanaryVersion({
-    baseVersion: JSON.parse(readFileSync(CLI_PACKAGE_JSON, 'utf8')).version,
-    publishedAt: run.created_at,
-    sha: env('GITHUB_SHA'),
-  });
-  const tag = `${TAG_PREFIX}${result}`;
-  if (canaryTags().includes(tag) && env('GITHUB_RUN_ATTEMPT') === '1') {
-    throw new Error(`${tag} already exists before this run`);
+  const outputDir = mkdtempSync(join(tmpdir(), 'kimi-code-canary-'));
+  try {
+    const result = computeCanaryVersion({
+      baseVersion: resolveCanaryBaseVersion({
+        outputFile: join(outputDir, 'release-plan.json'),
+        packageVersion: JSON.parse(readFileSync(CLI_PACKAGE_JSON, 'utf8')).version,
+      }),
+      publishedAt: run.created_at,
+      sha: env('GITHUB_SHA'),
+    });
+    const tag = `${TAG_PREFIX}${result}`;
+    if (canaryTags().includes(tag) && env('GITHUB_RUN_ATTEMPT') === '1') {
+      throw new Error(`${tag} already exists before this run`);
+    }
+    writeOutputs({ version: result, tag, published_at: run.created_at });
+  } finally {
+    rmSync(outputDir, { recursive: true, force: true });
   }
-  writeOutputs({ version: result, tag, published_at: run.created_at });
+}
+
+export function readNpmCanaryVersion(execute = execFileSync) {
+  const npmLatest = execute('npm', ['view', PACKAGE_NAME, 'dist-tags.canary'], { encoding: 'utf8' }).trim();
+  if (npmLatest !== '' && parseCanaryVersion(npmLatest) === null) {
+    throw new Error(`npm canary tag is malformed: ${npmLatest}`);
+  }
+  return npmLatest;
 }
 
 function guard() {
   git(['fetch', '--tags', 'origin']);
   const publishedVersions = canaryVersions(canaryTags());
-  if (process.env.KIMI_CODE_CANARY_NPM_PUBLISH === 'true') {
-    const npmLatest = execFileSync('npm', ['view', PACKAGE_NAME, 'dist-tags.canary'], { encoding: 'utf8' }).trim();
-    if (npmLatest !== '') {
-      if (parseCanaryVersion(npmLatest) === null) throw new Error(`npm canary tag is malformed: ${npmLatest}`);
-      publishedVersions.push(npmLatest);
-    }
-  }
+  const npmLatest = readNpmCanaryVersion();
+  if (npmLatest !== '') publishedVersions.push(npmLatest);
   const version = env('CANARY_VERSION');
   const newer = findNewerCanaryVersion(version, publishedVersions);
   if (newer !== null) throw new Error(`stale canary run: ${version} would replace newer ${newer}`);

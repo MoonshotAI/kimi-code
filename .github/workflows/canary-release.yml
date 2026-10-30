@@ -34,6 +34,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
@@ -42,6 +43,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/canary-release.mjs select
+      - name: Install dependencies
+        if: steps.select.outputs.skip == 'false'
+        run: pnpm install --frozen-lockfile
       - name: Compute canary version
         id: version
         if: steps.select.outputs.skip == 'false'
@@ -84,7 +88,6 @@ jobs:
       CANARY_VERSION: ${{ needs.prepare.outputs.version }}
       CANARY_TAG: ${{ needs.prepare.outputs.tag }}
       CANARY_PUBLISHED_AT: ${{ needs.prepare.outputs.published_at }}
-      KIMI_CODE_CANARY_NPM_PUBLISH: ${{ vars.KIMI_CODE_CANARY_NPM_PUBLISH }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -99,7 +102,6 @@ jobs:
       - name: Reject stale publish
         run: node scripts/canary-release.mjs guard
       - name: Publish to npm (canary dist-tag)
-        if: vars.KIMI_CODE_CANARY_NPM_PUBLISH == 'true'
         run: |
           if npm view "@moonshot-ai/kimi-code@$CANARY_VERSION" version >/dev/null 2>&1; then
             echo "@moonshot-ai/kimi-code@$CANARY_VERSION is already on npm"

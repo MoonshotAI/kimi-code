@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 
 import type { ToolCall } from '#human/message';
 import { dirname, join } from 'pathe';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -12,13 +12,16 @@ import { runWillBeginStepHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { createFakeHostFs, createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
+import { createMapFs, stubPlanEnvironment } from './stubs';
 import {
+  agentService,
   createCommandRunner,
   createTestAgent,
   execEnvServices,
@@ -150,13 +153,14 @@ describe('Plan service', () => {
   }
 
   async function expectActivePlanPath(): Promise<string> {
-    return (await expectActivePlan()).path;
+    const path = (await expectActivePlan()).path;
+    if (path === null) throw new Error('expected plan file path');
+    return path;
   }
 
   function expectedPlanPath(id: string): string {
-    const session = ctx.get(ISessionContext);
     const agent = ctx.get(IAgentScopeContext);
-    return join(session.sessionDir, 'agents', agent.agentId, 'plans', `${id}.md`);
+    return join(ctx.get(ISessionContext).sessionDir, 'agents', agent.agentId, 'plans', `${id}.md`);
   }
 
   async function expectPlanActive(active: boolean): Promise<void> {
@@ -185,7 +189,19 @@ describe('Plan service', () => {
       expect(ctx.llmCalls).toHaveLength(0);
     });
 
-    it('derives the plan path from the agent homedir on enter and restore', async () => {
+    it('restores plan content from the persistent path written by previous versions', async () => {
+      const session = ctx.get(ISessionContext);
+      const path = join(session.sessionDir, 'agents', ctx.get(IAgentScopeContext).agentId, 'plans', 'existing-plan.md');
+      const content = '# Existing plan\n\n- Keep the saved work';
+      const { fakes } = createPlanFileFakes(new Map([[path, content]]));
+      useFakes(fakes);
+
+      await ctx.dispatch({ type: 'plan_mode.enter', id: 'existing-plan' });
+
+      expect(await plan.status()).toEqual({ id: 'existing-plan', path, content });
+    });
+
+    it('keeps the local persistent plan path on enter and restore', async () => {
       useFakes(createPlanFakes({
         writeText: vi.fn(async (_path: string, _content: string): Promise<void> => {}),
       }));
@@ -234,6 +250,63 @@ describe('Plan service', () => {
       expect(ctx.llmCalls).toHaveLength(2);
       expect(ctx.llmCalls[0]!.tools.map((tool) => tool.name)).not.toContain('EnterPlanMode');
       expect(toolResultText(ctx.llmCalls[1]!.history)).not.toContain('Plan mode is now active');
+    });
+  });
+
+  describe('remote environment binding', () => {
+    const remoteTempDir = '/remote/tmp';
+    let remoteCtx: TestAgentContext;
+    let remotePlan: IAgentPlanService;
+    let localFiles: Map<string, string>;
+    let remoteFiles: Map<string, string>;
+    let remoteMkdir: Mock<IHostFileSystem['mkdir']>;
+
+    beforeEach(async () => {
+      localFiles = new Map();
+      remoteFiles = new Map();
+      remoteMkdir = vi.fn<IHostFileSystem['mkdir']>().mockResolvedValue(undefined);
+      remoteCtx = createTestAgent([
+        execEnvServices({ hostFs: createMapFs(localFiles) }),
+        agentService(
+          IAgentEnvironmentService,
+          stubPlanEnvironment({
+            fs: createMapFs(remoteFiles, { mkdir: remoteMkdir }),
+            tempDir: remoteTempDir,
+          }),
+        ),
+      ]);
+      remotePlan = remoteCtx.get(IAgentPlanService);
+      await remoteCtx.restorePersisted();
+    });
+
+    afterEach(async () => {
+      await remoteCtx.dispose();
+    });
+
+    function useRemoteTools(tools: readonly string[]): void {
+      remoteCtx.get(IAgentProfileService).update({ activeToolNames: [...tools] });
+      remoteCtx.newEvents();
+    }
+
+    it('keeps denying writes to non-plan files on a remote binding', async () => {
+      useRemoteTools(['Write']);
+      await remotePlan.enter('remote-plan', false);
+
+      const otherPath = '/remote/work/src/main.ts';
+      const writeCall: ToolCall = {
+        type: 'function',
+        id: 'call_write_other',
+        name: 'Write',
+        arguments: JSON.stringify({ path: otherPath, content: 'nope' }),
+      };
+      remoteCtx.mockNextResponse({ type: 'text', text: 'I will edit the source.' }, writeCall);
+      remoteCtx.mockNextResponse({ type: 'text', text: 'Understood.' });
+      await remoteCtx.rpc.prompt({ input: [{ type: 'text', text: 'Edit the source file' }] });
+
+      await remoteCtx.untilTurnEnd();
+
+      expect(remoteFiles.has(otherPath)).toBe(false);
+      expect(toolResultText(remoteCtx.llmCalls[1]!.history)).toContain('Plan mode is active');
     });
   });
 
@@ -781,6 +854,7 @@ describe('Plan service', () => {
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "planMode": true }
         [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Inspect without mutating files" } ], "createdAt": "<time>" }
         [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Inspect without mutating files" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
+        [emit] turn.prompt                 { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Inspect without mutating files" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0 }
         [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Inspect without mutating files" }
         [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Inspect without mutating files" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
         [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
@@ -860,6 +934,7 @@ describe('Plan service', () => {
         [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "planMode": true }
         [emit] prompt.submitted            { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ], "createdAt": "<time>" }
         [wire] turn.prompt                 { "agentId": "main", "input": [ { "type": "text", "text": "Remove forbidden.txt" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
+        [emit] turn.prompt                 { "time": "<time>", "agentId": "main", "input": [ { "type": "text", "text": "Remove forbidden.txt" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0 }
         [emit] turn.started                { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Remove forbidden.txt" }
         [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Remove forbidden.txt" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
         [emit] prompt.started              { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }

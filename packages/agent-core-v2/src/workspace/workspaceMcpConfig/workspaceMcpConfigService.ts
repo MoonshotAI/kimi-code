@@ -112,13 +112,13 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
 
   private async initialize(publish = false): Promise<void> {
     await this.config.ready;
-    await this.trust.ready;
+    const trusted = await this.trust.get();
     const [fileServers, pluginServers] = await Promise.all([
       loadMcpServers({
         fs: this.fs,
         cwd: this.workspace.cwd,
         homeDir: this.bootstrap.homeDir,
-        includeProject: this.trust.isTrusted(),
+        includeProject: trusted,
       }),
       this.plugins.enabledMcpServers(),
     ]);

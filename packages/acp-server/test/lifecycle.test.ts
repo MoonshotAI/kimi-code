@@ -77,8 +77,9 @@ describe('acp-server session lifecycle', () => {
     }
   });
 
-  async function boot(): Promise<TestClient> {
+  async function boot(configToml?: string): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-lifecycle-'));
+    if (configToml !== undefined) await writeFile(join(homeDir, 'config.toml'), configToml, 'utf-8');
     client = await createTestClient({ homeDir });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
     return client;
@@ -120,6 +121,18 @@ describe('acp-server session lifecycle', () => {
         sessions: { sessionId: string }[];
       };
       expect(listed.sessions.some((s) => s.sessionId === created.sessionId)).toBe(true);
+    },
+    30_000,
+  );
+
+  it(
+    'session/new bypasses an invalid configured environment default',
+    async () => {
+      const c = await boot('[environments]\ndefault = "missing"\n');
+      const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      expect(created.sessionId).toMatch(/^session_/);
     },
     30_000,
   );
@@ -338,6 +351,30 @@ describe('acp-server session lifecycle', () => {
 
       const entries = await sessionMcpEntries(c, created.sessionId);
       expect(entries.find((e) => e.name === 'mock')?.status).toBe('connected');
+    },
+    30_000,
+  );
+
+  it(
+    'session/load succeeds after the host process restarts',
+    async () => {
+      const c = await boot();
+      const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      await c.close();
+      client = undefined;
+
+      const restarted = await createTestClient({ homeDir: homeDir! });
+      client = restarted;
+      await restarted.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+
+      const loaded = (await restarted.send('session/load', {
+        sessionId: created.sessionId,
+        cwd: homeDir,
+        mcpServers: [],
+      })) as { configOptions?: unknown[] };
+      expect(Array.isArray(loaded.configOptions)).toBe(true);
     },
     30_000,
   );

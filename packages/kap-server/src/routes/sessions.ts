@@ -79,7 +79,11 @@ import { defineRoute } from '../middleware/defineRoute';
 import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
-import { sendMappedError, sessionConflictErrors } from './sessionErrors';
+import { sendEnvironmentError } from './environment';
+import {
+  sendMappedError as sendSessionMappedError,
+  sessionConflictErrors,
+} from './sessionErrors';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
@@ -190,6 +194,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description: 'Create a new session',
       tags: ['sessions'],
@@ -251,6 +257,9 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: resolved.id,
           workDir,
+          environmentId: body.environment_id,
+          environmentCwd: body.environment_cwd,
+          ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
         });
         if (typeof body.title === 'string') {
           await handle.accessor.get(ISessionMetadata).setTitle(body.title);
@@ -1148,11 +1157,7 @@ async function refreshWorkspaceCatalogs(
   if (workspaceId !== undefined) {
     const target = core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
     if (target !== undefined) {
-      await target.program.dirs.reload();
-      await target.program.instructions.reload();
-      await target.program.skills.reload();
-      await target.program.agentProfiles.reload().catch(() => undefined);
-      await target.program.userAgentProfiles.reload().catch(() => undefined);
+      await target.program.reload();
     }
   }
   const sessions = core.accessor.get(ISessionManager).list();
@@ -1309,4 +1314,13 @@ function buildValidationEnvelope(
     request_id: requestId,
     details,
   };
+}
+
+function sendMappedError(
+  reply: { send(payload: unknown): unknown },
+  req: { id: string },
+  error: unknown,
+): void {
+  if (sendEnvironmentError(reply, req.id, error)) return;
+  sendSessionMappedError(reply, req, error);
 }

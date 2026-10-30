@@ -187,17 +187,17 @@ describe('AgentTodoService', () => {
     const todo = ctx.get(IAgentTodoService);
     const reminder = ctx.get(IAgentReminderService);
 
-    appendAssistantTurns(ctx.context, 5);
+    appendAssistantTurns(ctx.context, 10);
     await reminder.reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
     expect(reminderCount(ctx.context)).toBe(0);
 
     await todo.replace([{ title: 'track me', status: 'pending' }]);
-    appendAssistantTurns(ctx.context, 5);
+    appendAssistantTurns(ctx.context, 10);
     await reminder.reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
     expect(reminderCount(ctx.context)).toBe(1);
 
     await todo.replace([{ title: 'track me', status: 'done' }]);
-    appendAssistantTurns(ctx.context, 5);
+    appendAssistantTurns(ctx.context, 10);
     await reminder.reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
     expect(reminderCount(ctx.context)).toBe(1);
 
@@ -206,7 +206,7 @@ describe('AgentTodoService', () => {
     const subReminder = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentReminderService);
     const subMemory = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentContextMemoryService);
     await subTodo.replace([{ title: 'sub task', status: 'pending' }]);
-    appendAssistantTurns(subMemory, 5);
+    appendAssistantTurns(subMemory, 10);
     await subReminder.reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
     expect(reminderCount(subMemory)).toBe(0);
     await lifecycle.remove(sub);
@@ -225,7 +225,7 @@ describe('AgentTodoService', () => {
         { title: 'parse config', status: 'done' },
         { title: 'update callers', status: 'in_progress' },
       ]);
-      appendAssistantTurns(tracked.context, 5);
+      appendAssistantTurns(tracked.context, 10);
       await tracked.get(IAgentReminderService).reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
       bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed' }));
       bus.publish(new TurnStarted({ agentId: 'main', turnId: 2, origin: { kind: 'user' } }));
@@ -239,7 +239,7 @@ describe('AgentTodoService', () => {
       const propertiesOf = (event: string) =>
         records.filter((record) => record.event === event).map((record) => record.properties);
       expect(propertiesOf('todo_reminder_shown')).toEqual([
-        expect.objectContaining({ steps_since_write: 5, item_count: 2, open_count: 1 }),
+        expect.objectContaining({ steps_since_write: 10, item_count: 2, open_count: 1 }),
       ]);
       expect(propertiesOf('todo_turn_ended')).toEqual([
         expect.objectContaining({

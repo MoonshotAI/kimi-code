@@ -21,6 +21,7 @@ export interface HookRunCallbacks {
     reason: string | undefined,
     durationMs: number,
   ) => void;
+  readonly onError?: (event: string, hook: HookDef, message: string) => void;
 }
 
 export function indexHooks(hooks: readonly HookDef[]): Map<string, HookDef[]> {
@@ -76,6 +77,17 @@ export async function runMatchedHooks(
     ),
   );
 
+  for (let index = 0; index < matched.length; index++) {
+    const hook = matched[index];
+    const result = results[index];
+    if (hook === undefined || result === undefined) continue;
+    const failure = hookExecutionError(hook, result);
+    if (failure === undefined) continue;
+    try {
+      callbacks.onError?.(event, hook, failure);
+    } catch {}
+  }
+
   const decision = blockDecision(event, results);
   try {
     callbacks.onResolved?.(
@@ -114,6 +126,17 @@ export function compileMatcher(pattern: string): RegExp {
   }
   const uniqueFlags = Array.from(new Set(flags)).join('');
   return new RegExp(rest, uniqueFlags || undefined);
+}
+
+export function hookExecutionError(hook: HookDef, result: HookResult): string | undefined {
+  if (result.error !== undefined) return result.error;
+  if (result.timedOut === true) {
+    return `timed out after ${hook.timeout ?? DEFAULT_HOOK_TIMEOUT_SECONDS}s`;
+  }
+  if (result.exitCode !== undefined && result.exitCode !== 0 && result.exitCode !== 2) {
+    return `exited with exit code ${result.exitCode}`;
+  }
+  return undefined;
 }
 
 export function matches(pattern: string, value: string): boolean {
