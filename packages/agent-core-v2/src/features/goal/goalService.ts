@@ -801,6 +801,7 @@ function cancelPendingContinuation(context: GoalOperationContext,
   preserveLiveContinuation = false,
   reason?: unknown,
 ): void {
+  context.effects.deferredContinuation = undefined;
   const pending = context.effects.pendingContinuation;
   if (preserveLiveContinuation && pending?.turnId === context.effects.liveTurnId) return;
   context.effects.pendingContinuation = undefined;

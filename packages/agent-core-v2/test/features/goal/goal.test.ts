@@ -1355,6 +1355,27 @@ describe('AgentGoalService core workflow hooks', () => {
     await vi.waitFor(() => expect(loopService.launches).toHaveLength(1));
   });
 
+  it('drops a deferred continuation when the goal is paused before the queue drains', async () => {
+    const queue = ctx!.get(IAgentPromptQueueService);
+    const pending = vi.spyOn(queue, 'hasPendingItems').mockReturnValue(true);
+    await goals.createGoal({ objective: 'finish the task' });
+
+    const turn = makeTurn(1);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+    await runGoalStep(loopService, turn);
+    endTurn(eventBus, turn);
+    await vi.waitFor(() => expect(goals.getGoal().goal?.turnsUsed).toBe(1));
+
+    await goals.pauseGoal();
+    await goals.resumeGoal();
+    pending.mockReturnValue(false);
+    queue.pause();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(goals.getGoal().goal?.status).toBe('active');
+    expect(loopService.launches).toEqual([]);
+  });
+
   it('drops a deferred continuation once a queued input starts its own goal turn', async () => {
     const queue = ctx!.get(IAgentPromptQueueService);
     const pending = vi.spyOn(queue, 'hasPendingItems').mockReturnValue(true);
