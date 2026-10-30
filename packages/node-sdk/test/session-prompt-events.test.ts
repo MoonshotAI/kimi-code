@@ -1051,7 +1051,7 @@ describe('Session.prompt events', () => {
     }
   });
 
-  it('rejects a first running turn without a completed fork boundary', async () => {
+  it('forks an empty session while the first turn is still running', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
@@ -1066,22 +1066,34 @@ describe('Session.prompt events', () => {
       await source.prompt('only question');
       await started;
 
-      await expect(
-        harness.forkSession({
-          id: source.id,
-          forkId: 'ses_turn_fork_range_child',
-        }),
-      ).rejects.toMatchObject({
-        name: 'KimiError',
-        code: 'request.invalid',
-        details: { availableTurns: 0 },
+      const fork = await harness.forkSession({
+        id: source.id,
+        forkId: 'ses_turn_fork_range_child',
       });
+      expect(visibleReplayText(fork.getResumeState()?.agents['main']?.replay ?? [])).toEqual([]);
       await expect(
         harness.listSessions({ sessionId: 'ses_turn_fork_range_child' }),
-      ).resolves.toEqual([]);
+      ).resolves.toHaveLength(1);
+      await fork.close();
 
       responseGate.resolve();
       await ended;
+      await source.close();
+      const completedSource = await harness.resumeSession({ id: source.id });
+      expect(visibleReplayText(completedSource.getResumeState()?.agents['main']?.replay ?? [])).toEqual([
+        'user:only question',
+        'assistant:hello from fake provider',
+      ]);
+
+      const resumed = await harness.resumeSession({ id: fork.id });
+      await runPrompt(resumed, 'fork question', 'fork answer');
+      await resumed.close();
+      const reloaded = await harness.resumeSession({ id: fork.id });
+      expect(reloaded.getResumeState()?.agents['main']).toMatchObject({ userTurnCount: 1 });
+      expect(visibleReplayText(reloaded.getResumeState()?.agents['main']?.replay ?? [])).toEqual([
+        'user:fork question',
+        'assistant:fork answer',
+      ]);
     } finally {
       responseGate.resolve();
       await harness.close();
