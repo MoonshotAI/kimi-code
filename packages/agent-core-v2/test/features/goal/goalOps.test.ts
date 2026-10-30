@@ -61,6 +61,7 @@ function createPromptQueueStub(): IAgentPromptQueueService {
     _serviceBrand: undefined,
     onDidChange: Event.None,
     hasPendingInputs: () => false,
+    hasPendingItems: () => false,
   } as unknown as IAgentPromptQueueService;
 }
 

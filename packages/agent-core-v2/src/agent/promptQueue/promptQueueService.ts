@@ -64,6 +64,10 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   }
 
   hasPendingInputs(): boolean {
+    return this.starting !== undefined || (!this.paused && this.entries.some((item) => item.kind === 'input'));
+  }
+
+  hasPendingItems(): boolean {
     return this.starting !== undefined || (!this.paused && this.entries.length > 0);
   }
 
@@ -254,6 +258,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     if (head.kind === 'compact') {
       this.take(head);
       this.startQueuedCompaction(head.instruction);
+      this.schedulePump();
       return;
     }
     await this.runBusy(async () => {
@@ -269,6 +274,11 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       }
       if (this.starting !== head) return;
       this.starting = undefined;
+      if (this.paused) {
+        this.restoreAtHead({ ...head, prepare: undefined });
+        this.emitChange();
+        return;
+      }
       this.emitChange();
       this.submitTaken(head);
     });
@@ -289,15 +299,19 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       return this.loop.submit(entry.entry).id;
     } catch (error) {
       this.logger.warn('queued prompt could not start', { promptId: entry.id, error });
-      const firstQueued = this.entries.findIndex((item) => item.delivery !== 'steer');
-      const afterSteers = firstQueued === -1 ? this.entries.length : firstQueued;
-      const index = entry.delivery === 'steer' ? 0 : afterSteers;
-      this.entries = [...this.entries.slice(0, index), entry, ...this.entries.slice(index)];
+      this.restoreAtHead(entry);
       this.paused = true;
       this.emitChange();
       this.warn('queued-prompt-failed', `The queue was paused because a queued prompt could not start: ${reasonOf(error)}`);
       return undefined;
     }
+  }
+
+  private restoreAtHead(entry: QueueEntry): void {
+    const firstQueued = this.entries.findIndex((item) => item.delivery !== 'steer');
+    const afterSteers = firstQueued === -1 ? this.entries.length : firstQueued;
+    const index = entry.delivery === 'steer' ? 0 : afterSteers;
+    this.entries = [...this.entries.slice(0, index), entry, ...this.entries.slice(index)];
   }
 
   private take(entry: QueueEntry): void {

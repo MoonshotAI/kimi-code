@@ -61,6 +61,8 @@ export interface IAgentPromptQueueService {
 
   hasPendingInputs(): boolean;
 
+  hasPendingItems(): boolean;
+
   submitInput(request: PromptQueueInputRequest): Promise<PromptQueueSubmitResult>;
 
   submitCompaction(request: PromptQueueCompactionRequest): PromptQueueSubmitResult;

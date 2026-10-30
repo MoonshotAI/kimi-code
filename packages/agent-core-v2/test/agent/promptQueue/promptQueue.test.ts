@@ -328,6 +328,31 @@ describe('AgentPromptQueueService', () => {
     await loop.settled();
   });
 
+  it('holds a starting prompt when the queue is paused while its mode is applied', async () => {
+    setup();
+    respond(2);
+    const release = await startHeldTurn();
+    let finishPrepare!: () => void;
+    const prepare = vi.fn(() => new Promise<void>((resolve) => {
+      finishPrepare = resolve;
+    }));
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'plan', prepare });
+
+    release();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    queue.pause();
+    finishPrepare();
+    await vi.waitFor(() => expect(queue.hasPendingItems()).toBe(false));
+    await loop.settled();
+    expect(launched).toEqual(['first']);
+    expect(queue.snapshot()).toMatchObject({ paused: true, items: [{ id: 'p2', mode: 'plan' }] });
+
+    queue.resume();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
+    await loop.settled();
+    expect(prepare).toHaveBeenCalledOnce();
+  });
+
   it('drops a starting prompt that is cancelled while its mode is applied', async () => {
     setup();
     respond(2);
@@ -420,19 +445,40 @@ describe('AgentPromptQueueService', () => {
       expect(queue.snapshot().items).toEqual([]);
     });
 
-    it('drops a queued compaction that cannot start with a warning instead of silently', async () => {
+    it('drops a queued compaction that cannot start with a warning and moves on to the next item', async () => {
       const begin = vi.fn(() => false);
       setup(fakeCompaction(begin));
-      respond(1);
+      respond(2);
       const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
       const release = await startHeldTurn();
 
       expect(queue.submitCompaction({ id: 'c1' })).toEqual({ acceptedAs: 'queue' });
+      await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue' });
       release();
 
-      await vi.waitFor(() => expect(begin).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
+      expect(begin).toHaveBeenCalledOnce();
       expect(queue.snapshot().items).toEqual([]);
       expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'warning', code: 'queued-compaction-failed' }));
+      await loop.settled();
+    });
+
+    it('counts a queued compaction as a pending item but not as a pending input', async () => {
+      setup(fakeCompaction(() => true));
+      respond(1);
+      const release = await startHeldTurn();
+
+      queue.submitCompaction({ id: 'c1' });
+      expect(queue.hasPendingItems()).toBe(true);
+      expect(queue.hasPendingInputs()).toBe(false);
+      await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue' });
+      expect(queue.hasPendingInputs()).toBe(true);
+      queue.pause();
+      expect(queue.hasPendingItems()).toBe(false);
+      expect(queue.hasPendingInputs()).toBe(false);
+
+      release();
+      await loop.settled();
     });
   });
 });

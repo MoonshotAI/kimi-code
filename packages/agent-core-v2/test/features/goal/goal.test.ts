@@ -1254,7 +1254,7 @@ describe('AgentGoalService core workflow hooks', () => {
   });
 
   it('does not launch a continuation while the prompt queue has inputs waiting', async () => {
-    const pending = vi.spyOn(ctx!.get(IAgentPromptQueueService), 'hasPendingInputs').mockReturnValue(true);
+    const pending = vi.spyOn(ctx!.get(IAgentPromptQueueService), 'hasPendingItems').mockReturnValue(true);
     await goals.createGoal({ objective: 'finish the task' });
     await goals.markBlocked({ reason: 'need credentials' });
 
@@ -1313,7 +1313,7 @@ describe('AgentGoalService core workflow hooks', () => {
 
   it('defers an automatic continuation behind queued input and launches it once the queue drains', async () => {
     const queue = ctx!.get(IAgentPromptQueueService);
-    const pending = vi.spyOn(queue, 'hasPendingInputs').mockReturnValue(true);
+    const pending = vi.spyOn(queue, 'hasPendingItems').mockReturnValue(true);
     await goals.createGoal({ objective: 'finish the task' });
 
     const turn = makeTurn(1);
@@ -1334,7 +1334,7 @@ describe('AgentGoalService core workflow hooks', () => {
 
   it('keeps a deferred continuation until the loop can launch again', async () => {
     const queue = ctx!.get(IAgentPromptQueueService);
-    const pending = vi.spyOn(queue, 'hasPendingInputs').mockReturnValue(true);
+    const pending = vi.spyOn(queue, 'hasPendingItems').mockReturnValue(true);
     const launchable = vi.spyOn(loopService, 'canLaunchPrompt').mockReturnValue(false);
     await goals.createGoal({ objective: 'finish the task' });
 
@@ -1357,7 +1357,7 @@ describe('AgentGoalService core workflow hooks', () => {
 
   it('drops a deferred continuation once a queued input starts its own goal turn', async () => {
     const queue = ctx!.get(IAgentPromptQueueService);
-    const pending = vi.spyOn(queue, 'hasPendingInputs').mockReturnValue(true);
+    const pending = vi.spyOn(queue, 'hasPendingItems').mockReturnValue(true);
     await goals.createGoal({ objective: 'finish the task' });
 
     const first = makeTurn(1);

@@ -723,7 +723,7 @@ function isWaitForAvailable(context: GoalOperationContext): boolean {
 function launchContinuationTurn(context: GoalOperationContext, goalId: string, stepCapped = false): void {
   if (!isActiveGoal(context, goalId)) return;
   if (context.effects.pendingContinuation !== undefined) return;
-  if (context.runtime.get(IAgentPromptQueueService).hasPendingInputs()) {
+  if (context.runtime.get(IAgentPromptQueueService).hasPendingItems()) {
     context.effects.deferredContinuation = { goalId, stepCapped };
     return;
   }
@@ -776,7 +776,7 @@ function canLaunchContinuation(context: GoalOperationContext): boolean {
   return (
     status.state === 'idle' &&
     !status.hasPendingRequests &&
-    !context.runtime.get(IAgentPromptQueueService).hasPendingInputs()
+    !context.runtime.get(IAgentPromptQueueService).hasPendingItems()
   );
 }
 
