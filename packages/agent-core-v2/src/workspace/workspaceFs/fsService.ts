@@ -1152,7 +1152,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private async resolveGitRoot(root?: string): Promise<string> {
     if (root === undefined) return this.workDir;
-    const cwd = await this.resolveWithin(root);
+    const cwd = root === '/' && this.isWithinWorkspace(root) ? this.path.resolve(root) : await this.resolveWithin(root);
     const stat = await this.hostFs.stat(cwd).catch(() => undefined);
     if (stat?.isDirectory !== true) {
       throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, `git root is not a directory: ${root}`, {

@@ -128,9 +128,11 @@ describe('GitService', () => {
       mkdirSync(join(repo, 'a'), { recursive: true });
       mkdirSync(join(repo, 'b'), { recursive: true });
       writeFileSync(join(repo, 'a/file.txt'), 'one\n');
+      writeFileSync(join(repo, 'a/other.txt'), 'one\n');
       writeFileSync(join(repo, 'b/file.txt'), 'one\n');
       commitAll('init');
       writeFileSync(join(repo, 'a/file.txt'), 'one\ntwo\n');
+      writeFileSync(join(repo, 'a/other.txt'), 'one\ntwo\nthree\n');
       writeFileSync(join(repo, 'b/file.txt'), 'one\ntwo\nthree\n');
 
       const result = await service.status(join(repo, 'a'), {
@@ -142,6 +144,21 @@ describe('GitService', () => {
       expect(result.entries).toEqual({ 'file.txt': 'modified' });
       expect(result.additions).toBe(1);
       expect(result.deletions).toBe(0);
+    });
+
+    it('preserves a file named __proto__ in a selected cwd', async () => {
+      mkdirSync(join(repo, 'sub'), { recursive: true });
+      writeFileSync(join(repo, 'sub/__proto__'), 'one\n');
+      commitAll('init');
+      writeFileSync(join(repo, 'sub/__proto__'), 'one\ntwo\n');
+
+      const result = await service.status(join(repo, 'sub'), {
+        scopeToCwd: true,
+        includePullRequest: false,
+      });
+
+      expect(Object.hasOwn(result.entries, '__proto__')).toBe(true);
+      expect(JSON.stringify(result.entries)).toContain('"__proto__"');
     });
 
     it('preserves whitespace in the selected cwd prefix', async () => {

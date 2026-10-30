@@ -9,7 +9,7 @@ export function parsePorcelain(
   let branch = '';
   let ahead = 0;
   let behind = 0;
-  const entries: Record<string, FsGitStatus> = {};
+  const entries = Object.create(null) as Record<string, FsGitStatus>;
 
   for (let i = 0; i < records.length; i++) {
     const record = records[i]!;

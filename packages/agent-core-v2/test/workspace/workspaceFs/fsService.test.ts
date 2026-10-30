@@ -81,7 +81,7 @@ function fakeFs(
     }
   };
   const addAbsAncestors = (abs: string): void => {
-    let dir = abs.slice(0, abs.lastIndexOf('/'));
+    let dir = abs.slice(0, abs.lastIndexOf('/')) || '/';
     while (dir.length > 0 && !dirSet.has(dir)) {
       dirSet.add(dir);
       dir = dir.slice(0, dir.lastIndexOf('/'));
@@ -553,6 +553,26 @@ describe('WorkspaceFsService.gitStatus', () => {
 
     await expect(fs.gitStatus({ root: '/outside' })).rejects.toMatchObject({ code: 'fs.path_escapes' });
     await expect(fs.gitStatus({ root: 'src/a.ts' })).rejects.toMatchObject({ code: 'fs.git_unavailable' });
+  });
+
+  it('allows a registered filesystem root as a Git root', async () => {
+    const calls: string[] = [];
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async (cwd) => {
+        calls.push(cwd);
+        return { branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
+      },
+      diff: async () => ({ path: '', diff: '', truncated: false }),
+      pullRequest: async () => null,
+      findWorkTree: async () => null,
+    };
+    const fs = makeSession({ '/placeholder': '' }, emptyHandler, [], git, [], undefined, {}, ['/']);
+
+    await fs.gitStatus({ root: '/' });
+    await fs.gitStatusBatch({ roots: ['/'], include_pull_request: false });
+
+    expect(calls).toEqual(['/', '/']);
   });
 
   it('propagates FS_GIT_UNAVAILABLE thrown by IGitService', async () => {

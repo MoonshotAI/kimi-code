@@ -59,7 +59,9 @@ export class GitService implements IGitService {
       const head = await this.runCommand('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
       if (head.exitCode === 0) {
         const diffArgs = ['diff', '--no-color', '--numstat', 'HEAD', '--'];
-        if (options.scopeToCwd === true) diffArgs.push('.');
+        const paths = options.pathFilter === undefined ? [] : [...options.pathFilter].toSorted();
+        if (paths.length > 0) diffArgs.push(...paths);
+        else if (options.scopeToCwd === true) diffArgs.push('.');
         const numstat = await this.runCommand('git', diffArgs, cwd);
         if (numstat.exitCode === 0) {
           const stats = parseNumstat(numstat.stdout);

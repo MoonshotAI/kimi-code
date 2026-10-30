@@ -1877,13 +1877,13 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/fs:git_status`
 
-读取会话工作区中指定目录的 git 状态，可选限定在一组路径内。返回条目的路径相对于所选目录。
+读取 git 状态，可选限定在一组路径内。提供 `root` 时，返回条目的路径相对于该目录；省略时，查询整个 Git worktree，条目路径相对于仓库根目录。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `root` | body | string | 要查询的工作区目录，默认是会话工作目录；相对路径从会话工作目录解析 |
-| `paths` | body | string[] | 将状态限定在这些相对于 `root` 的路径；省略表示整个所选目录 |
+| `root` | body | string | 要限定查询范围的工作区目录；省略时查询整个 Git worktree，相对路径从会话工作目录解析 |
+| `paths` | body | string[] | 将状态限定在这些路径；相对路径在提供 `root` 时从该目录解析，否则从会话工作目录解析 |
 | `include_pull_request` | body | boolean | 是否包含关联的 Pull Request。默认 `true` |
 
 成功时 `data` 为 `{ branch, ahead, behind, entries, additions, deletions, pullRequest }`，其中 `entries` 把每个变更路径映射到其状态（`clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted`），`pullRequest` 为 `{ number, state, url }`（`state` 为 `open` / `merged` / `closed` / `draft`）或 `null`。
