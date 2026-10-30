@@ -334,7 +334,7 @@ merge_all_available_skills = true
 [permission]
 # rules: object[] — one entry per item:
   # decision: "allow" | "deny" | "ask"
-  # scope: "turn-override" | "session-runtime" | "project" | "user" (default: "user")
+  # scope: "project" | "user" (default: "user")
   # pattern: string
   # reason: string
 # dangerous_command_guard: boolean

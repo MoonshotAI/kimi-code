@@ -15,6 +15,7 @@ import {
 } from '#/app/config/toml';
 
 import { parsePermissionPattern } from './matchesRule';
+import type { PermissionRule } from './permissionRules';
 
 export const PERMISSION_SECTION = 'permission';
 
@@ -35,12 +36,21 @@ export const PermissionRuleSchema = z.object({
   reason: z.string().optional(),
 });
 
+export const PersistedPermissionRuleSchema = PermissionRuleSchema.extend({
+  scope: z.enum(['project', 'user']).default('user'),
+});
+
 export const PermissionConfigSchema = z.object({
-  rules: z.array(PermissionRuleSchema).optional(),
+  rules: z.array(PersistedPermissionRuleSchema).optional(),
   dangerousCommandGuard: z.boolean().optional(),
 });
 
 export type PermissionConfig = z.infer<typeof PermissionConfigSchema>;
+
+export function readUserPermissionRules(config: IConfigService): readonly PermissionRule[] {
+  config.assertValid(PERMISSION_SECTION);
+  return config.get<PermissionConfig | undefined>(PERMISSION_SECTION)?.rules ?? [];
+}
 
 export const DANGEROUS_COMMAND_GUARD_ENV = 'KIMI_CODE_DANGEROUS_COMMAND_GUARD';
 

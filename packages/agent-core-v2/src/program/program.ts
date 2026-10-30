@@ -153,6 +153,7 @@ export class Program {
         userAgentProfiles: generation.userAgentProfiles,
         pluginAgentProfiles: generation.pluginAgentProfiles,
         mcp: generation.mcp,
+        trust: generation.trust,
         acquireWorkdir: (environmentId, cwd, followsPrimary) => generation.workdirs.acquire(environmentId, cwd, followsPrimary),
         onDispose: release,
       });
