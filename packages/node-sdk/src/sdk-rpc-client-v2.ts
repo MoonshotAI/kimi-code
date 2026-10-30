@@ -355,6 +355,7 @@ import type {
   Unsubscribe,
   UploadFileOptions,
   WorkspaceTrustInfo,
+  WorkspaceTrustInfoOptions,
   WorkspaceTrustInstructionSources,
 } from '#/types';
 import {
@@ -794,7 +795,18 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * `createSession` takes. The disclosure of what trusting would activate is
    * computed inside the engine by `WorkspaceTrustDisclosureService`.
    */
-  override async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
+  override async getWorkspaceTrustInfo(
+    workDir: string,
+    options?: WorkspaceTrustInfoOptions,
+  ): Promise<WorkspaceTrustInfo> {
+    const environment = options?.environmentId === undefined
+      ? undefined
+      : await this.resolveSessionEnvironment({
+          workDir,
+          environmentId: options.environmentId,
+          environmentCwd: options.environmentCwd,
+        });
+    const baseDir = environment?.cwd ?? normalizeRequiredWorkDir('getWorkspaceTrustInfo', workDir);
     return this.withWorkspaceInstance('getWorkspaceTrustInfo', workDir, async (handler) => {
       const trusted = await handler.program.trust.get();
       if (trusted) {
@@ -807,7 +819,37 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
           instructionSources: EMPTY_INSTRUCTION_SOURCES,
         };
       }
-      const activation = await handler.program.trustDisclosure.describeGatedActivation();
+      let additionalDirs = options?.additionalDirs;
+      let pendingAdditionalDirsResolved = false;
+      if (environment !== undefined && additionalDirs !== undefined) {
+        const workdir = await handler.program.acquireWorkdir(
+          environment.environmentId,
+          environment.cwd ?? baseDir,
+        );
+        try {
+          const resolved = await workdir.localConfig.resolveAdditionalDirs(
+            environment.cwd ?? baseDir,
+            additionalDirs,
+          );
+          additionalDirs = await Promise.all(
+            resolved.map(async (dir) => {
+              try {
+                return await workdir.hostFs.realpath(dir);
+              } catch {
+                return dir;
+              }
+            }),
+          );
+          pendingAdditionalDirsResolved = true;
+        } finally {
+          workdir.dispose();
+        }
+      }
+      const activation = await handler.program.trustDisclosure.describeGatedActivation(
+        additionalDirs,
+        baseDir,
+        pendingAdditionalDirsResolved,
+      );
       return {
         trusted: false,
         gatedMcpServers: activation.mcpServers,
