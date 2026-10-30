@@ -2152,7 +2152,7 @@ export class KimiTUI {
 
   handleTurnEnded(event: TurnEndedEvent): void {
     this.staging.handleTurnEnded(event);
-    this.surveyController.notifyTurnEnded(event.traceId);
+    this.surveyController.notifyTurnEnded(event.requestId);
     this.programStatus.finishTurn(event);
     this.state.footer.refreshGitStatus();
     if (event.reason === 'completed') void this.maybeAutoGenerateSessionTitle();
