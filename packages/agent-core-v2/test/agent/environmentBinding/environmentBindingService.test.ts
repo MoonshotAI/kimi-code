@@ -29,6 +29,19 @@ import type { IEnvironmentDeclarationService } from '#/app/environmentDeclaratio
 import type { IFlagService } from '#/app/flag/flag';
 import { MULTI_ENVIRONMENT_FLAG_ID } from '#/agent/environmentBinding/flag';
 import { AgentEnvironmentRosterService, ENVIRONMENT_ROSTER_REMINDER_VARIANT } from '#/agent/environmentBinding/environmentRoster';
+import {
+  SessionEnvironmentMountsService,
+  type EnvironmentMount,
+  type ISessionEnvironmentMounts,
+} from '#/session/environmentMounts/environmentMounts';
+import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
+import type { SkillContribution } from '#/features/skill/catalog/skillSource';
+import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
+import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
+import type { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import type { ISessionWorkdir, SessionEnvironmentWorkdir } from '#/session/workdir/workdir';
+import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
+import { stubSkill } from '../../features/skill/catalog/stubs';
 import type { ContextInjectionContext, ContextInjectionProvider, ContextInjectionResult } from '#/features/reminder/types';
 import type { RemoteEnvironmentEntry } from '#/remote/declaration/remoteEnvironmentDeclaration';
 import { stubAgentContext } from '../agentContext/stubs';
@@ -609,8 +622,31 @@ describe('AgentEnvironmentService multi-environment targets', () => {
   });
 });
 
+const ROSTER_GUIDANCE =
+  'Tools with an `environment` argument run in the environment you name; omit it to use the primary environment. ' +
+  'Each environment has its own files, shell, and installed programs, and relative paths resolve against its working directory. ' +
+  'A remote environment connects on its first use; if it cannot connect, the call fails instead of running elsewhere. ' +
+  "The system prompt's working directory, AGENTS.md instructions, and skills describe the primary environment. " +
+  'Once another environment connects, the AGENTS.md files found there are listed under it; read them before changing files in that environment. ' +
+  'Skills found in another environment are named `<skill>@<environment>`.';
+
+function stubMounts(results: Record<string, EnvironmentMount> = {}) {
+  const calls: { readonly environmentId: string; readonly cwd: string }[] = [];
+  const mounts: ISessionEnvironmentMounts = {
+    _serviceBrand: undefined,
+    mount: (environmentId: string, cwd: string) => {
+      calls.push({ environmentId, cwd });
+      return Promise.resolve(results[environmentId] ?? { status: 'mounted', agentsMdPaths: [] });
+    },
+  };
+  return { mounts, calls };
+}
+
 describe('AgentEnvironmentRosterService', () => {
-  function rosterProvider(agentEnvironment: ConstructorParameters<typeof AgentEnvironmentRosterService>[1]) {
+  function rosterProvider(
+    agentEnvironment: ConstructorParameters<typeof AgentEnvironmentRosterService>[1],
+    mounts: ISessionEnvironmentMounts = stubMounts().mounts,
+  ) {
     let provider: ContextInjectionProvider<string> | undefined;
     const reminder = {
       _serviceBrand: undefined,
@@ -620,72 +656,220 @@ describe('AgentEnvironmentRosterService', () => {
         return { dispose: () => {} };
       },
     } as unknown as IAgentReminderService;
-    const roster = new AgentEnvironmentRosterService(reminder, agentEnvironment);
-    const provide = (context: Partial<ContextInjectionContext<string>>) =>
-      provider!({ injectedPositions: [], lastInjectedAt: null, isNewTurn: true, ...context }) as
+    const roster = new AgentEnvironmentRosterService(reminder, agentEnvironment, mounts);
+    const provide = async (context: Partial<ContextInjectionContext<string>>) =>
+      (await provider!({ injectedPositions: [], lastInjectedAt: null, isNewTurn: true, ...context })) as
         | ContextInjectionResult<string>
         | undefined;
     return { roster, provide };
   }
 
-  it('lists every environment once and repeats only after the roster changes or leaves the context', () => {
+  it('lists every environment once and repeats only after the roster changes or leaves the context', async () => {
     const { agentEnvironment, registry } = setup({
       multiEnvironment: { declarations: [{ id: 'remote', defaultCwd: '/srv/app' }, { id: 'staging' }, { id: 'unregistered' }] },
     });
     registry.register(environment('staging', 'staging-one', 'pending'));
-    const { provide } = rosterProvider(agentEnvironment);
+    const { mounts, calls } = stubMounts();
+    const { provide } = rosterProvider(agentEnvironment, mounts);
 
-    const first = provide({});
+    const first = await provide({});
     expect(first?.content).toBe(
       [
         'Execution environments available in this session:',
         '- `local` (primary): working directory /workspace',
         '- `remote`: working directory /srv/app',
-        '- `staging`: working directory resolved on first use',
-        'Tools with an `environment` argument run in the environment you name; omit it to use the primary environment. ' +
-          'Each environment has its own files, shell, and installed programs, and relative paths resolve against its working directory. ' +
-          'A remote environment connects on its first use; if it cannot connect, the call fails instead of running elsewhere. ' +
-          "The system prompt's working directory, AGENTS.md instructions, and skills describe the primary environment only; " +
-          "read a project's AGENTS.md before changing files in another environment.",
+        '- `staging`: not connected yet; working directory resolved on first use',
+        ROSTER_GUIDANCE,
       ].join('\n'),
     );
     const injected = { role: 'user' as const, content: [] };
-    expect(provide({ lastInjection: injected, lastDisclosure: first?.disclosure })).toBeUndefined();
-    expect(provide({ lastDisclosure: first?.disclosure })?.content).toBe(first?.content);
+    expect(await provide({ lastInjection: injected, lastDisclosure: first?.disclosure })).toBeUndefined();
+    expect((await provide({ lastDisclosure: first?.disclosure }))?.content).toBe(first?.content);
+    expect(calls).toEqual([{ environmentId: 'remote', cwd: '/srv/app' }]);
   });
 
-  it('reports the working directory a connected environment resolved and keeps it across disconnects', () => {
+  it('shows the declared working directory of an environment that has not connected yet', async () => {
+    const { agentEnvironment, registry } = setup({
+      multiEnvironment: { declarations: [{ id: 'staging', defaultCwd: '/srv/staging' }] },
+    });
+    registry.register(environment('staging', 'staging-one', 'pending'));
+    const { mounts, calls } = stubMounts();
+    const { provide } = rosterProvider(agentEnvironment, mounts);
+
+    expect((await provide({}))?.content).toContain('- `staging`: working directory /srv/staging; not connected yet');
+    expect(calls).toEqual([]);
+  });
+
+  it('mounts an environment once it connects, lists its AGENTS.md files, and keeps them across disconnects', async () => {
     const { agentEnvironment, registry } = setup({
       multiEnvironment: { declarations: [{ id: 'staging' }] },
     });
     const staging = environment('staging', 'staging-one', 'pending', [], { cwd: '/home/deploy' });
     registry.register(staging);
+    const { mounts, calls } = stubMounts({
+      staging: { status: 'mounted', agentsMdPaths: ['/home/deploy/AGENTS.md', '/home/deploy/api/AGENTS.md'] },
+    });
+    const { provide } = rosterProvider(agentEnvironment, mounts);
+    const injected = { role: 'user' as const, content: [] };
+
+    const before = await provide({});
+    expect(before?.content).toContain('- `staging`: not connected yet; working directory resolved on first use');
+
+    staging.setStatus('ready');
+    const connected = await provide({ lastInjection: injected, lastDisclosure: before?.disclosure });
+    expect(connected?.content).toBe(
+      [
+        'Execution environment updates:',
+        '- `staging`: working directory /home/deploy',
+        '  - AGENTS.md: /home/deploy/AGENTS.md',
+        '  - AGENTS.md: /home/deploy/api/AGENTS.md',
+        'Read the AGENTS.md files listed above before changing files in that environment.',
+      ].join('\n'),
+    );
+
+    staging.setStatus('disconnected');
+    expect(await provide({ lastInjection: injected, lastDisclosure: connected?.disclosure })).toBeUndefined();
+    expect(calls).toEqual([{ environmentId: 'staging', cwd: '/home/deploy' }]);
+  });
+
+  it('sends only the environments that left since the last roster', async () => {
+    const { agentEnvironment, registry } = setup({
+      multiEnvironment: { declarations: [{ id: 'remote', defaultCwd: '/srv/app' }, { id: 'staging' }] },
+    });
+    const staging = registry.register(environment('staging', 'staging-one', 'pending'));
     const { provide } = rosterProvider(agentEnvironment);
     const injected = { role: 'user' as const, content: [] };
 
-    const before = provide({});
-    expect(before?.content).toContain('- `staging`: working directory resolved on first use');
+    const first = await provide({});
+    await staging.remove();
 
-    staging.setStatus('ready');
-    const connected = provide({ lastInjection: injected, lastDisclosure: before?.disclosure });
-    expect(connected?.content).toContain('- `staging`: working directory /home/deploy');
-
-    staging.setStatus('disconnected');
-    expect(provide({ lastInjection: injected, lastDisclosure: connected?.disclosure })).toBeUndefined();
+    expect(await provide({ lastInjection: injected, lastDisclosure: first?.disclosure })).toEqual({
+      content: ['Execution environment updates:', '- `staging` is no longer available.'].join('\n'),
+      disclosure: {
+        local: '- `local` (primary): working directory /workspace',
+        remote: '- `remote`: working directory /srv/app',
+      },
+    });
   });
 
-  it('withdraws the roster once only the primary environment remains', () => {
+  it('reports an environment whose project context could not be loaded', async () => {
+    const { agentEnvironment } = setup({
+      multiEnvironment: { declarations: [{ id: 'remote', defaultCwd: '/srv/app' }] },
+    });
+    const { mounts } = stubMounts({ remote: { status: 'failed', error: 'cwd /srv/app is not a directory' } });
+    const { provide } = rosterProvider(agentEnvironment, mounts);
+
+    expect((await provide({}))?.content).toContain(
+      '- `remote`: working directory /srv/app; its AGENTS.md files and skills could not be loaded: cwd /srv/app is not a directory',
+    );
+  });
+
+  it('withdraws the roster once only the primary environment remains', async () => {
     const { agentEnvironment } = setup({
       multiEnvironment: { enabled: false, declarations: [{ id: 'remote', defaultCwd: '/srv/app' }] },
     });
-    const { provide } = rosterProvider(agentEnvironment);
+    const { mounts, calls } = stubMounts();
+    const { provide } = rosterProvider(agentEnvironment, mounts);
     const injected = { role: 'user' as const, content: [] };
 
-    expect(provide({})).toBeUndefined();
-    expect(provide({ lastInjection: injected, lastDisclosure: '- `local` (primary): working directory /workspace' })).toEqual({
+    expect(await provide({})).toBeUndefined();
+    expect(await provide({ lastInjection: injected, lastDisclosure: '- `local` (primary): working directory /workspace' })).toEqual({
       content: 'Only the primary environment `local` is available now. Tools no longer take an `environment` argument.',
       disclosure: 'single',
     });
-    expect(provide({ lastInjection: injected, lastDisclosure: 'single' })).toBeUndefined();
+    expect(await provide({ lastInjection: injected, lastDisclosure: 'single' })).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('SessionEnvironmentMountsService', () => {
+  function setupMounts(options: {
+    readonly acquire?: (environmentId: string, cwd: string) => Promise<SessionEnvironmentWorkdir>;
+    readonly primaryAgentsMdPaths?: readonly string[];
+  } = {}) {
+    const contributions = new Map<string, SkillContribution>();
+    const acquired: { readonly environmentId: string; readonly cwd: string }[] = [];
+    let disposedWorkdirs = 0;
+    const environmentCatalog = new InMemorySkillCatalog();
+    environmentCatalog.register(stubSkill('deploy', { source: 'project', dir: '/srv/app/.agents/skills/deploy' }));
+    environmentCatalog.register(stubSkill('notes', { source: 'user' }));
+    const defaultWorkdir: SessionEnvironmentWorkdir = {
+      skills: { catalog: environmentCatalog, load: async () => {} } as unknown as IWorkspaceSkillCatalog,
+      instructions: {
+        ready: Promise.resolve(),
+        snapshot: {
+          agentsMd: undefined,
+          agentsMdWarning: undefined,
+          agentsMdPaths: ['/kimi-home/AGENTS.md', '/srv/app/AGENTS.md'],
+        },
+      } as unknown as IWorkspaceInstructionsService,
+      dispose: () => {
+        disposedWorkdirs += 1;
+      },
+    };
+    const workdir = {
+      _serviceBrand: undefined,
+      environmentId: 'local',
+      acquireEnvironmentWorkdir: (environmentId: string, cwd: string) => {
+        acquired.push({ environmentId, cwd });
+        return options.acquire?.(environmentId, cwd) ?? Promise.resolve(defaultWorkdir);
+      },
+    } as unknown as ISessionWorkdir;
+    const catalog = {
+      set: (id: string, contribution: SkillContribution) => {
+        contributions.set(id, contribution);
+      },
+    } as unknown as ISessionSkillCatalog;
+    const instructions = {
+      ready: Promise.resolve(),
+      agentsMdPaths: options.primaryAgentsMdPaths ?? ['/kimi-home/AGENTS.md', '/workspace/AGENTS.md'],
+    } as unknown as ISessionInstructionsProvider;
+    const service = new SessionEnvironmentMountsService(workdir, catalog, instructions);
+    return { service, contributions, acquired, disposedWorkdirs: () => disposedWorkdirs };
+  }
+
+  it('adds the project skills of a mounted environment under an environment-qualified name', async () => {
+    const { service, contributions } = setupMounts();
+
+    await service.mount('remote', '/srv/app');
+
+    const skills = contributions.get('environment:remote')?.skills ?? [];
+    expect(skills.map((skill) => [skill.name, skill.environmentId, skill.dir])).toEqual([
+      ['deploy@remote', 'remote', '/srv/app/.agents/skills/deploy'],
+    ]);
+  });
+
+  it('lists only the AGENTS.md files the primary environment did not already load', async () => {
+    const { service } = setupMounts();
+
+    await expect(service.mount('remote', '/srv/app')).resolves.toEqual({
+      status: 'mounted',
+      agentsMdPaths: ['/srv/app/AGENTS.md'],
+    });
+  });
+
+  it('loads each environment once and releases its workdir with the session', async () => {
+    const { service, acquired, disposedWorkdirs } = setupMounts();
+
+    const first = service.mount('remote', '/srv/app');
+    const second = service.mount('remote', '/srv/app');
+    expect(second).toBe(first);
+    await first;
+    expect(acquired).toEqual([{ environmentId: 'remote', cwd: '/srv/app' }]);
+
+    service.dispose();
+    expect(disposedWorkdirs()).toBe(1);
+  });
+
+  it('reports a workdir that cannot be opened without adding skills', async () => {
+    const { service, contributions } = setupMounts({
+      acquire: () => Promise.reject(new Error('cwd /srv/app is not a directory on environment remote')),
+    });
+
+    await expect(service.mount('remote', '/srv/app')).resolves.toEqual({
+      status: 'failed',
+      error: 'cwd /srv/app is not a directory on environment remote',
+    });
+    expect(contributions.size).toBe(0);
   });
 });

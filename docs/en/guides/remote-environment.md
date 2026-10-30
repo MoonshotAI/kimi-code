@@ -94,7 +94,9 @@ You can instead set `KIMI_CODE_EXPERIMENTAL_MULTI_ENVIRONMENT=true` for one proc
 
 All configured environments are candidates. The first call to another environment connects it lazily and uses its `defaultCwd`, or the working directory reported by the target when `defaultCwd` is unset. The primary keeps its existing working directory and additional directories. For example, a local session can inspect a remote checkout with `Read` using `environment = "dev-box"`, then run its tests with `Bash` in the same environment.
 
-Approval prompts show the environment for each call, and "allow for this session" approvals are remembered separately per environment. Tools outside the list above, skills, and project instructions (`AGENTS.md`) continue to use the primary environment or the local host as described elsewhere on this page. The model is asked to read a secondary project's `AGENTS.md` before modifying files there.
+Approval prompts show the environment for each call, and "allow for this session" approvals are remembered separately per environment. Tools outside the list above keep using the primary environment or the local host as described elsewhere on this page.
+
+The system prompt still describes only the primary environment. Once another environment connects, the session reads that environment's project context once: the `AGENTS.md` files found from its working directory are listed for the model, which is asked to read them before modifying files there, and its project skills join the session's skill list as `<skill>@<environment>` (for example `deploy@dev-box`). Environments that have not connected yet contribute nothing until their first use. When the primary environment is remote, user-level skills from the local host are marked as belonging to `local`, so the model reads their supporting files there.
 
 ## Disconnects and reconnecting
 

@@ -197,6 +197,8 @@ function createHarness(options: {
         onDidChange: skillCatalogChange.event,
         load: async () => {},
         reload: async () => {},
+        set: () => {},
+        remove: () => {},
         list: async () => [],
         catalog: {
           getModelSkillListing: () => skillListing.value,

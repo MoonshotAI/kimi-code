@@ -786,6 +786,8 @@ function createSessionSkillCatalog(catalog: SkillCatalog): ISessionSkillCatalog 
     onDidChange: Event.None as Event<string>,
     load: async () => { },
     reload: async () => { },
+    set: () => {},
+    remove: () => {},
     list: async () => catalog.listSkills().map(summarizeSkill),
   };
 }
@@ -1321,6 +1323,7 @@ export class AgentTestContext {
               environmentId: 'local',
               cwd: this.cwd,
               fs: undefined as never,
+              acquireEnvironmentWorkdir: () => Promise.reject(new Error('environment workdirs are not available in the agent harness')),
             });
             reg.defineInstance(
               IWorkspaceStateService,

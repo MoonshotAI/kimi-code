@@ -2,7 +2,9 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
+import type { EnvironmentTarget } from '#/environment/environment';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { ISessionEnvironmentMounts, type EnvironmentMount } from '#/session/environmentMounts/environmentMounts';
 
 import { IAgentEnvironmentService } from './agentEnvironment';
 
@@ -10,12 +12,21 @@ export const ENVIRONMENT_ROSTER_REMINDER_VARIANT = 'environment_roster';
 
 const SINGLE_ENVIRONMENT_DISCLOSURE = 'single';
 
+type RosterDisclosure = typeof SINGLE_ENVIRONMENT_DISCLOSURE | Readonly<Record<string, string>>;
+
+interface RosterEntry {
+  readonly environmentId: string;
+  readonly text: string;
+  readonly listsAgentsMd: boolean;
+}
+
 const ROSTER_GUIDANCE =
   'Tools with an `environment` argument run in the environment you name; omit it to use the primary environment. ' +
   'Each environment has its own files, shell, and installed programs, and relative paths resolve against its working directory. ' +
   'A remote environment connects on its first use; if it cannot connect, the call fails instead of running elsewhere. ' +
-  "The system prompt's working directory, AGENTS.md instructions, and skills describe the primary environment only; " +
-  "read a project's AGENTS.md before changing files in another environment.";
+  "The system prompt's working directory, AGENTS.md instructions, and skills describe the primary environment. " +
+  'Once another environment connects, the AGENTS.md files found there are listed under it; read them before changing files in that environment. ' +
+  'Skills found in another environment are named `<skill>@<environment>`.';
 
 export interface IAgentEnvironmentRosterService {
   readonly _serviceBrand: undefined;
@@ -30,21 +41,52 @@ export class AgentEnvironmentRosterService extends Disposable implements IAgentE
   constructor(
     @IAgentReminderService reminder: IAgentReminderService,
     @IAgentEnvironmentService environment: IAgentEnvironmentService,
+    @ISessionEnvironmentMounts mounts: ISessionEnvironmentMounts,
   ) {
     super();
-    const resolvedCwds = new Map<string, string>();
-    const secondaryCwd = (environmentId: string): string | undefined => {
-      if (!resolvedCwds.has(environmentId) && environment.isAvailable([], environmentId)) {
-        try {
-          resolvedCwds.set(environmentId, environment.workspaceRoots(environmentId).workDir);
-        } catch {
-          return undefined;
+    const mounted = new Map<string, { readonly cwd: string; readonly mount: Promise<EnvironmentMount> }>();
+    const connectedCwd = (environmentId: string): string | undefined => {
+      try {
+        return environment.workspaceRoots(environmentId).workDir;
+      } catch {
+        return undefined;
+      }
+    };
+    const entry = (target: EnvironmentTarget, lines: readonly string[], listsAgentsMd = false): RosterEntry => ({
+      environmentId: target.environmentId,
+      text: lines.join('\n'),
+      listsAgentsMd,
+    });
+    const describe = async (target: EnvironmentTarget): Promise<RosterEntry> => {
+      const label = `\`${target.environmentId}\``;
+      if (target.primary) return entry(target, [`- ${label} (primary): working directory ${environment.workspaceRoots().workDir}`]);
+      let pending = mounted.get(target.environmentId);
+      if (pending === undefined && environment.isAvailable([], target.environmentId)) {
+        const cwd = connectedCwd(target.environmentId);
+        if (cwd !== undefined) {
+          pending = { cwd, mount: mounts.mount(target.environmentId, cwd) };
+          mounted.set(target.environmentId, pending);
         }
       }
-      return resolvedCwds.get(environmentId);
+      if (pending === undefined) {
+        return entry(target, [
+          target.cwd === undefined
+            ? `- ${label}: not connected yet; working directory resolved on first use`
+            : `- ${label}: working directory ${target.cwd}; not connected yet`,
+        ]);
+      }
+      const mount = await pending.mount;
+      if (mount.status === 'failed') {
+        return entry(target, [`- ${label}: working directory ${pending.cwd}; its AGENTS.md files and skills could not be loaded: ${mount.error}`]);
+      }
+      return entry(
+        target,
+        [`- ${label}: working directory ${pending.cwd}`, ...mount.agentsMdPaths.map((path) => `  - AGENTS.md: ${path}`)],
+        mount.agentsMdPaths.length > 0,
+      );
     };
     this._register(
-      reminder.register<string>(ENVIRONMENT_ROSTER_REMINDER_VARIANT, ({ lastInjection, lastDisclosure }) => {
+      reminder.register<RosterDisclosure>(ENVIRONMENT_ROSTER_REMINDER_VARIANT, async ({ lastInjection, lastDisclosure }) => {
         const targets = environment.targets();
         if (targets.length < 2) {
           if (lastInjection === undefined || lastDisclosure === SINGLE_ENVIRONMENT_DISCLOSURE) return undefined;
@@ -53,17 +95,27 @@ export class AgentEnvironmentRosterService extends Disposable implements IAgentE
             disclosure: SINGLE_ENVIRONMENT_DISCLOSURE,
           };
         }
-        const lines = targets.map((target) => {
-          const label = target.primary ? `\`${target.environmentId}\` (primary)` : `\`${target.environmentId}\``;
-          const cwd = target.primary ? environment.workspaceRoots().workDir : target.cwd ?? secondaryCwd(target.environmentId);
-          return cwd === undefined
-            ? `- ${label}: working directory resolved on first use`
-            : `- ${label}: working directory ${cwd}`;
-        });
-        const disclosure = lines.join('\n');
-        if (lastInjection !== undefined && lastDisclosure === disclosure) return undefined;
+        const entries = await Promise.all(targets.map(describe));
+        const disclosure = Object.fromEntries(entries.map((current) => [current.environmentId, current.text]));
+        const previous = lastInjection !== undefined && typeof lastDisclosure === 'object' ? lastDisclosure : undefined;
+        if (previous === undefined) {
+          return {
+            content: ['Execution environments available in this session:', ...entries.map((current) => current.text), ROSTER_GUIDANCE].join('\n'),
+            disclosure,
+          };
+        }
+        const changed = entries.filter((current) => previous[current.environmentId] !== current.text);
+        const removed = Object.keys(previous).filter((environmentId) => disclosure[environmentId] === undefined);
+        if (changed.length === 0 && removed.length === 0) return undefined;
         return {
-          content: ['Execution environments available in this session:', ...lines, ROSTER_GUIDANCE].join('\n'),
+          content: [
+            'Execution environment updates:',
+            ...changed.map((current) => current.text),
+            ...removed.map((environmentId) => `- \`${environmentId}\` is no longer available.`),
+            ...(changed.some((current) => current.listsAgentsMd)
+              ? ['Read the AGENTS.md files listed above before changing files in that environment.']
+              : []),
+          ].join('\n'),
           disclosure,
         };
       }),

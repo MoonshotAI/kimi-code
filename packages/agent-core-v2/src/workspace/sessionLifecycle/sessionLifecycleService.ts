@@ -325,6 +325,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
               environmentId: environment?.environmentId ?? LOCAL_ENVIRONMENT_ID,
               cwd: environment?.cwd,
               fs: workdir.fs,
+              acquireEnvironmentWorkdir: (environmentId: string, cwd: string) => this.acquireWorkdir(environmentId, cwd),
             }],
             ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
           ],
