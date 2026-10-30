@@ -948,6 +948,8 @@ describe('context-projector', () => {
   it('tracks swarm mode enter/exit', () => {
     const enter = projectContext([{ lineNo: 1, data: { type: 'swarm_mode.enter' as const, trigger: 'task' }, raw: {} }] as any);
     expect(enter.swarm).toEqual({ active: true, trigger: 'task' });
+    const tool = projectContext([{ lineNo: 1, data: { type: 'swarm_mode.enter' as const, trigger: 'tool' }, raw: {} }] as any);
+    expect(tool.swarm).toEqual({ active: false });
     const exit = projectContext([
       { lineNo: 1, data: { type: 'swarm_mode.enter' as const, trigger: 'task' }, raw: {} },
       { lineNo: 2, data: { type: 'swarm_mode.exit' as const }, raw: {} },
