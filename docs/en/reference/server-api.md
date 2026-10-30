@@ -773,7 +773,7 @@ Session actions are dispatched through one route: the path tail is parsed as `{s
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. The source keeps running. If a turn is active, the fork stops at the last completed turn before it; the active turn, queued input, and later events are excluded.
+Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. The source keeps running. If a turn is active, the fork retains the last completed turn before it and the active turn's user prompt as a prompt-only `cancelled` turn; active assistant output, tool activity, queued input, and later events are excluded.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -870,7 +870,7 @@ On success, `data` is `{ items, has_more }` where each item is [the session obje
 
 #### `POST /api/v1/sessions/{session_id}/children`
 
-Creates a child session: a fork of this session recorded as its child, so it shows up under `GET /api/v1/sessions/{session_id}/children`. Running sources use the same completed-turn boundary as `:fork`; child creation does not accept a historical `turn_index`.
+Creates a child session: a fork of this session recorded as its child, so it shows up under `GET /api/v1/sessions/{session_id}/children`. Running sources use the same completed-turn boundary and prompt-only `cancelled` active turn as `:fork`; child creation does not accept a historical `turn_index`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |

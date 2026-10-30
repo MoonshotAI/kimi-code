@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   sliceMainRecordsAtTurn,
+  sliceMainRecordsForRunningFork,
   sliceRecordsBeforePendingWork,
 } from '#/workspace/sessionLifecycle/internal/forkTurnSlice';
 import type { WireRecord } from '#/wire/record';
@@ -74,5 +75,21 @@ describe('sliceMainRecordsAtTurn', () => {
     const queued = { type: 'agent.input.submitted', entry: { meta: { promptId: 'queued' } } };
     expect(sliceRecordsBeforePendingWork([...records, queued], undefined, ['queued'])).toEqual(records);
     expect(sliceRecordsBeforePendingWork([...records, { type: 'turn.prompt', turnId: 9 }], 9, [])).toEqual(records);
+
+    const running = sliceMainRecordsForRunningFork([
+      ...records,
+      { type: 'turn.prompt', turnId: 9, input: [{ type: 'text', text: 'active turn' }], origin: { kind: 'user' }, time: 7 },
+      userTurnRecord('active turn', 8),
+      { type: 'context.append_loop_event', event: { type: 'llm.request' }, time: 9 },
+    ], 'ses_source', 9, []);
+    expect(running.lastPrompt).toBe('active turn');
+    expect(running.lastTurnReason).toBe('cancelled');
+    expect(running.cutoffTime).toBe(6);
+    expect(running.records.slice(-3)).toMatchObject([
+      { type: 'turn.prompt', turnId: 9 },
+      { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'active turn' }] } },
+      { type: 'turn.ended', turnId: 9, reason: 'cancelled' },
+    ]);
+    expect(running.records.some((record) => record.type === 'context.append_loop_event')).toBe(false);
   });
 });

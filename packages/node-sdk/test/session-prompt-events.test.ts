@@ -562,10 +562,11 @@ describe('Session.prompt events', () => {
       await childStreaming;
 
       const runningFork = await harness.forkSession({ id: session.id });
-      expect(runningFork.getResumeState()?.agents['main']).toMatchObject({ userTurnCount: 1 });
+      expect(runningFork.getResumeState()?.agents['main']).toMatchObject({ userTurnCount: 2 });
       expect(visibleReplayText(runningFork.getResumeState()?.agents['main']?.replay ?? [])).toEqual([
         'user:seed completed boundary',
         'assistant:seed answer',
+        'user:Stop the forked subagent after it writes a draft.',
       ]);
       expect(Object.keys(runningFork.getResumeState()?.sessionMetadata.agents ?? {})).toEqual([
         'main',
@@ -746,7 +747,7 @@ describe('Session.prompt events', () => {
     }
   });
 
-  it('persists only completed turns when forking a running source across resume', async () => {
+  it('persists completed turns and the active prompt when forking a running source across resume', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
@@ -825,12 +826,13 @@ describe('Session.prompt events', () => {
       await source.prompt('queued question');
 
       const fullFork = await harness.forkSession({ id: source.id });
-      expect(fullFork.getResumeState()?.agents['main']).toMatchObject({ userTurnCount: 2 });
+      expect(fullFork.getResumeState()?.agents['main']).toMatchObject({ userTurnCount: 3 });
       expect(visibleReplayText(fullFork.getResumeState()?.agents['main']?.replay ?? [])).toEqual([
         'user:first question',
         'assistant:first answer',
         'user:second question',
         'assistant:second answer',
+        'user:third question',
       ]);
       await fullFork.close();
 
@@ -1051,7 +1053,7 @@ describe('Session.prompt events', () => {
     }
   });
 
-  it('forks an empty session while the first turn is still running', async () => {
+  it('forks the active user prompt while the first turn is still running', async () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
@@ -1070,7 +1072,10 @@ describe('Session.prompt events', () => {
         id: source.id,
         forkId: 'ses_turn_fork_range_child',
       });
-      expect(visibleReplayText(fork.getResumeState()?.agents['main']?.replay ?? [])).toEqual([]);
+      expect(fork.summary).toMatchObject({ lastPrompt: 'only question', lastTurnReason: 'cancelled' });
+      expect(visibleReplayText(fork.getResumeState()?.agents['main']?.replay ?? [])).toEqual([
+        'user:only question',
+      ]);
       await expect(
         harness.listSessions({ sessionId: 'ses_turn_fork_range_child' }),
       ).resolves.toHaveLength(1);
@@ -1089,8 +1094,9 @@ describe('Session.prompt events', () => {
       await runPrompt(resumed, 'fork question', 'fork answer');
       await resumed.close();
       const reloaded = await harness.resumeSession({ id: fork.id });
-      expect(reloaded.getResumeState()?.agents['main']).toMatchObject({ userTurnCount: 1 });
+      expect(reloaded.getResumeState()?.agents['main']).toMatchObject({ userTurnCount: 2 });
       expect(visibleReplayText(reloaded.getResumeState()?.agents['main']?.replay ?? [])).toEqual([
+        'user:only question',
         'user:fork question',
         'assistant:fork answer',
       ]);
