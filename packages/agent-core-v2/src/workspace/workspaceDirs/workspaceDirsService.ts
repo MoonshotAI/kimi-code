@@ -74,7 +74,12 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
         await this.reloadFromRegistry();
       }),
     );
-    if (this.legacyProjectConfig) void this.ready.then(() => this.watchLocalToml());
+    if (this.legacyProjectConfig) {
+      void this.ready.then(
+        () => this.watchLocalToml(),
+        () => undefined,
+      );
+    }
     this._register(
       this.workspaceStore.onDidChange(() => {
         void this.enqueue(() => this.reloadFromRegistry()).catch((error) => {

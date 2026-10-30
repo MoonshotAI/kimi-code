@@ -56,6 +56,7 @@ export class WorkspaceSkillCatalogService extends Disposable implements IWorkspa
         );
     }
     this.ready = this.loadAll();
+    void this.ready.catch(() => undefined);
   }
 
   private get contributions(): Map<
