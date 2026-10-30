@@ -102,7 +102,7 @@ import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressin
 import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
-  sliceMainRecordsAtLatestTurn,
+  sliceMainRecordsForRunningFork,
   sliceMainRecordsAtTurn,
   sliceRecordsBeforePendingWork,
   sliceSubagentRecordsAtTime,
@@ -702,7 +702,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         opts.turnIndex !== undefined
           ? sliceMainRecordsAtTurn(completedMainRecords!, sourceId, opts.turnIndex)
           : runningFork
-            ? sliceMainRecordsAtLatestTurn(completedMainRecords!, sourceId)
+            ? sliceMainRecordsForRunningFork(
+                mainRecords!,
+                sourceId,
+                activeTurnIds.get(MAIN_AGENT_ID),
+                queuedPromptIds.get(MAIN_AGENT_ID) ?? [],
+              )
             : undefined;
 
       targetSessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, targetId);

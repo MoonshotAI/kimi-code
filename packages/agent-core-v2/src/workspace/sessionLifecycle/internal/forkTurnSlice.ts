@@ -79,6 +79,57 @@ export function sliceMainRecordsAtLatestTurn(
   return { records: [] };
 }
 
+export function sliceMainRecordsForRunningFork(
+  records: readonly WireRecord[],
+  sourceSessionId: string,
+  activeTurnId: number | undefined,
+  queuedPromptIds: readonly string[],
+): MainTurnSlice {
+  const completed = sliceRecordsBeforePendingWork(records, activeTurnId, queuedPromptIds);
+  const latest = sliceMainRecordsAtLatestTurn(completed, sourceSessionId);
+  if (activeTurnId === undefined) return latest;
+  const promptIndex = records.findIndex(
+    (record) => record.type === 'turn.prompt' && record['turnId'] === activeTurnId,
+  );
+  if (promptIndex === -1) return latest;
+  const prompt = records[promptIndex]!;
+  const match = matchWireTurnInputRecords(records, true).find(
+    (candidate) => candidate.inputIndex === promptIndex && candidate.turnId === activeTurnId,
+  );
+  const append = match === undefined ? userMessageRecordFromPrompt(prompt) : records[match.appendIndex]!;
+  return {
+    records: [
+      ...latest.records,
+      prompt,
+      append,
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        turnId: activeTurnId,
+        reason: 'cancelled',
+        time: Date.now(),
+      },
+    ],
+    cutoffTime: latest.cutoffTime,
+    lastPrompt: promptMetadataFromTurnRecord(prompt),
+    lastTurnReason: 'cancelled',
+  };
+}
+
+function userMessageRecordFromPrompt(prompt: WireRecord): WireRecord {
+  const promptId = prompt['promptId'];
+  return {
+    type: 'context.append_message',
+    message: {
+      role: 'user',
+      id: typeof promptId === 'string' ? promptId : undefined,
+      content: prompt['input'],
+      origin: prompt['origin'],
+    },
+    time: prompt.time,
+  };
+}
+
 export function sliceMainRecordsAtTurn(
   records: readonly WireRecord[],
   sourceSessionId: string,

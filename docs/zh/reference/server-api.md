@@ -773,7 +773,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-将会话——其转录、Agent 状态与文件——复制到同一工作区中的新会话，并广播 `event.session.created`。源会话会继续运行；如果存在进行中的轮次，fork 会停在该轮次之前最近一个已完成的边界，不包含当前轮次、排队输入或后续事件。
+将会话——其转录、Agent 状态与文件——复制到同一工作区中的新会话，并广播 `event.session.created`。源会话会继续运行；如果存在进行中的轮次，fork 会保留该轮次之前最近一个已完成的边界，并将当前轮次的用户 prompt 保存为一个仅含 prompt 的 `cancelled` 轮次，不包含 Assistant 输出、工具活动、排队输入或后续事件。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -870,7 +870,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}/children`
 
-创建子会话：fork 当前会话并记录为其子会话，因此会出现在 `GET /api/v1/sessions/{session_id}/children` 下。运行中的源会话采用与 `:fork` 相同的已完成轮次边界；创建子会话不接受历史 `turn_index` 参数。
+创建子会话：fork 当前会话并记录为其子会话，因此会出现在 `GET /api/v1/sessions/{session_id}/children` 下。运行中的源会话采用与 `:fork` 相同的已完成轮次边界，以及仅含 prompt 的 `cancelled` 当前轮次；创建子会话不接受历史 `turn_index` 参数。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
