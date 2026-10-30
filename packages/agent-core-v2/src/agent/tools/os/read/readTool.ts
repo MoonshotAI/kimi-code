@@ -21,6 +21,7 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
+import { estimateTokens } from '#/llm-adapter/contract/tokens';
 import {
   ToolAccesses,
   type ExecutableToolResult,
@@ -67,6 +68,8 @@ interface ReadTailEntry extends ReadLineEntry {
 interface ReadRequest {
   readonly args: ReadInput;
   readonly maxChars: number;
+  readonly nextMaxChars: number;
+  readonly tokenLimit?: number;
   readonly maxCharsLimit: number;
   readonly detectedEncoding?: UtfTextEncoding;
   readonly lossyDecoding: boolean;
@@ -86,6 +89,15 @@ interface ReadPage {
 
 function stripTrailingLf(line: string): string {
   return line.endsWith('\n') ? line.slice(0, -1) : line;
+}
+
+function tokenLimitFor(maxChars: number): number {
+  return Math.floor(maxChars / 4);
+}
+
+function readResultText(result: ExecutableToolResult): string {
+  const output = typeof result.output === 'string' ? result.output : '';
+  return result.note === undefined ? output : `${output}\n${result.note}`;
 }
 
 function splitsSurrogatePair(text: string, offset: number): boolean {
@@ -178,6 +190,7 @@ export class ReadTool implements IReadTool {
     return renderPrompt(readDescriptionTemplate, {
       DEFAULT_MAX_CHARS: limits.defaultMaxChars,
       MAX_CHARS: limits.maxChars,
+      MAX_TOKENS: tokenLimitFor(limits.maxChars),
     });
   }
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
@@ -391,18 +404,23 @@ export class ReadTool implements IReadTool {
       }
 
       const limits = this.limits();
+      const maxChars = Math.min(args.max_chars ?? limits.defaultMaxChars, limits.maxChars);
       const request: ReadRequest = {
         args,
-        maxChars: Math.min(args.max_chars ?? limits.defaultMaxChars, limits.maxChars),
+        maxChars,
+        nextMaxChars: maxChars,
         maxCharsLimit: limits.maxChars,
         detectedEncoding,
         lossyDecoding,
         eventLog,
       };
+      const tokenLimit = tokenLimitFor(limits.maxChars);
       const lineOffset = args.line_offset ?? 1;
-      if (lineOffset >= 0) return await this.readForward(readLines(), request);
+      if (lineOffset >= 0) {
+        return await this.fitTokenLimit((page) => this.readForward(readLines(), page), request, tokenLimit);
+      }
       const rereadsFile = detectedEncoding === undefined && (args.n_lines ?? Infinity) < -lineOffset;
-      const result = await this.readTail(readLines, request);
+      const result = await this.fitTokenLimit((page) => this.readTail(readLines, page), request, tokenLimit);
       if (!result.isError && rereadsFile) {
         const currentStat = await source.stat();
         if (!currentStat.isFile || currentStat.size !== stat.size ||
@@ -420,6 +438,27 @@ export class ReadTool implements IReadTool {
         output: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  private async fitTokenLimit(
+    read: (request: ReadRequest) => Promise<ExecutableToolResult>,
+    request: ReadRequest,
+    tokenLimit: number,
+  ): Promise<ExecutableToolResult> {
+    let page = request;
+    let result = await read(page);
+    for (let attempt = 0; attempt < 6 && result.isError !== true; attempt += 1) {
+      const tokens = estimateTokens(readResultText(result));
+      if (tokens <= tokenLimit) return result;
+      const maxChars = Math.min(page.maxChars - 1, Math.floor((page.maxChars * tokenLimit) / tokens));
+      if (maxChars <= 0) return result;
+      const shorterPage = { ...page, maxChars, tokenLimit };
+      const shorter = await read(shorterPage);
+      if (shorter.isError === true) return result;
+      page = shorterPage;
+      result = shorter;
+    }
+    return result;
   }
 
   private async readForward(
@@ -495,7 +534,7 @@ export class ReadTool implements IReadTool {
   }
 
   private finishPage(page: ReadPage): ExecutableToolResult {
-    const { args, maxChars, maxCharsLimit, eventLog, detectedEncoding, lossyDecoding } = page.request;
+    const { args, maxChars, nextMaxChars, tokenLimit, maxCharsLimit, eventLog, detectedEncoding, lossyDecoding } = page.request;
     let first = 0;
     let end = page.renderedLines.length;
     let contentChars = page.renderedLines.reduce((sum, line) => sum + line.length + 1, -1);
@@ -511,7 +550,7 @@ export class ReadTool implements IReadTool {
       const lineIncomplete = fragmentEnd !== undefined;
       const complete = page.rangeStart > page.rangeEnd ||
         (count > 0 && startLine === page.rangeStart && endLine === page.rangeEnd && !lineIncomplete);
-      const parts = [
+      const summary = [
         count > 0
           ? `${String(count)} ${count === 1 ? 'line' : 'lines'} read from file starting from line ${String(startLine)}.`
           : 'No lines read from file.',
@@ -520,13 +559,17 @@ export class ReadTool implements IReadTool {
         `Effective max_chars: ${String(maxChars)}.`,
       ];
       if (!lineIncomplete && ((count > 0 && endLine === page.totalLines) || page.rangeStart > page.totalLines)) {
-        parts.push('End of file reached.');
+        summary.push('End of file reached.');
       }
+      const notices: string[] = [];
       if (count > 0 && !page.fromTail && (firstColumn > 0 || fragmentEnd !== undefined)) {
-        parts.push(`Line ${String(startLine)} fragment: columns [${String(firstColumn)}, ${String(firstColumn + (fragmentEnd ?? firstText.length))}) of ${String(firstColumn + firstText.length)}. ${lineIncomplete ? 'Line continues.' : 'Line complete.'}`);
+        notices.push(`Line ${String(startLine)} fragment: columns [${String(firstColumn)}, ${String(firstColumn + (fragmentEnd ?? firstText.length))}) of ${String(firstColumn + firstText.length)}. ${lineIncomplete ? 'Line continues.' : 'Line complete.'}`);
       }
       if (args.max_chars !== undefined && args.max_chars > maxCharsLimit) {
-        parts.push(`Requested max_chars=${String(args.max_chars)} was capped at the configured maximum ${String(maxCharsLimit)}.`);
+        notices.push(`Requested max_chars=${String(args.max_chars)} was capped at the configured maximum ${String(maxCharsLimit)}.`);
+      }
+      if (tokenLimit !== undefined) {
+        notices.push(`This page was shortened to stay within about ${String(tokenLimit)} estimated tokens; non-ASCII text such as Chinese counts as more tokens per character.`);
       }
       if (!complete && (count > 0 || page.fromTail)) {
         const nextStart = page.fromTail ? page.rangeStart : lineIncomplete ? startLine : endLine + 1;
@@ -536,29 +579,35 @@ export class ReadTool implements IReadTool {
           line_offset: nextStart,
           column_offset: fragmentEnd !== undefined ? firstColumn + fragmentEnd : undefined,
           n_lines: page.fromTail || args.n_lines !== undefined ? nextEnd - nextStart + 1 : undefined,
-          max_chars: maxChars,
+          max_chars: nextMaxChars,
         };
-        parts.push(`Next Read: ${JSON.stringify(next)}`);
+        notices.push(`Next Read: ${JSON.stringify(next)}`);
+        if (count > 0) {
+          notices.push('Continue only if what you need may be further on; Grep can find a specific section instead.');
+        }
       }
       if (eventLog) {
-        parts.push('Kimi Code agent event log: read one record at a time (n_lines=1); increase max_chars for a longer record or extract fields with Bash.');
+        notices.push('Kimi Code agent event log: read one record at a time (n_lines=1); follow Next Read for the rest of a longer record or extract fields with Bash.');
       }
       if (page.lineEndingStyle === 'mixed') {
-        parts.push('Mixed or lone carriage-return line endings are shown as \\r. Use exact \\r\\n or \\r escapes in Edit.old_string for those lines.');
+        notices.push('Mixed or lone carriage-return line endings are shown as \\r. Use exact \\r\\n or \\r escapes in Edit.old_string for those lines.');
       }
       if (detectedEncoding !== undefined) {
-        parts.push(`Detected file encoding: ${encodingDisplayName(detectedEncoding)}; content transcoded to UTF-8 for display. Edit and Write expect UTF-8 — convert the file's encoding first (e.g. \`iconv\` via Bash).`);
+        notices.push(`Detected file encoding: ${encodingDisplayName(detectedEncoding)}; content transcoded to UTF-8 for display. Edit and Write expect UTF-8 — convert the file's encoding first (e.g. \`iconv\` via Bash).`);
       }
       if (lossyDecoding) {
-        parts.push('Lossy UTF-16 decoding: malformed sequences were replaced with U+FFFD. The decoded text may differ from the original file.');
+        notices.push('Lossy UTF-16 decoding: malformed sequences were replaced with U+FFFD. The decoded text may differ from the original file.');
       }
-      const note = `<system>${parts.join(' ')}</system>`;
+      const wholeFile = complete && count > 0 && startLine === 1 && endLine === page.totalLines;
+      const note = wholeFile && notices.length === 0
+        ? undefined
+        : `<system>${[...summary, ...notices].join(' ')}</system>`;
       const renderedChars = count === 0
         ? renderToolResultForModel({ output: '', note }).reduce(
           (sum, part) => sum + (part.type === 'text' ? part.text.length : 0),
           0,
         )
-        : contentChars + 1 + note.length;
+        : contentChars + (note === undefined ? 0 : 1 + note.length);
       if (renderedChars <= maxChars && (complete || count > 0)) {
         return {
           output: fragmentEnd !== undefined
