@@ -68,6 +68,8 @@ import {
   availableCommandsUpdateNotification,
   configOptionUpdateNotification,
   currentModeUpdateNotification,
+  planClearedToSessionUpdate,
+  planDataToSessionUpdate,
   planFromDisplayBlock,
   sessionInfoUpdateNotification,
   thinkingDeltaToSessionUpdate,
@@ -193,6 +195,15 @@ interface TurnDriver {
   early: Array<{ readonly turnId: number; readonly dispatch: () => void }>;
 }
 
+interface SwarmCallState {
+  acpKey: string;
+  label: string;
+  total: number;
+  spawned: number;
+  completed: number;
+  summaries: string[];
+}
+
 export class AcpSession {
   /** The klient facade this session was created from. */
   private readonly klient: Klient;
@@ -255,6 +266,8 @@ export class AcpSession {
    * captured output; only the client-facing card content is de-duplicated.
    */
   private readonly terminalBackedCalls = new Map<string, string>();
+  /** AgentSwarm calls keyed by the engine toolCallId, for subagent progress. */
+  private readonly swarmCalls = new Map<string, SwarmCallState>();
   /** Bridges engine approval / ask-user requests to the ACP client. */
   private readonly interactionBridge: AcpInteractionBridge;
 
@@ -328,6 +341,28 @@ export class AcpSession {
         this.dispatchTurnEvent(event.turnId, () => {
           this.onTurnEnded(event);
         });
+      }),
+      events.on('agent.status.updated', (event) => {
+        if (event.planMode === true) {
+          void this.emitPlanState();
+        } else if (event.planMode === false) {
+          this.emit(planClearedToSessionUpdate(this.sessionId));
+        }
+      }),
+      events.on('subagent.spawned', (event) => {
+        this.onSwarmSubagentEvent('spawned', event);
+      }),
+      events.on('subagent.completed', (event) => {
+        this.onSwarmSubagentEvent('completed', event);
+      }),
+      events.on('subagent.failed', (event) => {
+        this.onSwarmSubagentEvent('failed', event);
+      }),
+      events.on('subagent.cancelled', (event) => {
+        this.onSwarmSubagentEvent('cancelled', event);
+      }),
+      events.on('subagent.suspended', (event) => {
+        this.onSwarmSubagentEvent('suspended', event);
       }),
       // Compaction runs as a background LLM task outside any turn, so these
       // are not turn-scoped; the subscription is already agent-grained (this
@@ -775,6 +810,25 @@ export class AcpSession {
   }
 
   private onToolCallStarted(event: AgentEventPayloads['tool.call.started']): void {
+    if (event.name === 'AgentSwarm') {
+      const args = event.args as { description?: unknown; items?: unknown } | undefined;
+      const label =
+        typeof args?.description === 'string' && args.description.trim() !== ''
+          ? args.description
+          : (event.title ?? 'AgentSwarm');
+      const items = args?.items;
+      this.swarmCalls.set(event.toolCallId, {
+        acpKey: acpToolCallId(event.turnId, event.toolCallId),
+        label,
+        total: Array.isArray(items) ? items.length : 0,
+        spawned: 0,
+        completed: 0,
+        summaries: [],
+      });
+    }
+    if (event.name === 'ExitPlanMode') {
+      void this.emitPlanState();
+    }
     if (this.driverFor(event.turnId) === undefined) return;
     // The klient payload mirrors `ToolCallStartedEvent` (`args` / `display`
     // arrive as `unknown` — cast at this seam).
@@ -978,6 +1032,54 @@ export class AcpSession {
     void this.emitSessionInfoUpdate();
   }
 
+  private onSwarmSubagentEvent(
+    kind: 'spawned' | 'completed' | 'failed' | 'cancelled' | 'suspended',
+    event: {
+      parentToolCallId: string;
+      subagentId: string;
+      subagentName?: string;
+      resultSummary?: string;
+      error?: string;
+      reason?: string;
+    },
+  ): void {
+    const tracked = this.swarmCalls.get(event.parentToolCallId);
+    if (tracked === undefined) return;
+    if (kind === 'spawned') {
+      tracked.spawned += 1;
+    } else {
+      tracked.completed += 1;
+    }
+    const name = event.subagentName ?? event.subagentId;
+    if (kind === 'completed') {
+      tracked.summaries.push(`${name}: ${event.resultSummary ?? ''}`);
+    } else if (kind === 'failed') {
+      tracked.summaries.push(`${name}: failed — ${event.error ?? 'unknown error'}`);
+    } else if (kind === 'cancelled') {
+      tracked.summaries.push(`${name}: cancelled`);
+    } else if (kind === 'suspended') {
+      tracked.summaries.push(`${name}: suspended — ${event.reason ?? ''}`);
+    }
+    const total = Math.max(tracked.total, tracked.spawned);
+    this.emit({
+      sessionId: this.sessionId,
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: tracked.acpKey,
+        title: `${tracked.label} (${tracked.completed}/${total})`,
+        status: 'in_progress',
+        content: [
+          { type: 'content', content: { type: 'text', text: tracked.summaries.join('\n') } },
+        ],
+      },
+    });
+  }
+
+  private async emitPlanState(): Promise<void> {
+    const plan = await this.agent.getPlan();
+    this.emit(planDataToSessionUpdate(this.sessionId, plan));
+  }
+
   /** Push a `session_info_update` with the current title (best-effort). */
   private async emitSessionInfoUpdate(): Promise<void> {
     try {
@@ -992,8 +1094,7 @@ export class AcpSession {
   }
 
   /** Push a `session/update` notification (best-effort, never throws). */
-  private emit(notification: SessionNotification | null): void {
-    if (notification === null) return;
+  private emit(notification: SessionNotification | null): void {    if (notification === null) return;
     void this.conn.sessionUpdate(notification).catch((error) => {
       log.warn('acp: failed to push session/update', {
         sessionId: this.sessionId,
