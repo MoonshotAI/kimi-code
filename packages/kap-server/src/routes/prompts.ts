@@ -331,6 +331,14 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               () => staging.discard(),
               () => staging.discard(),
             );
+            if (
+              req.body.skills !== undefined &&
+              result.acceptedAs === 'turn' &&
+              (await handle.launched) === undefined &&
+              handle.state !== 'blocked'
+            ) {
+              throw new Error2(ErrorCodes.INTERNAL, 'the skill prompt failed to start a turn');
+            }
           }
           const projected = projectPromptSnapshot(
             handle ?? {

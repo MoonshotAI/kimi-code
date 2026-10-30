@@ -377,6 +377,23 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(createGoal).toHaveBeenCalledExactlyOnceWith({ objective: 'Fix Button: Save' });
   });
 
+  it('reports a bundled skill prompt that fails before starting a turn as an error', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    agent.accessor.get(IAgentLoopService).hooks.onBeforeSubmitPrompt.register('test-fail-submit', async () => {
+      throw new Error('submit hook failed');
+    });
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'check the config' }],
+      skills: [{ name: 'update-config' }],
+    });
+
+    expect(submitted.body.code).not.toBe(0);
+  });
+
   it('keeps plan mode when a goal-mode prompt is rejected because a goal already exists', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
