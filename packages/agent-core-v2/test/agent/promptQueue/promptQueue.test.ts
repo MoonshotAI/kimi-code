@@ -257,28 +257,31 @@ describe('AgentPromptQueueService', () => {
     expect(order).toEqual(['prepare:1']);
   });
 
-  it('starts a queued input as a normal prompt and warns when its mode cannot be applied', async () => {
+  it('pauses the queue and keeps an input whose mode cannot be applied', async () => {
     setup();
     respond(2);
     const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
     const release = await startHeldTurn();
+    const prepare = vi.fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('plan directory is not writable'))
+      .mockResolvedValue(undefined);
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'plan', prepare });
 
-    await queue.submitInput({
-      id: 'p2',
-      entry: entry('p2', 'second'),
-      delivery: 'queue',
-      mode: 'goal',
-      prepare: () => Promise.reject(new Error('goal already exists')),
-    });
     release();
-
-    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
+    await vi.waitFor(() => expect(queue.snapshot().paused).toBe(true));
     await loop.settled();
+    expect(launched).toEqual(['first']);
+    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
       type: 'warning',
-      code: 'queued-mode-failed',
-      message: expect.stringContaining('goal already exists'),
+      code: 'queued-prompt-failed',
+      message: expect.stringContaining('plan directory is not writable'),
     }));
+
+    queue.resume();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
+    await loop.settled();
+    expect(prepare).toHaveBeenCalledTimes(2);
   });
 
   it('keeps a queued prompt and pauses the queue with a warning when it cannot start', async () => {
@@ -364,9 +367,9 @@ describe('AgentPromptQueueService', () => {
     expect(prepare).toHaveBeenCalledOnce();
   });
 
-  it('keeps a starting prompt listed but fixed at the head while its mode is applied', async () => {
+  it('keeps an input queued while its mode is applied and then starts whatever is at the head', async () => {
     setup();
-    respond(2);
+    respond(3);
     const release = await startHeldTurn();
     let finishPrepare!: () => void;
     const prepare = vi.fn(() => new Promise<void>((resolve) => {
@@ -379,15 +382,63 @@ describe('AgentPromptQueueService', () => {
     await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
     expect(ids(queue.snapshot())).toEqual(['p2:queue', 'p3:queue']);
     expect(queue.hasPendingInputs()).toBe(true);
-    expect(() => queue.move('p2')).toThrow(expect.objectContaining({ code: ErrorCodes.PROMPT_NOT_FOUND }));
-    expect(() => queue.move('p3', 'p2')).toThrow(expect.objectContaining({ code: ErrorCodes.PROMPT_NOT_FOUND }));
+    queue.move('p3', 'p2');
     finishPrepare();
 
-    await vi.waitFor(() => expect(launched).toEqual(['first', 'second', 'third']));
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'third', 'second']));
     await loop.settled();
+    expect(prepare).toHaveBeenCalledOnce();
   });
 
-  it('holds a starting prompt when the queue is paused while its mode is applied', async () => {
+  it('keeps an input queued when other work starts while its mode is applied', async () => {
+    setup();
+    respond(3);
+    const release = await startHeldTurn();
+    let finishPrepare!: () => void;
+    const prepare = vi.fn(() => new Promise<void>((resolve) => {
+      finishPrepare = resolve;
+    }));
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'plan', prepare });
+
+    release();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    const hold = holdNextStep();
+    loop.submit(entry('p3', 'direct'));
+    await hold.started;
+    finishPrepare();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(launched).toEqual(['first', 'direct']);
+    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
+
+    hold.release();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'direct', 'second']));
+    await loop.settled();
+    expect(prepare).toHaveBeenCalledOnce();
+  });
+
+  it('queues an idle input at the head when other work starts while its mode is applied', async () => {
+    setup();
+    respond(2);
+    let finishPrepare!: () => void;
+    const prepare = vi.fn(() => new Promise<void>((resolve) => {
+      finishPrepare = resolve;
+    }));
+    const submitted = queue.submitInput({ id: 'p1', entry: entry('p1', 'first'), delivery: 'queue', mode: 'plan', prepare });
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    const hold = holdNextStep();
+    loop.submit(entry('p2', 'direct'));
+    await hold.started;
+    finishPrepare();
+
+    await expect(submitted).resolves.toMatchObject({ acceptedAs: 'queue' });
+    expect(ids(queue.snapshot())).toEqual(['p1:queue']);
+    hold.release();
+    await vi.waitFor(() => expect(launched).toEqual(['direct', 'first']));
+    await loop.settled();
+    expect(prepare).toHaveBeenCalledOnce();
+  });
+
+  it('holds an input whose mode was applied when the queue is paused meanwhile', async () => {
     setup();
     respond(2);
     const release = await startHeldTurn();
@@ -401,7 +452,7 @@ describe('AgentPromptQueueService', () => {
     await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
     queue.pause();
     finishPrepare();
-    await vi.waitFor(() => expect(queue.hasPendingItems()).toBe(false));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     await loop.settled();
     expect(launched).toEqual(['first']);
     expect(queue.snapshot()).toMatchObject({ paused: true, items: [{ id: 'p2', mode: 'plan' }] });
@@ -412,28 +463,7 @@ describe('AgentPromptQueueService', () => {
     expect(prepare).toHaveBeenCalledOnce();
   });
 
-  it('does not warn about a failed mode after its prompt was cancelled', async () => {
-    setup();
-    respond(1);
-    const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
-    const release = await startHeldTurn();
-    let failPrepare!: (error: Error) => void;
-    const prepare = vi.fn(() => new Promise<void>((_resolve, reject) => {
-      failPrepare = reject;
-    }));
-    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'goal', prepare });
-
-    release();
-    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
-    queue.cancel('p2');
-    failPrepare(new Error('goal already exists'));
-    await loop.settled();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ code: 'queued-mode-failed' }));
-    expect(launched).toEqual(['first']);
-  });
-
-  it('drops a starting prompt that is cancelled while its mode is applied', async () => {
+  it('drops an input that is cancelled while its mode is applied', async () => {
     setup();
     respond(2);
     const release = await startHeldTurn();
@@ -454,6 +484,28 @@ describe('AgentPromptQueueService', () => {
 
     await vi.waitFor(() => expect(launched).toEqual(['first', 'third']));
     await loop.settled();
+  });
+
+  it('does not pause the queue for a failed mode after its input was cancelled', async () => {
+    setup();
+    respond(1);
+    const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
+    const release = await startHeldTurn();
+    let failPrepare!: (error: Error) => void;
+    const prepare = vi.fn(() => new Promise<void>((_resolve, reject) => {
+      failPrepare = reject;
+    }));
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'goal', prepare });
+
+    release();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    queue.cancel('p2');
+    failPrepare(new Error('plan directory is not writable'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await loop.settled();
+    expect(queue.snapshot().paused).toBe(false);
+    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ code: 'queued-prompt-failed' }));
+    expect(launched).toEqual(['first']);
   });
 
   it('emits a snapshot for each change and skips no-op pause and resume', async () => {

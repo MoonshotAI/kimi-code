@@ -37,10 +37,13 @@ export async function applyPromptLaunchMode(
       await agent.accessor.get(IAgentTowerService).exit();
       return;
     }
-    case 'goal':
-      await agent.accessor.get(IAgentGoalService).createGoal({ objective });
+    case 'goal': {
+      const goals = agent.accessor.get(IAgentGoalService);
+      if (goals.getGoal().goal !== null) return;
+      await goals.createGoal({ objective });
       if ((await plan.status()) !== null) plan.exit();
       return;
+    }
   }
 }
 
