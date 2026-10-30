@@ -5,6 +5,7 @@ import { IAgentFullCompactionService, type FullCompactionInput } from '#/agent/f
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptQueueService, type PromptQueueSnapshot } from '#/agent/promptQueue/promptQueue';
 import { ErrorCodes } from '#/errors';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import type { UserEntry } from '#human/agent/turn';
 
 import {
@@ -303,6 +304,44 @@ describe('AgentPromptQueueService', () => {
     queue.resume();
     await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
     await loop.settled();
+  });
+
+  it('checks that the session is current before applying the mode of an idle prompt', async () => {
+    setup();
+    const prepare = vi.fn(async () => {});
+    vi.spyOn(ctx.get(ISessionRunGate), 'begin').mockImplementationOnce(() => {
+      throw new Error('session is stale');
+    });
+
+    await expect(
+      queue.submitInput({ id: 'p1', entry: entry('p1', 'hello'), delivery: 'queue', mode: 'goal', prepare }),
+    ).rejects.toThrow('session is stale');
+    expect(prepare).not.toHaveBeenCalled();
+    expect(launched).toEqual([]);
+  });
+
+  it('pauses instead of applying a queued mode when the session is no longer current', async () => {
+    setup();
+    respond(2);
+    const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
+    const release = await startHeldTurn();
+    const prepare = vi.fn(async () => {});
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'goal', prepare });
+    const begin = vi.spyOn(ctx.get(ISessionRunGate), 'begin').mockImplementationOnce(() => {
+      throw new Error('session is stale');
+    });
+
+    release();
+    await vi.waitFor(() => expect(queue.snapshot().paused).toBe(true));
+    expect(prepare).not.toHaveBeenCalled();
+    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ code: 'queued-prompt-failed' }));
+
+    begin.mockRestore();
+    queue.resume();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
+    await loop.settled();
+    expect(prepare).toHaveBeenCalledOnce();
   });
 
   it('does not apply a mode again when a prepared prompt is restored after it could not start', async () => {

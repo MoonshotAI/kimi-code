@@ -8,6 +8,7 @@ import { WarningIssued } from '#/agent/profile/profileOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventService } from '#/app/event/event';
 import { LifecycleScope } from '#/app/scopes';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { Error2, ErrorCodes } from '#/errors';
@@ -48,6 +49,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @ISessionRunGate private readonly runGate: ISessionRunGate,
     @ILogService private readonly logger: ILogService,
   ) {
     super();
@@ -82,7 +84,10 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     if (this.canStartNow()) {
       this.busy = true;
       try {
-        if (request.prepare !== undefined) await request.prepare();
+        if (request.prepare !== undefined) {
+          this.runGate.begin();
+          await request.prepare();
+        }
         return { acceptedAs: 'turn', handle: this.launch(request.entry) };
       } finally {
         this.busy = false;
@@ -262,6 +267,14 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       return;
     }
     await this.runBusy(async () => {
+      if (head.prepare !== undefined) {
+        try {
+          this.runGate.begin();
+        } catch (error) {
+          this.pauseAfterFailedStart(head, error);
+          return;
+        }
+      }
       this.entries = this.entries.filter((item) => item !== head);
       this.starting = head;
       if (head.prepare !== undefined) {
@@ -299,13 +312,17 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     try {
       return this.loop.submit(entry.entry).id;
     } catch (error) {
-      this.logger.warn('queued prompt could not start', { promptId: entry.id, error });
       this.restoreAtHead(entry);
-      this.paused = true;
-      this.emitChange();
-      this.warn('queued-prompt-failed', `The queue was paused because a queued prompt could not start: ${reasonOf(error)}`);
+      this.pauseAfterFailedStart(entry, error);
       return undefined;
     }
+  }
+
+  private pauseAfterFailedStart(entry: QueueEntry, error: unknown): void {
+    this.logger.warn('queued prompt could not start', { promptId: entry.id, error });
+    this.paused = true;
+    this.emitChange();
+    this.warn('queued-prompt-failed', `The queue was paused because a queued prompt could not start: ${reasonOf(error)}`);
   }
 
   private restoreAtHead(entry: QueueEntry): void {
