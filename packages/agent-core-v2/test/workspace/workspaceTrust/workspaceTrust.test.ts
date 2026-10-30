@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'node:fs';
-import { rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -11,10 +11,15 @@ import { createServices } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService, type ConfigSectionChangedEvent } from '#/app/config/config';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
+import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
+import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
+import { projectRootsForDirs } from '#/features/skill/catalog/skillRoots';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { WORKSPACE_TRUST_SECTION } from '#/workspace/workspaceTrust/configSection';
@@ -32,6 +37,7 @@ import {
   readWorkspaceTrust,
   writeWorkspaceTrust,
 } from '#/workspace/workspaceTrust/trustRecord';
+import { WorkspaceTrustDisclosureService } from '#/workspace/workspaceTrust/trustDisclosureService';
 import {
   IWorkspaceTrustStore,
   WorkspaceTrustStore,
@@ -40,6 +46,7 @@ import {
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubConfigService } from '../../app/config/stubs';
 import { registerStateServices } from '../../state/stubs';
+import { stubLog } from '../../_base/log/stubs';
 
 describe('WorkspaceTrustService', () => {
   let homeDir: string;
@@ -519,5 +526,149 @@ describe('WorkspaceTrustService', () => {
     await entry.untrust();
 
     expect(changes).toEqual([{ trusted: true }, { trusted: false }]);
+  });
+
+  it('discloses skills and source paths from additional workspace dirs', async () => {
+    const secondary = mkdtempSync(join(tmpdir(), 'kimi-workspace-trust-secondary-'));
+    const skillRoot = join(secondary, '.kimi-code', 'skills');
+    const skillDir = join(skillRoot, 'trust-secondary');
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, 'SKILL.md'),
+      '---\nname: trust-secondary\ndescription: from secondary\n---\nbody',
+      'utf8',
+    );
+    const fs = new HostFileSystem();
+    const roots = await projectRootsForDirs([cwd, secondary]);
+    const discovered = await new FileSkillDiscovery(stubLog()).discover(roots);
+    const catalog = new InMemorySkillCatalog();
+    for (const skill of discovered.skills) catalog.register(skill);
+    catalog.addRoots(discovered.scannedRoots);
+    const service = new WorkspaceTrustDisclosureService(
+      { cwd, workspaceId: 'wm_test' } as never,
+      fs,
+      stubBootstrap(homeDir),
+      { get: () => true } as never,
+      {
+        readAdditionalDirs: async () => ({
+          projectRoot: cwd,
+          configPath: join(cwd, '.kimi-code', 'local.toml'),
+          additionalDirs: [],
+        }),
+        resolveAdditionalDirs: async (_baseDir: string, dirs: readonly string[]) => [...dirs],
+      } as never,
+      { ready: Promise.resolve(), sharedAdditionalDirs: [secondary] } as never,
+      { ready: Promise.resolve(), get: async () => false } as never,
+      { ready: Promise.resolve(), catalog, reloadSources: async () => undefined } as never,
+      { ready: Promise.resolve() } as never,
+      { entries: () => [] } as never,
+      { ready: Promise.resolve(), snapshot: { agentsMdPaths: [] } } as never,
+      stubLog(),
+    );
+
+    try {
+      const result = await service.describeGatedActivation();
+      const realSkillRoot = await fs.realpath(skillRoot);
+
+      expect(result.instructionSources.skills).toContain('trust-secondary');
+      expect(result.instructionSources.paths).toContain(`${realSkillRoot}/`);
+      expect(result.additionalDirs).toContain(realSkillRoot);
+      expect(result.additionalDirSources).toContain(realSkillRoot);
+    } finally {
+      await rm(secondary, { recursive: true, force: true });
+    }
+  });
+
+  it('awaits the current workspace reload before disclosing skills', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const catalog = new InMemorySkillCatalog();
+    const skill = {
+      name: 'reload-secondary',
+      description: 'Reload secondary',
+      source: 'project' as const,
+      path: '/secondary/.kimi-code/skills/reload-secondary/SKILL.md',
+      dir: '/secondary/.kimi-code/skills/reload-secondary',
+      metadata: { type: 'prompt' as const },
+      content: 'Reload secondary',
+    };
+    const reloadSources = vi.fn(async () => {
+      await blocked;
+      catalog.register(skill);
+    });
+    const fs = new HostFileSystem();
+    const service = new WorkspaceTrustDisclosureService(
+      { cwd, workspaceId: 'wm_test' } as never,
+      fs,
+      stubBootstrap(homeDir),
+      { get: () => true } as never,
+      {
+        readAdditionalDirs: async () => ({
+          projectRoot: cwd,
+          configPath: join(cwd, '.kimi-code', 'local.toml'),
+          additionalDirs: [],
+        }),
+        resolveAdditionalDirs: async (_baseDir: string, dirs: readonly string[]) => [...dirs],
+      } as never,
+      { ready: Promise.resolve(), sharedAdditionalDirs: [] } as never,
+      { ready: Promise.resolve(), get: async () => false } as never,
+      { ready: Promise.resolve(), catalog, reloadSources } as never,
+      { ready: Promise.resolve() } as never,
+      { entries: () => [] } as never,
+      { ready: Promise.resolve(), snapshot: { agentsMdPaths: [] } } as never,
+      stubLog(),
+    );
+
+    const pending = service.describeGatedActivation();
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(reloadSources).toHaveBeenCalledWith(['workspace']));
+    expect(settled).toBe(false);
+
+    release();
+    const result = await pending;
+    expect(result.instructionSources.skills).toContain('reload-secondary');
+  });
+
+  it('expands home-relative pending dirs without discovering their skills', async () => {
+    const secondary = mkdtempSync(join(tmpdir(), 'kimi-workspace-trust-home-'));
+    const skillRoot = join(secondary, '.kimi-code', 'skills');
+    await mkdir(join(skillRoot, 'home-only'), { recursive: true });
+    await writeFile(
+      join(skillRoot, 'home-only', 'SKILL.md'),
+      '---\nname: home-only\ndescription: Home-only skill\n---\nbody',
+      'utf8',
+    );
+    const fs = new HostFileSystem();
+    const service = new WorkspaceTrustDisclosureService(
+      { cwd, workspaceId: 'wm_test' } as never,
+      fs,
+      stubBootstrap(homeDir),
+      { get: () => true } as never,
+      new FileProjectLocalConfigService(stubBootstrap(homeDir), fs, secondary),
+      { ready: Promise.resolve(), sharedAdditionalDirs: [] } as never,
+      { ready: Promise.resolve(), get: async () => false } as never,
+      { ready: Promise.resolve(), catalog: new InMemorySkillCatalog(), reloadSources: async () => undefined } as never,
+      { ready: Promise.resolve() } as never,
+      { entries: () => [] } as never,
+      { ready: Promise.resolve(), snapshot: { agentsMdPaths: [] } } as never,
+      stubLog(),
+    );
+
+    try {
+      const result = await service.describeGatedActivation(['~']);
+      const realSecondary = await fs.realpath(secondary);
+
+      expect(result.additionalDirs).toEqual([realSecondary]);
+      expect(result.additionalDirSources).toEqual([realSecondary]);
+      expect(result.instructionSources.skills).not.toContain('home-only');
+      expect(result.instructionSources.paths).not.toContain(`${await fs.realpath(skillRoot)}/`);
+    } finally {
+      await rm(secondary, { recursive: true, force: true });
+    }
   });
 });
