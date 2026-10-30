@@ -1065,10 +1065,11 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
           { details: { sessionId: id } },
         );
       }
-      if (!stale && agentHandle.accessor.get(IAgentPromptQueueService).snapshot().items.length > 0) {
+      const queue = agentHandle.accessor.get(IAgentPromptQueueService).snapshot();
+      if (!stale && (queue.paused || queue.items.length > 0)) {
         throw new Error2(
           ErrorCodes.SESSION_BUSY,
-          `Session "${id}" cannot be reloaded while prompts are queued`,
+          `Session "${id}" cannot be reloaded while its queue is paused or holds prompts`,
           { details: { sessionId: id } },
         );
       }

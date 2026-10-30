@@ -831,7 +831,7 @@ Reloads the session with the latest on-disk configuration: re-reads `config.toml
 
 On success, `data` is [the session object](#the-session-object).
 
-- `40901`: the session has an active turn, a running compaction, or queued prompts, and cannot be reloaded. Queued prompts do not block reloading a session that another client changed; the reload drops them
+- `40901`: the session has an active turn, a running compaction, queued prompts or a paused queue, and cannot be reloaded. The queue does not block reloading a session that another client changed; the reload drops its prompts and its pause
 
 #### `POST /api/v1/sessions/{session_id}:takeover`
 
