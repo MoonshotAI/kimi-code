@@ -1635,12 +1635,23 @@ describe('AgentToolExecutorService environment routing', () => {
         text: { type: 'string' },
         environment: {
           type: 'string',
-          enum: ['local', 'gpu'],
-          description: 'Environment to run this call in. Omit to use the primary environment.',
+          description: 'Environment id from the environment roster. Omit to use the primary environment.',
         },
       },
     });
     expect(parameters['plain']).toBe(textSchema);
+  });
+
+  it('keeps environment schemas stable as the available environment ids change', () => {
+    registry.register(new RoutedTool('scoped', textSchema), { environmentScoped: true });
+    const parameters = () => registry.list().find((info) => info.name === 'scoped')?.parameters;
+    const initial = parameters();
+
+    environmentTargets = [...environmentTargets, { environmentId: 'staging', primary: false, cwd: '/staging' }];
+    expect(parameters()).toEqual(initial);
+
+    environmentTargets = environmentTargets.filter((target) => target.environmentId === 'local');
+    expect(parameters()).toBe(textSchema);
   });
 
   it('routes a call to the named environment, hands the tool its own arguments, and stamps the display', async () => {

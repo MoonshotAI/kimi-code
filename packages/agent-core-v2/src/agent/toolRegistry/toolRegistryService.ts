@@ -54,13 +54,12 @@ export class AgentToolRegistryService implements IAgentToolRegistryService {
   }
 
   list(): readonly ToolInfo[] {
-    const targets = this.environment?.current?.targets() ?? [];
-    const environmentSchema = targets.length < 2
+    const multipleEnvironments = (this.environment?.current?.targets().length ?? 0) >= 2;
+    const environmentSchema = !multipleEnvironments
       ? undefined
       : {
           type: 'string',
-          enum: targets.map((target) => target.environmentId),
-          description: 'Environment to run this call in. Omit to use the primary environment.',
+          description: 'Environment id from the environment roster. Omit to use the primary environment.',
         };
     return [...this.tools.values()]
       .map(({ tool, source, disclosure, environmentScoped }) => ({
