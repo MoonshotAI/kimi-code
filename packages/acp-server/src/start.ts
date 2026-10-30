@@ -133,9 +133,12 @@ export async function runAcpServerWithStream(
   // the server — exists. Handlers wait for `serverReady` so requests received
   // while the environment provider is attaching run only after construction.
   let resolveServer!: (server: AcpServer) => void;
-  const serverReady = new Promise<AcpServer>((resolve) => {
+  let rejectServer!: (error: unknown) => void;
+  const serverReady = new Promise<AcpServer>((resolve, reject) => {
     resolveServer = resolve;
+    rejectServer = reject;
   });
+  void serverReady.catch(() => {});
   const app = createAcpAgentApp(() => serverReady);
   const conn = app.connect(stream);
   const client = acpClientFromContext(conn.client);
@@ -144,7 +147,13 @@ export async function runAcpServerWithStream(
   // `IAcpConnection.get()`.
   acpConnection.bind(client);
   const acpEnvironmentProvider = new AcpEnvironmentProviderFactory(acpConnection, core.accessor.get(IHostEnvironment), core.accessor.get(IHostProcessService));
-  const acpProviderRegistration = await core.accessor.get(IEnvironmentService).addProvider(acpEnvironmentProvider);
+  const acpProviderRegistration = await core.accessor
+    .get(IEnvironmentService)
+    .addProvider(acpEnvironmentProvider)
+    .catch((error: unknown) => {
+      rejectServer(error);
+      throw error;
+    });
   const server = new AcpServer(client, klient, acpConnection, {
     agentInfo: opts.agentInfo,
     disableAuth: opts.disableAuth,
