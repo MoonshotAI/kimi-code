@@ -89,7 +89,7 @@ export function effectiveMaxCompletionTokens(params?: ModelRequestParams): numbe
   return params?.maxCompletionTokens;
 }
 
-export async function* generateModel(
+export function generateModel(
   initial: InitializedLlmRequester,
   input: ModelRequestInput,
   signal: AbortSignal | undefined,
@@ -101,7 +101,7 @@ export async function* generateModel(
     () => events.end(),
     (error) => events.fail(error),
   );
-  yield* events;
+  return events;
 }
 
 interface ModelEventSink {
