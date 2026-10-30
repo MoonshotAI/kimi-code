@@ -173,6 +173,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.SESSION_BUSY]: {},
         [ErrorCode.COMPACTION_UNABLE]: {},
         [ErrorCode.GOAL_ALREADY_EXISTS]: {},
         [ErrorCode.GOAL_OBJECTIVE_EMPTY]: {},

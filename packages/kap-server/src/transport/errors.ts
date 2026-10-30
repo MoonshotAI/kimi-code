@@ -33,6 +33,7 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.FS_PATH_NOT_FOUND]: ErrorCode.FS_PATH_NOT_FOUND,
   [ErrorCodes.SESSION_BUSY]: ErrorCode.SESSION_BUSY,
   [ErrorCodes.SESSION_FORK_ACTIVE_TURN]: ErrorCode.SESSION_BUSY,
+  [ErrorCodes.SESSION_CLOSED]: ErrorCode.SESSION_BUSY,
   [ErrorCodes.SESSION_OCCUPIED]: ErrorCode.SESSION_OCCUPIED,
   [ErrorCodes.SESSION_STALE]: ErrorCode.SESSION_STALE,
   [ErrorCodes.COMPACTION_UNABLE]: ErrorCode.COMPACTION_UNABLE,

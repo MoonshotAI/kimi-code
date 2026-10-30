@@ -1114,6 +1114,7 @@ On success, `data` is `{ prompt_id, user_message_id, status, content, created_at
 - `40401`: session or agent not found
 - `40407`: a referenced `file_id` does not exist (or does not match the part's media kind)
 - `40415`: a `skills` entry names an unknown skill
+- `40901`: the agent was closed, for example by a concurrent reload, before the input or compaction was accepted; submit it again
 - `40910`: the compaction cannot start, for example because the history has nothing to compact
 - `40912`: the skill exists but cannot be activated by the user
 - `40913`: `mode: "goal"` while the agent already has a goal at submission

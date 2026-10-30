@@ -13,6 +13,7 @@ import {
   IAgentLifecycleService,
   IAgentPlanService,
   IAgentProfileService,
+  IAgentPromptQueueService,
   IAgentLoopService,
   IAgentStateService,
   IAgentSwarmService,
@@ -376,6 +377,21 @@ describe('server-v2 /api/v1 prompts', () => {
 
     expect(submitted.body.code).toBe(0);
     expect(createGoal).toHaveBeenCalledExactlyOnceWith({ objective: 'Fix Button: Save' });
+  });
+
+  it('answers 40901 when the agent closes before the prompt is accepted', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    vi.spyOn(agent.accessor.get(IAgentPromptQueueService), 'submitInput')
+      .mockRejectedValueOnce(new Error2(ErrorCodes.SESSION_CLOSED, 'the agent was closed before the prompt was accepted'));
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+    });
+
+    expect(submitted.body.code).toBe(40901);
   });
 
   it('reports a bundled skill prompt that fails before starting a turn as an error', async () => {
