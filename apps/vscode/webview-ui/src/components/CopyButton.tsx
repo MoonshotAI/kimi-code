@@ -2,6 +2,8 @@ import { useState } from "react";
 import { IconCopy, IconCheck } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { bridge } from "@/services";
+import { toast } from "@/components/ui/sonner";
 
 interface CopyButtonProps {
   content: string;
@@ -15,11 +17,11 @@ export function CopyButton({ content, className }: CopyButtonProps) {
     if (!content) return;
 
     try {
-      await navigator.clipboard.writeText(content);
+      await bridge.copyText(content);
       setIsCopied(true);
       setTimeout(() => setIsCopied(false), 2000);
-    } catch (err) {
-      console.error("Failed to copy:", err);
+    } catch (error) {
+      toast.error(`Failed to copy: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 

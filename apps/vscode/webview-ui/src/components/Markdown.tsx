@@ -191,7 +191,7 @@ export const Markdown = memo(function Markdown({ content, className, enableEnric
       return;
     }
     const paths = extractPaths(content);
-    if (!paths.length) {
+    if (paths.length === 0) {
       setFileMap({});
       return;
     }
@@ -267,7 +267,7 @@ export const Markdown = memo(function Markdown({ content, className, enableEnric
   if (!content) return null;
 
   return (
-    <div className={className}>
+    <div className={className} data-markdown-content={content}>
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]} components={components}>
         {content}
       </ReactMarkdown>

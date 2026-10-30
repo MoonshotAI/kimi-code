@@ -19,6 +19,11 @@ const openFolder: Handler<void, { ok: boolean }> = async () => {
   return { ok: true };
 };
 
+const copyText: Handler<{ text: string }, { ok: boolean }> = async ({ text }) => {
+  await vscode.env.clipboard.writeText(text);
+  return { ok: true };
+};
+
 const getInputHistory: Handler<void, string[]> = async (_, ctx) => {
   return ctx.workspaceState.get<string[]>(INPUT_HISTORY_KEY, []);
 };
@@ -26,7 +31,7 @@ const getInputHistory: Handler<void, string[]> = async (_, ctx) => {
 const addInputHistory: Handler<{ text: string }, { ok: boolean }> = async ({ text }, ctx) => {
   const history = ctx.workspaceState.get<string[]>(INPUT_HISTORY_KEY, []);
   // 避免重复添加相同的最近一条
-  if (history[history.length - 1] !== text) {
+  if (history.at(-1) !== text) {
     history.push(text);
     if (history.length > MAX_HISTORY_SIZE) {
       history.shift();
@@ -41,4 +46,5 @@ export const workspaceHandlers: Record<string, Handler<any, any>> = {
   [Methods.OpenFolder]: openFolder,
   [Methods.GetInputHistory]: getInputHistory,
   [Methods.AddInputHistory]: addInputHistory,
+  [Methods.CopyText]: copyText,
 };
