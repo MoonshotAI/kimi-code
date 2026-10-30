@@ -580,7 +580,7 @@ describe('AgentFileHistoryService', () => {
     startTurn(2);
     await service.settled();
 
-    expect(service.history().tracked).toEqual(['gpu:/srv/app/a.txt']);
+    expect(service.history().tracked).toEqual([JSON.stringify(['gpu', '/srv/app/a.txt'])]);
     expect(await service.changes(1)).toEqual([
       { path: '/srv/app/a.txt', environmentId: 'gpu', status: 'modified', additions: 1, deletions: 1 },
     ]);
@@ -623,7 +623,22 @@ describe('AgentFileHistoryService', () => {
     await service.captureForActiveTurn('/srv/app/b.txt', 'gpu');
     await service.settled();
 
-    expect(service.history().tracked).toEqual(['a.txt', 'gpu:/srv/app/b.txt']);
+    expect(service.history().tracked).toEqual(['a.txt', JSON.stringify(['gpu', '/srv/app/b.txt'])]);
+  });
+
+  it('keeps environment and path pairs apart when their concatenations coincide', async () => {
+    const service = createService();
+    setFile('/b:/x', 'first\n');
+    setFile('/x', 'second\n');
+
+    startTurn(1);
+    await service.captureForActiveTurn('/b:/x', 'a');
+    await service.captureForActiveTurn('/x', 'a:/b');
+    await service.settled();
+
+    expect(service.history().tracked).toHaveLength(2);
+    expect((await service.contentAt(1, '/b:/x', 'start', 'a'))?.content).toBe('first\n');
+    expect((await service.contentAt(1, '/x', 'start', 'a:/b'))?.content).toBe('second\n');
   });
 
   it('keeps the environment on a reused backup so an unchanged routed file is not read from the primary', async () => {

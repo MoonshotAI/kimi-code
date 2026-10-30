@@ -32,6 +32,17 @@ export class AgentEnvironmentRosterService extends Disposable implements IAgentE
     @IAgentEnvironmentService environment: IAgentEnvironmentService,
   ) {
     super();
+    const resolvedCwds = new Map<string, string>();
+    const secondaryCwd = (environmentId: string): string | undefined => {
+      if (!resolvedCwds.has(environmentId) && environment.isAvailable([], environmentId)) {
+        try {
+          resolvedCwds.set(environmentId, environment.workspaceRoots(environmentId).workDir);
+        } catch {
+          return undefined;
+        }
+      }
+      return resolvedCwds.get(environmentId);
+    };
     this._register(
       reminder.register<string>(ENVIRONMENT_ROSTER_REMINDER_VARIANT, ({ lastInjection, lastDisclosure }) => {
         const targets = environment.targets();
@@ -44,7 +55,7 @@ export class AgentEnvironmentRosterService extends Disposable implements IAgentE
         }
         const lines = targets.map((target) => {
           const label = target.primary ? `\`${target.environmentId}\` (primary)` : `\`${target.environmentId}\``;
-          const cwd = target.primary ? environment.workspaceRoots().workDir : target.cwd;
+          const cwd = target.primary ? environment.workspaceRoots().workDir : target.cwd ?? secondaryCwd(target.environmentId);
           return cwd === undefined
             ? `- ${label}: working directory resolved on first use`
             : `- ${label}: working directory ${cwd}`;

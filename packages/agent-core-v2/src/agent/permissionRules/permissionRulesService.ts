@@ -35,7 +35,8 @@ export class AgentPermissionRulesService implements IAgentPermissionRulesService
   sessionApprovalRulePatterns(environment?: EnvironmentTarget): readonly string[] {
     const state = this.agentState.get(permissionRulesKey);
     if (environment?.primary !== false) return [...state.sessionApprovalRulePatterns];
-    return [...(state.environmentSessionApprovalRulePatterns?.[environment.environmentId] ?? [])];
+    const byEnvironment = state.environmentSessionApprovalRulePatterns ?? {};
+    return Object.hasOwn(byEnvironment, environment.environmentId) ? [...byEnvironment[environment.environmentId]!] : [];
   }
 
   addRules(rules: readonly PermissionRule[]): void {

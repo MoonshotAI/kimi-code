@@ -100,6 +100,16 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(svc.sessionApprovalRulePatterns({ environmentId: 'staging', primary: false })).toEqual([]);
   });
 
+  it('keeps session approvals for environments named like object prototype members', () => {
+    expect(svc.sessionApprovalRulePatterns({ environmentId: 'toString', primary: false })).toEqual([]);
+
+    svc.recordApprovalResult({ ...sessionApproval('Bash(rm *)'), environmentId: '__proto__' });
+    svc.recordApprovalResult({ ...sessionApproval('Bash(ls)'), environmentId: 'constructor' });
+
+    expect(svc.sessionApprovalRulePatterns({ environmentId: '__proto__', primary: false })).toEqual(['Bash(rm *)']);
+    expect(svc.sessionApprovalRulePatterns({ environmentId: 'constructor', primary: false })).toEqual(['Bash(ls)']);
+  });
+
   it('ignores non-session approvals for the pattern set', () => {
     const oneTime: PermissionApprovalResultRecord = {
       turnId: 2,

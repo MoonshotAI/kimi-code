@@ -67,7 +67,7 @@ export const permissionRulesKey = defineState(
       return;
     }
     const byEnvironment = s.environmentSessionApprovalRulePatterns ?? {};
-    const patterns = byEnvironment[e.environmentId] ?? [];
+    const patterns = Object.hasOwn(byEnvironment, e.environmentId) ? byEnvironment[e.environmentId]! : [];
     if (patterns.includes(pattern)) return;
     s.environmentSessionApprovalRulePatterns = { ...byEnvironment, [e.environmentId]: [...patterns, pattern] };
   });

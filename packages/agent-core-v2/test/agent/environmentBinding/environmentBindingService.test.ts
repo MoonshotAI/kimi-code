@@ -654,6 +654,26 @@ describe('AgentEnvironmentRosterService', () => {
     expect(provide({ lastDisclosure: first?.disclosure })?.content).toBe(first?.content);
   });
 
+  it('reports the working directory a connected environment resolved and keeps it across disconnects', () => {
+    const { agentEnvironment, registry } = setup({
+      multiEnvironment: { declarations: [{ id: 'staging' }] },
+    });
+    const staging = environment('staging', 'staging-one', 'pending', [], { cwd: '/home/deploy' });
+    registry.register(staging);
+    const { provide } = rosterProvider(agentEnvironment);
+    const injected = { role: 'user' as const, content: [] };
+
+    const before = provide({});
+    expect(before?.content).toContain('- `staging`: working directory resolved on first use');
+
+    staging.setStatus('ready');
+    const connected = provide({ lastInjection: injected, lastDisclosure: before?.disclosure });
+    expect(connected?.content).toContain('- `staging`: working directory /home/deploy');
+
+    staging.setStatus('disconnected');
+    expect(provide({ lastInjection: injected, lastDisclosure: connected?.disclosure })).toBeUndefined();
+  });
+
   it('withdraws the roster once only the primary environment remains', () => {
     const { agentEnvironment } = setup({
       multiEnvironment: { enabled: false, declarations: [{ id: 'remote', defaultCwd: '/srv/app' }] },

@@ -532,11 +532,11 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   }
 
   private entryKey(path: string, environmentId: string | undefined): string {
-    return environmentId === undefined ? this.pathKey(path) : `${environmentId}:${path}`;
+    return environmentId === undefined ? this.pathKey(path) : JSON.stringify([environmentId, path]);
   }
 
   private entryPath(pathKey: string, environmentId: string | undefined): string {
-    return environmentId === undefined ? pathKey : pathKey.slice(environmentId.length + 1);
+    return environmentId === undefined ? pathKey : (JSON.parse(pathKey) as [string, string])[1];
   }
 
   private pathKey(path: string): string {
