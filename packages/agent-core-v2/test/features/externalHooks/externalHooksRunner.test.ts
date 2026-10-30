@@ -32,6 +32,30 @@ describe('ExternalHooksRunnerService', () => {
     expect(results[0]?.action).toBe('allow');
   });
 
+  it('supports inline (?i) regex flags for case-insensitive matching', async () => {
+    const runner = makeHookRunner([
+      {
+        event: 'PreToolUse',
+        matcher: '(?i)(read|write|edit)',
+        command: nodeCommand('process.exit(0);'),
+        timeout: 5,
+      },
+    ]);
+
+    const readResults = await runner.trigger('PreToolUse', {
+      matcherValue: 'Read',
+      inputData: { toolName: 'Read' },
+    });
+    expect(readResults).toHaveLength(1);
+    expect(readResults[0]?.action).toBe('allow');
+
+    const bashResults = await runner.trigger('PreToolUse', {
+      matcherValue: 'Bash',
+      inputData: { toolName: 'Bash' },
+    });
+    expect(bashResults).toHaveLength(0);
+  });
+
   it('returns no results when no hook matcher matches the matcher value', async () => {
     const runner = makeHookRunner([
       { event: 'PreToolUse', matcher: 'Bash|Write', command: nodeCommand('process.exit(0);'), timeout: 5 },
