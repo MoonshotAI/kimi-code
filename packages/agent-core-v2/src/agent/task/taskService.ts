@@ -363,6 +363,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const timeoutMs = options.timeoutMs ?? task.timeoutMs;
     const entryOptions: RegisterAgentTaskOptions = {
       detached,
+      detachable: options.detachable,
       timeoutMs,
       detachTimeoutMs: options.detachTimeoutMs,
       autoBackgroundOnTimeout: options.autoBackgroundOnTimeout,
@@ -694,6 +695,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private detachEntry(entry: ManagedTask, viaTimeout: boolean): AgentTaskInfo | undefined {
     if (TERMINAL_STATUSES.has(entry.status)) return this.toInfo(entry);
+    if (entry.options.detachable === false) return this.toInfo(entry);
 
     const foregroundRelease = entry.foregroundRelease;
     if (foregroundRelease === undefined) return this.toInfo(entry);

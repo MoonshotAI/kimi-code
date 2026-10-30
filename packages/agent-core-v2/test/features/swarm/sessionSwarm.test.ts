@@ -1479,6 +1479,7 @@ describe('SessionSwarmService metadata compatibility', () => {
       const registered: Array<{
         readonly task: AgentTask;
         readonly detached: boolean | undefined;
+        readonly detachable: boolean | undefined;
         settlement?: AgentTaskSettlement;
         readonly refreshed: Array<SubagentTaskInfo>;
       }> = [];
@@ -1486,7 +1487,12 @@ describe('SessionSwarmService metadata compatibility', () => {
         task.toInfo({ taskId: 't', description: task.description, status: 'running', startedAt: 0, endedAt: null }) as SubagentTaskInfo;
       const callerTasks = {
         registerTask: (task: AgentTask, options?: RegisterAgentTaskOptions) => {
-          const entry: (typeof registered)[number] = { task, detached: options?.detached, refreshed: [] };
+          const entry: (typeof registered)[number] = {
+            task,
+            detached: options?.detached,
+            detachable: options?.detachable,
+            refreshed: [],
+          };
           registered.push(entry);
           void task.start({
             signal: new AbortController().signal,
@@ -1537,7 +1543,10 @@ describe('SessionSwarmService metadata compatibility', () => {
       await running;
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(registered.map((entry) => entry.detached)).toEqual([false, false]);
+      expect(registered.map((entry) => [entry.detached, entry.detachable])).toEqual([
+        [false, false],
+        [false, false],
+      ]);
       const [rl, peerTask] = registered;
       expect(rl!.refreshed.map((info) => info.stateReason)).toContain(
         'Provider rate limit; subagent requeued for retry.',
@@ -1549,6 +1558,8 @@ describe('SessionSwarmService metadata compatibility', () => {
         agentId: 'agent-rl',
         parentToolCallId: 'call_swarm',
         swarmIndex: 1,
+        model: 'kimi-test',
+        thinkingEffort: 'medium',
         resultSummary: 'recovered summary',
       });
       expect(peerTask!.settlement).toEqual({ status: 'completed' });
@@ -1556,6 +1567,62 @@ describe('SessionSwarmService metadata compatibility', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('stopping one member task cancels only that member', async () => {
+    agents['agent-stop'] = { labels: { parentAgentId: 'main' } };
+    agents['agent-keep'] = { labels: { parentAgentId: 'main' } };
+    handles.set('agent-stop', agentHandle('agent-stop', lifecycle, eventBus));
+    handles.set('agent-keep', agentHandle('agent-keep', lifecycle, eventBus));
+    const members: Array<{ readonly stop: AbortController; settlement?: AgentTaskSettlement }> = [];
+    const callerTasks = {
+      registerTask: (task: AgentTask) => {
+        const member: (typeof members)[number] = { stop: new AbortController() };
+        members.push(member);
+        void task.start({
+          signal: member.stop.signal,
+          appendOutput: () => {},
+          settle: async (settlement) => {
+            member.settlement = settlement;
+            return true;
+          },
+        });
+        return `task-${members.length - 1}`;
+      },
+      refresh: () => {},
+    } as unknown as IAgentTaskService;
+    handles.set(
+      'main',
+      agentHandle('main', lifecycle, eventBus, {}, new Map<unknown, unknown>([[IAgentTaskService, callerTasks]])),
+    );
+    const kept = createControlledPromise<{ summary: string }>();
+    runAgent.mockImplementation((agent, _request, options) => {
+      options?.onReady?.();
+      const agentId = (agent as AgentContext).agentId;
+      if (agentId === 'agent-keep') return { agentId, turn: {} as never, completion: kept };
+      return {
+        agentId,
+        turn: {} as never,
+        completion: new Promise((_resolve, reject) => {
+          options?.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+        }),
+      };
+    });
+
+    const running = ix.get(ISessionSwarmService).run({
+      callerAgentId: 'main',
+      tasks: [resumeSessionTask('agent-stop'), resumeSessionTask('agent-keep')],
+    });
+    await vi.waitFor(() => expect(runAgent).toHaveBeenCalledTimes(2));
+    members[0]!.stop.abort(userCancellationReason());
+    kept.resolve({ summary: 'kept summary' });
+    const results = await running;
+
+    expect(results.map((result) => [result.agentId, result.status])).toEqual([
+      ['agent-stop', 'aborted'],
+      ['agent-keep', 'completed'],
+    ]);
+    expect(members.map((member) => member.settlement?.status)).toEqual(['killed', 'completed']);
   });
 
   it('emits subagent.cancelled for a rate-limit-suspended child when the batch is cancelled', async () => {
@@ -2486,6 +2553,7 @@ function createMockAgentRunBatchRunner(
       }));
       return new AgentRunBatch(launcher, activeTasks as readonly QueuedAgentRunTask<T>[], {
         maxConcurrency: options.maxConcurrency,
+        signal: runOptions?.signal,
       }).run();
     },
     attempts,

@@ -29,6 +29,8 @@ export interface AgentSpawnAttemptOptions extends AgentRunAttemptOptions {
 export type AgentRunAttemptHandle = {
   readonly agentId: string;
   readonly profileName: string;
+  readonly model?: string;
+  readonly thinkingEffort?: string;
   readonly completion: Promise<{
     readonly result: string;
     readonly usage?: TokenUsage;
@@ -101,7 +103,8 @@ type ActiveAttempt<T> = {
 
 export type AgentRunBatchOptions<T = unknown> = {
   readonly maxConcurrency?: number;
-  readonly onStarted?: (task: QueuedAgentRunTask<T>, agentId: string) => void;
+  readonly signal?: AbortSignal;
+  readonly onStarted?: (task: QueuedAgentRunTask<T>, handle: AgentRunAttemptHandle) => void;
   readonly onSettled?: (result: AgentRunResult<T>) => void;
 };
 
@@ -145,7 +148,7 @@ export class AgentRunBatch<T> {
     }));
     this.pending = [...this.states];
     this.results = Array.from({ length: tasks.length });
-    this.batchSignal = tasks.find((task) => task.signal !== undefined)?.signal;
+    this.batchSignal = options.signal;
     this.batchAbortListener = () => {
       this.controller.abort(this.batchSignal?.reason);
       if (isUserCancellation(this.batchSignal?.reason)) {
@@ -314,7 +317,7 @@ export class AgentRunBatch<T> {
     }
 
     attempt.state.agentId = handle.agentId;
-    this.options.onStarted?.(task, handle.agentId);
+    this.options.onStarted?.(task, handle);
     try {
       const completion = await handle.completion;
       return {

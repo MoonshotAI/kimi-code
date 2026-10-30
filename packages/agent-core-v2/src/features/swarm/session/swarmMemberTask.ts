@@ -2,6 +2,7 @@ import type { IAgentTaskService } from '#/agent/task/task';
 import type { AgentTask, AgentTaskInfoBase, AgentTaskSettlement, AgentTaskSink } from '#/agent/task/types';
 import type { SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
 
+import type { AgentRunAttemptHandle } from './agentRunBatch';
 import type { SessionSwarmRunResult, SessionSwarmTask } from './sessionSwarm';
 
 export class SwarmMemberTasks {
@@ -10,22 +11,23 @@ export class SwarmMemberTasks {
   constructor(
     private readonly tasks: IAgentTaskService | undefined,
     members: readonly SessionSwarmTask[],
-    cancelSwarm: (reason: unknown) => void,
+    stopMember: (member: SessionSwarmTask, reason: unknown) => void,
   ) {
     if (tasks === undefined) return;
     for (const member of members) {
-      const task = new SwarmMemberTask(member, cancelSwarm);
+      const task = new SwarmMemberTask(member, (reason) => stopMember(member, reason));
       try {
-        this.members.set(member, { task, taskId: tasks.registerTask(task, { detached: member.runInBackground }) });
+        const taskId = tasks.registerTask(task, { detached: member.runInBackground, detachable: false });
+        this.members.set(member, { task, taskId });
       } catch {
       }
     }
   }
 
-  started(member: SessionSwarmTask, agentId: string): void {
+  started(member: SessionSwarmTask, handle: AgentRunAttemptHandle): void {
     const entry = this.members.get(member);
     if (entry === undefined) return;
-    entry.task.started(agentId);
+    entry.task.started(handle);
     this.tasks?.refresh(entry.taskId);
   }
 
@@ -53,35 +55,44 @@ export class SwarmMemberTask implements AgentTask {
   readonly idPrefix = 'agent';
   readonly description: string;
   private agentId: string | undefined;
+  private model: string | undefined;
+  private thinkingEffort: string | undefined;
   private stateReason: string | undefined;
   private resultSummary: string | undefined;
   private sink: AgentTaskSink | undefined;
   private result: SessionSwarmRunResult | undefined;
   private finish: (() => void) | undefined;
-  private readonly cancelOnAbort = (): void => {
-    this.cancelSwarm(this.sink?.signal.reason);
+  private readonly stopOnAbort = (): void => {
+    this.stop(this.sink?.signal.reason);
   };
 
   constructor(
     private readonly member: SessionSwarmTask,
-    private readonly cancelSwarm: (reason: unknown) => void,
+    private readonly stop: (reason: unknown) => void,
   ) {
     this.description = member.description;
-    this.agentId = member.kind === 'resume' ? member.resumeAgentId : undefined;
+    if (member.kind === 'resume') {
+      this.agentId = member.resumeAgentId;
+    } else {
+      this.model = member.plan.model;
+      this.thinkingEffort = member.plan.thinking;
+    }
   }
 
   start(sink: AgentTaskSink): Promise<void> {
     this.sink = sink;
-    if (sink.signal.aborted) this.cancelOnAbort();
-    else sink.signal.addEventListener('abort', this.cancelOnAbort, { once: true });
+    if (sink.signal.aborted) this.stopOnAbort();
+    else sink.signal.addEventListener('abort', this.stopOnAbort, { once: true });
     return new Promise((resolve) => {
       this.finish = resolve;
       if (this.result !== undefined) void this.settleWith(this.result);
     });
   }
 
-  started(agentId: string): void {
-    this.agentId = agentId;
+  started(handle: AgentRunAttemptHandle): void {
+    this.agentId = handle.agentId;
+    this.model = handle.model ?? this.model;
+    this.thinkingEffort = handle.thinkingEffort ?? this.thinkingEffort;
     this.stateReason = undefined;
   }
 
@@ -102,7 +113,8 @@ export class SwarmMemberTask implements AgentTask {
       agentId: this.agentId,
       subagentType: this.member.profileName,
       parentToolCallId: this.member.parentToolCallId,
-      model: this.member.kind === 'spawn' ? this.member.plan.model : undefined,
+      model: this.model,
+      thinkingEffort: this.thinkingEffort,
       swarmIndex: this.member.swarmIndex,
       stateReason: this.stateReason,
       resultSummary: this.resultSummary,
@@ -111,7 +123,7 @@ export class SwarmMemberTask implements AgentTask {
 
   private async settleWith(result: SessionSwarmRunResult): Promise<void> {
     const sink = this.sink!;
-    sink.signal.removeEventListener('abort', this.cancelOnAbort);
+    sink.signal.removeEventListener('abort', this.stopOnAbort);
     this.agentId = result.agentId ?? this.agentId;
     this.stateReason = undefined;
     this.resultSummary = result.result;

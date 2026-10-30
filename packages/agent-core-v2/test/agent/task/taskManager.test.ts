@@ -599,6 +599,17 @@ describe('AgentTaskService', () => {
     }).toThrow('Too many background tasks are already running.');
   });
 
+  it('keeps a task registered as not detachable in the foreground when asked to detach', () => {
+    const { manager } = createAgentTaskService();
+    const taskId = manager.registerTask(agentTask(new Promise(() => {}), 'swarm member'), {
+      detached: false,
+      detachable: false,
+    });
+
+    expect(manager.detach(taskId)).toMatchObject({ status: 'running', detached: false });
+    expect(manager.getTask(taskId)).toMatchObject({ detached: false });
+  });
+
   it('lists active tasks by default', () => {
     const { manager } = createAgentTaskService();
     registerProcess(manager, pendingProcess().proc, 'sleep 60', 'task 1');

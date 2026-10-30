@@ -43,6 +43,7 @@ export interface AgentTaskOutputTail {
 
 export interface RegisterAgentTaskOptions {
   readonly detached?: boolean;
+  readonly detachable?: boolean;
   readonly timeoutMs?: number;
   readonly detachTimeoutMs?: number;
   readonly autoBackgroundOnTimeout?: boolean;

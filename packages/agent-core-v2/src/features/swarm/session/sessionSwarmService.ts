@@ -91,14 +91,19 @@ export class SessionSwarmService implements ISessionSwarmService {
     const controller = new AbortController();
     this.inFlight.set(callerAgentId, controller);
     const unlinks: Array<() => void> = [];
+    const memberControllers = new Map<SessionSwarmTask, AbortController>();
     const linkedTasks: SessionSwarmTask<T>[] = tasks.map((task) => {
       if (task.signal !== undefined) unlinks.push(linkAbortSignal(task.signal, controller));
-      return { ...task, signal: controller.signal };
+      const memberController = new AbortController();
+      unlinks.push(linkAbortSignal(controller.signal, memberController));
+      const linked = { ...task, signal: memberController.signal };
+      memberControllers.set(linked, memberController);
+      return linked;
     });
     const members = new SwarmMemberTasks(
       this.agentLifecycle.handleOf(callerAgentId)?.accessor.get(IAgentTaskService),
       linkedTasks,
-      (reason) => controller.abort(reason),
+      (member, reason) => memberControllers.get(member)?.abort(reason),
     );
     const terminalized = new Set<string>();
     const terminalize: TerminalizeSubagent = (agentId, event) => {
@@ -135,7 +140,8 @@ export class SessionSwarmService implements ISessionSwarmService {
     const maxConcurrency = resolveSwarmMaxConcurrency();
     const promise = new AgentRunBatch(launcher, linkedTasks, {
       maxConcurrency,
-      onStarted: (task, agentId) => members.started(task, agentId),
+      signal: controller.signal,
+      onStarted: (task, handle) => members.started(task, handle),
       onSettled: (result) => members.settled(result),
     }).run();
     void promise.then(
@@ -261,9 +267,12 @@ export class SessionSwarmService implements ISessionSwarmService {
       signal: options.signal,
       terminalize,
     });
+    const profile = child.accessor.get(IAgentProfileService);
     return {
       agentId,
       profileName,
+      model: profile.data().modelAlias,
+      thinkingEffort: profile.getEffectiveThinkingLevel(),
       completion: mirrored.then((r) => ({
         result: r.summary,
         usage: r.usage,
