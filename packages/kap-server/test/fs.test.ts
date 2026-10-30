@@ -164,6 +164,26 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.data.size).toBe(11);
   });
 
+  it('downloads Unicode filenames with a safe content disposition', async () => {
+    const filename = '趋势图_20260929_20261028.png';
+    const relative = `分析数据/stat/${filename}`;
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await mkdir(join(work!, '分析数据/stat'), { recursive: true });
+    await writeFile(join(work!, relative), bytes);
+    const id = await createSession();
+    const encoded = relative.split('/').map(encodeURIComponent).join('/');
+    const response = await fetch(`${base}/api/v1/sessions/${id}/fs/${encoded}:download?allow_external_symlinks=true`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('image/png');
+    const disposition = response.headers.get('content-disposition') ?? '';
+    expect(disposition).not.toContain(filename);
+    expect(disposition).toMatch(/^attachment; filename="[\x20-\x7e]*";/);
+    expect(disposition).toContain(`filename*=UTF-8''${encodeURIComponent(filename)}`);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+  });
+
   it('serves fs actions and downloads from the environment the session was created on', async () => {
     await writeFile(join(work!, 'selected.txt'), 'local');
     const remote = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-')));
