@@ -28,7 +28,11 @@ export interface TrustGatedActivation {
 export interface IWorkspaceTrustDisclosure {
   readonly _serviceBrand: undefined;
 
-  describeGatedActivation(): Promise<TrustGatedActivation>;
+  describeGatedActivation(
+    pendingAdditionalDirs?: readonly string[],
+    baseDir?: string,
+    pendingAdditionalDirsResolved?: boolean,
+  ): Promise<TrustGatedActivation>;
 }
 
 export const IWorkspaceTrustDisclosure: ServiceIdentifier<IWorkspaceTrustDisclosure> =
