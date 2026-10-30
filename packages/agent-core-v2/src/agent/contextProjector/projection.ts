@@ -74,19 +74,16 @@ export function projectStrict(
 }
 
 interface SliceLayout {
-  readonly sizing: boolean;
   readonly lastNonToolIndex: number;
 }
 
 function sliceLayout(history: readonly ContextMessage[]): SliceLayout {
-  let sizing = true;
   let lastNonToolIndex = -1;
   for (const [index, message] of history.entries()) {
     if (message.partial === true || message.role === 'tool') continue;
     lastNonToolIndex = index;
-    if (message.role === 'assistant') sizing = false;
   }
-  return { sizing, lastNonToolIndex };
+  return { lastNonToolIndex };
 }
 
 interface AttachedResult {
@@ -131,7 +128,7 @@ function pairBlocks(
 
   for (const [index, message] of history.entries()) {
     if (message.partial === true) continue;
-    if (message.role === 'tool' && !layout.sizing) {
+    if (message.role === 'tool') {
       if (message.toolCallId === undefined) continue;
       const open = openCalls.get(message.toolCallId);
       if (open === undefined) {

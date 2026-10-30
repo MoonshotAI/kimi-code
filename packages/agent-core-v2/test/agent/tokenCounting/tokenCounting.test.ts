@@ -188,6 +188,19 @@ describe('Agent token counting', () => {
     expect(size.size).toBe(size.estimated);
   });
 
+  it('counts a tool-result slice independently of request projection', () => {
+    ctx.appendPartiallyResolvedParallelToolExchange();
+    const results = context.get().slice(-1);
+    const expected = estimateTokensForMessages(results);
+
+    expect(results.map((message) => message.role)).toEqual(['tool']);
+    expect(expected).toBeGreaterThan(0);
+    expect(tokenCounting.get(-1)).toEqual({ size: expected, measured: 0, estimated: expected });
+    expect(tokenCounting.estimateMessage(results[0]!)).toBe(expected);
+    expect(tokenCounting.estimateMessages(results)).toBe(expected);
+    expect(tokenCounting.requestSize({ systemPrompt: '', tools: [], messages: results })).toBe(expected);
+  });
+
   it('ignores a stored anchor that overshoots the live context', async () => {
     ctx.appendUserMessage([{ type: 'text', text: 'only one message' }]);
 

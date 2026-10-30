@@ -265,18 +265,38 @@ describe('projector tool-exchange normalization', () => {
     expect(shape(history)).toEqual(['user', 'assistant']);
   });
 
-  it('keeps a bare result slice with no preceding assistant (used for sizing)', () => {
-    expect(shape([toolResult('c1', 'partial result')])).toEqual(['tool:c1']);
+  it.each(['c1', ''])('drops a bare result with no preceding assistant (%j)', (toolCallId) => {
+    expect(project([toolResult(toolCallId, 'orphaned result')])).toEqual([]);
   });
 
-  it('keeps a tool-shaped message without a toolCallId', () => {
-    const message: ContextMessage = {
-      role: 'tool',
-      content: [{ type: 'text', text: 'tool-like output' }],
-      toolCallId: '',
-    };
-    expect(project([message])).toHaveLength(1);
-  });
+  it.each([undefined, 'strict'] as const)(
+    'drops orphan results behind user messages when no assistant survives (%s)',
+    (structure) => {
+      const projected = projector.project(
+        [
+          user('continue'),
+          { ...assistant('', ['c1', 'c2']), partial: true },
+          reminder('context note'),
+          toolResult('c1', 'one'),
+          toolResult('c2', 'two'),
+          user('summarize'),
+        ],
+        { structure },
+      );
+
+      expect(projected).toEqual([
+        { role: 'user', content: [{ type: 'text', text: 'continue' }] },
+        {
+          role: 'user',
+          content: [{ type: 'text', text: '<system-reminder>\ncontext note\n</system-reminder>' }],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'summarize' }] },
+      ]);
+      expect(repairPayloads(warnings)).toEqual([
+        expect.objectContaining({ droppedOrphan: 2, toolCallIds: ['c1', 'c2'] }),
+      ]);
+    },
+  );
 
   it('keeps a schema-only system message when it declares dynamic tools', () => {
     const projected = project([user('load it'), schemaMessage('mcp__srv__query')]);
@@ -797,6 +817,7 @@ describe('projector tool-exchange normalization', () => {
       const projected = projectStripped([
         user('look at these'),
         imageMessage('data:image/png;base64,AAAA'),
+        assistant('', ['c1']),
         {
           role: 'tool',
           content: [

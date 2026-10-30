@@ -4489,6 +4489,39 @@ describe('FullCompaction pre-shrink', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('drops results whose calls were pre-shrunk behind a retained reminder', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: PRE_SHRINK_CAPABILITIES,
+    });
+    ctx.context.append({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'x'.repeat(200_000) }],
+      toolCalls: [
+        { type: 'function', id: 'call_one', name: 'Lookup', arguments: '{}' },
+        { type: 'function', id: 'call_two', name: 'Lookup', arguments: '{}' },
+      ],
+    });
+    ctx.appendSystemReminder('Retained context note.');
+    ctx.context.append(
+      { role: 'tool', content: [{ type: 'text', text: 'one result' }], toolCallId: 'call_one' },
+      { role: 'tool', content: [{ type: 'text', text: 'two result' }], toolCallId: 'call_two' },
+    );
+    const completed = ctx.once('compaction.completed');
+
+    ctx.mockNextResponse({ type: 'text', text: 'Summary after trimming.' });
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    expect(ctx.llmCalls).toHaveLength(1);
+    const history = ctx.llmCalls[0]!.history;
+    expect(history.map((message) => message.role)).toEqual(['user', 'user']);
+    expect(messageText(history[0])).toContain('Retained context note.');
+    expect(messageText(history[1])).toBe(renderCompactionInstruction({ customInstruction: undefined }));
+    await ctx.expectResumeMatches();
+  });
+
   it('sends the full history on the first request when it already fits the budget', async () => {
     const ctx = testAgent();
     ctx.configure({
