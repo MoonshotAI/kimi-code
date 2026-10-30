@@ -1596,6 +1596,24 @@ describe('SessionEventBroadcaster', () => {
     expect(queueFrames(wildcardView)).toHaveLength(1);
   });
 
+  it('resends queue snapshots to existing subscribers when a session reattaches', async () => {
+    const lc = openSession('s1');
+    const main = lc.addAgent('main');
+    let paused = true;
+    main.set(IAgentPromptQueueService, { snapshot: () => ({ paused, items: [] }) });
+    const view = collectingTarget();
+    await bc.subscribe('s1', view.target, { main: 'delta' });
+    const queueFrames = () => view.envelopes.filter((frame) => frame.type === 'queue') as unknown[];
+    expect(queueFrames()).toHaveLength(0);
+
+    managerEvents.fireDidClose('s1');
+    paused = false;
+    managerEvents.fireDidCreate('s1', sessionHandle(core, 's1'));
+
+    await vi.waitFor(() => expect(queueFrames()).toHaveLength(1));
+    expect(queueFrames()[0]).toMatchObject({ type: 'queue', agent_id: 'main', paused: false, inputs: [] });
+  });
+
   describe('transcript streaming', () => {
     function makeBroadcasterWithTranscript(
       metaAgents?: Record<string, { type?: string; parentAgentId?: string }>,

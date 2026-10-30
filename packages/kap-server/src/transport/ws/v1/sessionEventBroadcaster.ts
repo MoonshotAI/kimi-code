@@ -431,7 +431,9 @@ export class SessionEventBroadcaster {
     this.attachInteractions(sessionId, state);
     for (const [target, spec] of state.targets) {
       await this.subscribeTranscript(state, target, spec, undefined);
-      if (state.targets.has(target)) state.transcriptSeeded.add(target);
+      if (!state.targets.has(target)) continue;
+      state.transcriptSeeded.add(target);
+      this.sendQueueSnapshots(sessionId, target);
     }
   }
 
