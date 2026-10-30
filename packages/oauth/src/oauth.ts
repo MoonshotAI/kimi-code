@@ -11,6 +11,7 @@
  */
 
 import { extractApiErrorMessage } from './api-error';
+import { describeFetchFailure } from './fetch-error';
 import {
   OAuthConnectionError,
   OAuthError,
@@ -95,23 +96,6 @@ async function postForm(
     // Non-JSON response — leave data empty; caller interprets by status.
   }
   return { status, data };
-}
-
-/**
- * Flatten a fetch rejection into a readable message. undici throws a generic
- * `TypeError: fetch failed` and hides the real reason (DNS, refused, TLS,
- * timeout) in a nested `cause` chain — walk it so the surfaced message names
- * the actual failure instead of just "fetch failed".
- */
-function describeFetchFailure(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
-  const messages = new Set<string>();
-  let current: Error | undefined = error;
-  while (current !== undefined) {
-    messages.add(current.message);
-    current = current.cause instanceof Error ? current.cause : undefined;
-  }
-  return [...messages].join(': ');
 }
 
 // ── requestDeviceAuthorization ────────────────────────────────────────

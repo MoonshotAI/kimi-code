@@ -1,4 +1,5 @@
 import { readApiErrorMessage } from './api-error';
+import { describeFetchFailure } from './fetch-error';
 import {
   KIMI_CODE_PLATFORM_ID,
   KIMI_CODE_PROVIDER_NAME,
@@ -154,6 +155,156 @@ export class CustomRegistryApiError extends Error {
     this.status = status;
   }
 }
+
+function sanitizeRegistryUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.username = '';
+    url.password = '';
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return '<invalid registry URL>';
+  }
+}
+
+function decodeRegistryValue(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function registryValueVariants(value: string): string[] {
+  const decoded = decodeRegistryValue(value);
+  const encoded = encodeURIComponent(decoded);
+  return [...new Set([value, decoded, encoded, encoded.replaceAll('%20', '+')])].filter(
+    (variant) => variant.length > 0,
+  );
+}
+
+function replaceRegistryValue(description: string, value: string, replacement: string): string {
+  let result = description;
+  for (const variant of registryValueVariants(value)) {
+    result = result.replaceAll(variant, () => replacement);
+  }
+  return result;
+}
+
+function escapeRegistryRegExp(value: string): string {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function replaceStandaloneRegistryValue(description: string, value: string): string {
+  if (value.length < 4) return description;
+  let result = description;
+  for (const variant of registryValueVariants(value)) {
+    result = result.replaceAll(
+      new RegExp(`(?<![A-Za-z0-9])${escapeRegistryRegExp(variant)}(?![A-Za-z0-9])`, 'g'),
+      '<redacted>',
+    );
+  }
+  return result;
+}
+
+function rawRegistryQueryEntries(sourceUrl: string): Array<[string | undefined, string]> {
+  const queryStart = sourceUrl.indexOf('?');
+  if (queryStart === -1) return [];
+  const hashStart = sourceUrl.indexOf('#', queryStart);
+  const rawQuery = sourceUrl.slice(queryStart + 1, hashStart === -1 ? undefined : hashStart);
+  return rawQuery.split('&').flatMap((entry): [string | undefined, string][] => {
+    if (entry === '') return [];
+    const separator = entry.indexOf('=');
+    return separator === -1
+      ? [[undefined, entry]]
+      : [[entry.slice(0, separator), entry.slice(separator + 1)]];
+  });
+}
+
+function rawRegistryQueryValues(sourceUrl: string): string[] {
+  return rawRegistryQueryEntries(sourceUrl).map(([, value]) => value);
+}
+
+function describeRegistryFetchFailure(
+  error: unknown,
+  sourceUrl: string,
+  registryUrl: string,
+): string {
+  let description = describeFetchFailure(error).replaceAll(sourceUrl, registryUrl);
+  if (!URL.canParse(sourceUrl)) return description;
+  const url = new URL(sourceUrl);
+  if (url.username !== '' || url.password !== '') {
+    const userinfo = `${url.username}${url.password === '' ? '' : `:${url.password}`}`;
+    description = replaceRegistryValue(description, `${userinfo}@`, '<redacted>@');
+  }
+  for (const [key, value] of url.searchParams) {
+    description = replaceRegistryValue(description, `${key}=${value}`, `${key}=<redacted>`);
+  }
+  for (const [key, value] of rawRegistryQueryEntries(sourceUrl)) {
+    if (key === undefined) continue;
+    description = replaceRegistryValue(description, `${key}=${value}`, `${key}=<redacted>`);
+  }
+  if (url.hash !== '') {
+    description = replaceRegistryValue(description, url.hash, '#<redacted>');
+  }
+  const sensitiveValues = new Set([
+    url.username,
+    url.password,
+    ...url.searchParams.values(),
+    ...rawRegistryQueryValues(sourceUrl),
+    url.hash.slice(1),
+  ]);
+  for (const value of sensitiveValues) {
+    description = replaceStandaloneRegistryValue(description, value);
+  }
+  return description;
+}
+
+class CustomRegistryFetchError extends Error {
+  readonly registryUrl: string;
+
+  constructor(name: string, sourceUrl: string, cause: unknown) {
+    const registryUrl = sanitizeRegistryUrl(sourceUrl);
+    super(
+      `Failed to fetch custom registry at ${registryUrl}: ${describeRegistryFetchFailure(cause, sourceUrl, registryUrl)}`,
+      { cause },
+    );
+    this.name = name;
+    this.registryUrl = registryUrl;
+  }
+}
+
+export class CustomRegistryNetworkError extends CustomRegistryFetchError {
+  constructor(sourceUrl: string, cause: unknown) {
+    super('CustomRegistryNetworkError', sourceUrl, cause);
+  }
+}
+
+class CustomRegistryRequestError extends CustomRegistryFetchError {
+  constructor(sourceUrl: string, cause: unknown) {
+    super('CustomRegistryRequestError', sourceUrl, cause);
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+function isBadPortFetchFailure(error: unknown): boolean {
+  return error instanceof TypeError && error.cause instanceof Error && error.cause.message === 'bad port';
+}
+
+function isTransportFetchFailure(error: unknown, sourceUrl: string): boolean {
+  if (isBadPortFetchFailure(error)) return false;
+  if (!(error instanceof TypeError) || error.cause === undefined || !URL.canParse(sourceUrl)) {
+    return false;
+  }
+  const url = new URL(sourceUrl);
+  return url.username === '' && url.password === '';
+}
+
 
 function isAllowedProviderType(value: unknown): value is CustomRegistryProviderType {
   return typeof value === 'string' && ALLOWED_PROVIDER_TYPES.has(value as CustomRegistryProviderType);
@@ -324,7 +475,16 @@ export async function fetchCustomRegistry(
   const init: RequestInit = { headers };
   if (signal !== undefined) init.signal = signal;
 
-  const response = await fetchImpl(source.url, init);
+  let response: Response;
+  try {
+    response = await fetchImpl(source.url, init);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    if (isTransportFetchFailure(error, source.url)) {
+      throw new CustomRegistryNetworkError(source.url, error);
+    }
+    throw new CustomRegistryRequestError(source.url, error);
+  }
   if (!response.ok) {
     const message = await readApiErrorMessage(
       response,
