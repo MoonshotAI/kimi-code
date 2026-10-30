@@ -1,3 +1,5 @@
+import * as posixPath from 'node:path/posix';
+
 import {
   decodeTextWithErrors,
   readUtf8Lines,
@@ -7,8 +9,15 @@ import { splitLinesKeepingTerminator } from '#/_base/text/line-endings';
 import type {
   HostDirEntry,
   HostFileStat,
+  HostWalkOptions,
+  HostWalkResult,
   IHostFileSystem,
 } from '#/os/interface/hostFileSystem';
+import {
+  HOST_WALK_DEFAULT_TIMEOUT_MS,
+  HOST_WALK_MAX_IGNORE_BYTES,
+  walkHostDirectory,
+} from '#/os/interface/hostFsWalk';
 import {
   HostFsError,
   OsFsErrors,
@@ -28,16 +37,23 @@ import {
   FS_READ_FILE_METHOD,
   FS_REMOVE_METHOD,
   FS_RENAME_METHOD,
+  FS_WALK_METHOD,
   FS_WRITE_FILE_CHUNK_BYTES,
   FS_WRITE_FILE_METHOD,
   type FsGetMetadataResult,
   type FsReadDirectoryResult,
   type FsReadFileResult,
+  type FsWalkResult,
   type FsWriteMode,
 } from '#/remote/protocol/methods';
 import { rpcDomainError } from './rpcDomainError';
 
 const HOST_FS_CODES: ReadonlySet<string> = new Set(Object.values(OsFsErrors.codes));
+const REMOTE_WALK_PATH = {
+  join: (...paths: readonly string[]) => posixPath.join(...paths),
+  relative: (from: string, to: string) => posixPath.relative(from, to),
+  separator: posixPath.sep,
+};
 
 export function toRemoteFsError(error: unknown): Error {
   if (!(error instanceof RpcError)) {
@@ -77,17 +93,30 @@ export class RemoteFileSystem implements IHostFileSystem {
     return this.call<FsReadFileResult>(FS_READ_FILE_METHOD, { path, offset, maxBytes });
   }
 
-  private async writeMode(path: string, data: Uint8Array, mode: FsWriteMode): Promise<void> {
-    await this.call(FS_WRITE_FILE_METHOD, { path, dataBase64: encodeBase64(data), mode });
+  private async writeMode(path: string, data: Uint8Array, mode: FsWriteMode, parent?: string): Promise<void> {
+    await this.call(FS_WRITE_FILE_METHOD, { path, dataBase64: encodeBase64(data), mode, parent });
   }
 
-  private async writeChunked(path: string, data: Uint8Array, mode: FsWriteMode): Promise<void> {
+  private async writeChunked(path: string, data: Uint8Array, mode: FsWriteMode, parent?: string): Promise<void> {
     if (data.byteLength <= FS_WRITE_FILE_CHUNK_BYTES) {
-      await this.writeMode(path, data, mode);
+      await this.writeMode(path, data, mode, parent);
       return;
     }
     for (let offset = 0; offset < data.byteLength; offset += FS_WRITE_FILE_CHUNK_BYTES) {
-      await this.writeMode(path, data.subarray(offset, offset + FS_WRITE_FILE_CHUNK_BYTES), offset === 0 ? mode : 'append');
+      await this.writeMode(path, data.subarray(offset, offset + FS_WRITE_FILE_CHUNK_BYTES), offset === 0 ? mode : 'append', offset === 0 ? parent : undefined);
+    }
+  }
+
+  async readWholeFile(path: string) {
+    try {
+      const result = await this.readRange(path, 0);
+      const bytes = decodeBase64(result.dataBase64);
+      return {
+        bytes,
+        stat: { isFile: true, isDirectory: false, size: bytes.byteLength },
+      };
+    } catch {
+      return undefined;
     }
   }
 
@@ -95,13 +124,18 @@ export class RemoteFileSystem implements IHostFileSystem {
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): Promise<string> {
-    const bytes = await this.readBytes(path);
+    const whole = await this.readWholeFile(path);
+    const bytes = whole === undefined ? await this.readBytes(path) : whole.bytes;
     const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     return decodeTextWithErrors(buffer, options?.encoding ?? 'utf-8', options?.errors ?? 'strict');
   }
 
   async writeText(path: string, data: string): Promise<void> {
     await this.writeChunked(path, Buffer.from(data, 'utf8'), 'truncate');
+  }
+
+  async writeTextWithParent(path: string, data: string, mode: 'overwrite' | 'append', parent: string): Promise<void> {
+    await this.writeChunked(path, Buffer.from(data, 'utf8'), mode === 'append' ? 'append' : 'truncate', parent);
   }
 
   async appendText(path: string, data: string): Promise<void> {
@@ -230,6 +264,46 @@ export class RemoteFileSystem implements IHostFileSystem {
       isDirectory: entry.isDirectory,
       isSymbolicLink: entry.isSymlink,
     }));
+  }
+
+  async walk(path: string, options: HostWalkOptions): Promise<HostWalkResult> {
+    const remainingMs = options.deadlineMs === undefined ? undefined : options.deadlineMs - Date.now();
+    if (remainingMs !== undefined && remainingMs <= 0) {
+      return { entries: [], errors: [], truncated: true, responseBytes: 0 };
+    }
+    const timeoutMs = Math.max(1, Math.min(
+      remainingMs ?? HOST_WALK_DEFAULT_TIMEOUT_MS,
+      HOST_WALK_DEFAULT_TIMEOUT_MS,
+    ));
+    if (options.ignore !== undefined && Buffer.byteLength(JSON.stringify(options.ignore)) > HOST_WALK_MAX_IGNORE_BYTES) {
+      return this.walkFallback(path, options);
+    }
+    try {
+      const result = await this.connection.call(FS_WALK_METHOD, {
+        path,
+        maxDepth: options.maxDepth,
+        maxDirectories: options.maxDirectories,
+        maxEntries: options.maxEntries,
+        maxResponseBytes: options.maxResponseBytes,
+        ignore: options.ignore,
+        timeoutMs,
+      }) as FsWalkResult;
+      return {
+        entries: result.entries,
+        errors: result.errors.map(({ path: errorPath, error }) => ({
+          path: errorPath,
+          error: toRemoteFsError(RpcError.fromErrorBody(error)),
+        })),
+        truncated: result.truncated,
+        responseBytes: result.responseBytes,
+      };
+    } catch (error) {
+      throw toRemoteFsError(error);
+    }
+  }
+
+  private async walkFallback(path: string, options: HostWalkOptions): Promise<HostWalkResult> {
+    return walkHostDirectory(this, path, options, { path: REMOTE_WALK_PATH });
   }
 
   async mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {

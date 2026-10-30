@@ -1,7 +1,7 @@
 import { isAbsolute } from 'node:path';
 
 import type { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { HostFsError, OsFsErrors, toHostFsError } from '#/os/interface/hostFsErrors';
+import { HostFsError, isHostFsNotFound, OsFsErrors, toHostFsError } from '#/os/interface/hostFsErrors';
 
 import { RpcError, RpcErrorCode } from '#/remote/protocol/errors';
 import {
@@ -12,7 +12,18 @@ import {
   type FsGetMetadataResult,
   type FsReadDirectoryResult,
   type FsReadFileResult,
+  type FsWalkResult,
 } from '#/remote/protocol/methods';
+import {
+  HOST_WALK_DEFAULT_TIMEOUT_MS,
+  HOST_WALK_MAX_DEPTH,
+  HOST_WALK_MAX_DIRECTORIES,
+  HOST_WALK_MAX_ENTRIES,
+  HOST_WALK_MAX_IGNORE_BYTES,
+  HOST_WALK_MAX_RESPONSE_BYTES,
+  HOST_WALK_MAX_TIMEOUT_MS,
+  walkHostDirectory,
+} from '#/os/interface/hostFsWalk';
 
 type Params = Record<string, unknown>;
 
@@ -58,6 +69,15 @@ function optionalInteger(
   if (value === undefined) return undefined;
   if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
     throw new RpcError(RpcErrorCode.InvalidParams, `${name} must be an integer in [${min}, ${max}]`);
+  }
+  return value;
+}
+
+function optionalStringArray(params: Params, name: string): readonly string[] | undefined {
+  const value = params[name];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new RpcError(RpcErrorCode.InvalidParams, `${name} must be an array of strings`);
   }
   return value;
 }
@@ -119,6 +139,24 @@ export class FsHandler {
       throw new RpcError(RpcErrorCode.InvalidParams, 'mode must be truncate, append or exclusive');
     }
     const data = Buffer.from(dataBase64, 'base64');
+    if (params['parent'] !== undefined) {
+      const parent = requireAbsolutePath(params, 'parent');
+      try {
+        const stat = await this.fs.stat(parent);
+        if (!stat.isDirectory) {
+          throw new RpcError(RpcErrorCode.InvalidRequest, `Parent path is not a directory: ${parent}.`);
+        }
+      } catch (error) {
+        if (error instanceof RpcError) throw error;
+        if (isHostFsNotFound(error)) {
+          try {
+            await this.fs.mkdir(parent, { recursive: true });
+          } catch (mkdirError) {
+            throw new RpcError(RpcErrorCode.InvalidRequest, mkdirError instanceof Error ? mkdirError.message : String(mkdirError));
+          }
+        }
+      }
+    }
     try {
       if (mode === 'truncate') {
         await this.fs.writeBytes(path, data);
@@ -194,6 +232,45 @@ export class FsHandler {
     } catch (error) {
       throw fsDomainError(error, { path, op: 'readdir' });
     }
+  }
+
+  async walk(rawParams: unknown): Promise<FsWalkResult> {
+    const params = requireParams(rawParams);
+    const path = requireAbsolutePath(params, 'path');
+    const maxDepth = optionalInteger(params, 'maxDepth', 0, HOST_WALK_MAX_DEPTH) ?? HOST_WALK_MAX_DEPTH;
+    const maxDirectories = optionalInteger(params, 'maxDirectories', 1, HOST_WALK_MAX_DIRECTORIES) ?? HOST_WALK_MAX_DIRECTORIES;
+    const maxEntries = optionalInteger(params, 'maxEntries', 1, HOST_WALK_MAX_ENTRIES) ?? HOST_WALK_MAX_ENTRIES;
+    const maxResponseBytes = optionalInteger(params, 'maxResponseBytes', 1, HOST_WALK_MAX_RESPONSE_BYTES) ?? HOST_WALK_MAX_RESPONSE_BYTES;
+    const ignore = optionalStringArray(params, 'ignore');
+    if (ignore !== undefined && Buffer.byteLength(JSON.stringify(ignore)) > HOST_WALK_MAX_IGNORE_BYTES) {
+      throw new RpcError(
+        RpcErrorCode.InvalidParams,
+        `ignore must not exceed ${HOST_WALK_MAX_IGNORE_BYTES} bytes when encoded as JSON`,
+      );
+    }
+    const timeoutMs = optionalInteger(params, 'timeoutMs', 1, HOST_WALK_MAX_TIMEOUT_MS) ?? HOST_WALK_DEFAULT_TIMEOUT_MS;
+    const result = await walkHostDirectory(this.fs, path, {
+      maxDepth,
+      maxDirectories,
+      maxEntries,
+      maxResponseBytes,
+      ignore,
+      deadlineMs: Date.now() + timeoutMs,
+    }, {
+      serializeError: (errorPath, error) => fsDomainError(error, {
+        path: errorPath,
+        op: 'readdir',
+      }).toErrorBody(),
+    });
+    return {
+      entries: result.entries,
+      errors: result.errors.map(({ path: errorPath, error }) => ({
+        path: errorPath,
+        error: fsDomainError(error, { path: errorPath, op: 'readdir' }).toErrorBody(),
+      })),
+      truncated: result.truncated,
+      responseBytes: result.responseBytes,
+    };
   }
 
   async remove(rawParams: unknown): Promise<typeof EMPTY> {

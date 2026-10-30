@@ -2,9 +2,10 @@ import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { walkHostDirectory } from '#/os/interface/hostFsWalk';
 
 let dir: string;
 let fs: HostFileSystem;
@@ -50,6 +51,164 @@ describe('HostFileSystem streamed writes', () => {
 
     expect((await fs.stat(path)).size).toBe(0);
     await expect(fs.readBytes(path)).resolves.toEqual(new Uint8Array(0));
+  });
+});
+
+describe('HostFileSystem walk', () => {
+  const options = {
+    maxDepth: 64,
+    maxDirectories: 10_000,
+    maxEntries: 100_000,
+    maxResponseBytes: 8 * 1024 * 1024,
+  };
+
+  it('lists nested entries without following directory symlinks', async () => {
+    await mkdir(join(dir, 'a/b'), { recursive: true });
+    await writeFile(join(dir, 'a/b/file.ts'), '');
+    await writeFile(join(dir, 'root.ts'), '');
+    await symlink(join(dir, 'a'), join(dir, 'link'));
+
+    const result = await fs.walk(dir, options);
+
+    const names = result.entries.map((entry) => entry.name.slice(dir.length + 1));
+    expect(names).toHaveLength(5);
+    expect(names).toEqual(expect.arrayContaining([
+      'a',
+      'root.ts',
+      'link',
+      'a/b',
+      'a/b/file.ts',
+    ]));
+    expect(result.entries.find((entry) => entry.name === join(dir, 'link'))?.isSymbolicLink).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.truncated).toBe(false);
+  });
+
+  it('prunes ignored directories before traversing them', async () => {
+    await mkdir(join(dir, 'node_modules/pkg'), { recursive: true });
+    await mkdir(join(dir, 'src'), { recursive: true });
+    await writeFile(join(dir, 'node_modules/pkg/index.ts'), '');
+    await writeFile(join(dir, 'src/app.ts'), '');
+
+    const result = await fs.walk(dir, { ...options, ignore: ['node_modules/'] });
+
+    expect(result.entries.map((entry) => entry.name.slice(dir.length + 1))).toEqual(['src', 'src/app.ts']);
+    expect(result.truncated).toBe(false);
+  });
+
+  it('returns descendants at maxDepth but does not traverse below them', async () => {
+    await mkdir(join(dir, 'a/b/c'), { recursive: true });
+    await writeFile(join(dir, 'a/b/c/deep.ts'), '');
+
+    const result = await fs.walk(dir, { ...options, maxDepth: 1 });
+
+    expect(result.entries.map((entry) => entry.name.slice(dir.length + 1))).toEqual(['a', 'a/b']);
+    expect(result.truncated).toBe(false);
+  });
+
+  it('reports missing roots as recoverable errors', async () => {
+    const result = await fs.walk(join(dir, 'missing'), options);
+
+    expect(result.entries).toEqual([]);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toMatchObject({
+      path: join(dir, 'missing'),
+      error: { code: 'os.fs.not_found' },
+    });
+  });
+
+  it('bounds directories and entries without reporting an exact fit as truncated', async () => {
+    const tree = new Map<string, { name: string; isFile: boolean; isDirectory: boolean }[]>([
+      ['/root', [
+        { name: 'a', isFile: false, isDirectory: true },
+        { name: 'b', isFile: false, isDirectory: true },
+      ]],
+      ['/root/a', [{ name: 'one.ts', isFile: true, isDirectory: false }]],
+      ['/root/b', [{ name: 'two.ts', isFile: true, isDirectory: false }]],
+    ]);
+    const backend = {
+      readdir: async (path: string) => tree.get(path) ?? [],
+    };
+
+    const exact = await walkHostDirectory(backend, '/root', {
+      ...options,
+      maxDirectories: 3,
+      maxEntries: 4,
+    });
+    const boundedDirectories = await walkHostDirectory(backend, '/root', {
+      ...options,
+      maxDirectories: 2,
+      maxEntries: 4,
+    });
+    const boundedEntries = await walkHostDirectory(backend, '/root', {
+      ...options,
+      maxDirectories: 3,
+      maxEntries: 3,
+    });
+
+    expect(exact.truncated).toBe(false);
+    expect(exact.entries).toHaveLength(4);
+    expect(boundedDirectories.truncated).toBe(true);
+    expect(boundedDirectories.entries.map((entry) => entry.name)).toEqual(['/root/a', '/root/b']);
+    expect(boundedEntries.truncated).toBe(true);
+    expect(boundedEntries.entries.map((entry) => entry.name)).toEqual(['/root/a', '/root/b', '/root/a/one.ts']);
+  });
+
+  it('counts entry and error JSON in the response budget', async () => {
+    const backend = {
+      readdir: async () => [{ name: 'a', isFile: true, isDirectory: false }],
+    };
+    const initial = await walkHostDirectory(backend, '/root', options);
+    const tooSmall = await walkHostDirectory(backend, '/root', { ...options, maxResponseBytes: initial.responseBytes - 1 });
+
+    expect(initial).toMatchObject({ truncated: false });
+    expect(tooSmall).toMatchObject({ entries: [], truncated: true });
+
+    const readWithError = async (maxResponseBytes: number) => walkHostDirectory(backend, '/root', {
+      ...options,
+      maxResponseBytes,
+    }, {}, async (path) => {
+      if (path === '/root') return [{ name: 'a', isFile: false, isDirectory: true }];
+      throw new Error('unreadable');
+    });
+    const withError = await readWithError(options.maxResponseBytes);
+    const beforeError = await readWithError(withError.responseBytes - 1);
+
+    expect(withError.errors).toHaveLength(1);
+    expect(beforeError).toMatchObject({ errors: [], truncated: true });
+  });
+
+  it('returns partial entries at the deadline', async () => {
+    let clock = 1_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      const result = await walkHostDirectory({ readdir: async () => [] }, '/root', {
+        ...options,
+        deadlineMs: clock + 5,
+      }, {}, async (path) => {
+        if (path === '/root') return [{ name: 'a', isFile: false, isDirectory: true }];
+        clock += 5;
+        return [{ name: 'file.ts', isFile: true, isDirectory: false }];
+      });
+
+      expect(result.entries.map((entry) => entry.name)).toEqual(['/root/a']);
+      expect(result.truncated).toBe(true);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('does not start walking at an expired deadline', async () => {
+    let reads = 0;
+    const result = await walkHostDirectory({
+      readdir: async () => {
+        reads += 1;
+        return [];
+      },
+    }, '/root', { ...options, deadlineMs: Date.now() });
+
+    expect(result).toMatchObject({ entries: [], truncated: true });
+    expect(reads).toBe(0);
   });
 });
 

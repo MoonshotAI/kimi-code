@@ -63,10 +63,17 @@ deviations per the design spec, plus one forced addition:
   without `maxBytes` are capped well below the 64MiB frame cap.
 - `fs/writeFile` takes `mode: truncate|append|exclusive` (codex only has
   truncate); `exclusive` maps EEXIST to `os.fs.already_exists`, which the
-  client maps back to `createExclusive === false`.
+  client maps back to `createExclusive === false`. Optional `parent` folds
+  directory preparation into the first write while chunks remain sequential.
 - `fs/readDirectory` preserves the symlink marker on each entry. The client
   rejects a truncated listing with `os.fs.directory_too_large` rather than
   exposing an incomplete directory; the current limit is 50,000 entries.
+- `fs/walk` performs a bounded recursive listing in one call. It accepts the
+  root ignore rules needed to prune ignored directories before traversal and
+  reports entries, recoverable directory errors, and truncation. Clients fall
+  back to per-directory reads when the JSON-encoded ignore rules exceed 1MiB.
+  Walks default to a 55-second budget so they can return a truncated result
+  before the 60-second RPC deadline.
 - Added `fs/rename` (no codex counterpart).
 - `fs/remove` takes only `path` and always removes recursively and ignores a
   missing path, matching `IHostFileSystem.remove` (codex has `recursive`/`force`).
@@ -89,7 +96,7 @@ deviations per the design spec, plus one forced addition:
 - `environment` adds `osArch`/`osVersion`/`pathClass` over codex (rg artifact
   selection needs arch), plus `cwd`/`tempDir`.
 - No ws transport, no `resumeSessionId`, no sandbox parameter family, no
-  `fs/walk`/`fs/copy`/`capabilityRoots/discoverV1`/`environmentConfig/read`.
+  `fs/copy`/`capabilityRoots/discoverV1`/`environmentConfig/read`.
 
 Process output is delivered through notifications (`process/output`,
 `process/exited`, `process/closed`). The executor retains process handles until

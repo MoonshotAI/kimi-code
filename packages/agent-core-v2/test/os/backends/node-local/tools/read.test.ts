@@ -507,6 +507,25 @@ describe('ReadTool', () => {
     );
   });
 
+  it('uses a whole-file capability without separate stat, sniff and line reads', async () => {
+    const { fs, stat, readBytes, readLines } = createSpiedFs('alpha\nbeta\n');
+    const bytes = Buffer.from('alpha\nbeta\n');
+    const readWholeFile = vi.fn(async () => ({
+      stat: { isFile: true, isDirectory: false, size: bytes.length },
+      bytes,
+    }));
+    fs.readWholeFile = readWholeFile;
+    const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/a.txt' });
+
+    expect(result.output).toBe('1\talpha\n2\tbeta');
+    expect(readWholeFile).toHaveBeenCalledWith('/tmp/a.txt');
+    expect(stat).not.toHaveBeenCalled();
+    expect(readBytes).not.toHaveBeenCalled();
+    expect(readLines).not.toHaveBeenCalled();
+  });
+
   it('stats the resolved target so symlinked files stay readable', async () => {
     const { fs, stat } = createSpiedFs('alpha\n');
     const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);

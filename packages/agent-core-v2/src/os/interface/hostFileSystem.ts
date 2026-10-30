@@ -11,11 +11,37 @@ export interface HostFileStat {
   readonly mode?: number;
 }
 
+export interface HostWholeFile {
+  readonly stat: HostFileStat;
+  readonly bytes: Uint8Array;
+}
+
 export interface HostDirEntry {
   readonly name: string;
   readonly isFile: boolean;
   readonly isDirectory: boolean;
   readonly isSymbolicLink?: boolean;
+}
+
+export interface HostWalkOptions {
+  readonly maxDepth: number;
+  readonly maxDirectories: number;
+  readonly maxEntries: number;
+  readonly maxResponseBytes: number;
+  readonly ignore?: readonly string[];
+  readonly deadlineMs?: number;
+}
+
+export interface HostWalkError {
+  readonly path: string;
+  readonly error: Error;
+}
+
+export interface HostWalkResult {
+  readonly entries: readonly HostDirEntry[];
+  readonly errors: readonly HostWalkError[];
+  readonly truncated: boolean;
+  readonly responseBytes: number;
 }
 
 export interface IHostFileSystem {
@@ -25,7 +51,9 @@ export interface IHostFileSystem {
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): Promise<string>;
+  readWholeFile?(path: string): Promise<HostWholeFile | undefined>;
   writeText(path: string, data: string): Promise<void>;
+  writeTextWithParent?(path: string, data: string, mode: 'overwrite' | 'append', parent: string): Promise<void>;
   appendText(path: string, data: string): Promise<void>;
   readBytes(path: string, n?: number, offset?: number): Promise<Uint8Array>;
   writeBytes(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void>;
@@ -37,6 +65,7 @@ export interface IHostFileSystem {
   stat(path: string): Promise<HostFileStat>;
   lstat(path: string): Promise<HostFileStat>;
   readdir(path: string): Promise<readonly HostDirEntry[]>;
+  walk(path: string, options: HostWalkOptions): Promise<HostWalkResult>;
   mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void>;
   remove(path: string): Promise<void>;
   rename?(from: string, to: string): Promise<void>;

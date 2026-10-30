@@ -353,6 +353,7 @@ function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additi
     stat: (path) => { assert(path); return inner.stat(path); },
     lstat: inner.lstat.bind(inner),
     readdir: (path) => { assert(path); return inner.readdir(path); },
+    walk: (path, options) => { assert(path); return inner.walk(path, options); },
     mkdir: (path, options) => { assert(path); return inner.mkdir(path, options); },
     remove: (path) => { assert(path); return inner.remove(path); },
     realpath: inner.realpath.bind(inner),

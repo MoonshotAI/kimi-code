@@ -7,6 +7,7 @@ export const FS_CREATE_DIRECTORY_METHOD = 'fs/createDirectory';
 export const FS_GET_METADATA_METHOD = 'fs/getMetadata';
 export const FS_CANONICALIZE_METHOD = 'fs/canonicalize';
 export const FS_READ_DIRECTORY_METHOD = 'fs/readDirectory';
+export const FS_WALK_METHOD = 'fs/walk';
 export const FS_REMOVE_METHOD = 'fs/remove';
 export const FS_RENAME_METHOD = 'fs/rename';
 
@@ -63,6 +64,7 @@ export interface FsWriteFileParams {
   readonly path: string;
   readonly dataBase64: string;
   readonly mode: FsWriteMode;
+  readonly parent?: string;
 }
 
 export interface FsCreateDirectoryParams {
@@ -105,8 +107,40 @@ export interface FsReadDirectoryEntry {
 
 export interface FsReadDirectoryResult {
   readonly entries: FsReadDirectoryEntry[];
-
   readonly truncated: boolean;
+}
+
+export interface FsWalkParams {
+  readonly path: string;
+  readonly maxDepth: number;
+  readonly maxDirectories: number;
+  readonly maxEntries: number;
+  readonly maxResponseBytes: number;
+  readonly ignore?: readonly string[];
+  readonly timeoutMs?: number;
+}
+
+export interface FsWalkEntry {
+  readonly name: string;
+  readonly isFile: boolean;
+  readonly isDirectory: boolean;
+  readonly isSymbolicLink?: boolean;
+}
+
+export interface FsWalkError {
+  readonly path: string;
+  readonly error: {
+    readonly code: number;
+    readonly message: string;
+    readonly data?: unknown;
+  };
+}
+
+export interface FsWalkResult {
+  readonly entries: readonly FsWalkEntry[];
+  readonly errors: readonly FsWalkError[];
+  readonly truncated: boolean;
+  readonly responseBytes: number;
 }
 
 export interface FsRemoveParams {

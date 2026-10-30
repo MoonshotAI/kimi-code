@@ -359,8 +359,10 @@ export class ReadTool implements IReadTool {
   ): Promise<ExecutableToolResult> {
     try {
       let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
+      let whole: Awaited<ReturnType<NonNullable<FileReadSource['readWholeFile']>>> | undefined;
       try {
-        stat = await source.stat();
+        if ((args.line_offset ?? 1) >= 0) whole = await source.readWholeFile?.();
+        stat = whole?.stat ?? await source.stat();
       } catch (error) {
         if (isHostFsNotFound(error) || isHostFsNotDirectory(error)) {
           return { isError: true, output: `"${args.path}" does not exist.` };
@@ -371,7 +373,7 @@ export class ReadTool implements IReadTool {
         return { isError: true, output: `"${args.path}" is not a file.` };
       }
 
-      const header = await source.readBytes(MEDIA_SNIFF_BYTES);
+      const header = whole?.bytes.subarray(0, MEDIA_SNIFF_BYTES) ?? await source.readBytes(MEDIA_SNIFF_BYTES);
       const fileType = detectFileType(source.name, header);
       if (fileType.kind === 'image' || fileType.kind === 'video') {
         const kind = fileType.kind;
@@ -409,7 +411,7 @@ export class ReadTool implements IReadTool {
               'Convert it to UTF-8 first (e.g. with `iconv`).',
           };
         }
-        const bytes = await source.readBytes();
+        const bytes = whole?.bytes ?? await source.readBytes();
         let decoded: string;
         try {
           decoded = new TextDecoder(detection.encoding, { fatal: true }).decode(bytes);
@@ -426,6 +428,10 @@ export class ReadTool implements IReadTool {
           isError: true,
           output: notReadableFileOutput(args.path),
         };
+      } else if (whole !== undefined) {
+        const decoded = new TextDecoder('utf-8', { fatal: true }).decode(whole.bytes);
+        const content = splitLinesKeepingTerminator(decoded);
+        readLines = () => decodedLines(content);
       } else {
         readLines = () => source.readLines();
       }

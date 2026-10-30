@@ -463,6 +463,7 @@ function mappingHostFs(remoteRoot: string): IHostFileSystem {
     stat: (path) => inner.stat(map(path)),
     lstat: (path) => inner.lstat(map(path)),
     readdir: (path) => inner.readdir(map(path)),
+    walk: (path, options) => inner.walk(map(path), options),
     mkdir: (path, options) => inner.mkdir(map(path), options),
     remove: (path) => inner.remove(map(path)),
     realpath: async (path) => unmap(await inner.realpath(map(path))),

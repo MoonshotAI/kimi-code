@@ -14,8 +14,15 @@ import {
 } from 'node:fs/promises';
 import { decodeTextWithErrors, readUtf8Lines, type TextDecodeErrors } from '#/_base/execEnv/decodeText';
 
-import { type HostDirEntry, type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import {
+  type HostDirEntry,
+  type HostFileStat,
+  type HostWalkOptions,
+  type HostWalkResult,
+  IHostFileSystem,
+} from '#/os/interface/hostFileSystem';
 import { toHostFsError } from '#/os/interface/hostFsErrors';
+import { walkHostDirectory } from '#/os/interface/hostFsWalk';
 
 const READ_CHUNK_SIZE = 64 * 1024;
 
@@ -190,6 +197,10 @@ export class HostFileSystem implements IHostFileSystem {
     } catch (error) {
       throw toHostFsError(error, { path, op: 'readdir' });
     }
+  }
+
+  async walk(path: string, options: HostWalkOptions): Promise<HostWalkResult> {
+    return walkHostDirectory(this, path, options);
   }
 
   async mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {

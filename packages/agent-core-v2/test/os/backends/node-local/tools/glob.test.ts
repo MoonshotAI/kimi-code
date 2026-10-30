@@ -459,13 +459,14 @@ describe('GlobTool', () => {
   });
 
   it('does not present a capped capture as a complete search when returning all matches', async () => {
-    const { tool } = makeTool(workspace, {
-      exec: execReturning(`/workspace/${'x'.repeat(200)}.ts\n`.repeat(50_000)),
-    });
+    const exec = vi.fn(async () => fakeProcess(`/workspace/${'x'.repeat(200)}.ts\n`.repeat(50_000)));
+    const { tool } = makeTool(workspace, { exec });
     const result = await execute(tool, GlobInputSchema.parse({ pattern: '*.ts', head_limit: 0 }));
     expect(result.output).toContain('stdout truncated');
     expect(result.output).toContain('collected matches (partial result set)');
     expect(result.output).not.toContain('Continue with');
+    const process = await exec.mock.results[0]!.value as IHostProcess;
+    expect(process.kill).toHaveBeenCalledWith('SIGTERM');
   });
 
   it('keeps the timeout warning when the requested page has no collected matches', async () => {

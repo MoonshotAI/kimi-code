@@ -1,7 +1,7 @@
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LifecycleScope } from '#/app/scopes';
 import {
   ScopeActivation,
@@ -15,6 +15,7 @@ import { EnvironmentError } from '#/environment/environmentRegistry';
 import { HandshakeError } from '#/remote/client/connection';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError } from '#/os/interface/hostFsErrors';
+import { walkHostDirectory } from '#/os/interface/hostFsWalk';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
@@ -158,7 +159,7 @@ function fakeFs(
     }
     throw enoent(p);
   };
-  return {
+  const fs: IHostFileSystem = {
     _serviceBrand: undefined,
     readText: async (p) => {
       const c = fileMap.get(resolveSymlinks(p));
@@ -214,6 +215,7 @@ function fakeFs(
       for (const s of symlinkSet) visit(s, 'symlink');
       return [...children.values()];
     },
+    walk: (path, options) => walkHostDirectory(fs, path, options),
     mkdir: async (p, options) => {
       const recursive = options?.recursive ?? false;
       const exists = isDir(p) || fileMap.has(p);
@@ -266,6 +268,7 @@ function fakeFs(
       return current;
     },
   };
+  return fs;
 }
 
 function fakeProcess(stdout: string, stderr: string, exitCode: number): IHostProcess {
@@ -791,6 +794,26 @@ describe('WorkspaceFsService.search', () => {
     expect(paths.some((p) => p.startsWith('src/link/'))).toBe(false);
   });
 
+  it('keeps the original deep-directory boundary', async () => {
+    const files: Record<string, string> = {};
+    let current = 'root';
+    files[`${current}/match.ts`] = '';
+    for (let depth = 1; depth <= 66; depth += 1) {
+      current = `${current}/level-${depth}`;
+      if (depth === 63 || depth === 64 || depth === 65) files[`${current}/match.ts`] = '';
+    }
+    const fs = makeSession(files, emptyHandler);
+    const deepPath = Array.from({ length: 63 }, (_, index) => `level-${index + 1}`).join('/');
+
+    const result = await fs.search({ query: 'match', limit: 50, follow_gitignore: false });
+
+    expect(result.items.map((item) => item.path).toSorted()).toEqual([
+      'root/match.ts',
+      `root/${deepPath}/match.ts`,
+    ].toSorted());
+    expect(result.items.some((item) => item.path.includes('level-64/'))).toBe(false);
+  });
+
   it('lists the workspace root top-level entries when the query is empty', async () => {
     const fs = makeSession(
       { 'src/foo.ts': '', 'src/nested/deep.ts': '', 'README.md': '', '.hidden.ts': '' },
@@ -1179,6 +1202,79 @@ describe('WorkspaceFsService.suggest', () => {
     expect(on.items.map((i) => i.path)).toContain('.secret.ts');
   });
 
+  it('passes ignore rules to the walk and reports inventory truncation', async () => {
+    const backend = fakeFs({
+      '.gitignore': 'node_modules/\n',
+      'src/app.ts': '',
+      'node_modules/pkg/index.ts': '',
+    });
+    let receivedIgnore: readonly string[] | undefined;
+    backend.walk = async (_path, options) => {
+      receivedIgnore = options.ignore;
+      return { entries: [], errors: [], truncated: true, responseBytes: 64 };
+    };
+    const fs = makeRemoteSession(
+      { '.gitignore': 'node_modules/\n' },
+      () => ({ stdout: '', exitCode: 127 }),
+      [],
+      'ssh-dev',
+      '/home/target',
+      backend,
+    );
+
+    const result = await fs.suggest({
+      query: 'app',
+      limit: 50,
+      show_hidden: false,
+      follow_gitignore: true,
+    });
+
+    expect(receivedIgnore).toEqual(['.git/', 'node_modules/', '']);
+    expect(result).toEqual({ items: [], truncated: true });
+  });
+
+  it('keeps matching and file enumeration order when using batched walks', async () => {
+    const backend = fakeFs({
+      '.git/config': 'hello\n',
+      'a/first.ts': 'hello\n',
+      'a/nested/second.ts': 'hello\n',
+      'z.ts': 'hello\n',
+    });
+    const readdir = backend.readdir.bind(backend);
+    const reads: string[] = [];
+    backend.readdir = async (path) => {
+      reads.push(path);
+      return readdir(path);
+    };
+    const fs = makeRemoteSession(
+      {},
+      () => ({ stdout: '', exitCode: 127 }),
+      [],
+      'ssh-dev',
+      '/home/target',
+      backend,
+    );
+
+    const result = await fs.grep({
+      pattern: 'hello',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: false,
+      max_files: 200,
+      max_matches_per_file: 50,
+      max_total_matches: 5000,
+      context_lines: 0,
+    });
+
+    expect(result.files.map((file) => file.path)).toEqual([
+      'a/nested/second.ts',
+      'a/first.ts',
+      'z.ts',
+    ]);
+    expect(result.files.some((file) => file.path.startsWith('.git/'))).toBe(false);
+    expect(reads).toEqual(['/repo', '/repo/a', '/repo/a/nested']);
+  });
+
   it('falls back to the node walk when rg fails to spawn', async () => {
     const events: Array<{ event: string; properties: Record<string, unknown> }> = [];
     const runner: IHostProcessService = {
@@ -1493,6 +1589,89 @@ describe('WorkspaceFsService.suggest', () => {
     expect(skipped.items.map((i) => i.path)).toEqual([]);
   });
 
+  it('keeps partial candidates at the shared deadline without walking later roots', async () => {
+    const backend = fakeFs({ 'src/foo.ts': '', '/extra/foo-extra.ts': '' });
+    let clock = 1_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    let deadline: number | undefined;
+    const roots: string[] = [];
+    backend.walk = async (path, options) => {
+      roots.push(path);
+      deadline = options.deadlineMs;
+      clock += 10_000;
+      return {
+        entries: [
+          { name: '/repo/src', isFile: false, isDirectory: true },
+          { name: '/repo/src/foo.ts', isFile: true, isDirectory: false },
+        ],
+        errors: [],
+        truncated: true,
+        responseBytes: 128,
+      };
+    };
+    try {
+      const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
+      Object.defineProperty(fs, 'suggestRoots', {
+        value: async () => [
+          { dir: WORK_DIR, real: WORK_DIR, primary: true },
+          { dir: '/extra', real: '/extra', primary: false },
+        ],
+      });
+
+      const result = await fs.suggest({
+        query: 'foo',
+        limit: 50,
+        follow_gitignore: false,
+        show_hidden: false,
+      });
+
+      expect(result.items.map((item) => item.path)).toEqual(['src/foo.ts']);
+      expect(result.truncated).toBe(true);
+      expect(roots).toEqual([WORK_DIR]);
+      expect(deadline).toBe(11_000);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it('does not restart the suggest budget after the rg attempt', async () => {
+    const backend = fakeFs({ 'src/foo.ts': '' });
+    let clock = 1_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    let deadline: number | undefined;
+    backend.walk = async (_path, options) => {
+      deadline = options.deadlineMs;
+      return { entries: [], errors: [], truncated: false, responseBytes: 64 };
+    };
+    const runner: IHostProcessService = {
+      _serviceBrand: undefined,
+      spawn: async (_command, args) => {
+        if (args?.[0] === '--version') return fakeProcess('ripgrep 15.0.0', '', 0);
+        clock += 4_000;
+        throw new Error('spawn failed');
+      },
+    };
+    try {
+      const fs = makeRemoteSession({}, emptyHandler, [], 'ssh-dev', '/home/target', backend);
+      Object.defineProperty(fs, 'resolver', {
+        value: {
+          acquire: () => ({
+            environment: { process: runner },
+            track: (resource: unknown) => resource,
+            dispose: () => {},
+          }),
+        },
+      });
+      Object.defineProperty(fs, 'rgResolution', { value: { path: 'rg' } });
+
+      await fs.suggest({ query: 'foo', limit: 50, follow_gitignore: false, show_hidden: false });
+
+      expect(deadline).toBe(11_000);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('lists top-level entries of every root for an empty query', async () => {
     const fs = makeSession(
       { 'src/foo.ts': '', 'README.md': '', '/extra/lib/util.ts': '', '/extra/notes.md': '' },
@@ -1773,6 +1952,70 @@ describe('WorkspaceFsService.grep', () => {
 
     expect(result.files.map((file) => file.path)).toEqual(['src/a.ts', '/extra/b.ts']);
     expect(result.files_scanned).toBe(2);
+  });
+
+  it('distinguishes partial matches from an empty timed-out inventory', async () => {
+    const backend = fakeFs({ 'src/a.ts': 'hello primary\n', '/extra/b.ts': 'hello extra\n' });
+    let clock = 1_000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const roots: string[] = [];
+    backend.walk = async (path) => {
+      roots.push(path);
+      clock += 30_000;
+      return {
+        entries: [
+          { name: '/repo/src', isFile: false, isDirectory: true },
+          { name: '/repo/src/a.ts', isFile: true, isDirectory: false },
+        ],
+        errors: [],
+        truncated: true,
+        responseBytes: 128,
+      };
+    };
+    try {
+      const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
+      Object.defineProperty(fs, 'suggestRoots', {
+        value: async () => [
+          { dir: WORK_DIR, real: WORK_DIR, primary: true },
+          { dir: '/extra', real: '/extra', primary: false },
+        ],
+      });
+
+      const result = await fs.grep({
+        pattern: 'hello',
+        regex: false,
+        case_sensitive: true,
+        follow_gitignore: false,
+        max_files: 200,
+        max_matches_per_file: 50,
+        max_total_matches: 5000,
+        context_lines: 0,
+      });
+
+      expect(result.files.map((file) => file.path)).toEqual(['src/a.ts']);
+      expect(result.files_scanned).toBe(1);
+      expect(result.truncated).toBe(true);
+      expect(roots).toEqual([WORK_DIR]);
+      backend.walk = async () => {
+        clock += 30_000;
+        return { entries: [], errors: [], truncated: true, responseBytes: 64 };
+      };
+      await expect(fs.grep({
+        pattern: 'hello',
+        regex: false,
+        case_sensitive: true,
+        follow_gitignore: false,
+        max_files: 200,
+        max_matches_per_file: 50,
+        max_total_matches: 5000,
+        context_lines: 0,
+      })).rejects.toMatchObject({
+        code: ErrorCodes.FS_GREP_TIMEOUT,
+        message: 'grep timed out after 30000ms',
+      });
+    } finally {
+      now.mockRestore();
+    }
   });
 });
 

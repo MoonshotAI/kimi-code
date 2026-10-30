@@ -257,6 +257,19 @@ describe('WriteTool', () => {
     expect(writeText).toHaveBeenCalledWith('/tmp/missing-dir/file.txt', 'data');
   });
 
+  it('uses the combined parent-and-write operation when available', async () => {
+    const { tool, fs, stat, writeText } = makeTool();
+    const writeTextWithParent = vi.fn(async () => {});
+    fs.writeTextWithParent = writeTextWithParent;
+
+    const result = await execute(tool, { path: '/tmp/missing-dir/file.txt', content: 'data' });
+
+    expect(result.isError).toBeUndefined();
+    expect(writeTextWithParent).toHaveBeenCalledWith('/tmp/missing-dir/file.txt', 'data', 'overwrite', '/tmp/missing-dir');
+    expect(stat).not.toHaveBeenCalled();
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it('surfaces mkdir failures when a missing parent cannot be created', async () => {
     const enoent = Object.assign(new Error('ENOENT: no such file or directory'), {
       code: 'ENOENT',

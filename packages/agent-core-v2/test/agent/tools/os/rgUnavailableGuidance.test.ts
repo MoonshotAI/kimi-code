@@ -56,6 +56,7 @@ function createBackend(options: {
     stat: async () => directoryStat(),
     lstat: async () => directoryStat(),
     readdir: () => notImplemented('readdir'),
+    walk: () => notImplemented('walk'),
     mkdir: () => notImplemented('mkdir'),
     remove: () => notImplemented('remove'),
     realpath: async (path: string) => path,

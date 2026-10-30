@@ -20,6 +20,8 @@ import {
   HostFileSystem,
   type HostDirEntry,
   type HostFileStat,
+  type HostWalkOptions,
+  type HostWalkResult,
   IHostFileSystem,
   ISessionContext,
   LifecycleScope,
@@ -149,6 +151,10 @@ export class AcpHostFileSystem implements IHostFileSystem {
 
   readdir(path: string): Promise<readonly HostDirEntry[]> {
     return this.inner.readdir(path);
+  }
+
+  walk(path: string, options: HostWalkOptions): Promise<HostWalkResult> {
+    return this.inner.walk(path, options);
   }
 
   mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {

@@ -105,14 +105,18 @@ export class WriteTool implements IWriteTool {
   }
 
   private async execution(fs: IHostFileSystem, args: WriteInput, safePath: string, parent = dirname(safePath)): Promise<ExecutableToolResult> {
-    const parentError = await this.ensureParentDirectory(fs, parent);
-    if (parentError !== undefined) {
-      return { isError: true, output: parentError };
+    const mode = args.mode ?? 'overwrite';
+    if (fs.writeTextWithParent === undefined) {
+      const parentError = await this.ensureParentDirectory(fs, parent);
+      if (parentError !== undefined) {
+        return { isError: true, output: parentError };
+      }
     }
 
     try {
-      const mode = args.mode ?? 'overwrite';
-      if (mode === 'append') {
+      if (fs.writeTextWithParent !== undefined) {
+        await fs.writeTextWithParent(safePath, args.content, mode, parent);
+      } else if (mode === 'append') {
         await fs.appendText(safePath, args.content);
       } else {
         await fs.writeText(safePath, args.content);

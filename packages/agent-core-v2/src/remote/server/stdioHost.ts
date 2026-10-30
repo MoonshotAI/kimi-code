@@ -19,6 +19,7 @@ import {
   FS_READ_FILE_METHOD,
   FS_REMOVE_METHOD,
   FS_RENAME_METHOD,
+  FS_WALK_METHOD,
   FS_WRITE_FILE_METHOD,
   INITIALIZE_METHOD,
   MAX_IN_FLIGHT_CALLS,
@@ -166,6 +167,7 @@ export class StdioHost {
       [FS_GET_METADATA_METHOD, (p) => fs.getMetadata(p)],
       [FS_CANONICALIZE_METHOD, (p) => fs.canonicalize(p)],
       [FS_READ_DIRECTORY_METHOD, (p) => fs.readDirectory(p)],
+      [FS_WALK_METHOD, (p) => fs.walk(p)],
       [FS_REMOVE_METHOD, (p) => fs.remove(p)],
       [FS_RENAME_METHOD, (p) => fs.rename(p)],
       [PROCESS_START_METHOD, (p) => pm.start(p)],
@@ -283,7 +285,9 @@ export class StdioHost {
       );
       return;
     }
-    const lane: Lane = message.method === FS_READ_FILE_METHOD ? 'data' : 'control';
+    const lane: Lane = message.method === FS_READ_FILE_METHOD || message.method === FS_WALK_METHOD
+      ? 'data'
+      : 'control';
     if (CONTROL_METHODS.has(message.method)) {
       void this.runHandler(message.id, handler, message.params, lane, false);
       return;
