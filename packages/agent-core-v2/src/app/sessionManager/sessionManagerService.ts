@@ -301,10 +301,9 @@ export class SessionManager implements ISessionManager {
     const agents = handle.accessor.get(IAgentLifecycleService);
     const holdsWork = agents.list().some((agent) => {
       const accessor = agents.handleOf(agent.agentId)?.accessor;
-      return accessor !== undefined && (
-        accessor.get(IAgentCronService).list().length > 0 ||
-        accessor.get(IAgentPromptQueueService).snapshot().items.length > 0
-      );
+      if (accessor === undefined) return false;
+      const queue = accessor.get(IAgentPromptQueueService).snapshot();
+      return accessor.get(IAgentCronService).list().length > 0 || queue.paused || queue.items.length > 0;
     });
     if (holdsWork) return true;
     const activity = handle.accessor.get(ISessionActivityView).state();

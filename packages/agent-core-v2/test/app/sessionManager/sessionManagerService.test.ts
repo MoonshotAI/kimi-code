@@ -572,6 +572,7 @@ describe('SessionManager closeIfIdle', () => {
     readonly pending?: 'none' | 'approval' | 'question';
     readonly cronTasks?: number;
     readonly queuedPrompts?: number;
+    readonly queuePaused?: boolean;
   }
 
   const managers: SessionManager[] = [];
@@ -585,6 +586,7 @@ describe('SessionManager closeIfIdle', () => {
       pending: 'none' as const,
       cronTasks: 0,
       queuedPrompts: 0,
+      queuePaused: false,
       activeAt: Date.now(),
       ...guards,
     };
@@ -593,7 +595,7 @@ describe('SessionManager closeIfIdle', () => {
         get: (token: unknown) => {
           if (token === IAgentCronService) return { list: () => Array.from({ length: state.cronTasks }) };
           if (token === IAgentPromptQueueService) {
-            return { snapshot: () => ({ paused: true, items: Array.from({ length: state.queuedPrompts }) }) };
+            return { snapshot: () => ({ paused: state.queuePaused, items: Array.from({ length: state.queuedPrompts }) }) };
           }
           return undefined;
         },
@@ -689,7 +691,8 @@ describe('SessionManager closeIfIdle', () => {
     ['a pending approval', { pending: 'approval' }],
     ['a pending question', { pending: 'question' }],
     ['pending cron tasks', { cronTasks: 1 }],
-    ['prompts held in a paused queue', { queuedPrompts: 1 }],
+    ['prompts held in a paused queue', { queuedPrompts: 1, queuePaused: true }],
+    ['an empty paused queue', { queuePaused: true }],
   ];
 
   it.each(eligibilityCases)('retains sessions with %s', async (_label, guards) => {
