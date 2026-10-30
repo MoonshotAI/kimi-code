@@ -221,12 +221,12 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
   });
 
-  it('loads trusted project rules once from the actual workdir and fails closed', async () => {
-    const remoteRule: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash' };
+  it('loads local trusted rules, ignores legacy user runtime scopes, and rejects remote project IO', async () => {
+    const projectRule: PermissionRule = { decision: 'deny', scope: 'project', pattern: 'Bash' };
     const appendedRule: PermissionRule = { decision: 'allow', scope: 'project', pattern: 'Write' };
-    const invalidRule = { decision: 'deny', scope: 'session-runtime', pattern: 'Bash' };
+    const runtimeRule: PermissionRule = { decision: 'deny', scope: 'session-runtime', pattern: 'Bash' };
     const calls: string[] = [];
-    let rawRules: unknown[] = [invalidRule];
+    let rawRules: unknown[] = [runtimeRule];
     let trusted = false;
     let failAppend = false;
     const localConfig = {
@@ -244,7 +244,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     const trust = { get: async () => trusted } as never;
     const untrusted = new ProjectPermissionRulesService(
       { cwd: '/local-association' } as never,
-      { environmentId: 'ssh', cwd: '/remote/project' } as never,
+      { environmentId: 'local', cwd: '/local/project' } as never,
       localConfig,
       trust,
     );
@@ -253,45 +253,60 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(calls).toEqual([]);
 
     trusted = true;
-    rawRules = [remoteRule];
-    const remote = new ProjectPermissionRulesService(
+    rawRules = [projectRule];
+    const local = new ProjectPermissionRulesService(
       { cwd: '/local-association' } as never,
-      { environmentId: 'ssh', cwd: '/remote/project' } as never,
+      { environmentId: 'local', cwd: '/local/project' } as never,
       localConfig,
       trust,
     );
-    await remote.ready;
-    expect(remote.rules).toEqual([remoteRule]);
+    await local.ready;
+    expect(local.rules).toEqual([projectRule]);
 
-    rawRules = [remoteRule, appendedRule];
-    expect(remote.rules).toEqual([remoteRule]);
-    rawRules = [remoteRule];
+    rawRules = [projectRule, appendedRule];
+    expect(local.rules).toEqual([projectRule]);
+    rawRules = [projectRule];
     failAppend = true;
-    await expect(remote.appendRules([appendedRule])).rejects.toThrow('append failed');
-    expect(remote.rules).toEqual([remoteRule]);
+    await expect(local.appendRules([appendedRule])).rejects.toThrow('append failed');
+    expect(local.rules).toEqual([projectRule]);
 
     failAppend = false;
-    await remote.appendRules([appendedRule]);
-    expect(remote.rules).toEqual([remoteRule, appendedRule]);
-    expect(calls).toHaveLength(3);
-    expect(calls.every((cwd) => cwd === '/remote/project')).toBe(true);
+    await local.appendRules([appendedRule]);
+    expect(local.rules).toEqual([projectRule, appendedRule]);
 
-    rawRules = [invalidRule];
+    rawRules = [runtimeRule];
     const invalid = new ProjectPermissionRulesService(
       { cwd: '/local-association' } as never,
-      { environmentId: 'ssh', cwd: '/remote/project' } as never,
+      { environmentId: 'local', cwd: '/local/project' } as never,
       localConfig,
       trust,
     );
     await expect(invalid.ready).rejects.toThrow('Invalid project permission rule');
+
+    const remote = new ProjectPermissionRulesService(
+      { cwd: '/local-association' } as never,
+      { environmentId: 'ssh', cwd: '/remote/project' } as never,
+      localConfig,
+      { get: async () => { throw new Error('remote trust must not be read'); } } as never,
+    );
+    await remote.ready;
+    expect(remote.rules).toEqual([]);
+    await expect(remote.appendRules([appendedRule])).rejects.toThrow('not supported');
     expect(calls).toEqual([
-      '/remote/project',
-      '/remote/project',
-      '/remote/project',
-      '/remote/project',
+      '/local/project',
+      '/local/project',
+      '/local/project',
+      '/local/project',
     ]);
 
-    config.permission = { rules: [invalidRule] } as unknown as PermissionConfig;
+    const userRule: PermissionRule = { ...runtimeRule, scope: 'user' };
+    config.permission = {
+      rules: [runtimeRule, { ...runtimeRule, scope: 'turn-override' }, userRule],
+    };
+    expect(readUserPermissionRules(config.asService())).toEqual([userRule]);
+    config.permission = {
+      rules: [{ ...runtimeRule, scope: 'invalid' }],
+    } as unknown as PermissionConfig;
     expect(() => readUserPermissionRules(config.asService())).toThrow();
   });
 
