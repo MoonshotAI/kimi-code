@@ -412,6 +412,27 @@ describe('AgentPromptQueueService', () => {
     expect(prepare).toHaveBeenCalledOnce();
   });
 
+  it('does not warn about a failed mode after its prompt was cancelled', async () => {
+    setup();
+    respond(1);
+    const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
+    const release = await startHeldTurn();
+    let failPrepare!: (error: Error) => void;
+    const prepare = vi.fn(() => new Promise<void>((_resolve, reject) => {
+      failPrepare = reject;
+    }));
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'goal', prepare });
+
+    release();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    queue.cancel('p2');
+    failPrepare(new Error('goal already exists'));
+    await loop.settled();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ code: 'queued-mode-failed' }));
+    expect(launched).toEqual(['first']);
+  });
+
   it('drops a starting prompt that is cancelled while its mode is applied', async () => {
     setup();
     respond(2);

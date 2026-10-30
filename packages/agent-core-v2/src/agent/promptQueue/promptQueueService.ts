@@ -281,8 +281,10 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
         try {
           await head.prepare();
         } catch (error) {
-          this.logger.warn('queued prompt mode could not be applied', { promptId: head.id, error });
-          this.warn('queued-mode-failed', `The queued prompt could not enter its mode and started as a normal prompt: ${reasonOf(error)}`);
+          if (this.starting === head) {
+            this.logger.warn('queued prompt mode could not be applied', { promptId: head.id, error });
+            this.warn('queued-mode-failed', `The queued prompt could not enter its mode and started as a normal prompt: ${reasonOf(error)}`);
+          }
         }
       }
       if (this.starting !== head) return;
