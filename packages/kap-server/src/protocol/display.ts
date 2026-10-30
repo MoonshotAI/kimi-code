@@ -7,6 +7,7 @@ export const ToolInputDisplaySchema = z.discriminatedUnion('kind', [
     cwd: z.string().optional(),
     description: z.string().optional(),
     language: z.literal('bash').optional(),
+    environment: z.string().optional(),
   }),
   z.object({
     kind: z.literal('file_io'),
@@ -16,6 +17,7 @@ export const ToolInputDisplaySchema = z.discriminatedUnion('kind', [
     content: z.string().optional(),
     before: z.string().optional(),
     after: z.string().optional(),
+    environment: z.string().optional(),
   }),
   z.object({
     kind: z.literal('diff'),

@@ -211,6 +211,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
       toolName: name,
       action,
       sessionApprovalRule,
+      environmentId: context.environment?.primary === false ? context.environment.environmentId : undefined,
       result: response,
     });
     this.telemetry.track2('permission_approval_result', {

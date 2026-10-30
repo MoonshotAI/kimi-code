@@ -152,6 +152,7 @@ export interface WorkspaceStateSnapshot {
           [key: string]: unknown;
         };
         readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+        readonly environmentId?: string;
         readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
           readonly id: string;
           readonly instructions?: string;
@@ -190,6 +191,7 @@ export interface WorkspaceStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -218,6 +220,7 @@ export interface WorkspaceStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -254,6 +257,7 @@ export interface WorkspaceStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -282,6 +286,7 @@ export interface WorkspaceStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -310,6 +315,7 @@ export interface WorkspaceStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -340,6 +346,7 @@ export interface WorkspaceStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -368,6 +375,7 @@ export interface WorkspaceStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -397,6 +405,7 @@ export interface WorkspaceStateSnapshot {
     readonly agentsMd: string | undefined;
     readonly agentsMdWarning: string | undefined;
     readonly agentsMdPaths: readonly string[] | undefined;
+    readonly agentsMdProjectPaths: readonly string[] | undefined;
   };
   // src/workspace/workspaceTrust/workspaceTrustService.ts
   'workspaceTrust.trusted': boolean;
@@ -427,6 +436,7 @@ export interface SessionStateSnapshot {
           [key: string]: unknown;
         };
         readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+        readonly environmentId?: string;
         readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
           readonly id: string;
           readonly instructions?: string;
@@ -465,6 +475,7 @@ export interface SessionStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -493,6 +504,7 @@ export interface SessionStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -529,6 +541,7 @@ export interface SessionStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -557,6 +570,7 @@ export interface SessionStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -585,6 +599,7 @@ export interface SessionStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -615,6 +630,7 @@ export interface SessionStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -643,6 +659,7 @@ export interface SessionStateSnapshot {
         [key: string]: unknown;
       };
       readonly source: /* SkillSource — packages/agent-core-v2/src/features/skill/catalog/types.ts */ 'project' | 'user' | 'extra' | 'builtin';
+      readonly environmentId?: string;
       readonly plugin?: /* SkillPluginContext — packages/agent-core-v2/src/features/skill/catalog/types.ts */ {
         readonly id: string;
         readonly instructions?: string;
@@ -879,6 +896,7 @@ export interface AgentStateSnapshot {
       cwd?: string;
       description?: string;
       language?: 'bash';
+      environment?: string;
     } | {
       kind: 'file_io';
       operation: 'read' | 'write' | 'edit' | 'glob' | 'grep';
@@ -887,6 +905,7 @@ export interface AgentStateSnapshot {
       content?: string;
       before?: string;
       after?: string;
+      environment?: string;
     } | {
       kind: 'diff';
       path: string;
@@ -1092,6 +1111,7 @@ export interface AgentStateSnapshot {
       cwd?: string;
       description?: string;
       language?: 'bash';
+      environment?: string;
     } | {
       kind: 'file_io';
       operation: 'read' | 'write' | 'edit' | 'glob' | 'grep';
@@ -1100,6 +1120,7 @@ export interface AgentStateSnapshot {
       content?: string;
       before?: string;
       after?: string;
+      environment?: string;
     } | {
       kind: 'diff';
       path: string;
@@ -1314,6 +1335,7 @@ export interface AgentStateSnapshot {
       cwd?: string;
       description?: string;
       language?: 'bash';
+      environment?: string;
     } | {
       kind: 'file_io';
       operation: 'read' | 'write' | 'edit' | 'glob' | 'grep';
@@ -1322,6 +1344,7 @@ export interface AgentStateSnapshot {
       content?: string;
       before?: string;
       after?: string;
+      environment?: string;
     } | {
       kind: 'diff';
       path: string;
@@ -1528,6 +1551,7 @@ export interface AgentStateSnapshot {
       cwd?: string;
       description?: string;
       language?: 'bash';
+      environment?: string;
     } | {
       kind: 'file_io';
       operation: 'read' | 'write' | 'edit' | 'glob' | 'grep';
@@ -1536,6 +1560,7 @@ export interface AgentStateSnapshot {
       content?: string;
       before?: string;
       after?: string;
+      environment?: string;
     } | {
       kind: 'diff';
       path: string;
@@ -1790,6 +1815,7 @@ export interface AgentStateSnapshot {
       readonly reason?: string;
     }[];
     readonly sessionApprovalRulePatterns: readonly string[];
+    readonly environmentSessionApprovalRulePatterns?: Readonly<Record<string, readonly string[]>>;
   };
   // src/agent/plugin/agentPluginOps.ts
   // replayable · durable — folds: PluginSessionStartEvent

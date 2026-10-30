@@ -1,5 +1,6 @@
 import type { ContentPart, ToolCall, ToolDescription as Tool } from '#human/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { EnvironmentTarget } from '#/environment/environment';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 export type ExecutableToolOutput = string | ContentPart[];
@@ -89,8 +90,12 @@ export interface RunnableToolExecution {
 
 export type ToolExecution = RunnableToolExecution | ExecutableToolErrorResult;
 
+export interface ToolResolutionContext {
+  readonly environment?: EnvironmentTarget;
+}
+
 export interface ExecutableTool<Input = unknown> extends Tool {
-  resolveExecution(input: Input): ToolExecution | Promise<ToolExecution>;
+  resolveExecution(input: Input, context?: ToolResolutionContext): ToolExecution | Promise<ToolExecution>;
 }
 
 export type ToolSource = 'builtin' | 'user' | 'mcp';

@@ -84,10 +84,30 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     const approval = sessionApproval('Bash(rm *)');
     svc.recordApprovalResult(approval);
 
-    expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
+    expect(svc.sessionApprovalRulePatterns()).toEqual(['Bash(rm *)']);
 
     svc.recordApprovalResult(approval);
-    expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
+    expect(svc.sessionApprovalRulePatterns()).toEqual(['Bash(rm *)']);
+  });
+
+  it('keeps session approvals for another environment out of the primary pattern set', () => {
+    svc.recordApprovalResult({ ...sessionApproval('Bash(rm *)'), environmentId: 'gpu' });
+    svc.recordApprovalResult({ ...sessionApproval('Bash(rm *)'), environmentId: 'gpu' });
+
+    expect(svc.sessionApprovalRulePatterns()).toEqual([]);
+    expect(svc.sessionApprovalRulePatterns({ environmentId: 'local', primary: true })).toEqual([]);
+    expect(svc.sessionApprovalRulePatterns({ environmentId: 'gpu', primary: false })).toEqual(['Bash(rm *)']);
+    expect(svc.sessionApprovalRulePatterns({ environmentId: 'staging', primary: false })).toEqual([]);
+  });
+
+  it('keeps session approvals for environments named like object prototype members', () => {
+    expect(svc.sessionApprovalRulePatterns({ environmentId: 'toString', primary: false })).toEqual([]);
+
+    svc.recordApprovalResult({ ...sessionApproval('Bash(rm *)'), environmentId: '__proto__' });
+    svc.recordApprovalResult({ ...sessionApproval('Bash(ls)'), environmentId: 'constructor' });
+
+    expect(svc.sessionApprovalRulePatterns({ environmentId: '__proto__', primary: false })).toEqual(['Bash(rm *)']);
+    expect(svc.sessionApprovalRulePatterns({ environmentId: 'constructor', primary: false })).toEqual(['Bash(ls)']);
   });
 
   it('ignores non-session approvals for the pattern set', () => {
@@ -99,7 +119,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
       result: { decision: 'approved' },
     };
     svc.recordApprovalResult(oneTime);
-    expect(svc.sessionApprovalRulePatterns).toEqual([]);
+    expect(svc.sessionApprovalRulePatterns()).toEqual([]);
   });
 
   it('only persists approval records (permission.rules.add is live-only)', async () => {
@@ -126,6 +146,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
   it('replay rebuilds session approval patterns only (rules are not persisted)', async () => {
     svc.addRules([allowRule, denyRule]);
     svc.recordApprovalResult(sessionApproval('Bash(rm *)'));
+    svc.recordApprovalResult({ ...sessionApproval('Bash(rm *)'), environmentId: 'gpu' });
     const records = await readRecords();
 
     const ix2 = disposables.add(new TestInstantiationService());
@@ -149,6 +170,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(freshState.get(permissionRulesKey)).toEqual({
       rules: [],
       sessionApprovalRulePatterns: ['Bash(rm *)'],
+      environmentSessionApprovalRulePatterns: { gpu: ['Bash(rm *)'] },
     });
     const written: WireRecord[] = [];
     for await (const record of log2.read<WireRecord>(testWireScope(SCOPE, 'permission-rules-replay'), AGENT_WIRE_RECORD_KEY)) {

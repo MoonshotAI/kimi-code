@@ -30,6 +30,8 @@ import type { ToolCall } from '#human/llm/message';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError } from '#/os/interface/hostFsErrors';
+import type { EnvironmentTarget } from '#/environment/environment';
+import { EnvironmentError } from '#/environment/environmentRegistry';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { BlobStoreService } from '#/persistence/backends/node-fs/blobStoreService';
@@ -51,6 +53,8 @@ import { createTestAgent, homeDirServices } from '../../harness';
 const SCOPE = 'wire';
 const KEY = 'file-history-test';
 const WORK_DIR = '/ws';
+const LOCAL: EnvironmentTarget = { environmentId: 'local', primary: true };
+const GPU: EnvironmentTarget = { environmentId: 'gpu', primary: false };
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -63,6 +67,9 @@ describe('AgentFileHistoryService', () => {
   let blobs: IBlobStore;
   let scopeCtx: IAgentScopeContext;
   let files: Map<string, Uint8Array>;
+  let gpuFiles: Map<string, Uint8Array>;
+  let gpuReachable: boolean;
+  let connectAttempts: number;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -85,6 +92,9 @@ describe('AgentFileHistoryService', () => {
     executorEvents = stubToolExecutorEvents();
     blobs = new BlobStoreService(new InMemoryStorageService());
     files = new Map();
+    gpuFiles = new Map();
+    gpuReachable = true;
+    connectAttempts = 0;
   });
 
   afterEach(() => {
@@ -97,16 +107,27 @@ describe('AgentFileHistoryService', () => {
       path: posix,
       workspace: { mapRoots: (roots: unknown) => roots },
     };
+    const gpu = { ...environment, fs: hostFs(false, gpuFiles) };
     return {
+      targets: () => [LOCAL, GPU],
       inspect: () => environment,
-      acquire: () => ({
-        environment,
-        dispose: () => {},
+      acquire: (_required: unknown, environmentId?: string) => {
+        if (environmentId !== 'gpu') return { environment, dispose: () => {} };
+        if (!gpuReachable) throw new EnvironmentError('environment.unavailable', 'environment gpu is disconnected');
+        return { environment: gpu, dispose: () => {} };
+      },
+      acquireWhenReady: async () => {
+        connectAttempts += 1;
+        throw new Error('file history must not connect environments');
+      },
+      workspaceRoots: (environmentId?: string) => ({
+        workDir: environmentId === 'gpu' ? '/srv/app' : WORK_DIR,
+        additionalDirs: [],
       }),
     } as unknown as IAgentEnvironmentService;
   }
 
-  function hostFs(remoteShape = false): IHostFileSystem {
+  function hostFs(remoteShape = false, store: Map<string, Uint8Array> = files): IHostFileSystem {
     const missing = (path: string): Error =>
       remoteShape
         ? new HostFsError('os.fs.not_found', 'stat failed: path does not exist', {
@@ -115,12 +136,12 @@ describe('AgentFileHistoryService', () => {
         : Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     return createFakeHostFs({
       stat: async (path: string) => {
-        const content = files.get(path);
+        const content = store.get(path);
         if (content === undefined) throw missing(path);
         return { isFile: true, isDirectory: false, size: content.byteLength };
       },
       readBytes: async (path: string) => {
-        const content = files.get(path);
+        const content = store.get(path);
         if (content === undefined) throw missing(path);
         return content;
       },
@@ -183,7 +204,12 @@ describe('AgentFileHistoryService', () => {
     files.set(path, encoder.encode(content));
   }
 
-  async function fireEdit(service: AgentFileHistoryService, path: string, turnId: number): Promise<void> {
+  async function fireEdit(
+    service: AgentFileHistoryService,
+    path: string,
+    turnId: number,
+    environment?: EnvironmentTarget,
+  ): Promise<void> {
     const toolCall: ToolCall = { type: 'function', id: `call-${String(turnId)}`, name: 'Edit', arguments: null };
     const execution: RunnableToolExecution = {
       approvalRule: 'Edit',
@@ -191,7 +217,7 @@ describe('AgentFileHistoryService', () => {
       execute: async () => ({ output: '' }),
     };
     await executorEvents.fireWillExecute(
-      { turnId, toolCall, execution, args: {} },
+      { turnId, toolCall, execution, args: {}, environment },
       new AbortController().signal,
     );
     await service.settled();
@@ -537,6 +563,99 @@ describe('AgentFileHistoryService', () => {
     endTurn(8);
     await service.settled();
     expect(await blobs.list(scopeCtx.scope(), 'file-history/')).toEqual([]);
+  });
+
+  it('reports an edit routed to another environment by its own path and environment', async () => {
+    const service = createService();
+    setFile('/srv/app/a.txt', 'primary copy\n');
+    gpuFiles.set('/srv/app/a.txt', encoder.encode('one\ntwo\n'));
+
+    startTurn(1);
+    await fireEdit(service, '/srv/app/a.txt', 1, GPU);
+    gpuFiles.set('/srv/app/a.txt', encoder.encode('one\nTWO\n'));
+    expect(await service.changes(1)).toEqual([
+      { path: '/srv/app/a.txt', environmentId: 'gpu', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+    endTurn(1);
+    startTurn(2);
+    await service.settled();
+
+    expect(service.history().tracked).toEqual([JSON.stringify(['gpu', '/srv/app/a.txt'])]);
+    expect(await service.changes(1)).toEqual([
+      { path: '/srv/app/a.txt', environmentId: 'gpu', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+    expect((await service.contentAt(1, '/srv/app/a.txt', 'start', 'gpu'))?.content).toBe('one\ntwo\n');
+    expect((await service.contentAt(1, '/srv/app/a.txt', 'end', 'gpu'))?.content).toBe('one\nTWO\n');
+    expect(await service.contentAt(1, '/srv/app/a.txt')).toBeUndefined();
+    expect(connectAttempts).toBe(0);
+  });
+
+  it('records a turn whose routed environment is unreachable at its end without connecting it', async () => {
+    const service = createService();
+    setFile(join(WORK_DIR, 'a.txt'), 'one\n');
+    gpuFiles.set('/srv/app/b.txt', encoder.encode('one\n'));
+
+    startTurn(1);
+    await fireEdit(service, join(WORK_DIR, 'a.txt'), 1, LOCAL);
+    await fireEdit(service, '/srv/app/b.txt', 1, GPU);
+    setFile(join(WORK_DIR, 'a.txt'), 'two\n');
+    gpuReachable = false;
+    endTurn(1);
+    startTurn(2);
+    await service.settled();
+
+    expect(await service.turnRecorded(1)).toBe(true);
+    expect(await service.changes(1)).toEqual([
+      { path: 'a.txt', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+    expect((await service.contentAt(1, 'a.txt'))?.content).toBe('one\n');
+    expect((await service.contentAt(1, 'a.txt', 'start', 'local'))?.content).toBe('one\n');
+    expect(connectAttempts).toBe(0);
+  });
+
+  it('keys a capture by environment id against its own primary, whichever role the caller saw', async () => {
+    const service = createService();
+    setFile(join(WORK_DIR, 'a.txt'), 'one\n');
+    gpuFiles.set('/srv/app/b.txt', encoder.encode('one\n'));
+
+    startTurn(1);
+    await service.captureForActiveTurn(join(WORK_DIR, 'a.txt'), 'local');
+    await service.captureForActiveTurn('/srv/app/b.txt', 'gpu');
+    await service.settled();
+
+    expect(service.history().tracked).toEqual(['a.txt', JSON.stringify(['gpu', '/srv/app/b.txt'])]);
+  });
+
+  it('keeps environment and path pairs apart when their concatenations coincide', async () => {
+    const service = createService();
+    setFile('/b:/x', 'first\n');
+    setFile('/x', 'second\n');
+
+    startTurn(1);
+    await service.captureForActiveTurn('/b:/x', 'a');
+    await service.captureForActiveTurn('/x', 'a:/b');
+    await service.settled();
+
+    expect(service.history().tracked).toHaveLength(2);
+    expect((await service.contentAt(1, '/b:/x', 'start', 'a'))?.content).toBe('first\n');
+    expect((await service.contentAt(1, '/x', 'start', 'a:/b'))?.content).toBe('second\n');
+  });
+
+  it('keeps the environment on a reused backup so an unchanged routed file is not read from the primary', async () => {
+    const service = createService();
+    gpuFiles.set('/srv/app/a.txt', encoder.encode('one\n'));
+
+    startTurn(1);
+    await fireEdit(service, '/srv/app/a.txt', 1, GPU);
+    gpuFiles.set('/srv/app/a.txt', encoder.encode('two\n'));
+    endTurn(1);
+    startTurn(2);
+    await fireEdit(service, '/srv/app/a.txt', 2, GPU);
+    endTurn(2);
+    startTurn(3);
+    await service.settled();
+
+    expect(await service.changes(2)).toEqual([]);
   });
 
   it('keeps files outside the workspace keyed by absolute path', async () => {

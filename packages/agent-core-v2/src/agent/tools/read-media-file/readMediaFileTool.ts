@@ -15,6 +15,7 @@ import {
   type AgentTool,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
 } from '#/tool/toolContract';
 import { resolvePathAccessPath, type WorkspaceConfig } from '#/tool/path-access';
 import {
@@ -227,20 +228,23 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     return inlineVideoPart(data, mimeType);
   }
 
-  async resolveExecution(args: ReadMediaFileInput): Promise<ToolExecution> {
+  async resolveExecution(args: ReadMediaFileInput, context?: ToolResolutionContext): Promise<ToolExecution> {
+    const environmentId = context?.environment?.environmentId;
+    const primary = context?.environment?.primary !== false;
     if (!args.path) {
       return { isError: true, output: 'File path cannot be empty.' };
     }
     if (isDaemonFileUrl(args.path)) {
       return this.attachmentExecution(args);
     }
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
+      const roots = this.environment.workspaceRoots(environmentId);
       const view = new EnvironmentWorkspaceView(inspected, {
-        workDir: this.workspace.workspaceDir,
-        additionalDirs: this.workspace.additionalDirs,
+        workDir: roots.workDir,
+        additionalDirs: primary ? this.workspace.additionalDirs : roots.additionalDirs,
       });
       const env = view.host;
       const workspace = { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
@@ -256,12 +260,12 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         approvalRule: literalRulePattern(this.name, path),
         matchesRule: (ruleArgs) =>
           matchesPathRuleSubject(ruleArgs, path, {
-            cwd: this.workspace.workspaceDir,
+            cwd: workspace.workspaceDir,
             pathClass: env.pathClass,
             homeDir: env.homeDir,
           }),
         execute: async ({ signal }) => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs']);
+          const lease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

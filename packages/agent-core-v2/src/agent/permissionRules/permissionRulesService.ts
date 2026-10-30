@@ -4,6 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import type { EnvironmentTarget } from '#/environment/environment';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   IAgentPermissionRulesService,
@@ -31,8 +32,11 @@ export class AgentPermissionRulesService implements IAgentPermissionRulesService
     return [...this.agentState.get(permissionRulesKey).rules];
   }
 
-  get sessionApprovalRulePatterns(): readonly string[] {
-    return [...this.agentState.get(permissionRulesKey).sessionApprovalRulePatterns];
+  sessionApprovalRulePatterns(environment?: EnvironmentTarget): readonly string[] {
+    const state = this.agentState.get(permissionRulesKey);
+    if (environment?.primary !== false) return [...state.sessionApprovalRulePatterns];
+    const byEnvironment = state.environmentSessionApprovalRulePatterns ?? {};
+    return Object.hasOwn(byEnvironment, environment.environmentId) ? [...byEnvironment[environment.environmentId]!] : [];
   }
 
   addRules(rules: readonly PermissionRule[]): void {

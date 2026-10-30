@@ -43,6 +43,7 @@ export function registerMediaTools(
       deps.providerType,
       deps.attachmentStore,
     ),
+    { environmentScoped: true },
   );
 }
 

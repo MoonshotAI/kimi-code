@@ -1,5 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import { type IDisposable } from '#/_base/di/lifecycle';
+import type { EnvironmentTarget } from '#/environment/environment';
 import type {
   ExecutableTool,
   ToolDisclosure,
@@ -10,12 +11,21 @@ import type {
 export interface ToolRegistrationOptions {
   readonly source?: ToolSource;
   readonly disclosure?: ToolDisclosure;
+  readonly environmentScoped?: boolean;
 }
 
 export interface ToolReference {
   readonly name: string;
   readonly source: ToolSource;
 }
+
+export interface ToolEnvironmentRoute {
+  readonly args: unknown;
+  readonly environment?: EnvironmentTarget;
+  readonly error?: string;
+}
+
+export const ENVIRONMENT_ARGUMENT = 'environment';
 
 export interface IAgentToolRegistryService {
   readonly _serviceBrand: undefined;
@@ -24,6 +34,7 @@ export interface IAgentToolRegistryService {
   list(): readonly ToolInfo[];
   listReferences(): readonly ToolReference[];
   resolve(name: string): ExecutableTool | undefined;
+  routeEnvironment(name: string, args: unknown): ToolEnvironmentRoute;
 }
 
 export const IAgentToolRegistryService = createDecorator<IAgentToolRegistryService>('agentToolRegistryService');

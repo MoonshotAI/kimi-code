@@ -60,6 +60,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     @IWorkspacePersistence private readonly workspaceStore: IWorkspacePersistence,
     @ILogService private readonly log: ILogService,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
+    private readonly readsRegistry = true,
   ) {
     this.states.contributeState(workspaceDirsFileDirsKey);
     this.states.contributeState(workspaceDirsEphemeralDirsKey);
@@ -222,6 +223,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   }
 
   private async reloadFromRegistry(): Promise<void> {
+    if (!this.readsRegistry) return;
     const registered = await this.workspaces.list();
     const current = this.workspace.meta.kind === 'managed'
       ? undefined

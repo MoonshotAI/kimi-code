@@ -66,7 +66,7 @@ export async function loadAgentsMdDetailed(
   deps: ProfileContextDeps,
   workDir: string,
   brandHome?: string,
-): Promise<LoadedAgentsMd> {
+): Promise<DiscoveredAgentsMd> {
   return loadAgentsMdForRoots(deps, brandHome, [workDir]);
 }
 
@@ -75,6 +75,10 @@ export interface LoadedAgentsMd {
   readonly warning: string | undefined;
   readonly paths: readonly string[];
   readonly files: ReadonlyMap<string, string>;
+}
+
+export interface DiscoveredAgentsMd extends LoadedAgentsMd {
+  readonly projectPaths: readonly string[];
 }
 
 export function splitAgentsMdFiles(
@@ -163,8 +167,9 @@ export async function loadAgentsMdForRoots(
   brandHome: string | undefined,
   workDirs: readonly string[],
   personalFs: IHostFileSystem = deps.fs,
-): Promise<LoadedAgentsMd> {
+): Promise<DiscoveredAgentsMd> {
   const discovered: AgentFile[] = [];
+  const projectPaths: string[] = [];
   const seenByFs = new Map<IHostFileSystem, Set<string>>();
   const loadWarnings: string[] = [];
   const warnLoad = (message: string): void => {
@@ -200,10 +205,15 @@ export async function loadAgentsMdForRoots(
     const projectRoot = (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
     const dirs = dirsRootToLeaf(rootWorkDir, projectRoot);
 
+    const collectProject = async (path: string): Promise<boolean> => {
+      if (!(await collect(deps.fs, path))) return false;
+      projectPaths.push(normalize(discovered.at(-1)!.path));
+      return true;
+    };
     for (const dir of dirs) {
-      await collect(deps.fs, dotKimiAgentsMdPath(dir));
+      await collectProject(dotKimiAgentsMdPath(dir));
       for (const fileName of AGENTS_MD_PLAIN_NAMES) {
-        if (await collect(deps.fs, join(dir, fileName))) break;
+        if (await collectProject(join(dir, fileName))) break;
       }
     }
   }
@@ -220,7 +230,7 @@ export async function loadAgentsMdForRoots(
   const warning = loadWarnings.length > 0 ? loadWarnings.join('\n') : undefined;
   const paths = discovered.map((file) => normalize(file.path));
   const files = new Map(discovered.map((file) => [normalize(file.path), file.content]));
-  return { content, warning, paths, files };
+  return { content, warning, paths, files, projectPaths };
 }
 
 export interface AgentsMdWatchRoot {

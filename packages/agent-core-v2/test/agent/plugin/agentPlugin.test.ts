@@ -191,6 +191,8 @@ describe('AgentPluginService plugin session-start wiring', () => {
       onDidChange: sinkChange.event,
       load: async () => {},
       reload: async () => {},
+      set: () => {},
+      remove: () => {},
       list: async () => catalog.listSkills().map(summarizeSkill),
     };
 
@@ -238,6 +240,8 @@ describe('AgentPluginService plugin session-start wiring', () => {
       onDidChange: sinkChange.event,
       load: async () => {},
       reload: async () => {},
+      set: () => {},
+      remove: () => {},
       list: async () => catalog.listSkills().map(summarizeSkill),
     };
 
@@ -280,6 +284,8 @@ describe('AgentPluginService plugin session-start wiring', () => {
       onDidChange: sinkChange.event,
       load: async () => {},
       reload: async () => {},
+      set: () => {},
+      remove: () => {},
       list: async () => catalog.listSkills().map(summarizeSkill),
     };
 
@@ -391,6 +397,8 @@ describe('AgentPluginService plugin-change reminder', () => {
       onDidChange: change.event,
       load: async () => {},
       reload: async () => {},
+      set: () => {},
+      remove: () => {},
       list: async () => catalog.listSkills().map(summarizeSkill),
     };
     return skillCatalog;

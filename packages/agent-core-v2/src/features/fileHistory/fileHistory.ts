@@ -27,6 +27,7 @@ export type FileHistoryChangeStatus = 'added' | 'modified' | 'deleted';
 
 export interface FileHistoryChange {
   readonly path: string;
+  readonly environmentId?: string;
   readonly status: FileHistoryChangeStatus;
   readonly additions: number;
   readonly deletions: number;
@@ -45,13 +46,14 @@ export interface IAgentFileHistoryService {
 
   history(): FileHistoryState;
   settled(): Promise<void>;
-  captureForActiveTurn(path: string): Promise<void>;
+  captureForActiveTurn(path: string, environmentId?: string): Promise<void>;
   changes(turnId: number): Promise<FileHistoryChange[]>;
   turnRecorded(turnId: number): Promise<boolean>;
   contentAt(
     turnId: number,
     path: string,
     phase?: FileHistoryCheckpointPhase,
+    environmentId?: string,
   ): Promise<FileHistoryContent | undefined>;
 }
 

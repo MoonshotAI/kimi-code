@@ -8,6 +8,7 @@ import type {
 } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptLaunchResult, type Turn } from '#/agent/loop/loop';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventService } from '#/app/event/event';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -21,7 +22,7 @@ import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetad
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { isUserActivatableSkillType, type SkillDefinition } from './catalog/types';
-import { promptMetadataTextFromSkill, renderUserSlashSkillPrompt } from './prompt';
+import { promptMetadataTextFromSkill, renderUserSlashSkillPrompt, routedSkillEnvironment } from './prompt';
 import { ISessionSkillCatalog } from './session/skillCatalog';
 import type {
   PromptSkillActivation,
@@ -52,6 +53,7 @@ export class AgentSkillService implements IAgentSkillService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
   ) {}
 
   async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
@@ -78,6 +80,7 @@ export class AgentSkillService implements IAgentSkillService {
           skillArgs,
           skillContent,
           skillSource: skill.source,
+          skillEnvironment: routedSkillEnvironment(skill, this.environment.targets()),
           skillDir: skill.dir,
         }),
       },
@@ -231,6 +234,7 @@ export class AgentSkillService implements IAgentSkillService {
           skillArgs,
           skillContent,
           skillSource: skill.source,
+          skillEnvironment: routedSkillEnvironment(skill, this.environment.targets()),
           skillDir: skill.dir,
         }),
         activationId,

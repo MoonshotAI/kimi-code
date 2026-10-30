@@ -10,11 +10,11 @@ import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView
 import { IAgentPlanService } from '#/features/plan/plan';
 import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   ToolAccesses,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
@@ -30,7 +30,6 @@ export class EditTool implements IEditTool {
   constructor(
     @IFileEditService private readonly editor: IFileEditService,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
     @IAgentPlanService private readonly planService?: IAgentPlanService,
   ) {}
@@ -39,8 +38,10 @@ export class EditTool implements IEditTool {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  async resolveExecution(args: EditInput): Promise<ToolExecution> {
-    const planTarget = await this.planService?.resolveFile(args.path);
+  async resolveExecution(args: EditInput, context?: ToolResolutionContext): Promise<ToolExecution> {
+    const environmentId = context?.environment?.environmentId;
+    const primary = context?.environment?.primary !== false;
+    const planTarget = primary ? await this.planService?.resolveFile(args.path) : undefined;
     if (planTarget !== undefined) {
       const path = planTarget.path;
       return {
@@ -58,15 +59,16 @@ export class EditTool implements IEditTool {
         },
       };
     }
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
+      const roots = this.environment.workspaceRoots(environmentId);
       const view = new EnvironmentWorkspaceView(inspected, {
-        workDir: this.workspaceCtx.workDir,
+        workDir: roots.workDir,
         additionalDirs: [
-          ...this.workspaceCtx.additionalDirs,
-          ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+          ...(roots.additionalDirs ?? []),
+          ...(primary ? this.skillCatalog?.catalog.getSkillRoots() ?? [] : []),
         ],
       });
       const env = view.host;
@@ -94,7 +96,7 @@ export class EditTool implements IEditTool {
             homeDir: env.homeDir,
           }),
         execute: async () => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs']);
+          const lease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
@@ -141,4 +143,5 @@ registerAgentToolService(IEditTool, EditTool, {
   name: 'Edit',
   domain: 'edit',
   requiredEnvironmentCapabilities: ['fs'],
+  environmentScoped: true,
 });

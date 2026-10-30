@@ -1,6 +1,7 @@
 import type { IWaitUntil } from '#/_base/event';
 import type { ToolCall } from '#human/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { EnvironmentTarget } from '#/environment/environment';
 
 import type {
   ExecutableTool,
@@ -17,6 +18,7 @@ export interface ToolExecutionHookContext {
   readonly toolCalls: readonly ToolCall[];
   readonly tool?: ExecutableTool | undefined;
   readonly args: unknown;
+  readonly environment?: EnvironmentTarget;
 }
 
 export interface ResolvedToolExecutionHookContext extends ToolExecutionHookContext {
@@ -40,6 +42,7 @@ export interface WillExecuteToolEvent extends IWaitUntil {
   readonly toolCall: ToolCall;
   readonly execution: RunnableToolExecution;
   readonly args: unknown;
+  readonly environment?: EnvironmentTarget;
 }
 
 export type ToolExecutionOutcome =

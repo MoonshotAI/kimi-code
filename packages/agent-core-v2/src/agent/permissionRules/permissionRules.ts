@@ -1,5 +1,6 @@
 import { createDecorator } from "#/_base/di/instantiation";
 import type { ApprovalResponse } from "#/agent/interaction/approval";
+import type { EnvironmentTarget } from "#/environment/environment";
 
 export interface PermissionApprovalResultRecord {
   readonly turnId: number;
@@ -7,6 +8,7 @@ export interface PermissionApprovalResultRecord {
   readonly toolName: string;
   readonly action: string;
   readonly sessionApprovalRule?: string;
+  readonly environmentId?: string;
   readonly result: ApprovalResponse;
 }
 
@@ -25,7 +27,7 @@ export interface IAgentPermissionRulesService {
   readonly _serviceBrand: undefined;
 
   readonly rules: readonly PermissionRule[];
-  readonly sessionApprovalRulePatterns: readonly string[];
+  sessionApprovalRulePatterns(environment?: EnvironmentTarget): readonly string[];
   addRules(rules: readonly PermissionRule[]): void;
   recordApprovalResult(record: PermissionApprovalResultRecord): void;
 }

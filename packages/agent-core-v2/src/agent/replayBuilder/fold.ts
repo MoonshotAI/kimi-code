@@ -481,6 +481,7 @@ class WireReplayFoldState {
       toolName: record['toolName'] as string,
       action: record['action'] as string,
       sessionApprovalRule: readString(record, 'sessionApprovalRule'),
+      environmentId: readString(record, 'environmentId'),
       result: record['result'] as PermissionApprovalResultRecord['result'],
     };
     this.push({ type: 'approval_result', record: approval }, time);

@@ -4,7 +4,6 @@ import { IConfigService } from '#/app/config/config';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { acquireOrWhenReady, pinnedGeneration, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -13,6 +12,7 @@ import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
   type ToolUpdate,
 } from '#/tool/toolContract';
 import {
@@ -101,7 +101,6 @@ export class BashTool implements IBashTool {
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionContext private readonly ctx: ISessionContext,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
@@ -134,41 +133,34 @@ export class BashTool implements IBashTool {
     return renderedDescription;
   }
 
-  resolveExecution(args: BashInput): ToolExecution {
-    const expectedGeneration = this.reviewedGeneration();
-    const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
-    return {
-      description: args.run_in_background
-        ? `Starting background: ${preview}`
-        : `Running: ${preview}`,
-      display: {
-        kind: 'command',
-        command: args.command,
-        cwd: this.executionCwd(args),
-        description: args.description,
-        language: 'bash',
-      },
-      approvalRule: literalRulePattern(this.name, args.command),
-      matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
-      execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
-        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration),
-    };
-  }
-
-  private reviewedGeneration(): string | undefined {
+  async resolveExecution(args: BashInput, context?: ToolResolutionContext): Promise<ToolExecution> {
+    const environmentId = context?.environment?.environmentId;
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['process'], environmentId);
     try {
-      return pinnedGeneration(this.environment.inspect());
-    } catch {
-      return undefined;
-    }
-  }
-
-  private executionCwd(args: BashInput): string {
-    try {
-      const view = new EnvironmentWorkspaceView(this.environment.inspect(), this.workspaceCtx);
-      return view.resolve(args.cwd ?? view.workDir);
-    } catch {
-      return args.cwd ?? this.ctx.cwd;
+      const expectedGeneration = pinnedGeneration(resolutionLease.environment);
+      const view = new EnvironmentWorkspaceView(
+        resolutionLease.environment,
+        this.environment.workspaceRoots(environmentId),
+      );
+      const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
+      return {
+        description: args.run_in_background
+          ? `Starting background: ${preview}`
+          : `Running: ${preview}`,
+        display: {
+          kind: 'command',
+          command: args.command,
+          cwd: view.resolve(args.cwd ?? view.workDir),
+          description: args.description,
+          language: 'bash',
+        },
+        approvalRule: literalRulePattern(this.name, args.command),
+        matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
+        execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
+          this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration, environmentId),
+      };
+    } finally {
+      resolutionLease.dispose();
     }
   }
 
@@ -197,18 +189,19 @@ export class BashTool implements IBashTool {
     onUpdate?: (update: ToolUpdate) => void,
     onForegroundTaskStart?: (taskId: string) => void,
     expectedGeneration?: string,
+    environmentId?: string,
   ): Promise<ExecutableToolResult> {
     const validationError = this.validateRunRequest(args, signal);
     if (validationError !== undefined) return validationError;
 
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
-    const lease = await acquireOrWhenReady(this.environment, ['process']);
+    const lease = await acquireOrWhenReady(this.environment, ['process'], environmentId);
     if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
       lease.dispose();
       return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
     }
-    const view = new EnvironmentWorkspaceView(lease.environment, this.workspaceCtx);
+    const view = new EnvironmentWorkspaceView(lease.environment, this.environment.workspaceRoots(environmentId));
     const env = view.host;
     const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
     const effectiveCwd = view.resolve(args.cwd ?? view.workDir);
@@ -463,6 +456,7 @@ registerAgentToolService(IBashTool, BashTool, {
   name: 'Bash',
   domain: 'os/backends',
   requiredEnvironmentCapabilities: ['process'],
+  environmentScoped: true,
 });
 
 function formatTimeoutLabel(timeoutMs: number): string {

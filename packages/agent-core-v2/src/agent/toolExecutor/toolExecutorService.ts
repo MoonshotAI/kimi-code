@@ -5,6 +5,7 @@ import { AsyncEmitter, type Event } from '#/_base/event';
 import { defineState } from '#/state/state';
 import type { ContentPart, ToolCall } from '#human/llm/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { EnvironmentTarget } from '#/environment/environment';
 
 import {
   compileToolArgsValidator,
@@ -388,13 +389,20 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
     let execution: ToolExecution;
     try {
-      execution = await call.tool.resolveExecution(call.args);
+      execution = await call.tool.resolveExecution(call.input, { environment: call.environment });
     } catch (error) {
       const output =
         error instanceof PathSecurityError
           ? error.message
           : `Tool "${call.toolName}" failed to resolve execution: ${errorMessage(error)}`;
       return settleError(call.args, output, 'resolution-failed');
+    }
+    if (
+      call.environment?.primary === false &&
+      execution.isError !== true &&
+      (execution.display?.kind === 'command' || execution.display?.kind === 'file_io')
+    ) {
+      execution = { ...execution, display: { ...execution.display, environment: call.environment.environmentId } };
     }
 
     const displayFields = toolCallDisplayFieldsFromExecution(execution);
@@ -427,6 +435,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         toolCall: call.toolCall,
         execution,
         args: call.args,
+        environment: call.environment,
       },
       options.signal,
     );
@@ -640,6 +649,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       toolCalls: [call.toolCall],
       tool: call.kind === 'runnable' ? call.tool : undefined,
       args: call.args,
+      environment: call.kind === 'runnable' ? call.environment : undefined,
       outcome,
       accesses: resolvedAccesses,
       result: result as ExecutableToolResult,
@@ -689,6 +699,8 @@ interface RunnableToolCall {
   readonly toolName: string;
   readonly tool: ExecutableTool;
   readonly args: unknown;
+  readonly input: unknown;
+  readonly environment?: EnvironmentTarget;
 }
 
 interface RejectedToolCall {
@@ -725,6 +737,7 @@ function buildBeforeExecuteContext(
     toolCalls: allCalls,
     tool: call.tool,
     args: call.args,
+    environment: call.environment,
     execution,
   };
 }
@@ -778,7 +791,17 @@ function preflightToolCall(
       output: unavailable,
     };
   }
-  const validationError = validateExecutableToolArgs(tool, parsedArgs.data);
+  const route = toolRegistry.routeEnvironment(toolName, parsedArgs.data);
+  if (route.error !== undefined) {
+    return {
+      kind: 'rejected',
+      toolCall,
+      toolName,
+      args: parsedArgs.data,
+      output: route.error,
+    };
+  }
+  const validationError = validateExecutableToolArgs(tool, route.args);
   if (validationError !== null) {
     return {
       kind: 'rejected',
@@ -788,7 +811,15 @@ function preflightToolCall(
       output: `Invalid args for tool "${toolName}": ${validationError}`,
     };
   }
-  return { kind: 'runnable', toolCall, toolName, tool, args: parsedArgs.data };
+  return {
+    kind: 'runnable',
+    toolCall,
+    toolName,
+    tool,
+    args: parsedArgs.data,
+    input: route.args,
+    environment: route.environment,
+  };
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {

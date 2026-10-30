@@ -197,6 +197,8 @@ function createHarness(options: {
         onDidChange: skillCatalogChange.event,
         load: async () => {},
         reload: async () => {},
+        set: () => {},
+        remove: () => {},
         list: async () => [],
         catalog: {
           getModelSkillListing: () => skillListing.value,
@@ -267,6 +269,7 @@ function createHarness(options: {
       reg.defineInstance(IAgentEnvironmentService, {
         _serviceBrand: undefined,
         onDidChange: () => ({ dispose: () => {} }),
+        targets: () => [{ environmentId: 'local', primary: true }],
         isAvailable: () => true,
         inspect() {
           return this.acquire().environment;

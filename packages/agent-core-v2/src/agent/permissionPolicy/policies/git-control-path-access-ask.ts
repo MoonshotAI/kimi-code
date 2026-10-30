@@ -3,8 +3,6 @@ import { IConfigService } from '#/app/config/config';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { isDangerousCommandGuardEnabled } from '#/agent/permissionRules/configSection';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { ISessionWorkspaceContext as WorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type {
   PermissionPolicy,
   PermissionPolicyResult,
@@ -21,7 +19,6 @@ export class GitControlPathAccessAskPermissionPolicyService implements Permissio
 
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspace: WorkspaceContext,
     @IConfigService private readonly config: IConfigService,
   ) {}
 
@@ -29,11 +26,12 @@ export class GitControlPathAccessAskPermissionPolicyService implements Permissio
     context: ResolvedToolExecutionHookContext,
   ): Promise<PermissionPolicyResult | undefined> {
     if (!isDangerousCommandGuardEnabled(this.config)) return undefined;
-    const cwd = this.workspace.workDir;
-    if (cwd.length === 0) return undefined;
-    const lease = acquireEnvironmentLease(this.environment);
+    const environmentId = context.environment?.environmentId;
+    const lease = acquireEnvironmentLease(this.environment, [], environmentId);
     if (lease === undefined) return undefined;
     try {
+      const cwd = this.environment.workspaceRoots(environmentId).workDir;
+      if (cwd.length === 0) return undefined;
       const pathClass = lease.environment.host?.pathClass;
       if (pathClass === undefined) return undefined;
       const fs = lease.environment.fs;

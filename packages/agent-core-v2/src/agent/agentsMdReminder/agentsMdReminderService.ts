@@ -108,7 +108,7 @@ export class AgentAgentsMdReminderService
       }),
     );
     const handler = async (ctx: ToolDidExecuteContext, next: () => Promise<void>): Promise<void> => {
-      await this.probeAndRemind(ctx);
+      if (ctx.environment?.primary !== false) await this.probeAndRemind(ctx);
       await next();
     };
     this._register(toolExecutor.hooks.onDidExecuteTool.register('agentsMdReminder', handler));

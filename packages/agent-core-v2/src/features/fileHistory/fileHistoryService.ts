@@ -159,13 +159,15 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
     const changes: FileHistoryChange[] = [];
     const lcsBudget = { remaining: LCS_AGGREGATE_CELL_BUDGET };
-    for (const path of paths.toSorted()) {
-      const before = Object.hasOwn(start.entries, path) ? start.entries[path] : undefined;
-      const after = end !== undefined ? end.entries[path] : undefined;
+    for (const pathKey of paths.toSorted()) {
+      const before = Object.hasOwn(start.entries, pathKey) ? start.entries[pathKey] : undefined;
+      const after = end !== undefined ? end.entries[pathKey] : undefined;
+      const environmentId = before?.environmentId;
+      const path = this.entryPath(pathKey, environmentId);
       if (end !== undefined && before?.version === after?.version) continue;
       if (before?.oversize === true && after?.oversize === true) {
         if (before.version !== after.version) {
-          changes.push({ path, status: 'modified', additions: 0, deletions: 0, oversize: true });
+          changes.push({ path, environmentId, status: 'modified', additions: 0, deletions: 0, oversize: true });
         }
         continue;
       }
@@ -178,7 +180,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
           afterBytes = await this.entryBytes(after);
         }
       } else {
-        const current = await this.readCurrent(path);
+        const current = await this.readCurrent(pathKey, environmentId);
         if (current === 'unreadable') continue;
         if (current instanceof Uint8Array) afterBytes = current;
         else if (current === 'missing') liveMissing = true;
@@ -198,7 +200,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
           continue;
         }
         const status = beforeMissing ? 'added' : afterMissing ? 'deleted' : 'modified';
-        changes.push({ path, status, additions: 0, deletions: 0, oversize: true });
+        changes.push({ path, environmentId, status, additions: 0, deletions: 0, oversize: true });
         continue;
       }
       const beforeBytes = await this.entryBytes(before);
@@ -208,11 +210,11 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
         end !== undefined && after !== undefined && after.key !== null && afterBytes === undefined;
       if (beforeLost || afterLost) {
         const status = beforeMissing ? 'added' : afterMissing ? 'deleted' : 'modified';
-        changes.push({ path, status, additions: 0, deletions: 0, binary: true });
+        changes.push({ path, environmentId, status, additions: 0, deletions: 0, binary: true });
         continue;
       }
       const change = diffChange(path, beforeBytes, afterBytes, lcsBudget);
-      if (change !== undefined) changes.push(change);
+      if (change !== undefined) changes.push({ ...change, environmentId });
     }
     return changes;
   }
@@ -221,14 +223,16 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     turnId: number,
     path: string,
     phase: FileHistoryCheckpointPhase = 'start',
+    environmentId?: string,
   ): Promise<FileHistoryContent | undefined> {
-    return this.enqueueValue(() => this.readContentAt(turnId, path, phase));
+    return this.enqueueValue(() => this.readContentAt(turnId, path, phase, environmentId));
   }
 
   private async readContentAt(
     turnId: number,
     path: string,
     phase: FileHistoryCheckpointPhase,
+    environmentId: string | undefined,
   ): Promise<FileHistoryContent | undefined> {
     const state = this.history();
     const index = state.checkpoints.findIndex(
@@ -236,7 +240,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     );
     if (index < 0) return undefined;
     const record = state.checkpoints[index]!;
-    const pathKey = this.pathKey(path);
+    const pathKey = this.entryKey(path, this.recordedEnvironmentId(environmentId));
     let entry = Object.hasOwn(record.entries, pathKey) ? record.entries[pathKey] : undefined;
     if (entry === undefined && phase === 'end') {
       const start = state.checkpoints.find(
@@ -259,7 +263,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   private onWillExecuteTool(event: WillExecuteToolEvent): void {
     const path = editTargetPath(event.execution.display);
     if (path === undefined) return;
-    event.waitUntil(this.enqueue(() => this.capture(path, event.turnId)));
+    event.waitUntil(this.enqueue(() => this.capture(path, event.turnId, event.environment?.environmentId)));
   }
 
   private onSubagentWillExecuteTool(event: WillExecuteToolEvent): void {
@@ -267,13 +271,15 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     if (path === undefined) return;
     const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
     if (main === undefined) return;
-    event.waitUntil(main.accessor.get(IAgentFileHistoryService).captureForActiveTurn(path));
+    event.waitUntil(
+      main.accessor.get(IAgentFileHistoryService).captureForActiveTurn(path, event.environment?.environmentId),
+    );
   }
 
-  captureForActiveTurn(path: string): Promise<void> {
+  captureForActiveTurn(path: string, environmentId?: string): Promise<void> {
     const turnId = this.activeTurnId;
     if (turnId === undefined) return Promise.resolve();
-    return this.enqueue(() => this.capture(path, turnId));
+    return this.enqueue(() => this.capture(path, turnId, environmentId));
   }
 
   private enqueue(op: () => Promise<void>): Promise<void> {
@@ -291,15 +297,16 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     return run;
   }
 
-  private async capture(path: string, turnId: number): Promise<void> {
-    const pathKey = this.pathKey(path);
+  private async capture(path: string, turnId: number, routedEnvironmentId?: string): Promise<void> {
+    const environmentId = this.recordedEnvironmentId(routedEnvironmentId);
+    const pathKey = this.entryKey(path, environmentId);
     const state = this.history();
     const startCheckpoint = state.checkpoints.find(
       (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
     );
     if (startCheckpoint !== undefined && Object.hasOwn(startCheckpoint.entries, pathKey)) return;
 
-    const current = await this.readCurrent(pathKey);
+    const current = await this.readCurrent(pathKey, environmentId);
     if (current === 'unreadable') return;
     const latest = latestEntry(state.checkpoints, pathKey);
     const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
@@ -330,7 +337,12 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
             };
     }
     await this.dispatcher.dispatch(
-      new FileHistoryTracked({ agentId: this.agentCtx.agentId, turnId, path: pathKey, entry }),
+      new FileHistoryTracked({
+        agentId: this.agentCtx.agentId,
+        turnId,
+        path: pathKey,
+        entry: environmentId === undefined ? entry : { ...entry, environmentId },
+      }),
     );
   }
 
@@ -358,7 +370,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     >;
     for (const [pathKey, before] of Object.entries(start.entries)) {
       const nextVersion = maxVersion(state.checkpoints, pathKey) + 1;
-      const current = await this.readCurrent(pathKey);
+      const current = await this.readCurrent(pathKey, before.environmentId);
       if (current === 'unreadable') continue;
       if (current === 'missing') {
         if (before.key !== null || before.oversize === true) {
@@ -466,12 +478,15 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
 
   private async readCurrent(
     pathKey: string,
+    environmentId?: string,
   ): Promise<
     Uint8Array | 'missing' | 'unreadable' | { oversizeBytes: number; mtimeMs?: number }
   > {
+    let workDir: string;
     let lease: EnvironmentLease;
     try {
-      lease = this.environment.acquire(['fs']);
+      workDir = this.environment.workspaceRoots(environmentId).workDir;
+      lease = this.environment.acquire(['fs'], environmentId);
     } catch (error) {
       if (error instanceof EnvironmentError) return 'unreadable';
       throw error;
@@ -481,7 +496,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
       if (fs === undefined) return 'unreadable';
       const path = lease.environment.path;
       if (path === undefined) return 'unreadable';
-      const absolute = resolveWorkspacePath(path, this.workspaceCtx.workDir, pathKey);
+      const absolute = resolveWorkspacePath(path, workDir, this.entryPath(pathKey, environmentId));
       let info;
       try {
         info = await fs.stat(absolute);
@@ -509,6 +524,19 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     } finally {
       lease.dispose();
     }
+  }
+
+  private recordedEnvironmentId(environmentId: string | undefined): string | undefined {
+    const primary = this.environment.targets().find((target) => target.primary);
+    return environmentId === primary?.environmentId ? undefined : environmentId;
+  }
+
+  private entryKey(path: string, environmentId: string | undefined): string {
+    return environmentId === undefined ? this.pathKey(path) : JSON.stringify([environmentId, path]);
+  }
+
+  private entryPath(pathKey: string, environmentId: string | undefined): string {
+    return environmentId === undefined ? pathKey : (JSON.parse(pathKey) as [string, string])[1];
   }
 
   private pathKey(path: string): string {

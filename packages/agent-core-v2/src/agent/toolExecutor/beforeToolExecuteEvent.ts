@@ -2,6 +2,7 @@ import { Emitter } from '#/_base/event';
 import { BugIndicatingError } from '#/errors';
 import type { ToolCall } from '#human/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { EnvironmentTarget } from '#/environment/environment';
 import type {
   ExecutableTool,
   ExecutableToolResult,
@@ -28,6 +29,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
   readonly toolCalls: readonly ToolCall[];
   readonly tool?: ExecutableTool | undefined;
   readonly args: unknown;
+  readonly environment?: EnvironmentTarget;
   readonly execution: RunnableToolExecution;
 
   private _vetoResult: ExecutableToolResult | undefined;
@@ -44,6 +46,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
     this.toolCalls = context.toolCalls;
     this.tool = context.tool;
     this.args = context.args;
+    this.environment = context.environment;
     this.execution = context.execution;
   }
 

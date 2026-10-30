@@ -97,8 +97,8 @@ function createReadTool(
     ),
     { host: env, fs },
   );
-  const resolver = stubAgentEnvironment(environment);
-  return new ReadTool(resolver, workspace, skillCatalog, truncation, stubConfigService(), profile, toolPolicy, toolRegistry);
+  const resolver = stubAgentEnvironment(environment, { workDir: workspace.workDir, additionalDirs: workspace.additionalDirs });
+  return new ReadTool(resolver, skillCatalog, truncation, stubConfigService(), profile, toolPolicy, toolRegistry);
 }
 
 function createSpiedFs(content: string) {
@@ -193,6 +193,7 @@ function createRegistryBackedTool(environmentValue: FakeEnvironment) {
   const environment: IAgentEnvironmentService = {
     _serviceBrand: undefined,
     onDidChange: (listener) => registry.onDidChange(() => listener()),
+    targets: () => [{ environmentId: 'local', primary: true }],
     isAvailable: (required = []) => {
       try {
         const lease = registry.acquire(binding, required);
@@ -209,7 +210,6 @@ function createRegistryBackedTool(environmentValue: FakeEnvironment) {
   };
   const tool = new ReadTool(
     environment,
-    stubWorkspaceContext('/workspace'),
     { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
     stubToolResultTruncationService(),
     stubConfigService(),

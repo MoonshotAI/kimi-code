@@ -81,6 +81,23 @@ Resuming reads the persisted environment id and working directory and reconnects
 
 The footer shows the active environment's identity before the working directory; `local` renders nothing. A disconnected environment is shown with its failure reason, and the local git status slot is hidden for remote sessions. Approval prompts display the target environment next to the command or path, and `@` file completion queries the target filesystem.
 
+## Multiple environments in one session
+
+The experimental multi-environment feature lets `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, and `ReadMediaFile` choose a configured environment for each call. It is disabled by default. Enable it in `config.toml` alongside your [environment declarations](#declaring-environments):
+
+```toml
+[experimental]
+multi_environment = true
+```
+
+You can instead set `KIMI_CODE_EXPERIMENTAL_MULTI_ENVIRONMENT=true` for one process. When at least two environments are available, these tools gain an optional `environment` argument. Omitting it uses the session's primary environment; an unknown id fails the call rather than running it elsewhere. This enables the model to select environments — it does not add a manual environment selector to the TUI.
+
+All configured environments are candidates. The first call to another environment connects it lazily and uses its `defaultCwd`, or the working directory reported by the target when `defaultCwd` is unset. The primary keeps its existing working directory and additional directories. For example, a local session can inspect a remote checkout with `Read` using `environment = "dev-box"`, then run its tests with `Bash` in the same environment.
+
+Approval prompts show the environment for each call, and "allow for this session" approvals are remembered separately per environment. Tools outside the list above keep using the primary environment or the local host as described elsewhere on this page.
+
+The system prompt still describes only the primary environment. Once another environment connects, the session reads that environment's project context once: the `AGENTS.md` files found from its working directory are listed for the model, which is asked to read them before modifying files there, and its project skills join the session's skill list as `<skill>@<environment>` (for example `deploy@dev-box`). Environments that have not connected yet contribute nothing until their first use. When the primary environment is remote, user-level skills from the local host are marked as belonging to `local`, so the model reads their supporting files there.
+
 ## Disconnects and reconnecting
 
 Each environment id keeps one connection for the whole process. Workspaces bound to that id share it; a different id, including another id on the same machine, keeps its own. Two layers decide when the connection is dead: the SSH launcher's transport keepalive (`ServerAliveInterval`), and a protocol-level liveness probe — after about 30 seconds of idle time the client sends a `ping` to the executor, and no response within 10 seconds means the connection is dead. Any inbound traffic resets the idle clock so active transfers are never probed, and executors too old to know `ping` disable the probe automatically. A closed local pipe is also a disconnect signal. When the connection drops — network loss, a stopped container, or the executor exiting — every workspace using that id goes `disconnected` at once, and the processes it started on the target end with the connection.

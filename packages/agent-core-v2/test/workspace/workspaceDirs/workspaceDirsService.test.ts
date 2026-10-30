@@ -78,6 +78,7 @@ describe('WorkspaceDirsService (registry source)', () => {
     cwd: string,
     workspaceId: string,
     kind: 'managed' | 'implicit' = 'implicit',
+    readsRegistry = true,
   ): WorkspaceDirsService {
     const bootstrap = stubBootstrap(homeDir);
     const hostFs = new HostFileSystem();
@@ -97,6 +98,7 @@ describe('WorkspaceDirsService (registry source)', () => {
         persistence,
         noopLog,
         new WorkspaceStateService(),
+        readsRegistry,
       ),
     );
   }
@@ -118,6 +120,15 @@ describe('WorkspaceDirsService (registry source)', () => {
     await outsider.ready;
     expect(outsider.additionalDirs).toEqual([]);
     expect(outsider.sessionInfo().primaryByWorkspace).toEqual({});
+  });
+
+  it('ignores the local registry for a view of another environment that shares a registered path', async () => {
+    const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
+
+    const remoteView = createDirs(dirA, project.id, 'managed', false);
+    await remoteView.ready;
+    expect(remoteView.additionalDirs).toEqual([]);
+    expect(remoteView.sessionInfo().primaryByWorkspace).toEqual({});
   });
 
   it('keeps same-root managed workspaces scoped to their workspace id', async () => {
