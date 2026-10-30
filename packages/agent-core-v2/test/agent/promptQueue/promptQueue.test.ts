@@ -6,6 +6,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPromptQueueService, type PromptQueueSnapshot } from '#/agent/promptQueue/promptQueue';
 import { ErrorCodes } from '#/errors';
 import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
+import { IWireService } from '#/wire/wire';
 import type { UserEntry } from '#human/agent/turn';
 
 import {
@@ -282,6 +283,33 @@ describe('AgentPromptQueueService', () => {
     await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
     await loop.settled();
     expect(prepare).toHaveBeenCalledTimes(2);
+  });
+
+  it('starts the next queued input only after the previous turn has been torn down', async () => {
+    setup();
+    respond(2);
+    const release = await startHeldTurn();
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue' });
+    const wire = ctx.get(IWireService);
+    const drainPersisted = wire.drainPersisted.bind(wire);
+    let finishDrain!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finishDrain = resolve;
+    });
+    const drain = vi.spyOn(wire, 'drainPersisted').mockImplementation(async () => {
+      await gate;
+      await drainPersisted();
+    });
+
+    release();
+    await vi.waitFor(() => expect(drain).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(loop.canLaunchPrompt()).toBe(false);
+    expect(launched).toEqual(['first']);
+
+    finishDrain();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
+    await loop.settled();
   });
 
   it('keeps a queued prompt and pauses the queue with a warning when it cannot start', async () => {

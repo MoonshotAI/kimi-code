@@ -167,6 +167,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private machineTurnSuppressed = false;
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
+  private endingTurns = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
   private engine: MachineEngine | undefined;
 
@@ -987,6 +988,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       !this.disposing &&
       this.quiescenceDepth === 0 &&
       this.active === undefined &&
+      this.endingTurns === 0 &&
       this.pendingMachineTurn === undefined &&
       !this.hasPendingRequests()
     );
@@ -2191,6 +2193,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private async endTurn(turn: ActiveTurn, result: TurnResult): Promise<void> {
     if (this.active !== turn) return;
     this.active = undefined;
+    this.endingTurns += 1;
+    try {
+      await this.finishTurn(turn, result);
+    } finally {
+      this.endingTurns -= 1;
+    }
+    this.maybeSettle();
+  }
+
+  private async finishTurn(turn: ActiveTurn, result: TurnResult): Promise<void> {
     this.disarmTurnWatch();
     await this.wire.drainPersisted().catch(() => undefined);
     for (const nudge of this.nudges.slice(this.nudgeCursor)) {
@@ -2261,7 +2273,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.activeRequestTrace = undefined;
     this.lastRequestId = undefined;
     turn.result.resolve(result);
-    this.maybeSettle();
   }
 
   private emitStepInterrupted(
