@@ -69,6 +69,7 @@ describe('WorkspaceMcpConfigService', () => {
   let sectionChanges: Emitter<ConfigSectionChangedEvent>;
   let changes: McpServersChange[];
   let cancelAuthorization: Mock<(serverName: string, serverUrl: string | URL) => Promise<void>>;
+  let invalidate: Mock<(serverName: string, serverUrl: string | URL) => Promise<void>>;
 
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-cwd-'));
@@ -83,6 +84,7 @@ describe('WorkspaceMcpConfigService', () => {
     sectionChanges = disposables.add(new Emitter<ConfigSectionChangedEvent>());
     changes = [];
     cancelAuthorization = vi.fn(async () => undefined);
+    invalidate = vi.fn(async () => undefined);
   });
 
   afterEach(async () => {
@@ -128,7 +130,7 @@ describe('WorkspaceMcpConfigService', () => {
           onDidChange: trustFlips.event as IWorkspaceTrust['onDidChange'],
         });
         reg.definePartialInstance(IMcpConfigStore, { onDidWrite: storeWrites.event });
-        reg.definePartialInstance(IMcpOAuthService, { cancelAuthorization });
+        reg.definePartialInstance(IMcpOAuthService, { cancelAuthorization, invalidate });
         reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);
       },
     });
@@ -389,6 +391,8 @@ describe('WorkspaceMcpConfigService', () => {
 
     expect(cancelAuthorization).toHaveBeenCalledOnce();
     expect(cancelAuthorization).toHaveBeenCalledWith('alpha', url);
+    expect(invalidate).toHaveBeenCalledOnce();
+    expect(invalidate).toHaveBeenCalledWith('alpha', url);
   });
 
   it('cancels the previous remote authorization when a plugin server is disabled', async () => {
@@ -406,6 +410,7 @@ describe('WorkspaceMcpConfigService', () => {
 
     expect(cancelAuthorization).toHaveBeenCalledOnce();
     expect(cancelAuthorization).toHaveBeenCalledWith('alpha', url);
+    expect(invalidate).not.toHaveBeenCalled();
   });
 
   it('warns and continues removing the plugin server when authorization cleanup fails', async () => {

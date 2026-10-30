@@ -234,6 +234,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     }
     for (const name of remove) {
       await this.cancelAuthorization(name, this.current[name]);
+      await this.invalidateAuthorization(name, this.current[name]);
     }
     for (const [name, config] of Object.entries(upsert)) {
       if (config.enabled === false) await this.cancelAuthorization(name, this.current[name]);
@@ -252,6 +253,18 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       await this.oauth.cancelAuthorization(name, config.url);
     } catch (error) {
       this.log.warn('mcp oauth authorization cleanup failed', { name, error });
+    }
+  }
+
+  private async invalidateAuthorization(
+    name: string,
+    config: McpServerConfig | undefined,
+  ): Promise<void> {
+    if (config === undefined || !('url' in config)) return;
+    try {
+      await this.oauth.invalidate(name, config.url);
+    } catch (error) {
+      this.log.warn('mcp oauth credential cleanup failed', { name, error });
     }
   }
 }
