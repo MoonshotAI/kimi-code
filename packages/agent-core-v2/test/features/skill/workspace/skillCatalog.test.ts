@@ -13,6 +13,7 @@ import {
 } from '#/_base/di/scope';
 import { AsyncEmitter, Emitter, Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IRegionService } from '#/app/region/region';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import type { PluginReloadEvent } from '#/app/plugin/types';
@@ -146,6 +147,7 @@ function pluginStub(
     getPluginInfo: async () => {
       throw new Error('getPluginInfo is not used by these tests');
     },
+    previewPlugin: async () => ({ skills: [], mcpServers: [] }),
     listPluginCommands: async () => [],
     checkUpdates: async () => [],
     pluginSkillRoots: async () => skillRoots,
@@ -1043,6 +1045,11 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IConfigService, configStub()),
       stubPair(IProviderService, stubProviderService()),
+      stubPair(IRegionService, {
+        _serviceBrand: undefined,
+        current: () => ({ region: 'mainland-cn', source: 'default' }),
+        getRegionAsync: async () => 'mainland-cn',
+      } satisfies IRegionService),
       stubPair(ITelemetryService, noopTelemetryService),
     ]);
     const ws = workspaceContextStub('/work');

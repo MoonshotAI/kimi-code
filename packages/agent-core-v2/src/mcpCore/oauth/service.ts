@@ -366,6 +366,17 @@ export class McpOAuthService {
     return flow.attach();
   }
 
+  async cancelAuthorization(serverName: string, serverUrl: string | URL): Promise<void> {
+    const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
+    const active = this.activeAuthorizations.get(storeKey);
+    if (active === undefined) return;
+    this.activeAuthorizations.delete(storeKey);
+    await active.serverRef.current?.close().catch(() => undefined);
+    active.controller.abort();
+    const flow = await active.started.catch(() => undefined);
+    await flow?.cancelUnderlying();
+  }
+
   private async startAuthorizationFlow(
     serverName: string,
     serverUrl: string | URL,

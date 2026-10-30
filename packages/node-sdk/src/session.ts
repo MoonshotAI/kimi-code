@@ -22,6 +22,7 @@ import type {
   GetCronTasksResult,
   GoalSnapshot,
   GoalToolResult,
+  InstallPluginInput,
   JsonObject,
   McpServerConfig,
   McpServerInfo,
@@ -678,9 +679,9 @@ export class Session {
     return this.rpc.listPlugins();
   }
 
-  async installPlugin(source: string): Promise<PluginSummary> {
+  async installPlugin(input: string | InstallPluginInput): Promise<PluginSummary> {
     this.ensureOpen();
-    return this.rpc.installPlugin(source);
+    return this.rpc.installPlugin(input);
   }
 
   async setPluginEnabled(id: string, enabled: boolean): Promise<void> {

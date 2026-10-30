@@ -72,6 +72,7 @@ export const ErrorCodes = {
 
   PLUGIN_NOT_FOUND: 'plugin.not_found',
   PLUGIN_LOAD_FAILED: 'plugin.load_failed',
+  PLUGIN_CATALOG_CHANGED: 'plugin.catalog_changed',
 
   REQUEST_INVALID: 'request.invalid',
   REQUEST_WORK_DIR_REQUIRED: 'request.work_dir_required',
@@ -433,6 +434,12 @@ export const KIMI_ERROR_INFO = {
     retryable: true,
     public: true,
     action: 'Fix the installed.json file under $KIMI_CODE_HOME/plugins/ and run /plugins reload.',
+  },
+  'plugin.catalog_changed': {
+    title: 'Plugin marketplace entry changed',
+    retryable: true,
+    public: true,
+    action: 'Refresh the plugin marketplace and retry with the current version.',
   },
 
   'request.invalid': {

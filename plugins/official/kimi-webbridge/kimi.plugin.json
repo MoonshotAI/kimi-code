@@ -1,6 +1,6 @@
 {
   "$schema": "https://kimi.com/schemas/kimi.plugin.schema.json",
-  "name": "kimi-webbridge",
+  "name": "kimi-browser-extension",
   "version": "2.0.11",
   "description": "Control your real browser (with your login sessions) from Kimi Code via the local Kimi Browser Extension daemon — navigate, click, type, read pages, and screenshot any website.",
   "keywords": [

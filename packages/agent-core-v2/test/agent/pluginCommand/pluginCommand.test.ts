@@ -35,6 +35,7 @@ function pluginServiceStub(commands: readonly PluginCommandDef[]): IPluginServic
     getPluginInfo: async () => {
       throw new Error('getPluginInfo is not used by these tests');
     },
+    previewPlugin: async () => ({ skills: [], mcpServers: [] }),
     listPluginCommands: async () => commands,
     checkUpdates: async () => [],
     pluginSkillRoots: async () => [],

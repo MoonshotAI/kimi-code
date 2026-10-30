@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -108,13 +109,24 @@ async function rewriteMarketplaceJson(raw, pluginsRoot) {
   const plugins = await Promise.all(
     parsed.plugins.map(async (entry) => {
       if (!isRecord(entry) || typeof entry.source !== 'string') return entry;
-      if (!isLocalRelativeSource(entry.source)) return entry;
-      const sourcePath = resolveInsideRoot(pluginsRoot, entry.source);
-      if (!(await isDirectory(sourcePath))) return entry;
-      // Stamp the version from the plugin's real manifest so "latest" stays truthful.
-      const version = await readPluginManifestVersion(sourcePath);
-      const withVersion = version !== undefined ? { ...entry, version } : entry;
-      return { ...withVersion, source: withZipExtension(withVersion.source) };
+      let source = entry.source;
+      let bytes;
+      if (isLocalRelativeSource(source)) {
+        const sourcePath = resolveInsideRoot(pluginsRoot, source);
+        if (await isDirectory(sourcePath)) {
+          bytes = await zipBuffer(sourcePath);
+          source = withZipExtension(source);
+          const version = await readPluginManifestVersion(sourcePath);
+          if (version !== undefined) entry = { ...entry, version };
+        } else {
+          bytes = await readFile(sourcePath);
+        }
+      } else {
+        const response = await fetch(source, { signal: AbortSignal.timeout(30_000) });
+        if (!response.ok) throw new Error(`Failed to download marketplace source ${source}: HTTP ${response.status}`);
+        bytes = Buffer.from(await response.arrayBuffer());
+      }
+      return { ...entry, source, sha256sum: sha256(bytes) };
     }),
   );
 
@@ -137,13 +149,8 @@ async function servePluginZip(res, pluginsRoot, pathname, headOnly) {
     return;
   }
 
-  const zipfile = new yazl.ZipFile();
-  zipfile.outputStream.on('error', (error) => {
-    res.destroy(error);
-  });
-  zipfile.outputStream.pipe(res);
-  await addDirectoryToZip(zipfile, sourceRoot, basename(sourceRoot));
-  zipfile.end();
+  const bytes = await zipBuffer(sourceRoot);
+  res.end(bytes);
 }
 
 async function serveStaticFile(res, pluginsRoot, pathname, headOnly) {
@@ -178,6 +185,24 @@ async function addDirectoryToZip(zipfile, root, zipRoot) {
       zipfile.addFile(absolutePath, zipPath);
     }
   }
+}
+
+async function zipBuffer(root) {
+  const zipfile = new yazl.ZipFile();
+  const chunks = [];
+  zipfile.outputStream.on('data', (chunk) => chunks.push(chunk));
+  const done = new Promise((resolveDone, rejectDone) => {
+    zipfile.outputStream.on('end', resolveDone);
+    zipfile.outputStream.on('error', rejectDone);
+  });
+  await addDirectoryToZip(zipfile, root, basename(root));
+  zipfile.end();
+  await done;
+  return Buffer.concat(chunks);
+}
+
+function sha256(buffer) {
+  return createHash('sha256').update(buffer).digest('hex');
 }
 
 function resolveInsideRoot(root, input) {

@@ -699,6 +699,29 @@ describe('McpOAuthService single-flight refresh', () => {
 });
 
 describe('McpOAuthService interactive flow serialization', () => {
+  it('cancels an active authorization by server credential without exchanging tokens', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+
+    const flow = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const completion = flow.complete({ timeoutMs: 10_000 });
+    void completion.catch(() => undefined);
+    await fixture.service.cancelAuthorization(SERVER_NAME, SERVER_URL);
+
+    await expect(completion).rejects.toThrow(/callback listener closed/);
+    expect(authServer.counts.exchange).toBe(0);
+    await expect(
+      fixture.service.cancelAuthorization(SERVER_NAME, SERVER_URL),
+    ).resolves.toBeUndefined();
+
+    const next = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    expect(next.authorizationUrl.toString()).not.toBe(flow.authorizationUrl.toString());
+    await next.cancel();
+  }, 15000);
+
   it('closes the callback listener when stale registration cleanup fails', async () => {
     const memory = createMemoryMcpOAuthStore();
     const store: McpOAuthStore = {

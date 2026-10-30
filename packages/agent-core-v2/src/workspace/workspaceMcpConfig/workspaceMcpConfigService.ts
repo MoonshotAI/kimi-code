@@ -10,8 +10,10 @@ import { IConfigService } from '#/app/config/config';
 import { loadMcpServers, resolveMcpJsonPaths } from '#/app/mcpConfig/configLoader';
 import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
+import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
@@ -49,6 +51,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IWorkspaceTrust private readonly trust: IWorkspaceTrust,
     @IMcpConfigStore mcpConfigStore: IMcpConfigStore,
+    @IMcpOAuthService private readonly oauth: McpOAuthService,
   ) {
     super();
     this.ready = this.initialize().catch((error: unknown) => {
@@ -229,9 +232,40 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     for (const name of Object.keys(this.current)) {
       if (!Object.hasOwn(next, name)) remove.push(name);
     }
+    for (const name of remove) {
+      await this.cancelAuthorization(name, this.current[name]);
+      await this.invalidateAuthorization(name, this.current[name]);
+    }
+    for (const [name, config] of Object.entries(upsert)) {
+      if (config.enabled === false) await this.cancelAuthorization(name, this.current[name]);
+    }
     this.current = next;
     if (Object.keys(upsert).length === 0 && remove.length === 0) return;
     await this.changeEmitter.fireAsync({ upsert, remove }, NO_ABORT);
+  }
+
+  private async cancelAuthorization(
+    name: string,
+    config: McpServerConfig | undefined,
+  ): Promise<void> {
+    if (config === undefined || !('url' in config)) return;
+    try {
+      await this.oauth.cancelAuthorization(name, config.url);
+    } catch (error) {
+      this.log.warn('mcp oauth authorization cleanup failed', { name, error });
+    }
+  }
+
+  private async invalidateAuthorization(
+    name: string,
+    config: McpServerConfig | undefined,
+  ): Promise<void> {
+    if (config === undefined || !('url' in config)) return;
+    try {
+      await this.oauth.invalidate(name, config.url);
+    } catch (error) {
+      this.log.warn('mcp oauth credential cleanup failed', { name, error });
+    }
   }
 }
 

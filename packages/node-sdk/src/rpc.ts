@@ -38,6 +38,7 @@ import type {
   ImportCustomRegistryOptions,
   ImportCustomRegistryResult,
   GetCronTasksResult,
+  InstallPluginInput,
   GlobalMcpServerAuthStatus,
   McpManagedServerInfo,
   McpServerConfig,
@@ -464,7 +465,7 @@ export abstract class SDKRpcClientBase {
 
   abstract listPlugins(): Promise<readonly PluginSummary[]>;
 
-  abstract installPlugin(source: string): Promise<PluginSummary>;
+  abstract installPlugin(input: string | InstallPluginInput): Promise<PluginSummary>;
 
   abstract setPluginEnabled(id: string, enabled: boolean): Promise<void>;
 

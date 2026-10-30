@@ -1,6 +1,6 @@
 import { ErrorCodes, type HostUiCapability } from '@moonshot-ai/kimi-code-sdk';
 
-import { currentKimiProfile } from '#/utils/region';
+import { currentKimiManagedRuntimeAuth, currentKimiProfile } from '#/utils/region';
 
 export const PRODUCT_NAME = 'Kimi Code';
 export const CLI_COMMAND_NAME = 'kimi';
@@ -120,19 +120,12 @@ export function kimiCodeCdnCanaryChannelUrl(): string {
 export function kimiCodeCdnBinariesBase(): string {
   return `${kimiCodeCdnBase()}/binaries`;
 }
-// The marketplace env override name lives in the shared agent-core-v2 plugin
-// domain (kap-server consumes it from there). Deep-path import: this module is
-// evaluated on every CLI invocation, so it must not pull in the engine root.
 export { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV } from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
-// The CLI-side default catalog derives from the current region profile; the
-// env override above takes priority at the call site.
 export function kimiCodePluginMarketplaceUrl(): string {
-  return `${kimiCodeCdnBase()}/plugins/marketplace.json`;
+  const auth = currentKimiManagedRuntimeAuth();
+  const baseUrl = (auth.baseUrl ?? currentKimiProfile().baseUrl).trim().replace(/\/+$/, '');
+  return `${baseUrl}/plugins/marketplace`;
 }
-// Bound on each background "latest release" lookup when the TUI fills in
-// marketplace versions. Without it a stalled connection to github.com hangs
-// the version phase for undici's default header timeout (300s).
-export const MARKETPLACE_VERSION_LOOKUP_TIMEOUT_MS = 5000;
 export const INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS = 10_000;
 // Official plugins whose usage bills against the user's plan quota. Installing
 // one of these shows a quota note after the install result.

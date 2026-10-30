@@ -276,7 +276,7 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 | --- | --- |
 | `name` | 必填，作为 plugin id，必须匹配 `[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*(@[A-Za-z0-9_-]+)?` |
 | `version`、`description`、`keywords`、`author`、`homepage`、`license` | 展示元数据 |
-| `interface` | 在 `/plugins` 中展示的字段：`displayName`、`shortDescription`、`longDescription`、`developerName`、`websiteURL` |
+| `interface` | 在 `/plugins` 中展示的字段：`displayName`、`shortDescription`、`longDescription`、`developerName`、`websiteURL`；另见下方的能力展示覆盖 |
 | `skills` | 一个或多个 `./` 路径，必须位于 plugin 根目录内。省略时根目录的 `SKILL.md` 被当作单个 Skill root |
 | `agents` | 一个或多个 `./` 路径，必须位于 plugin 根目录内，指向含有 [Agent 文件](./agents.md#自定义-agent) 的目录。省略时若根目录存在 `agents/` 目录则自动采用 |
 | `sessionStart.skill` | 在新会话或恢复会话开始时，把指定 plugin Skill 加载到 main agent |
@@ -286,6 +286,12 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 | `mcpServers` | MCP server 声明，默认启用，可从 `/plugins` 中禁用 |
 | `hooks` | 在 plugin 启用期间于生命周期事件上运行的 hook 规则，见 [插件中的 Hooks](#插件中的-hooks) |
 | `commands` | 一个或多个 `./` 路径，指向目录或 `.md` 文件，把其中的 Markdown 文件注册为斜杠命令，见 [插件斜杠命令](#插件斜杠命令) |
+
+`interface.mcpOverrides` 以 `mcpServers` 中的服务键为键，可为对应 MCP 服务提供展示用的 `displayName`、`description` 和 `iconUrl`。这些字段不改变 MCP 服务名称或运行配置。
+
+`interface.skillOverrides` 以技能目录名为键，可为对应技能提供展示用的 `displayName` 和 `description`。它们只影响插件信息展示，不改变技能的调用名称或 `SKILL.md` 内容。
+
+`interface.defaultLocale` 声明 `interface` 默认文案的语言。`interface.locales` 可指向插件根目录内的翻译目录（例如 `./locales/`），其中的 `<语言>.json` 文件（例如 `en-US.json`）可提供上述展示字段及两类 overrides。读取插件详情或预览时可指定 `locale`，匹配的翻译用于能力展示，未提供的字段回退到默认 `interface`。
 
 `tools`、`apps`、`inject`、`configFile` 等不支持的运行时字段会显示为 diagnostics 并被忽略。
 

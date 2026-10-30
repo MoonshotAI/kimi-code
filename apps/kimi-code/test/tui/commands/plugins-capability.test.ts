@@ -1,13 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { log } from '@moonshot-ai/kimi-code-sdk';
+import {
+  log,
+  type InstallPluginInput,
+  type PluginSummary,
+} from '@moonshot-ai/kimi-code-sdk';
 import { resetCapabilitiesCache, setCapabilities, type Component } from '@moonshot-ai/pi-tui';
 
 import { __pluginsCommandInternals } from '#/tui/commands/plugins';
 import { NoticeMessageComponent } from '#/tui/components/messages/status-message';
+import { capabilityIdForMarketplaceEntry } from '#/tui/utils/capability-marketplace';
 
 const {
-  isCapabilityEntry,
   installCapabilityFromPanel,
+  installMarketplaceEntryFromPanel,
+  installPluginFromSource,
   isDefaultMarketplaceCatalog,
   pollCapabilityInstall,
   removePlugin,
@@ -19,20 +25,45 @@ function fakeHost(overrides: {
     steps?: readonly unknown[];
     install: { running: boolean; step?: string; percent?: number; error?: string };
   }>;
+  installed?: readonly PluginSummary[];
 }) {
   const statuses: string[] = [];
   const notices: { title: string; detail?: string }[] = [];
   const renders: number[] = [];
   const transcriptEntries: Component[] = [];
+  const installed = overrides.installed ?? [];
   const installCapability = vi.fn(() => Promise.resolve());
+  const installPlugin = vi.fn((input: InstallPluginInput): Promise<PluginSummary> => {
+    const marketplace = 'marketplaceId' in input;
+    const id = marketplace ? input.marketplaceId : 'custom-plugin';
+    return Promise.resolve({
+      id,
+      displayName: id,
+      version: marketplace ? input.expectedVersion : '1.0.0',
+      enabled: true,
+      state: 'ok',
+      skillCount: 0,
+      mcpServerCount: 0,
+      enabledMcpServerCount: 0,
+      hookCount: 0,
+      commandCount: 0,
+      hasErrors: false,
+      source: marketplace ? 'zip-url' : 'local-path',
+      originalSource: marketplace
+        ? 'https://code.kimi.com/kimi-code/plugins/official/demo.zip'
+        : undefined,
+      origin: marketplace ? 'marketplace' : 'custom',
+      installedAt: '2026-01-01T00:00:00.000Z',
+    });
+  });
   const getCapability =
     overrides.capabilityStatus ??
     (() => Promise.resolve({ state: 'ready', steps: [], install: { running: false } }));
   const host = {
-    // Session-less (lazy session): plugin and capability calls fall back to
-    // the harness facade.
     session: undefined,
     harness: {
+      listPlugins: () => Promise.resolve(installed),
+      installPlugin,
       removePlugin: () => Promise.resolve(),
       getCapability,
       installCapability,
@@ -54,13 +85,41 @@ function fakeHost(overrides: {
     },
     restoreEditor: () => undefined,
     state: {
+      appState: { workDir: '/workspace' },
       ui: { requestRender: () => renders.push(1) },
       transcriptContainer: {
         addChild: (entry: Component) => transcriptEntries.push(entry),
       },
     },
   };
-  return { host: host as never, statuses, notices, renders, transcriptEntries, installCapability };
+  return {
+    host: host as never,
+    statuses,
+    notices,
+    renders,
+    transcriptEntries,
+    installCapability,
+    installPlugin,
+  };
+}
+
+function installedPlugin(id: string, version = '1.0.0'): PluginSummary {
+  return {
+    id,
+    displayName: id,
+    version,
+    enabled: true,
+    state: 'ok',
+    skillCount: 0,
+    mcpServerCount: 0,
+    enabledMcpServerCount: 0,
+    hookCount: 0,
+    commandCount: 0,
+    hasErrors: false,
+    source: 'local-path',
+    origin: 'custom',
+    installedAt: '2026-01-01T00:00:00.000Z',
+  };
 }
 
 function fakePanel() {
@@ -106,24 +165,137 @@ describe('plugins command capability surface', () => {
     resetCapabilitiesCache();
   });
 
-  it('routes built-in entries through capabilities', () => {
-    expect(
-      isCapabilityEntry({ id: 'kimi-cu', source: 'capability:kimi-cu', builtIn: true } as never),
-    ).toBe(true);
-    expect(
-      isCapabilityEntry({
-        id: 'kimi-webbridge',
-        source: 'capability:kimi-webbridge',
-        builtIn: true,
-      } as never),
-    ).toBe(true);
-    expect(
-      isCapabilityEntry({ id: 'kimi-cu', source: 'https://example.test/plugin.zip' } as never),
-    ).toBe(false);
-    // A forged capability: source without the parser-proof flag is a plain row.
-    expect(isCapabilityEntry({ id: 'kimi-cu', source: 'capability:kimi-cu' } as never)).toBe(
-      false,
+  it('maps only known default-catalog entries to capabilities', () => {
+    expect(capabilityIdForMarketplaceEntry('kimi-browser-extension', true)).toBe('kimi-webbridge');
+    expect(capabilityIdForMarketplaceEntry('kimi-webbridge', true)).toBeUndefined();
+    expect(capabilityIdForMarketplaceEntry('kimi-cu', true)).toBe('kimi-cu');
+    expect(capabilityIdForMarketplaceEntry('kimi-cu-win', true)).toBe('kimi-cu');
+    expect(capabilityIdForMarketplaceEntry('kimi-browser-extension', false)).toBeUndefined();
+    expect(capabilityIdForMarketplaceEntry('kimi-cu', false)).toBeUndefined();
+    expect(capabilityIdForMarketplaceEntry('superpowers', true)).toBeUndefined();
+  });
+
+  it('installs ordinary marketplace entries by id and expected version', async () => {
+    const { host, installCapability, installPlugin } = fakeHost({});
+    await installMarketplaceEntryFromPanel(
+      host,
+      fakePanel().panel,
+      {
+        id: 'demo',
+        displayName: 'Demo',
+        version: '2.0.0',
+        source: 'https://code.kimi.com/kimi-code/plugins/official/demo.zip',
+      } as never,
+      true,
     );
+
+    expect(installPlugin).toHaveBeenCalledWith({
+      marketplaceId: 'demo',
+      expectedVersion: '2.0.0',
+      migrateFrom: undefined,
+      marketplaceSource: undefined,
+    });
+    expect(installCapability).not.toHaveBeenCalled();
+  });
+
+  it('reports a marketplace entry with no version without installing', async () => {
+    const { host, installPlugin, statuses } = fakeHost({});
+    await installMarketplaceEntryFromPanel(
+      host,
+      fakePanel().panel,
+      {
+        id: 'demo',
+        displayName: 'Demo',
+        source: 'https://code.kimi.com/kimi-code/plugins/official/demo.zip',
+      } as never,
+      true,
+    );
+
+    expect(installPlugin).not.toHaveBeenCalled();
+    expect(statuses).toContain(
+      'Failed to install Demo: Marketplace plugin "demo" has no version in the current catalog',
+    );
+  });
+
+  it('installs custom sources with a source input', async () => {
+    const { host, installCapability, installPlugin } = fakeHost({});
+    await installPluginFromSource(host, './demo');
+
+    expect(installPlugin).toHaveBeenCalledWith({ source: '/workspace/demo' });
+    expect(installCapability).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['kimi-browser-extension', 'kimi-webbridge'],
+    ['kimi-cu-win', 'kimi-cu'],
+  ] as const)('dispatches %s to the %s capability', async (entryId, capabilityId) => {
+    const { host, installCapability, installPlugin } = fakeHost({});
+    await installMarketplaceEntryFromPanel(
+      host,
+      fakePanel().panel,
+      {
+        id: entryId,
+        displayName: entryId,
+        version: '1.0.0',
+        source: 'https://example.test/plugin.zip',
+      } as never,
+      true,
+    );
+
+    expect(installCapability).toHaveBeenCalledWith(capabilityId);
+    expect(installPlugin).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale legacy WebBridge selection without a ZIP install fallback', async () => {
+    const { host, installCapability, installPlugin } = fakeHost({});
+    await expect(
+      installMarketplaceEntryFromPanel(
+        host,
+        fakePanel().panel,
+        {
+          id: 'kimi-webbridge',
+          displayName: 'Legacy WebBridge',
+          version: '1.0.0',
+          source: 'https://example.test/legacy.zip',
+        } as never,
+        false,
+        '/tmp/legacy.json',
+      ),
+    ).rejects.toThrow('install "kimi-browser-extension" instead');
+
+    expect(installCapability).not.toHaveBeenCalled();
+    expect(installPlugin).not.toHaveBeenCalled();
+  });
+
+  it('keeps the selected catalog for a same-id/version artifact and migrates legacy ids', async () => {
+    const { host, installCapability, installPlugin } = fakeHost({
+      installed: [
+        installedPlugin('kimi-webbridge'),
+        installedPlugin('kimi-browser-extension', '2.0.0'),
+      ],
+    });
+    await installMarketplaceEntryFromPanel(
+      host,
+      fakePanel().panel,
+      {
+        id: 'kimi-browser-extension',
+        displayName: 'Kimi Browser Extension',
+        version: '3.0.0',
+        sha256sum: 'b'.repeat(64),
+        source: 'https://code.kimi.com/kimi-code/plugins/official/alternate/kimi-browser-extension.zip',
+        builtIn: true,
+      } as never,
+      false,
+      '/tmp/alternate-marketplace.json',
+    );
+
+    expect(installCapability).not.toHaveBeenCalled();
+    expect(installPlugin).toHaveBeenCalledWith({
+      marketplaceId: 'kimi-browser-extension',
+      expectedVersion: '3.0.0',
+      migrateFrom: 'kimi-webbridge',
+      marketplaceSource: '/tmp/alternate-marketplace.json',
+    });
   });
 
   it('logs progress without replacing the generic installing label', async () => {
@@ -164,7 +336,14 @@ describe('plugins command capability surface', () => {
     expect(statuses.some((s) => s.includes('runtime binaries were left untouched'))).toBe(true);
   });
 
-  it('treats only the default catalog (and the dev server) as injectable', () => {
+  it('keeps the runtime note for the canonical WebBridge plugin id', async () => {
+    const { host, statuses } = fakeHost({});
+    await removePlugin(host, 'kimi-browser-extension');
+    expect(statuses.some((s) => s.includes('Removed kimi-browser-extension'))).toBe(true);
+    expect(statuses.some((s) => s.includes('runtime binaries were left untouched'))).toBe(true);
+  });
+
+  it('treats only the default catalog and dev server as capability-mapped', () => {
     expect(isDefaultMarketplaceCatalog(undefined, {})).toBe(true);
     // The dev marketplace server started by scripts/dev.mjs serves this
     // repo's own catalog — it counts as default, not as a user override.
@@ -194,6 +373,7 @@ describe('plugins command capability surface', () => {
       idle.host,
       fakePanel().panel,
       { id: 'kimi-cu', displayName: 'Kimi Computer Use', source: 'capability:kimi-cu' } as never,
+      'kimi-cu',
     );
     expect(idle.installCapability).toHaveBeenCalledWith('kimi-cu');
   });
@@ -216,6 +396,7 @@ describe('plugins command capability surface', () => {
       host,
       fakePanel().panel,
       { id: 'kimi-cu', displayName: 'Kimi Computer Use', source: 'capability:kimi-cu' } as never,
+      'kimi-cu',
     );
 
     // The service rejects duplicate starts (40922) — a healthy in-progress
@@ -225,7 +406,7 @@ describe('plugins command capability surface', () => {
     expect(statuses.some((s) => s.includes('is installed'))).toBe(true);
   });
 
-  it('renders visible clickable store URLs after WebBridge installs in a hyperlink-capable terminal', async () => {
+  it('renders visible clickable store URLs after canonical WebBridge installs in a hyperlink-capable terminal', async () => {
     setCapabilities({ images: null, trueColor: true, hyperlinks: true });
     const { host, statuses, notices, transcriptEntries } = fakeHost({});
 
@@ -233,10 +414,11 @@ describe('plugins command capability surface', () => {
       host,
       fakePanel().panel,
       {
-        id: 'kimi-webbridge',
+        id: 'kimi-browser-extension',
         displayName: 'Kimi Browser Extension',
-        source: 'capability:kimi-webbridge',
+        source: 'https://example.test/kimi-browser-extension.zip',
       } as never,
+      'kimi-webbridge',
     );
 
     expect(notices).toContainEqual({ title: 'Kimi Browser Extension is installed.', detail: undefined });
@@ -264,6 +446,7 @@ describe('plugins command capability surface', () => {
         displayName: 'Kimi Browser Extension',
         source: 'capability:kimi-webbridge',
       } as never,
+      'kimi-webbridge',
     );
 
     const rendered = transcriptEntries.flatMap((entry) => entry.render(100)).join('\n');
@@ -285,6 +468,7 @@ describe('plugins command capability surface', () => {
         displayName: 'Kimi Browser Extension',
         source: 'capability:kimi-webbridge',
       } as never,
+      'kimi-webbridge',
     );
 
     const lines = visibleLines(transcriptEntries, 180);
@@ -319,6 +503,7 @@ describe('plugins command capability surface', () => {
       host,
       fakePanel().panel,
       { id: 'kimi-cu', displayName: 'Kimi Computer Use', source: 'capability:kimi-cu' } as never,
+      'kimi-cu',
     );
 
     expect(statuses).toContain(
@@ -332,7 +517,10 @@ describe('plugins command capability surface', () => {
       capabilityStatus: () => Promise.resolve({
         id: 'kimi-cu',
         state: 'partial',
-        steps: [{ id: 'permissions', state: 'missing', detail: 'screenRecording' }],
+        steps: [
+          { id: 'permissions.accessibility', state: 'ok' },
+          { id: 'permissions.screenRecording', state: 'missing' },
+        ],
         install: { running: false },
       }),
     });
@@ -340,7 +528,12 @@ describe('plugins command capability surface', () => {
     await installCapabilityFromPanel(
       host,
       fakePanel().panel,
-      { id: 'kimi-cu', displayName: 'Kimi Computer Use', source: 'capability:kimi-cu' } as never,
+      {
+        id: 'kimi-cu-win',
+        displayName: 'Kimi Computer Use for Windows',
+        source: 'https://example.test/kimi-cu-win.zip',
+      } as never,
+      'kimi-cu',
     );
 
     expect(statuses.some((s) => s.includes('Grant Accessibility and Screen Recording'))).toBe(true);
@@ -349,7 +542,10 @@ describe('plugins command capability surface', () => {
       'capability needs attention',
       expect.objectContaining({
         capabilityId: 'kimi-cu',
-        steps: [expect.objectContaining({ detail: 'screenRecording' })],
+        steps: [
+          { id: 'permissions.accessibility', state: 'ok' },
+          { id: 'permissions.screenRecording', state: 'missing' },
+        ],
       }),
     );
   });
