@@ -479,7 +479,7 @@ describe('transcript contract e2e', () => {
       .accessor.get(IAgentLifecycleService)
       .handleOf(MAIN_AGENT_ID)!
       .accessor.get(IAgentPlanService);
-    const planPath = (await planService.status())!.path;
+    const planPath = (await planService.status())!.path!;
     await mkdir(dirname(planPath), { recursive: true });
     await writeFile(planPath, '# Plan\n\n- Change the greeting\n- Add a test', 'utf-8');
 

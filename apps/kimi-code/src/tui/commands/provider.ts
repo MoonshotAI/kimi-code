@@ -11,7 +11,7 @@ import {
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { createKimiCodeUserAgent } from '#/cli/version';
+import { createKimiCodeUserAgent } from '#/cli/host-identity';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
 import { refreshKimiRegion } from '#/utils/region';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';

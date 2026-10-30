@@ -15,17 +15,18 @@ import {
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
-import type {
-  AssistantDelta,
-  ThinkingDelta,
-  ToolCallDelta,
-  TurnStarted,
-  TurnStepCompleted,
-  TurnStepInterrupted,
-  TurnStepRetrying,
-  TurnStepStarted,
+import {
+  turnPromptText,
+  type AssistantDelta,
+  type ThinkingDelta,
+  type ToolCallDelta,
+  type TurnStarted,
+  type TurnStepCompleted,
+  type TurnStepInterrupted,
+  type TurnStepRetrying,
+  type TurnStepStarted,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { TurnEnded, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import type { PluginCommandActivated } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
@@ -121,6 +122,7 @@ type SteerFileAttachment = { readonly name: string; readonly mediaType: string; 
 
 export type ProjectorBusEvent =
   | PlanRevisionEvent
+  | ({ readonly type: 'turn.prompt' } & TurnPrompt)
   | ({ readonly type: 'turn.started' } & TurnStarted)
   | ({ readonly type: 'turn.ended' } & TurnEnded)
   | ({ readonly type: 'turn.step.started' } & TurnStepStarted)
@@ -236,6 +238,7 @@ export class AgentTranscriptProjector {
   private highWater = -1;
   private highWaterSeeded = false;
   private readonly wireToExport = new Map<number, string>();
+  private taskPrompt: { readonly turnId: number; readonly text: string | undefined } | undefined;
   private pendingTaskNotifications: { text: string; taskId: string | undefined }[] = [];
   private pendingSteers: {
     input: readonly ContentPart[];
@@ -379,6 +382,8 @@ export class AgentTranscriptProjector {
     switch (event.type) {
       case 'plan.revision':
         return this.onPlanRevision(event);
+      case 'turn.prompt':
+        return this.onTurnPrompt(event);
       case 'turn.started':
         return this.onTurnStarted(event);
       case 'turn.ended':
@@ -474,6 +479,18 @@ export class AgentTranscriptProjector {
     }
   }
 
+  private onTurnPrompt(event: TurnPrompt): TranscriptOperation[] {
+    if (event.turnId === undefined || event.origin.kind !== 'task') return [];
+    this.taskPrompt = {
+      turnId: event.turnId,
+      text: turnPromptText(
+        event.input.filter((part) => !isUserPromptSubmitHookPart(part)),
+        event.origin,
+      ),
+    };
+    return [];
+  }
+
   private onTurnStarted(event: {
     turnId: number;
     promptId?: string;
@@ -528,14 +545,20 @@ export class AgentTranscriptProjector {
       ops.push({ op: 'attachment.upsert', attachment });
       attachmentIds.push(attachment.attachmentId);
     }
+    const origin = mapTurnOrigin(event.origin);
+    const prompt =
+      event.prompt ??
+      (origin.kind === 'task' && this.taskPrompt?.turnId === event.turnId
+        ? this.taskPrompt.text
+        : undefined);
     this.currentTurn = {
       kind: 'turn',
       turnId,
       triggerPromptId: event.promptId,
       ordinal,
       state: 'running',
-      origin: mapTurnOrigin(event.origin),
-      prompt: event.prompt,
+      origin,
+      prompt,
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       startedAt: nowIso(),
     };
@@ -607,6 +630,7 @@ export class AgentTranscriptProjector {
     durationMs?: number;
     interruptReason?: string;
   }): TranscriptOperation[] {
+    if (this.taskPrompt?.turnId === event.turnId) this.taskPrompt = undefined;
     const ops: TranscriptOperation[] = [];
     this.flushOpenFrames(ops);
     const turnId = this.exportTurnId(event.turnId);

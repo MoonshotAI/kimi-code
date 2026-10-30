@@ -12,13 +12,16 @@ import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { IAgentToolSelectSchemasService } from '#/agent/toolSelect/toolSelectSchemas';
+import { LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
+import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import '#/agent/tools/select-tools/selectToolsTool';
 
-import { createTestAgent, sessionService, type TestAgentContext } from '../../harness';
+import { createTestAgent, mcpServices, sessionService, type TestAgentContext } from '../../harness';
+import { createMemoryMcpOAuthStore, startInProcessHttpMcpServer } from '../../mcpCore/stubs';
 import type { Message } from '#human/llm/message';
 
 function toolsOf(message: Message | undefined) {
@@ -417,5 +420,101 @@ describe('progressive tool disclosure end-to-end', () => {
       '"mcp__srv__ghost" has already failed selection 2 times. ' +
         'Stop retrying this name until its availability changes.',
     );
+  });
+});
+
+describe('same-turn MCP tool replacement', () => {
+  it.each([true, false])('authenticates and calls the replacement tool with deferred=%s', async (deferred) => {
+    vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
+    const server = await startInProcessHttpMcpServer({ authToken: 'test-token' });
+    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    const authenticating = createControlledPromise<void>();
+    const authorized = createControlledPromise<void>();
+    vi.spyOn(oauthService, 'beginAuthorization').mockResolvedValue({
+      authorizationUrl: new URL('https://example.test/authorize'),
+      complete: async () => {
+        authenticating.resolve();
+        await authorized;
+        await oauthService.getProvider('srv', server.url).saveTokens({
+          access_token: 'test-token',
+          token_type: 'Bearer',
+        });
+      },
+      cancel: async () => {},
+    });
+    const manager = new McpConnectionManager({ oauthService });
+    const ctx = createTestAgent(mcpServices({ manager }));
+    const authenticate = 'mcp__srv__authenticate';
+    const echo = 'mcp__srv__echo';
+    try {
+      ctx.get(IAgentToolSelectService);
+      ctx.get(IAgentToolSelectAnnouncementsService);
+      ctx.get(IAgentToolSelectSchemasService);
+      ctx.get(IAgentToolExecutorService);
+      ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+      await ctx.restorePersisted();
+      await ctx.rpc.setPermission({ mode: 'yolo' });
+      await manager.connectAll({ srv: { transport: 'http', url: server.url, deferred } });
+      expect(manager.get('srv')?.status).toBe('needs-auth');
+      expect(ctx.get(IAgentToolRegistryService).resolve(authenticate)).toBeDefined();
+
+      if (deferred) ctx.mockNextResponse(selectToolsCall('select_authenticate', [authenticate]));
+      ctx.mockNextResponse({ type: 'function', id: 'authenticate', name: authenticate, arguments: '{}' });
+      if (deferred) ctx.mockNextResponse(selectToolsCall('select_echo', [echo]));
+      ctx.mockNextResponse({
+        type: 'function', id: 'echo', name: echo, arguments: JSON.stringify({ text: 'authorized echo' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'authenticate and echo' }] });
+      await authenticating;
+      expect(ctx.llmCalls).toHaveLength(deferred ? 2 : 1);
+      authorized.resolve();
+      await ctx.untilTurnEnd();
+
+      expect(manager.get('srv')?.status).toBe('connected');
+      expect(ctx.get(IAgentToolRegistryService).resolve(authenticate)).toBeUndefined();
+      expect(ctx.get(IAgentToolRegistryService).resolve(echo)).toBeDefined();
+      expect(ctx.llmCalls).toHaveLength(deferred ? 5 : 3);
+      const afterAuthentication = ctx.llmCalls[deferred ? 2 : 1]!;
+      const beforeEcho = ctx.llmCalls[deferred ? 3 : 1]!;
+      const context = ctx.get(IAgentContextMemoryService).get();
+      expect(context.filter((message) => message.origin?.kind === 'user')).toHaveLength(1);
+      expect(context.some((message) => message.role === 'tool' &&
+        message.content.some((part) => part.type === 'text' && part.text === 'authorized echo'))).toBe(true);
+      const announcements = context.filter((message) =>
+        message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT);
+      const catalog = historyText(afterAuthentication.history);
+      if (deferred) {
+        expect([...catalog.matchAll(/<tools_added>\n([\s\S]*?)\n<\/tools_added>/g)]
+          .map((match) => match[1])).toEqual([authenticate, echo]);
+        expect([...catalog.matchAll(/<tools_removed>\n([\s\S]*?)\n<\/tools_removed>/g)]
+          .map((match) => match[1])).toEqual([authenticate]);
+        expect(announcements).toHaveLength(2);
+        expect(afterAuthentication.history.flatMap((message) => toolsOf(message) ?? [])
+          .some((tool) => tool.name === echo)).toBe(false);
+        const schema = beforeEcho.history.flatMap((message) => toolsOf(message) ?? [])
+          .find((tool) => tool.name === echo);
+        expect(schema).toBeDefined();
+        expect(schema!.parameters).toEqual(manager.resolved('srv')?.tools[0]?.parameters);
+        expect(toolNames(beforeEcho.tools)).not.toContain(echo);
+        expect(ctx.llmCalls.every((call) => JSON.stringify(call.tools) ===
+          JSON.stringify(ctx.llmCalls[0]!.tools))).toBe(true);
+      } else {
+        expect(announcements).toHaveLength(1);
+        expect(catalog).not.toContain('<tools_added>\n');
+        expect(catalog).not.toContain('<tools_removed>\n');
+        expect(toolNames(afterAuthentication.tools)).toContain(echo);
+        expect(toolNames(afterAuthentication.tools)).not.toContain(authenticate);
+      }
+    } finally {
+      authorized.resolve();
+      await ctx.dispose();
+      await manager.shutdown();
+      await oauthService.shutdown();
+      await server.close();
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
+    }
   });
 });

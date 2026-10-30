@@ -880,7 +880,7 @@ describe('AgentTaskService', () => {
     });
   });
 
-  it('records failed runtime when proc.wait rejects', async () => {
+  it('records failed environment when proc.wait rejects', async () => {
     const { manager } = createAgentTaskService();
     const taskId = registerProcess(
       manager,

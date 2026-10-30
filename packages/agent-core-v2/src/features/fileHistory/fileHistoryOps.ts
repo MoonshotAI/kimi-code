@@ -22,6 +22,7 @@ const backupEntrySchema = z.object({
   size: z.number().optional(),
   oversize: z.boolean().optional(),
   mtimeMs: z.number().optional(),
+  environmentId: z.string().optional(),
 });
 
 const fileHistoryTrackedSchema = z.object({

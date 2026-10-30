@@ -153,6 +153,7 @@ export interface GlobalSessionsFacade {
     additionalDirs?: readonly string[];
     title?: string;
     mcpServers?: Readonly<Record<string, McpServerConfig>>;
+    environmentId?: string;
   }): Promise<SessionMeta>;
 }
 
@@ -422,9 +423,9 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       get: (id) => call('sessionIndex', 'get', [id]) as Promise<SessionSummary | undefined>,
       countActive: (workspaceIds) =>
         call('sessionIndex', 'count', [{ workspaceIds }]) as Promise<number>,
-      create: async ({ workDir, additionalDirs, title, mcpServers }) => {
+      create: async ({ workDir, additionalDirs, title, mcpServers, environmentId }) => {
         const handle = (await scoped({}, 'sessionManager', 'create', [
-          { workDir, additionalDirs, mcpServers },
+          { workDir, additionalDirs, mcpServers, environmentId },
         ])) as { id: string };
         const scope = { sessionId: handle.id };
         if (title !== undefined) {

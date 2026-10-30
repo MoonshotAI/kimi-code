@@ -8,7 +8,7 @@ export class WorkspaceGitService implements IWorkspaceGitService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IWorkspaceContext private readonly workspace: IWorkspaceContext,
+    @IWorkspaceContext private readonly workspace: Pick<IWorkspaceContext, 'cwd'>,
     @ref(IGitService) private readonly git: LiveRef<IGitService>,
   ) {}
 

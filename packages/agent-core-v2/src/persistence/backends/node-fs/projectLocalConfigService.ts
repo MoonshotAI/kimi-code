@@ -10,6 +10,7 @@ import {
 } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { OsFsErrors } from '#/os/interface/hostFsErrors';
 import { StorageError, StorageErrors, toStorageIoError } from '#/persistence/interface/storage';
 
 const ProjectLocalTomlSchema = z.object({
@@ -26,8 +27,9 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IBootstrapService bootstrap: IBootstrapService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
+    private readonly homeDir = bootstrap.osHomeDir,
   ) {}
 
   async readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult> {
@@ -133,9 +135,9 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
   }
 
   private expandHome(value: string): string {
-    if (value === '~') return this.bootstrap.osHomeDir;
-    if (value.startsWith('~/')) return join(this.bootstrap.osHomeDir, value.slice(2));
-    return value;
+    if (this.homeDir.length === 0 || (value !== '~' && !value.startsWith('~/'))) return value;
+    if (value === '~') return this.homeDir;
+    return join(this.homeDir, value.slice(2));
   }
 
   private hasSameAdditionalDir(dirs: readonly string[], target: string): boolean {
@@ -234,7 +236,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isPathMissing(error: unknown): boolean {
   const code = getErrorCode(unwrapErrorCause(error));
-  return code === 'ENOENT' || code === 'ENOTDIR';
+  return (
+    code === 'ENOENT' ||
+    code === 'ENOTDIR' ||
+    code === OsFsErrors.codes.OS_FS_NOT_FOUND ||
+    code === OsFsErrors.codes.OS_FS_NOT_DIRECTORY
+  );
 }
 
 function getErrorCode(error: unknown): unknown {

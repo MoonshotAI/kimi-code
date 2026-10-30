@@ -283,6 +283,63 @@ describe('FileMentionProvider', () => {
     expect(result).toBeNull();
   });
 
+  it('maps remote @ mention candidates without scanning the local workspace', async () => {
+    writeFileSync(join(workDir, 'local-only.ts'), 'local');
+    const remoteSuggest = vi.fn(async () => [
+      { path: 'src/app.ts', kind: 'file' as const },
+      { path: 'src/components', kind: 'directory' as const },
+      { path: 'docs/with space.md', kind: 'file' as const },
+    ]);
+    const provider = new FileMentionProvider(
+      [],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      remoteSuggest,
+    );
+
+    const result = await provider.getSuggestions(['@'], 0, 1, { signal: ctrl() });
+
+    expect(remoteSuggest).toHaveBeenCalledWith('');
+    expect(result).not.toBeNull();
+    expect(result!.prefix).toBe('@');
+    expect(result!.items.map((item) => item.value)).toEqual([
+      '@src/app.ts',
+      '@src/components/',
+      '@"docs/with space.md"',
+    ]);
+    expect(result!.items.some((item) => item.value.includes('local-only'))).toBe(false);
+  });
+
+  it('returns null instead of local candidates when remote suggestions are unavailable', async () => {
+    writeFileSync(join(workDir, 'local-only.ts'), 'local');
+    const unavailable = new FileMentionProvider(
+      [],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      async () => undefined,
+    );
+    const failing = new FileMentionProvider(
+      [],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      undefined,
+      async () => {
+        throw new Error('remote unavailable');
+      },
+    );
+
+    await expect(unavailable.getSuggestions(['@local'], 0, 6, { signal: ctrl() })).resolves.toBeNull();
+    await expect(failing.getSuggestions(['@local'], 0, 6, { signal: ctrl() })).resolves.toBeNull();
+  });
+
   it('uses a filesystem fallback for @ mentions when fd is not available', async () => {
     mkdirSync(join(workDir, 'src', 'components'), { recursive: true });
     writeFileSync(join(workDir, 'src', 'components', 'Button.tsx'), 'export {};');
@@ -307,6 +364,59 @@ describe('FileMentionProvider', () => {
     expect(result).not.toBeNull();
     expect(result!.items.map((item) => item.value)).toContain(
       `@${join(extraDir, 'src', 'Additional.ts').replaceAll('\\', '/')}`,
+    );
+  });
+
+  it('redistributes unused fallback scan capacity to additional roots', async () => {
+    const extraDir = createExtraDir();
+    for (let i = 0; i < 1500; i++) {
+      writeFileSync(join(extraDir, `entry-${i}.ts`), 'export {};');
+    }
+    writeFileSync(join(extraDir, 'target-needle.ts'), 'export {};');
+    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'), [extraDir]);
+
+    const result = await provider.getSuggestions(['@target-needle'], 0, '@target-needle'.length, {
+      signal: ctrl(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((item) => item.value)).toContain(
+      `@${join(extraDir, 'target-needle.ts').replaceAll('\\', '/')}`,
+    );
+  });
+
+  it('deduplicates fallback roots equal to cwd before scanning', async () => {
+    for (let i = 0; i < 1500; i++) {
+      writeFileSync(join(workDir, `entry-${i}.ts`), 'export {};');
+    }
+    mkdirSync(join(workDir, 'deep'));
+    writeFileSync(join(workDir, 'deep', 'target-needle.ts'), 'export {};');
+    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'), [workDir]);
+
+    const result = await provider.getSuggestions(['@target-needle'], 0, '@target-needle'.length, {
+      signal: ctrl(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((item) => item.value)).toContain('@deep/target-needle.ts');
+  });
+
+  it('scans additionalDirs within a shared bounded fallback budget', async () => {
+    for (let i = 0; i < 2000; i++) {
+      writeFileSync(join(workDir, `filler-${i}.ts`), 'export {};');
+    }
+    const extraDir = createExtraDir();
+    mkdirSync(join(extraDir, 'deep'), { recursive: true });
+    writeFileSync(join(extraDir, 'deep', 'target-needle.ts'), 'export {};');
+    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'), [extraDir]);
+
+    const result = await provider.getSuggestions(['@target-needle'], 0, '@target-needle'.length, {
+      signal: ctrl(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((item) => item.value)).toContain(
+      `@${join(extraDir, 'deep', 'target-needle.ts').replaceAll('\\', '/')}`,
     );
   });
 
@@ -392,6 +502,7 @@ describe('FileMentionProvider', () => {
       (item) => item.description === join(extraDir, 'src', 'Overlap.ts').replaceAll('\\', '/'),
     );
     expect(overlapItems).toHaveLength(1);
+    expect(overlapItems[0]?.value).toBe('@extra/src/Overlap.ts');
   });
 
   it.runIf(IS_FD_INSTALLED)(

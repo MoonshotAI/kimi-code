@@ -30,6 +30,7 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
@@ -239,6 +240,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     undoParticipants: IAgentConversationUndoParticipantRegistry,
     @ILogService private readonly log: ILogService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IFlagService flags: IFlagService,
     @IAgentToolRegistryService tools: IAgentToolRegistryService,
     @IAgentToolPolicyService policy: IAgentToolPolicyService,
@@ -260,6 +262,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       atomicDocs,
       byteStore,
       fallbackRoot,
+      () => environmentTempTarget(this.environment, 'task-output'),
     );
     this._register(
       undoParticipants.register({

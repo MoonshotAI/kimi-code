@@ -17,7 +17,8 @@ import process from 'node:process';
 import { createKimiHarness, type Event } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, test } from 'vitest';
 
-import { createKimiCodeHostIdentity, getVersion } from '#/cli/version';
+import { createKimiCodeHostIdentity } from '#/cli/host-identity';
+import { getVersion } from '#/cli/version';
 
 const DEFAULT_PROMPT = 'Reply with a single word: hi';
 const DEFAULT_WORKDIR = '/tmp/kimi-e2e';

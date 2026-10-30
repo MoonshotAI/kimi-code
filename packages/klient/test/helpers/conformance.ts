@@ -752,18 +752,17 @@ export function defineKlientConformance(
       }
     });
 
-    it('agent runtime and media events are available through every transport', async () => {
+    it('agent environment binding and media events are available through every transport', async () => {
       const created = await target.klient.global.sessions.create({
         workDir: process.cwd(),
-        title: 'conformance runtime',
+        title: 'conformance environment',
       });
       try {
         const agent = target.klient.session(created.id).agent('main');
-        const binding = await agent.getRuntime();
-        expect(binding.runtimeId).toBe('local');
-        expect(binding.workspaceId.length).toBeGreaterThan(0);
-        await expect(agent.switchRuntime('missing-runtime')).rejects.toThrow(/missing-runtime/);
-        expect(await agent.getRuntime()).toEqual(binding);
+        const binding = await agent.getEnvironment();
+        expect(binding.environmentId).toBe('local');
+        expect(binding).toEqual({ environmentId: 'local' });
+        expect(await agent.getEnvironment()).toEqual(binding);
 
         const seen: unknown[] = [];
         const sub = agent.events.on('tool.result', (event) => seen.push(event));

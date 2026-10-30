@@ -28,7 +28,7 @@ import {
   resolveKimiRegionFresh,
 } from '#/utils/region';
 
-import { createKimiCodeHostIdentity } from './version';
+import { createKimiCodeHostIdentity } from './host-identity';
 
 export interface CliTelemetryBootstrap {
   readonly homeDir: string;

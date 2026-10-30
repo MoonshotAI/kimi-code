@@ -466,6 +466,12 @@ export class EditorKeyboardController {
   }
 
   private cancelCurrentStream(): void {
+    if (this.host.cancelInFlight !== undefined) {
+      const cancel = this.host.cancelInFlight;
+      this.host.cancelInFlight = undefined;
+      cancel();
+      return;
+    }
     // Cancel any running `!` shell command (treated as a streaming phase) in
     // addition to the agent turn, so Esc / Ctrl+C interrupts it too.
     this.host.cancelRunningShellCommand();

@@ -4,7 +4,7 @@ import { ProcessTerminal, TuiMainScreen } from '@moonshot-ai/pi-tui';
 import type { Command } from 'commander';
 
 import { createCliTelemetryBootstrap } from '#/cli/telemetry';
-import { createKimiCodeHostIdentity } from '#/cli/version';
+import { createKimiCodeHostIdentity } from '#/cli/host-identity';
 
 import { importBudget, importSessions, scanImportableSessions, sourceHomes } from './run-import';
 import { ImportSessionsScreenComponent } from './screen';

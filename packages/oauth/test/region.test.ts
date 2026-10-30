@@ -36,7 +36,9 @@ describe('KIMI_REGION_PROFILES', () => {
   it('kimiRegionProfile returns the requested profile', () => {
     expect(kimiRegionProfile('global').oauthHost).toBe('https://auth.kimi.ai');
     expect(kimiRegionProfile('global').relayOrigin).toBe('https://code-rc.kimi.ai');
-    expect(kimiRegionProfile('global').telemetryEndpoint).toBeUndefined();
+    expect(kimiRegionProfile('global').telemetryEndpoint).toBe(
+      'https://telemetry-logs.kimi.ai/v1/event',
+    );
     expect(kimiRegionProfile('mainland-cn').telemetryEndpoint).toBe(
       'https://telemetry-logs.kimi.com/v1/event',
     );

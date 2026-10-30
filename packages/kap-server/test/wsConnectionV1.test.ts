@@ -610,13 +610,11 @@ describe('WsConnectionV1 global target registration', () => {
   function makeGlobalTargetBroadcaster() {
     const added: unknown[] = [];
     const removed: unknown[] = [];
-    const diOptIns: unknown[] = [];
     const broadcaster = makeBroadcaster({
       addGlobalTarget: (target: unknown) => added.push(target),
       removeGlobalTarget: (target: unknown) => removed.push(target),
-      addDiEventTarget: (target: unknown) => diOptIns.push(target),
     });
-    return { broadcaster, added, removed, diOptIns };
+    return { broadcaster, added, removed };
   }
 
   it('registers the connection as a global target on construction and unregisters on close', () => {
@@ -639,19 +637,5 @@ describe('WsConnectionV1 global target registration', () => {
 
     socket.emit('close');
     expect(removed).toEqual([conn]);
-  });
-
-  it('opts only kimi-inspect connections into the event.di.* debug feed on client_hello', async () => {
-    const socket = new FakeSocket();
-    const { broadcaster, diOptIns } = makeGlobalTargetBroadcaster();
-    const conn = makeConn(socket, { broadcaster });
-
-    socket.emit('message', controlFrame('client_hello', { client_id: 'kimi-web' }, 'h1'));
-    await vi.waitFor(() => expect(acks(socket)).toHaveLength(1));
-    expect(diOptIns).toEqual([]);
-
-    socket.emit('message', controlFrame('client_hello', { client_id: 'kimi-inspect' }, 'h2'));
-    await vi.waitFor(() => expect(diOptIns).toEqual([conn]));
-    conn.close();
   });
 });

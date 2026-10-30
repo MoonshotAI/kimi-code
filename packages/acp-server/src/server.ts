@@ -135,8 +135,8 @@ export interface AcpServerOptions {
    * scope. Absent → `persistOriginalImage`'s shared temp-dir fallback.
    */
   readonly resolveOriginalsDir?: (sessionId: string) => string | undefined;
-  readonly bindSessionRuntime?: (sessionId: string) => Promise<void>;
-  readonly unbindSessionRuntime?: (sessionId: string) => Promise<void>;
+  readonly bindSessionEnvironment?: (sessionId: string) => Promise<void>;
+  readonly unbindSessionEnvironment?: (sessionId: string) => Promise<void>;
   /** Static or per-session host command palette. */
   readonly slashCommands?: SlashCommandsResolver;
 }
@@ -148,8 +148,8 @@ export class AcpServer {
   private readonly terminalAuthEnv: Readonly<Record<string, string>> | undefined;
   private readonly terminalAuthLegacyCommand: string | undefined;
   private readonly resolveOriginalsDir: ((sessionId: string) => string | undefined) | undefined;
-  private readonly bindSessionRuntime: ((sessionId: string) => Promise<void>) | undefined;
-  private readonly unbindSessionRuntime: ((sessionId: string) => Promise<void>) | undefined;
+  private readonly bindSessionEnvironment: ((sessionId: string) => Promise<void>) | undefined;
+  private readonly unbindSessionEnvironment: ((sessionId: string) => Promise<void>) | undefined;
   private readonly resolveSlashCommands: (
     session: SessionHandle,
   ) => Promise<ReadonlyArray<AvailableCommand> | SlashCommandsSnapshot>;
@@ -171,8 +171,8 @@ export class AcpServer {
     this.terminalAuthEnv = opts.terminalAuthEnv;
     this.terminalAuthLegacyCommand = opts.terminalAuthLegacyCommand;
     this.resolveOriginalsDir = opts.resolveOriginalsDir;
-    this.bindSessionRuntime = opts.bindSessionRuntime;
-    this.unbindSessionRuntime = opts.unbindSessionRuntime;
+    this.bindSessionEnvironment = opts.bindSessionEnvironment;
+    this.unbindSessionEnvironment = opts.unbindSessionEnvironment;
     const slashCommands = opts.slashCommands;
     this.resolveSlashCommands =
       typeof slashCommands === 'function'
@@ -248,6 +248,7 @@ export class AcpServer {
       workDir: params.cwd,
       additionalDirs: params.additionalDirectories,
       mcpServers: acpMcpServersToConfigRecord(params.mcpServers),
+      environmentId: 'local',
     });
     return { sessionId: meta.id, ...(await this.activateSession(meta.id)) };
   }
@@ -344,7 +345,7 @@ export class AcpServer {
       this.sessions.delete(params.sessionId);
     }
     await this.klient.session(params.sessionId).close();
-    await this.unbindSessionRuntime?.(params.sessionId);
+    await this.unbindSessionEnvironment?.(params.sessionId);
   }
 
   /**
@@ -372,7 +373,7 @@ export class AcpServer {
       acpSession.dispose();
       this.sessions.delete(params.sessionId);
     }
-    await this.unbindSessionRuntime?.(params.sessionId);
+    await this.unbindSessionEnvironment?.(params.sessionId);
     return {};
   }
 
@@ -562,7 +563,7 @@ export class AcpServer {
   private async wireSession(sessionId: string): Promise<AcpSession> {
     const session = this.klient.session(sessionId);
     await this.bindDefaultModel(session.agent('main'));
-    await this.bindSessionRuntime?.(sessionId);
+    await this.bindSessionEnvironment?.(sessionId);
     const hostCommands = await this.resolveSlashCommands(session);
     const acpSession = new AcpSession(
       this.conn,
@@ -690,33 +691,41 @@ function parseSetSessionModelParams(params: unknown): SetSessionModelParams {
  * Build the ACP agent app (SDK `agent()` builder) that routes every inbound
  * method to the {@link AcpServer} returned by `getServer`.
  *
- * `getServer` is dereferenced lazily per request because the app must be
- * connected before the outbound client surface (and thus the server) exists
- * — see `./start`. Handlers for unregistered methods never arise here: the
- * connection layer answers unknown requests with `method_not_found` (-32601)
- * and silently drops unknown notifications, matching the legacy
- * `extMethod` / `extNotification` fallbacks.
+ * `getServer` is awaited per request because the app must be connected before
+ * the outbound client surface (and thus the server) exists, and the environment
+ * provider attaches asynchronously — see `./start`. Handlers for unregistered
+ * methods never arise here: the connection layer answers unknown requests with
+ * `method_not_found` (-32601) and silently drops unknown notifications, matching
+ * the legacy `extMethod` / `extNotification` fallbacks.
  */
-export function createAcpAgentApp(getServer: () => AcpServer): AgentApp {
+export function createAcpAgentApp(getServer: () => AcpServer | Promise<AcpServer>): AgentApp {
   return agent({ name: 'kimi-code-acp' })
-    .onRequest(methods.agent.initialize, (ctx) => getServer().initialize(ctx.params))
-    .onRequest(methods.agent.authenticate, (ctx) => getServer().authenticate(ctx.params))
-    .onRequest(methods.agent.logout, (ctx) => getServer().logout(ctx.params))
-    .onRequest(methods.agent.session.new, (ctx) => getServer().newSession(ctx.params))
-    .onRequest(methods.agent.session.load, (ctx) => getServer().loadSession(ctx.params))
-    .onRequest(methods.agent.session.resume, (ctx) => getServer().resumeSession(ctx.params))
-    .onRequest(methods.agent.session.list, (ctx) => getServer().listSessions(ctx.params))
-    .onRequest(methods.agent.session.close, (ctx) => getServer().closeSession(ctx.params))
-    .onRequest(methods.agent.session.delete, (ctx) => getServer().deleteSession(ctx.params))
-    .onRequest(methods.agent.session.fork, (ctx) => getServer().unstable_forkSession(ctx.params))
-    .onRequest(methods.agent.session.setMode, (ctx) => getServer().setSessionMode(ctx.params))
-    .onRequest(methods.agent.session.setConfigOption, (ctx) =>
-      getServer().setSessionConfigOption(ctx.params),
+    .onRequest(methods.agent.initialize, async (ctx) => (await getServer()).initialize(ctx.params))
+    .onRequest(methods.agent.authenticate, async (ctx) => (await getServer()).authenticate(ctx.params))
+    .onRequest(methods.agent.logout, async (ctx) => (await getServer()).logout(ctx.params))
+    .onRequest(methods.agent.session.new, async (ctx) => (await getServer()).newSession(ctx.params))
+    .onRequest(methods.agent.session.load, async (ctx) => (await getServer()).loadSession(ctx.params))
+    .onRequest(methods.agent.session.resume, async (ctx) => (await getServer()).resumeSession(ctx.params))
+    .onRequest(methods.agent.session.list, async (ctx) => (await getServer()).listSessions(ctx.params))
+    .onRequest(methods.agent.session.close, async (ctx) => (await getServer()).closeSession(ctx.params))
+    .onRequest(methods.agent.session.delete, async (ctx) => (await getServer()).deleteSession(ctx.params))
+    .onRequest(methods.agent.session.fork, async (ctx) =>
+      (await getServer()).unstable_forkSession(ctx.params),
     )
-    .onRequest(methods.agent.session.prompt, (ctx) => getServer().prompt(ctx.params, ctx.signal))
-    .onNotification(methods.agent.session.cancel, (ctx) => getServer().cancel(ctx.params))
-    .onRequest(SET_SESSION_MODEL_METHOD, parseSetSessionModelParams, (ctx) =>
-      getServer().setSessionModel(ctx.params),
+    .onRequest(methods.agent.session.setMode, async (ctx) =>
+      (await getServer()).setSessionMode(ctx.params),
+    )
+    .onRequest(methods.agent.session.setConfigOption, async (ctx) =>
+      (await getServer()).setSessionConfigOption(ctx.params),
+    )
+    .onRequest(methods.agent.session.prompt, async (ctx) =>
+      (await getServer()).prompt(ctx.params, ctx.signal),
+    )
+    .onNotification(methods.agent.session.cancel, async (ctx) =>
+      (await getServer()).cancel(ctx.params),
+    )
+    .onRequest(SET_SESSION_MODEL_METHOD, parseSetSessionModelParams, async (ctx) =>
+      (await getServer()).setSessionModel(ctx.params),
     );
 }
 

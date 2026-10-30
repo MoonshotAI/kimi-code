@@ -63,6 +63,8 @@
 
 **`FetchURL`** 接受单个 `url` 参数，返回页面内容。对 HTML 页面，宿主会提取正文而非返回完整 HTML；纯文本或 Markdown 页面直接透传。同样需要宿主注入实现。
 
+这两个网络工具始终从运行 Kimi Code 的机器发起请求，即使会话绑定了 [远程环境](../guides/remote-environment.md)——请求不会从目标环境出网。
+
 ## Plan 模式
 
 | 工具 | 默认审批 | 说明 |
@@ -155,3 +157,4 @@ Plan 模式是一种受约束的工作状态，只能由用户打开（`Shift-Ta
 - [Agent 与 subagent](../customization/agents.md) — `Agent` 工具的调度机制与上下文隔离
 - [Hooks](../customization/hooks.md) — 在工具调用前后触发本地脚本
 - [斜杠命令](./slash-commands.md) — TUI 内置控制命令速查
+- [远程环境](../guides/remote-environment.md) — 创建时绑定环境与声明式环境配置

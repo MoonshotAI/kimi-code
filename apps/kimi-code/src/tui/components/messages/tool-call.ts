@@ -27,6 +27,7 @@ import {
   MESSAGE_INDENT,
   OUTCOME_MAX_LINES,
   RESULT_PREVIEW_LINES,
+  SUBAGENT_PREVIEW_TEXT_MAX_CHARS,
   THINKING_PREVIEW_LINES,
 } from '#/tui/constant/rendering';
 import {
@@ -546,11 +547,69 @@ function formatSubagentLabel(agentName: string | undefined): string {
 
 function tailNonEmptyLines(text: string, maxLines: number): string[] {
   if (text.length === 0) return [];
-  return text
-    .split('\n')
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim().length > 0)
-    .slice(-maxLines);
+  const lines: string[] = [];
+  let end = text.length;
+  while (end > 0 && lines.length < maxLines) {
+    const start = text.lastIndexOf('\n', end - 1);
+    const line = text.slice(start + 1, end).trimEnd();
+    if (line.trim().length > 0) lines.push(line);
+    end = start === -1 ? 0 : start;
+  }
+  return lines.toReversed();
+}
+
+/**
+ * The last `maxLines` source lines without splitting the whole string —
+ * the cards below only ever show a two-row window, so scanning back from the
+ * end keeps the cost proportional to what is displayed rather than to the
+ * accumulated subagent output.
+ */
+function tailSourceLines(text: string, maxLines: number): string {
+  let end = text.length;
+  for (let seen = 0; seen < maxLines; seen++) {
+    if (end === 0) return text;
+    const start = text.lastIndexOf('\n', end - 1);
+    if (start === -1) return text;
+    end = start;
+  }
+  return text.slice(end + 1);
+}
+
+/**
+ * Keeps the trailing slice of streamed subagent text that the card can show.
+ * The cut drops the first, partial line so every retained line starts at a
+ * line boundary: wrapping is then identical to the unbounded text, and no
+ * escape sequence is left half-open. A single logical line longer than the cap
+ * has no boundary to align to, so it keeps its raw tail.
+ */
+function tailPreviewText(text: string): string {
+  if (text.length <= SUBAGENT_PREVIEW_TEXT_MAX_CHARS) return text;
+  const tail = text.slice(text.length - SUBAGENT_PREVIEW_TEXT_MAX_CHARS);
+  const lineBreak = tail.indexOf('\n');
+  if (lineBreak !== -1) {
+    const aligned = tail.slice(lineBreak + 1);
+    // Only drop the partial first line when two non-empty lines remain: those
+    // wrap exactly as they would unbounded. A trailing blank does not count —
+    // the finished window filters empty lines — and otherwise the partial line
+    // is what fills the window, so the raw tail is the better answer.
+    if (tailNonEmptyLines(aligned, 2).length === 2) {
+      return stripTerminalSequences(aligned);
+    }
+  }
+  // The card applies its own styling, so control sequences carried in the
+  // streamed text are dropped rather than replayed without their opener.
+  return stripTerminalSequences(tail);
+}
+
+function lastNonEmptyLine(text: string): string | undefined {
+  let end = text.length;
+  while (end > 0) {
+    const start = text.lastIndexOf('\n', end - 1);
+    const trimmed = text.slice(start + 1, end).trim();
+    if (trimmed.length > 0) return trimmed;
+    end = start === -1 ? 0 : start;
+  }
+  return undefined;
 }
 
 class PrefixedWrappedLine implements Component {
@@ -1252,7 +1311,7 @@ export class ToolCallComponent extends Container {
     if (subagent === undefined) return;
     this.subagentAgentId = subagent.id;
     this.subagentAgentName = subagent.name;
-    this.subagentText = subagent.text ?? '';
+    this.subagentText = tailPreviewText(subagent.text ?? '');
     for (const call of subagent.toolCalls ?? []) {
       if (call.result === undefined) {
         this.ongoingSubCalls.set(call.id, { name: call.name, args: call.args });
@@ -1590,7 +1649,7 @@ export class ToolCallComponent extends Container {
     this.subagentResultSummary =
       payload.resultSummary.length > 0 ? payload.resultSummary : undefined;
     if (this.subagentText.trim().length === 0 && this.subagentResultSummary !== undefined) {
-      this.subagentText = this.subagentResultSummary;
+      this.subagentText = tailPreviewText(this.subagentResultSummary);
     }
     this.syncSubagentElapsedTimer();
     this.headerText.setText(this.buildHeader());
@@ -1738,10 +1797,15 @@ export class ToolCallComponent extends Container {
 
   appendSubagentText(text: string, kind: SubagentTextKind = 'text'): void {
     this.lastSubagentStreamKind = kind;
+    // The preview window only ever shows a small tail, so keep the retained
+    // buffer bounded instead of concatenating the whole history. Trimming the
+    // merged buffer on each append costs O(cap + delta) regardless of how long
+    // the agent has been running, and the text still ends with the newest
+    // output.
     if (kind === 'thinking') {
-      this.subagentThinkingText += text;
+      this.subagentThinkingText = tailPreviewText(this.subagentThinkingText + text);
     } else {
-      this.subagentText += text;
+      this.subagentText = tailPreviewText(this.subagentText + text);
     }
     // Child-agent activity means it is running unless already terminal/backgrounded.
     if (
@@ -2165,7 +2229,7 @@ export class ToolCallComponent extends Container {
     }
 
     if (this.subagentText.length > 0) {
-      const tailLines = this.subagentText.split('\n').slice(-3);
+      const tailLines = tailSourceLines(this.subagentText, 3).split('\n');
       for (const line of tailLines) {
         this.addChild(new Text(`    ${currentTheme.dim(line)}`, 0, 0));
       }
@@ -2428,12 +2492,14 @@ export class ToolCallComponent extends Container {
     const content = this.getActiveSubagentContent();
     // Keep both tones muted: a bright `fg('text')` here flashed white whenever
     // the window flipped between thinking and a brief text/tool-output segment.
+    const text =
+      content === undefined ? '…' : tailSourceLines(content.text, THINKING_PREVIEW_LINES * 4);
     const styled =
       content === undefined
-        ? currentTheme.dim('…')
+        ? currentTheme.dim(text)
         : content.tone === 'thinking'
-          ? currentTheme.dim(content.text)
-          : currentTheme.fg('textDim', content.text);
+          ? currentTheme.dim(text)
+          : currentTheme.fg('textDim', text);
     // Always exactly two rows (padded when short) so the live window matches
     // the finished card's height.
     return new PrefixedWrappedLine(
@@ -2552,6 +2618,15 @@ export class ToolCallComponent extends Container {
         this.addChild(new Text(line, 2, 0));
       }
     } else if (name === 'Bash') {
+      // The engine stamps the cwd the command actually executes in (the bound
+      // environment's resolved path) into display.cwd; show it whenever it says
+      // something the card does not already — a remote environment's path or an
+      // explicit cwd argument. A stamp equal to the local workspace dir is
+      // the default local case and keeps the card's current shape.
+      const executionCwd = this.stampedExecutionCwd();
+      if (executionCwd !== undefined) {
+        this.addChild(new Text(currentTheme.dim(`cwd: ${executionCwd}`), 2, 0));
+      }
       // Collapsed: the header already carries the command's first line, so no
       // command body is added; the outcome row comes from the live tail or the
       // result renderer. Expanded: the full command, across the whole lifecycle.
@@ -2568,6 +2643,14 @@ export class ToolCallComponent extends Container {
         }),
       );
     }
+  }
+
+  private stampedExecutionCwd(): string | undefined {
+    const display = this.toolCall.display;
+    if (display?.kind !== 'command') return undefined;
+    const cwd = display.cwd;
+    if (cwd === undefined || cwd.length === 0 || cwd === this.workspaceDir) return undefined;
+    return cwd;
   }
 
   /**
@@ -2865,11 +2948,8 @@ function computeLatestActivity(
     }
   }
   if (text.length > 0) {
-    const tail = text
-      .split('\n')
-      .toReversed()
-      .find((l) => l.trim().length > 0);
-    if (tail !== undefined) return tail.trim();
+    const tail = lastNonEmptyLine(text);
+    if (tail !== undefined) return tail;
   }
   return undefined;
 }

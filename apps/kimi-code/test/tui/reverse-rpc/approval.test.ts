@@ -140,6 +140,23 @@ describe('approval reverse-rpc', () => {
     });
   });
 
+  it('shows the panel without a badge when the environment lookup fails', async () => {
+    const controller = new ApprovalController();
+    const show = vi.spyOn(controller, 'show').mockResolvedValue({ decision: 'approved' });
+    const handler = createApprovalRequestHandler(
+      controller,
+      undefined,
+      vi.fn(() => {
+        throw new Error('environment gone');
+      }),
+    );
+
+    await expect(handler(approvalEvent())).resolves.toEqual({ decision: 'approved' });
+    expect(show).toHaveBeenCalledWith(
+      expect.not.objectContaining({ environment: expect.anything() }),
+    );
+  });
+
   it('tracks the requesting agent until approval settles or fails', async () => {
     const controller = new ApprovalController();
     const show = vi.spyOn(controller, 'show').mockResolvedValue({ decision: 'approved' });
@@ -148,7 +165,7 @@ describe('approval reverse-rpc', () => {
       startInteraction: vi.fn(() => token),
       endInteraction: vi.fn(),
     };
-    const handler = createApprovalRequestHandler(controller, undefined, tracker);
+    const handler = createApprovalRequestHandler(controller, undefined, undefined, tracker);
 
     await expect(handler(approvalEvent({ agentId: 'agent-1' }))).resolves.toEqual({
       decision: 'approved',
