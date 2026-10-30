@@ -274,13 +274,14 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       }
       if (this.starting !== head) return;
       this.starting = undefined;
+      const prepared = { ...head, prepare: undefined };
       if (this.paused) {
-        this.restoreAtHead({ ...head, prepare: undefined });
+        this.restoreAtHead(prepared);
         this.emitChange();
         return;
       }
       this.emitChange();
-      this.submitTaken(head);
+      this.submitTaken(prepared);
     });
   }
 

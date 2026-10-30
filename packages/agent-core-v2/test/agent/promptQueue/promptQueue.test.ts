@@ -305,6 +305,26 @@ describe('AgentPromptQueueService', () => {
     await loop.settled();
   });
 
+  it('does not apply a mode again when a prepared prompt is restored after it could not start', async () => {
+    setup();
+    respond(2);
+    const release = await startHeldTurn();
+    const prepare = vi.fn(async () => {});
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'goal', prepare });
+    const submit = vi.spyOn(loop, 'submit').mockImplementationOnce(() => {
+      throw new Error('session is stale');
+    });
+
+    release();
+    await vi.waitFor(() => expect(queue.snapshot().paused).toBe(true));
+    submit.mockRestore();
+    queue.resume();
+
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
+    await loop.settled();
+    expect(prepare).toHaveBeenCalledOnce();
+  });
+
   it('keeps a starting prompt listed but fixed at the head while its mode is applied', async () => {
     setup();
     respond(2);
