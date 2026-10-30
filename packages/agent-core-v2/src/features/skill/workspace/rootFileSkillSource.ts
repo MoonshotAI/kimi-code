@@ -73,6 +73,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     this.watchReady = this.workspaceDirs.ready
       .then(() => this.updateProjectSkillRootWatches([]))
       .then(() => undefined);
+    void this.watchReady.catch(() => undefined);
   }
 
   private get workDirs(): readonly string[] {
