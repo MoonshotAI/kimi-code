@@ -15,7 +15,7 @@ export function slugifyWorkDirName(name: string): string {
 }
 
 export function encodeWorkDirKey(workDir: string): string {
-  const normalized = workDir.replaceAll(/\\/g, '/').replace(/\/+$/, '');
+  const normalized = workDir.replaceAll('\\', '/').replace(/\/+$/, '');
   const base = normalized.split('/').pop() ?? normalized;
   const slug = slugifyWorkDirName(base);
   const hash = createHash('sha256').update(normalized).digest('hex').slice(0, HASH_LENGTH);

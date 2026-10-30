@@ -10,6 +10,7 @@ export interface ISessionWorkspaceContext {
   resolve(rel: string): string;
   isWithin(absPath: string): boolean;
   assertAllowed(absPath: string, op: PathAccessOperation): string;
+  setWorkDir(workDir: string): void;
 }
 
 export const ISessionWorkspaceContext: ServiceIdentifier<ISessionWorkspaceContext> =

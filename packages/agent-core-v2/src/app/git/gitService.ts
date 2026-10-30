@@ -3,7 +3,8 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IRuntimeResolver, IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import { IGitService } from './git';
 import { parseNumstat, parsePorcelain, parsePullRequest } from './gitParsers';
@@ -23,9 +24,9 @@ export class GitService implements IGitService {
   >();
 
   constructor(
-    @IRuntimeResolver private readonly resolver: IRuntimeResolver,
-    @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
+    @IEnvironmentService private readonly resolver: EnvironmentResolver,
     @IHostFileSystem private readonly fs: IHostFileSystem,
+    private readonly environmentId: string = LOCAL_ENVIRONMENT_ID,
   ) {}
 
   async status(cwd: string, options: GitStatusOptions = {}): Promise<FsGitStatusResponse> {
@@ -152,9 +153,8 @@ export class GitService implements IGitService {
     cwd: string,
     options: RunOptions = {},
   ): Promise<RunResult> {
-    const workspaceId = this.resolveWorkspaceId(cwd);
-    const lease = this.resolver.acquire({ workspaceId, runtimeId: 'local' }, ['process']);
-    const spawned = await lease.runtime.process!
+    const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
+    const spawned = await lease.environment.process!
       .spawn(cmd, args, { cwd, env: options.env })
       .then(
         (proc) => ({ ok: true as const, proc }),
@@ -202,14 +202,6 @@ export class GitService implements IGitService {
       void proc.dispose();
       lease.dispose();
     }
-  }
-
-  private resolveWorkspaceId(cwd: string): string {
-    const workspace = this.workspaces.findContaining(cwd);
-    if (workspace === undefined) {
-      throw new Error(`workspace for root ${cwd} is not materialized`);
-    }
-    return workspace.id;
   }
 
   private gitUnavailable(cwd: string, detail: string): Error2 {

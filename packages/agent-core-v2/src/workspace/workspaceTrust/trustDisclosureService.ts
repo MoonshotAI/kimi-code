@@ -63,8 +63,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   ) {}
 
   async describeGatedActivation(): Promise<TrustGatedActivation> {
-    await this.trust.ready;
-    if (this.trust.isTrusted()) return EMPTY_ACTIVATION;
+    if (await this.trust.get()) return EMPTY_ACTIVATION;
     const warnings: string[] = [];
     const [mcpServers, configuredDirs, skillRoots, instructionSources] = await Promise.all([
       this.describeGatedMcpServers().catch((error: unknown) => {

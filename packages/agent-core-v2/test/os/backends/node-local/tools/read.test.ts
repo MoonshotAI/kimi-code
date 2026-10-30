@@ -4,6 +4,7 @@ import { PathSecurityError } from '#/tool/path-access';
 import { MEDIA_SNIFF_BYTES } from '#/agent/media/file-type';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../../../environment/stubs';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
   type ReadInput,
@@ -18,9 +19,9 @@ import type { IAgentToolResultTruncationService } from '#/agent/toolResultTrunca
 import type { IAgentProfileService } from '#/agent/profile/profile';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
-import { RuntimeRegistry } from '#/runtime/runtimeRegistry';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
@@ -89,20 +90,14 @@ function createReadTool(
   toolPolicy: IAgentToolPolicyService = { isToolActive: () => true } as unknown as IAgentToolPolicyService,
   toolRegistry: IAgentToolRegistryService = { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
 ): ReadTool {
-  const runtime = Object.assign(
-    new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+  const environment = Object.assign(
+    new FakeEnvironment(
+      { environmentId: 'local', generation: 'test' },
       { capabilities: ['fs'], pathClass: env.pathClass },
     ),
-    { environment: env, fs },
+    { host: env, fs },
   );
-  const resolver: IAgentRuntimeService = {
-    _serviceBrand: undefined,
-    onDidChange: () => ({ dispose: () => {} }),
-    isAvailable: () => true,
-    inspect: () => runtime,
-    acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-  };
+  const resolver = stubAgentEnvironment(environment);
   return new ReadTool(resolver, workspace, skillCatalog, truncation, stubConfigService(), profile, toolPolicy, toolRegistry);
 }
 
@@ -189,6 +184,54 @@ async function execute(tool: ReadTool, args: ReadInput): Promise<ExecutableToolR
     signal,
   };
   return execution.execute(ctx);
+}
+
+function createRegistryBackedTool(environmentValue: FakeEnvironment) {
+  const registry = new EnvironmentRegistry();
+  registry.register(environmentValue);
+  const binding = { environmentId: 'local' } as const;
+  const environment: IAgentEnvironmentService = {
+    _serviceBrand: undefined,
+    onDidChange: (listener) => registry.onDidChange(() => listener()),
+    isAvailable: (required = []) => {
+      try {
+        const lease = registry.acquire(binding, required);
+        lease.dispose();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    inspect: () => registry.inspect(binding),
+    acquire: (required = []) => registry.acquire(binding, required),
+    acquireWhenReady: (required = []) => registry.acquireWhenReady(binding, required),
+    workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
+  };
+  const tool = new ReadTool(
+    environment,
+    stubWorkspaceContext('/workspace'),
+    { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
+    stubToolResultTruncationService(),
+    stubConfigService(),
+    stubProfileService({ image_in: true, video_in: true }),
+    { isToolActive: () => true } as unknown as IAgentToolPolicyService,
+    { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
+  );
+  return { registry, tool };
+}
+
+async function connectingReadExecution(status?: 'connecting') {
+  const env = createTestEnv();
+  const fs = createSpiedFs('visible').fs;
+  const environmentValue = new FakeEnvironment(
+    { environmentId: 'local', generation: 'test' },
+    { capabilities: ['fs'], status },
+  );
+  Object.assign(environmentValue, { host: env, fs });
+  const { tool } = createRegistryBackedTool(environmentValue);
+  const execution = await tool.resolveExecution({ path: '/workspace/a.txt' });
+  if (!('execute' in execution)) throw new Error('expected executable Read tool');
+  return { environmentValue, execution };
 }
 
 describe('ReadTool', () => {
@@ -1453,50 +1496,15 @@ describe('ReadTool', () => {
     expect(result.truncated).toBeUndefined();
   });
 
-  it('rechecks runtime availability when execution starts after the tool was shown', async () => {
-    const env = createTestEnv();
-    const fs = createSpiedFs('visible').fs;
-    const runtimeValue = new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
-      { capabilities: ['fs'] },
-    );
-    Object.assign(runtimeValue, { environment: env, fs });
-    const registry = new RuntimeRegistry('workspace');
-    registry.register(runtimeValue);
-    const binding = { workspaceId: 'workspace', runtimeId: 'local' } as const;
-    const runtime: IAgentRuntimeService = {
-      _serviceBrand: undefined,
-      onDidChange: (listener) => registry.onDidChange(() => listener()),
-      isAvailable: (required = []) => {
-        try {
-          const lease = registry.acquire(binding, required);
-          lease.dispose();
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      inspect: () => registry.inspect(binding),
-      acquire: (required = []) => registry.acquire(binding, required),
-    };
-    const tool = new ReadTool(
-      runtime,
-      stubWorkspaceContext('/workspace'),
-      { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
-      stubToolResultTruncationService(),
-      stubConfigService(),
-      stubProfileService({ image_in: true, video_in: true }),
-      { isToolActive: () => true } as unknown as IAgentToolPolicyService,
-      { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
-    );
-    const execution = await tool.resolveExecution({ path: '/workspace/a.txt' });
+  it('rechecks environment availability when execution starts after the tool was shown', async () => {
+    const { environmentValue, execution } = await connectingReadExecution();
     expect('execute' in execution).toBe(true);
 
-    runtimeValue.setStatus('disconnected');
+    environmentValue.setStatus('disconnected');
 
     if (!('execute' in execution)) throw new Error('expected executable Read tool');
     await expect(
       execution.execute({ turnId: 0, toolCallId: 'call_read_late', signal }),
-    ).rejects.toMatchObject({ code: 'runtime.unavailable' });
+    ).rejects.toMatchObject({ code: 'environment.unavailable' });
   });
 });

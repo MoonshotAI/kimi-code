@@ -8,7 +8,7 @@
 import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 import { OAuthAccessDeniedError, type KimiRegion } from '@moonshot-ai/kimi-code-oauth';
 
-import { createKimiCodeHostIdentity } from '#/cli/version';
+import { createKimiCodeHostIdentity } from '#/cli/host-identity';
 import { openUrl } from '#/utils/open-url';
 import { persistedKimiOAuthRef, regionForBareLogin } from '#/utils/region';
 

@@ -6,14 +6,14 @@ import type { ISessionMediaStore } from './sessionMediaStore';
 
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import type { WorkspaceConfig } from '#/tool/path-access';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import type { VideoUploader } from '#/agent/tools/read-media-file/read-media-file';
 
 export interface RegisterMediaToolsDeps {
   readonly attachmentStore?: ISessionMediaStore;
-  readonly runtime: IAgentRuntimeService;
+  readonly environment: IAgentEnvironmentService;
   readonly workspace: WorkspaceConfig;
   readonly capabilities: ModelCapability;
   readonly videoUploader?: VideoUploader;
@@ -27,14 +27,14 @@ export function registerMediaTools(
   deps: RegisterMediaToolsDeps,
 ): IDisposable {
   if (
-    (!deps.runtime.isAvailable(['fs']) && deps.attachmentStore === undefined) ||
+    (!deps.environment.isAvailable(['fs']) && deps.attachmentStore === undefined) ||
     (!deps.capabilities.image_in && !deps.capabilities.video_in)
   ) {
     return toDisposable(() => {});
   }
   return toolRegistry.register(
     new ReadMediaFileTool(
-      deps.runtime,
+      deps.environment,
       deps.workspace,
       deps.capabilities,
       deps.videoUploader,

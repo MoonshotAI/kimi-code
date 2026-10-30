@@ -100,6 +100,14 @@ describe('SessionMetadata', () => {
     expect((await meta.read()).createdAt).toBeGreaterThan(0);
   });
 
+  it('retains the host cwd in metadata and the read model for a remote session', async () => {
+    const meta = ix.get(ISessionMetadata);
+    await meta.ready;
+    await meta.update({ environmentId: 'remote', environmentCwd: '/remote/project' });
+    expect((await meta.read()).cwd).toBe(makeContext().cwd);
+    expect(mirror.recorded.at(-1)).toMatchObject({ cwd: makeContext().cwd });
+  });
+
   it('update merges fields and bumps updatedAt', async () => {
     const meta = ix.get(ISessionMetadata);
     const before = (await meta.read()).updatedAt;

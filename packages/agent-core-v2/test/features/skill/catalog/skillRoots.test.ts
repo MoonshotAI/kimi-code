@@ -68,6 +68,23 @@ describe('skillRoots', () => {
       expect(brandIdx).toBeGreaterThanOrEqual(0);
       expect(genericIdx).toBeGreaterThan(brandIdx);
     });
+
+    it('resolves roots through the provided filesystem instead of the local one', async () => {
+      const remoteRoot = '/remote/project';
+      const fs = {
+        stat: async (p: string) => {
+          if (p === `${remoteRoot}/.git` || p === `${remoteRoot}/.kimi-code/skills`) {
+            return { isFile: false, isDirectory: true, size: 0 };
+          }
+          throw new Error('ENOENT');
+        },
+        realpath: async (p: string) => p,
+      };
+
+      const roots = await projectRoots(remoteRoot, {}, fs);
+
+      expect(roots).toEqual([{ path: '/remote/project/.kimi-code/skills', source: 'project' }]);
+    });
   });
 
   describe('userRoots', () => {

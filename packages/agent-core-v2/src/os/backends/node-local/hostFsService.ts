@@ -7,12 +7,11 @@ import {
   readdir,
   mkdir,
   realpath as nodeRealpath,
+  rename as nodeRename,
   rm,
   stat as nodeStat,
   writeFile,
 } from 'node:fs/promises';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { decodeTextWithErrors, readUtf8Lines, type TextDecodeErrors } from '#/_base/execEnv/decodeText';
 
 import { type HostDirEntry, type HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -73,6 +72,14 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
+  async appendBytes(path: string, data: Uint8Array): Promise<void> {
+    try {
+      await appendFile(path, data);
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'append' });
+    }
+  }
+
   async readBytes(path: string, n?: number, offset = 0): Promise<Uint8Array> {
     try {
       if (n === undefined && offset === 0) {
@@ -93,7 +100,7 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async writeBytes(path: string, data: Uint8Array): Promise<void> {
+  async writeBytes(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void> {
     try {
       await writeFile(path, data);
     } catch (error) {
@@ -147,6 +154,7 @@ export class HostFileSystem implements IHostFileSystem {
         size: s.size,
         mtimeMs: s.mtimeMs,
         ino: s.ino,
+        mode: s.mode & 0o7777,
       };
     } catch (error) {
       throw toHostFsError(error, { path, op: 'stat' });
@@ -163,6 +171,7 @@ export class HostFileSystem implements IHostFileSystem {
         size: s.size,
         mtimeMs: s.mtimeMs,
         ino: s.ino,
+        mode: s.mode & 0o7777,
       };
     } catch (error) {
       throw toHostFsError(error, { path, op: 'lstat' });
@@ -199,6 +208,14 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
+  async rename(from: string, to: string): Promise<void> {
+    try {
+      await nodeRename(from, to);
+    } catch (error) {
+      throw toHostFsError(error, { path: from, op: 'rename' });
+    }
+  }
+
   async realpath(path: string): Promise<string> {
     try {
       return await nodeRealpath(path);
@@ -207,11 +224,3 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IHostFileSystem,
-  HostFileSystem,
-  ScopeActivation.OnScopeCreated,
-  'hostFs',
-);
