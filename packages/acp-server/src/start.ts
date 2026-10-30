@@ -130,12 +130,16 @@ export async function runAcpServerWithStream(
 
   // Route every inbound ACP method to the `AcpServer`. The app must be
   // connected before the outbound client surface (`conn.client`) — and thus
-  // the server — exists, so handlers dereference `server` lazily. No inbound
-  // message can be dispatched before this synchronous block yields (the
-  // connection's reader only runs on later microtasks), so `server` is always
-  // assigned by the time a handler fires.
-  let server: AcpServer;
-  const app = createAcpAgentApp(() => server);
+  // the server — exists. Handlers wait for `serverReady` so requests received
+  // while the environment provider is attaching run only after construction.
+  let resolveServer!: (server: AcpServer) => void;
+  let rejectServer!: (error: unknown) => void;
+  const serverReady = new Promise<AcpServer>((resolve, reject) => {
+    resolveServer = resolve;
+    rejectServer = reject;
+  });
+  void serverReady.catch(() => {});
+  const app = createAcpAgentApp(() => serverReady);
   const conn = app.connect(stream);
   const client = acpClientFromContext(conn.client);
   // Bind the process-wide ACP client connection before any session performs
@@ -143,8 +147,14 @@ export async function runAcpServerWithStream(
   // `IAcpConnection.get()`.
   acpConnection.bind(client);
   const acpEnvironmentProvider = new AcpEnvironmentProviderFactory(acpConnection, core.accessor.get(IHostEnvironment), core.accessor.get(IHostProcessService));
-  const acpProviderRegistration = await core.accessor.get(IEnvironmentService).addProvider(acpEnvironmentProvider);
-  server = new AcpServer(client, klient, acpConnection, {
+  const acpProviderRegistration = await core.accessor
+    .get(IEnvironmentService)
+    .addProvider(acpEnvironmentProvider)
+    .catch((error: unknown) => {
+      rejectServer(error);
+      throw error;
+    });
+  const server = new AcpServer(client, klient, acpConnection, {
     agentInfo: opts.agentInfo,
     disableAuth: opts.disableAuth,
     terminalAuthEnv: opts.terminalAuthEnv,
@@ -176,6 +186,7 @@ export async function runAcpServerWithStream(
         : sessionMediaOriginalsDir(handle.accessor.get(ISessionContext).sessionDir);
     },
   });
+  resolveServer(server);
 
   let closePromise: Promise<void> | undefined;
   const close = async (): Promise<void> => {

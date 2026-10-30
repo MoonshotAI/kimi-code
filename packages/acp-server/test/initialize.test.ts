@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { PassThrough, Readable, Writable } from 'node:stream';
 
 import { ndJsonStream } from '@agentclientprotocol/sdk';
+import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it } from 'vitest';
 
 import { runAcpServerWithStream } from '../src/start';
@@ -96,6 +97,81 @@ describe('acp-server initialize handshake', () => {
       }
     },
     30_000,
+  );
+
+  it(
+    'answers an initialize request sent before startup completes',
+    async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), 'acp-server-early-init-'));
+      const toAgent = new PassThrough();
+      const toClient = new PassThrough();
+      try {
+        const stream = ndJsonStream(Writable.toWeb(toClient), Readable.toWeb(toAgent));
+        const serverPromise = runAcpServerWithStream(stream, { homeDir });
+        toAgent.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: { protocolVersion: 1, clientCapabilities: {} },
+          })}\n`,
+        );
+
+        const response = await readOneMessage(toClient);
+        const server = await serverPromise;
+        await server.close();
+        toAgent.end();
+        toClient.end();
+
+        expect(response.id).toBe(1);
+        expect(response.error).toBeUndefined();
+        expect(response.result).toMatchObject({ protocolVersion: 1 });
+      } finally {
+        await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    },
+    30_000,
+  );
+
+  it(
+    'rejects an early initialize request when startup fails',
+    async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), 'acp-server-failed-init-'));
+      const toAgent = new PassThrough();
+      const toClient = new PassThrough();
+      const startupError = new Error('environment attach failed');
+      try {
+        const stream = ndJsonStream(Writable.toWeb(toClient), Readable.toWeb(toAgent));
+        const environmentService = {
+          addProvider: () => Promise.reject(startupError),
+        } as unknown as IEnvironmentService;
+        const serverPromise = runAcpServerWithStream(stream, {
+          homeDir,
+          extraSeeds: [[IEnvironmentService, environmentService]],
+        });
+        toAgent.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: { protocolVersion: 1, clientCapabilities: {} },
+          })}\n`,
+        );
+
+        const responsePromise = readOneMessage(toClient);
+        await expect(serverPromise).rejects.toBe(startupError);
+        const response = await responsePromise;
+        expect(response.error).toMatchObject({
+          code: -32603,
+          data: { details: startupError.message },
+        });
+      } finally {
+        toAgent.end();
+        toClient.end();
+        await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    },
+    5_000,
   );
 
   it(
