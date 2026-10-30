@@ -223,14 +223,14 @@ describe('AgentToolExecutorService', () => {
     await execute(
       [toolCall('call_traced', 'echo', { text: 'hi' })],
       undefined,
-      { traceId: 'trace-tool-1' },
+      { requestId: 'trace-tool-1' },
     );
 
     expect(telemetryEvents).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
         tool_call_id: 'call_traced',
-        trace_id: 'trace-tool-1',
+        request_id: 'trace-tool-1',
       }),
     });
   });
@@ -1185,6 +1185,8 @@ describe('truncation pipeline', () => {
   });
 
   it('recovers an expanded Glob listing beyond spill retention using complete saved pages', async () => {
+    await readConfig.set('read', { maxChars: 500_000 });
+    await readConfig.reload();
     const root = await mkdtemp(join(tmpdir(), 'r'.repeat(180)));
     try {
       const names = Array.from({ length: 60_000 }, (_, i) => `file-${String(i).padStart(6, '0')}.ts`);
@@ -1312,9 +1314,7 @@ describe('truncation pipeline', () => {
     vi.spyOn(environmentFs, 'readLines').mockImplementation(() => {
       throw new Error('client cannot access daemon storage');
     });
-    registry.register(new ReadMediaFileTool(mediaEnvironment, { workspaceDir: homeDir, additionalDirs: [] }, {
-      image_in: true, video_in: false, audio_in: false, thinking: false, tool_use: true,
-    }, undefined, undefined, undefined, undefined, attachmentStore));
+    registry.register(new ReadMediaFileTool(mediaEnvironment, { workspaceDir: homeDir, additionalDirs: [] }, attachmentStore));
     const png = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
     const bytes = [png, Buffer.from('%PDF-1.4\nexample\n%%EOF')];
     const client: MCPClient = {
@@ -1527,7 +1527,7 @@ describe('truncation pipeline', () => {
     expect(result.output.length).toBeGreaterThan(50_000);
     expect(result.output.replaceAll(/^\d+\t/gm, '')).toBe(content.trimEnd());
     expect(result.truncated).toBeUndefined();
-    expect(result.note).toContain('Requested range complete.');
+    expect(result.note).toBeUndefined();
     expect(result.output).not.toContain('output_path:');
   });
 

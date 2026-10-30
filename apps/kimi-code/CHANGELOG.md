@@ -1,5 +1,17 @@
 # @moonshot-ai/kimi-code
 
+## 2.4.1
+
+### Patch Changes
+
+- [#4553](https://github.com/MoonshotAI/kimi-code/pull/4553) [`9140ea0`](https://github.com/MoonshotAI/kimi-code/commit/9140ea0d980fc27c5c5ff983b2efe82191eb2b4a) Thanks [@RealKai42](https://github.com/RealKai42)! - A single file read by the agent now returns at most 100,000 characters or about 25,000 tokens, whichever comes first, instead of up to 500,000 characters; set `max_chars` under `[read]` in config.toml to raise both limits again.
+
+- [#4521](https://github.com/MoonshotAI/kimi-code/pull/4521) [`dbb65af`](https://github.com/MoonshotAI/kimi-code/commit/dbb65affd82525096c439e01d34e99d5dcf85318) Thanks [@7Sageer](https://github.com/7Sageer)! - Shorten built-in tool and subagent prompts.
+
+- [#4521](https://github.com/MoonshotAI/kimi-code/pull/4521) [`dbb65af`](https://github.com/MoonshotAI/kimi-code/commit/dbb65affd82525096c439e01d34e99d5dcf85318) Thanks [@7Sageer](https://github.com/7Sageer)! - Shorten repeated goal and plan mode reminders.
+
+- [#4555](https://github.com/MoonshotAI/kimi-code/pull/4555) [`480a9b0`](https://github.com/MoonshotAI/kimi-code/commit/480a9b0499b86d1421ce2c751cd8aaa798e2190a) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Improved interactions and fixed known bugs.
+
 ## 2.4.0
 
 ### Minor Changes

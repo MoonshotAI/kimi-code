@@ -5,7 +5,7 @@ import type {
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import type { ThinkingEffort } from '#human/llm-requester/thinking';
-import type { ModelRequestParams } from '#/llm-adapter/model/model-requester';
+import type { ModelRequestParams } from '#/llm-adapter/model/generate';
 
 import { createDecorator } from "#/_base/di/instantiation";
 import type { ErrorCode } from '#/errors';

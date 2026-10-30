@@ -1,4 +1,3 @@
-import { createDecorator } from '#/_base/di/instantiation';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import type { ThinkingEffort } from '#human/llm-requester/thinking';
@@ -10,7 +9,7 @@ import type {
 } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm-requester/usage';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
+import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
 import type { LogContext } from '#/_base/log/log';
 
 export type AgentLLMRequestLogFields = Readonly<LogContext>;
@@ -37,7 +36,7 @@ export interface AgentLLMRequestFinish {
   rawFinishReason?: string;
   providerMessageId?: string;
   timing?: ModelRequestTiming;
-  traceId?: string;
+  requestId?: string;
 }
 
 export type AgentLLMRequestPartHandler = (part: StreamedMessagePart) => void | Promise<void>;
@@ -62,28 +61,12 @@ export interface PreparedTurnRequestConfig {
   readonly thinkingEffort: ThinkingEffort;
 }
 
-export interface AgentLLMTurnRequestSnapshot {
-  readonly modelAlias: string;
-  readonly contextRevision: number;
-  readonly toolsHash: string;
-  readonly systemPromptHash: string;
-  readonly messageCount: number;
-  readonly historyHash: string;
-  readonly inputTokens?: number;
-  readonly startedAt: number;
-  readonly finishedAt: number;
-}
-
-export interface IAgentLLMRequesterService {
-  readonly _serviceBrand: undefined;
-
+export interface LoopRequester {
   prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined;
 
   currentCredentialProvider(): LlmCredentialProvider | undefined;
 
   credentialProviderForTurn(turnId: number): LlmCredentialProvider | undefined;
-
-  lastTurnRequest(): AgentLLMTurnRequestSnapshot | undefined;
 
   request(
     overrides?: AgentLLMRequestOverrides,
@@ -97,7 +80,3 @@ export interface IAgentLLMRequesterService {
     signal?: AbortSignal,
   ): AgentLLMRequestTask;
 }
-
-export const IAgentLLMRequesterService = createDecorator<IAgentLLMRequesterService>(
-  'agentLLMRequesterService',
-);

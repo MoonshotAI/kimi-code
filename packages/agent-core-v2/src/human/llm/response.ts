@@ -160,9 +160,16 @@ export interface LlmOutput {
   readonly timing?: LlmTiming;
 }
 
+export type LlmErrorDiagnostics = Readonly<Record<string, unknown>>;
+
 export type LlmOutcome =
   | ({ readonly type: 'done' } & LlmOutput)
-  | ({ readonly type: 'failed'; readonly error: LlmErrorMessage; readonly rawError?: unknown } & Partial<LlmOutput>)
+  | ({
+      readonly type: 'failed';
+      readonly error: LlmErrorMessage;
+      readonly rawError?: unknown;
+      readonly diagnostics?: LlmErrorDiagnostics;
+    } & Partial<LlmOutput>)
   | ({ readonly type: 'aborted'; readonly message: AssistantMessage | null; readonly reason?: unknown } & Omit<LlmOutput, 'message'>);
 
 export interface LlmRequestSummary {

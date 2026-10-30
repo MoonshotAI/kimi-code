@@ -583,6 +583,8 @@ export function projectContext(
       case 'llm.tools_snapshot':
       case 'llm.request':
       case 'mcp.tools_discovered':
+      case 'tool_select.initialized':
+      case 'tool_select.tools_changed':
       case 'mcp.server_failed':
       case 'mcp.server_failure_resolved':
       case 'file_history.checkpoint':

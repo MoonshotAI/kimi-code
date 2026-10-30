@@ -197,10 +197,10 @@ async function executeAll(
   calls: ToolCall[],
   turnId: number,
   signal = new AbortController().signal,
-  traceId?: string,
+  requestId?: string,
 ): Promise<ToolExecutionResult[]> {
   const results: ToolExecutionResult[] = [];
-  for await (const item of h.executor.execute(calls, { turnId, signal, trace: { traceId } })) {
+  for await (const item of h.executor.execute(calls, { turnId, signal, trace: { requestId } })) {
     results.push(item);
   }
   return results;
@@ -931,7 +931,7 @@ describe('AgentToolDedupeService', () => {
         properties: expect.objectContaining({
           tool_call_id: 'c2',
           dup_type: 'cross_step',
-          trace_id: 'trace-dedupe-1',
+          request_id: 'trace-dedupe-1',
         }),
       });
       expect(telemetryEvents).toContainEqual({
@@ -939,7 +939,7 @@ describe('AgentToolDedupeService', () => {
         properties: expect.objectContaining({
           tool_name: 'Read',
           repeat_count: 2,
-          trace_id: 'trace-dedupe-1',
+          request_id: 'trace-dedupe-1',
         }),
       });
     });

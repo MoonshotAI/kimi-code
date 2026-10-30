@@ -38,7 +38,7 @@ function fixture() {
   });
   const first = mount();
   first.observe({ kind: 'turn-started', origin: { kind: 'user' } });
-  first.observe({ kind: 'turn-ended', traceId: 'trace-a' });
+  first.observe({ kind: 'turn-ended', requestId: 'trace-a' });
   expect(first.evaluate()).toEqual({ appearanceId: 'appearance-1', survey: 'session' });
   return {
     first, mount, ledger, events,

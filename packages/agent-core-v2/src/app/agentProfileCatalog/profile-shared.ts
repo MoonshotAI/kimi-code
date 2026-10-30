@@ -10,12 +10,14 @@ import {
 import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from './builtinAgentProfileLoader';
 
 import SYSTEM_PROMPT_TEMPLATE from './system.md?raw';
+import CODING_SECTION from './coding.md?raw';
+import DELIVERING_WORK_SECTION from './delivering-work.md?raw';
+import READ_ONLY_DELIVERING_WORK_SECTION from './delivering-work-read-only.md?raw';
+import PROJECT_INFORMATION_SECTION from './project-information.md?raw';
 
 export const TASK_AGENT_ROLE_PREFIX =
-  'You are now running as a subagent. All the `user` messages are sent by the main agent. ' +
-  'The main agent cannot see your context, it can only see your last message when you finish the task. ' +
-  'You must treat the parent agent as your caller. Do not directly ask the end user questions. ' +
-  'If something is unclear, explain the ambiguity in your final summary to the parent agent.';
+  'You are a subagent; the main agent is your caller and all `user` messages come from it. ' +
+  'The main agent sees only your final message. Do not ask the end user questions; explain ambiguities in your final handoff.';
 
 export function skillActiveFor(tools: readonly string[]): boolean {
   return tools.includes('Skill');
@@ -110,13 +112,13 @@ export const DEFAULT_REPLY_STYLE_GUIDE =
   "Your text replies render as Markdown in the user's terminal. Keep structure light and shallow — deep nesting, large tables, and heavy headings read poorly there. Cite code locations as `path/to/file.ts:42` so the user can navigate to them. Do not use emoji unless the user does first or asks for it.";
 
 export const NOTIFY_USER_GUIDANCE =
-  'When `NotifyUser` is available, use it proactively to keep the end user informed while you work. For a multi-step task, send an early update describing your approach, then report meaningful findings, phase conclusions, long waits, and blockers. Give each update a one-line title the user can take in at a glance and put the details behind it in the message, both in the end user\'s language; avoid repeating unchanged status. The UI adds the source label automatically. If you are working as a subagent, report only your own subtask\'s progress, do not present its completion as completion of the whole task, and do not ask the end user questions or request decisions. Updates do not automatically reach your parent agent: include every important finding in your final handoff. Updates are progress notes, not the answer, so your final reply must still stand on its own.';
+  'When `NotifyUser` is available, use it proactively to keep the end user informed while you work: for a multi-step task, send an early update describing your approach, then report meaningful findings, phase conclusions, long waits, and blockers.';
 
 export const TODO_LIST_GUIDANCE =
   'When you track work in `TodoList`, keep it in step with what you have actually done: mark an item done as soon as it is finished, before you start the next one, and make sure the list matches what you did before you write your final message.';
 
 export const PLAN_MODE_GUIDANCE =
-  'Plan mode is a read-only planning state that only the user can turn on, from the app (for example with Shift-Tab or `/plan` in the terminal); you cannot enter it yourself. If the user asks for plan mode, tell them how to turn it on. When they ask you to plan first, wait for their go-ahead before changing code.';
+  'Plan mode is a read-only planning state that only the user can turn on (for example with Shift-Tab or `/plan` in the terminal); you cannot enter it yourself, so if asked, tell the user how. When they ask you to plan first, wait for their go-ahead before changing code.';
 
 export function renderAgentProfilePrompt(
   profile: AgentProfile,
@@ -141,7 +143,7 @@ const PLUGIN_SECTIONS_PROSE =
 
 export function systemPromptVars(
   context: AgentProfileContext,
-  options: { readonly skillActive: boolean },
+  options: { readonly skillActive: boolean; readonly readOnly?: boolean },
 ): Record<string, string> {
   const shellName = context.shellName ?? '';
   const shellPath = context.shellPath ?? '';
@@ -149,19 +151,39 @@ export function systemPromptVars(
   const skills = skillActive ? (context.skills ?? '') : '';
   const pluginSections = context.pluginSections ?? '';
   const additionalDirsInfo = context.additionalDirsInfo ?? '';
+  const agentsMd = context.agentsMd ?? '';
+  const todoListGuidance = context.todoListActive === true ? `${TODO_LIST_GUIDANCE}\n\n` : '';
+  const deliveringWorkSection =
+    options.readOnly === true
+      ? READ_ONLY_DELIVERING_WORK_SECTION
+      : renderPrompt(DELIVERING_WORK_SECTION, {
+          plan_mode_guidance: context.planModeAvailable === true ? `${PLAN_MODE_GUIDANCE}\n\n` : '',
+          todo_list_guidance: todoListGuidance,
+        });
   return {
     role_additional: '',
     product_name: context.productName ?? DEFAULT_PRODUCT_NAME,
     reply_style_guide: context.replyStyleGuide ?? DEFAULT_REPLY_STYLE_GUIDE,
     notify_user_guidance: context.notifyUserActive === true ? ` ${NOTIFY_USER_GUIDANCE}` : '',
-    todo_list_guidance: context.todoListActive === true ? `${TODO_LIST_GUIDANCE}\n\n` : '',
-    plan_mode_guidance: context.planModeAvailable === true ? `${PLAN_MODE_GUIDANCE}\n\n` : '',
+    todo_list_guidance: todoListGuidance,
+    coding_section: options.readOnly === true ? '' : `${CODING_SECTION}\n`,
+    delivering_work_section: `${deliveringWorkSection}\n`,
     os: context.osKind ?? '',
     windows_notes: context.osKind === 'Windows' ? `\n\n${WINDOWS_NOTES}\n\n` : '',
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',
     cwd: context.cwd ?? '',
     cwd_listing: context.cwdListing ?? '',
-    agents_md: context.agentsMd ?? '',
+    agents_md: agentsMd,
+    agents_section:
+      agentsMd.length > 0 || options.readOnly !== true
+        ? renderPrompt(PROJECT_INFORMATION_SECTION, {
+            agents_md: agentsMd,
+            agents_md_update:
+              options.readOnly === true
+                ? ''
+                : ' If you change anything an `AGENTS.md` documents, update that `AGENTS.md` to match.',
+          })
+        : '',
     additional_dirs_info: additionalDirsInfo,
     additional_dirs_section:
       additionalDirsInfo.length > 0
@@ -180,7 +202,7 @@ export function systemPromptVars(
 export function renderPromptTemplateResult(
   template: string,
   context: AgentProfileContext,
-  options: { readonly skillActive: boolean },
+  options: { readonly skillActive: boolean; readonly readOnly?: boolean },
   basePrompt?: (context: AgentProfileContext) => SystemPromptRenderResult,
 ): SystemPromptRenderResult {
   const vars = systemPromptVars(context, options);
@@ -198,7 +220,7 @@ export function renderPromptTemplateResult(
 export function renderSystemPromptResult(
   roleAdditional: string,
   context: AgentProfileContext,
-  options: { readonly skillActive: boolean },
+  options: { readonly skillActive: boolean; readonly readOnly?: boolean },
 ): SystemPromptRenderResult {
   return {
     text: renderPrompt(SYSTEM_PROMPT_TEMPLATE, {

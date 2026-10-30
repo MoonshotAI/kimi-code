@@ -1,13 +1,12 @@
-import type { SystemMessage, UserMessage } from '#/llm/message';
 import type { AgentEmitted } from '#/agent/machine';
-import { createSystemEntry, createUserEntry, type SystemEntry, type UserEntry } from '#/agent/turn';
+import type { SystemEntry, UserEntry } from '#/agent/turn';
 import type { ToolDefinition } from '#/tool/tool';
 
 export interface AgentPluginTarget {
   kind: 'agent';
   on(type: AgentEmitted['type'], handler: (event: AgentEmitted) => void): unknown;
-  notify(message: UserMessage): void;
-  remind(key: string, message: UserMessage | SystemMessage): void;
+  notify(entry: UserEntry): void;
+  remind(entry: SystemEntry | UserEntry): void;
 }
 
 export type PluginTarget = AgentPluginTarget;
@@ -27,7 +26,7 @@ export interface AgentPluginSource {
   send(
     event:
       | { type: 'input.notify'; entry: UserEntry }
-      | { type: 'input.remind'; key: string; entry: SystemEntry | UserEntry },
+      | { type: 'input.remind'; entry: SystemEntry | UserEntry },
   ): void;
 }
 
@@ -37,15 +36,11 @@ export function connectPlugins(actor: AgentPluginSource, plugins: readonly Plugi
     on: (type, handler) => {
       actor.on(type, handler);
     },
-    notify: (message) => {
-      actor.send({ type: 'input.notify', entry: { message } });
+    notify: (entry) => {
+      actor.send({ type: 'input.notify', entry });
     },
-    remind: (key, message) => {
-      actor.send({
-        type: 'input.remind',
-        key,
-        entry: message.role === 'system' ? createSystemEntry(message) : createUserEntry(message),
-      });
+    remind: (entry) => {
+      actor.send({ type: 'input.remind', entry });
     },
   };
   for (const plugin of plugins) {

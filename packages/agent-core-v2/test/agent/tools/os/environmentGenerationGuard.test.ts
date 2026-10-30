@@ -11,7 +11,7 @@ import {
 } from '#/environment/environmentRegistry';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { ModelCapability } from '#human/llm-requester/capability';
+import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import type { IAgentProfileService } from '#/agent/profile/profile';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -50,15 +50,7 @@ const profile = {
 const toolPolicy = { isToolActive: () => true } as unknown as IAgentToolPolicyService;
 const toolRegistry = { resolve: () => ({}) } as unknown as IAgentToolRegistryService;
 
-function modelCapabilities(): ModelCapability {
-  return {
-    image_in: true,
-    video_in: true,
-    audio_in: false,
-    thinking: false,
-    tool_use: true,
-  };
-}
+const attachmentStore = { put: async () => 'kimi-file://a' } as unknown as ISessionMediaStore;
 
 function registryBackedService(registry: EnvironmentRegistry): IAgentEnvironmentService {
   return {
@@ -252,7 +244,7 @@ function toolCases(): readonly ToolCase[] {
       name: 'ReadMediaFile',
       fs: pngFs(),
       resolve: (service) =>
-        new ReadMediaFileTool(service, WORKSPACE, modelCapabilities(), undefined, noopTelemetryService).resolveExecution({
+        new ReadMediaFileTool(service, WORKSPACE, attachmentStore, noopTelemetryService).resolveExecution({
           path: '/workspace/a.png',
         }),
       expectOutcome: () => {},

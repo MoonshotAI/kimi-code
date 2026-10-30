@@ -121,7 +121,7 @@ import {
 } from '#human/llm/message';
 import { type ThinkingEffort } from '#human/llm-requester/thinking';
 import { type TokenUsage } from '#human/llm-requester/usage';
-import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
 import { IAgentTodoService } from '#/features/todo/todoService';
@@ -148,11 +148,9 @@ import {
   IBootstrapService,
   IConfigService,
   IAgentContextMemoryService,
-  IAgentContextProjectorService,
   IAgentExternalHooksService,
   IExternalHooksRunnerService,
   IAgentFullCompactionService,
-  IAgentLLMRequesterService,
   ILogService,
   IAgentPermissionGate,
   IAgentPermissionModeService,
@@ -218,7 +216,6 @@ import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { ModelCatalog } from '#/llm-adapter/model/catalog-service';
 import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
 import { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
-import type { ModelRequestParams, ModelRequester } from '#/llm-adapter/model/model-requester';
 import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
 import {
   IProviderService,
@@ -243,8 +240,9 @@ import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
-import { guardPromptCachePrefix, PromptCacheGuardedLLMRequesterService } from './prompt-cache-guard';
-import { createScriptedGenerate } from './scripted-generate';
+import { guardPromptCachePrefix, PromptCacheGuardedLoopRequester } from './prompt-cache-guard';
+import { coreRequesterFromA, createScriptedGenerate } from './scripted-generate';
+import { project as projectContext } from '#/agent/loop/projection';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
   type EventSnapshot,
@@ -1083,22 +1081,9 @@ class ConfigBackedModelCatalog extends ModelCatalog {
 
   override get(id: string): Model {
     this.syncRegistriesFromConfig();
-    return super.get(id);
-  }
-
-  override getRequester(id: string): ModelRequester {
-    this.syncRegistriesFromConfig();
-    const requester = super.getRequester(id);
+    const model = super.get(id);
     const cacheKey = this.options.promptCacheKey;
-    if (cacheKey === undefined) return requester;
-    return {
-      ...requester,
-      request: (
-        input: Parameters<ModelRequester['request']>[0],
-        signal?: AbortSignal,
-        params?: ModelRequestParams,
-      ) => requester.request(input, signal, { cacheKey, ...params }),
-    };
+    return cacheKey === undefined ? model : Object.assign(model, { promptCacheKey: cacheKey });
   }
 
   override findByName(name: string): readonly string[] {
@@ -1411,10 +1396,6 @@ export class AgentTestContext {
             reg.defineDescriptor(IAgentBlobService, new SyncDescriptor(AgentBlobServiceImpl));
             reg.defineDescriptor(IAgentProfileService, new SyncDescriptor(AgentProfileService));
             reg.defineDescriptor(
-              IAgentLLMRequesterService,
-              new SyncDescriptor(PromptCacheGuardedLLMRequesterService),
-            );
-            reg.defineDescriptor(
               IAgentExternalHooksService,
               new SyncDescriptor(AgentExternalHooksService),
             );
@@ -1455,6 +1436,13 @@ export class AgentTestContext {
     this.session.accessor
       .get(ISessionEventBus)
       .activateAgent(harnessAgentContext);
+    const loop = this.agent.accessor.get(IAgentLoopService) as {
+      requester: IAgentLoopService['requester'];
+    };
+    loop.requester = new PromptCacheGuardedLoopRequester(
+      loop.requester,
+      this.agent.accessor.get(IAgentContextMemoryService),
+    );
     adoptAgent!();
     this.installInteractionBridge();
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
@@ -1689,7 +1677,7 @@ export class AgentTestContext {
     void plan.status();
 
     this.get(IAgentUserToolService);
-    this.get(IAgentLLMRequesterService);
+    this.get(IAgentLoopService);
     this.get(IAgentFullCompactionService);
     this.get(IAgentProfileService);
     const agentState = this.get(IAgentStateService);
@@ -1749,9 +1737,7 @@ export class AgentTestContext {
   }
 
   project(messages?: readonly ContextMessage[]) {
-    const context = this.get(IAgentContextMemoryService);
-    const projector = this.get(IAgentContextProjectorService);
-    return projector.project(messages ?? context.get());
+    return projectContext(messages ?? this.get(IAgentContextMemoryService).get());
   }
 
   toolsData(): Array<
@@ -2835,7 +2821,18 @@ function createGenerateBackedGateway(requester: LlmRequester): IProtocolAdapterR
       real.resolveProviderBaseId(protocol, providerType),
     resolveCapability: (protocol, modelName, providerType) =>
       real.resolveCapability(protocol, modelName, providerType),
-    resolve: (model) => ({ ...real.resolve(model), requester }),
+    request: (model, params) => {
+      const cacheKey = (model as Model & { readonly promptCacheKey?: string }).promptCacheKey;
+      return coreRequesterFromA(real.request(model, { cacheKey, ...params }), {
+        ...requester,
+        generate: (config, content, control) =>
+          requester.generate(
+            { ...config, maxCompletionTokens: params?.maxCompletionTokens },
+            content,
+            control,
+          ),
+      });
+    },
   };
 }
 
