@@ -20,10 +20,13 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { estimateTokens } from '#/llm-adapter/contract/tokens';
+import type { HostFileStat } from '#/os/interface/hostFileSystem';
 import {
   ToolAccesses,
+  type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
@@ -48,7 +51,10 @@ import {
 } from './read';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { READ_SECTION, type ReadConfig } from './configSection';
+import { ReadActivity, type ReadPageFacts } from './readActivity';
 import readDescriptionTemplate from './read.md?raw';
+
+const readPageFacts = new WeakMap<ExecutableToolResult, ReadPageFacts>();
 
 interface LineEndingFlags {
   hasCrLf: boolean;
@@ -209,7 +215,10 @@ export class ReadTool implements IReadTool {
     @IHostEnvironment private readonly hostEnvironment?: IHostEnvironment,
     @ISessionContext private readonly session?: ISessionContext,
     @IAgentScopeContext private readonly agent?: IAgentScopeContext,
+    @ITelemetryService private readonly telemetry?: ITelemetryService,
   ) {}
+
+  private readonly activity = new ReadActivity();
 
   private limits(): { defaultMaxChars: number; maxChars: number } {
     const section = this.config.get<ReadConfig | undefined>(READ_SECTION);
@@ -259,14 +268,14 @@ export class ReadTool implements IReadTool {
             pathClass: env.pathClass,
             homeDir: env.homeDir,
           }),
-        execute: async () => {
+        execute: async (ctx) => {
           const lease = await acquireOrWhenReady(this.environment, ['fs']);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
             }
             const eventLog = this.resultTruncation.isWireJournalPath(path);
-            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog);
+            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog, ctx);
             return { ...result, spillExempt: true };
           } finally {
             lease.dispose();
@@ -301,11 +310,11 @@ export class ReadTool implements IReadTool {
       matchesRule: (ruleArgs) => matchesPathRuleSubject(ruleArgs, path, {
         cwd: target.environmentPath.dirname(path), pathClass: target.pathClass,
       }),
-      execute: async () => {
+      execute: async (ctx) => {
         if (planFile && (await this.planService?.resolveFile(path, 'read'))?.path !== path) {
           return { isError: true, output: 'The active plan changed before execution. Retry the tool call.' };
         }
-        return { ...await this.execution(environmentFileSource(target.fs, path), args, false), spillExempt: true };
+        return { ...await this.execution(environmentFileSource(target.fs, path), args, false, ctx), spillExempt: true };
       },
     };
   }
@@ -318,8 +327,8 @@ export class ReadTool implements IReadTool {
       display: { kind: 'file_io', operation: 'read', path: source.localPath ?? args.path },
       approvalRule: literalRulePattern(this.name, args.path),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.path),
-      execute: async () => ({
-        ...withAttachmentLocation(await this.execution(source, args, false), source),
+      execute: async (ctx) => ({
+        ...withAttachmentLocation(await this.execution(source, args, false, ctx), source),
         spillExempt: true,
       }),
     };
@@ -329,6 +338,7 @@ export class ReadTool implements IReadTool {
     source: FileReadSource,
     args: ReadInput,
     eventLog: boolean,
+    ctx: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
       let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
@@ -417,7 +427,9 @@ export class ReadTool implements IReadTool {
       const tokenLimit = tokenLimitFor(limits.maxChars);
       const lineOffset = args.line_offset ?? 1;
       if (lineOffset >= 0) {
-        return await this.fitTokenLimit((page) => this.readForward(readLines(), page), request, tokenLimit);
+        const result = await this.fitTokenLimit((page) => this.readForward(readLines(), page), request, tokenLimit);
+        this.trackRead(ctx, source, args, stat, result);
+        return result;
       }
       const rereadsFile = detectedEncoding === undefined && (args.n_lines ?? Infinity) < -lineOffset;
       const result = await this.fitTokenLimit((page) => this.readTail(readLines, page), request, tokenLimit);
@@ -428,6 +440,7 @@ export class ReadTool implements IReadTool {
           return { isError: true, output: 'File changed while reading its tail. Retry Read with the updated file.' };
         }
       }
+      this.trackRead(ctx, source, args, stat, result);
       return result;
     } catch (error) {
       if (isTextDecodeError(error)) {
@@ -438,6 +451,26 @@ export class ReadTool implements IReadTool {
         output: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  private trackRead(
+    ctx: ExecutableToolContext,
+    source: FileReadSource,
+    args: ReadInput,
+    stat: HostFileStat,
+    result: ExecutableToolResult,
+  ): void {
+    const facts = readPageFacts.get(result);
+    if (this.telemetry === undefined || facts === undefined) return;
+    this.telemetry.track2('read_file', this.activity.observe({
+      turnId: ctx.turnId,
+      toolCallId: ctx.toolCallId,
+      file: isDaemonFileUrl(args.path) ? args.path : source.name,
+      args,
+      stat,
+      text: readResultText(result),
+      facts,
+    }));
   }
 
   private async fitTokenLimit(
@@ -609,13 +642,22 @@ export class ReadTool implements IReadTool {
         )
         : contentChars + (note === undefined ? 0 : 1 + note.length);
       if (renderedChars <= maxChars && (complete || count > 0)) {
-        return {
+        const result: ExecutableToolResult = {
           output: fragmentEnd !== undefined
             ? firstPrefix + firstText.slice(0, fragmentEnd)
             : page.renderedLines.slice(first, end).join('\n'),
           note,
           truncated: complete ? undefined : true,
         };
+        readPageFacts.set(result, {
+          totalLines: page.totalLines,
+          returnedLines: count,
+          wholeFile,
+          complete,
+          tokenLimited: tokenLimit !== undefined,
+          nextLine: complete || page.fromTail ? undefined : lineIncomplete ? startLine : endLine + 1,
+        });
+        return result;
       }
       if (count === 1 && !page.fromTail) {
         const previousEnd = fragmentEnd ?? firstText.length;

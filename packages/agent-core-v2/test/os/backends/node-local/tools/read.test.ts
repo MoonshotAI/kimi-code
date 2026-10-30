@@ -14,6 +14,7 @@ import {
 import { ReadTool } from '#/agent/tools/os/read/readTool';
 import { READ_SECTION } from '#/agent/tools/os/read/configSection';
 import type { IConfigService } from '#/app/config/config';
+import { noopTelemetryService, type ITelemetryService } from '#/app/telemetry/telemetry';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { estimateTokens } from '#/llm-adapter/contract/tokens';
 import { stubToolResultTruncationService } from '../../../../agent/toolResultTruncation/stubs';
@@ -93,6 +94,7 @@ function createReadTool(
   toolPolicy: IAgentToolPolicyService = { isToolActive: () => true } as unknown as IAgentToolPolicyService,
   toolRegistry: IAgentToolRegistryService = { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
   config: IConfigService = stubConfigService(),
+  telemetry?: ITelemetryService,
 ): ReadTool {
   const environment = Object.assign(
     new FakeEnvironment(
@@ -102,7 +104,23 @@ function createReadTool(
     { host: env, fs },
   );
   const resolver = stubAgentEnvironment(environment);
-  return new ReadTool(resolver, workspace, skillCatalog, truncation, config, profile, toolPolicy, toolRegistry);
+  return new ReadTool(
+    resolver,
+    workspace,
+    skillCatalog,
+    truncation,
+    config,
+    profile,
+    toolPolicy,
+    toolRegistry,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    telemetry,
+  );
 }
 
 function createSpiedFs(content: string) {
@@ -486,6 +504,75 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/a.txt' });
 
     expect(result).toMatchObject({ output: '1\talpha\n2\tbeta' });
+  });
+
+  it('reports each Read to telemetry with paging, re-read, and change signals', async () => {
+    const path = '/tmp/notes.md';
+    const lines = Array.from({ length: 40 }, (_, index) => `line ${String(index + 1)} ${'x'.repeat(40)}`);
+    const files: Record<string, FakeFile> = {
+      [path]: { bytes: Buffer.from(lines.join('\n')) },
+      '/tmp/small.ts': { bytes: Buffer.from('export {};\n') },
+    };
+    const events: { event: string; properties: unknown }[] = [];
+    const telemetry: ITelemetryService = {
+      ...noopTelemetryService,
+      track2: (event, properties) => {
+        events.push({ event, properties });
+      },
+    };
+    const tool = createReadTool(
+      createSpiedMapFs(files).fs,
+      createTestEnv(),
+      PERMISSIVE_WORKSPACE,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      telemetry,
+    );
+
+    const first = await execute(tool, { path, max_chars: 800 });
+    const next = ReadInputSchema.parse(JSON.parse(/Next Read: (\{[^\n]*\})/.exec(first.note ?? '')![1]!));
+    await execute(tool, next);
+    await execute(tool, next);
+    files[path] = { bytes: Buffer.from(lines.slice(0, 30).join('\n')) };
+    await execute(tool, next);
+    await execute(tool, { path: '/tmp/small.ts' });
+    await execute(tool, { path: '/tmp/missing.md' });
+
+    expect(events.map((entry) => entry.event)).toEqual(Array.from({ length: 5 }, () => 'read_file'));
+    expect(events[0]?.properties).toMatchObject({
+      turn_id: 0,
+      ext: 'md',
+      whole_file: false,
+      complete: false,
+      ranged: false,
+      requested_max_chars: 800,
+      reread: false,
+      continues_previous_page: false,
+    });
+    expect(events[1]?.properties).toMatchObject({
+      ranged: true,
+      reread: true,
+      reread_unchanged: false,
+      changed_since_last_read: false,
+      continues_previous_page: true,
+    });
+    expect(events[2]?.properties).toMatchObject({ reread_unchanged: true, changed_since_last_read: false });
+    expect(events[3]?.properties).toMatchObject({ reread_unchanged: false, changed_since_last_read: true });
+    expect(events[4]?.properties).toMatchObject({
+      ext: 'ts',
+      whole_file: true,
+      complete: true,
+      returned_lines: 1,
+      total_lines: 1,
+      returned_chars: '1\texport {};'.length,
+      estimated_tokens: 3,
+      token_limited: false,
+      reread: false,
+    });
   });
 
   it('omits the status block when the whole file is returned with nothing to report', async () => {
