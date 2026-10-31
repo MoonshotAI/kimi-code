@@ -174,6 +174,10 @@ export class WsConnectionV1 implements BroadcastTarget {
     const sid = parsed.data.session_id;
     const grades = parsed.data.transcript;
     const ok = await this.broadcaster.subscribe(sid, this, grades, parsed.data.transcript_since);
+    if (this.closed) {
+      this.broadcaster.unsubscribe(sid, this);
+      return;
+    }
     if (ok) this.subscriptions.set(sid, grades);
     this.sendImmediateFrame(
       buildAck(frame.id ?? '', 0, 'success', {

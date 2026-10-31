@@ -385,6 +385,43 @@ describe('WsConnectionV1 control frames', () => {
     socket.emit('close');
     expect(unsubscribes.toSorted()).toEqual(['s1', 's2']);
   });
+
+  it('does not register a subscription when the socket closes while subscribe is pending', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, calls, unsubscribes } = makeCapturingBroadcaster();
+
+    let releaseSubscribe: () => void = () => {};
+    const subscribeGate = new Promise<void>((resolve) => {
+      releaseSubscribe = resolve;
+    });
+    broadcaster.subscribe = async (
+      sessionId: string,
+      _target: unknown,
+      grades: unknown,
+      transcriptSince?: Record<string, number>,
+    ) => {
+      calls.push({ sessionId, grades, transcriptSince });
+      await subscribeGate;
+      return true;
+    };
+
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit(
+      'message',
+      controlFrame('subscribe_v2', { session_id: 's1', transcript: { '*': 'delta' } }),
+    );
+
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    socket.emit('close');
+
+    releaseSubscribe();
+    await vi.waitFor(() => expect(unsubscribes).toEqual(['s1']));
+
+    expect(conn.subscriptions.size).toBe(0);
+    expect(conn.subscriptionSessionIds).toEqual([]);
+    expect(acks(socket)).toHaveLength(0);
+  });
 });
 
 describe('WsConnectionV1 outbound buffer', () => {
