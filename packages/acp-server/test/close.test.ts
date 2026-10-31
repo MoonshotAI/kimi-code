@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createTestClient, type TestClient } from './_helpers/acpClient';
+import { log } from '../src/log';
 
 describe('acp-server session/close', () => {
   let homeDir: string | undefined;
@@ -141,26 +142,37 @@ describe('acp-server session/close', () => {
   );
 
   it(
-    'automatic server shutdown does not trigger unhandledRejection when session close rejects',
+    'automatic server shutdown does not trigger unhandledRejection and logs error when session close rejects',
     async () => {
       let unhandled: unknown;
       const onUnhandled = (err: unknown) => {
         unhandled = err;
       };
       process.on('unhandledRejection', onUnhandled);
+      const logSpy = vi.spyOn(log, 'error').mockImplementation(() => {});
       try {
         const c = await boot();
         const s = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
           sessionId: string;
         };
-        const sessionHandle = c.server.klient.session(s.sessionId);
-        vi.spyOn(sessionHandle, 'close').mockRejectedValueOnce(
-          new Error('forced teardown failure'),
-        );
-        await c.close().catch(() => {});
+        vi.spyOn(c.server.klient, 'session').mockImplementation(((sessionId: string) => {
+          const original = (c.server.klient.session as any).getMockImplementation?.() === undefined;
+          return {
+            close: vi.fn().mockRejectedValueOnce(new Error('forced teardown failure')),
+          };
+        }) as any);
+        await c.disconnect();
+        await c.server.conn.closed;
         await new Promise((r) => setTimeout(r, 50));
         expect(unhandled).toBeUndefined();
+        expect(logSpy).toHaveBeenCalledWith(
+          'acp: automatic session teardown failed on connection close',
+          expect.objectContaining({ error: expect.stringContaining('forced teardown failure') }),
+        );
       } finally {
+        await client?.server.close().catch(() => {});
+        client = undefined;
+        logSpy.mockRestore();
         process.off('unhandledRejection', onUnhandled);
       }
     },

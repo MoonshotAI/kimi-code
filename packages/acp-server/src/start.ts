@@ -49,6 +49,7 @@ import { acpClientFromContext } from './acp-client';
 import { IAcpConnection } from './acp-fs';
 import { AcpEnvironmentProviderFactory } from './acp-terminal';
 import { AcpServer, type AcpServerOptions, createAcpAgentApp } from './server';
+import { log } from './log';
 
 export interface RunAcpServerOptions extends AcpServerOptions {
   readonly homeDir?: string;
@@ -239,7 +240,11 @@ export async function runAcpServerWithStream(
   };
 
   void conn.closed.then(() => {
-    void close().catch(() => {});
+    void close().catch((err: unknown) => {
+      log.error('acp: automatic session teardown failed on connection close', {
+        error: String(err),
+      });
+    });
   });
 
   return { core, klient, conn, close };
