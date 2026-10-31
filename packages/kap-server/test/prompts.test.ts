@@ -446,6 +446,33 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(await plan.status()).not.toBeNull();
   });
 
+  it('rejects empty or over-long goal objectives before accepting the prompt', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const loop = agent.accessor.get(IAgentLoopService);
+    const queue = agent.accessor.get(IAgentPromptQueueService);
+    const prompts = `/api/v1/sessions/${id}/prompts`;
+
+    expect((await call<null>('POST', prompts, {
+      content: [{ type: 'text', text: '   ' }],
+      mode: 'goal',
+    })).body.code).toBe(40917);
+
+    expect((await call<null>('POST', prompts, {
+      content: [{ type: 'text', text: 'x'.repeat(4001) }],
+      mode: 'goal',
+    })).body.code).toBe(40918);
+
+    vi.spyOn(loop, 'canLaunchPrompt').mockReturnValue(false);
+    expect((await call<null>('POST', prompts, {
+      content: [{ type: 'text', text: '   ' }],
+      mode: 'goal',
+    })).body.code).toBe(40917);
+    expect(queue.snapshot().items).toHaveLength(0);
+  });
+
   it('validates compaction submissions on the prompt endpoint', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);

@@ -229,6 +229,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           if (mode === 'goal' && resolved.agent.accessor.get(IAgentGoalService).getGoal().goal !== null) {
             throw new Error2(ErrorCodes.GOAL_ALREADY_EXISTS, 'A goal already exists');
           }
+          if (mode === 'goal') {
+            assertAcceptableGoalObjective(promptObjectiveText(contentToCoreParts(content), req.body.metadata));
+          }
           reservation = reservePromptId(session_id, req.body.prompt_id);
 
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
@@ -571,10 +574,24 @@ const queueActions: ActionTable<'steer' | 'move' | 'cancel', QueueActionExtra> =
   } },
 };
 
+const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
+
 function promptObjectiveText(parts: readonly ContentPart[], metadata: Record<string, unknown> | undefined): string {
   const displayText = metadata?.['display_text'];
   if (typeof displayText === 'string' && displayText.trim() !== '') return displayText.trim();
   return promptDisplayTextFromContentParts(parts).trim();
+}
+
+function assertAcceptableGoalObjective(objective: string): void {
+  if (objective.length === 0) {
+    throw new Error2(ErrorCodes.GOAL_OBJECTIVE_EMPTY, 'Goal objective cannot be empty');
+  }
+  if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
+    throw new Error2(
+      ErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
+      `Goal objective cannot exceed ${MAX_GOAL_OBJECTIVE_LENGTH} characters. Put long content in a file and reference the file path.`,
+    );
+  }
 }
 
 export function toWireQueueState(snapshot: PromptQueueSnapshot): QueueStateWire {
