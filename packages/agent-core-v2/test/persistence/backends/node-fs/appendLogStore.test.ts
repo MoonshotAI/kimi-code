@@ -917,6 +917,52 @@ describe('AppendLogStore session lock integration', () => {
     expect(log.externallyModified(SCOPE, KEY)).toBe(true);
   });
 
+  it('preserves the own append baseline when a suspended reader closes', async () => {
+    log.append(SCOPE, KEY, { n: 1 });
+    await log.flush();
+    await readAll();
+    const reader = log.read<Rec>(SCOPE, KEY)[Symbol.asyncIterator]();
+    await reader.next();
+    log.append(SCOPE, KEY, { n: 2 });
+    await log.flush();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+    await reader.return?.();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it('does not allow an older suspended reader to overwrite a newer reader observation', async () => {
+    log.append(SCOPE, KEY, { n: 1 });
+    await log.flush();
+    await readAll();
+
+    const reader1 = log.read<Rec>(SCOPE, KEY)[Symbol.asyncIterator]();
+    await reader1.next();
+
+    log.append(SCOPE, KEY, { n: 2 });
+    await log.flush();
+
+    await readAll();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+
+    await reader1.return?.();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it('does not allow an older reader across rewrite to reset known length', async () => {
+    log.append(SCOPE, KEY, { n: 1 });
+    await log.flush();
+    await readAll();
+
+    const reader = log.read<Rec>(SCOPE, KEY)[Symbol.asyncIterator]();
+    await reader.next();
+
+    await log.rewrite<Rec>(SCOPE, KEY, [{ n: 10 }, { n: 20 }]);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+
+    await reader.return?.();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
   it('resets known length after rewrite', async () => {
     log.append<Rec>(SCOPE, KEY, { n: 1 });
     await log.flush();
