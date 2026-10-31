@@ -125,6 +125,7 @@ export interface ChatState {
 }
 
 let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+let isReplaying = false;
 
 function clearHandshakeTimer() {
   if (handshakeTimer) {
@@ -273,7 +274,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Auto-send next queued item when streaming ends (complete or error)
     if (event.type === "stream_complete" || event.type === "error") {
-      flushTrackFiles();
+      if (!isReplaying) {
+        flushTrackFiles();
+      }
       const { queue, isStreaming: stillStreaming } = get();
       if (!stillStreaming && queue.length > 0) {
         setTimeout(() => get().sendNextQueued(), 50);
@@ -308,8 +311,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
     useApprovalStore.getState().clearRequests();
 
-    for (const event of events) {
-      get().processEvent(event);
+    isReplaying = true;
+    try {
+      for (const event of events) {
+        get().processEvent(event);
+      }
+    } finally {
+      isReplaying = false;
     }
     flushTrackFiles();
 
