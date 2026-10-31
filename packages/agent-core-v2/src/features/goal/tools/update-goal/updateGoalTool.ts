@@ -3,7 +3,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { type ToolExecution } from '#/tool/toolContract';
 
-import { IAgentGoalService } from '#/features/goal/goalService';
+import { GOAL_OBJECTIVE_EDITED_TOOL_RESULT, IAgentGoalService } from '#/features/goal/goalService';
 import {
   buildGoalBlockedReasonPrompt,
   buildGoalCompletionSummaryPrompt,
@@ -59,6 +59,9 @@ export class UpdateGoalTool implements IUpdateGoalTool {
         if (status === 'active') {
           await this.goal.resumeGoal({}, 'model');
           return { output: 'Goal resumed.' };
+        }
+        if (this.goal.isObjectiveEditedInTurn(turnId)) {
+          return { output: GOAL_OBJECTIVE_EDITED_TOOL_RESULT };
         }
         if (status === 'complete') {
           const completed = await this.goal.markComplete({}, 'model');

@@ -1139,6 +1139,37 @@ describe('AgentGoalService core workflow hooks', () => {
     },
   );
 
+  it.each(['complete', 'blocked'])(
+    'ignores UpdateGoal %s when the objective is edited while the call awaits approval',
+    async (status) => {
+      const created = await goals.createGoal({ objective: 'old task' });
+      const turn = makeTurn(74);
+      eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+      const listener = toolExecutor.onBeforeExecuteTool((event) => {
+        event.waitUntil(async () => {
+          await goals.editGoalObjective({ objective: 'new task' });
+          return undefined;
+        });
+      });
+
+      const results = await executeToolCall(toolExecutor, turn, {
+        type: 'function',
+        id: 'call_update_during_approval',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status }),
+      });
+      listener.dispose();
+
+      expect(results[0]!.result.output).toContain('The goal objective was edited since this turn started');
+      expect(results[0]!.result.stopTurn).not.toBe(true);
+      expect(goals.getGoal().goal).toMatchObject({
+        goalId: created.goalId,
+        objective: 'new task',
+        status: 'active',
+      });
+    },
+  );
+
   it('accepts UpdateGoal again on the turn after the objective edit', async () => {
     await goals.createGoal({ objective: 'old task' });
     const editedTurn = makeTurn(72);
@@ -1866,6 +1897,7 @@ describe('AgentGoalService API boundary', () => {
       'getGoal',
       'incrementTurn',
       'isGoalToolTarget',
+      'isObjectiveEditedInTurn',
       'markBlocked',
       'markComplete',
       'pauseGoal',
@@ -1899,6 +1931,7 @@ describe('AgentGoalService agent eligibility', () => {
   it.each([
     ['getGoal', (goals: IAgentGoalService) => goals.getGoal()],
     ['isGoalToolTarget', (goals: IAgentGoalService) => goals.isGoalToolTarget(1, 'goal-1')],
+    ['isObjectiveEditedInTurn', (goals: IAgentGoalService) => goals.isObjectiveEditedInTurn(1)],
     ['createGoal', (goals: IAgentGoalService) => goals.createGoal({ objective: 'work' })],
     ['pauseGoal', (goals: IAgentGoalService) => goals.pauseGoal()],
     ['resumeGoal', (goals: IAgentGoalService) => goals.resumeGoal()],

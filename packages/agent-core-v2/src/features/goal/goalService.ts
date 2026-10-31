@@ -129,7 +129,7 @@ const GOAL_BUDGET_TOOLS_REJECTED_MESSAGE =
   'Goal budget exhausted; tool calls are rejected. Write your final message.';
 const GOAL_STALE_TOOL_RESULT =
   'Goal changed since this turn started; ignored stale goal tool call.';
-const GOAL_OBJECTIVE_EDITED_TOOL_RESULT =
+export const GOAL_OBJECTIVE_EDITED_TOOL_RESULT =
   'The goal objective was edited since this turn started, so this status update was ignored. End this turn normally; the next turn receives the new objective.';
 
 const GOAL_CONTINUATION_PROMPT = [
@@ -273,6 +273,11 @@ function getGoal(context: GoalOperationContext): GoalToolResult {
 function isGoalToolTarget(context: GoalOperationContext, turnId: number, goalId: string): boolean {
   assertSupportedAgent(context);
   return context.effects.goalTurnTargets.get(turnId) === goalId;
+}
+
+function isObjectiveEditedInTurn(context: GoalOperationContext, turnId: number): boolean {
+  assertSupportedAgent(context);
+  return context.effects.objectiveEditedTurns.has(turnId);
 }
 
 async function createGoal(context: GoalOperationContext, input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
@@ -1335,6 +1340,7 @@ export interface IAgentGoalService {
   readonly _serviceBrand: undefined;
   getGoal(): GoalToolResult;
   isGoalToolTarget(turnId: number, goalId: string): boolean;
+  isObjectiveEditedInTurn(turnId: number): boolean;
   createGoal(input: CreateGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;
   editGoalObjective(input: EditGoalObjectiveInput, actor?: GoalActor): Promise<GoalSnapshot>;
   pauseGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;
@@ -1448,6 +1454,10 @@ export class AgentGoalService extends AgentActorService<GoalRuntimeState> implem
 
   isGoalToolTarget(turnId: number, goalId: string): boolean {
     return isGoalToolTarget(goalOperationContext(this.actor), turnId, goalId);
+  }
+
+  isObjectiveEditedInTurn(turnId: number): boolean {
+    return isObjectiveEditedInTurn(goalOperationContext(this.actor), turnId);
   }
 
   async createGoal(input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
