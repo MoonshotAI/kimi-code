@@ -49,6 +49,7 @@ import { acpClientFromContext } from './acp-client';
 import { IAcpConnection } from './acp-fs';
 import { AcpEnvironmentProviderFactory } from './acp-terminal';
 import { AcpServer, type AcpServerOptions, createAcpAgentApp } from './server';
+import { log } from './log';
 
 export interface RunAcpServerOptions extends AcpServerOptions {
   readonly homeDir?: string;
@@ -192,41 +193,58 @@ export async function runAcpServerWithStream(
   const close = async (): Promise<void> => {
     if (closePromise !== undefined) return closePromise;
     closePromise = (async () => {
-      // Detach the klient's event subscriptions first so disposal below cannot
-      // deliver into a torn-down scope.
-      await klient.close();
-      // Flush the append-log write-behind before disposing, so a clean shutdown
-      // never races a pending drain against teardown (and doesn't drop the last
-      // persisted ops). Best-effort: a flush failure must not block disposal.
-      const appendLogStore = core.accessor.get(IAppendLogStore);
+      let serverCloseError: unknown;
       try {
-        await appendLogStore.flush();
-      } catch {
-        // ignore — disposal proceeds regardless
+        const server = await serverReady;
+        await server.close();
+      } catch (err) {
+        serverCloseError = err;
       }
-      // Same shutdown order as kap-server: settle queued session-metadata
-      // writes, then drain the session-index mirror while the query store is
-      // still open, so a queued summary lands in the read model.
-      await drainSessionMetadataWrites();
-      await core.accessor.get(ISessionIndexMirror).drain();
-      await acpProviderRegistration.dispose();
-      core.dispose();
-      // `core.dispose()` runs the mirror's and the query store's synchronous
-      // `dispose()`, whose drains/closes are asynchronous — await them so an
-      // embedding host that removes homeDir right after close() never races
-      // an in-flight shard close (ENOTEMPTY on teardown). The same window
-      // exists for the append-log retirement flushes released by disposal.
-      await appendLogStore.drainRetirements();
-      await drainSessionIndexMirror();
-      await drainQueryStoreDisposals();
-      await drainSessionMetadataWrites();
-      await drainLogCloses();
+      try {
+        // Detach the klient's event subscriptions first so disposal below cannot
+        // deliver into a torn-down scope.
+        await klient.close();
+        // Flush the append-log write-behind before disposing, so a clean shutdown
+        // never races a pending drain against teardown (and doesn't drop the last
+        // persisted ops). Best-effort: a flush failure must not block disposal.
+        const appendLogStore = core.accessor.get(IAppendLogStore);
+        try {
+          await appendLogStore.flush();
+        } catch {
+          // ignore — disposal proceeds regardless
+        }
+        // Same shutdown order as kap-server: settle queued session-metadata
+        // writes, then drain the session-index mirror while the query store is
+        // still open, so a queued summary lands in the read model.
+        await drainSessionMetadataWrites();
+        await core.accessor.get(ISessionIndexMirror).drain();
+        await acpProviderRegistration.dispose();
+        core.dispose();
+        // `core.dispose()` runs the mirror's and the query store's synchronous
+        // `dispose()`, whose drains/closes are asynchronous — await them so an
+        // embedding host that removes homeDir right after close() never races
+        // an in-flight shard close (ENOTEMPTY on teardown). The same window
+        // exists for the append-log retirement flushes released by disposal.
+        await appendLogStore.drainRetirements();
+        await drainSessionIndexMirror();
+        await drainQueryStoreDisposals();
+        await drainSessionMetadataWrites();
+        await drainLogCloses();
+      } finally {
+        if (serverCloseError !== undefined) {
+          throw serverCloseError;
+        }
+      }
     })();
     return closePromise;
   };
 
   void conn.closed.then(() => {
-    void close();
+    void close().catch((err: unknown) => {
+      log.error('acp: automatic session teardown failed on connection close', {
+        error: String(err),
+      });
+    });
   });
 
   return { core, klient, conn, close };

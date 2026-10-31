@@ -28,6 +28,7 @@ export function stubToolExecutorEvents(): ToolExecutorEventStubs {
   const executor: IAgentToolExecutorService = {
     _serviceBrand: undefined,
     execute: async function* () {},
+    settled: async () => {},
     onBeforeExecuteTool: beforeEmitter.event,
     onWillExecuteTool: willEmitter.event,
     hooks: { onDidExecuteTool: didExecuteSlot },

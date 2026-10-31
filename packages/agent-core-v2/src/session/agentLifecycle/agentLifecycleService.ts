@@ -55,6 +55,7 @@ import '#/agent/environmentBinding/environmentBindingService';
 import { EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
@@ -600,6 +601,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const loop = handle.accessor.get(IAgentLoopService);
     const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
     const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
+    const toolExecutor = handle.accessor.get(IAgentToolExecutorService);
     const reason = abortError('Agent removed');
     if (compaction !== null && !compaction.abortController.signal.aborted) {
       compaction.abortController.abort(reason);
@@ -611,11 +613,15 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         if (queueId !== undefined) loop.cancel({ promptId: queueId }, reason);
       }
       loop.cancel(undefined, reason);
+      const toolSettledNow =
+        typeof toolExecutor?.settled === 'function'
+          ? toolExecutor.settled().catch(() => undefined)
+          : Promise.resolve();
       let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
       let settled: boolean;
       try {
         settled = await Promise.race([
-          Promise.all([loop.settled(), compactionSettled]).then(() => true),
+          Promise.all([loop.settled(), compactionSettled, toolSettledNow]).then(() => true),
           new Promise<false>((resolve) => {
             deadlineTimer = setTimeout(() => {
               resolve(false);
