@@ -1170,6 +1170,40 @@ describe('AgentGoalService core workflow hooks', () => {
     },
   );
 
+  it.each([
+    ['complete', null],
+    ['blocked', { objective: 'replacement task', status: 'blocked' }],
+  ])(
+    'accepts UpdateGoal %s for a goal that replaced the edited goal in the same turn',
+    async (status, expected) => {
+      await goals.createGoal({ objective: 'old task' });
+      const turn = makeTurn(75);
+      eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+      await goals.editGoalObjective({ objective: 'new task' });
+      await executeToolCall(toolExecutor, turn, {
+        type: 'function',
+        id: 'call_replace_after_edit',
+        name: 'CreateGoal',
+        arguments: JSON.stringify({ objective: 'replacement task', replace: true }),
+      });
+      expect(goals.getGoal().goal).toMatchObject({ objective: 'replacement task', status: 'active' });
+
+      const results = await executeToolCall(toolExecutor, turn, {
+        type: 'function',
+        id: 'call_update_after_replace',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status }),
+      });
+
+      expect(results[0]!.result.output).not.toContain('The goal objective was edited since this turn started');
+      if (expected === null) {
+        expect(goals.getGoal().goal).toBeNull();
+      } else {
+        expect(goals.getGoal().goal).toMatchObject(expected);
+      }
+    },
+  );
+
   it('accepts UpdateGoal again on the turn after the objective edit', async () => {
     await goals.createGoal({ objective: 'old task' });
     const editedTurn = makeTurn(72);

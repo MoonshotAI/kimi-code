@@ -868,6 +868,7 @@ function clearInternal(context: GoalOperationContext,
   cancelPendingContinuation(context, opts.preserveLiveContinuation === true);
   context.runtime.send({ type: 'goal.deadline.clear' });
   context.effects.liveWallClockStartedAt = undefined;
+  context.effects.objectiveEditedTurns.clear();
   void context.runtime.dispatch(new GoalClear({ agentId: context.runtime.agent.agentId }));
   if (opts.emit !== false) emitGoalUpdated(context, null);
   if (opts.track !== false) context.runtime.get(ITelemetryService).track2('goal_cleared', { actor });
