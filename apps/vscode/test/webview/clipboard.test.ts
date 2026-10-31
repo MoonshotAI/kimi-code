@@ -101,4 +101,35 @@ describe("copyToClipboard helper", () => {
     expect(capturedStateDuringExec).toBe(true);
     expect(isPerformingProgrammaticCopy()).toBe(false);
   });
+
+  it("cleans up fallback textarea and restores focus even when execCommand throws", async () => {
+    const writeTextMock = vi.fn().mockRejectedValue(new Error("Document is not focused"));
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: writeTextMock },
+      configurable: true,
+      writable: true,
+    });
+    boundary.copyToClipboard.mockRejectedValue(new Error("Bridge error"));
+
+    const initialButton = document.createElement("button");
+    document.body.appendChild(initialButton);
+    initialButton.focus();
+    expect(document.activeElement).toBe(initialButton);
+
+    const execCommandMock = vi.fn(() => {
+      throw new Error("execCommand failed");
+    });
+    Object.defineProperty(document, "execCommand", {
+      value: execCommandMock,
+      configurable: true,
+      writable: true,
+    });
+
+    const success = await copyToClipboard("error in execCommand");
+    expect(success).toBe(false);
+    expect(document.querySelector("textarea")).toBeNull();
+    expect(document.activeElement).toBe(initialButton);
+    expect(isPerformingProgrammaticCopy()).toBe(false);
+    initialButton.remove();
+  });
 });

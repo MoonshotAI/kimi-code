@@ -28,9 +28,11 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   }
 
   if (typeof document !== "undefined") {
+    let textarea: HTMLTextAreaElement | undefined;
+    const activeElement = document.activeElement as HTMLElement | null;
     try {
       isProgrammaticCopy = true;
-      const textarea = document.createElement("textarea");
+      textarea = document.createElement("textarea");
       textarea.value = text;
       textarea.style.position = "fixed";
       textarea.style.left = "-9999px";
@@ -40,11 +42,16 @@ export async function copyToClipboard(text: string): Promise<boolean> {
       textarea.focus();
       textarea.select();
       const success = document.execCommand("copy");
-      textarea.remove();
       if (success) return true;
     } catch {
       // Ignore
     } finally {
+      if (textarea) {
+        textarea.remove();
+      }
+      if (activeElement && typeof activeElement.focus === "function") {
+        activeElement.focus();
+      }
       isProgrammaticCopy = false;
     }
   }
