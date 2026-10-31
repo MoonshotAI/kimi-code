@@ -275,7 +275,7 @@ export async function resolvePromptMediaFiles(
         ? rootDir
         : (target?.path ?? { join: (...parts: string[]) => join(...parts) }).join(
             rootDir,
-            sanitizeAttachmentName(namespace),
+            createHash('sha256').update(namespace).digest('hex').slice(0, 32),
           );
     const base =
       target?.fs !== undefined && target.path !== undefined

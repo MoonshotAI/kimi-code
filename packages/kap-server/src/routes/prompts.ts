@@ -104,6 +104,10 @@ const queueParamsSchema = z.object({
   agent_id: z.string().min(1),
 });
 
+const queueActionParamsSchema = queueParamsSchema.extend({
+  tail: z.string().min(1),
+});
+
 const validationDetailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
 async function resolveSession(core: Scope, sessionId: string): Promise<ISessionScopeHandle> {
@@ -492,6 +496,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/sessions/{session_id}/agents/{agent_id}/queue/{tail}',
+      params: queueActionParamsSchema,
       body: z.preprocess((value) => (value === undefined ? {} : value), queueMoveRequestSchema),
       success: { data: z.object({}) },
       errors: queueErrors,
@@ -500,11 +505,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       operationId: 'queueAction',
     },
     async (req, reply) => {
-      const { session_id, agent_id, tail } = req.params as {
-        session_id: string;
-        agent_id: string;
-        tail: string;
-      };
+      const { session_id, agent_id, tail } = req.params;
       try {
         const target = resolveActionTarget({ tail, actions: queueActions, resourceLabel: 'prompt' });
         if ('message' in target) {

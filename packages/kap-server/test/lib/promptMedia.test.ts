@@ -177,11 +177,12 @@ describe('resolvePromptMediaFiles with an environment attachments target', () =>
       stagingNamespace: 'prompt_b',
       resolveAttachmentsTarget: async () => targetFor(fake.fs),
     });
-    expect(first.attachments[0]!.path).toBe(
-      '/remote/tmp/kimi-code/attachments/prompt_a/f_shared-note.txt',
+    expect(first.attachments[0]!.path).not.toBe(second.attachments[0]!.path);
+    expect(first.attachments[0]!.path).toMatch(
+      /^\/remote\/tmp\/kimi-code\/attachments\/[0-9a-f]{32}\/f_shared-note\.txt$/,
     );
-    expect(second.attachments[0]!.path).toBe(
-      '/remote/tmp/kimi-code/attachments/prompt_b/f_shared-note.txt',
+    expect(second.attachments[0]!.path).toMatch(
+      /^\/remote\/tmp\/kimi-code\/attachments\/[0-9a-f]{32}\/f_shared-note\.txt$/,
     );
     expectStoredBytes(fake.files, first.attachments[0]!.path, data);
     expectStoredBytes(fake.files, second.attachments[0]!.path, data);
