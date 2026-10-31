@@ -146,7 +146,7 @@ export async function runAcpServerWithStream(
   };
 
   void conn.closed.then(() => {
-    void close();
+    void close().catch(() => {});
   });
 
   return { core, klient, conn, close };
