@@ -1,18 +1,23 @@
 import { Agent, EnvHttpProxyAgent, type Dispatcher } from 'undici';
 
 export const LLM_HEADERS_TIMEOUT_ENV = 'KIMI_CODE_LLM_HEADERS_TIMEOUT_MS';
+export const ACP_LLM_TIMEOUT_ENV = 'KIMI_CODE_ACP_LLM_TIMEOUT_MS';
 
 const MAX_HEADERS_TIMEOUT_MS = 2 ** 31 - 1;
 
 type Env = Readonly<Record<string, string | undefined>>;
 
 export function resolveLlmHeadersTimeoutMs(env: Env = process.env): number | undefined {
-  const raw = env[LLM_HEADERS_TIMEOUT_ENV];
+  const envKey =
+    env[ACP_LLM_TIMEOUT_ENV] !== undefined && env[ACP_LLM_TIMEOUT_ENV]?.trim() !== ''
+      ? ACP_LLM_TIMEOUT_ENV
+      : LLM_HEADERS_TIMEOUT_ENV;
+  const raw = env[envKey];
   if (raw === undefined || raw.trim() === '') return undefined;
   const value = Number(raw);
   if (!Number.isInteger(value) || value <= 0 || value > MAX_HEADERS_TIMEOUT_MS) {
     throw new Error(
-      `${LLM_HEADERS_TIMEOUT_ENV} must be a positive integer no greater than ${MAX_HEADERS_TIMEOUT_MS}, got ${JSON.stringify(raw)}.`,
+      `${envKey} must be a positive integer no greater than ${MAX_HEADERS_TIMEOUT_MS}, got ${JSON.stringify(raw)}.`,
     );
   }
   return value;

@@ -21,6 +21,7 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.3.0",
     "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/klient": "workspace:^"
   }
 }

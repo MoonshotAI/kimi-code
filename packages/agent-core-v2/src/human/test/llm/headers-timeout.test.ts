@@ -5,7 +5,11 @@ import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
 import { createUserMessage, type Message } from '#/message';
 import type { LlmModel } from '#/llm-requester/model';
 import type { LlmRequester, LlmRequestEvent } from '#/llm-requester/requester';
-import { LLM_HEADERS_TIMEOUT_ENV } from '#/llm-requester/timeout';
+import {
+  ACP_LLM_TIMEOUT_ENV,
+  LLM_HEADERS_TIMEOUT_ENV,
+  resolveLlmHeadersTimeoutMs,
+} from '#/llm-requester/timeout';
 import { createAnthropicRequester } from '#/llm-requester/factories';
 import { createGoogleGenAIRequester } from '#/llm-requester/factories';
 import { createOpenAIRequester } from '#/llm-requester/factories';
@@ -226,6 +230,10 @@ describe('default client headers timeout', () => {
       expect(fetchStub).toHaveBeenCalledTimes(calls);
       expect(fetchStub.mock.calls[calls - 1]?.[1]).not.toHaveProperty('dispatcher');
       delete process.env['HTTP_PROXY'];
+
+      process.env[ACP_LLM_TIMEOUT_ENV] = '60000';
+      expect(resolveLlmHeadersTimeoutMs()).toBe(60000);
+      delete process.env[ACP_LLM_TIMEOUT_ENV];
     } finally {
       vi.unstubAllGlobals();
       for (const [key, value] of Object.entries(savedEnv)) {
