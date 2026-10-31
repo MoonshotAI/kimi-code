@@ -106,9 +106,12 @@ export async function runAcpServerWithStream(
   stream: Stream,
   opts: RunAcpServerOptions = {},
 ): Promise<RunningAcpServer> {
+  const previousTimeout = process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'];
+  let didOverrideTimeout = false;
   const acpTimeout = process.env[ACP_LLM_TIMEOUT_ENV];
   if (acpTimeout !== undefined && acpTimeout.trim() !== '') {
     process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'] = acpTimeout;
+    didOverrideTimeout = true;
   }
   const homeDir = resolveKimiHome(opts.homeDir);
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
@@ -240,6 +243,13 @@ export async function runAcpServerWithStream(
       await drainQueryStoreDisposals();
       await drainSessionMetadataWrites();
       await drainLogCloses();
+      if (didOverrideTimeout) {
+        if (previousTimeout === undefined) {
+          delete process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'];
+        } else {
+          process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'] = previousTimeout;
+        }
+      }
     })();
     return closePromise;
   };
