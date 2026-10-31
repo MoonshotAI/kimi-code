@@ -66,7 +66,7 @@ kimi acp
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
-| `session/update` | 是 | 流式推送 `agent_message_chunk` / `tool_call*` / `plan` / `config_option_update` / `available_commands_update` |
+| `session/update` | 是 | 流式推送客户端 prompt 与定时 cron 任务的 turn 活动，以及 `config_option_update` / `available_commands_update` |
 | `session/request_permission` | 是 | 工具审批和问题提问共用此通道 |
 | `fs/read_text_file` | 是 | 客户端声明 `fsCapabilities` 时，引擎的文件读取路由到客户端 |
 | `fs/write_text_file` | 是 | 引擎的文件写入路由到客户端 |
