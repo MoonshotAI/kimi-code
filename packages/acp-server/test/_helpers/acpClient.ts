@@ -22,6 +22,7 @@ export interface TestClient {
   waitForSessionUpdate(sessionUpdate: string, timeoutMs?: number): Promise<RpcMessage>;
   onRequest(method: string, handler: RequestHandler): void;
   readonly server: RunningAcpServer;
+  disconnect(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -150,16 +151,20 @@ export async function createTestClient(opts: {
     });
   }
 
-  async function close(): Promise<void> {
-    await server.close();
+  async function disconnect(): Promise<void> {
     toAgent.end();
     toClient.end();
     await reader;
+  }
+
+  async function close(): Promise<void> {
+    await server.close();
+    await disconnect();
   }
 
   function onRequest(method: string, handler: RequestHandler): void {
     requestHandlers.set(method, handler);
   }
 
-  return { send, notify, received, sessionUpdates, waitForSessionUpdate, onRequest, server, close };
+  return { send, notify, received, sessionUpdates, waitForSessionUpdate, onRequest, server, disconnect, close };
 }
