@@ -55,6 +55,8 @@ import { IAcpConnection } from './acp-fs';
 import { AcpEnvironmentProviderFactory } from './acp-terminal';
 import { AcpServer, type AcpServerOptions, createAcpAgentApp } from './server';
 
+export const ACP_LLM_TIMEOUT_ENV = 'KIMI_CODE_ACP_LLM_TIMEOUT_MS';
+
 export interface RunAcpServerOptions extends AcpServerOptions {
   readonly homeDir?: string;
   readonly configPath?: string;
@@ -104,6 +106,10 @@ export async function runAcpServerWithStream(
   stream: Stream,
   opts: RunAcpServerOptions = {},
 ): Promise<RunningAcpServer> {
+  const acpTimeout = process.env[ACP_LLM_TIMEOUT_ENV];
+  if (acpTimeout !== undefined && acpTimeout.trim() !== '') {
+    process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'] = acpTimeout;
+  }
   const homeDir = resolveKimiHome(opts.homeDir);
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
   // `ILogOptions` (logSeed) is required by the Session-scoped log writer; any

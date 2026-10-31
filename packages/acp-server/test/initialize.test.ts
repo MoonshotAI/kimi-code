@@ -327,4 +327,38 @@ describe('acp-server initialize handshake', () => {
     },
     30_000,
   );
+
+  it(
+    'applies KIMI_CODE_ACP_LLM_TIMEOUT_MS in ACP server mode',
+    async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), 'acp-server-timeout-'));
+      const toAgent = new PassThrough();
+      const toClient = new PassThrough();
+      const prevTimeout = process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'];
+      const prevAcpTimeout = process.env['KIMI_CODE_ACP_LLM_TIMEOUT_MS'];
+      try {
+        process.env['KIMI_CODE_ACP_LLM_TIMEOUT_MS'] = '12345';
+        const stream = ndJsonStream(Writable.toWeb(toClient), Readable.toWeb(toAgent));
+        const server = await runAcpServerWithStream(stream, { homeDir });
+        expect(process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS']).toBe('12345');
+
+        await server.close();
+        toAgent.end();
+        toClient.end();
+      } finally {
+        if (prevTimeout !== undefined) {
+          process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'] = prevTimeout;
+        } else {
+          delete process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'];
+        }
+        if (prevAcpTimeout !== undefined) {
+          process.env['KIMI_CODE_ACP_LLM_TIMEOUT_MS'] = prevAcpTimeout;
+        } else {
+          delete process.env['KIMI_CODE_ACP_LLM_TIMEOUT_MS'];
+        }
+        await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    },
+    30_000,
+  );
 });
