@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { copyToClipboard } from "@/lib/clipboard";
+import { copyToClipboard, isPerformingProgrammaticCopy } from "@/lib/clipboard";
 
 const boundary = vi.hoisted(() => ({
   copyToClipboard: vi.fn(),
@@ -74,5 +74,31 @@ describe("copyToClipboard helper", () => {
     const success = await copyToClipboard("fallback to execCommand");
     expect(success).toBe(true);
     expect(execCommandMock).toHaveBeenCalledWith("copy");
+  });
+
+  it("sets isPerformingProgrammaticCopy while running document.execCommand", async () => {
+    const writeTextMock = vi.fn().mockRejectedValue(new Error("Document is not focused"));
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: writeTextMock },
+      configurable: true,
+      writable: true,
+    });
+    boundary.copyToClipboard.mockRejectedValue(new Error("Bridge error"));
+
+    let capturedStateDuringExec: boolean | undefined;
+    const execCommandMock = vi.fn(() => {
+      capturedStateDuringExec = isPerformingProgrammaticCopy();
+      return true;
+    });
+    Object.defineProperty(document, "execCommand", {
+      value: execCommandMock,
+      configurable: true,
+      writable: true,
+    });
+
+    expect(isPerformingProgrammaticCopy()).toBe(false);
+    await copyToClipboard("test programmatic state");
+    expect(capturedStateDuringExec).toBe(true);
+    expect(isPerformingProgrammaticCopy()).toBe(false);
   });
 });

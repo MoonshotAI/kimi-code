@@ -1,5 +1,11 @@
 import { bridge } from "@/services";
 
+let isProgrammaticCopy = false;
+
+export function isPerformingProgrammaticCopy(): boolean {
+  return isProgrammaticCopy;
+}
+
 export async function copyToClipboard(text: string): Promise<boolean> {
   if (!text) return true;
 
@@ -23,6 +29,7 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 
   if (typeof document !== "undefined") {
     try {
+      isProgrammaticCopy = true;
       const textarea = document.createElement("textarea");
       textarea.value = text;
       textarea.style.position = "fixed";
@@ -37,6 +44,8 @@ export async function copyToClipboard(text: string): Promise<boolean> {
       if (success) return true;
     } catch {
       // Ignore
+    } finally {
+      isProgrammaticCopy = false;
     }
   }
 
