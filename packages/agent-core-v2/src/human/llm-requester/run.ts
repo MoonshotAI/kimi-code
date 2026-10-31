@@ -9,6 +9,7 @@ import type {
 import { isUnknownCapability } from '#/llm-requester/capability';
 import {
   resolveModelConnection,
+  withOpencodeSessionHeader,
   type DefaultHeadersResolver,
   type ProtocolEndpointSource,
 } from '#/llm-requester/connection';
@@ -121,7 +122,11 @@ export function createRunRequester<TOptions>(
       }
       const endpoint: LlmEndpoint = {
         baseUrl: model.baseUrl,
-        headers: mergeRequestHeaders(options?.defaultHeaders?.({ model }), model.defaultHeaders),
+        headers: withOpencodeSessionHeader(
+          model.baseUrl,
+          mergeRequestHeaders(options?.defaultHeaders?.({ model }), model.defaultHeaders),
+          config.cacheKey,
+        ),
         credentials: {
           resolve: () => (model.apiKey === undefined ? undefined : { apiKey: model.apiKey }),
         },

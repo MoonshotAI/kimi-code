@@ -287,6 +287,27 @@ describe('request gateway routes', () => {
       adaptiveThinking: true,
     });
   });
+
+  it('attaches conversation-scoped x-opencode-session header on requester for opencode endpoints', () => {
+    const opencodeModel: Model = {
+      ...modelWith({ protocol: 'openai' }),
+      baseUrl: 'https://opencode.ai/inference/go/openai/v1',
+    };
+    const req = registry.request(opencodeModel, { cacheKey: 'session-adapter-1' });
+    expect(contentsOf(req).endpoint?.headers).toMatchObject({
+      'x-opencode-session': 'session-adapter-1',
+    });
+
+    const explicitModel: Model = {
+      ...opencodeModel,
+      headers: { 'X-OpenCode-Session': 'custom-session' },
+    };
+    const explicitReq = registry.request(explicitModel, { cacheKey: 'session-adapter-1' });
+    expect(contentsOf(explicitReq).endpoint?.headers).toMatchObject({
+      'X-OpenCode-Session': 'custom-session',
+    });
+    expect(contentsOf(explicitReq).endpoint?.headers?.['x-opencode-session']).toBeUndefined();
+  });
 });
 
 describe('resolveProviderEndpoint', () => {

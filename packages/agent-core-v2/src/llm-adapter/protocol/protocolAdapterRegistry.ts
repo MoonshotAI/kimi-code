@@ -9,7 +9,7 @@ import {
   openAIResponsesRequester,
 } from '#human/llm/builtin/provider/index';
 import type { OpenAIOptions } from '#human/llm/builtin/protocol/openai/index';
-import { mergeHeaders } from '#human/llm/endpoint';
+import { mergeHeaders, withOpencodeSessionHeader } from '#human/llm/endpoint';
 import type { LlmEndpoint, LlmSampling } from '#human/llm/request';
 import { contentsOf, createRequester } from '#human/llm/requester';
 import type { LlmRequester as CoreLlmRequester } from '#human/llm/requester';
@@ -217,7 +217,11 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     const endpoint: LlmEndpoint = {
       ...base.endpoint,
       baseUrl: connection.baseUrl,
-      headers: mergeHeaders(route.defaultHeaders?.({ model: connection }), connection.defaultHeaders),
+      headers: withOpencodeSessionHeader(
+        connection.baseUrl,
+        mergeHeaders(route.defaultHeaders?.({ model: connection }), connection.defaultHeaders),
+        params?.cacheKey,
+      ),
       credentials: {
         resolve: async () => {
           const credential = await model.credentialProvider?.resolve();
