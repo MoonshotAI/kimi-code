@@ -6,7 +6,7 @@ import { useApprovalStore } from "./approval.store";
 import { toast } from "@/components/ui/sonner";
 
 import { useSettingsStore } from "./settings.store";
-import { processEvent } from "./event-handlers";
+import { clearTrackFilesBatch, flushTrackFiles, processEvent } from "./event-handlers";
 import type { StatusUpdate, ContentPart, QuestionRequest, ToolResult } from "shared/legacy-sdk";
 import type { UIStreamEvent } from "shared/types";
 
@@ -273,6 +273,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Auto-send next queued item when streaming ends (complete or error)
     if (event.type === "stream_complete" || event.type === "error") {
+      flushTrackFiles();
       const { queue, isStreaming: stillStreaming } = get();
       if (!stillStreaming && queue.length > 0) {
         setTimeout(() => get().sendNextQueued(), 50);
@@ -282,6 +283,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   loadSession: async (sessionId, events) => {
     clearHandshakeTimer();
+    clearTrackFilesBatch();
 
     // Abort any ongoing stream when switching sessions
     const { isStreaming: wasStreaming } = get();
@@ -309,6 +311,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     for (const event of events) {
       get().processEvent(event);
     }
+    flushTrackFiles();
 
     // All steps are finished when loading from history
     set(
@@ -334,6 +337,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   startNewConversation: async () => {
     clearHandshakeTimer();
+    clearTrackFilesBatch();
 
     // Abort any ongoing stream before starting new conversation
     const { isStreaming: wasStreaming } = get();
