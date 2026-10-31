@@ -11,6 +11,7 @@ import type { LlmModule, ToolMessageConversion } from '#/llm/protocol/protocol';
 import type { MediaSupport } from '#/llm/protocol/rules/media';
 
 import { sanitizeToolCallId } from '../tool-call-id';
+import { isOfficialOpenAIBaseUrl } from '../openai-base-url';
 import type { OpenAIContentPart, OpenAIWireMessage, OpenAIWireToolCall } from './contract';
 import { DEFAULT_REASONING_KEY, REASONING_DETAILS_KEY } from './decode';
 import {
@@ -422,6 +423,13 @@ export const openAIPipeline: PipelineSpec<
       return [];
     }
     return converted;
+  },
+  finalize: (native, module) => {
+    if (native.params.prompt_cache_key !== undefined && !isOfficialOpenAIBaseUrl(module.options?.baseUrl)) {
+      const { prompt_cache_key: _, ...rest } = native.params;
+      return { ...native, params: rest };
+    }
+    return native;
   },
   flatten,
 };

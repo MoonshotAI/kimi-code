@@ -52,6 +52,16 @@ The format mirrors `ANTHROPIC_CUSTOM_HEADERS`: newline-separated `Name: Value` l
 
 > Precedence: the Kimi identity headers (`User-Agent`, `X-Msh-*`) and a provider's `custom_headers` in `config.toml` (see [Config files](./config-files.md#providers)) override same-named entries here. Authentication is protocol-dependent: on the `kimi`, `openai`, and `openai_responses` protocols an exact `Authorization` entry replaces the generated bearer token, while `/models` listing requests keep their own authentication. A case variant such as `authorization` is never treated as the same name. It merges with the real header, which can break requests. Do not use this variable for authentication or other reserved headers. Use `custom_headers` when headers need to differ per provider.
 
+### `KIMI_CODE_OPENAI_PROMPT_CACHE_KEY`
+
+Controls whether `prompt_cache_key` is attached to requests sent to non-official OpenAI endpoints when no provider trait explicitly encodes it. For `openai` and `openai_responses` providers without dedicated trait overrides, prompt cache keys default to being sent only to official OpenAI endpoints (`api.openai.com`) to prevent incompatibilities with third-party proxies and gateways that reject unknown fields (dedicated `kimi` providers always attach `prompt_cache_key` via their provider trait regardless of endpoint).
+
+Set to `1` or `true` (case-insensitive) to force-enable cache key propagation for custom OpenAI-compatible gateways:
+
+```sh
+export KIMI_CODE_OPENAI_PROMPT_CACHE_KEY=1
+```
+
 ## Provider credential key names (written in config.toml)
 
 The key names below are not read directly from the shell. They are key names written inside the `[providers.<name>.env]` sub-table of `config.toml`, serving as fallback values for `api_key` / `base_url`. The CLI reads only from the config file, not from `process.env`.

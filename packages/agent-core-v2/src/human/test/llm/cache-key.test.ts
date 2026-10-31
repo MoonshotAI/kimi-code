@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
-import { createKimiOpenAIRequester } from '#/llm-requester/factories';
-import { createUserMessage, type Message } from '#/message';
+import {
+  createAnthropicRequester,
+  createKimiOpenAIRequester,
+  createKimiResponsesRequester,
+  createOpenAIRequester,
+  createOpenAIResponsesRequester,
+} from '#/llm-requester/factories';
 import type { LlmModel } from '#/llm-requester/model';
-import { createAnthropicRequester } from '#/llm-requester/factories';
-import { createOpenAIRequester } from '#/llm-requester/factories';
 import type { LlmClientContext } from '#/llm-requester/requester';
+import { createUserMessage, type Message } from '#/message';
 
 const model: LlmModel = {
   provider: 'test',
@@ -33,6 +37,17 @@ const anthropicStreamEvents: readonly Record<string, unknown>[] = [
   { type: 'content_block_stop', index: 0 },
   { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
   { type: 'message_stop' },
+];
+
+const responsesStreamEvents: readonly Record<string, unknown>[] = [
+  {
+    type: 'response.completed',
+    response: {
+      id: 'resp_1',
+      status: 'completed',
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    },
+  },
 ];
 
 function createAsyncStream<T>(chunks: readonly T[]): AsyncIterable<T> {
@@ -75,6 +90,34 @@ function stubOpenAIClient(chunks: readonly Record<string, unknown>[]): {
   };
 }
 
+function stubResponsesClient(events: readonly Record<string, unknown>[]): {
+  clientFactory: (request: LlmClientContext) => never;
+  body: () => Record<string, unknown>;
+} {
+  const captured: Record<string, unknown>[] = [];
+  return {
+    clientFactory: () =>
+      ({
+        responses: {
+          create: (params: Record<string, unknown>) => {
+            captured.push(params);
+            return {
+              withResponse: async () => ({
+                data: createAsyncStream(events),
+                response: new Response(null),
+              }),
+            };
+          },
+        },
+      }) as never,
+    body: () => {
+      const last = captured.at(-1);
+      if (last === undefined) throw new Error('expected client to be called');
+      return last;
+    },
+  };
+}
+
 function stubAnthropicClient(events: readonly Record<string, unknown>[]): {
   clientFactory: (request: LlmClientContext) => never;
   body: () => Record<string, unknown>;
@@ -104,7 +147,7 @@ function stubAnthropicClient(events: readonly Record<string, unknown>[]): {
 }
 
 describe('openai requester cacheKey', () => {
-  it('encodes the cache key as prompt_cache_key by default', async () => {
+  it('omits prompt_cache_key for third-party OpenAI endpoints by default', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -116,10 +159,48 @@ describe('openai requester cacheKey', () => {
       { messages },
       { signal: new AbortController().signal },
     );
-    expect(client.body()['prompt_cache_key']).toBe('session-1');
+    expect(client.body()['prompt_cache_key']).toBeUndefined();
     expect(client.body()['stop']).toEqual(['END']);
     expect(client.body()['presence_penalty']).toBe(0.5);
     expect(client.body()['extra_body']).toEqual({ trace_id: 't1' });
+  });
+
+  it('sends prompt_cache_key for official OpenAI endpoints', async () => {
+    const client = stubOpenAIClient(chatCompletionChunks);
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    await requester.generate(
+      {
+        model: { ...model, baseUrl: 'https://api.openai.com/v1' },
+        cacheKey: 'session-1',
+      },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.body()['prompt_cache_key']).toBe('session-1');
+  });
+
+  it('sends prompt_cache_key to third-party OpenAI endpoints when KIMI_CODE_OPENAI_PROMPT_CACHE_KEY is set (case-insensitive)', async () => {
+    const prev = process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'];
+    process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'] = 'TRUE';
+    try {
+      const client = stubOpenAIClient(chatCompletionChunks);
+      const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+      await requester.generate(
+        {
+          model: { ...model, baseUrl: 'https://integrate.api.nvidia.com/v1' },
+          cacheKey: 'session-1',
+        },
+        { messages },
+        { signal: new AbortController().signal },
+      );
+      expect(client.body()['prompt_cache_key']).toBe('session-1');
+    } finally {
+      if (prev === undefined) {
+        delete process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'];
+      } else {
+        process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'] = prev;
+      }
+    }
   });
 
   it('encodes the cache key as prompt_cache_key for the kimi requester', async () => {
@@ -158,5 +239,61 @@ describe('anthropic requester cacheKey', () => {
     );
     expect(client.body()['metadata']).toEqual({ user_id: 'session-1' });
     expect(client.body()['top_k']).toBe(5);
+  });
+});
+
+describe('openai-responses requester cacheKey', () => {
+  it('omits prompt_cache_key for third-party endpoints', async () => {
+    const client = stubResponsesClient(responsesStreamEvents);
+    const requester = createOpenAIResponsesRequester({ clientFactory: client.clientFactory });
+    await requester.generate(
+      {
+        model: { ...model, baseUrl: 'https://integrate.api.nvidia.com/v1' },
+        cacheKey: 'session-1',
+      },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.body()['prompt_cache_key']).toBeUndefined();
+  });
+
+  it('sends prompt_cache_key to third-party endpoints when KIMI_CODE_OPENAI_PROMPT_CACHE_KEY is set (case-insensitive)', async () => {
+    const prev = process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'];
+    process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'] = 'true';
+    try {
+      const client = stubResponsesClient(responsesStreamEvents);
+      const requester = createOpenAIResponsesRequester({ clientFactory: client.clientFactory });
+      await requester.generate(
+        {
+          model: { ...model, baseUrl: 'https://integrate.api.nvidia.com/v1' },
+          cacheKey: 'session-1',
+        },
+        { messages },
+        { signal: new AbortController().signal },
+      );
+      expect(client.body()['prompt_cache_key']).toBe('session-1');
+    } finally {
+      if (prev === undefined) {
+        delete process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'];
+      } else {
+        process.env['KIMI_CODE_OPENAI_PROMPT_CACHE_KEY'] = prev;
+      }
+    }
+  });
+
+  it('preserves prompt_cache_key for the kimi responses requester', async () => {
+    const client = stubResponsesClient(responsesStreamEvents);
+    const requester = createKimiResponsesRequester({
+      clientFactory: client.clientFactory,
+    });
+    await requester.generate(
+      {
+        model: { ...model, baseUrl: 'https://api.moonshot.ai/v1' },
+        cacheKey: 'session-1',
+      },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    expect(client.body()['prompt_cache_key']).toBe('session-1');
   });
 });

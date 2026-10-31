@@ -40,6 +40,7 @@ export interface OpenAIOptions {
   readonly detectedReasoningKey?: string;
   readonly onReasoningKey?: (reasoningKey: string) => void;
   readonly toolMessageConversion?: ToolMessageConversion;
+  readonly baseUrl?: string;
 }
 
 function createClient(endpoint: ResolvedEndpoint): OpenAI {

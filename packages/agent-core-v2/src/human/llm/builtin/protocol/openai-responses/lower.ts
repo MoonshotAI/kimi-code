@@ -11,6 +11,7 @@ import type { MediaSupport } from '#/llm/protocol/rules/media';
 import { resolveReasoningEffort } from '../openai/lower';
 
 import { sanitizeOpenAIResponsesCallId } from '../tool-call-id';
+import { isOfficialOpenAIBaseUrl } from '../openai-base-url';
 import { convertToolResultToPlainText } from '../tool-result-text';
 import type { ResponsesInputContentItem, ResponsesInputItem } from './contract';
 import { asRawObject } from './decode';
@@ -312,5 +313,12 @@ export const openAIResponsesPipeline: PipelineSpec<
   sampling: encodeSampling,
   tool: defaultTool,
   message: lowerMessage,
+  finalize: (native, module) => {
+    if (native.params.prompt_cache_key !== undefined && !isOfficialOpenAIBaseUrl(module.options?.baseUrl)) {
+      const { prompt_cache_key: _, ...rest } = native.params;
+      return { ...native, params: rest };
+    }
+    return native;
+  },
   flatten,
 };

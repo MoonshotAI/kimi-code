@@ -33,6 +33,7 @@ export {
 export interface OpenAIResponsesOptions {
   readonly extras?: OpenAIResponsesExtraParams;
   readonly toolMessageConversion?: ToolMessageConversion;
+  readonly baseUrl?: string;
 }
 
 function createClient(endpoint: ResolvedEndpoint): OpenAI {

@@ -64,10 +64,11 @@ export function createOpenAIRequester(options?: OpenAIRequesterOptions): LlmRequ
     defaultHeaders: options?.defaultHeaders,
     classifyError: options?.classifyError,
     clientFactory: options?.clientFactory,
-    options: (config) => ({
+    options: (config, model) => ({
       extras: config.extraParams?.openai,
       reasoningKey: options?.reasoningKey,
       toolMessageConversion: config.toolMessageConversion,
+      baseUrl: model.baseUrl,
     }),
   });
 }
@@ -87,9 +88,10 @@ export function createOpenAIResponsesRequester(
     defaultHeaders: options?.defaultHeaders,
     classifyError: options?.classifyError,
     clientFactory: options?.clientFactory,
-    options: (config) => ({
+    options: (config, model) => ({
       extras: config.extraParams?.responses,
       toolMessageConversion: config.toolMessageConversion,
+      baseUrl: model.baseUrl,
     }),
   });
 }
