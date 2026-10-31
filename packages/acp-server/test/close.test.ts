@@ -110,4 +110,19 @@ describe('acp-server session/close', () => {
     },
     30_000,
   );
+
+  it(
+    'server shutdown drains replacement deleteSession following an in-flight closeSession',
+    async () => {
+      const c = await boot();
+      const s = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      const closeReq = c.send('session/close', { sessionId: s.sessionId });
+      const deleteReq = c.send('session/delete', { sessionId: s.sessionId });
+      const shutdown = c.close();
+      await Promise.all([closeReq, deleteReq, shutdown]);
+    },
+    30_000,
+  );
 });

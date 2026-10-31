@@ -338,20 +338,27 @@ export class AcpServer {
    * Close all active sessions and clean up ACP server resources.
    */
   async close(): Promise<void> {
-    const targets = new Set<string>([
-      ...this.sessions.keys(),
-      ...this.inFlightTeardowns.keys(),
-    ]);
     const errors: unknown[] = [];
-    await Promise.all(
-      [...targets].map(async (sessionId) => {
-        try {
-          await this.closeSession({ sessionId });
-        } catch (error) {
-          errors.push(error);
-        }
-      }),
-    );
+    while (this.sessions.size > 0 || this.inFlightTeardowns.size > 0) {
+      const targets = new Set<string>([
+        ...this.sessions.keys(),
+        ...this.inFlightTeardowns.keys(),
+      ]);
+      await Promise.all(
+        [...targets].map(async (sessionId) => {
+          try {
+            const inFlight = this.inFlightTeardowns.get(sessionId);
+            if (inFlight !== undefined) {
+              await inFlight.promise;
+            } else {
+              await this.closeSession({ sessionId });
+            }
+          } catch (error) {
+            errors.push(error);
+          }
+        }),
+      );
+    }
     if (errors.length === 1) {
       throw errors[0];
     } else if (errors.length > 1) {
@@ -414,17 +421,11 @@ export class AcpServer {
    */
   async deleteSession(params: DeleteSessionRequest): Promise<DeleteSessionResponse> {
     const existing = this.inFlightTeardowns.get(params.sessionId);
-    if (existing !== undefined) {
-      if (existing.kind === 'delete') {
-        await existing.promise;
-        return {};
-      }
-      try {
-        await existing.promise;
-      } catch {
-        // proceed to delete even if close threw an error
-      }
+    if (existing?.kind === 'delete') {
+      await existing.promise;
+      return {};
     }
+    const previousTeardown = existing?.promise;
     const acpSession = this.sessions.get(params.sessionId);
     if (acpSession !== undefined) {
       acpSession.dispose();
@@ -439,6 +440,13 @@ export class AcpServer {
     promise.catch(() => {});
     this.inFlightTeardowns.set(params.sessionId, { kind: 'delete', promise });
     try {
+      if (previousTeardown !== undefined) {
+        try {
+          await previousTeardown;
+        } catch {
+          // proceed to delete even if close threw an error
+        }
+      }
       try {
         await this.klient.session(params.sessionId).delete();
       } catch (error) {
