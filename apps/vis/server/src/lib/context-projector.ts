@@ -504,6 +504,7 @@ export function projectContext(
           const prev: GoalSnapshot = goal;
           goal = {
             ...prev,
+            objective: rec.objective ?? prev.objective,
             status: rec.status ?? prev.status,
             actor: rec.actor ?? prev.actor,
             reason: rec.reason ?? prev.reason,

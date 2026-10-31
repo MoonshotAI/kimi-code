@@ -22,6 +22,7 @@ export interface ISessionLegacyService {
 
   status(sessionId: string): Promise<SessionStatusResponse>;
   goal(sessionId: string): Promise<GoalSnapshot | null>;
+  editGoalObjective(sessionId: string, objective: string): Promise<GoalSnapshot>;
 }
 
 export const ISessionLegacyService: ServiceIdentifier<ISessionLegacyService> =

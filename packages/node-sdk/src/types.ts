@@ -234,6 +234,10 @@ export interface UploadFileOptions {
   readonly expiresInSec?: number;
 }
 
+export interface EditGoalObjectiveInput {
+  readonly objective: string;
+}
+
 export interface CreateGoalInput {
   readonly objective: string;
   readonly replace?: boolean;

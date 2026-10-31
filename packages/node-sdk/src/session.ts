@@ -19,6 +19,7 @@ import type {
   CapabilityStatus,
   CompactOptions,
   CreateGoalInput,
+  EditGoalObjectiveInput,
   GetCronTasksResult,
   GoalSnapshot,
   GoalToolResult,
@@ -607,6 +608,11 @@ export class Session {
   async getGoal(): Promise<GoalToolResult> {
     this.ensureOpen();
     return this.rpc.getGoal({ sessionId: this.id });
+  }
+
+  async editGoalObjective(input: EditGoalObjectiveInput): Promise<GoalSnapshot> {
+    this.ensureOpen();
+    return this.rpc.editGoalObjective({ sessionId: this.id, ...input });
   }
 
   async pauseGoal(): Promise<GoalSnapshot> {

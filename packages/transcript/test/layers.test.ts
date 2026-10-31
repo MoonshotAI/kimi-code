@@ -1654,6 +1654,17 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(folded.items).toBe(base.items);
   });
 
+  it('folds an edited goal objective into meta.goal', () => {
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'goal.create', goalId: 'g1', objective: 'fix the bug', time: 1000 },
+        { type: 'goal.update', objective: 'fix the other bug', time: 2000 },
+      ],
+      baseWithMarker(),
+    );
+    expect(folded.meta.goal?.objective).toBe('fix the other bug');
+  });
+
   it('folds goal create/update/clear into meta.goal with markers, last write wins', () => {
     const base = baseWithMarker();
     expect(base.items.some((item) => item.kind === 'marker' && item.markerId === 'm1')).toBe(true);

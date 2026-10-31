@@ -412,6 +412,8 @@ class WireReplayFoldState {
     if (state === undefined) return;
     const status = record['status'] as GoalStatus | undefined;
     const reason = readString(record, 'reason');
+    const objective = readString(record, 'objective');
+    if (objective !== undefined) state.objective = objective;
     if (status !== undefined) {
       state.status = status;
       state.terminalReason = status === 'active' ? undefined : reason;
