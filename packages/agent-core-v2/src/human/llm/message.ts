@@ -361,7 +361,7 @@ export function createMessageAccumulator(): MessageAccumulator {
         return undefined;
       }
       flush();
-      return message.toolCalls[message.toolCalls.length - 1];
+      return message.toolCalls.at(-1);
     },
     finish(): AssistantMessage {
       flush();
