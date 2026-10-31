@@ -36,9 +36,15 @@ const addInputHistory: Handler<{ text: string }, { ok: boolean }> = async ({ tex
   return { ok: true };
 };
 
+const copyToClipboard: Handler<{ text: string }, { ok: boolean }> = async ({ text }) => {
+  await vscode.env.clipboard.writeText(text);
+  return { ok: true };
+};
+
 export const workspaceHandlers: Record<string, Handler<any, any>> = {
   [Methods.CheckWorkspace]: checkWorkspace,
   [Methods.OpenFolder]: openFolder,
   [Methods.GetInputHistory]: getInputHistory,
   [Methods.AddInputHistory]: addInputHistory,
+  [Methods.CopyToClipboard]: copyToClipboard,
 };
