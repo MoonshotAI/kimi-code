@@ -738,13 +738,11 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `profile` | string | 把 main agent 绑定到这个 agent profile，同时带上 `model` / `thinking`（如有）；已绑定后换成别的 profile 返回 `40001` |
 | `model` | string | 模型别名 id；空字符串会被忽略 |
 | `thinking` | string | Thinking 强度等级 |
 | `permission_mode` | string | `manual` / `yolo` / `auto` |
 | `plan_mode` | boolean | 进入或退出 Plan 模式 |
 | `swarm_mode` | boolean | 进入或退出 swarm 模式 |
-| `disabled_tools` | array | 整个会话禁用的工具名，替换之前的列表（`[]` 表示清空）；main agent 的 profile 绑定之前写入返回 `40001` |
 | `goal_objective` | string | 以该文本为内容创建一个目标 |
 | `goal_control` | string | `pause` / `resume` / `cancel` 当前目标 |
 
@@ -752,7 +750,6 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 成功时，`data` 为更新后的 [session 对象](#session-对象)。
 
-- `40001`：未知或冲突的 `profile`，或在 profile 绑定之前写入 `disabled_tools`
 - `40401`：会话不存在
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`

@@ -6,9 +6,7 @@ import {
   IAgentPlanService,
   IAgentProfileService,
   IAgentSwarmService,
-  IAgentToolPolicyService,
   IAgentTowerService,
-  ProfileError,
   resumeSessionById,
   towerEnterFailureMessage,
   type IAgentScopeHandle,
@@ -16,7 +14,7 @@ import {
   type PromptLaunchMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import type { SessionAgentConfigUpdate } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
+import type { SessionAgentConfigPartial } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { ensureMainAgent } from '../transport/mainAgent';
 
@@ -47,19 +45,10 @@ export async function applyPromptLaunchMode(
   }
 }
 
-async function rejectProfileErrors(apply: () => Promise<unknown>): Promise<void> {
-  try {
-    await apply();
-  } catch (error) {
-    if (error instanceof ProfileError) throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
-    throw error;
-  }
-}
-
 export async function applySessionAgentConfig(
   core: Scope,
   sessionId: string,
-  agentConfig: SessionAgentConfigUpdate,
+  agentConfig: SessionAgentConfigPartial,
 ): Promise<void> {
   const session = await resumeSessionById(core.accessor, sessionId);
   if (session === undefined) {
@@ -68,26 +57,11 @@ export async function applySessionAgentConfig(
   const agent = await ensureMainAgent(session);
 
   const profile = agent.accessor.get(IAgentProfileService);
-  const model = agentConfig.model === '' ? undefined : agentConfig.model;
-  const profileName = agentConfig.profile;
-  const rebound = profileName !== undefined && profileName !== profile.data().profileName;
-  if (rebound) {
-    await rejectProfileErrors(() => profile.bind({
-      profile: profileName,
-      model,
-      thinking: agentConfig.thinking,
-      strictThinking: agentConfig.thinking !== undefined,
-    }));
+  if (agentConfig.model !== undefined && agentConfig.model !== '') {
+    await profile.setModel(agentConfig.model);
   }
-  if (model !== undefined) {
-    await profile.setModel(model);
-  }
-  if (agentConfig.thinking !== undefined && !rebound) {
+  if (agentConfig.thinking !== undefined) {
     profile.setThinking(agentConfig.thinking);
-  }
-  if (agentConfig.disabled_tools !== undefined) {
-    const disabledTools = agentConfig.disabled_tools;
-    await rejectProfileErrors(() => agent.accessor.get(IAgentToolPolicyService).setSessionDisabledTools(disabledTools));
   }
   if (agentConfig.permission_mode !== undefined) {
     agent.accessor
