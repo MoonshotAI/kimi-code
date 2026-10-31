@@ -53,6 +53,9 @@ interface LogState {
   inFlightBytes: number;
   rewriteInFlight: number | undefined;
   guardWarned: boolean;
+  appendedBytesInEpoch: number;
+  nextReadSeq: number;
+  lastCompletedReadSeq: number;
   onError?: (error: unknown) => void;
 }
 
@@ -95,7 +98,13 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
   async *read<R>(scope: string, key: string, options?: AppendLogReadOptions): AsyncIterable<R> {
     await this.flushLog(scope, key);
     const state = this.state(scope, key);
+    while (state.flushPromise !== undefined) {
+      await state.flushPromise;
+    }
+    const epochAtStart = state.cutoverEpoch;
+    const readSeq = ++state.nextReadSeq;
     const lengthAtStart = this.diskLength(scope, key);
+    const appendsAtStart = state.appendedBytesInEpoch;
     try {
       const onTruncate = options?.onTruncate;
       const textDecoder = new TextDecoder();
@@ -132,9 +141,14 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         }
       }
     } finally {
-      const disk = this.diskLength(scope, key);
-      if (disk !== undefined) {
-        state.knownLength = lengthAtStart === disk ? disk : (lengthAtStart ?? 0);
+      if (state.cutoverEpoch === epochAtStart && readSeq >= state.lastCompletedReadSeq) {
+        state.lastCompletedReadSeq = readSeq;
+        const disk = this.diskLength(scope, key);
+        if (disk !== undefined) {
+          const ownAppended = state.appendedBytesInEpoch - appendsAtStart;
+          const baseline = (lengthAtStart ?? 0) + ownAppended;
+          state.knownLength = disk === baseline ? disk : baseline;
+        }
       }
     }
   }
@@ -178,6 +192,9 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         state.storageFailure = undefined;
         state.recovery = undefined;
         state.knownLength = encoded.length;
+        state.appendedBytesInEpoch = 0;
+        state.nextReadSeq = 0;
+        state.lastCompletedReadSeq = 0;
         return true;
       } catch (error) {
         state.rewriteInFlight = undefined;
@@ -282,6 +299,9 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         inFlightBytes: 0,
         rewriteInFlight: undefined,
         guardWarned: false,
+        appendedBytesInEpoch: 0,
+        nextReadSeq: 0,
+        lastCompletedReadSeq: 0,
       };
       this.logs.set(id, state);
     }
@@ -447,6 +467,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         state.inFlightBytes = 0;
         state.recovery = undefined;
         wrote = true;
+        state.appendedBytesInEpoch += encoded.length;
         if (state.knownLength !== undefined) state.knownLength += encoded.length;
         if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {
