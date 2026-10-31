@@ -11,7 +11,7 @@ import { LoginScreen } from "./components/LoginScreen";
 import { Toaster, toast } from "./components/ui/sonner";
 import { useChatStore, useSettingsStore } from "./stores";
 import { bridge, Events } from "./services";
-import { copyToClipboard } from "./lib/clipboard";
+import { copyToClipboard, isPerformingProgrammaticCopy } from "./lib/clipboard";
 import { useAppInit, resolveAppView } from "./hooks/useAppInit";
 import { isPreflightError } from "shared/errors";
 import type { UIStreamEvent, StreamError, ExtensionConfig } from "shared/types";
@@ -55,6 +55,7 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
 
   useEffect(() => {
     const handleCopy = (e: ClipboardEvent) => {
+      if (isPerformingProgrammaticCopy()) return;
       const selection = window.getSelection()?.toString();
       if (selection) {
         if (e.clipboardData) {
