@@ -49,12 +49,22 @@ export function normalizeToolArgs(
       ? (tool.parameters['properties'] as Record<string, unknown>)
       : undefined;
 
-  const isStrictlyClosedSchema =
-    tool?.parameters &&
-    typeof tool.parameters === 'object' &&
-    tool.parameters['additionalProperties'] === false;
-
   const toolName = tool?.name?.toLowerCase();
+  const isBuiltinTool =
+    toolName === 'read' ||
+    toolName === 'write' ||
+    toolName === 'edit';
+
+  const isStrictlyClosedSchema =
+    isBuiltinTool ||
+    (tool?.parameters !== undefined &&
+      typeof tool.parameters === 'object' &&
+      tool.parameters['additionalProperties'] === false);
+
+  function schemaRejects(key: string): boolean {
+    return isStrictlyClosedSchema && !hasProperty(rawProperties, key);
+  }
+
   const supportsLineOffset =
     hasProperty(rawProperties, 'line_offset') || toolName === 'read';
   const supportsNLines =
@@ -66,19 +76,19 @@ export function normalizeToolArgs(
     toolName === 'edit';
 
   if (supportsLineOffset) {
-    if (!hasProperty(rawProperties, 'offset') && 'offset' in normalized) {
+    if (schemaRejects('offset') && 'offset' in normalized) {
       if (normalized['line_offset'] === undefined) {
         normalized['line_offset'] = toLineOffset(normalized['offset']);
       }
       delete normalized['offset'];
     }
-    if (!hasProperty(rawProperties, 'start_line') && 'start_line' in normalized) {
+    if (schemaRejects('start_line') && 'start_line' in normalized) {
       if (normalized['line_offset'] === undefined) {
         normalized['line_offset'] = toLineOffset(normalized['start_line']);
       }
       delete normalized['start_line'];
     }
-    if (!hasProperty(rawProperties, 'parameter_offset') && 'parameter_offset' in normalized) {
+    if (schemaRejects('parameter_offset') && 'parameter_offset' in normalized) {
       if (normalized['line_offset'] === undefined) {
         normalized['line_offset'] = toLineOffset(normalized['parameter_offset']);
       }
@@ -87,7 +97,7 @@ export function normalizeToolArgs(
   }
 
   if (supportsNLines) {
-    if (!hasProperty(rawProperties, 'limit') && 'limit' in normalized) {
+    if (schemaRejects('limit') && 'limit' in normalized) {
       if (normalized['n_lines'] === undefined) {
         normalized['n_lines'] = toInteger(normalized['limit']);
       }
@@ -96,13 +106,13 @@ export function normalizeToolArgs(
   }
 
   if (supportsPath) {
-    if (!hasProperty(rawProperties, 'file_path') && 'file_path' in normalized) {
+    if (schemaRejects('file_path') && 'file_path' in normalized) {
       if (normalized['path'] === undefined) {
         normalized['path'] = normalized['file_path'];
       }
       delete normalized['file_path'];
     }
-    if (!hasProperty(rawProperties, 'filepath') && 'filepath' in normalized) {
+    if (schemaRejects('filepath') && 'filepath' in normalized) {
       if (normalized['path'] === undefined) {
         normalized['path'] = normalized['filepath'];
       }
@@ -110,13 +120,11 @@ export function normalizeToolArgs(
     }
   }
 
-  if (isStrictlyClosedSchema && rawProperties !== undefined) {
-    if (!hasProperty(rawProperties, 'description_note') && 'description_note' in normalized) {
-      delete normalized['description_note'];
-    }
-    if (!hasProperty(rawProperties, 'details') && 'details' in normalized) {
-      delete normalized['details'];
-    }
+  if (schemaRejects('description_note') && 'description_note' in normalized) {
+    delete normalized['description_note'];
+  }
+  if (schemaRejects('details') && 'details' in normalized) {
+    delete normalized['details'];
   }
 
   return normalized;
