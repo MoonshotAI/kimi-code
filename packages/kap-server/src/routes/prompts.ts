@@ -244,6 +244,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               {
                 telemetry,
                 providerType: resolved.profile.getModelProviderType(),
+                stagingNamespace: reservation.id,
                 resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => {
                   try {
                     const session = await resumeSessionById(core.accessor, session_id);

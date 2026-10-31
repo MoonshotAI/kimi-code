@@ -140,6 +140,7 @@ export interface ResolvePromptMediaOptions {
   readonly resolveAttachmentsTarget?: () => Promise<PromptAttachmentsTarget | undefined>;
   readonly telemetry?: ITelemetryService;
   readonly providerType?: string;
+  readonly stagingNamespace?: string;
 }
 
 export interface PromptAttachmentsTarget {
@@ -267,10 +268,19 @@ export async function resolvePromptMediaFiles(
   const resolveAttachmentsSink = async (): Promise<AttachmentSink> => {
     if (attachmentsSink !== undefined) return attachmentsSink;
     const target = await options.resolveAttachmentsTarget?.();
+    const namespace = options.stagingNamespace?.trim();
+    const rootDir = target?.dir ?? cacheDir;
+    const dir =
+      namespace === undefined || namespace.length === 0
+        ? rootDir
+        : (target?.path ?? { join: (...parts: string[]) => join(...parts) }).join(
+            rootDir,
+            sanitizeAttachmentName(namespace),
+          );
     const base =
       target?.fs !== undefined && target.path !== undefined
-        ? environmentAttachmentSink({ dir: target.dir, fs: target.fs, path: target.path })
-        : localAttachmentSink(target?.dir ?? cacheDir);
+        ? environmentAttachmentSink({ dir, fs: target.fs, path: target.path })
+        : localAttachmentSink(dir);
     attachmentsSink = {
       ...base,
       write: async (path, data) => {

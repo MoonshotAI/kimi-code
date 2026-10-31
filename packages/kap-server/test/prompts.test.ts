@@ -2,7 +2,7 @@ import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { environmentBindingKey } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBindingOps';
 import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
 import {
@@ -1549,7 +1549,8 @@ describe('server-v2 /api/v1 prompts', () => {
     const content = submitted.body.data.content as Array<{ type: string; text?: string }>;
     expect(content).toHaveLength(1);
     const attachedPath = attachedPathFrom(content[0]?.text ?? '');
-    expect(dirname(attachedPath).endsWith('/attachments')).toBe(true);
+    expect(attachedPath.includes('/attachments/')).toBe(true);
+    expect(basename(attachedPath)).not.toContain('..');
     expect((await realpath(attachedPath)).startsWith(await realpath(home as string))).toBe(true);
     expect(await readFile(attachedPath)).toEqual(scriptBytes);
   });
@@ -1698,7 +1699,7 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(upload.body.code).toBe(0);
       const content = upload.body.data.content as Array<{ type: string; text?: string }>;
       const attachedPath = attachedPathFrom(content[0]?.text ?? '');
-      expect(dirname(attachedPath)).toBe(join(remoteRoot, 'remote-tmp', 'kimi-code', 'attachments'));
+      expect(dirname(dirname(attachedPath))).toBe(join(remoteRoot, 'remote-tmp', 'kimi-code', 'attachments'));
       expect(await readFile(attachedPath)).toEqual(uploadBytes);
     } finally {
       await rm(remoteRoot, { recursive: true, force: true });
@@ -1768,7 +1769,7 @@ describe('server-v2 /api/v1 prompts', () => {
       const content = submitted.body.data.content as Array<{ type: string; text?: string }>;
       expect(content).toHaveLength(2);
       const attachedPath = attachedPathFrom(content[1]?.text ?? '');
-      expect(dirname(attachedPath)).toBe(join(remote.remoteTempDir, 'kimi-code', 'attachments'));
+      expect(dirname(dirname(attachedPath))).toBe(join(remote.remoteTempDir, 'kimi-code', 'attachments'));
       expect(attachedPath.endsWith(`${uploaded.id}-report.pdf`)).toBe(true);
       expect(await readFile(attachedPath)).toEqual(pdfBytes);
 

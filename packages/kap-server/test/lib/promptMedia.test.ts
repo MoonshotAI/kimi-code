@@ -155,4 +155,38 @@ describe('resolvePromptMediaFiles with an environment attachments target', () =>
     expect(fake.removed).toEqual([]);
     expectStoredBytes(fake.files, target, data);
   });
+
+  it('namespaces staged paths per prompt so cancel discard cannot drop a sibling queue item', async () => {
+    const data = patternedBytes(17);
+    const store = fakeFileStore(
+      new Map([['f_shared', { meta: meta('f_shared', 'note.txt', data.byteLength), chunks: [data] }]]),
+    );
+    const fake = fakeEnvironmentFs();
+    const part = {
+      type: 'file' as const,
+      file_id: 'f_shared',
+      name: 'note.txt',
+      media_type: 'text/plain',
+      size: data.byteLength,
+    };
+    const first = await resolvePromptMediaFiles([part], store, '/cache', {
+      stagingNamespace: 'prompt_a',
+      resolveAttachmentsTarget: async () => targetFor(fake.fs),
+    });
+    const second = await resolvePromptMediaFiles([part], store, '/cache', {
+      stagingNamespace: 'prompt_b',
+      resolveAttachmentsTarget: async () => targetFor(fake.fs),
+    });
+    expect(first.attachments[0]!.path).toBe(
+      '/remote/tmp/kimi-code/attachments/prompt_a/f_shared-note.txt',
+    );
+    expect(second.attachments[0]!.path).toBe(
+      '/remote/tmp/kimi-code/attachments/prompt_b/f_shared-note.txt',
+    );
+    expectStoredBytes(fake.files, first.attachments[0]!.path, data);
+    expectStoredBytes(fake.files, second.attachments[0]!.path, data);
+    await first.discardStaged();
+    expect(fake.files.has(first.attachments[0]!.path)).toBe(false);
+    expectStoredBytes(fake.files, second.attachments[0]!.path, data);
+  });
 });
