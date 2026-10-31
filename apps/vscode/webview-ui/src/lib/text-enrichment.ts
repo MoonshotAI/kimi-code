@@ -5,8 +5,9 @@ const HEX_COLOR = /#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{
 const RGB_COLOR = /rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*[\d.]+)?\s*\)/;
 const HSL_COLOR = /hsla?\(\s*\d{1,3}\s*,\s*[\d.]+%\s*,\s*[\d.]+%(?:\s*,\s*[\d.]+)?\s*\)/;
 
-// File Path Regex
-const FILE_PATH = /(?:@|\.\/)?(?:[a-zA-Z_][\w-]*\/)*[a-zA-Z_][\w-]*\.[a-zA-Z0-9]+/;
+// File Path Regex, with an optional `:line` or `:line:col` suffix
+const FILE_PATH = /(?:@|\.\/)?(?:[a-zA-Z_][\w-]*\/)*[a-zA-Z_][\w-]*\.[a-zA-Z0-9]+(?::[1-9]\d*(?::[1-9]\d*)?)?/;
+const LINE_SUFFIX = /:[1-9]\d*(?::[1-9]\d*)?$/;
 
 // Combined Regex
 const ENRICHMENT_PATTERN = new RegExp(`(${HEX_COLOR.source}|${RGB_COLOR.source}|${HSL_COLOR.source})|(${FILE_PATH.source})`, "g");
@@ -35,7 +36,7 @@ export function extractPaths(text: string): string[] {
   const regex = new RegExp(FILE_PATH.source, "g");
   let m: RegExpExecArray | null;
   while ((m = regex.exec(text))) {
-    seen.add(normalizePath(m[0]));
+    seen.add(normalizePath(m[0]).replace(LINE_SUFFIX, ""));
   }
   return [...seen];
 }
@@ -61,7 +62,11 @@ export function parseSegments(text: string, fileExistsMap: Record<string, boolea
       segments.push({ type: "color", value: colorMatch });
     } else if (fileMatch) {
       const path = normalizePath(fileMatch);
-      segments.push(fileExistsMap[path] ? { type: "file", value: fileMatch, path } : { type: "text", value: fileMatch });
+      segments.push(
+        fileExistsMap[path.replace(LINE_SUFFIX, "")]
+          ? { type: "file", value: fileMatch, path }
+          : { type: "text", value: fileMatch },
+      );
     }
 
     lastIndex = m.index + full.length;

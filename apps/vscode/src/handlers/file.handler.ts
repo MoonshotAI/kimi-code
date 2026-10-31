@@ -85,12 +85,33 @@ const pickMedia: Handler<PickMediaParams, string[]> = async (params) => {
   return results;
 };
 
+const FILE_LOCATION_SUFFIX = /:([1-9]\d*)(?::([1-9]\d*))?$/;
+
 const openFile: Handler<FilePathParams, { ok: boolean }> = async ({ filePath }, ctx) => {
-  const resolved = await resolveExistingWorkspaceFile(ctx.requireWorkDirUri(), filePath);
+  const location = fileLocation(filePath);
+  const resolved = await resolveExistingWorkspaceFile(ctx.requireWorkDirUri(), location.filePath);
   if (resolved === undefined) return { ok: false };
-  await vscode.commands.executeCommand("vscode.open", resolved.uri);
+  if (location.line === undefined) {
+    await vscode.commands.executeCommand("vscode.open", resolved.uri);
+  } else {
+    const line = location.line - 1;
+    const character = (location.column ?? 1) - 1;
+    await vscode.commands.executeCommand("vscode.open", resolved.uri, {
+      selection: new vscode.Range(line, character, line, character),
+    });
+  }
   return { ok: true };
 };
+
+function fileLocation(filePath: string): { filePath: string; line?: number; column?: number } {
+  const match = FILE_LOCATION_SUFFIX.exec(filePath);
+  if (match === null) return { filePath };
+  return {
+    filePath: filePath.slice(0, match.index),
+    line: Number(match[1]),
+    column: match[2] === undefined ? undefined : Number(match[2]),
+  };
+}
 
 const openFileDiff: Handler<FilePathParams, { ok: boolean }> = async ({ filePath }, ctx) => {
   const sessionId = ctx.getSessionId();

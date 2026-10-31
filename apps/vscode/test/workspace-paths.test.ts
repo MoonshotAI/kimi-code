@@ -80,6 +80,16 @@ const vscodeHost = vi.hoisted(() => {
     }
   }
 
+  class Range {
+    readonly start: { line: number; character: number };
+    readonly end: { line: number; character: number };
+
+    constructor(startLine: number, startCharacter: number, endLine: number, endCharacter: number) {
+      this.start = { line: startLine, character: startCharacter };
+      this.end = { line: endLine, character: endCharacter };
+    }
+  }
+
   const readDirectory = vi.fn();
   const stat = vi.fn();
   const readFile = vi.fn();
@@ -90,6 +100,7 @@ const vscodeHost = vi.hoisted(() => {
   return {
     Uri,
     RelativePattern,
+    Range,
     readDirectory,
     stat,
     readFile,
@@ -103,6 +114,7 @@ const vscodeHost = vi.hoisted(() => {
 vi.mock("vscode", () => ({
   Uri: vscodeHost.Uri,
   RelativePattern: vscodeHost.RelativePattern,
+  Range: vscodeHost.Range,
   FileType: { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 },
   QuickPickItemKind: { Separator: -1 },
   workspace: {
@@ -220,6 +232,53 @@ describe("Webview workspace paths (selected-directory containment)", () => {
     expect(files).toEqual([]);
     expect(ctx.logError).toHaveBeenCalled();
     expect(vscodeHost.findFiles).not.toHaveBeenCalled();
+  });
+
+  it("opens a path:line link with the cursor on that line", async () => {
+    const workDir = join(root, "project");
+    await mkdir(join(workDir, "src"), { recursive: true });
+    await writeFile(join(workDir, "src", "app.ts"), "one\ntwo\nthree");
+    const ctx = createContext(vscodeHost.Uri.file(workDir));
+
+    const result = await fileHandlers[Methods.OpenFile]!({ filePath: "src/app.ts:2" }, ctx);
+
+    expect(result).toEqual({ ok: true });
+    const [, , options] = vscodeHost.executeCommand.mock.calls.at(-1)! as [
+      string,
+      { fsPath: string },
+      { selection: { start: { line: number; character: number } } },
+    ];
+    expect(options.selection.start.line).toBe(1);
+    expect(options.selection.start.character).toBe(0);
+  });
+
+  it("opens a path:line:col link at the column", async () => {
+    const workDir = join(root, "project");
+    await mkdir(join(workDir, "src"), { recursive: true });
+    await writeFile(join(workDir, "src", "app.ts"), "one\ntwo\nthree");
+    const ctx = createContext(vscodeHost.Uri.file(workDir));
+
+    const result = await fileHandlers[Methods.OpenFile]!({ filePath: "src/app.ts:3:4" }, ctx);
+
+    expect(result).toEqual({ ok: true });
+    const [, , options] = vscodeHost.executeCommand.mock.calls.at(-1)! as [
+      string,
+      { fsPath: string },
+      { selection: { start: { line: number; character: number } } },
+    ];
+    expect(options.selection.start).toEqual({ line: 2, character: 3 });
+  });
+
+  it("opens a plain path without a selection", async () => {
+    const workDir = join(root, "project");
+    await mkdir(join(workDir, "src"), { recursive: true });
+    await writeFile(join(workDir, "src", "app.ts"), "one");
+    const ctx = createContext(vscodeHost.Uri.file(workDir));
+
+    const result = await fileHandlers[Methods.OpenFile]!({ filePath: "src/app.ts" }, ctx);
+
+    expect(result).toEqual({ ok: true });
+    expect(vscodeHost.executeCommand.mock.calls.at(-1)).toHaveLength(2);
   });
 
   it("refuses to open a symlink whose target lies outside the selected working directory", async () => {
