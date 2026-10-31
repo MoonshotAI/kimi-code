@@ -368,4 +368,30 @@ describe('normalizeToolArgs', () => {
       description_note: 'preserve extra note',
     });
   });
+
+  it('preserves aliases accepted by open schemas without additionalProperties: false', () => {
+    const openReaderTool = {
+      name: 'mcp_reader',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          line_offset: { type: 'integer' },
+          n_lines: { type: 'integer' },
+        },
+      },
+    };
+
+    expect(
+      normalizeToolArgs(openReaderTool, {
+        path: 'src/main.ts',
+        offset: 5,
+        limit: 10,
+      }),
+    ).toEqual({
+      path: 'src/main.ts',
+      offset: 5,
+      limit: 10,
+    });
+  });
 });
