@@ -47,7 +47,6 @@ describe('applyToolArgAliases', () => {
   });
 
   it('drops the alias key even when the canonical value is already present', () => {
-    // The leftover `offset` would otherwise still trip `additionalProperties`.
     expect(
       applyToolArgAliases(readAliases, { offset: 10, line_offset: 5, n_lines: 3 }),
     ).toEqual({ line_offset: 5, n_lines: 3 });
