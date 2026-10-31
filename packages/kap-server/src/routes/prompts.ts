@@ -233,9 +233,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           if (mode === 'goal' && resolved.agent.accessor.get(IAgentGoalService).getGoal().goal !== null) {
             throw new Error2(ErrorCodes.GOAL_ALREADY_EXISTS, 'A goal already exists');
           }
-          if (mode === 'goal') {
-            assertAcceptableGoalObjective(promptObjectiveText(contentToCoreParts(content), req.body.metadata));
-          }
           reservation = reservePromptId(session_id, req.body.prompt_id);
 
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
@@ -278,6 +275,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           const promptAttachments =
             staging.attachments.length > 0 ? staging.attachments : undefined;
           const parts = contentToCoreParts(staging.content);
+          if (mode === 'goal') {
+            assertAcceptableGoalObjective(promptObjectiveText(parts, req.body.metadata));
+          }
           const clientMetadata = req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)];
           let entry: UserEntry;
           if (req.body.skills !== undefined) {
