@@ -154,7 +154,10 @@ export class AcpServer {
     session: SessionHandle,
   ) => Promise<ReadonlyArray<AvailableCommand> | SlashCommandsSnapshot>;
   private readonly sessions = new Map<string, AcpSession>();
-  private readonly inFlightTeardowns = new Map<string, Promise<void>>();
+  private readonly inFlightTeardowns = new Map<
+    string,
+    { kind: 'close' | 'delete'; promise: Promise<void> }
+  >();
 
   constructor(
     private readonly conn: AcpClient,
@@ -367,7 +370,7 @@ export class AcpServer {
   async closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse | void> {
     const existing = this.inFlightTeardowns.get(params.sessionId);
     if (existing !== undefined) {
-      await existing;
+      await existing.promise;
       return;
     }
     const acpSession = this.sessions.get(params.sessionId);
@@ -375,18 +378,29 @@ export class AcpServer {
       acpSession.dispose();
       this.sessions.delete(params.sessionId);
     }
-    const teardown = (async () => {
+    let resolveTeardown!: () => void;
+    let rejectTeardown!: (error: unknown) => void;
+    const promise = new Promise<void>((res, rej) => {
+      resolveTeardown = res;
+      rejectTeardown = rej;
+    });
+    promise.catch(() => {});
+    this.inFlightTeardowns.set(params.sessionId, { kind: 'close', promise });
+    try {
       try {
         await this.klient.session(params.sessionId).close();
       } finally {
         await this.unbindSessionEnvironment?.(params.sessionId);
       }
-    })();
-    this.inFlightTeardowns.set(params.sessionId, teardown);
-    try {
-      await teardown;
+      resolveTeardown();
+    } catch (error) {
+      rejectTeardown(error);
+      throw error;
     } finally {
-      this.inFlightTeardowns.delete(params.sessionId);
+      const current = this.inFlightTeardowns.get(params.sessionId);
+      if (current?.promise === promise) {
+        this.inFlightTeardowns.delete(params.sessionId);
+      }
     }
   }
 
@@ -401,15 +415,30 @@ export class AcpServer {
   async deleteSession(params: DeleteSessionRequest): Promise<DeleteSessionResponse> {
     const existing = this.inFlightTeardowns.get(params.sessionId);
     if (existing !== undefined) {
-      await existing;
-      return {};
+      if (existing.kind === 'delete') {
+        await existing.promise;
+        return {};
+      }
+      try {
+        await existing.promise;
+      } catch {
+        // proceed to delete even if close threw an error
+      }
     }
     const acpSession = this.sessions.get(params.sessionId);
     if (acpSession !== undefined) {
       acpSession.dispose();
       this.sessions.delete(params.sessionId);
     }
-    const teardown = (async () => {
+    let resolveTeardown!: () => void;
+    let rejectTeardown!: (error: unknown) => void;
+    const promise = new Promise<void>((res, rej) => {
+      resolveTeardown = res;
+      rejectTeardown = rej;
+    });
+    promise.catch(() => {});
+    this.inFlightTeardowns.set(params.sessionId, { kind: 'delete', promise });
+    try {
       try {
         await this.klient.session(params.sessionId).delete();
       } catch (error) {
@@ -423,12 +452,15 @@ export class AcpServer {
       } finally {
         await this.unbindSessionEnvironment?.(params.sessionId);
       }
-    })();
-    this.inFlightTeardowns.set(params.sessionId, teardown);
-    try {
-      await teardown;
+      resolveTeardown();
+    } catch (error) {
+      rejectTeardown(error);
+      throw error;
     } finally {
-      this.inFlightTeardowns.delete(params.sessionId);
+      const current = this.inFlightTeardowns.get(params.sessionId);
+      if (current?.promise === promise) {
+        this.inFlightTeardowns.delete(params.sessionId);
+      }
     }
     return {};
   }

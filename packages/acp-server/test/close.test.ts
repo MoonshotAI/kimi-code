@@ -92,4 +92,22 @@ describe('acp-server session/close', () => {
     },
     30_000,
   );
+
+  it(
+    'deleteSession following an in-flight closeSession still deletes the session',
+    async () => {
+      const c = await boot();
+      const s = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      const closeReq = c.send('session/close', { sessionId: s.sessionId });
+      const deleteReq = c.send('session/delete', { sessionId: s.sessionId });
+      await Promise.all([closeReq, deleteReq]);
+
+      await expect(
+        c.send('session/delete', { sessionId: s.sessionId }),
+      ).rejects.toThrow();
+    },
+    30_000,
+  );
 });
