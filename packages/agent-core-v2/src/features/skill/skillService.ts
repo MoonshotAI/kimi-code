@@ -14,6 +14,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart } from '#human/llm/message';
 import { skillActivationPart } from '#human/agent/origin';
+import type { UserEntry } from '#human/agent/turn';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -34,6 +35,7 @@ import { SkillActivated } from './skillOps';
 export interface IAgentSkillService {
   readonly _serviceBrand: undefined;
   activate(input: SkillActivationInput): Promise<PromptLaunchResult>;
+  preparePromptWithSkills(input: PromptWithSkillsInput, promptId?: string): Promise<UserEntry>;
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
   recordModelToolActivation(origin: SkillActivationOrigin): void;
 }
@@ -122,7 +124,7 @@ export class AgentSkillService implements IAgentSkillService {
     return { turn_id: turn.id };
   }
 
-  async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult> {
+  async preparePromptWithSkills(input: PromptWithSkillsInput, promptId?: string): Promise<UserEntry> {
     if (input.input.length === 0) {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'promptWithSkills requires a non-empty prompt');
     }
@@ -148,29 +150,32 @@ export class AgentSkillService implements IAgentSkillService {
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
     }
+    return {
+      message: {
+        role: 'user',
+        content: [...prepared.map((activation) => activation.part), ...input.input],
+      },
+      meta: {
+        promptId,
+        origin: {
+          kind: 'user',
+          skillActivations: prepared.map((activation) => activation.entry),
+          clientMetadata: input.clientMetadata,
+          attachments: input.attachments,
+        } as PromptOrigin,
+        tracked: true,
+      },
+    };
+  }
+
+  async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult> {
+    const entry = await this.preparePromptWithSkills(input);
     const status = this.loop.snapshot();
     const steerable =
       input.steerIfActive === true &&
       status.state === 'running' &&
       status.activePromptId !== undefined;
-    const { id } = this.loop.submit(
-      {
-        message: {
-          role: 'user',
-          content: [...prepared.map((activation) => activation.part), ...input.input],
-        },
-        meta: {
-          origin: {
-            kind: 'user',
-            skillActivations: prepared.map((activation) => activation.entry),
-            clientMetadata: input.clientMetadata,
-            attachments: input.attachments,
-          } as PromptOrigin,
-          tracked: true,
-        },
-      },
-      { steerIfActive: input.steerIfActive },
-    );
+    const { id } = this.loop.submit(entry, { steerIfActive: input.steerIfActive });
     const handle = this.loop.promptHandle(id)!;
     if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
       return { prompt_id: id, created_at: handle.createdAt, state: 'queued' };

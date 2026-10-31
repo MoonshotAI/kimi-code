@@ -190,8 +190,8 @@ describeLive('DaemonClient (live server required)', () => {
       const compactRequest = { instruction: '  focus on decisions  ' };
       log('request', {
         method: 'POST',
-        path: `/api/v1/sessions/${session.id}:compact`,
-        body: compactRequest,
+        path: `/api/v1/sessions/${session.id}/prompts`,
+        body: { compact: compactRequest },
       });
 
       let compactError: unknown;
@@ -249,8 +249,8 @@ describeLive('DaemonClient (live server required)', () => {
       };
       successLog('request', {
         method: 'POST',
-        path: `/api/v1/sessions/${populated.id}:compact`,
-        body: populatedCompactRequest,
+        path: `/api/v1/sessions/${populated.id}/prompts`,
+        body: { compact: populatedCompactRequest },
       });
 
       const compaction = await client.runUntilIdle(
@@ -356,7 +356,7 @@ describe('DaemonClient session action helpers', () => {
     });
   });
 
-  it('compactSession posts the action-suffix route and preserves error envelope details', async () => {
+  it('compactSession posts a compaction to the prompt route and preserves error envelope details', async () => {
     const log = createCaseLogger('client helper: compactSession');
     const calls: FetchCall[] = [];
     const client = new DaemonClient({
@@ -392,10 +392,10 @@ describe('DaemonClient session action helpers', () => {
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe('http://server.example.test/api/v1/sessions/sess_source:compact');
+    expect(calls[0]?.url).toBe('http://server.example.test/api/v1/sessions/sess_source/prompts');
     expect(calls[0]?.init.method).toBe('POST');
     expect(parseRecordedJsonBody(calls[0])).toEqual({
-      instruction: '  focus on decisions  ',
+      compact: { instruction: '  focus on decisions  ' },
     });
   });
 

@@ -9,12 +9,41 @@ import {
   IAgentTowerService,
   resumeSessionById,
   towerEnterFailureMessage,
+  type IAgentScopeHandle,
   type PermissionMode,
+  type PromptLaunchMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import type { SessionAgentConfigPartial } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { ensureMainAgent } from '../transport/mainAgent';
+
+export async function applyPromptLaunchMode(
+  agent: Pick<IAgentScopeHandle, 'accessor'>,
+  mode: PromptLaunchMode,
+  objective: string,
+): Promise<void> {
+  const plan = agent.accessor.get(IAgentPlanService);
+  switch (mode) {
+    case 'plan':
+      if ((await plan.status()) === null) await plan.enter();
+      await agent.accessor.get(IAgentTowerService).exit();
+      return;
+    case 'swarm': {
+      const swarm = agent.accessor.get(IAgentSwarmService);
+      if (!swarm.isActive) swarm.enter('manual');
+      await agent.accessor.get(IAgentTowerService).exit();
+      return;
+    }
+    case 'goal': {
+      const goals = agent.accessor.get(IAgentGoalService);
+      if (goals.getGoal().goal !== null) return;
+      await goals.createGoal({ objective });
+      if ((await plan.status()) !== null) plan.exit();
+      return;
+    }
+  }
+}
 
 export async function applySessionAgentConfig(
   core: Scope,

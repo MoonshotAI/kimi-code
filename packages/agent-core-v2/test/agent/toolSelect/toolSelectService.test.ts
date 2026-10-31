@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { produce } from 'immer';
 
 import { DisposableStore, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Event } from '#/_base/event';
 import { createServices, type ServiceRegistration, type TestInstantiationService } from '#/_base/di/test';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventBus } from '#/app/event/eventBus';
@@ -260,6 +261,16 @@ class FakeLoopService implements IAgentLoopService {
   promptHandle(): never {
     throw new Error('unused in this suite');
   }
+
+  canLaunchPrompt(): boolean {
+    return true;
+  }
+
+  canSteerPrompt(): boolean {
+    return false;
+  }
+
+  readonly onDidChangeActivity = Event.None as Event<void>;
 
   notify(): LoopNotifyHandle {
     throw new Error('unused in this suite');

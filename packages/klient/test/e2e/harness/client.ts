@@ -34,16 +34,13 @@ import type {
 } from '@moonshot-ai/kap-server/protocol/rest-modelCatalog';
 import type {
   PromptAbortResponse,
-  PromptListResponse,
   PromptPermissionMode,
   PromptSubmission,
-  PromptSteerResult,
   PromptSubmitResult,
   PromptThinking,
+  QueuePauseResponse,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
 import type {
-  CompactSessionRequest,
-  CompactSessionResponse,
   ForkSessionRequest,
   SessionAbortResponse,
   UndoSessionRequest,
@@ -124,12 +121,27 @@ export const DEFAULT_PROMPT_CONTROLS = {
  * `DEFAULT_PROMPT_CONTROLS` when omitted. `metadata` carries through
  * verbatim.
  */
-export type PromptSubmitInput =
-  Pick<PromptSubmission, 'content'>
-  & Partial<Pick<PromptSubmission, 'metadata' | 'model' | 'thinking' | 'permission_mode' | 'plan_mode'>>;
+export type PromptSubmitInput = Pick<PromptSubmission, 'content' | 'metadata'> & {
+  readonly model?: string;
+  readonly thinking?: PromptThinking;
+  readonly permission_mode?: PromptPermissionMode;
+  readonly plan_mode?: boolean;
+};
 
-function fillPromptDefaults(input: PromptSubmitInput): PromptSubmission {
-  return { ...DEFAULT_PROMPT_CONTROLS, ...input };
+function splitPromptInput(input: PromptSubmitInput): {
+  readonly controls: typeof DEFAULT_PROMPT_CONTROLS;
+  readonly body: PromptSubmission;
+} {
+  const { model, thinking, permission_mode, plan_mode, ...body } = input;
+  return {
+    controls: {
+      model: model ?? DEFAULT_PROMPT_CONTROLS.model,
+      thinking: thinking ?? DEFAULT_PROMPT_CONTROLS.thinking,
+      permission_mode: permission_mode ?? DEFAULT_PROMPT_CONTROLS.permission_mode,
+      plan_mode: plan_mode ?? DEFAULT_PROMPT_CONTROLS.plan_mode,
+    } as typeof DEFAULT_PROMPT_CONTROLS,
+    body,
+  };
 }
 
 export class DaemonClient {
@@ -202,10 +214,7 @@ export class DaemonClient {
   forkSession(sid: string, body: ForkSessionRequest = {}): Promise<Session> {
     return this.http.forkSession(sid, body);
   }
-  compactSession(
-    sid: string,
-    body: CompactSessionRequest = {},
-  ): Promise<CompactSessionResponse> {
+  compactSession(sid: string, body: { instruction?: string } = {}): Promise<PromptSubmitResult> {
     return this.http.compactSession(sid, body);
   }
   undoSession(
@@ -263,8 +272,8 @@ export class DaemonClient {
   ): Promise<{ items: Message[]; has_more: boolean }> {
     return this.http.listMessages(sid, query);
   }
-  submitPrompt(sid: string, input: PromptSubmitInput): Promise<PromptSubmitResult> {
-    return this.http.submitPrompt(sid, fillPromptDefaults(input));
+  async submitPrompt(sid: string, input: PromptSubmitInput): Promise<PromptSubmitResult> {
+    return this.http.submitPrompt(sid, await this.applyPromptControls(sid, input));
   }
   /**
    * Stateful-session submit — sends `body` to `POST /sessions/{sid}/prompts`
@@ -279,14 +288,20 @@ export class DaemonClient {
   ): Promise<PromptSubmitResult> {
     return this.http.submitPrompt(sid, body);
   }
-  listPrompts(sid: string): Promise<PromptListResponse> {
-    return this.http.listPrompts(sid);
+  pauseQueue(sid: string, agentId?: string): Promise<QueuePauseResponse> {
+    return this.http.pauseQueue(sid, agentId);
   }
-  steerPrompt(sid: string, pid: string): Promise<PromptSteerResult> {
-    return this.http.steerPrompt(sid, pid);
+  resumeQueue(sid: string, agentId?: string): Promise<QueuePauseResponse> {
+    return this.http.resumeQueue(sid, agentId);
   }
-  steerPrompts(sid: string, promptIds: readonly string[]): Promise<PromptSteerResult> {
-    return this.http.steerPrompts(sid, promptIds);
+  steerQueued(sid: string, pid: string, agentId?: string): Promise<Record<string, never>> {
+    return this.http.steerQueued(sid, pid, agentId);
+  }
+  moveQueued(sid: string, pid: string, beforePromptId?: string, agentId?: string): Promise<Record<string, never>> {
+    return this.http.moveQueued(sid, pid, beforePromptId, agentId);
+  }
+  cancelQueued(sid: string, pid: string, agentId?: string): Promise<Record<string, never>> {
+    return this.http.cancelQueued(sid, pid, agentId);
   }
   abortPrompt(sid: string, pid: string): Promise<PromptAbortResponse> {
     return this.http.abortPrompt(sid, pid);
@@ -481,7 +496,13 @@ export class DaemonClient {
     input: PromptSubmitInput,
     opts: SubmitAndWaitOptions = {},
   ): Promise<SubmitAndWaitResult> {
-    return this.submitAndWaitStateful(sid, fillPromptDefaults(input), opts);
+    return this.submitAndWaitStateful(sid, await this.applyPromptControls(sid, input), opts);
+  }
+
+  private async applyPromptControls(sid: string, input: PromptSubmitInput): Promise<PromptSubmission> {
+    const { controls, body } = splitPromptInput(input);
+    await this.http.updateSession(sid, { agent_config: controls });
+    return body;
   }
 
   /**
@@ -501,7 +522,8 @@ export class DaemonClient {
       () => this.http.submitPrompt(sid, body),
       opts,
     );
-    return { prompt_id: result.prompt_id, user_message_id: result.user_message_id, finalFrame };
+    const userMessageId = 'user_message_id' in result ? result.user_message_id : result.prompt_id;
+    return { prompt_id: result.prompt_id, user_message_id: userMessageId, finalFrame };
   }
 
   // ── internals ───────────────────────────────────────────────────────────

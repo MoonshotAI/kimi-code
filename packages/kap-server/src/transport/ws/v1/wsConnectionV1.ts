@@ -181,7 +181,10 @@ export class WsConnectionV1 implements BroadcastTarget {
         not_found: ok ? [] : [sid],
       }),
     );
-    if (ok) this.broadcaster.sendPendingInteractions(sid, this);
+    if (ok) {
+      this.broadcaster.sendPendingInteractions(sid, this);
+      this.broadcaster.sendQueueSnapshots(sid, this);
+    }
   }
 
   private async onUnsubscribeV2(frame: InboundFrame): Promise<void> {

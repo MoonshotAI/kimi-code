@@ -25,14 +25,11 @@ import type {
 } from '@moonshot-ai/kap-server/protocol/rest-modelCatalog';
 import type {
   PromptAbortResponse,
-  PromptListResponse,
   PromptSubmission,
-  PromptSteerResult,
   PromptSubmitResult,
+  QueuePauseResponse,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
 import type {
-  CompactSessionRequest,
-  CompactSessionResponse,
   ForkSessionRequest,
   SessionAbortResponse,
   UndoSessionRequest,
@@ -233,15 +230,8 @@ export class HttpClient {
   forkSession(sid: string, body: ForkSessionRequest = {}): Promise<Session> {
     return this.request('POST', `/sessions/${encodeURIComponent(sid)}:fork`, body);
   }
-  compactSession(
-    sid: string,
-    body: CompactSessionRequest = {},
-  ): Promise<CompactSessionResponse> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}:compact`,
-      body,
-    );
+  compactSession(sid: string, body: { instruction?: string } = {}): Promise<PromptSubmitResult> {
+    return this.request('POST', `/sessions/${encodeURIComponent(sid)}/prompts`, { compact: body });
   }
   undoSession(
     sid: string,
@@ -332,25 +322,25 @@ export class HttpClient {
   }
 
   // ── Prompts ─────────────────────────────────────────────────────────────
-  listPrompts(sid: string): Promise<PromptListResponse> {
-    return this.request('GET', `/sessions/${encodeURIComponent(sid)}/prompts`, undefined);
-  }
   submitPrompt(sid: string, body: PromptSubmission): Promise<PromptSubmitResult> {
     return this.request('POST', `/sessions/${encodeURIComponent(sid)}/prompts`, body);
   }
-  steerPrompt(sid: string, pid: string): Promise<PromptSteerResult> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/prompts/${encodeURIComponent(pid)}:steer`,
-      {},
-    );
+  pauseQueue(sid: string, agentId = 'main'): Promise<QueuePauseResponse> {
+    return this.request('POST', `${queuePath(sid, agentId)}:pause`, {});
   }
-  steerPrompts(sid: string, promptIds: readonly string[]): Promise<PromptSteerResult> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/prompts:steer`,
-      { prompt_ids: [...promptIds] },
-    );
+  resumeQueue(sid: string, agentId = 'main'): Promise<QueuePauseResponse> {
+    return this.request('POST', `${queuePath(sid, agentId)}:resume`, {});
+  }
+  steerQueued(sid: string, pid: string, agentId = 'main'): Promise<Record<string, never>> {
+    return this.request('POST', `${queuePath(sid, agentId)}/${encodeURIComponent(pid)}:steer`, {});
+  }
+  moveQueued(sid: string, pid: string, beforePromptId?: string, agentId = 'main'): Promise<Record<string, never>> {
+    return this.request('POST', `${queuePath(sid, agentId)}/${encodeURIComponent(pid)}:move`, {
+      before_prompt_id: beforePromptId,
+    });
+  }
+  cancelQueued(sid: string, pid: string, agentId = 'main'): Promise<Record<string, never>> {
+    return this.request('POST', `${queuePath(sid, agentId)}/${encodeURIComponent(pid)}:cancel`, {});
   }
   abortPrompt(sid: string, pid: string): Promise<PromptAbortResponse> {
     return this.request(
@@ -415,4 +405,8 @@ function blobFromInput(input: {
   return new Blob([input.data], {
     type: input.mediaType ?? 'application/octet-stream',
   });
+}
+
+function queuePath(sid: string, agentId: string): string {
+  return `/sessions/${encodeURIComponent(sid)}/agents/${encodeURIComponent(agentId)}/queue`;
 }

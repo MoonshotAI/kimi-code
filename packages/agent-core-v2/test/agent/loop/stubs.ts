@@ -163,6 +163,9 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
       return { id };
     },
     steer: async () => {},
+    canLaunchPrompt: () => active === undefined && !hasPending(),
+    canSteerPrompt: () => active !== undefined,
+    onDidChangeActivity: Event.None as Event<void>,
     remind(note: LoopNotify = {}): LoopNotifyHandle {
       return this.notify(note);
     },
