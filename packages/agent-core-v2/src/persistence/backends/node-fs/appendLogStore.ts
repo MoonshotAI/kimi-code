@@ -143,9 +143,9 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       }
     } finally {
       if (state.committedRewriteEpoch === epochAtStart && readSeq >= state.lastCompletedReadSeq) {
-        state.lastCompletedReadSeq = readSeq;
         const disk = this.diskLength(scope, key);
         if (disk !== undefined) {
+          state.lastCompletedReadSeq = readSeq;
           const ownAppended = state.appendedBytesInEpoch - appendsAtStart;
           const baseline = (lengthAtStart ?? 0) + ownAppended;
           state.knownLength = disk === baseline ? disk : baseline;
