@@ -268,10 +268,10 @@ export async function resolvePromptMediaFiles(
   const resolveAttachmentsSink = async (): Promise<AttachmentSink> => {
     if (attachmentsSink !== undefined) return attachmentsSink;
     const target = await options.resolveAttachmentsTarget?.();
-    const namespace = options.stagingNamespace?.trim();
+    const namespace = options.stagingNamespace;
     const rootDir = target?.dir ?? cacheDir;
     const dir =
-      namespace === undefined || namespace.length === 0
+      namespace === undefined || namespace === ''
         ? rootDir
         : (target?.path ?? { join: (...parts: string[]) => join(...parts) }).join(
             rootDir,

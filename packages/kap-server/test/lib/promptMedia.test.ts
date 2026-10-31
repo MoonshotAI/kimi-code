@@ -156,6 +156,32 @@ describe('resolvePromptMediaFiles with an environment attachments target', () =>
     expectStoredBytes(fake.files, target, data);
   });
 
+  it('hashes prompt ids without trimming so whitespace variants stay distinct', async () => {
+    const data = patternedBytes(9);
+    const store = fakeFileStore(
+      new Map([['f_ws', { meta: meta('f_ws', 'note.txt', data.byteLength), chunks: [data] }]]),
+    );
+    const fake = fakeEnvironmentFs();
+    const part = {
+      type: 'file' as const,
+      file_id: 'f_ws',
+      name: 'note.txt',
+      media_type: 'text/plain',
+      size: data.byteLength,
+    };
+    const plain = await resolvePromptMediaFiles([part], store, '/cache', {
+      stagingNamespace: 'foo',
+      resolveAttachmentsTarget: async () => targetFor(fake.fs),
+    });
+    const padded = await resolvePromptMediaFiles([part], store, '/cache', {
+      stagingNamespace: ' foo ',
+      resolveAttachmentsTarget: async () => targetFor(fake.fs),
+    });
+    expect(plain.attachments[0]!.path).not.toBe(padded.attachments[0]!.path);
+    await plain.discardStaged();
+    expectStoredBytes(fake.files, padded.attachments[0]!.path, data);
+  });
+
   it('namespaces staged paths per prompt so cancel discard cannot drop a sibling queue item', async () => {
     const data = patternedBytes(17);
     const store = fakeFileStore(
