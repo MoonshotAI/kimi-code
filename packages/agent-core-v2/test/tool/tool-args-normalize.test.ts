@@ -226,6 +226,7 @@ describe('normalizeToolArgs', () => {
           line_offset: { type: 'integer' },
           n_lines: { type: 'integer' },
         },
+        additionalProperties: false,
       },
     };
 
@@ -316,6 +317,55 @@ describe('normalizeToolArgs', () => {
       offset: 10,
       limit: 20,
       details: 'keep in open schema',
+    });
+  });
+
+  it('preserves metadata fields in default-open schemas without additionalProperties field', () => {
+    const defaultOpenTool = {
+      name: 'custom_mcp',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+        },
+      },
+    };
+
+    expect(
+      normalizeToolArgs(defaultOpenTool, {
+        query: 'search term',
+        details: 'preserve extra details',
+        description_note: 'preserve extra note',
+      }),
+    ).toEqual({
+      query: 'search term',
+      details: 'preserve extra details',
+      description_note: 'preserve extra note',
+    });
+  });
+
+  it('preserves metadata fields in open schemas with subschema additionalProperties', () => {
+    const schemaWithSubschema = {
+      name: 'custom_mcp',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+        },
+        additionalProperties: { type: 'string' },
+      },
+    };
+
+    expect(
+      normalizeToolArgs(schemaWithSubschema, {
+        query: 'search term',
+        details: 'preserve extra details',
+        description_note: 'preserve extra note',
+      }),
+    ).toEqual({
+      query: 'search term',
+      details: 'preserve extra details',
+      description_note: 'preserve extra note',
     });
   });
 });

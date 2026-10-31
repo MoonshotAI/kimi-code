@@ -49,10 +49,10 @@ export function normalizeToolArgs(
       ? (tool.parameters['properties'] as Record<string, unknown>)
       : undefined;
 
-  const isOpenSchema =
+  const isStrictlyClosedSchema =
     tool?.parameters &&
     typeof tool.parameters === 'object' &&
-    tool.parameters['additionalProperties'] === true;
+    tool.parameters['additionalProperties'] === false;
 
   const toolName = tool?.name?.toLowerCase();
   const supportsLineOffset =
@@ -110,7 +110,7 @@ export function normalizeToolArgs(
     }
   }
 
-  if (!isOpenSchema && rawProperties !== undefined) {
+  if (isStrictlyClosedSchema && rawProperties !== undefined) {
     if (!hasProperty(rawProperties, 'description_note') && 'description_note' in normalized) {
       delete normalized['description_note'];
     }
