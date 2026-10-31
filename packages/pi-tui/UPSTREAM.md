@@ -222,3 +222,9 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** In tmux, program-status reports and clears use DCS passthrough. Auto mode uses the Rex environment fallback and does not send a support query in tmux, screen, or zellij; explicit enablement still reports the root record.
 
 **Why not in the app:** The terminal owns capability detection, replay, stop, and direct-exit restoration. An app wrapper around ordinary reports would leave the other lifecycle paths unwrapped.
+
+### orca-image-detection — keep
+
+**Decision:** Orca sets `TERM_PROGRAM=Orca` and advertises Kitty graphics only out-of-band through `ORCA_IMAGE_PROTOCOL=kitty`, so the detector returns Kitty images only when both signals are present. The check sits with the other outer-terminal detectors, ahead of the `KITTY_WINDOW_ID` branch, so Orca builds without the advertisement keep the text fallback instead of reserving image rows nothing renders.
+
+**Why not in the app:** The app-side options are `PI_IMAGE_PROTOCOL` and `setCapabilityOverrides`, both applied after detection, so either one also overrides the tmux/screen image opt-out; keeping that opt-out means the env-gated branch belongs in the detector.

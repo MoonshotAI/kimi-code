@@ -98,6 +98,12 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 
+	// Orca advertises Kitty graphics support through ORCA_IMAGE_PROTOCOL. Check it before
+	// outer-terminal detection because variables like KITTY_WINDOW_ID can leak into its panes.
+	if (termProgram === "orca" && process.env['ORCA_IMAGE_PROTOCOL'] === "kitty") {
+		return { images: "kitty", trueColor: true, hyperlinks: true };
+	}
+
 	if (process.env['KITTY_WINDOW_ID'] || termProgram === "kitty") {
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
