@@ -154,6 +154,7 @@ export class AcpServer {
     session: SessionHandle,
   ) => Promise<ReadonlyArray<AvailableCommand> | SlashCommandsSnapshot>;
   private readonly sessions = new Map<string, AcpSession>();
+  private readonly inFlightTeardowns = new Map<string, Promise<void>>();
 
   constructor(
     private readonly conn: AcpClient,
@@ -334,9 +335,24 @@ export class AcpServer {
    * Close all active sessions and clean up ACP server resources.
    */
   async close(): Promise<void> {
-    const sessionIds = [...this.sessions.keys()];
-    for (const sessionId of sessionIds) {
-      await this.closeSession({ sessionId });
+    const targets = new Set<string>([
+      ...this.sessions.keys(),
+      ...this.inFlightTeardowns.keys(),
+    ]);
+    const errors: unknown[] = [];
+    await Promise.all(
+      [...targets].map(async (sessionId) => {
+        try {
+          await this.closeSession({ sessionId });
+        } catch (error) {
+          errors.push(error);
+        }
+      }),
+    );
+    if (errors.length === 1) {
+      throw errors[0];
+    } else if (errors.length > 1) {
+      throw new AggregateError(errors, 'Failed to close one or more ACP sessions');
     }
   }
 
@@ -349,15 +365,28 @@ export class AcpServer {
    * is not currently live.
    */
   async closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse | void> {
+    const existing = this.inFlightTeardowns.get(params.sessionId);
+    if (existing !== undefined) {
+      await existing;
+      return;
+    }
     const acpSession = this.sessions.get(params.sessionId);
     if (acpSession !== undefined) {
       acpSession.dispose();
       this.sessions.delete(params.sessionId);
     }
+    const teardown = (async () => {
+      try {
+        await this.klient.session(params.sessionId).close();
+      } finally {
+        await this.unbindSessionEnvironment?.(params.sessionId);
+      }
+    })();
+    this.inFlightTeardowns.set(params.sessionId, teardown);
     try {
-      await this.klient.session(params.sessionId).close();
+      await teardown;
     } finally {
-      await this.unbindSessionEnvironment?.(params.sessionId);
+      this.inFlightTeardowns.delete(params.sessionId);
     }
   }
 
@@ -370,23 +399,36 @@ export class AcpServer {
    * `invalid_params` (-32602).
    */
   async deleteSession(params: DeleteSessionRequest): Promise<DeleteSessionResponse> {
+    const existing = this.inFlightTeardowns.get(params.sessionId);
+    if (existing !== undefined) {
+      await existing;
+      return {};
+    }
     const acpSession = this.sessions.get(params.sessionId);
     if (acpSession !== undefined) {
       acpSession.dispose();
       this.sessions.delete(params.sessionId);
     }
-    try {
-      await this.klient.session(params.sessionId).delete();
-    } catch (error) {
-      if (isSessionNotFound(error)) {
-        throw RequestError.invalidParams(
-          { sessionId: params.sessionId },
-          `Unknown sessionId: ${params.sessionId}`,
-        );
+    const teardown = (async () => {
+      try {
+        await this.klient.session(params.sessionId).delete();
+      } catch (error) {
+        if (isSessionNotFound(error)) {
+          throw RequestError.invalidParams(
+            { sessionId: params.sessionId },
+            `Unknown sessionId: ${params.sessionId}`,
+          );
+        }
+        throw error;
+      } finally {
+        await this.unbindSessionEnvironment?.(params.sessionId);
       }
-      throw error;
+    })();
+    this.inFlightTeardowns.set(params.sessionId, teardown);
+    try {
+      await teardown;
     } finally {
-      await this.unbindSessionEnvironment?.(params.sessionId);
+      this.inFlightTeardowns.delete(params.sessionId);
     }
     return {};
   }

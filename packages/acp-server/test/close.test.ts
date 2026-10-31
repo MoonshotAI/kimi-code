@@ -78,4 +78,18 @@ describe('acp-server session/close', () => {
     },
     30_000,
   );
+
+  it(
+    'server shutdown awaits in-flight session teardowns and cleans up cleanly',
+    async () => {
+      const c = await boot();
+      const s = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+        sessionId: string;
+      };
+      const closeReq = c.send('session/close', { sessionId: s.sessionId });
+      const shutdown = c.close();
+      await Promise.all([closeReq, shutdown]);
+    },
+    30_000,
+  );
 });
