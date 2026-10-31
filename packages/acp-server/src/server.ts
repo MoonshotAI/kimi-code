@@ -377,8 +377,17 @@ export class AcpServer {
   async closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse | void> {
     const existing = this.inFlightTeardowns.get(params.sessionId);
     if (existing !== undefined) {
-      await existing.promise;
-      return;
+      if (existing.kind === 'close') {
+        await existing.promise;
+        return;
+      }
+      try {
+        await existing.promise;
+        return;
+      } catch {
+        // Fall back to the close path after a rejected delete so closeSession's
+        // best-effort cleanup contract is preserved.
+      }
     }
     const acpSession = this.sessions.get(params.sessionId);
     if (acpSession !== undefined) {

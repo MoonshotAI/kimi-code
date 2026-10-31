@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createTestClient, type TestClient } from './_helpers/acpClient';
 
@@ -122,6 +122,47 @@ describe('acp-server session/close', () => {
       const deleteReq = c.send('session/delete', { sessionId: s.sessionId });
       const shutdown = c.close();
       await Promise.all([closeReq, deleteReq, shutdown]);
+    },
+    30_000,
+  );
+
+  it(
+    'closeSession succeeds even when concurrent deleteSession for an unknown id fails',
+    async () => {
+      const c = await boot();
+      const unknownId = 'nonexistent-session-id';
+      const deleteReq = c.send('session/delete', { sessionId: unknownId });
+      const closeReq = c.send('session/close', { sessionId: unknownId });
+
+      await expect(deleteReq).rejects.toThrow();
+      await expect(closeReq).resolves.toBeDefined();
+    },
+    30_000,
+  );
+
+  it(
+    'automatic server shutdown does not trigger unhandledRejection when session close rejects',
+    async () => {
+      let unhandled: unknown;
+      const onUnhandled = (err: unknown) => {
+        unhandled = err;
+      };
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        const c = await boot();
+        const s = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+          sessionId: string;
+        };
+        const sessionHandle = c.server.klient.session(s.sessionId);
+        vi.spyOn(sessionHandle, 'close').mockRejectedValueOnce(
+          new Error('forced teardown failure'),
+        );
+        await c.close().catch(() => {});
+        await new Promise((r) => setTimeout(r, 50));
+        expect(unhandled).toBeUndefined();
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
     },
     30_000,
   );
