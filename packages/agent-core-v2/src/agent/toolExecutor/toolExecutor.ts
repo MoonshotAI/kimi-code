@@ -49,6 +49,8 @@ export interface IAgentToolExecutorService {
 
   execute(calls: ToolCall[], options: ToolExecutorExecuteOptions): AsyncIterable<ToolExecutionResult>;
 
+  settled(): Promise<void>;
+
   readonly onBeforeExecuteTool: Event<BeforeToolExecuteEvent>;
 
   readonly onWillExecuteTool: Event<WillExecuteToolEvent>;

@@ -331,6 +331,16 @@ export class AcpServer {
   }
 
   /**
+   * Close all active sessions and clean up ACP server resources.
+   */
+  async close(): Promise<void> {
+    const sessionIds = [...this.sessions.keys()];
+    for (const sessionId of sessionIds) {
+      await this.closeSession({ sessionId });
+    }
+  }
+
+  /**
    * Handle ACP `session/close`. Cancels any in-flight turn, tears down the
    * per-session ACP resources (interaction bridge, event subscriptions), and
    * asks the engine to dispose the live session scope. Best-effort: an
@@ -344,8 +354,11 @@ export class AcpServer {
       acpSession.dispose();
       this.sessions.delete(params.sessionId);
     }
-    await this.klient.session(params.sessionId).close();
-    await this.unbindSessionEnvironment?.(params.sessionId);
+    try {
+      await this.klient.session(params.sessionId).close();
+    } finally {
+      await this.unbindSessionEnvironment?.(params.sessionId);
+    }
   }
 
   /**
@@ -357,6 +370,11 @@ export class AcpServer {
    * `invalid_params` (-32602).
    */
   async deleteSession(params: DeleteSessionRequest): Promise<DeleteSessionResponse> {
+    const acpSession = this.sessions.get(params.sessionId);
+    if (acpSession !== undefined) {
+      acpSession.dispose();
+      this.sessions.delete(params.sessionId);
+    }
     try {
       await this.klient.session(params.sessionId).delete();
     } catch (error) {
@@ -367,13 +385,9 @@ export class AcpServer {
         );
       }
       throw error;
+    } finally {
+      await this.unbindSessionEnvironment?.(params.sessionId);
     }
-    const acpSession = this.sessions.get(params.sessionId);
-    if (acpSession !== undefined) {
-      acpSession.dispose();
-      this.sessions.delete(params.sessionId);
-    }
-    await this.unbindSessionEnvironment?.(params.sessionId);
     return {};
   }
 

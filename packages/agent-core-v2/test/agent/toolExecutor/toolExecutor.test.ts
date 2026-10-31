@@ -853,6 +853,105 @@ describe('AgentToolExecutorService', () => {
       message: { content: [{ type: 'text', text: 'injected' }] },
     });
   });
+
+  it('settled() waits for an in-flight asynchronous resolveExecution to complete', async () => {
+    let unblockResolve!: () => void;
+    const resolvePromise = new Promise<void>((resolve) => {
+      unblockResolve = resolve;
+    });
+    const tool = new TestTool('slow_resolve', {
+      resolve: async () => {
+        await resolvePromise;
+        return {
+          approvalRule: 'slow_resolve',
+          execute: async () => ({ output: 'ready' }),
+        };
+      },
+    });
+    registry.register(tool);
+
+    const abortController = new AbortController();
+    const stream = executor.execute([toolCall('call_slow', 'slow_resolve', {})], {
+      signal: abortController.signal,
+      turnId: 0,
+    });
+    const iter = stream[Symbol.asyncIterator]();
+    const nextPromise = iter.next();
+
+    let settled = false;
+    void executor.settled().then(() => {
+      settled = true;
+    });
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+
+    unblockResolve();
+    const result = await nextPromise;
+    expect(result.done).toBe(false);
+
+    await executor.settled();
+    expect(settled).toBe(true);
+  });
+
+  it('does not begin tool resolution when turn is already aborted', async () => {
+    let resolveCalled = false;
+    const tool = new TestTool('aborted_before', {
+      resolve: () => {
+        resolveCalled = true;
+        return {
+          approvalRule: 'aborted_before',
+          execute: async () => ({ output: 'done' }),
+        };
+      },
+    });
+    registry.register(tool);
+
+    const abortController = new AbortController();
+    abortController.abort(new Error('turn cancelled'));
+
+    const stream = executor.execute([toolCall('call_aborted', 'aborted_before', {})], {
+      signal: abortController.signal,
+      turnId: 0,
+    });
+    const results = [];
+    for await (const res of stream) {
+      results.push(res);
+    }
+
+    expect(resolveCalled).toBe(false);
+    expect(results).toHaveLength(1);
+    expect(results[0]!.result.isError).toBe(true);
+    expect(results[0]!.result.output).toContain('aborted');
+  });
+
+  it('classifies resolution failure as aborted when cancellation happened while resolving', async () => {
+    let rejectResolve!: (err: unknown) => void;
+    const resolvePromise = new Promise<ToolExecution>((_, reject) => {
+      rejectResolve = reject;
+    });
+    const tool = new TestTool('aborted_during', {
+      resolve: () => resolvePromise,
+    });
+    registry.register(tool);
+
+    const abortController = new AbortController();
+    const stream = executor.execute([toolCall('call_during', 'aborted_during', {})], {
+      signal: abortController.signal,
+      turnId: 0,
+    });
+    const iter = stream[Symbol.asyncIterator]();
+    const nextPromise = iter.next();
+
+    await new Promise((r) => setTimeout(r, 10));
+    abortController.abort(new Error('session closed'));
+    rejectResolve(new Error('runtime environment does not exist'));
+
+    const result = await nextPromise;
+    expect(result.done).toBe(false);
+    expect(result.value?.result.isError).toBe(true);
+    expect(result.value?.result.output).toContain('aborted');
+  });
 });
 
 describe('onBeforeExecuteTool veto semantics', () => {
@@ -1689,12 +1788,18 @@ class TestTool implements ExecutableTool<Record<string, unknown>> {
         ctx: ExecutableToolContext,
         args: Record<string, unknown>,
       ) => Promise<ExecutableToolResult>;
+      readonly resolve?: (
+        args: Record<string, unknown>,
+      ) => ToolExecution | Promise<ToolExecution>;
     } = {},
   ) {
     this.parameters = options.parameters ?? { type: 'object', additionalProperties: true };
   }
 
-  resolveExecution(args: Record<string, unknown>): ToolExecution {
+  resolveExecution(args: Record<string, unknown>): ToolExecution | Promise<ToolExecution> {
+    if (this.options.resolve !== undefined) {
+      return this.options.resolve(args);
+    }
     return {
       approvalRule: this.name,
       accesses: this.options.accesses,
