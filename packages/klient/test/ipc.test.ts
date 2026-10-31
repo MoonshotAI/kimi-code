@@ -51,6 +51,88 @@ describe('ipc transport specifics', () => {
     await klient.close();
   });
 
+  it('rejects a stream read when the initial connection fails', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    const klient = createKlient({
+      socketPath: join(tmpdir(), `klient-missing-stream-${process.pid}-${Date.now()}.sock`),
+    });
+    try {
+      const iterator = klient.global
+        .kosong
+        .generate('fixture', { systemPrompt: '', messages: [] })[Symbol.asyncIterator]();
+      const pending = Symbol('pending');
+      await expect(
+        Promise.race([
+          iterator.next(),
+          new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(pending);
+            }, 1000);
+          }),
+        ]),
+      ).rejects.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      await klient.close();
+    }
+  });
+
+  it('reports an initial connection failure to event subscribers', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    const klient = createKlient({
+      socketPath: join(tmpdir(), `klient-missing-listen-${process.pid}-${Date.now()}.sock`),
+    });
+    const errors: Error[] = [];
+    const errorSub = klient.events.onError((error) => errors.push(error));
+    const eventSub = klient.events.on('config.changed', () => {});
+    try {
+      await vi.waitFor(
+        () => {
+          expect(errors).toHaveLength(1);
+        },
+        { timeout: 1000 },
+      );
+      expect(errors[0]!.message).toContain('ENOENT');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(unhandled).toEqual([]);
+    } finally {
+      eventSub.dispose();
+      errorSub.dispose();
+      process.off('unhandledRejection', onUnhandled);
+      await klient.close();
+    }
+  });
+
+  it('does not raise unhandled rejections when a subscription is disposed before connecting', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    const klient = createKlient({
+      socketPath: join(tmpdir(), `klient-missing-dispose-${process.pid}-${Date.now()}.sock`),
+    });
+    const eventSub = klient.events.on('config.changed', () => {});
+    eventSub.dispose();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      await klient.close();
+    }
+  });
+
   it('rejects calls made after close', async () => {
     const socketPath = await setup();
     const klient = createKlient({ socketPath });

@@ -53,6 +53,10 @@ function scopeKindOf(scope: ScopeRef): 'core' | 'workspace' | 'session' | 'agent
   return 'core';
 }
 
+function asError(reason: unknown): Error {
+  return reason instanceof Error ? reason : new Error(String(reason));
+}
+
 export class IpcChannel implements KlientChannel {
   private readonly socket: Socket;
   private readonly decoder = new NdjsonDecoder();
@@ -203,25 +207,30 @@ export class IpcChannel implements KlientChannel {
         const ensureStarted = (): void => {
           if (started) return;
           started = true;
-          void this.ready.then(() => {
-            if (this.closed) {
-              pending.error(new Error('ipc closed'));
-              return;
-            }
-            streamId = this.nextId();
-            this.streams.set(streamId, pending);
-            this.send({
-              type: 'stream',
-              id: streamId,
-              scope: scopeKindOf(scope),
-              service,
-              method,
-              arg: trimTrailingUndefined(args),
-              workspaceId: scope.workspaceId,
-              sessionId: scope.sessionId,
-              agentId: scope.agentId,
-            });
-          });
+          void this.ready.then(
+            () => {
+              if (this.closed) {
+                pending.error(new Error('ipc closed'));
+                return;
+              }
+              streamId = this.nextId();
+              this.streams.set(streamId, pending);
+              this.send({
+                type: 'stream',
+                id: streamId,
+                scope: scopeKindOf(scope),
+                service,
+                method,
+                arg: trimTrailingUndefined(args),
+                workspaceId: scope.workspaceId,
+                sessionId: scope.sessionId,
+                agentId: scope.agentId,
+              });
+            },
+            (error: unknown) => {
+              pending.error(asError(error));
+            },
+          );
         };
 
         return {
@@ -280,15 +289,24 @@ export class IpcChannel implements KlientChannel {
       source.kind === 'stream'
         ? { ...base, event: source.name }
         : { ...base, service: source.service, event: source.event };
-    void this.ready.then(() => {
-      this.send(frame);
-    });
+    void this.ready.then(
+      () => {
+        this.send(frame);
+      },
+      (error: unknown) => {
+        if (!this.listens.delete(id)) return;
+        onError?.(asError(error));
+      },
+    );
     return {
       dispose: () => {
         if (!this.listens.delete(id)) return;
-        void this.ready.then(() => {
-          this.send({ type: 'unlisten', id });
-        });
+        void this.ready.then(
+          () => {
+            this.send({ type: 'unlisten', id });
+          },
+          () => {},
+        );
       },
     };
   }
