@@ -631,6 +631,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `POST /api/v1/sessions/{session_id}/children` | 创建子会话（fork 并打标） |
 | `GET /api/v1/sessions/{session_id}/status` | 实时状态汇总 |
 | `GET /api/v1/sessions/{session_id}/goal` | 当前目标快照（无则 `null`） |
+| `PATCH /api/v1/sessions/{session_id}/goal` | 就地修改当前目标的 objective |
 | `GET /api/v1/sessions/{session_id}/warnings` | 会话级告警 |
 | `GET /api/v1/sessions/{session_id}/environment` | 读取 main agent 的环境绑定 |
 | `GET /api/v1/sessions/{session_id}/environments` | 列出会话工作区已注册的环境 |
@@ -903,6 +904,23 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 成功时，`data` 为 `null` 或 `{ goalId, objective, completionCriterion?, status, turnsUsed, tokensUsed, wallClockMs, budget, terminalReason? }`，其中 `status` 为 `active` / `paused` / `blocked` / `complete`，`budget` 报告 token、轮次与 wall-clock 三项预算，以及各自的剩余量与每项预算的 reached 标志（未设置对应预算时各项为 null）。
 
 - `40401`：会话不存在
+
+#### `PATCH /api/v1/sessions/{session_id}/goal`
+
+替换当前目标的 objective，`goalId`、状态、进度和预算均保持不变。适用于 active、paused、blocked 状态的目标。正在运行的 turn 不会被打断，agent 在下一个 turn 收到新的 objective。已连接的客户端通过 `goal.updated` 事件获知变化。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `objective` | body | string | **必填。** 新的 objective，首尾空白会被去除 |
+
+成功时 `data` 是更新后的目标快照，形状与 `GET /api/v1/sessions/{session_id}/goal` 相同（camelCase）。
+
+- `40401`: 会话不存在
+- `40914`: 当前没有目标
+- `40915`: 目标已完成
+- `40917`: objective 为空
+- `40918`: objective 超过 4000 字符
 
 #### `GET /api/v1/sessions/{session_id}/warnings`
 

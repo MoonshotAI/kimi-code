@@ -11,7 +11,8 @@ import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { AgentGoalService, IAgentGoalService } from '#/features/goal/goalService';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
 
-import { GoalUpdated } from '#/features/goal/goalOps';
+import { GoalUpdate, GoalUpdated } from '#/features/goal/goalOps';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
@@ -406,6 +407,97 @@ describe('AgentGoalService', () => {
       const removed = await goals.cancelGoal({});
       expect(removed.status).toBe('active');
       expect(goals.getGoal().goal).toBeNull();
+    });
+  });
+
+  describe('AgentGoalService objective edit', () => {
+    it('changes only the objective of an active goal and notifies clients', async () => {
+      const created = await goals.createGoal({ objective: 'old task', completionCriterion: 'tests pass' });
+      await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 100 } }, 'model');
+      await goals.incrementTurn();
+      await goals.recordTokenUsage(7);
+      const before = goals.getGoal().goal!;
+      events.length = 0;
+
+      const edited = await goals.editGoalObjective({ objective: '  new task  ' });
+
+      expect(edited).toEqual({ ...before, objective: 'new task', wallClockMs: edited.wallClockMs });
+      expect(edited).toMatchObject({
+        goalId: created.goalId,
+        status: 'active',
+        completionCriterion: 'tests pass',
+        turnsUsed: 1,
+        tokensUsed: 7,
+      });
+      expect(goals.getGoal().goal?.objective).toBe('new task');
+      expect(events).toHaveLength(1);
+      expect(events[0]?.snapshot).toEqual(edited);
+      expect(events[0]?.change).toBeUndefined();
+      expect(records).toContainEqual(
+        expect.objectContaining({ type: 'goal.update', objective: 'new task' }),
+      );
+    });
+
+    it.each(['paused', 'blocked'] as const)('keeps a %s goal in its status', async (status) => {
+      const created = await goals.createGoal({ objective: 'old task' });
+      if (status === 'paused') await goals.pauseGoal({ reason: 'later' });
+      else await goals.markBlocked({ reason: 'need creds' });
+      const terminalReason = goals.getGoal().goal?.terminalReason;
+
+      const edited = await goals.editGoalObjective({ objective: 'new task' });
+
+      expect(edited).toMatchObject({
+        goalId: created.goalId,
+        objective: 'new task',
+        status,
+        terminalReason,
+      });
+    });
+
+    it('does not record or emit anything when the objective is unchanged', async () => {
+      await goals.createGoal({ objective: 'same task' });
+      const recordCount = records.length;
+      events.length = 0;
+
+      await goals.editGoalObjective({ objective: ' same task ' });
+
+      expect(records).toHaveLength(recordCount);
+      expect(events).toHaveLength(0);
+    });
+
+    it('rejects a missing goal', async () => {
+      await expect(goals.editGoalObjective({ objective: 'new task' })).rejects.toMatchObject({
+        code: 'goal.not_found',
+      });
+    });
+
+    it('rejects a goal that already completed and was cleared', async () => {
+      await goals.createGoal({ objective: 'old task' });
+      await goals.markComplete({ reason: 'done' }, 'model');
+
+      await expect(goals.editGoalObjective({ objective: 'new task' })).rejects.toMatchObject({
+        code: 'goal.not_found',
+      });
+    });
+
+    it('rejects a goal still in complete status', async () => {
+      await goals.createGoal({ objective: 'old task' });
+      void ctx.get(IEventDispatcher).dispatch(new GoalUpdate({ agentId: 'main', status: 'complete' }));
+
+      await expect(goals.editGoalObjective({ objective: 'new task' })).rejects.toMatchObject({
+        code: 'goal.status_invalid',
+      });
+      expect(goals.getGoal().goal?.objective).toBe('old task');
+    });
+
+    it.each([
+      ['empty', '   ', 'goal.objective_empty'],
+      ['too long', 'x'.repeat(4001), 'goal.objective_too_long'],
+    ])('rejects %s text and keeps the objective', async (_name, objective, code) => {
+      await goals.createGoal({ objective: 'old task' });
+
+      await expect(goals.editGoalObjective({ objective })).rejects.toMatchObject({ code });
+      expect(goals.getGoal().goal?.objective).toBe('old task');
     });
   });
 
@@ -1012,6 +1104,128 @@ describe('AgentGoalService core workflow hooks', () => {
       kind: 'system_trigger',
       name: 'goal_continuation',
     });
+  });
+
+  it('leaves the running turn alone when the objective is edited', async () => {
+    const created = await goals.createGoal({ objective: 'old task' });
+    const turn = makeTurn(70);
+    const cancel = vi.spyOn(loopService, 'cancel');
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+
+    await goals.editGoalObjective({ objective: 'new task' });
+
+    expect(cancel).not.toHaveBeenCalled();
+    expect(turn.signal.aborted).toBe(false);
+    expect(goals.getGoal().goal).toMatchObject({ goalId: created.goalId, status: 'active' });
+  });
+
+  it.each(['complete', 'blocked'])(
+    'ignores UpdateGoal %s from a turn that started before the objective edit',
+    async (status) => {
+      await goals.createGoal({ objective: 'old task' });
+      const turn = makeTurn(71);
+      eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+      await goals.editGoalObjective({ objective: 'new task' });
+
+      const results = await executeToolCall(toolExecutor, turn, {
+        type: 'function',
+        id: 'call_update_after_edit',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status }),
+      });
+
+      expect(results[0]!.result.output).toContain('The goal objective was edited since this turn started');
+      expect(goals.getGoal().goal).toMatchObject({ objective: 'new task', status: 'active' });
+    },
+  );
+
+  it.each(['complete', 'blocked'])(
+    'ignores UpdateGoal %s when the objective is edited while the call awaits approval',
+    async (status) => {
+      const created = await goals.createGoal({ objective: 'old task' });
+      const turn = makeTurn(74);
+      eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+      const listener = toolExecutor.onBeforeExecuteTool((event) => {
+        event.waitUntil(async () => {
+          await goals.editGoalObjective({ objective: 'new task' });
+          return undefined;
+        });
+      });
+
+      const results = await executeToolCall(toolExecutor, turn, {
+        type: 'function',
+        id: 'call_update_during_approval',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status }),
+      });
+      listener.dispose();
+
+      expect(results[0]!.result.output).toContain('The goal objective was edited since this turn started');
+      expect(results[0]!.result.stopTurn).not.toBe(true);
+      expect(goals.getGoal().goal).toMatchObject({
+        goalId: created.goalId,
+        objective: 'new task',
+        status: 'active',
+      });
+    },
+  );
+
+  it.each([
+    ['complete', null],
+    ['blocked', { objective: 'replacement task', status: 'blocked' }],
+  ])(
+    'accepts UpdateGoal %s for a goal that replaced the edited goal in the same turn',
+    async (status, expected) => {
+      await goals.createGoal({ objective: 'old task' });
+      const turn = makeTurn(75);
+      eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+      await goals.editGoalObjective({ objective: 'new task' });
+      await executeToolCall(toolExecutor, turn, {
+        type: 'function',
+        id: 'call_replace_after_edit',
+        name: 'CreateGoal',
+        arguments: JSON.stringify({ objective: 'replacement task', replace: true }),
+      });
+      expect(goals.getGoal().goal).toMatchObject({ objective: 'replacement task', status: 'active' });
+
+      const results = await executeToolCall(toolExecutor, turn, {
+        type: 'function',
+        id: 'call_update_after_replace',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status }),
+      });
+
+      expect(results[0]!.result.output).not.toContain('The goal objective was edited since this turn started');
+      if (expected === null) {
+        expect(goals.getGoal().goal).toBeNull();
+      } else {
+        expect(goals.getGoal().goal).toMatchObject(expected);
+      }
+    },
+  );
+
+  it('accepts UpdateGoal again on the turn after the objective edit', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const editedTurn = makeTurn(72);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: editedTurn.id, origin: USER_PROMPT_ORIGIN }));
+    await goals.editGoalObjective({ objective: 'new task' });
+    vi.spyOn(loopService, 'submit').mockReturnValue({ id: 'p' });
+    vi.spyOn(loopService, 'promptHandle').mockReturnValue({
+      launched: new Promise(() => {}),
+      completion: new Promise(() => {}),
+    } as never);
+    endTurn(eventBus, editedTurn);
+
+    const nextTurn = makeTurn(73);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: nextTurn.id, origin: USER_PROMPT_ORIGIN }));
+    await executeToolCall(toolExecutor, nextTurn, {
+      type: 'function',
+      id: 'call_update_next_turn',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete' }),
+    });
+
+    expect(goals.getGoal().goal).toBeNull();
   });
 
   it('does not charge a same-turn replacement goal for usage owned by the prior goal', async () => {
@@ -1713,9 +1927,11 @@ describe('AgentGoalService API boundary', () => {
       'cancelGoal',
       'constructor',
       'createGoal',
+      'editGoalObjective',
       'getGoal',
       'incrementTurn',
       'isGoalToolTarget',
+      'isObjectiveEditedInTurn',
       'markBlocked',
       'markComplete',
       'pauseGoal',
@@ -1749,11 +1965,13 @@ describe('AgentGoalService agent eligibility', () => {
   it.each([
     ['getGoal', (goals: IAgentGoalService) => goals.getGoal()],
     ['isGoalToolTarget', (goals: IAgentGoalService) => goals.isGoalToolTarget(1, 'goal-1')],
+    ['isObjectiveEditedInTurn', (goals: IAgentGoalService) => goals.isObjectiveEditedInTurn(1)],
     ['createGoal', (goals: IAgentGoalService) => goals.createGoal({ objective: 'work' })],
     ['pauseGoal', (goals: IAgentGoalService) => goals.pauseGoal()],
     ['resumeGoal', (goals: IAgentGoalService) => goals.resumeGoal()],
     ['setBudgetLimits', (goals: IAgentGoalService) =>
       goals.setBudgetLimits({ budgetLimits: { turnBudget: 1 } })],
+    ['editGoalObjective', (goals: IAgentGoalService) => goals.editGoalObjective({ objective: 'work' })],
     ['cancelGoal', (goals: IAgentGoalService) => goals.cancelGoal()],
     ['markBlocked', (goals: IAgentGoalService) => goals.markBlocked()],
     ['markComplete', (goals: IAgentGoalService) => goals.markComplete()],

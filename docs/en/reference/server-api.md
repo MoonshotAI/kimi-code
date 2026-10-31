@@ -631,6 +631,7 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `POST /api/v1/sessions/{session_id}/children` | Create a child session (fork with a tag) |
 | `GET /api/v1/sessions/{session_id}/status` | Realtime status rollup |
 | `GET /api/v1/sessions/{session_id}/goal` | Current goal snapshot (`null` when none) |
+| `PATCH /api/v1/sessions/{session_id}/goal` | Edit the current goal's objective in place |
 | `GET /api/v1/sessions/{session_id}/warnings` | Session-level warnings |
 | `GET /api/v1/sessions/{session_id}/environment` | Read the main agent's environment binding |
 | `GET /api/v1/sessions/{session_id}/environments` | List the environments registered for the session workspace |
@@ -903,6 +904,23 @@ Reads the session's current goal snapshot, or `null` when no goal is active. Not
 On success, `data` is `null` or `{ goalId, objective, completionCriterion?, status, turnsUsed, tokensUsed, wallClockMs, budget, terminalReason? }`, where `status` is `active` / `paused` / `blocked` / `complete` and `budget` reports the token, turn, and wall-clock budgets together with the remaining amounts and per-budget reached flags (each nullable when no such budget is set).
 
 - `40401`: session not found
+
+#### `PATCH /api/v1/sessions/{session_id}/goal`
+
+Replaces the objective of the current goal without changing its `goalId`, status, progress, or budget. Works on active, paused, and blocked goals. A running turn is not interrupted; the agent receives the new objective on its next turn. Connected clients are notified through the `goal.updated` event.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `objective` | body | string | **Required.** New objective; surrounding whitespace is trimmed |
+
+On success, `data` is the updated goal snapshot, in the same camelCase shape as `GET /api/v1/sessions/{session_id}/goal`.
+
+- `40401`: session not found
+- `40914`: no current goal
+- `40915`: the goal is complete
+- `40917`: the objective is empty
+- `40918`: the objective exceeds 4000 characters
 
 #### `GET /api/v1/sessions/{session_id}/warnings`
 

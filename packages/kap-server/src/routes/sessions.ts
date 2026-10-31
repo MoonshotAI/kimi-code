@@ -53,6 +53,8 @@ import {
   createSessionRequestSchema,
   deleteSessionResponseSchema,
   forkSessionRequestSchema,
+  editSessionGoalRequestSchema,
+  editSessionGoalResponseSchema,
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
   sessionAbortResponseSchema,
@@ -101,6 +103,14 @@ interface SessionRouteHost {
     options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
     handler: (
       req: { id: string; query: unknown; params: unknown },
+      reply: { send(payload: unknown): unknown },
+    ) => Promise<void> | void,
+  ): unknown;
+  patch(
+    path: string,
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
+    handler: (
+      req: { id: string; body: unknown; params: unknown; headers: Record<string, unknown> },
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
@@ -829,6 +839,42 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     goalRoute.path,
     goalRoute.options,
     goalRoute.handler as Parameters<SessionRouteHost['get']>[2],
+  );
+
+  const editGoalRoute = defineRoute(
+    {
+      method: 'PATCH',
+      path: '/sessions/{session_id}/goal',
+      params: sessionIdParamSchema,
+      body: editSessionGoalRequestSchema,
+      success: { data: editSessionGoalResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.GOAL_NOT_FOUND]: {},
+        [ErrorCode.GOAL_STATUS_INVALID]: {},
+        [ErrorCode.GOAL_OBJECTIVE_EMPTY]: {},
+        [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: {},
+      },
+      description: 'Edit the objective of the current session goal in place',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      try {
+        const { session_id } = req.params;
+        const goal = await core.accessor
+          .get(ISessionLegacyService)
+          .editGoalObjective(session_id, req.body.objective);
+        reply.send(okEnvelope(goal, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.patch(
+    editGoalRoute.path,
+    editGoalRoute.options,
+    editGoalRoute.handler as Parameters<SessionRouteHost['patch']>[2],
   );
 
   const sessionWarningsRoute = defineRoute(

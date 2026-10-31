@@ -294,6 +294,20 @@ describe('foldWireRecords', () => {
     });
   });
 
+  it('carries an edited objective into later goal_updated records without a transcript entry', () => {
+    const folded = fold([
+      { type: 'goal.create', goalId: 'g1', objective: 'old task', time: 1 },
+      { type: 'goal.update', objective: 'new task', actor: 'user', time: 2 },
+      { type: 'goal.update', status: 'paused', reason: 'wait', time: 3 },
+    ]);
+    expect(folded.replay).toHaveLength(2);
+    expect(folded.replay[1]).toMatchObject({
+      type: 'goal_updated',
+      time: 3,
+      snapshot: { goalId: 'g1', objective: 'new task', status: 'paused' },
+    });
+  });
+
   it('clears the goal and appends the fork reminder on forked', () => {
     const folded = fold([
       { type: 'goal.create', goalId: 'g1', objective: 'ship it', time: 1 },

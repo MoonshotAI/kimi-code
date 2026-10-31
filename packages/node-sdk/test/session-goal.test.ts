@@ -7,6 +7,7 @@ function makeSession() {
   const rpc = {
     createGoal: vi.fn(async () => ({ goalId: 'g1' })),
     getGoal: vi.fn(async () => ({ goal: null })),
+    editGoalObjective: vi.fn(async () => ({ goalId: 'g1' })),
     pauseGoal: vi.fn(async () => ({ goalId: 'g1' })),
     resumeGoal: vi.fn(async () => ({ goalId: 'g1' })),
     cancelGoal: vi.fn(async () => ({ goalId: 'g1' })),
@@ -28,6 +29,15 @@ describe('Session goal methods', () => {
       sessionId: 'ses_goal',
       objective: 'Ship feature X',
       replace: true,
+    });
+  });
+
+  it('editGoalObjective forwards the objective with sessionId', async () => {
+    const { session, rpc } = makeSession();
+    await session.editGoalObjective({ objective: 'Ship feature Y' });
+    expect(rpc.editGoalObjective).toHaveBeenCalledWith({
+      sessionId: 'ses_goal',
+      objective: 'Ship feature Y',
     });
   });
 

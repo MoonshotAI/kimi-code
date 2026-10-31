@@ -457,6 +457,7 @@ export function foldWireRecordFacts(
           const tokenBudget = payload.budgetLimits?.tokenBudget;
           goal = {
             ...goal,
+            objective: typeof payload.objective === 'string' ? payload.objective : goal.objective,
             status:
               typeof payload.status === 'string' &&
               GOAL_STATUSES.has(payload.status as GoalStatus)

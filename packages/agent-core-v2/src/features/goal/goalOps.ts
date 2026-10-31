@@ -71,6 +71,7 @@ const goalUpdateSchema = z
   .object({
     agentId: z.string(),
     goalId: z.string().optional(),
+    objective: z.string().optional(),
     status: GoalStatusSchema.optional(),
     reason: z.string().optional(),
     turnsUsed: z.number().finite().nonnegative().optional(),
@@ -90,6 +91,7 @@ export class GoalUpdate extends AgentEvent2<z.infer<typeof goalUpdateSchema>> {
 export interface GoalUpdate {
   readonly agentId: string;
   readonly goalId?: string;
+  readonly objective?: string;
   readonly status?: GoalStatus;
   readonly reason?: string;
   readonly turnsUsed?: number;
