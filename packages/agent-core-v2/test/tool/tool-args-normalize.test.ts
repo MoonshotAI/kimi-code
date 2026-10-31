@@ -265,4 +265,57 @@ describe('normalizeToolArgs', () => {
       unknown_param: 123,
     });
   });
+
+  it('leaves fractional numbers and non-integer strings uncoerced for schema validation', () => {
+    const tool = {
+      name: 'Read',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          line_offset: { type: 'integer' },
+          n_lines: { type: 'integer' },
+        },
+      },
+    };
+
+    expect(
+      normalizeToolArgs(tool, {
+        path: 'src/main.ts',
+        offset: 25.5,
+        limit: '25junk',
+      }),
+    ).toEqual({
+      path: 'src/main.ts',
+      line_offset: 25.5,
+      n_lines: '25junk',
+    });
+  });
+
+  it('preserves explicitly declared schema properties without renaming or dropping them', () => {
+    const toolWithOffset = {
+      name: 'custom_reader',
+      parameters: {
+        type: 'object',
+        properties: {
+          line_offset: { type: 'integer' },
+          offset: { type: 'integer' },
+          limit: { type: 'integer' },
+        },
+        additionalProperties: true,
+      },
+    };
+
+    expect(
+      normalizeToolArgs(toolWithOffset, {
+        offset: 10,
+        limit: 20,
+        details: 'keep in open schema',
+      }),
+    ).toEqual({
+      offset: 10,
+      limit: 20,
+      details: 'keep in open schema',
+    });
+  });
 });

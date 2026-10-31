@@ -9,12 +9,15 @@ function hasProperty(properties: Record<string, unknown> | undefined, key: strin
 
 function toInteger(value: unknown): unknown {
   if (typeof value === 'number') {
-    return Number.isInteger(value) ? value : Math.trunc(value);
+    return Number.isInteger(value) ? value : value;
   }
-  if (typeof value === 'string' && value.trim().length > 0) {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (!Number.isNaN(parsed)) {
-      return parsed;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^-?\d+$/.test(trimmed)) {
+      const parsed = Number(trimmed);
+      if (Number.isSafeInteger(parsed)) {
+        return parsed;
+      }
     }
   }
   return value;
@@ -46,6 +49,11 @@ export function normalizeToolArgs(
       ? (tool.parameters['properties'] as Record<string, unknown>)
       : undefined;
 
+  const isOpenSchema =
+    tool?.parameters &&
+    typeof tool.parameters === 'object' &&
+    tool.parameters['additionalProperties'] === true;
+
   const toolName = tool?.name?.toLowerCase();
   const supportsLineOffset =
     hasProperty(rawProperties, 'line_offset') || toolName === 'read';
@@ -58,25 +66,33 @@ export function normalizeToolArgs(
     toolName === 'edit';
 
   if (supportsLineOffset) {
-    if (normalized['line_offset'] === undefined) {
-      if ('offset' in normalized) {
+    if (!hasProperty(rawProperties, 'offset') && 'offset' in normalized) {
+      if (normalized['line_offset'] === undefined) {
         normalized['line_offset'] = toLineOffset(normalized['offset']);
-      } else if ('start_line' in normalized) {
+      }
+      delete normalized['offset'];
+    }
+    if (!hasProperty(rawProperties, 'start_line') && 'start_line' in normalized) {
+      if (normalized['line_offset'] === undefined) {
         normalized['line_offset'] = toLineOffset(normalized['start_line']);
-      } else if ('parameter_offset' in normalized) {
+      }
+      delete normalized['start_line'];
+    }
+    if (!hasProperty(rawProperties, 'parameter_offset') && 'parameter_offset' in normalized) {
+      if (normalized['line_offset'] === undefined) {
         normalized['line_offset'] = toLineOffset(normalized['parameter_offset']);
       }
+      delete normalized['parameter_offset'];
     }
-    delete normalized['offset'];
-    delete normalized['start_line'];
-    delete normalized['parameter_offset'];
   }
 
   if (supportsNLines) {
-    if (normalized['n_lines'] === undefined && 'limit' in normalized) {
-      normalized['n_lines'] = toInteger(normalized['limit']);
+    if (!hasProperty(rawProperties, 'limit') && 'limit' in normalized) {
+      if (normalized['n_lines'] === undefined) {
+        normalized['n_lines'] = toInteger(normalized['limit']);
+      }
+      delete normalized['limit'];
     }
-    delete normalized['limit'];
   }
 
   if (supportsPath) {
@@ -94,7 +110,7 @@ export function normalizeToolArgs(
     }
   }
 
-  if (rawProperties !== undefined) {
+  if (!isOpenSchema && rawProperties !== undefined) {
     if (!hasProperty(rawProperties, 'description_note') && 'description_note' in normalized) {
       delete normalized['description_note'];
     }
