@@ -113,27 +113,34 @@ export async function runAcpServerWithStream(
   const close = async (): Promise<void> => {
     if (closePromise !== undefined) return closePromise;
     closePromise = (async () => {
+      let serverCloseError: unknown;
       try {
         const server = await serverReady;
         await server.close();
-      } catch {
-        // server initialization may not have resolved
+      } catch (err) {
+        serverCloseError = err;
       }
-      // Detach the klient's event subscriptions first so disposal below cannot
-      // deliver into a torn-down scope.
-      await klient.close();
-      const appendLogStore = core.accessor.get(IAppendLogStore);
       try {
-        await appendLogStore.flush();
-      } catch {}
-      await drainSessionMetadataWrites();
-      await core.accessor.get(ISessionIndexMirror).drain();
-      core.dispose();
-      await appendLogStore.drainRetirements();
-      await drainSessionIndexMirror();
-      await drainQueryStoreDisposals();
-      await drainSessionMetadataWrites();
-      await drainLogCloses();
+        // Detach the klient's event subscriptions first so disposal below cannot
+        // deliver into a torn-down scope.
+        await klient.close();
+        const appendLogStore = core.accessor.get(IAppendLogStore);
+        try {
+          await appendLogStore.flush();
+        } catch {}
+        await drainSessionMetadataWrites();
+        await core.accessor.get(ISessionIndexMirror).drain();
+        core.dispose();
+        await appendLogStore.drainRetirements();
+        await drainSessionIndexMirror();
+        await drainQueryStoreDisposals();
+        await drainSessionMetadataWrites();
+        await drainLogCloses();
+      } finally {
+        if (serverCloseError !== undefined) {
+          throw serverCloseError;
+        }
+      }
     })();
     return closePromise;
   };
