@@ -963,6 +963,26 @@ describe('AppendLogStore session lock integration', () => {
     expect(log.externallyModified(SCOPE, KEY)).toBe(false);
   });
 
+  it('preserves reader baseline when a concurrent rewrite fails before writing', async () => {
+    log.append(SCOPE, KEY, { n: 1 });
+    await log.flush();
+    await readAll();
+
+    const reader = log.read<Rec>(SCOPE, KEY)[Symbol.asyncIterator]();
+    await reader.next();
+
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async () => {
+      throw new Error('failed rewrite');
+    };
+
+    await expect(log.rewrite<Rec>(SCOPE, KEY, [{ n: 10 }])).rejects.toThrow('failed rewrite');
+    storage.write = originalWrite;
+
+    await reader.return?.();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
   it('resets known length after rewrite', async () => {
     log.append<Rec>(SCOPE, KEY, { n: 1 });
     await log.flush();

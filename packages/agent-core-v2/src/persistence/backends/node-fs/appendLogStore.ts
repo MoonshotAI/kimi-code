@@ -45,6 +45,7 @@ interface LogState {
   failureWarned: boolean;
   stuckWatch: NodeJS.Timeout | undefined;
   cutoverEpoch: number;
+  committedRewriteEpoch: number;
   refCount: number;
   retired: boolean;
   ready: Promise<void>;
@@ -101,7 +102,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     while (state.flushPromise !== undefined) {
       await state.flushPromise;
     }
-    const epochAtStart = state.cutoverEpoch;
+    const epochAtStart = state.committedRewriteEpoch;
     const readSeq = ++state.nextReadSeq;
     const lengthAtStart = this.diskLength(scope, key);
     const appendsAtStart = state.appendedBytesInEpoch;
@@ -141,7 +142,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         }
       }
     } finally {
-      if (state.cutoverEpoch === epochAtStart && readSeq >= state.lastCompletedReadSeq) {
+      if (state.committedRewriteEpoch === epochAtStart && readSeq >= state.lastCompletedReadSeq) {
         state.lastCompletedReadSeq = readSeq;
         const disk = this.diskLength(scope, key);
         if (disk !== undefined) {
@@ -188,6 +189,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       try {
         state.rewriteInFlight = encoded.length;
         await this.storage.write(scope, key, encoded, { atomic: true });
+        state.committedRewriteEpoch++;
         state.rewriteInFlight = undefined;
         state.storageFailure = undefined;
         state.recovery = undefined;
@@ -291,6 +293,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         failureWarned: false,
         stuckWatch: undefined,
         cutoverEpoch: 0,
+        committedRewriteEpoch: 0,
         refCount: 0,
         retired: false,
         ready,

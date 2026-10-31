@@ -1,5 +1,5 @@
 ---
-"@moonshot-ai/agent-core-v2": patch
+"@moonshot-ai/kimi-code": patch
 ---
 
-Fix AppendLogStore incorrectly flagging own concurrent appends as external modifications.
+Fix sessions sometimes failing with session.stale after concurrent local file operations.
