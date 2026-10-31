@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { PassThrough, Readable, Writable } from 'node:stream';
 
 import { ndJsonStream } from '@agentclientprotocol/sdk';
-import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
+import { IBootstrapService, IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it } from 'vitest';
 
 import { runAcpServerWithStream } from '../src/start';
@@ -252,6 +252,110 @@ describe('acp-server initialize handshake', () => {
         toAgent.end();
         toClient.end();
       } finally {
+        await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    },
+    30_000,
+  );
+
+  it(
+    'bootstraps engine with default Kimi host identity requestHeaders',
+    async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), 'acp-server-headers-'));
+      const toAgent = new PassThrough();
+      const toClient = new PassThrough();
+      try {
+        const stream = ndJsonStream(Writable.toWeb(toClient), Readable.toWeb(toAgent));
+        const server = await runAcpServerWithStream(stream, {
+          homeDir,
+          agentInfo: { name: 'Kimi Code CLI', version: '2.4.1' },
+        });
+
+        const bootstrap = server.core.accessor.get(IBootstrapService);
+        expect(bootstrap.clientIdentity.productName).toBe('Kimi Code CLI');
+        expect(bootstrap.clientIdentity.version).toBe('2.4.1');
+        expect(bootstrap.clientIdentity.platform).toBe('kimi_code_cli');
+
+        const headers = bootstrap.args.requestHeaders;
+        expect(headers['X-Msh-Platform']).toBe('kimi_code_cli');
+        expect(headers['X-Msh-Version']).toBe('2.4.1');
+        expect(headers['X-Msh-Device-Id']).toBeDefined();
+        expect(headers['User-Agent']).toBe('Kimi Code CLI/2.4.1');
+
+        await server.close();
+        toAgent.end();
+        toClient.end();
+      } finally {
+        await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    },
+    30_000,
+  );
+
+  it(
+    'preserves custom hostIdentity and requestHeaders overrides',
+    async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), 'acp-server-custom-headers-'));
+      const toAgent = new PassThrough();
+      const toClient = new PassThrough();
+      try {
+        const stream = ndJsonStream(Writable.toWeb(toClient), Readable.toWeb(toAgent));
+        const server = await runAcpServerWithStream(stream, {
+          homeDir,
+          hostIdentity: {
+            productName: 'custom-client',
+            version: '1.0.0',
+            platform: 'kimi_code_cli',
+          },
+          requestHeaders: {
+            'X-Custom-Header': 'test-value',
+          },
+        });
+
+        const bootstrap = server.core.accessor.get(IBootstrapService);
+        expect(bootstrap.clientIdentity.productName).toBe('custom-client');
+        expect(bootstrap.args.requestHeaders).toEqual({
+          'X-Custom-Header': 'test-value',
+        });
+
+        await server.close();
+        toAgent.end();
+        toClient.end();
+      } finally {
+        await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    },
+    30_000,
+  );
+
+  it(
+    'applies KIMI_CODE_ACP_LLM_TIMEOUT_MS in ACP server mode',
+    async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), 'acp-server-timeout-'));
+      const toAgent = new PassThrough();
+      const toClient = new PassThrough();
+      const prevTimeout = process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'];
+      const prevAcpTimeout = process.env['KIMI_CODE_ACP_LLM_TIMEOUT_MS'];
+      try {
+        process.env['KIMI_CODE_ACP_LLM_TIMEOUT_MS'] = '12345';
+        const stream = ndJsonStream(Writable.toWeb(toClient), Readable.toWeb(toAgent));
+        const server = await runAcpServerWithStream(stream, { homeDir });
+        expect(process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS']).toBe('12345');
+
+        await server.close();
+        toAgent.end();
+        toClient.end();
+      } finally {
+        if (prevTimeout !== undefined) {
+          process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'] = prevTimeout;
+        } else {
+          delete process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'];
+        }
+        if (prevAcpTimeout !== undefined) {
+          process.env['KIMI_CODE_ACP_LLM_TIMEOUT_MS'] = prevAcpTimeout;
+        } else {
+          delete process.env['KIMI_CODE_ACP_LLM_TIMEOUT_MS'];
+        }
         await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
       }
     },

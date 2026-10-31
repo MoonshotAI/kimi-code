@@ -15,6 +15,11 @@ import { Readable, Writable } from 'node:stream';
 
 import { ndJsonStream, type AgentConnection, type Stream } from '@agentclientprotocol/sdk';
 import {
+  assertKimiHostIdentity,
+  createKimiDefaultHeaders,
+  type KimiHostIdentity,
+} from '@moonshot-ai/kimi-code-oauth';
+import {
   bootstrap,
   drainLogCloses,
   drainQueryStoreDisposals,
@@ -50,11 +55,15 @@ import { IAcpConnection } from './acp-fs';
 import { AcpEnvironmentProviderFactory } from './acp-terminal';
 import { AcpServer, type AcpServerOptions, createAcpAgentApp } from './server';
 
+export const ACP_LLM_TIMEOUT_ENV = 'KIMI_CODE_ACP_LLM_TIMEOUT_MS';
+
 export interface RunAcpServerOptions extends AcpServerOptions {
   readonly homeDir?: string;
   readonly configPath?: string;
   readonly input?: NodeJS.ReadableStream;
   readonly output?: NodeJS.WritableStream;
+  readonly hostIdentity?: KimiHostIdentity;
+  readonly requestHeaders?: Record<string, string>;
   /**
    * Extra App-scope service seeds forwarded to `bootstrap()`. Intended for
    * tests — e.g. seeding a scripted `IProtocolAdapterRegistry` to drive a
@@ -97,6 +106,10 @@ export async function runAcpServerWithStream(
   stream: Stream,
   opts: RunAcpServerOptions = {},
 ): Promise<RunningAcpServer> {
+  const acpTimeout = process.env[ACP_LLM_TIMEOUT_ENV];
+  if (acpTimeout !== undefined && acpTimeout.trim() !== '') {
+    process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'] = acpTimeout;
+  }
   const homeDir = resolveKimiHome(opts.homeDir);
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
   // `ILogOptions` (logSeed) is required by the Session-scoped log writer; any
@@ -104,19 +117,25 @@ export async function runAcpServerWithStream(
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
   // `bootstrap()` seeds `IFileSystemStorageService` with a `FileStorageService`
   // rooted at `homeDir`, so session metadata, wire records, blobs, and the
-  // session index all persist to disk. `clientIdentity` is required by the
-  // engine: reuse the advertised ACP `agentInfo` (the embedding CLI's
-  // name/version) with the CLI platform — the literal matches
-  // `KIMI_CODE_PLATFORM` from `@moonshot-ai/kimi-code-oauth`, which this
-  // package does not depend on.
+  // session index all persist to disk. Host identity headers (User-Agent,
+  // X-Msh-*) are forwarded to outbound provider requests so managed vendors
+  // (e.g. api.kimi.ai) recognize the client and honor normal connection timeouts.
+  const identity: KimiHostIdentity = opts.hostIdentity
+    ? assertKimiHostIdentity(opts.hostIdentity)
+    : {
+        productName: opts.agentInfo?.name ?? 'kimi-code-acp',
+        version: opts.agentInfo?.version ?? '0.0.0',
+        platform: 'kimi_code_cli',
+      };
+  const requestHeaders =
+    opts.requestHeaders ?? createKimiDefaultHeaders({ homeDir, ...identity });
   const { app: core } = bootstrap(
     {
       homeDir,
       configPath,
-      clientIdentity: {
-        productName: opts.agentInfo?.name ?? 'kimi-code-acp',
-        version: opts.agentInfo?.version ?? '0.0.0',
-        platform: 'kimi_code_cli',
+      clientIdentity: identity,
+      args: {
+        requestHeaders,
       },
     },
     [...logSeed(logging), ...(opts.extraSeeds ?? [])],
