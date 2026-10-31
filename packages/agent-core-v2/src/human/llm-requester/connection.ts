@@ -41,3 +41,9 @@ export function resolveModelConnection(
     apiKey: model.apiKey ?? read(declaration.apiKeyEnv),
   };
 }
+
+export {
+  isOpenCodeEndpoint,
+  OPENCODE_SESSION_HEADER,
+  withOpencodeSessionHeader,
+} from '#/llm/endpoint';
