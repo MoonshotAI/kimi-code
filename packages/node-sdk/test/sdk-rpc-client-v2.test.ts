@@ -11,7 +11,7 @@
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
@@ -43,6 +43,7 @@ import {
   getLiveSessionById,
   HostProcessError,
   IAgentIdentity,
+  IAgentContextMemoryService,
   IAgentTodoService,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -55,15 +56,27 @@ import {
   IAgentToolRegistryService,
   INotifyUserTool,
   IAtomicDocumentStore,
+  IConfigService,
   ISessionContext,
   IAgentTowerService,
   IHostRequestHeaders,
   IMcpManagementService,
   IMcpOAuthService,
   ISessionManager,
+  IWorkspaceInstanceManager,
+  IEnvironmentService,
+  IWorkspaceService,
   MAIN_AGENT_ID,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
+
+import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
+import { ISessionAgentProfileCatalog } from '@moonshot-ai/agent-core-v2/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { attachmentFileSource } from '@moonshot-ai/agent-core-v2/agent/tools/fileReadSource';
+import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
+import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
+import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
+import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 
 import { McpOAuthService as McpOAuthServiceV2 } from '@moonshot-ai/agent-core-v2/mcpCore/oauth/service';
 import { TowerStore } from '@moonshot-ai/agent-core-v2/features/tower/protocol/store';
@@ -157,19 +170,429 @@ async function findSessionDir(homeDir: string, sessionId: string): Promise<strin
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
-  it('exposes the validated runtime binding through Session', async () => {
+  it('loads explicit agent files for native print sessions', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-work-'));
+    tempDirs.push(homeDir, workDir);
+    const agentFile = join(homeDir, 'reviewer.md');
+    await writeFile(agentFile, '---\nname: print-reviewer\ndescription: Reviews code.\n---\n\nReview the project.\n');
+    await writeFile(join(homeDir, 'config.toml'), runtimeConfigToml('/remote/work'));
+    const client = new SDKRpcClientV2({
+      homeDir,
+      identity: TEST_IDENTITY,
+      agentFiles: [agentFile],
+    });
+    try {
+      const session = await client.engineAccessor.get(ISessionManager).create({
+        workDir,
+        mainAgentBinding: { profile: 'print-reviewer' },
+      });
+      expect(await client.getStatus({ sessionId: session.id })).toMatchObject({ model: 'stub' });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('exposes the validated environment binding through Session', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
     tempDirs.push(workDir);
-    const session = await harness.createSession({ id: 'ses_runtime', workDir });
+    const session = await harness.createSession({ id: 'ses_environment', workDir });
     try {
-      const binding = await session.getRuntime();
-      expect(binding.runtimeId).toBe('local');
-      expect(binding.workspaceId.length).toBeGreaterThan(0);
-      await expect(session.switchRuntime('missing-runtime')).rejects.toThrow(/missing-runtime/);
-      expect(await session.getRuntime()).toEqual(binding);
+      const binding = await session.getEnvironment();
+      expect(binding.environmentId).toBe('local');
+      expect(binding).toEqual({ environmentId: 'local' });
+      expect(await session.getEnvironment()).toEqual(binding);
     } finally {
       await harness.close();
+    }
+  });
+
+  it('keeps an explicit local cwd on the session the next session inherits', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-local-cwd-work-'));
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-local-cwd-session-'));
+    tempDirs.push(workDir, sessionDir);
+    const session = await harness.createSession({
+      id: 'ses_local_cwd',
+      workDir,
+      environmentId: 'local',
+      environmentCwd: sessionDir,
+    });
+    try {
+      expect(await session.getEnvironment()).toEqual({ environmentId: 'local', cwd: sessionDir });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  function runtimeConfigToml(defaultCwd: string): string {
+    return [
+      'default_model = "stub"',
+      '',
+      '[providers.stub]',
+      'type = "openai"',
+      'base_url = "http://127.0.0.1:9999"',
+      'api_key = "stub"',
+      '',
+      '[models.stub]',
+      'provider = "stub"',
+      'model = "stub"',
+      'max_context_size = 1000',
+      '',
+      '[environments.fake-box]',
+      'type = "ssh"',
+      'host = "fake-box"',
+      `defaultCwd = ${JSON.stringify(defaultCwd)}`,
+      '',
+    ].join('\n');
+  }
+
+  async function makeEnvironmentHarness(options: { readonly defaultCwd?: string } = {}): Promise<{ harness: KimiHarness; client: SDKRpcClientV2; homeDir: string }> {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    tempDirs.push(homeDir);
+    await writeFile(join(homeDir, 'config.toml'), runtimeConfigToml(options.defaultCwd ?? '/remote/work'), 'utf-8');
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const harness = new KimiHarness(client, {
+      identity: client.identity,
+      homeDir: client.homeDir,
+      configPath: client.configPath,
+      auth: client.auth,
+      telemetry: client.telemetry,
+      ensureConfigFile: () => client.ensureConfigFile(),
+      onClose: () => client.close(),
+    });
+    return { harness, client, homeDir };
+  }
+
+  async function attachFakeBoxEnvironment(client: SDKRpcClientV2, hostInfo: { homeDir?: string } = {}) {
+    // The constructor attaches the real remote-exec provider, which owns every
+    // declared environment as a placeholder; retire it so the fake provider can
+    // register the same environment id.
+    const attached = await (client as unknown as {
+      remoteEnvironmentProvider: Promise<{ dispose(): void | Promise<void> } | undefined>;
+    }).remoteEnvironmentProvider;
+    await attached?.dispose();
+    return client.engineAccessor.get(IEnvironmentService).addProvider({
+      id: 'fake-box-provider',
+      attach: async (host) => {
+        const fake = new FakeEnvironment(
+          { environmentId: 'fake-box', generation: 'fake-generation' },
+          { capabilities: ['fs', 'process'], host: hostInfo },
+        );
+        const environment = Object.assign(fake, {
+          fs: new HostFileSystem(),
+          process: new HostProcessService(),
+        });
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
+  }
+
+  it.each([
+    {
+      name: 'a valid default next to an invalid entry',
+      config: '[environments]\ndefault = "good"\n\n[environments.good]\ntype = "ssh"\nhost = "example.com"\ndefault_cwd = "/remote/work"\n\n[environments.bad]\ntype = "ssh"\n',
+    },
+    {
+      name: 'an invalid default reference',
+      config: '[environments]\ndefault = "missing"\n',
+    },
+    {
+      name: 'malformed TOML',
+      config: '[environments\n',
+    },
+  ])('rejects implicit local creation with $name and allows explicit local', async ({ config }) => {
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-work-'));
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-invalid-env-home-'));
+    tempDirs.push(workDir, homeDir);
+    await writeFile(join(homeDir, 'config.toml'), config, 'utf-8');
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const harness = new KimiHarness(client, {
+      identity: client.identity,
+      homeDir: client.homeDir,
+      configPath: client.configPath,
+      auth: client.auth,
+      telemetry: client.telemetry,
+      ensureConfigFile: () => client.ensureConfigFile(),
+      onClose: () => client.close(),
+    });
+    try {
+      await expect(harness.createSession({ workDir })).rejects.toMatchObject({ code: 'config.invalid' });
+      const local = await client.engineAccessor.get(ISessionManager).create({ workDir, environmentId: 'local' });
+      expect(local.id).not.toBe('');
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('resolves creation defaults without creating a session', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-default-work-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-default-target-'));
+    tempDirs.push(workDir, remoteDir);
+    const { harness, client } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    const provider = await attachFakeBoxEnvironment(client);
+    try {
+      await client.engineAccessor.get(IConfigService).set('environments', { default: 'fake-box' });
+      expect(await harness.resolveSessionEnvironment({ workDir })).toEqual({ environmentId: 'fake-box', cwd: remoteDir });
+      expect(await harness.resolveSessionEnvironment({ workDir, environmentId: 'local' })).toEqual({ environmentId: 'local', cwd: undefined });
+      expect(await harness.resolveSessionEnvironment({
+        workDir,
+        environmentId: 'local',
+        environmentCwd: workDir,
+      })).toEqual({ environmentId: 'local', cwd: workDir });
+      expect(client.engineAccessor.get(ISessionManager).list()).toHaveLength(0);
+    } finally {
+      await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
+    }
+  });
+
+  it('resolves relative additional directories against the same remote cwd on cold resume', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-resume-local-'));
+    const target = await mkdtemp(join(tmpdir(), 'kimi-sdk-resume-target-'));
+    const remoteDir = join(target, 'project');
+    const sharedDir = join(target, 'shared');
+    tempDirs.push(workDir, target);
+    await mkdir(remoteDir); await mkdir(sharedDir);
+    const { harness, client } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    const provider = await attachFakeBoxEnvironment(client);
+    try {
+      const session = await harness.createSession({ workDir, environmentId: 'fake-box', additionalDirs: ['../shared'] });
+      await session.close();
+      const restored = await harness.resumeSession({ id: session.id, additionalDirs: ['../shared'] });
+      expect(restored.summary?.workDir).toBe(workDir);
+      expect(restored.summary?.additionalDirs).toContain(sharedDir);
+      expect(await restored.getEnvironment()).toMatchObject({ environmentId: 'fake-box', cwd: remoteDir });
+      expect(getLiveSessionById(client.engineAccessor, session.id)!.accessor.get(ISessionContext).cwd).toBe(workDir);
+    } finally {
+      await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
+    }
+  });
+
+  it('keeps remote AGENTS.md change notifications on the session workdir across reloads', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-agents-local-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-agents-remote-'));
+    const remoteHome = await mkdtemp(join(tmpdir(), 'kimi-sdk-agents-home-'));
+    tempDirs.push(workDir, remoteDir, remoteHome);
+    const remoteAgentsMd = join(remoteDir, 'AGENTS.md');
+    const remotePersonalAgentsMd = join(remoteHome, '.agents', 'AGENTS.md');
+    await writeFile(join(workDir, 'AGENTS.md'), 'local project');
+    await writeFile(remoteAgentsMd, 'remote v1');
+    await mkdir(join(remoteHome, '.agents'));
+    await writeFile(remotePersonalAgentsMd, 'remote personal');
+    const { harness, client, homeDir } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    await writeFile(join(homeDir, 'AGENTS.md'), 'local personal');
+    const provider = await attachFakeBoxEnvironment(client, { homeDir: remoteHome });
+    try {
+      const session = await harness.createSession({ workDir, environmentId: 'fake-box' });
+      const main = () => getLiveSessionById(client.engineAccessor, session.id)!.accessor
+        .get(IAgentLifecycleService)
+        .handleOf(MAIN_AGENT_ID)!;
+      const changeMessages = () => main().accessor.get(IAgentContextMemoryService).get()
+        .filter((message) => message.origin?.kind === 'injection' && message.origin.variant === 'agents_md_change')
+        .map((message) => message.content.map((part) => part.type === 'text' ? part.text : '').join(''));
+      const prompt = main().accessor.get(IAgentProfileService).getSystemPrompt();
+      expect(prompt).toContain('remote v1');
+      expect(prompt).toContain('local personal');
+      expect(prompt).not.toContain('local project');
+      expect(prompt).not.toContain('remote personal');
+
+      await harness.reloadSession({ id: session.id });
+      expect(changeMessages()).toEqual([]);
+
+      await writeFile(remoteAgentsMd, 'remote v2');
+      await harness.reloadSession({ id: session.id });
+      expect(changeMessages()).toHaveLength(1);
+      const message = changeMessages()[0]!;
+      expect(message).toContain(`- ${remoteAgentsMd}\n`);
+      expect(message).not.toContain('(deleted)');
+      expect(message).not.toContain(join(workDir, 'AGENTS.md'));
+      expect(message).not.toContain(remotePersonalAgentsMd);
+    } finally {
+      await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
+    }
+  });
+
+  it('keeps launch-directory project agents out of remote sessions, which read only user agents', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-profiles-local-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-profiles-remote-'));
+    tempDirs.push(workDir, remoteDir);
+    const agentMd = (name: string): string => `---\nname: ${name}\ndescription: ${name} agent\n---\n\nYou are ${name}.\n`;
+    await mkdir(join(workDir, '.kimi-code', 'agents'), { recursive: true });
+    await writeFile(join(workDir, '.kimi-code', 'agents', 'launch-project.md'), agentMd('launch-project'));
+    await mkdir(join(remoteDir, '.kimi-code', 'agents'), { recursive: true });
+    await writeFile(join(remoteDir, '.kimi-code', 'agents', 'remote-project.md'), agentMd('remote-project'));
+    const { harness, client, homeDir } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    await mkdir(join(homeDir, 'agents'), { recursive: true });
+    await writeFile(join(homeDir, 'agents', 'personal.md'), agentMd('personal'));
+    const provider = await attachFakeBoxEnvironment(client);
+    try {
+      const local = await harness.createSession({ workDir, environmentId: 'local' });
+      const remote = await harness.createSession({ workDir, environmentId: 'fake-box' });
+      const profileNames = (sessionId: string): string[] => getLiveSessionById(client.engineAccessor, sessionId)!.accessor
+        .get(ISessionAgentProfileCatalog)
+        .list()
+        .map((profile) => profile.name);
+
+      expect(profileNames(local.id)).toEqual(expect.arrayContaining(['launch-project', 'personal']));
+      expect(profileNames(remote.id)).toContain('personal');
+      expect(profileNames(remote.id)).not.toContain('launch-project');
+      expect(profileNames(remote.id)).not.toContain('remote-project');
+    } finally {
+      await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
+    }
+  });
+
+  it('persists the creation binding in session meta and fails resume loudly when the environment cannot connect', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-meta-work-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-meta-remote-'));
+    tempDirs.push(workDir, remoteDir);
+    const { harness, client, homeDir } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    const provider = await attachFakeBoxEnvironment(client);
+    try {
+      await expect(harness.createSession({ workDir, environmentId: 'fake-box', environmentCwd: join(remoteDir, 'missing') })).rejects.toMatchObject({
+        code: 'environment.invalid_cwd',
+      });
+      const session = await harness.createSession({ workDir, environmentId: 'fake-box', model: 'stub' });
+      const meta = JSON.parse(await readFile(join(await findSessionDir(homeDir, session.id), 'state.json'), 'utf-8'));
+      expect(meta).toMatchObject({ environmentId: 'fake-box', environmentCwd: remoteDir, cwd: workDir });
+      await client.engineAccessor.get(ISessionManager).close(session.id);
+      const fake = client.engineAccessor.get(IEnvironmentService).current('fake-box') as FakeEnvironment;
+      fake.setStatus('disconnected');
+      Object.assign(fake, { connect: async () => { throw new Error('ssh unreachable'); } });
+      await expect(client.engineAccessor.get(ISessionManager).resume(session.id)).rejects.toMatchObject({
+        code: 'environment.unavailable',
+        message: expect.stringContaining('ssh unreachable'),
+      });
+      expect(getLiveSessionById(client.engineAccessor, session.id)).toBeUndefined();
+    } finally {
+      await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
+    }
+  });
+
+  it('resumes an explicit local cwd from session metadata', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-local-resume-work-'));
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-local-resume-cwd-'));
+    tempDirs.push(workDir, sessionDir);
+    const { harness } = await makeHarness();
+    const created = await harness.createSession({
+      workDir,
+      environmentId: 'local',
+      environmentCwd: sessionDir,
+    });
+    try {
+      await created.close();
+      const restored = await harness.resumeSession({ id: created.id });
+      expect(await restored.getEnvironment()).toEqual({ environmentId: 'local', cwd: sessionDir });
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('keeps attached originals readable in remote sessions, forks and cold resumes without staging files', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-attachment-work-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-attachment-target-'));
+    tempDirs.push(workDir, remoteDir);
+    const { harness, client, homeDir } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    const provider = await attachFakeBoxEnvironment(client);
+    const bytes = Buffer.from('original-image-bytes');
+    const read = async (sessionId: string, reference: string) => {
+      const store = getLiveSessionById(client.engineAccessor, sessionId)!.accessor.get(ISessionMediaStore);
+      return (await attachmentFileSource(reference, store)).readBytes();
+    };
+    try {
+      const session = await harness.createSession({ workDir, environmentId: 'fake-box' });
+      const reference = await session.attachFile(bytes, { name: 'original.png', mimeType: 'image/png' });
+      expect(reference).toMatch(/^kimi-file:\/\/f_attachment_/);
+      expect(await read(session.id, reference)).toEqual(bytes);
+      const fork = await harness.forkSession({ id: session.id });
+      expect(await read(fork.id, reference)).toEqual(bytes);
+      await client.engineAccessor.get(IAtomicDocumentStore).set('', 'session_index.jsonl', {
+        sessionId: session.id,
+        sessionDir: await findSessionDir(homeDir, session.id),
+        workDir: remoteDir,
+      });
+      await session.close();
+      await harness.resumeSession({ id: session.id });
+      expect(await read(session.id, reference)).toEqual(bytes);
+      expect(getLiveSessionById(client.engineAccessor, session.id)!.accessor.get(ISessionContext).cwd).toBe(workDir);
+      await fork.close();
+      const restoredFork = await harness.resumeSession({ id: fork.id });
+      expect(getLiveSessionById(client.engineAccessor, restoredFork.id)!.accessor.get(ISessionContext).cwd).toBe(workDir);
+    } finally {
+      await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
+    }
+  });
+
+  function stubGatedFakeBoxAttach(): { release(): void; restore(): void } {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const spy = vi
+      .spyOn(RemoteEnvironmentProviderFactory.prototype, 'attach')
+      .mockImplementation(async (host) => {
+        await gate;
+        const fake = new FakeEnvironment(
+          { environmentId: 'fake-box', generation: 'fake-generation' },
+          { capabilities: ['fs', 'process'] },
+        );
+        const environment = Object.assign(fake, {
+          fs: new HostFileSystem(),
+          process: new HostProcessService(),
+        });
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      });
+    return { release, restore: () => spy.mockRestore() };
+  }
+
+  it('waits for the remote environment provider attach before resuming a remote-bound session', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-race-work-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-race-remote-'));
+    tempDirs.push(workDir, remoteDir);
+    const { harness, client, homeDir } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    const provider = await attachFakeBoxEnvironment(client);
+    let sessionId: string;
+    try {
+      const session = await harness.createSession({ workDir, environmentId: 'fake-box' });
+      sessionId = session.id;
+      await client.engineAccessor.get(ISessionManager).close(sessionId);
+    } finally {
+      await provider.dispose();
+      await harness.close();
+    }
+
+    const gated = stubGatedFakeBoxAttach();
+    const freshClient = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      let settled = false;
+      const resumePromise = freshClient.resumeSession({ id: sessionId }).then(
+        (summary) => {
+          settled = true;
+          return summary;
+        },
+        (error: unknown) => {
+          settled = true;
+          throw error;
+        },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(settled).toBe(false);
+      gated.release();
+      await resumePromise;
+      expect(await freshClient.getEnvironment({ sessionId })).toMatchObject({
+        environmentId: 'fake-box',
+        cwd: remoteDir,
+      });
+    } finally {
+      gated.restore();
+      await freshClient.close();
+      vi.unstubAllEnvs();
     }
   });
 
@@ -991,6 +1414,11 @@ key = "${titleOAuthRef.key}"
       expect(limitedMain?.toolStore).toEqual(expectedLimited.toolStore);
       expect(JSON.stringify(limitedMain?.replay)).toContain('second imported turn');
       expect(JSON.stringify(limitedMain?.replay)).not.toContain('first imported turn');
+      expect(
+        limitedMain?.replay.flatMap((record) =>
+          record.type === 'message' ? [record.message] : [],
+        ),
+      ).toEqual([expect.objectContaining({ role: 'user', toolCalls: [] })]);
       expect(Object.keys(limited.agents)).toEqual([MAIN_AGENT_ID]);
 
       // A live re-resume serves the same fold off the live scope.
@@ -1003,6 +1431,14 @@ key = "${titleOAuthRef.key}"
       const expectedFull = await foldAgentWireReplay(wirePath);
       expect(full.agents[MAIN_AGENT_ID]?.replay).toEqual(expectedFull.replay);
       expect(JSON.stringify(full.agents[MAIN_AGENT_ID]?.replay)).toContain('first imported turn');
+      expect(
+        full.agents[MAIN_AGENT_ID]?.replay.flatMap((record) =>
+          record.type === 'message' ? [record.message] : [],
+        ),
+      ).toEqual([
+        expect.objectContaining({ role: 'user', toolCalls: [] }),
+        expect.objectContaining({ role: 'user', toolCalls: [] }),
+      ]);
     } finally {
       await client.close();
     }
@@ -1070,6 +1506,101 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  describe('workspace additional directory discovery', () => {
+    it('loads legacy project directories without a session and releases the workspace lease', async () => {
+      const { harness } = await makeHarness();
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+      const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+      tempDirs.push(workDir, extraDir);
+      await mkdir(join(workDir, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(workDir, '.kimi-code', 'local.toml'),
+        `[workspace]\nadditional_dir = [${JSON.stringify(extraDir)}]\n`,
+      );
+      const client = harness['rpc'] as SDKRpcClientV2;
+      const manager = client.engineAccessor.get(IWorkspaceInstanceManager);
+      const acquireSpy = vi.spyOn(manager, 'acquire');
+      try {
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
+        expect(harness.sessions.size).toBe(0);
+        expect(acquireSpy).toHaveBeenCalledTimes(1);
+        const lease = await acquireSpy.mock.results[0]!.value;
+        expect(manager.get(lease.instance.id)).toBeUndefined();
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it('loads registry directories without a session', async () => {
+      const { harness } = await makeHarness();
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+      const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+      tempDirs.push(workDir, extraDir);
+      const client = harness['rpc'] as SDKRpcClientV2;
+      const workspaces = client.engineAccessor.get(IWorkspaceService);
+      try {
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([]);
+        await workspaces.create({ root: workDir, additionalDirs: [extraDir] });
+        await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
+        expect(harness.sessions.size).toBe(0);
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it('waits for workspace directories before returning them', async () => {
+      const { harness } = await makeHarness();
+      const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+      const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+      tempDirs.push(workDir, extraDir);
+      const client = harness['rpc'] as SDKRpcClientV2;
+      const manager = client.engineAccessor.get(IWorkspaceInstanceManager);
+      const lease = await manager.acquire({ root: workDir });
+      const dirs = lease.instance.program.dirs;
+      let releaseReady!: () => void;
+      const readyGate = new Promise<void>((resolve) => {
+        releaseReady = resolve;
+      });
+      let ready = false;
+      const gatedDirs = Object.create(dirs) as typeof dirs;
+      Object.defineProperties(gatedDirs, {
+        ready: {
+          value: readyGate.then(() => {
+            ready = true;
+          }),
+        },
+        additionalDirs: {
+          get: () => (ready ? [extraDir] : []),
+        },
+      });
+      const dirsSpy = vi.spyOn(lease.instance.program, 'dirs', 'get').mockReturnValue(gatedDirs);
+      try {
+        let settled = false;
+        const pending = harness.getWorkspaceAdditionalDirs(workDir);
+        void pending.then(() => {
+          settled = true;
+        });
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
+        expect(settled).toBe(false);
+        releaseReady();
+        await expect(pending).resolves.toEqual([extraDir]);
+      } finally {
+        releaseReady();
+        dirsSpy.mockRestore();
+        lease.dispose();
+        await harness.close();
+      }
+    });
+
+    it('rejects unsupported directory discovery instead of returning an empty list', async () => {
+      await expect(
+        SDKRpcClientBase.prototype.getWorkspaceAdditionalDirs('/tmp/project'),
+      ).rejects.toMatchObject({ code: ErrorCodes.NOT_IMPLEMENTED });
+    });
+  });
+
   it('serves suggestFiles through the workspace handler fs service', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -1094,6 +1625,40 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('serves suggestFiles from a live remote session working directory', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-remote-'));
+    tempDirs.push(workDir, remoteDir);
+    await mkdir(join(workDir, 'src'), { recursive: true });
+    await mkdir(join(remoteDir, 'src'), { recursive: true });
+    await writeFile(join(workDir, 'src', 'local-only.ts'), 'local');
+    await writeFile(join(remoteDir, 'src', 'app.ts'), 'remote');
+    const { harness, client } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    const provider = await attachFakeBoxEnvironment(client);
+    try {
+      const session = await harness.createSession({ workDir, environmentId: 'fake-box' });
+      expect(await session.getEnvironmentState()).toEqual({ environmentId: 'fake-box', cwd: remoteDir, type: 'ssh', status: 'ready' });
+      const matched = await harness.suggestFiles(workDir, { query: 'app', sessionId: session.id });
+      expect(matched?.items).toContainEqual(
+        expect.objectContaining({ kind: 'file', path: 'src/app.ts', name: 'app.ts' }),
+      );
+      const remoteOnly = await harness.suggestFiles(workDir, { query: 'local', sessionId: session.id });
+      expect(remoteOnly?.items.some((item) => item.name === 'local-only.ts')).toBe(false);
+
+      const local = await harness.suggestFiles(workDir, { query: 'local' });
+      expect(local?.items).toContainEqual(
+        expect.objectContaining({ kind: 'file', path: 'src/local-only.ts' }),
+      );
+
+      await provider.dispose();
+      expect(await session.getEnvironmentState()).toMatchObject({ environmentId: 'fake-box', status: 'disposed' });
+    } finally {
+      await provider.dispose();
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('rejects an out-of-range suggestFiles limit before touching the engine', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -1106,6 +1671,25 @@ key = "${titleOAuthRef.key}"
       }
     } finally {
       await harness.close();
+    }
+  });
+
+  it('reads the [environments] section through getConfig and extends it through setConfig', async () => {
+    const { harness } = await makeEnvironmentHarness();
+    try {
+      const config = await harness.getConfig();
+      expect(config.environments?.['fake-box']).toMatchObject({
+        type: 'ssh',
+        host: 'fake-box',
+        defaultCwd: '/remote/work',
+      });
+      await harness.setConfig({ environments: { 'added-box': { type: 'ssh', host: 'added-box' } } });
+      const reread = await harness.getConfig({ reload: true });
+      expect(reread.environments?.['added-box']).toMatchObject({ type: 'ssh', host: 'added-box' });
+      expect(reread.environments?.['fake-box']).toMatchObject({ type: 'ssh', host: 'fake-box' });
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
     }
   });
 
@@ -1136,7 +1720,7 @@ key = "${titleOAuthRef.key}"
       expect(byName.has('demo-project-skill')).toBe(false);
 
       // The session skill catalog (the Skill tool's listing) goes through the
-      // seeded engine runtime options, so it sees the same explicit source.
+      // seeded engine environment options, so it sees the same explicit source.
       const session = await harness.createSession({ workDir });
       const sessionNames = new Set((await session.listSkills()).map((skill) => skill.name));
       expect(sessionNames.has('demo-explicit-skill')).toBe(true);
@@ -1591,6 +2175,97 @@ key = "${titleOAuthRef.key}"
     30_000,
   );
 
+  it('reloads workspace dirs without duplicating agent reminders', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+    const failureDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-failure-'));
+    tempDirs.push(homeDir, workDir, extraDir, failureDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.setConfig({
+        providers: {
+          stub: {
+            type: 'openai',
+            baseUrl: 'https://model.example.test/v1',
+            apiKey: 'YOUR_API_KEY',
+          },
+        },
+        models: { stub: { provider: 'stub', model: 'stub', maxContextSize: 32000 } },
+        defaultModel: 'stub',
+      });
+      await client.createSession({ id: 'ses_dirs_reload', workDir });
+      await client.getStatus({ sessionId: 'ses_dirs_reload' });
+      const before = getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!;
+      const workspaceId = before.accessor.get(ISessionContext).workspaceId;
+      const currentProgram = () => {
+        const current = client.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId);
+        if (current === undefined) throw new Error('expected the current workspace program');
+        return current.program;
+      };
+      const reloadDirs = vi.spyOn(currentProgram().dirs, 'reload');
+      const projectsPath = join(homeDir, 'projects.json');
+      const projects = JSON.parse(await readFile(projectsPath, 'utf8')) as {
+        projects: Record<string, { root: string; additional_dirs?: string[] }>;
+      };
+      const project = Object.values(projects.projects).find((entry) => entry.root === workDir);
+      if (project === undefined) throw new Error('expected the session project');
+      project.additional_dirs = [extraDir];
+      await writeFile(projectsPath, JSON.stringify(projects), 'utf8');
+
+      await client.reloadSession({ sessionId: 'ses_dirs_reload' });
+      expect(reloadDirs).toHaveBeenCalledTimes(1);
+      const context = () =>
+        getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!
+          .accessor.get(IAgentLifecycleService)
+          .handleOf('main')!
+          .accessor.get(IAgentContextMemoryService)
+          .get();
+      const dirsReminders = () =>
+        context().filter(
+          (message) =>
+            message.origin?.kind === 'injection' &&
+            message.origin.variant === 'workspace_dirs_change',
+        );
+      expect(dirsReminders()).toHaveLength(1);
+      expect(JSON.stringify(dirsReminders()[0])).toContain(`Added directories: ${extraDir}.`);
+
+      const secondReloadDirs = vi.spyOn(currentProgram().dirs, 'reload');
+      await client.reloadSession({ sessionId: 'ses_dirs_reload' });
+      expect(secondReloadDirs).toHaveBeenCalledTimes(1);
+      expect(dirsReminders()).toHaveLength(1);
+
+      const beforeFailure = getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!;
+      const latestProjects = JSON.parse(await readFile(projectsPath, 'utf8')) as {
+        projects: Record<string, { root: string; additional_dirs?: string[] }>;
+      };
+      const latestProject = Object.values(latestProjects.projects).find(
+        (entry) => entry.root === workDir,
+      );
+      if (latestProject === undefined) throw new Error('expected the latest session project');
+      latestProject.additional_dirs = [extraDir, failureDir];
+      await writeFile(projectsPath, JSON.stringify(latestProjects), 'utf8');
+      const failureReloadDirs = vi.spyOn(currentProgram().dirs, 'reload');
+      vi.spyOn(currentProgram().instructions, 'reload').mockRejectedValueOnce(
+        new Error('instructions reload failed'),
+      );
+      await expect(client.reloadSession({ sessionId: 'ses_dirs_reload' })).rejects.toThrow(
+        'instructions reload failed',
+      );
+      expect(getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')).toBe(beforeFailure);
+      expect(failureReloadDirs).toHaveBeenCalledTimes(1);
+      expect(dirsReminders()).toHaveLength(2);
+      expect(JSON.stringify(dirsReminders().at(-1))).toContain(
+        `Added directories: ${failureDir}.`,
+      );
+
+      await client.reloadSession({ sessionId: 'ses_dirs_reload' });
+      expect(dirsReminders()).toHaveLength(2);
+    } finally {
+      await client.close();
+    }
+  }, 15_000);
+
   it('serves getTodos from the live session todo state', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
@@ -2006,6 +2681,103 @@ describe('SDKRpcClientV2 workspace trust', () => {
     }
   });
 
+  it('resolves trust paths against the bound environment', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-trust-local-'));
+    const remoteCwd = await mkdtemp(join(tmpdir(), 'kimi-sdk-trust-remote-'));
+    const remoteHome = await mkdtemp(join(tmpdir(), 'kimi-sdk-trust-remote-home-'));
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-trust-home-'));
+    const remoteAdditionalDir = join(remoteCwd, 'shared');
+    const remoteHomeAdditionalDir = join(remoteHome, 'home-shared');
+    tempDirs.push(workDir, remoteCwd, remoteHome, homeDir);
+    await mkdir(remoteAdditionalDir);
+    await mkdir(remoteHomeAdditionalDir);
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `[environments.fake-box]\ntype = "ssh"\nhost = "example.com"\ndefaultCwd = ${JSON.stringify(remoteCwd)}\n`,
+      'utf8',
+    );
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const harness = new KimiHarness(client, {
+      identity: client.identity,
+      homeDir: client.homeDir,
+      configPath: client.configPath,
+      auth: client.auth,
+      telemetry: client.telemetry,
+      ensureConfigFile: () => client.ensureConfigFile(),
+      onClose: () => client.close(),
+    });
+    const attached = await (client as unknown as {
+      remoteEnvironmentProvider: Promise<{ dispose(): void | Promise<void> } | undefined>;
+    }).remoteEnvironmentProvider;
+    await attached?.dispose();
+    const provider = await client.engineAccessor.get(IEnvironmentService).addProvider({
+      id: 'fake-box-provider',
+      attach: async (host) => {
+        const fake = new FakeEnvironment(
+          { environmentId: 'fake-box', generation: 'fake-generation' },
+          { capabilities: ['fs', 'process'], host: { homeDir: remoteHome } },
+        );
+        const environment = Object.assign(fake, {
+          fs: new HostFileSystem(),
+          process: new HostProcessService(),
+        });
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
+
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir, {
+        additionalDirs: ['shared', '~/home-shared'],
+        environmentId: 'fake-box',
+        environmentCwd: remoteCwd,
+      });
+
+      expect(info.gatedAdditionalDirs).toEqual([
+        await realpath(remoteAdditionalDir),
+        await realpath(remoteHomeAdditionalDir),
+      ]);
+      expect(info.additionalDirSources).toEqual([
+        await realpath(remoteAdditionalDir),
+        await realpath(remoteHomeAdditionalDir),
+      ]);
+    } finally {
+      await provider.dispose();
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('resolves relative session-only dirs without loading their skills', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const additionalDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-additional-'));
+    tempDirs.push(workDir, additionalDir);
+    const skillRoot = join(additionalDir, '.kimi-code', 'skills');
+    await mkdir(join(skillRoot, 'startup-only'), { recursive: true });
+    await writeFile(
+      join(skillRoot, 'startup-only', 'SKILL.md'),
+      '---\nname: startup-only\ndescription: Startup-only skill\n---\nbody',
+      'utf8',
+    );
+
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir, {
+        additionalDirs: [relative(workDir, additionalDir)],
+      });
+      const realAdditionalDir = await realpath(additionalDir);
+
+      expect(info.gatedAdditionalDirs).toEqual([realAdditionalDir]);
+      expect(info.additionalDirSources).toEqual([realAdditionalDir]);
+      expect(info.instructionSources.skills).not.toContain('startup-only');
+      expect(info.instructionSources.paths).not.toContain(`${await realpath(skillRoot)}/`);
+      expect(info.gatedAdditionalDirs).not.toContain(await realpath(skillRoot));
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('points to the scanned agent directory for an effective workspace profile', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
@@ -2056,41 +2828,161 @@ describe('foldAgentWireReplay', () => {
     const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
     tempDirs.push(dir);
     const wirePath = join(dir, 'wire.jsonl');
+    const toolCalls = [
+      { type: 'function', id: 'call_1', name: 'Bash', arguments: '{"command":"ls"}' },
+    ];
     const records = [
       { type: 'metadata', protocol_version: '1.5', created_at: 1000 },
       {
         type: 'context.append_message',
-        message: { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'hello' },
+            { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+          ],
+        },
         time: 1001,
       },
-      { type: 'permission.set_mode', mode: 'auto', time: 1002 },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'running' },
+            { type: 'audio_url', audioUrl: { url: 'data:audio/mpeg;base64,BBB' } },
+          ],
+          toolCalls,
+        },
+        time: 1002,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'tool',
+          content: [
+            { type: 'text', text: 'ok' },
+            { type: 'video_url', videoUrl: { url: 'https://example.com/result.mp4' } },
+          ],
+          toolCalls: [],
+          toolCallId: 'call_1',
+        },
+        time: 1003,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'context summary' }],
+          origin: { kind: 'compaction_summary' },
+        },
+        time: 1004,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'goal fork cleared' }],
+          origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
+        },
+        time: 1005,
+      },
+      {
+        type: 'context.apply_compaction',
+        summary: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'legacy compaction' },
+            { type: 'image_url', imageUrl: { url: 'media://media_legacy' } },
+          ],
+        },
+        compactedCount: 1,
+        tokensAfter: 10,
+        keptUserMessageCount: 1,
+        time: 1006,
+      },
+      { type: 'permission.set_mode', mode: 'auto', time: 1007 },
       {
         type: 'tools.update_store',
         key: 'todo',
         value: [{ title: 'old', status: 'done' }],
-        time: 1003,
+        time: 1008,
       },
       {
         type: 'tools.update_store',
         key: 'todo',
         value: [{ title: 'new', status: 'pending' }],
-        time: 1004,
+        time: 1009,
       },
       // A v2-only op the v1 restore switch does not know: ignored.
-      { type: 'profile.bind', profileName: 'agent', systemPrompt: 'x', thinkingEffort: 'off', disallowedTools: [], time: 1005 },
+      { type: 'profile.bind', profileName: 'agent', systemPrompt: 'x', thinkingEffort: 'off', disallowedTools: [], time: 1010 },
     ];
     await writeFile(wirePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf-8');
-    const folded = await foldAgentWireReplay(wirePath);
-    expect(folded.replay).toEqual([
-      {
-        type: 'message',
-        message: { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
-        time: 1001,
-      },
-      { type: 'permission_updated', mode: 'auto', time: 1002 },
-    ]);
-    // Last write wins per store key.
-    expect(folded.toolStore).toEqual({ todo: [{ title: 'new', status: 'pending' }] });
+    for (const turnLimit of [undefined, 1]) {
+      const folded = await foldAgentWireReplay(wirePath, turnLimit);
+      expect(folded.replay).toEqual([
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'hello' },
+              { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+            ],
+            toolCalls: [],
+          },
+          time: 1001,
+        },
+        {
+          type: 'message',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'running' },
+              { type: 'audio_url', audioUrl: { url: 'data:audio/mpeg;base64,BBB' } },
+            ],
+            toolCalls,
+          },
+          time: 1002,
+        },
+        {
+          type: 'message',
+          message: {
+            role: 'tool',
+            content: [
+              { type: 'text', text: 'ok' },
+              { type: 'video_url', videoUrl: { url: 'https://example.com/result.mp4' } },
+            ],
+            toolCallId: 'call_1',
+            toolCalls: [],
+          },
+          time: 1003,
+        },
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'context summary' }],
+            toolCalls: [],
+            origin: { kind: 'compaction_summary' },
+          },
+          time: 1004,
+        },
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'goal fork cleared' }],
+            toolCalls: [],
+            origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
+          },
+          time: 1005,
+        },
+        { type: 'permission_updated', mode: 'auto', time: 1007 },
+      ]);
+      // Last write wins per store key.
+      expect(folded.toolStore).toEqual({ todo: [{ title: 'new', status: 'pending' }] });
+    }
   });
 
   it('degrades to an empty fold on a missing or corrupt journal', async () => {

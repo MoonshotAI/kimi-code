@@ -1,4 +1,4 @@
-import { type Message } from '#/llm-adapter/contract/message';
+import { type Message } from '#human/llm/message';
 import { describe, expect, it } from 'vitest';
 
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
@@ -84,8 +84,8 @@ describe('DefaultCompactionStrategy', () => {
           { type: 'function', id: 'call_b', name: 'Lookup', arguments: '{}' },
         ],
       },
-      { role: 'tool', content: [{ type: 'text', text: 'a' }], toolCalls: [], toolCallId: 'call_a' },
-      { role: 'tool', content: [{ type: 'text', text: 'b' }], toolCalls: [], toolCallId: 'call_b' },
+      { role: 'tool', content: [{ type: 'text', text: 'a' }], toolCallId: 'call_a' },
+      { role: 'tool', content: [{ type: 'text', text: 'b' }], toolCallId: 'call_b' },
       textMessage('user', 'next prompt'),
     ];
 
@@ -207,9 +207,7 @@ function overflowOnlyCompactionStrategy(maxSize: number = 14): DefaultCompaction
 }
 
 function textMessage(role: 'user' | 'assistant', text: string): Message {
-  return {
-    role,
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-  };
+  return role === 'assistant'
+    ? { role, content: [{ type: 'text', text }], toolCalls: [] }
+    : { role, content: [{ type: 'text', text }] };
 }

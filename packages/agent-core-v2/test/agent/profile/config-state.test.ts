@@ -1,7 +1,8 @@
-import { emptyUsage } from '#human/llm/usage';
+import { emptyUsage } from '#human/llm-requester/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
+import type { LoopRequester } from '#/agent/loop/requesterContract';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelRecord } from '#/llm-adapter/model/model';
@@ -33,7 +34,7 @@ function defaultGenerate(): GenerateFn {
 describe('ConfigState model capabilities', () => {
   let ctx: TestAgentContext;
   let profile: IAgentProfileService;
-  let requester: IAgentLLMRequesterService;
+  let requester: LoopRequester;
   let kimiConfig: TestKimiConfig;
   let generate: GenerateFn;
   let records: TelemetryRecord[];
@@ -52,7 +53,7 @@ describe('ConfigState model capabilities', () => {
       telemetryServices(recordingTelemetry(records)),
     );
     profile = ctx.get(IAgentProfileService);
-    requester = ctx.get(IAgentLLMRequesterService);
+    requester = ctx.get(IAgentLoopService).requester;
   });
 
   afterEach(async () => {
@@ -376,7 +377,7 @@ describe('ConfigState prompt cache hint', () => {
 describe('ConfigState thinking clamp for always-thinking models', () => {
   let ctx: TestAgentContext;
   let profile: IAgentProfileService;
-  let requester: IAgentLLMRequesterService;
+  let requester: LoopRequester;
   let kimiConfig: TestKimiConfig;
   let capturedThinking: unknown;
 
@@ -439,7 +440,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
       })),
     );
     profile = ctx.get(IAgentProfileService);
-    requester = ctx.get(IAgentLLMRequesterService);
+    requester = ctx.get(IAgentLoopService).requester;
   });
 
   afterEach(async () => {
@@ -560,7 +561,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
   let ctx: TestAgentContext | undefined;
   let profile: IAgentProfileService;
-  let requester: IAgentLLMRequesterService;
+  let requester: LoopRequester;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
   let capturedOptions: Parameters<LegacyGenerateFn>[5];
@@ -614,7 +615,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       })),
     );
     profile = ctx.get(IAgentProfileService);
-    requester = ctx.get(IAgentLLMRequesterService);
+    requester = ctx.get(IAgentLoopService).requester;
   }
 
   it('injects KIMI_MODEL_TEMPERATURE into the per-turn sampling intent (the compaction request also uses)', async () => {

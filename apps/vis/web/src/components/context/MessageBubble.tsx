@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react';
 
-import type {
-  ContentPart,
-  ProjectedMessage,
-  ToolCall,
+import {
+  mediaUrlOf,
+  type CoreContentPart as ContentPart,
+  type ProjectedMessage,
+  type ToolCall,
 } from '../../types';
 import { ImagePreview } from '../shared/ImagePreview';
 import { Pill } from '../shared/Pill';
@@ -47,6 +48,7 @@ function UserBubble({ m }: { m: ProjectedMessage }) {
 }
 
 function AssistantBubble({ m }: { m: ProjectedMessage }) {
+  if (m.message.role !== 'assistant') return null;
   const thinkPart = m.message.content.find((p) => p.type === 'think');
   const think = thinkPart && thinkPart.type === 'think' ? thinkPart.think : undefined;
   const visibleParts = m.message.content.filter((p) => p.type !== 'think');
@@ -78,6 +80,7 @@ function AssistantBubble({ m }: { m: ProjectedMessage }) {
 }
 
 function ToolBubble({ m }: { m: ProjectedMessage }) {
+  if (m.message.role !== 'tool') return null;
   // Tool outputs are often huge (file contents, command stdout). Collapse
   // by default so the conversation flow stays readable. Errors open by
   // default — that's the case where the user actually needs to read.
@@ -202,19 +205,19 @@ function MessageContent({ parts }: { parts: readonly ContentPart[] }): ReactNode
           return <ThinkBlock key={i} text={p.think} />;
         }
         if (p.type === 'image_url') {
-          return <ImagePreview key={i} url={p.imageUrl.url} />;
+          return <ImagePreview key={i} url={mediaUrlOf(p)} />;
         }
         if (p.type === 'audio_url') {
           return (
             <div key={i} className="font-mono text-[11px] text-fg-2">
-              [audio: {p.audioUrl.url}]
+              [audio: {mediaUrlOf(p)}]
             </div>
           );
         }
         if (p.type === 'video_url') {
           return (
             <div key={i} className="font-mono text-[11px] text-fg-2">
-              [video: {p.videoUrl.url ?? '—'}]
+              [video: {mediaUrlOf(p)}]
             </div>
           );
         }

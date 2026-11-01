@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.22.0
+
+### Minor Changes
+
+- [#4347](https://github.com/MoonshotAI/kimi-code/pull/4347) [`b3c6e0a`](https://github.com/MoonshotAI/kimi-code/commit/b3c6e0a75a3b1716a360a75eed7194be9b97c176) Thanks [@Grapedge](https://github.com/Grapedge)! - Expose agent IDs in approval and question requests.
+
 ## 0.21.1
 
 ### Patch Changes

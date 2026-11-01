@@ -5,12 +5,15 @@ import {
   wrapTextWithAnsi,
   type Component,
   type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 import type { WorkspaceTrustInfo } from '@moonshot-ai/kimi-code-sdk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme, type ColorToken } from '#/tui/theme';
 import { pageView } from '#/tui/utils/paging';
+import { isSettlingClick } from '#/tui/utils/terminal-focus';
 
 export type TrustPromptChoice = 'trust' | 'distrust';
 
@@ -32,6 +35,8 @@ export class TrustPromptComponent implements Component, Focusable {
   private disclosureIndex = 0;
   private disclosurePageSize = 1;
   private canConfirm = true;
+  private optionRows: readonly number[] = [];
+  private readonly shownAt = Date.now();
 
   constructor(private readonly opts: TrustPromptOptions) {}
 
@@ -64,7 +69,35 @@ export class TrustPromptComponent implements Component, Focusable {
     }
   }
 
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (!this.focused) {
+      if (event.type === 'press') return { handled: true };
+      if (event.type === 'click') return { handled: true, focus: true };
+      return undefined;
+    }
+    if (event.type === 'move') {
+      const index = this.optionRows.indexOf(event.y);
+      if (index === -1) return undefined;
+      const changed = this.selectedIndex !== index;
+      this.selectedIndex = index;
+      return { handled: true, render: changed };
+    }
+    if (event.button !== 'left') return undefined;
+    const index = this.optionRows.indexOf(event.y);
+    if (index === -1) return undefined;
+    if (event.type === 'press') {
+      this.selectedIndex = index;
+      return { handled: true, render: true };
+    }
+    if (event.type === 'click' && this.canConfirm && !isSettlingClick(this.shownAt)) {
+      this.selectedIndex = index;
+      this.opts.onSelect(OPTIONS[index]!.value);
+    }
+    return { handled: true };
+  }
+
   render(width: number): string[] {
+    this.optionRows = [];
     const rule = currentTheme.fg('primary', '─'.repeat(width));
     const availableRows = Math.max(0, Math.floor(this.opts.getAvailableRows?.() ?? Infinity));
     const header = [
@@ -87,16 +120,18 @@ export class TrustPromptComponent implements Component, Focusable {
       ),
       ...wrap('Tool approvals follow your permission settings.', 1, width, 'textMuted'),
       '',
-      ...OPTIONS.map((option, i) => {
-        const selected = i === this.selectedIndex;
-        const pointer = selected ? SELECT_POINTER : ' ';
-        const label = selected
-          ? currentTheme.boldFg('primary', option.label)
-          : currentTheme.fg('text', option.label);
-        return currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `) + label;
-      }),
-      rule,
     ];
+    const optionRows: number[] = [];
+    for (const [i, option] of OPTIONS.entries()) {
+      const selected = i === this.selectedIndex;
+      const pointer = selected ? SELECT_POINTER : ' ';
+      const label = selected
+        ? currentTheme.boldFg('primary', option.label)
+        : currentTheme.fg('text', option.label);
+      optionRows.push(footer.length);
+      footer.push(currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `) + label);
+    }
+    footer.push(rule);
     this.canConfirm = header.length + footer.length + 2 <= availableRows;
     if (!this.canConfirm) {
       return [header[1]!, ' Enlarge terminal to review sources. Esc exit.']
@@ -113,6 +148,7 @@ export class TrustPromptComponent implements Component, Focusable {
     while (lines.length < header.length + this.disclosurePageSize) lines.push('');
     if (page.pageCount > 1)
       lines.push(currentTheme.fg('textMuted', ` ←→ page · ${page.page + 1} / ${page.pageCount}`));
+    this.optionRows = optionRows.map((row) => lines.length + row);
     lines.push(...footer);
     return lines.map((line) => truncateToWidth(line, width));
   }

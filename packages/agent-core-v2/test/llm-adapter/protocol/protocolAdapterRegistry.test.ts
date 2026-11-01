@@ -1,7 +1,9 @@
-import { beforeEach, afterEach, describe, expect, it } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { isUnknownCapability } from '#/llm-adapter/contract/capability';
-import { thinkingMetadataOf } from '#human/llm/thinking';
+import { contentsOf } from '#human/llm/requester';
+import { supportsLlmUpload } from '#/llm-adapter/model/media';
+import { generateModel } from '#/llm-adapter/model/generate';
 import type { Model } from '#/llm-adapter/model/catalog';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import {
@@ -103,30 +105,31 @@ describe('supportedProtocols', () => {
 });
 
 describe('resolveAdapterIdentity', () => {
-  it('resolves the kimi pair registrations to their vendor traits', () => {
+  it('resolves the kimi pair registrations to their vendor protocol bindings', () => {
     expect(registry.resolveAdapterIdentity('openai', 'kimi').baseId).toBe('openai');
-    expect(registry.resolveAdapterIdentity('openai', 'kimi').trait).toBeDefined();
+    expect(registry.resolveAdapterIdentity('openai', 'kimi').thinkingDriven).toBe(true);
+    expect(registry.resolveAdapterIdentity('openai', 'kimi').strictThinkingValidation).toBe(true);
     expect(registry.resolveAdapterIdentity('anthropic', 'kimi').baseId).toBe('anthropic');
-    expect(registry.resolveAdapterIdentity('anthropic', 'kimi').trait).toBeDefined();
+    expect(registry.resolveAdapterIdentity('anthropic', 'kimi').thinkingDriven).toBe(true);
     expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').baseId).toBe(
       'openai_responses',
     );
-    expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').trait).toBeDefined();
+    expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').thinkingDriven).toBe(true);
   });
 
   it('resolves unregistered pairs to the protocol itself with no vendor trait', () => {
     const google = registry.resolveAdapterIdentity('google-genai', 'kimi');
     expect(google.baseId).toBe('google-genai');
-    expect(google.trait).toBeUndefined();
+    expect(google.thinkingDriven).toBeUndefined();
     const unknown = registry.resolveAdapterIdentity('openai', 'no-such-vendor');
     expect(unknown.baseId).toBe('openai');
-    expect(unknown.trait).toBeUndefined();
+    expect(unknown.thinkingDriven).toBeUndefined();
   });
 
   it('resolves the no-providerType branch identically', () => {
     const identity = registry.resolveAdapterIdentity('openai');
     expect(identity.baseId).toBe('openai');
-    expect(identity.trait).toBeUndefined();
+    expect(identity.thinkingDriven).toBeUndefined();
   });
 });
 
@@ -165,54 +168,121 @@ describe('resolveCapability', () => {
   });
 });
 
-describe('resolve gateway routes', () => {
+describe('request gateway routes', () => {
   it('routes kimi+openai to the kimi trait with the video upload media', () => {
-    const resolved = registry.resolve(modelWith({ protocol: 'openai', providerType: 'kimi' }));
-    expect(resolved.protocol).toBe('openai');
-    expect(resolved.model.provider).toBe('openai');
-    expect(resolved.model.model).toBe('wire-model');
-    expect(typeof resolved.media?.uploadVideo).toBe('function');
-    expect(typeof resolved.media?.uploadImage).toBe('function');
+    const resolved = registry.request(modelWith({ protocol: 'openai', providerType: 'kimi' }));
+    expect(contentsOf(resolved).model?.spec?.provider).toBe('openai');
+    expect(contentsOf(resolved).model?.spec?.name).toBe('wire-model');
+    expect(supportsLlmUpload(resolved, 'video')).toBe(true);
+    expect(supportsLlmUpload(resolved, 'image')).toBe(true);
   });
 
   it('routes plain openai without the upload media', () => {
-    const resolved = registry.resolve(modelWith({ protocol: 'openai' }));
-    expect(resolved.protocol).toBe('openai');
-    expect(resolved.media?.uploadVideo).toBeUndefined();
-    expect(resolved.media?.uploadImage).toBeUndefined();
+    const resolved = registry.request(modelWith({ protocol: 'openai' }));
+    expect(contentsOf(resolved).model?.spec?.provider).toBe('openai');
+    expect(supportsLlmUpload(resolved, 'video')).toBe(false);
+    expect(supportsLlmUpload(resolved, 'image')).toBe(false);
   });
 
   it('reports the wire protocol regardless of beta or vertex provider options', () => {
-    const beta = registry.resolve(
+    const beta = registry.request(
       modelWith({ protocol: 'anthropic', providerOptions: { betaApi: true } }),
     );
-    expect(beta.protocol).toBe('anthropic');
-    const vertex = registry.resolve(
+    expect(contentsOf(beta).model?.spec?.provider).toBe('anthropic');
+    expect(contentsOf(beta).protocol?.options).toMatchObject({ betaApi: true });
+    const vertex = registry.request(
       modelWith({
         protocol: 'google-genai',
         providerOptions: { vertexai: true, project: 'p', location: 'l' },
       }),
     );
-    expect(vertex.protocol).toBe('google-genai');
+    expect(contentsOf(vertex).model?.spec?.provider).toBe('google_genai');
+    expect(contentsOf(vertex).protocol?.options).toMatchObject({ vertexai: true });
   });
 
-  it('routes kimi+anthropic through the kimi anthropic trait with media', () => {
-    const resolved = registry.resolve(modelWith({ protocol: 'anthropic', providerType: 'kimi' }));
-    expect(resolved.protocol).toBe('anthropic');
-    expect(typeof resolved.media?.uploadVideo).toBe('function');
-    expect(typeof resolved.media?.uploadImage).toBe('function');
+  it('routes kimi+anthropic with media and explicit beta opt-in', async () => {
+    const resolved = registry.request(modelWith({ protocol: 'anthropic', providerType: 'kimi' }));
+    expect(contentsOf(resolved).model?.spec?.provider).toBe('anthropic');
+    expect(supportsLlmUpload(resolved, 'video')).toBe(true);
+    expect(supportsLlmUpload(resolved, 'image')).toBe(true);
+
+    const urls: string[] = [];
+    const terminal: string[] = [];
+    const failures: unknown[] = [];
+    vi.stubGlobal('fetch', (async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ) => {
+      urls.push(new Request(input, init).url);
+      const events = [
+        {
+          type: 'message_start',
+          message: {
+            id: 'msg_1',
+            type: 'message',
+            role: 'assistant',
+            model: 'wire-model',
+            content: [],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hi' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+        { type: 'message_stop' },
+      ];
+      return new Response(
+        events
+          .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+          .join(''),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      );
+    }) as typeof fetch);
+    const generate = async (providerOptions?: Model['providerOptions']) => {
+      const routed = registry.request(
+        modelWith({ protocol: 'anthropic', providerType: 'kimi', providerOptions }),
+      );
+      try {
+        for await (const event of generateModel(
+          routed,
+          {
+            systemPrompt: '',
+            tools: [],
+            messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+          },
+          new AbortController().signal,
+          { stream: true },
+        )) {
+          if (event.type === 'finish') terminal.push(event.type);
+        }
+      } catch (error) {
+        failures.push(error);
+      }
+    };
+    try {
+      await generate();
+      await generate({ betaApi: true });
+      expect(failures).toEqual([]);
+      expect(urls.map((url) => new URL(url).searchParams.get('beta'))).toEqual([null, 'true']);
+      expect(terminal).toEqual(['finish', 'finish']);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('carries thinking metadata and model limits onto the resolved LlmModel', () => {
-    const resolved = registry.resolve(
+    const resolved = registry.request(
       modelWith({
         protocol: 'anthropic',
         supportEfforts: ['low', 'high'],
         providerOptions: { supportEfforts: ['low', 'high'], adaptiveThinking: true },
       }),
     );
-    expect(resolved.model.maxContextSize).toBe(128000);
-    expect(thinkingMetadataOf(resolved.model)).toMatchObject({
+    expect(contentsOf(resolved).model?.spec?.maxContextSize).toBe(128000);
+    expect(contentsOf(resolved).model?.spec?.thinking).toMatchObject({
       supportEfforts: ['low', 'high'],
       adaptiveThinking: true,
     });
@@ -269,11 +339,11 @@ describe('kimi provider definitions', () => {
     const anthropic = getProviderDefinition('kimi', 'anthropic');
     const responses = getProviderDefinition('kimi', 'openai_responses');
     expect(native?.baseProtocol).toBe('openai');
-    expect(native?.trait).toBeDefined();
+    expect(native?.requester).toBeDefined();
     expect(anthropic?.baseProtocol).toBe('anthropic');
-    expect(anthropic?.trait).toBeDefined();
+    expect(anthropic?.requester).toBeDefined();
     expect(responses?.baseProtocol).toBe('openai_responses');
-    expect(responses?.trait).toBeDefined();
+    expect(responses?.requester).toBeDefined();
     for (const definition of [native, anthropic, responses]) {
       expect(definition?.endpoint).toEqual({
         apiKeyEnv: 'KIMI_API_KEY',

@@ -5,7 +5,7 @@
  * differs per file.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,7 +13,17 @@ import { join } from 'node:path';
 
 import { Service } from '@moonshot-ai/agent-core-v2/_base/di/service';
 import { CommandContribution } from '@moonshot-ai/agent-core-v2/agent/command/commandContribution';
+import { ToolResultEvent } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
+import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
+import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
+import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
+import { generateModel } from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
+import type { LlmRequester } from '@moonshot-ai/agent-core-v2/human/llm-requester/requester';
+import { coreRequesterFromA } from '../../../agent-core-v2/test/harness/scripted-generate.js';
 import {
   resetModelsDevUpstreamForTest,
   setModelsDevUpstreamForTest,
@@ -67,21 +77,38 @@ export function defineKlientConformance(
     });
 
     it('workspaces round-trip through create/get/update/list/delete', async () => {
-      const workspaces = target.klient.global.workspaces;
-      const created = await workspaces.createOrTouch({ root: process.cwd(), name: 'conformance' });
-      expect(created.id.length).toBeGreaterThan(0);
+      const additionalDir = await mkdtemp(join(tmpdir(), 'klient-workspace-extra-'));
+      try {
+        const workspaces = target.klient.global.workspaces;
+        const created = await workspaces.createOrTouch({ root: process.cwd(), name: 'conformance' });
+        expect(created.id.length).toBeGreaterThan(0);
 
-      const fetched = await workspaces.get(created.id);
-      expect(fetched?.name).toBe('conformance');
+        const fetched = await workspaces.get(created.id);
+        expect(fetched?.name).toBe('conformance');
 
-      const updated = await workspaces.update({ id: created.id, patch: { name: 'conformance-2' } });
-      expect(updated?.name).toBe('conformance-2');
+        const updated = await workspaces.update({ id: created.id, patch: { name: 'conformance-2' } });
+        expect(updated?.name).toBe('conformance-2');
 
-      const list = await workspaces.list();
-      expect(list.some((w) => w.id === created.id)).toBe(true);
+        const withAdditionalDirs = await workspaces.update({
+          id: created.id,
+          patch: { additionalDirs: [additionalDir] },
+        });
+        expect(withAdditionalDirs?.additionalDirs).toEqual([additionalDir]);
 
-      await workspaces.delete(created.id);
-      expect(await workspaces.get(created.id)).toBeUndefined();
+        const cleared = await workspaces.update({
+          id: created.id,
+          patch: { additionalDirs: [] },
+        });
+        expect(cleared?.additionalDirs).toEqual([]);
+
+        const list = await workspaces.list();
+        expect(list.some((w) => w.id === created.id)).toBe(true);
+
+        await workspaces.delete(created.id);
+        expect(await workspaces.get(created.id)).toBeUndefined();
+      } finally {
+        await rm(additionalDir, { recursive: true, force: true });
+      }
     });
 
     it('sessions index responds with a page shape', async () => {
@@ -374,7 +401,7 @@ export function defineKlientConformance(
       await expect(files.get(meta.id)).rejects.toMatchObject({ name: 'RPCError', code: 40404 });
     });
 
-    it('kosong lists models/providers and anonymous provider round-trips', async () => {
+    it('kosong lists models/providers and preserves generation contracts', async () => {
       const kosong = target.klient.global.kosong;
       expect(Array.isArray(await kosong.listModels())).toBe(true);
       expect(Array.isArray(await kosong.listProviders())).toBe(true);
@@ -409,6 +436,171 @@ export function defineKlientConformance(
       } finally {
         await kosong.removeProvider(id);
         sub.dispose();
+      }
+
+      const kimiId = '__klient_kimi_thinking__';
+      const kimiProviderId = '__klient_kimi_provider__';
+      await kosong.addProvider(kimiProviderId, {
+        type: 'kimi',
+        baseUrl: 'https://example.test/v1',
+        auth: { method: 'api-key', apiKey: 'conf-key' },
+      });
+      await target.app.accessor.get(IModelService).set(kimiId, {
+        provider: kimiProviderId,
+        model: 'conf-kimi',
+        maxContextSize: 4096,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high'],
+        defaultEffort: 'high',
+      });
+      const bodies: Record<string, unknown>[] = [];
+      const chunk = JSON.stringify({
+        id: 'chatcmpl-conf',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'conf-kimi',
+        choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      });
+      vi.stubGlobal('fetch', (async (
+        input: Parameters<typeof fetch>[0],
+        init?: Parameters<typeof fetch>[1],
+      ) => {
+        bodies.push(JSON.parse(await new Request(input, init).text()) as Record<string, unknown>);
+        return new Response(`data: ${chunk}\n\ndata: [DONE]\n\n`, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }) as typeof fetch);
+      const consume = async (stream: AsyncIterable<unknown>): Promise<void> => {
+        let finished = false;
+        for await (const event of stream) {
+          if ((event as { readonly type?: string }).type === 'finish') finished = true;
+        }
+        expect(finished).toBe(true);
+      };
+      const publicInput = {
+        systemPrompt: '',
+        tools: [],
+        messages: [
+          {
+            role: 'user' as const,
+            content: [
+              { type: 'text' as const, text: 'hi' },
+              {
+                type: 'image_url' as const,
+                imageUrl: { url: 'data:image/png;base64,QUJD', id: 'image-1' },
+              },
+            ],
+            toolCalls: [],
+          },
+        ],
+      };
+      const coreInput = {
+        systemPrompt: '',
+        tools: [],
+        messages: [
+          {
+            role: 'user' as const,
+            content: [
+              { type: 'text' as const, text: 'hi' },
+              {
+                type: 'image_url' as const,
+                imageUrl: { url: 'data:image/png;base64,QUJD', id: 'image-1' },
+              },
+            ],
+          },
+        ],
+      };
+      try {
+        await consume(kosong.generate(kimiId, publicInput, { thinkingEffort: 'on' }));
+        await consume(kosong.generate(kimiId, publicInput, { thinkingEffort: 'max' }));
+        const catalog = target.app.accessor.get(IModelCatalog);
+        const registry = target.app.accessor.get(IProtocolAdapterRegistry);
+        await consume(
+          generateModel(registry.request(catalog.get(kimiId), { thinkingEffort: 'on' }), coreInput, undefined, {
+            thinkingEffort: 'on',
+          }),
+        );
+        await consume(
+          generateModel(registry.request(catalog.get(kimiId), { thinkingEffort: 'max' }), coreInput, undefined, {
+            thinkingEffort: 'max',
+          }),
+        );
+        expect(bodies.map((body) => body['thinking'])).toEqual([
+          { type: 'enabled' },
+          { type: 'enabled', effort: 'max' },
+          { type: 'enabled' },
+          { type: 'enabled', effort: 'max' },
+        ]);
+        const expectedMessages = [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'hi' },
+              {
+                type: 'image_url',
+                image_url: { url: 'data:image/png;base64,QUJD', id: 'image-1' },
+              },
+            ],
+          },
+        ];
+        expect(bodies).toHaveLength(4);
+        for (const body of bodies) {
+          expect(body['messages']).toEqual(expectedMessages);
+        }
+
+        const responsePart = {
+          type: 'image_url' as const,
+          imageUrl: { url: 'data:image/png;base64,QUJD', id: 'response-image', name: 'pixel.png' },
+        };
+        const fakeRequester: LlmRequester = {
+          generate: (_config, _content, control) => {
+            control.onEvent?.({ type: 'llm.streaming.part', part: responsePart });
+            control.onEvent?.({
+              type: 'llm.streaming.finish',
+              finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+            });
+            control.onEvent?.({ type: 'llm.done' });
+            return Promise.resolve();
+          },
+        };
+        const request = registry.request.bind(registry);
+        const generate = vi.spyOn(registry, 'request').mockImplementation((model, params) =>
+          coreRequesterFromA(request(model, params), fakeRequester),
+        );
+        try {
+          const responseEvents: unknown[] = [];
+          for await (const event of kosong.generate(kimiId, publicInput)) {
+            responseEvents.push(event);
+          }
+          const publicPart = {
+            type: 'image_url',
+            imageUrl: {
+              url: 'data:image/png;base64,QUJD',
+              id: 'response-image',
+              name: 'pixel.png',
+            },
+          };
+          expect(responseEvents).toStrictEqual([
+            { type: 'part', part: publicPart },
+            expect.objectContaining({
+              type: 'finish',
+              message: { role: 'assistant', content: [publicPart], toolCalls: [] },
+            }),
+            expect.objectContaining({
+              type: 'timing',
+              firstTokenLatencyMs: expect.any(Number),
+              streamDurationMs: expect.any(Number),
+            }),
+          ]);
+        } finally {
+          generate.mockRestore();
+        }
+      } finally {
+        vi.unstubAllGlobals();
+        await kosong.removeProvider(kimiId);
+        await kosong.removeProvider(kimiProviderId);
       }
     });
 
@@ -586,18 +778,52 @@ export function defineKlientConformance(
       }
     });
 
-    it('agent runtime binding is available through every transport', async () => {
+    it('agent environment binding and media events are available through every transport', async () => {
       const created = await target.klient.global.sessions.create({
         workDir: process.cwd(),
-        title: 'conformance runtime',
+        title: 'conformance environment',
       });
       try {
         const agent = target.klient.session(created.id).agent('main');
-        const binding = await agent.getRuntime();
-        expect(binding.runtimeId).toBe('local');
-        expect(binding.workspaceId.length).toBeGreaterThan(0);
-        await expect(agent.switchRuntime('missing-runtime')).rejects.toThrow(/missing-runtime/);
-        expect(await agent.getRuntime()).toEqual(binding);
+        const binding = await agent.getEnvironment();
+        expect(binding.environmentId).toBe('local');
+        expect(binding).toEqual({ environmentId: 'local' });
+        expect(await agent.getEnvironment()).toEqual(binding);
+
+        const seen: unknown[] = [];
+        const sub = agent.events.on('tool.result', (event) => seen.push(event));
+        await new Promise((resolve) => {
+          setTimeout(resolve, 300);
+        });
+        try {
+          const live = getLiveSessionById(target.app.accessor, created.id);
+          if (live === undefined) throw new Error('expected a live session');
+          const main = live.accessor.get(IAgentLifecycleService).handleOf('main');
+          if (main === undefined) throw new Error('expected the main agent');
+          main.accessor.get(IEventBus).publish(
+            new ToolResultEvent({
+              agentId: 'main',
+              turnId: 1,
+              toolCallId: 'call-media',
+              output: [
+                { type: 'text', text: 'media' },
+                { type: 'image_url', imageUrl: { url: 'data:image/png;base64,QUJD' } },
+              ],
+            }),
+          );
+          await waitFor(() => seen.length === 1, 2_000);
+          expect(seen[0]).toMatchObject({
+            output: [
+              { type: 'text', text: 'media' },
+              {
+                type: 'image_url',
+                imageUrl: expect.objectContaining({ url: 'data:image/png;base64,QUJD' }),
+              },
+            ],
+          });
+        } finally {
+          sub.dispose();
+        }
       } finally {
         await target.klient.session(created.id).close();
       }

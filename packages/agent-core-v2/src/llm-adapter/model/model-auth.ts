@@ -7,7 +7,7 @@ import {
   BUDGET_THINKING_EFFORTS,
   matchKnownAnthropicModelProfile,
   matchUnknownClaudeProfile,
-} from '#human/llm/requester/bases/anthropic/profile';
+} from '#human/llm/builtin/protocol/anthropic/legalize';
 
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
 import { ProtocolSchema, type Protocol } from '../protocol/protocol';

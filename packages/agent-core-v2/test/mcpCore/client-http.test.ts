@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ErrorCodes, Error2 } from '#/errors';
-import { buildMcpHttpHeaders, HttpMcpClient, isTerminalTransportError } from '#/mcpCore/client-http';
+import {
+  buildMcpHttpHeaders,
+  HttpMcpClient,
+  isSseReconnectionExhaustedError,
+  isUnauthorizedTransportError,
+} from '#/mcpCore/client-http';
 
 import { startInProcessHttpMcpServer } from './stubs';
 
@@ -98,19 +103,21 @@ describe('buildMcpHttpHeaders', () => {
     ).toEqual({ Authorization: 'Bearer fresh', 'X-Trace': '1' });
   });
 
-  it('flags errors the SDK uses to signal a dead HTTP transport as terminal', () => {
+  it('flags errors the SDK uses to signal auth loss or a dead push stream', () => {
     const unauthorized = new Error('Unauthorized');
     unauthorized.name = 'UnauthorizedError';
-    expect(isTerminalTransportError(unauthorized)).toBe(true);
-    expect(isTerminalTransportError(new Error('Maximum reconnection attempts (3) exceeded.'))).toBe(
-      true,
-    );
+    expect(isUnauthorizedTransportError(unauthorized)).toBe(true);
+    expect(
+      isSseReconnectionExhaustedError(new Error('Maximum reconnection attempts (3) exceeded.')),
+    ).toBe(true);
   });
 
-  it('does not flag transient SDK errors as terminal', () => {
-    expect(isTerminalTransportError(new Error('SSE stream disconnected: ECONNRESET'))).toBe(false);
-    expect(isTerminalTransportError(new Error('fetch failed'))).toBe(false);
-    expect(isTerminalTransportError(new Error('Connection closed'))).toBe(false);
+  it('does not flag transient SDK errors as session evidence', () => {
+    expect(isUnauthorizedTransportError(new Error('SSE stream disconnected: ECONNRESET'))).toBe(
+      false,
+    );
+    expect(isSseReconnectionExhaustedError(new Error('fetch failed'))).toBe(false);
+    expect(isSseReconnectionExhaustedError(new Error('Connection closed'))).toBe(false);
   });
 });
 
@@ -133,14 +140,14 @@ describe('HttpMcpClient', () => {
     }
   }, 15000);
 
-  it('flips to unexpected-close when the SDK signals a terminal transport error', async () => {
+  it('reports weak session evidence when the SDK exhausts push-stream reconnects', async () => {
     const server = await startInProcessHttpMcpServer();
     cleanups.push(server.close);
 
     const client = new HttpMcpClient({ transport: 'http', url: server.url });
-    const closes: Array<{ error?: string }> = [];
-    client.onUnexpectedClose((reason) => {
-      closes.push({ error: reason.error?.message });
+    const evidences: Array<{ kind?: string; error?: string }> = [];
+    client.onSessionEvidence((evidence) => {
+      evidences.push({ kind: evidence.kind, error: evidence.reason.error?.message });
     });
     try {
       await client.connect();
@@ -149,8 +156,9 @@ describe('HttpMcpClient', () => {
       }).client;
       internal.onerror?.(new Error('Maximum reconnection attempts (3) exceeded.'));
       await new Promise((r) => setTimeout(r, 25));
-      expect(closes).toHaveLength(1);
-      expect(closes[0]?.error).toContain('Maximum reconnection attempts');
+      expect(evidences).toHaveLength(1);
+      expect(evidences[0]?.kind).toBe('weak');
+      expect(evidences[0]?.error).toContain('Maximum reconnection attempts');
     } finally {
       await client.close();
     }
@@ -162,7 +170,7 @@ describe('HttpMcpClient', () => {
 
     const client = new HttpMcpClient({ transport: 'http', url: server.url });
     const closes: number[] = [];
-    client.onUnexpectedClose(() => closes.push(Date.now()));
+    client.onSessionEvidence(() => closes.push(Date.now()));
     try {
       await client.connect();
       const internal = (client as unknown as {

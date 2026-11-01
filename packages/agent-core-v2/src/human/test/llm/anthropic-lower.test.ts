@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import { providerImagePolicy } from '#/llm/media/image-formats';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
+import { providerImagePolicy } from '#/llm/protocol/kit/media';
 import type { Message } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import { lowerMessage } from '#/llm/requester/bases/anthropic/lower';
-import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
-import type { LlmClientContext } from '#/llm/requester/requester';
-import { kimiAnthropicTrait } from '#/llm-kimi/trait';
+import { fromCorePart, toCorePart } from '#/message';
+import type { LlmModel } from '#/llm-requester/model';
+import { createKimiAnthropicRequester } from '#/llm-requester/factories';
+import { lowerMessage } from '#/llm/builtin/protocol/anthropic/lower';
+import type { LlmClientContext } from '#/llm-requester/requester';
 
 const routedModel: LlmModel = {
   provider: 'anthropic',
@@ -16,11 +16,9 @@ const routedModel: LlmModel = {
   baseUrl: 'https://example.test/v1',
 };
 
-const HEIC_URL = 'data:image/heic;base64,AAAA';
-
 const message: Message = {
   role: 'user',
-  content: [{ type: 'image_url', imageUrl: { url: HEIC_URL } }],
+  content: [{ type: 'image_url', imageUrl: { url: 'data:image/heic;base64,AAAA' } }],
 };
 
 const HEIC_BLOCK = {
@@ -38,24 +36,24 @@ function stubAnthropicClient(): {
     { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
     { type: 'message_stop' },
   ];
+  const create = (params: Record<string, unknown>) => {
+    captured.push(params);
+    return {
+      withResponse: async () => ({
+        data: {
+          async *[Symbol.asyncIterator]() {
+            for (const event of events) yield event;
+          },
+        },
+        response: new Response(null),
+      }),
+    };
+  };
   return {
     clientFactory: () =>
       ({
-        messages: {
-          create: (params: Record<string, unknown>) => {
-            captured.push(params);
-            return {
-              withResponse: async () => ({
-                data: {
-                  async *[Symbol.asyncIterator]() {
-                    for (const event of events) yield event;
-                  },
-                },
-                response: new Response(null),
-              }),
-            };
-          },
-        },
+        messages: { create },
+        beta: { messages: { create } },
       }) as never,
     body: () => {
       const last = captured.at(-1);
@@ -71,16 +69,24 @@ describe('anthropic lowering of inline images', () => {
     expect(wire[0]?.content[0]).toEqual(HEIC_BLOCK);
   });
 
-  it('refuses a base64 image outside the baseline set when no trait widens it', () => {
+  it('refuses unsupported base64 media without dropping MIME parameters', () => {
     expect(() => lowerMessage(message, providerImagePolicy().acceptedMimes)).toThrow(
       /Unsupported media type for base64 image: image\/heic/,
     );
+
+    const url = 'data:video/mp4;codecs=avc1;base64,AQID';
+    const core = toCorePart({ type: 'video_url', videoUrl: { url } });
+    const legacy = fromCorePart(core);
+    if (legacy.type !== 'video_url') throw new Error('expected a video part');
+    expect(legacy.videoUrl.url).toBe(url);
+    expect(() =>
+      lowerMessage({ role: 'user', content: [core] }, providerImagePolicy().acceptedMimes),
+    ).toThrow(/Unsupported media type for base64 video: video\/mp4;codecs=avc1/);
   });
 
   it('sends the HEIC block on the wire when Kimi is reached over the Anthropic protocol', async () => {
     const client = stubAnthropicClient();
-    const requester = createAnthropicRequester({
-      trait: kimiAnthropicTrait,
+    const requester = createKimiAnthropicRequester({
       clientFactory: client.clientFactory,
     });
     await requester.generate(

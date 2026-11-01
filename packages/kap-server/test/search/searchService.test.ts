@@ -136,7 +136,7 @@ function makeConfig(searchEnabled: boolean, extra?: Record<string, unknown>): IC
   return {
     ready: Promise.resolve(),
     get: (domain: string) =>
-      domain === DATABASE_SECTION ? { search: searchEnabled, ...extra } : undefined,
+      domain === DATABASE_SECTION ? { globalSearch: true, search: searchEnabled, ...extra } : undefined,
   } as unknown as IConfigService;
 }
 
@@ -3557,5 +3557,71 @@ describe('search lifecycle diagnostics (stage 5)', () => {
       expect(service.syncDebounceMs).toBe(12_345);
       expect((coreOf(service) as unknown as { syncSessionCap: number }).syncSessionCap).toBe(7);
     });
+  });
+});
+
+describe('global search switched off', () => {
+  let home: string | undefined;
+  const services: GlobalSearchService[] = [];
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-kap-search-off-'));
+  });
+
+  afterEach(async () => {
+    for (const service of services.splice(0)) service.dispose();
+    await drainGlobalSearchDisposals();
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  function offConfig(section: Record<string, unknown>): IConfigService {
+    return {
+      ready: Promise.resolve(),
+      get: (domain: string) => (domain === DATABASE_SECTION ? section : undefined),
+    } as unknown as IConfigService;
+  }
+
+  async function expectOff(service: GlobalSearchService): Promise<void> {
+    services.push(service);
+    const status = await service.status();
+    expect(status.lifecycle.state).toBe('stopped');
+    expect(status.lifecycle.detail).toContain('global_search');
+    expect(status.sessions).toBe(0);
+    expect(service.lifecycleReport()).toEqual({ state: 'stopped' });
+    await expect(service.search({ query: '苹果' })).rejects.toMatchObject({
+      name: 'GlobalSearchError',
+      reason: 'index_unavailable',
+    });
+    await expect(service.reindex()).rejects.toMatchObject({ reason: 'index_unavailable' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect(stat(join(home!, 'search-index'))).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+
+  it('stays off by default: no index directory, no worker, search tells how to enable it', async () => {
+    const s1 = summary('s1', '搜索重构讨论', T1);
+    await writeTitle(home!, s1.id, s1.title!);
+    await writeWire(home!, 's1', 'main', [userLine('帮我看看苹果怎么挑', T1)]);
+    const service = new GlobalSearchService(
+      staticIndex([s1]),
+      makeBootstrap(home!),
+      noopLog,
+      offConfig({ search: true }),
+    );
+    service.syncDebounceMs = 0;
+    await expectOff(service);
+  });
+
+  it('explicit global_search = false keeps the index off', async () => {
+    const service = new GlobalSearchService(
+      staticIndex([]),
+      makeBootstrap(home!),
+      noopLog,
+      offConfig({ globalSearch: false, search: false }),
+    );
+    service.syncDebounceMs = 0;
+    await expectOff(service);
   });
 });

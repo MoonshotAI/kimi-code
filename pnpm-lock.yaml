@@ -71,7 +71,7 @@ importers:
         version: typescript@6.0.2
       vitest:
         specifier: 4.1.4
-        version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
+        version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
 
   apps/kimi-code:
     dependencies:
@@ -118,6 +118,9 @@ importers:
       '@moonshot-ai/remote-control':
         specifier: workspace:^
         version: link:../../packages/remote-control
+      '@moonshot-ai/session-import':
+        specifier: workspace:^
+        version: link:../../packages/session-import
       '@moonshot-ai/vis-server':
         specifier: workspace:^
         version: link:../vis/server
@@ -177,49 +180,6 @@ importers:
         specifier: ^0.3.9
         version: 0.3.9
 
-  apps/kimi-inspect:
-    dependencies:
-      '@moonshot-ai/agent-core-v2':
-        specifier: workspace:^
-        version: link:../../packages/agent-core-v2
-      '@moonshot-ai/transcript':
-        specifier: workspace:^
-        version: link:../../packages/transcript
-      '@tanstack/react-query':
-        specifier: ^5.74.4
-        version: 5.99.2(react@19.2.5)
-      react:
-        specifier: ^19.1.0
-        version: 19.2.5
-      react-dom:
-        specifier: ^19.1.0
-        version: 19.2.5(react@19.2.5)
-    devDependencies:
-      '@tailwindcss/vite':
-        specifier: ^4.1.4
-        version: 4.1.18(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
-      '@types/react':
-        specifier: ^19.1.2
-        version: 19.2.14
-      '@types/react-dom':
-        specifier: ^19.1.2
-        version: 19.2.3(@types/react@19.2.14)
-      '@vitejs/plugin-react':
-        specifier: ^4.4.1
-        version: 4.7.0(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
-      tailwindcss:
-        specifier: ^4.1.4
-        version: 4.1.18
-      typescript:
-        specifier: 7.0.2
-        version: 7.0.2
-      vite:
-        specifier: ^6.3.3
-        version: 6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
-      vitest:
-        specifier: 4.1.4
-        version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
-
   apps/vis:
     devDependencies:
       concurrently:
@@ -252,7 +212,7 @@ importers:
         version: 4.21.0
       vitest:
         specifier: 4.1.4
-        version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
+        version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
       yazl:
         specifier: ^3.3.1
         version: 3.3.1
@@ -301,7 +261,7 @@ importers:
         version: 2.3.3(rollup@4.60.2)(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
       vitest:
         specifier: 4.1.4
-        version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
+        version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
 
   apps/vscode:
     dependencies:
@@ -455,7 +415,7 @@ importers:
         version: 8.17.0
       jsdom:
         specifier: ^30.0.1
-        version: 30.0.1
+        version: 30.0.1(@noble/hashes@2.4.0)
       ovsx:
         specifier: 1.0.2
         version: 1.0.2
@@ -470,7 +430,7 @@ importers:
         version: 3.5.2(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
       vitest:
         specifier: 4.1.4
-        version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
+        version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
 
   docs:
     dependencies:
@@ -529,6 +489,9 @@ importers:
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
+      '@noble/hashes':
+        specifier: ^2.0.0
+        version: 2.4.0
       ajv:
         specifier: ^8.18.0
         version: 8.18.0
@@ -562,6 +525,9 @@ importers:
       picomatch:
         specifier: ^4.0.4
         version: 4.0.4
+      proper-lockfile:
+        specifier: ^4.1.2
+        version: 4.1.2
       radashi:
         specifier: ^12.9.1
         version: 12.9.1
@@ -605,6 +571,9 @@ importers:
       '@types/picomatch':
         specifier: ^4.0.3
         version: 4.0.3
+      '@types/proper-lockfile':
+        specifier: ^4.1.4
+        version: 4.1.4
       '@types/retry':
         specifier: 0.12.0
         version: 0.12.0
@@ -820,6 +789,9 @@ importers:
       marked:
         specifier: 18.0.11
         version: 18.0.11
+      marked-cjk-friendly:
+        specifier: 0.1.2
+        version: 0.1.2(marked@18.0.11)
     devDependencies:
       '@xterm/headless':
         specifier: 5.5.0
@@ -855,6 +827,8 @@ importers:
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1
+
+  packages/session-import: {}
 
   packages/telemetry: {}
 
@@ -2326,6 +2300,10 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1
       '@emnapi/runtime': ^1.7.1
+
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
 
   '@node-rs/crc32-android-arm-eabi@1.10.6':
     resolution: {integrity: sha512-vZAMuJXm3TpWPOkkhxdrofWDv+Q+I2oO7ucLRbXyAPmXFNDhHtBxbO1rk9Qzz+M3eep8ieS4/+jCL1Q0zacNMQ==}
@@ -7058,6 +7036,12 @@ packages:
     resolution: {integrity: sha512-MqIQVVkz+uGEHi3TsHx/czcxxCbRIL7sv5K5DnYw/tI+apY54IbPefV/cmgxp6LoJSEx/TqcHdLs/298afG5QQ==}
     engines: {node: '>=6'}
 
+  marked-cjk-friendly@0.1.2:
+    resolution: {integrity: sha512-GUj8HjiEbur9yhgUo52FBgKizggF1QtT6gVdrYdWW6ZB4lVVjgS3EyyXPyfyRD0V4ghGRPlO7MO80rgSWbm0eA==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      marked: '>=15.0.0'
+
   marked-terminal@7.3.0:
     resolution: {integrity: sha512-t4rBvPsHc57uE/2nJOLmMbZCQ4tgAccAED3ngXQqW6g+TxA488JzJ+FK3lQkzBQOI1mRV/r/Kq+1ZlJ4D0owQw==}
     engines: {node: '>=16.0.0'}
@@ -10679,7 +10663,9 @@ snapshots:
   '@esbuild/win32-x64@0.27.7':
     optional: true
 
-  '@exodus/bytes@1.15.1': {}
+  '@exodus/bytes@1.15.1(@noble/hashes@2.4.0)':
+    optionalDependencies:
+      '@noble/hashes': 2.4.0
 
   '@fastify/ajv-compiler@4.0.5':
     dependencies:
@@ -11260,6 +11246,8 @@ snapshots:
       '@emnapi/runtime': 1.9.2
       '@tybys/wasm-util': 0.10.1
     optional: true
+
+  '@noble/hashes@2.4.0': {}
 
   '@node-rs/crc32-android-arm-eabi@1.10.6':
     optional: true
@@ -13236,7 +13224,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.0.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
+      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
 
   '@vitest/expect@4.1.4':
     dependencies:
@@ -14286,10 +14274,10 @@ snapshots:
 
   data-uri-to-buffer@4.0.1: {}
 
-  data-urls@7.0.0:
+  data-urls@7.0.0(@noble/hashes@2.4.0):
     dependencies:
       whatwg-mimetype: 5.0.0
-      whatwg-url: 16.0.1
+      whatwg-url: 16.0.1(@noble/hashes@2.4.0)
     transitivePeerDependencies:
       - '@noble/hashes'
 
@@ -15196,9 +15184,9 @@ snapshots:
     dependencies:
       lru-cache: 10.4.3
 
-  html-encoding-sniffer@6.0.0:
+  html-encoding-sniffer@6.0.0(@noble/hashes@2.4.0):
     dependencies:
-      '@exodus/bytes': 1.15.1
+      '@exodus/bytes': 1.15.1(@noble/hashes@2.4.0)
     transitivePeerDependencies:
       - '@noble/hashes'
 
@@ -15491,17 +15479,17 @@ snapshots:
     dependencies:
       argparse: 2.0.1
 
-  jsdom@30.0.1:
+  jsdom@30.0.1(@noble/hashes@2.4.0):
     dependencies:
       '@asamuzakjp/css-color': 6.0.7
       '@asamuzakjp/dom-selector': 8.3.2
       '@bramus/specificity': 2.4.2
       '@csstools/css-syntax-patches-for-csstree': 1.1.12(css-tree@3.2.1)
-      '@exodus/bytes': 1.15.1
+      '@exodus/bytes': 1.15.1(@noble/hashes@2.4.0)
       css-tree: 3.2.1
-      data-urls: 7.0.0
+      data-urls: 7.0.0(@noble/hashes@2.4.0)
       decimal.js: 10.6.0
-      html-encoding-sniffer: 6.0.0
+      html-encoding-sniffer: 6.0.0(@noble/hashes@2.4.0)
       is-potential-custom-element-name: 1.0.1
       lru-cache: 11.5.2
       parse5: 8.0.1
@@ -15512,7 +15500,7 @@ snapshots:
       w3c-xmlserializer: 5.0.0
       webidl-conversions: 8.0.1
       whatwg-mimetype: 5.0.0
-      whatwg-url: 17.1.0
+      whatwg-url: 17.1.0(@noble/hashes@2.4.0)
       xml-name-validator: 5.0.0
     transitivePeerDependencies:
       - '@noble/hashes'
@@ -15873,6 +15861,10 @@ snapshots:
   markdown-table@3.0.4: {}
 
   markdown-title@1.0.2: {}
+
+  marked-cjk-friendly@0.1.2(marked@18.0.11):
+    dependencies:
+      marked: 18.0.11
 
   marked-terminal@7.3.0(marked@9.1.6):
     dependencies:
@@ -18519,7 +18511,7 @@ snapshots:
       - typescript
       - universal-cookie
 
-  vitest@4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)):
+  vitest@4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)):
     dependencies:
       '@vitest/expect': 4.1.4
       '@vitest/mocker': 4.1.4(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
@@ -18544,11 +18536,11 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.19.17
       '@vitest/coverage-v8': 4.1.4(vitest@4.1.4)
-      jsdom: 30.0.1
+      jsdom: 30.0.1(@noble/hashes@2.4.0)
     transitivePeerDependencies:
       - msw
 
-  vitest@4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3)):
+  vitest@4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3)):
     dependencies:
       '@vitest/expect': 4.1.4
       '@vitest/mocker': 4.1.4(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
@@ -18573,7 +18565,7 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.19.17
       '@vitest/coverage-v8': 4.1.4(vitest@4.1.4)
-      jsdom: 30.0.1
+      jsdom: 30.0.1(@noble/hashes@2.4.0)
     transitivePeerDependencies:
       - msw
 
@@ -18621,17 +18613,17 @@ snapshots:
 
   whatwg-mimetype@5.0.0: {}
 
-  whatwg-url@16.0.1:
+  whatwg-url@16.0.1(@noble/hashes@2.4.0):
     dependencies:
-      '@exodus/bytes': 1.15.1
+      '@exodus/bytes': 1.15.1(@noble/hashes@2.4.0)
       tr46: 6.0.0
       webidl-conversions: 8.0.1
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  whatwg-url@17.1.0:
+  whatwg-url@17.1.0(@noble/hashes@2.4.0):
     dependencies:
-      '@exodus/bytes': 1.15.1
+      '@exodus/bytes': 1.15.1(@noble/hashes@2.4.0)
       tr46: 6.0.0
       webidl-conversions: 8.0.1
     transitivePeerDependencies:

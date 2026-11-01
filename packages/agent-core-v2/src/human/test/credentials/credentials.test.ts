@@ -6,9 +6,9 @@ import {
   createOAuthCredentialProvider,
   createStaticCredentialProvider,
 } from '#/credentials/credentials';
-import type { LlmModel } from '#/llm/model';
-import type { LlmRecoveryContext, LlmRecoveryRecord } from '#/llm/requester/recovery';
-import type { LlmCredentialProvider } from '#/llm/requester/requester';
+import type { LlmModel } from '#/llm-requester/model';
+import type { LlmRecoveryContext, LlmRecoveryRecord } from '#/llm-requester/recovery';
+import type { LlmCredentialProvider } from '#/llm-requester/requester';
 
 const MODEL: LlmModel = {
   provider: 'fake',

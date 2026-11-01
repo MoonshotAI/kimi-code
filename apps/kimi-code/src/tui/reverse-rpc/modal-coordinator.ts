@@ -65,6 +65,14 @@ export class ReverseRpcModalCoordinator {
     active?.hide();
   }
 
+  dismiss(owner: ReverseRpcModalOwner): void {
+    if (this.active?.owner === owner) this.active = null;
+    for (let index = this.queued.length - 1; index >= 0; index -= 1) {
+      if (this.queued[index]?.owner === owner) this.queued.splice(index, 1);
+    }
+    this.showNext();
+  }
+
   private show(entry: ReverseRpcModalEntry): void {
     const active = this.active;
     if (active === null) {

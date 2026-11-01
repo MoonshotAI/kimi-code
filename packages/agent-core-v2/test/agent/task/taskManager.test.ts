@@ -880,7 +880,7 @@ describe('AgentTaskService', () => {
     });
   });
 
-  it('records failed runtime when proc.wait rejects', async () => {
+  it('records failed environment when proc.wait rejects', async () => {
     const { manager } = createAgentTaskService();
     const taskId = registerProcess(
       manager,
@@ -1307,6 +1307,7 @@ describe('AgentTaskService', () => {
       }),
     );
     await expect(manager.wait(warmupId, 60_000)).resolves.toMatchObject({ status: 'completed' });
+    await vi.advanceTimersByTimeAsync(0);
     const baselineTimerCount = vi.getTimerCount();
     const taskId = manager.registerTask(
       agentTask(Promise.resolve({ result: 'done' }), 'fast deadline task', {

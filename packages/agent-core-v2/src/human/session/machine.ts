@@ -12,7 +12,7 @@ import {
 } from '#/xstate2';
 
 import type { createAgentMachine, AgentEvent, AgentInput } from '#/agent/machine';
-import type { LlmRequestConfig } from '#/llm/requester/requester';
+import type { LlmRequestConfig } from '#/llm-requester/requester';
 import type { TurnLlmEvent, TurnToolEvent } from '#/agent/turn';
 import type { ToolUpdate } from '#/tool/executor';
 

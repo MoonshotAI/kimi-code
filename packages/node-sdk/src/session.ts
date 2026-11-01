@@ -14,7 +14,7 @@ import type {
   AddAdditionalDirOptions,
   AddAdditionalDirResult,
   AgentCommandInfo,
-  AgentRuntimeBinding,
+  AgentEnvironmentBinding,
   BackgroundTaskInfo,
   CapabilityStatus,
   CompactOptions,
@@ -38,11 +38,14 @@ import type {
   SessionPlan,
   SessionStatus,
   SessionSummary,
+  SessionEnvironmentsInfo,
+  SessionEnvironmentState,
   SessionTodoItem,
   SessionUsage,
   SkillSummary,
   PluginCommandDef,
   ThinkingEffort,
+  UploadFileOptions,
   Unsubscribe,
 } from '#/types';
 
@@ -271,19 +274,33 @@ export class Session {
     await this.rpc.setModel({ sessionId: this.id, model: normalized });
   }
 
-  async getRuntime(): Promise<AgentRuntimeBinding> {
+  async attachFile(data: Uint8Array, options: Pick<UploadFileOptions, 'name' | 'mimeType'>): Promise<string> {
     this.ensureOpen();
-    return this.rpc.getRuntime({ sessionId: this.id });
+    return this.rpc.attachFile({ sessionId: this.id, data, options });
   }
 
-  async switchRuntime(runtimeId: string): Promise<AgentRuntimeBinding> {
+  async getEnvironment(): Promise<AgentEnvironmentBinding> {
     this.ensureOpen();
-    const normalized = normalizeRequiredString(
-      runtimeId,
-      'Session runtime cannot be empty',
-      ErrorCodes.REQUEST_INVALID,
-    );
-    return this.rpc.switchRuntime({ sessionId: this.id, runtimeId: normalized });
+    return this.rpc.getEnvironment({ sessionId: this.id });
+  }
+
+  /**
+   * List the environments available to this session: `local` plus every
+   * declared environment, with its type and connection status.
+   */
+  async listEnvironments(): Promise<SessionEnvironmentsInfo> {
+    this.ensureOpen();
+    return this.rpc.listEnvironments({ sessionId: this.id });
+  }
+
+  /**
+   * The main agent's environment binding together with that environment's type
+   * and connection status. An environment that is no longer registered reports
+   * `disposed`.
+   */
+  async getEnvironmentState(): Promise<SessionEnvironmentState> {
+    this.ensureOpen();
+    return this.rpc.getEnvironmentState({ sessionId: this.id });
   }
 
   async setThinking(effort: ThinkingEffort): Promise<void> {

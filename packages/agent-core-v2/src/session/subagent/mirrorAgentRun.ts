@@ -7,7 +7,7 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { tryAgentContextOf } from '#/agent/scopeContext/scopeContext';
 import { isProviderRateLimitError } from '#/llm-adapter/contract/errors';
-import { type TokenUsage } from '#human/llm/usage';
+import { type TokenUsage } from '#human/llm-requester/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { SubagentCreatedEvent } from '#/app/telemetry/events';
 import { Event2, registerEvent2Class } from '#/app/event/event2';

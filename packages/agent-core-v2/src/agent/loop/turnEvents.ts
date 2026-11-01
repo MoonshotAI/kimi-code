@@ -5,9 +5,10 @@ import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { annotateBundledSkillParts, isSkillActivationPart } from '#human/agent/origin';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
-import type { FinishReason } from '#human/llm/finish-reason';
-import type { ContentPart, TextPart } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm/usage';
+import type { FinishReason } from '#human/llm-requester/finish-reason';
+import type { ContentPart, MediaPart, TextPart } from '#human/llm/message';
+import { mediaFileIdOf, mediaUrlOf } from '#human/llm/protocol/kit/media';
+import type { TokenUsage } from '#human/llm-requester/usage';
 
 export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
 
@@ -64,20 +65,25 @@ export function turnPromptAttachments(
   origin?: PromptOrigin,
 ): TurnStartedPayload['promptAttachments'] {
   const attachments: TurnPromptAttachment[] = [];
-  const promptMediaFileId = (url: string, id: string | undefined): string | undefined => {
-    const fileId = parseDaemonFileUrl(url)?.fileId;
+  const promptMediaFileId = (part: MediaPart): string | undefined => {
+    const fileId = parseDaemonFileUrl(mediaUrlOf(part))?.fileId;
+    const id = mediaFileIdOf(part);
     if (id === undefined) return fileId;
     return fileId === id ? id : undefined;
   };
   for (const part of input) {
     if (part.type === 'image_url') {
-      const fileId = promptMediaFileId(part.imageUrl.url, part.imageUrl.id);
-      if (fileId !== undefined) attachments.push({ kind: 'image', fileId, name: part.imageUrl.name });
+      const fileId = promptMediaFileId(part);
+      if (fileId !== undefined) {
+        attachments.push({ kind: 'image', fileId, name: part.imageUrl.name });
+      }
     } else if (part.type === 'video_url') {
-      const fileId = promptMediaFileId(part.videoUrl.url, part.videoUrl.id);
-      if (fileId !== undefined) attachments.push({ kind: 'video', fileId, name: part.videoUrl.name });
+      const fileId = promptMediaFileId(part);
+      if (fileId !== undefined) {
+        attachments.push({ kind: 'video', fileId, name: part.videoUrl.name });
+      }
     } else if (part.type === 'audio_url') {
-      const fileId = promptMediaFileId(part.audioUrl.url, part.audioUrl.id);
+      const fileId = promptMediaFileId(part);
       if (fileId !== undefined) attachments.push({ kind: 'audio', fileId });
     }
   }

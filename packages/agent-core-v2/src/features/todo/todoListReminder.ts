@@ -4,8 +4,8 @@ import { TODO_LIST_TOOL_NAME, todoProgress, type TodoItem } from './todoItem';
 
 export const TODO_LIST_REMINDER_VARIANT = 'todo_list_reminder';
 
-const TODO_LIST_REMINDER_STEPS_SINCE_WRITE = 5;
-const TODO_LIST_REMINDER_STEPS_BETWEEN_REMINDERS = 5;
+const TODO_LIST_REMINDER_STEPS_SINCE_WRITE = 10;
+const TODO_LIST_REMINDER_STEPS_BETWEEN_REMINDERS = 10;
 
 interface TodoListReminderInput {
   readonly active: boolean;
@@ -110,6 +110,7 @@ function getTodoListReminderStepCounts(
 }
 
 function hasTodoListWrite(message: ContextMessage): boolean {
+  if (message.role !== 'assistant') return false;
   return message.toolCalls.some((toolCall) => {
     if (toolCall.name !== TODO_LIST_TOOL_NAME) return false;
     if (typeof toolCall.arguments !== 'string') return false;
@@ -139,7 +140,7 @@ function renderTodoListReminder(todos: readonly TodoItem[], stepsSinceLastWrite:
       ? `${progress}, none in_progress`
       : `${progress}, "${current.title}" still in_progress`;
   return [
-    `The todo list has not been updated in the last ${String(stepsSinceLastWrite)} steps (${status}). If an item is finished, mark it done now; the TodoList call can go in the same response as your next tool call. If the list no longer matches the current work, rewrite or clear it. Never mention this reminder to the user.`,
+    `The todo list has not been updated in the last ${String(stepsSinceLastWrite)} steps (${status}). If an item is finished, mark it done; the TodoList call can go in the same response as your next tool call. If the list no longer matches the current work, rewrite or clear it. If the list still matches your progress, no update is needed; this is just a gentle reminder. Never mention this reminder to the user.`,
     '',
     'Current todo list:',
     renderTodoItems(todos),

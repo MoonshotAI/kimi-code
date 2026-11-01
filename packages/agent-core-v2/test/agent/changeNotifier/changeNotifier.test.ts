@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, normalize, basename, dirname } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Draft } from 'immer';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
@@ -14,8 +15,8 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { RuntimeLease } from '#/runtime/runtime';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import type { EnvironmentLease } from '#/environment/environment';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -23,6 +24,7 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../../features/reminder/stubs';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
@@ -34,10 +36,13 @@ import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog
 import type { SecondaryModelConfig } from '#/session/subagent/configSection';
 import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 import { AgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifierService';
+import { ContextApplyCompaction, ContextClear } from '#/agent/contextMemory/contextEvents';
 import { event2FromRecord } from '#/app/event/event2';
+import type { FoldContext } from '#/state/state';
 import {
   ChangeNotifierSnapshotEvent,
   changeNotifierSnapshotKey,
+  type ChangeNotifierSnapshotState,
 } from '#/agent/changeNotifier/changeNotifierOps';
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
@@ -71,6 +76,12 @@ interface Harness {
   readonly instructionsChange: Emitter<readonly WatchChange[]>;
   readonly skillCatalogChange: Emitter<string>;
   readonly agentCatalogChange: Emitter<string>;
+  readonly workspaceDirsChange: Emitter<void>;
+  readonly workspaceDirs: {
+    additionalDirs: readonly string[];
+    primaryByWorkspace: Readonly<Record<string, string>>;
+  };
+  readonly beforeSnapshotDispatch: { handler?: () => Promise<void> };
   readonly skillListing: { value: string };
   readonly profileNames: { value: readonly string[] };
   readonly profileMeta: {
@@ -100,15 +111,43 @@ function makeProfileData(overrides: Partial<ProfileData>): ProfileData {
   } as unknown as ProfileData;
 }
 
+const contextFold: FoldContext = {
+  silent: false,
+  checkpoint() {},
+  clearCheckpoints() {},
+  undoToCheckpoint() {},
+  emit() {},
+};
+
+function foldChangeNotifierContextReset(
+  h: Harness,
+  event: ContextApplyCompaction | ContextClear,
+): void {
+  const fold = changeNotifierSnapshotKey.replayable.folds.get(
+    event instanceof ContextApplyCompaction ? ContextApplyCompaction : ContextClear,
+  )!;
+  const states = h.ix.get(IAgentStateService);
+  const current = { ...states.get(changeNotifierSnapshotKey) } as Draft<ChangeNotifierSnapshotState>;
+  const next = fold(current, event, contextFold);
+  if (next !== undefined) states.set(changeNotifierSnapshotKey, next);
+}
+
 function createHarness(options: {
   readonly agentId?: string;
   readonly profile: ProfileData;
   readonly skillReady?: Promise<void>;
+  readonly workspaceReady?: Promise<void>;
 }): Harness {
   const reminders: CapturedReminder[] = [];
   const instructionsChange = disposables.add(new Emitter<readonly WatchChange[]>());
   const skillCatalogChange = disposables.add(new Emitter<string>());
   const agentCatalogChange = disposables.add(new Emitter<string>());
+  const workspaceDirsChange = disposables.add(new Emitter<void>());
+  const workspaceDirs = {
+    additionalDirs: [] as readonly string[],
+    primaryByWorkspace: {} as Readonly<Record<string, string>>,
+  };
+  const beforeSnapshotDispatch: { handler?: () => Promise<void> } = {};
   const skillListing = { value: '' };
   const profileNames = { value: ['default'] as readonly string[] };
   const profileMeta = {
@@ -208,24 +247,35 @@ function createHarness(options: {
         scope: (sub?: string): string =>
           sub ? `sessions/workspace-1/session-1/${sub}` : 'sessions/workspace-1/session-1',
       } satisfies ISessionContext);
+      reg.defineInstance(ISessionWorkspaceInfo, {
+        _serviceBrand: undefined,
+        ready: options.workspaceReady ?? Promise.resolve(),
+        get additionalDirs() {
+          return workspaceDirs.additionalDirs;
+        },
+        get primaryByWorkspace() {
+          return workspaceDirs.primaryByWorkspace;
+        },
+        onDidChange: workspaceDirsChange.event,
+      } satisfies ISessionWorkspaceInfo);
       reg.defineInstance(IBootstrapService, {
         homeDir,
         getEnv: () => undefined,
       } as unknown as IBootstrapService);
       reg.defineInstance(IHostFileSystem, hostFs);
       reg.defineInstance(IHostEnvironment, hostEnvironment);
-      reg.defineInstance(IAgentRuntimeService, {
+      reg.defineInstance(IAgentEnvironmentService, {
         _serviceBrand: undefined,
         onDidChange: () => ({ dispose: () => {} }),
         isAvailable: () => true,
         inspect() {
-          return this.acquire().runtime;
+          return this.acquire().environment;
         },
-        acquire: (): RuntimeLease => ({
-          runtime: {
-            identity: { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'test' },
+        acquire: (): EnvironmentLease => ({
+          environment: {
+            identity: { environmentId: 'local', generation: 'test' },
             capabilities: new Set(['fs', 'process']),
-            environment: hostEnvironment,
+            host: hostEnvironment,
             path: {
               separator: '/',
               delimiter: ':',
@@ -246,18 +296,25 @@ function createHarness(options: {
           track: (resource) => resource,
           dispose: () => {},
         }),
-      } satisfies IAgentRuntimeService);
+        async acquireWhenReady() {
+          return this.acquire();
+        },
+        workspaceRoots: () => ({ workDir }),
+      } satisfies IAgentEnvironmentService);
       reg.defineInstance(IEventDispatcher, {
         _serviceBrand: undefined,
         hooks: { onDidRestore: new OrderedHookSlot() },
         dispatch: async (event: unknown) => {
           if (event instanceof ChangeNotifierSnapshotEvent) {
+            await beforeSnapshotDispatch.handler?.();
             agentState.set(changeNotifierSnapshotKey, {
               agentsMdHash: event.agentsMdHash ?? undefined,
               agentsMdFiles: event.agentsMdFiles ?? undefined,
               skillsHash: event.skillsHash ?? undefined,
               subagentNames: event.subagentNames ?? undefined,
               modelPool: event.modelPool ?? undefined,
+              workspacePrimaryByWorkspace: event.workspacePrimaryByWorkspace ?? undefined,
+              workspaceAdditionalDirs: event.workspaceAdditionalDirs ?? undefined,
             });
           }
         },
@@ -274,6 +331,9 @@ function createHarness(options: {
     instructionsChange,
     skillCatalogChange,
     agentCatalogChange,
+    workspaceDirsChange,
+    workspaceDirs,
+    beforeSnapshotDispatch,
     skillListing,
     profileNames,
     profileMeta,
@@ -1162,6 +1222,234 @@ describe('notifySubagentChanges', () => {
     await h.notifier.notifySubagentChanges();
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.content).toContain('Models added: k1');
+  });
+});
+
+describe('notifyWorkspaceDirsChanges', () => {
+  it('establishes a baseline, reports additions and removals, and deduplicates equivalent paths', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { wm_project: workDir };
+
+    await h.notifier.notifyWorkspaceDirsChanges();
+    expect(h.reminders).toHaveLength(0);
+
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    h.workspaceDirsChange.fire();
+    await flushWatch();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.variant).toBe('workspace_dirs_change');
+    expect(h.reminders[0]?.content).toContain('Added directories: /work/B.');
+    expect(h.reminders[0]?.content).toContain(`Session cwd remains ${workDir}.`);
+
+    h.workspaceDirs.additionalDirs = ['/work/B/'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+    expect(h.reminders).toHaveLength(1);
+
+    h.workspaceDirs.additionalDirs = [];
+    await h.notifier.notifyWorkspaceDirsChanges();
+    expect(h.reminders).toHaveLength(2);
+    expect(h.reminders[1]?.content).toContain('Removed directories: /work/B.');
+
+    await h.notifier.notifyWorkspaceDirsChanges();
+    expect(h.reminders).toHaveLength(2);
+  });
+
+  it('preserves the workspace baseline across context compaction', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { wm_project: workDir };
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    foldChangeNotifierContextReset(
+      h,
+      new ContextApplyCompaction({ agentId: 'main', summary: 'summary', compactedCount: 1 }),
+    );
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Added directories: /work/B.');
+  });
+
+  it('preserves the workspace baseline across context clear', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { wm_project: workDir };
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    foldChangeNotifierContextReset(h, new ContextClear({ agentId: 'main' }));
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Added directories: /work/B.');
+  });
+
+  it('reports a primary change even when a member cwd keeps the same additional dirs', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { wm_project: '/work/A' };
+    h.workspaceDirs.additionalDirs = ['/work/A'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    h.workspaceDirs.primaryByWorkspace = { wm_project: workDir };
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain(
+      `Primary directory for project wm_project: /work/A -> ${workDir}.`,
+    );
+    expect(h.reminders[0]?.content).not.toContain('Added directories:');
+    expect(h.reminders[0]?.content).not.toContain('Removed directories:');
+  });
+
+  it('combines a primary swap into one reminder without redundant directory deltas', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { wm_project: workDir };
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    h.workspaceDirs.primaryByWorkspace = { wm_project: '/work/B' };
+    h.workspaceDirs.additionalDirs = [workDir];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain(
+      `Primary directory for project wm_project: ${workDir} -> /work/B.`,
+    );
+    expect(h.reminders[0]?.content).not.toContain('Added directories:');
+    expect(h.reminders[0]?.content).not.toContain('Removed directories:');
+  });
+
+  it('does not invent a primary change when a project leaves the cwd association', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { wm_project: workDir };
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    h.workspaceDirs.primaryByWorkspace = {};
+    h.workspaceDirs.additionalDirs = [];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Removed directories: /work/B.');
+    expect(h.reminders[0]?.content).not.toContain('Primary directory for project');
+  });
+
+  it('serializes rapid changes against the latest durable snapshot', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { wm_project: workDir };
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered = 0;
+    h.beforeSnapshotDispatch.handler = async () => {
+      entered += 1;
+      if (entered === 1) await gate;
+    };
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    const first = h.notifier.notifyWorkspaceDirsChanges();
+    await vi.waitFor(() => {
+      expect(entered).toBe(1);
+    });
+    h.workspaceDirs.additionalDirs = ['/work/B', '/work/C'];
+    const second = h.notifier.notifyWorkspaceDirsChanges();
+    release();
+    await Promise.all([first, second]);
+    h.beforeSnapshotDispatch.handler = undefined;
+
+    expect(h.reminders).toHaveLength(2);
+    expect(h.reminders[0]?.content).toContain('Added directories: /work/B.');
+    expect(h.reminders[1]?.content).toContain('Added directories: /work/C.');
+    await h.notifier.notifyWorkspaceDirsChanges();
+    expect(h.reminders).toHaveLength(2);
+  });
+
+  it('restores the previous snapshot when muted during snapshot dispatch', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { wm_project: workDir };
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered = 0;
+    h.beforeSnapshotDispatch.handler = async () => {
+      entered += 1;
+      if (entered === 1) await gate;
+    };
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    const pending = h.notifier.notifyWorkspaceDirsChanges();
+    await vi.waitFor(() => {
+      expect(entered).toBe(1);
+    });
+    h.notifier.mute();
+    release();
+    await pending;
+    h.beforeSnapshotDispatch.handler = undefined;
+    expect(h.reminders).toHaveLength(0);
+
+    h.notifier.unmute();
+    await h.notifier.notifyWorkspaceDirsChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Added directories: /work/B.');
+  });
+
+  it('preserves the previous workspace snapshot when beliefs are reseeded', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { wm_project: workDir };
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    await h.notifier.seedBeliefs({ agentsMd: '', agentsMdPaths: [], skillsListing: '' });
+    expect(h.reminders).toHaveLength(0);
+    await h.notifier.notifyWorkspaceDirsChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Added directories: /work/B.');
+  });
+
+  it('replays a durable workspace snapshot and reports only the new difference', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { wm_project: workDir };
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    await h.ix.get(IEventDispatcher).dispatch(
+      new ChangeNotifierSnapshotEvent({
+        agentId: 'main',
+        agentsMdHash: null,
+        skillsHash: null,
+        subagentNames: null,
+        workspacePrimaryByWorkspace: { wm_project: workDir },
+        workspaceAdditionalDirs: [],
+      }),
+    );
+
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Added directories: /work/B.');
+  });
+
+  it('does not notify subagents and resumes main-agent notifications after unmute', async () => {
+    const child = createHarness({
+      agentId: 'worker',
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+    child.workspaceDirs.additionalDirs = ['/work/B'];
+    child.workspaceDirsChange.fire();
+    await flushWatch();
+    await child.notifier.notifyWorkspaceDirsChanges();
+    expect(child.reminders).toHaveLength(0);
+
+    const main = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    await main.notifier.notifyWorkspaceDirsChanges();
+    main.notifier.mute();
+    main.workspaceDirs.additionalDirs = ['/work/B'];
+    await main.notifier.notifyWorkspaceDirsChanges();
+    expect(main.reminders).toHaveLength(0);
+    main.notifier.unmute();
+    await main.notifier.notifyWorkspaceDirsChanges();
+    expect(main.reminders).toHaveLength(1);
   });
 });
 

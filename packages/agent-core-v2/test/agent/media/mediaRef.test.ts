@@ -90,7 +90,10 @@ describe('daemon file URL', () => {
       daemonFileRefFromPart({ type: 'video_url', videoUrl: { url } }),
     ).toEqual({ kind: 'video', ref: { fileId: 'file_1' } });
     expect(
-      daemonFileRefFromPart({ type: 'image_url', imageUrl: { url: 'data:image/png;base64,AA' } }),
+      daemonFileRefFromPart({
+        type: 'image_url',
+        imageUrl: { url: 'data:image/png;base64,AA' },
+      }),
     ).toBeUndefined();
     expect(daemonFileRefFromPart({ type: 'text', text: url })).toBeUndefined();
   });

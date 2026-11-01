@@ -54,15 +54,6 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
       get: () => {
         throw new Error('modelCatalog.get not exercised in this test');
       },
-      getRequester: () => {
-        throw new Error('modelCatalog.getRequester not exercised in this test');
-      },
-      generate: () => {
-        throw new Error('modelCatalog.generate not exercised in this test');
-      },
-      ping: () => {
-        throw new Error('modelCatalog.ping not exercised in this test');
-      },
       findByName: () => [],
       listModels: async () => [],
       listProviders: async () => [],
@@ -154,13 +145,13 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   it('lists spliced messages newest-first with stable ids and mapped content', async () => {
     const id = await createSession();
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'running' }],
         toolCalls: [{ type: 'function', id: 'call_1', name: 'Bash', arguments: '{"cmd":"ls"}' }],
       },
-      { role: 'tool', content: [{ type: 'text', text: 'file.txt' }], toolCalls: [], toolCallId: 'call_1' },
+      { role: 'tool', content: [{ type: 'text', text: 'file.txt' }], toolCallId: 'call_1' },
     ]);
 
     const { body } = await getJson<PageWire>(`/api/v1/sessions/${id}/messages`);
@@ -199,7 +190,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   it('gets a single message by id and 404s for an unknown message', async () => {
     const id = await createSession();
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
     ]);
 
@@ -226,7 +217,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   it('returns 40403 for a message id not present in the session', async () => {
     const id = await createSession();
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
     ]);
     const { body } = await getJson<null>(
       `/api/v1/sessions/${id}/messages/msg_00NOT_IN_SESSION00`,
@@ -245,9 +236,9 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   it('paginates with page_size and before_id / after_id cursors', async () => {
     const id = await createSession();
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'm0' }], toolCalls: [] },
-      { role: 'user', content: [{ type: 'text', text: 'm1' }], toolCalls: [] },
-      { role: 'user', content: [{ type: 'text', text: 'm2' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'm0' }] },
+      { role: 'user', content: [{ type: 'text', text: 'm1' }] },
+      { role: 'user', content: [{ type: 'text', text: 'm2' }] },
     ]);
     const all = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
     const idsDesc = all.body.data.items.map((m) => m.id);
@@ -273,9 +264,9 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   it('filters the page by role after pagination', async () => {
     const id = await createSession();
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'q' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'q' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'a' }], toolCalls: [] },
-      { role: 'user', content: [{ type: 'text', text: 'q2' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'q2' }] },
     ]);
     const { body } = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?role=user`);
     expect(body.code).toBe(0);
@@ -292,9 +283,15 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
     const ctx = agent.accessor.get(IAgentContextMemoryService);
     ctx.append(
-      { role: 'user', content: [{ type: 'text', text: 'm0' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'm0' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'm1' }], toolCalls: [] },
-      { role: 'user', content: [{ type: 'text', text: 'm2' }], toolCalls: [] },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'm2' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,QUJD' } },
+        ],
+      },
     );
     ctx.applyCompaction({
       summary: 'summary',
@@ -325,6 +322,12 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
       role: 'user',
       metadata: { origin: { kind: 'compaction_summary' } },
     });
+    expect(_m2?.content).toContainEqual(
+      expect.objectContaining({
+        type: 'image',
+        source: { kind: 'url', url: 'data:image/png;base64,QUJD' },
+      }),
+    );
 
     const got = await getJson<MessageWire>(`/api/v1/sessions/${id}/messages/${m1.id}`);
     expect(got.body.code).toBe(0);

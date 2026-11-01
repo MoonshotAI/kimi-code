@@ -48,12 +48,13 @@ import { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLo
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 
-const watchMockState = vi.hoisted(() => ({ mode: 'inert' as 'inert' | 'real' }));
+const watchMockState = vi.hoisted(() => ({ mode: 'inert' as 'inert' | 'real', calls: [] as string[] }));
 
 vi.mock('#human/utils/watch', async (importOriginal) => {
   const original = await importOriginal<typeof import('#human/utils/watch')>();
   const watch = (path: string, options?: Parameters<typeof original.watch>[1]) => {
     if (watchMockState.mode === 'real') return original.watch(path, options);
+    watchMockState.calls.push(path);
     return {
       ready: Promise.resolve(),
       onDidChange: () => ({ dispose: () => {} }),
@@ -121,7 +122,7 @@ function workspaceContextStub(workDir: string): IWorkspaceContext {
     workspaceId: 'wd_test',
     cwd: workDir,
     source: 'local',
-    meta: { id: 'wd_test', root: workDir, name: 'test', createdAt: 0, lastOpenedAt: 0 },
+    meta: { id: 'wd_test', root: workDir, name: 'test', kind: 'implicit', createdAt: 0, lastOpenedAt: 0 },
     persistenceScope: 'sessions/wd_test',
   };
 }
@@ -828,6 +829,43 @@ describe('agent profile loaders + session catalog', () => {
         expect(stack.catalog.get('user-only')).toBeUndefined();
         expect(stack.catalog.get(DEFAULT_AGENT_PROFILE_NAME)?.description).toBe('builtin default');
       });
+    });
+  });
+});
+
+describe('workspace loader watchEnabled', () => {
+  function userStub(): IUserAgentProfileLoader {
+    return {
+      getDefaultProfile: () => ({ renderSystemPrompt: () => 'prompt' }),
+    } as unknown as IUserAgentProfileLoader;
+  }
+
+  it('registers a project watcher only when watchEnabled is set', async () => {
+    await withFixture(async (fixture) => {
+      const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+      const make = (watchEnabled: boolean) =>
+        new WorkspaceAgentProfileLoaderService(
+          workspaceContextStub(fixture.workDir),
+          new HostFileSystem(),
+          logStub(),
+          userStub(),
+          undefined,
+          undefined,
+          watchEnabled,
+        );
+
+      watchMockState.calls = [];
+      const disabled = make(false);
+      await disabled.ready;
+      await flush();
+      expect(watchMockState.calls).toEqual([]);
+      disabled.dispose();
+
+      const enabled = make(true);
+      await enabled.ready;
+      await flush();
+      expect(watchMockState.calls.length).toBeGreaterThan(0);
+      enabled.dispose();
     });
   });
 });

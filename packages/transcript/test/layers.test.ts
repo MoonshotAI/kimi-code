@@ -955,6 +955,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
   });
 
   it('maps media parts on the opening user message to attachment entities, dropping base64 bytes', () => {
+    const storedRefPart = { type: 'image_url', imageUrl: { url: 'media://store_1', name: 'stored-ref.png' } };
     const snapshot = groupMessagesIntoSnapshot([
       {
         role: 'user',
@@ -962,6 +963,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
           { type: 'text', text: 'what is this? [Image #1]' },
           { type: 'image', source: { kind: 'base64', media_type: 'image/png', data: 'aGVsbG8=' }, name: 'inline.png' },
           { type: 'image', source: { kind: 'url', url: 'https://example.com/pic.png' }, name: 'remote.png' },
+          storedRefPart,
           { type: 'image', source: { kind: 'file', file_id: 'file_8' }, name: 'stored.png' },
           { type: 'file', file_id: 'file_9', name: 'notes.txt', media_type: 'text/plain', size: 128 },
         ],
@@ -971,7 +973,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'a screenshot' }], toolCalls: [] },
     ]);
 
-    expect(snapshot.attachments).toHaveLength(4);
+    expect(snapshot.attachments).toHaveLength(5);
     expect(snapshot.attachments[0]).toMatchObject({
       attachmentId: 'att_1',
       mediaType: 'image/png',
@@ -985,18 +987,24 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     });
     expect(snapshot.attachments[2]).toMatchObject({
       attachmentId: 'att_3',
-      name: 'stored.png',
-      source: { kind: 'file', fileId: 'file_8' },
+      mediaType: 'image/*',
+      name: 'stored-ref.png',
+      source: { kind: 'url', url: 'media://store_1' },
     });
     expect(snapshot.attachments[3]).toMatchObject({
       attachmentId: 'att_4',
+      name: 'stored.png',
+      source: { kind: 'file', fileId: 'file_8' },
+    });
+    expect(snapshot.attachments[4]).toMatchObject({
+      attachmentId: 'att_5',
       mediaType: 'text/plain',
       name: 'notes.txt',
       source: { kind: 'file', fileId: 'file_9' },
     });
     const firstTurn = snapshot.items[0];
     if (firstTurn?.kind !== 'turn') throw new Error('expected turn');
-    expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3', 'att_4']);
+    expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3', 'att_4', 'att_5']);
   });
 
   it('folds origin file attachments on the opening user message into path-sourced entities', () => {
@@ -1753,6 +1761,27 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(stillPlanning.meta.modes).toEqual({ plan: {} });
   });
 
+  it('keeps a model-started swarm that an older version never closed out of meta.modes', () => {
+    const base = baseWithMarker();
+    const markersOf = (snapshot: AgentTranscriptSnapshot) =>
+      snapshot.items
+        .filter((item) => item.kind === 'marker')
+        .map((item) => item.kind === 'marker' && item.marker);
+
+    const modelStarted = foldWireRecordFacts(
+      [{ type: 'swarm_mode.enter', agentId: 'main', trigger: 'tool', time: 1000 }],
+      base,
+    );
+    expect(modelStarted.meta.modes?.swarm).toBeUndefined();
+    expect(markersOf(modelStarted)).toEqual(['compaction', 'swarm.enter']);
+
+    const userStarted = foldWireRecordFacts(
+      [{ type: 'swarm_mode.enter', agentId: 'main', trigger: 'manual', time: 1000 }],
+      base,
+    );
+    expect(userStarted.meta.modes).toEqual({ swarm: {} });
+  });
+
   it('folds tower mode records into meta.modes without markers', () => {
     const base = baseWithMarker();
     const folded = foldWireRecordFacts(
@@ -1998,6 +2027,32 @@ describe('foldWireRecordFacts (cold facts)', () => {
           time: 3000,
         },
         { type: 'interaction.resolved', id: 'q-1', response: null, time: 4000 },
+        {
+          type: 'interaction.request',
+          id: 'q-2',
+          kind: 'question',
+          request: { questions: [] },
+          time: 5000,
+        },
+        {
+          type: 'interaction.resolved',
+          id: 'q-2',
+          response: { cancelled: true, reason: 'turn_ended' },
+          time: 6000,
+        },
+        {
+          type: 'interaction.request',
+          id: 'q-3',
+          kind: 'question',
+          request: { questions: [] },
+          time: 7000,
+        },
+        {
+          type: 'interaction.resolved',
+          id: 'q-3',
+          response: { cancelled: true },
+          time: 8000,
+        },
       ],
       base,
     );
@@ -2017,6 +2072,22 @@ describe('foldWireRecordFacts (cold facts)', () => {
         state: 'dismissed',
         request: { questions: [] },
         response: null,
+      },
+      {
+        interactionId: 'q-2',
+        interactionKind: 'question',
+        toolCallId: undefined,
+        state: 'cancelled',
+        request: { questions: [] },
+        response: { cancelled: true, reason: 'turn_ended' },
+      },
+      {
+        interactionId: 'q-3',
+        interactionKind: 'question',
+        toolCallId: undefined,
+        state: 'answered',
+        request: { questions: [] },
+        response: { cancelled: true },
       },
     ]);
   });
