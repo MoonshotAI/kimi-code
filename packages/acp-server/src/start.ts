@@ -108,12 +108,23 @@ export async function runAcpServerWithStream(
 ): Promise<RunningAcpServer> {
   const previousTimeout = process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'];
   let didOverrideTimeout = false;
+  const restoreTimeout = (): void => {
+    if (didOverrideTimeout) {
+      if (previousTimeout === undefined) {
+        delete process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'];
+      } else {
+        process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'] = previousTimeout;
+      }
+      didOverrideTimeout = false;
+    }
+  };
   const acpTimeout = process.env[ACP_LLM_TIMEOUT_ENV];
   if (acpTimeout !== undefined && acpTimeout.trim() !== '') {
     process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'] = acpTimeout;
     didOverrideTimeout = true;
   }
-  const homeDir = resolveKimiHome(opts.homeDir);
+  try {
+    const homeDir = resolveKimiHome(opts.homeDir);
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
   // `ILogOptions` (logSeed) is required by the Session-scoped log writer; any
   // session creation would otherwise fail to instantiate the Session scope.
@@ -214,41 +225,38 @@ export async function runAcpServerWithStream(
   const close = async (): Promise<void> => {
     if (closePromise !== undefined) return closePromise;
     closePromise = (async () => {
-      // Detach the klient's event subscriptions first so disposal below cannot
-      // deliver into a torn-down scope.
-      await klient.close();
-      // Flush the append-log write-behind before disposing, so a clean shutdown
-      // never races a pending drain against teardown (and doesn't drop the last
-      // persisted ops). Best-effort: a flush failure must not block disposal.
-      const appendLogStore = core.accessor.get(IAppendLogStore);
       try {
-        await appendLogStore.flush();
-      } catch {
-        // ignore — disposal proceeds regardless
-      }
-      // Same shutdown order as kap-server: settle queued session-metadata
-      // writes, then drain the session-index mirror while the query store is
-      // still open, so a queued summary lands in the read model.
-      await drainSessionMetadataWrites();
-      await core.accessor.get(ISessionIndexMirror).drain();
-      await acpProviderRegistration.dispose();
-      core.dispose();
-      // `core.dispose()` runs the mirror's and the query store's synchronous
-      // `dispose()`, whose drains/closes are asynchronous — await them so an
-      // embedding host that removes homeDir right after close() never races
-      // an in-flight shard close (ENOTEMPTY on teardown). The same window
-      // exists for the append-log retirement flushes released by disposal.
-      await appendLogStore.drainRetirements();
-      await drainSessionIndexMirror();
-      await drainQueryStoreDisposals();
-      await drainSessionMetadataWrites();
-      await drainLogCloses();
-      if (didOverrideTimeout) {
-        if (previousTimeout === undefined) {
-          delete process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'];
-        } else {
-          process.env['KIMI_CODE_LLM_HEADERS_TIMEOUT_MS'] = previousTimeout;
+        // Detach the klient's event subscriptions first so disposal below cannot
+        // deliver into a torn-down scope.
+        await klient.close();
+        // Flush the append-log write-behind before disposing, so a clean shutdown
+        // never races a pending drain against teardown (and doesn't drop the last
+        // persisted ops). Best-effort: a flush failure must not block disposal.
+        const appendLogStore = core.accessor.get(IAppendLogStore);
+        try {
+          await appendLogStore.flush();
+        } catch {
+          // ignore — disposal proceeds regardless
         }
+        // Same shutdown order as kap-server: settle queued session-metadata
+        // writes, then drain the session-index mirror while the query store is
+        // still open, so a queued summary lands in the read model.
+        await drainSessionMetadataWrites();
+        await core.accessor.get(ISessionIndexMirror).drain();
+        await acpProviderRegistration.dispose();
+        core.dispose();
+        // `core.dispose()` runs the mirror's and the query store's synchronous
+        // `dispose()`, whose drains/closes are asynchronous — await them so an
+        // embedding host that removes homeDir right after close() never races
+        // an in-flight shard close (ENOTEMPTY on teardown). The same window
+        // exists for the append-log retirement flushes released by disposal.
+        await appendLogStore.drainRetirements();
+        await drainSessionIndexMirror();
+        await drainQueryStoreDisposals();
+        await drainSessionMetadataWrites();
+        await drainLogCloses();
+      } finally {
+        restoreTimeout();
       }
     })();
     return closePromise;
@@ -259,6 +267,10 @@ export async function runAcpServerWithStream(
   });
 
   return { core, klient, conn, close };
+  } catch (error) {
+    restoreTimeout();
+    throw error;
+  }
 }
 
 /**
