@@ -1,11 +1,11 @@
-import { errorStatusCode } from '#/llm/errors';
-import type { LlmModel } from '#/llm/model';
-import type { LlmRecovery } from '#/llm/requester/recovery';
+import { errorStatusCode } from '#/llm-requester/errors';
+import type { LlmModel } from '#/llm-requester/model';
+import type { LlmRecovery } from '#/llm-requester/recovery';
 import {
   mergeRequestHeaders,
   type LlmCredential,
   type LlmCredentialProvider,
-} from '#/llm/requester/requester';
+} from '#/llm-requester/requester';
 
 export interface AccessTokenResolver {
   (options?: { readonly force?: boolean }): Promise<string | undefined>;

@@ -25,11 +25,8 @@ import { persistedKimiOAuthRef } from '#/utils/region';
 import { generateRemoteControlQr } from '#/utils/remote-control-qr';
 
 import { initializeServerTelemetry } from '../../telemetry';
-import {
-  createKimiCodeHostIdentity,
-  getHostPackageRoot,
-  getVersion,
-} from '../../version';
+import { createKimiCodeHostIdentity } from '../../host-identity';
+import { getHostPackageRoot, getVersion } from '../../version';
 import {
   accessUrlLines,
   browserOpenOrigin,

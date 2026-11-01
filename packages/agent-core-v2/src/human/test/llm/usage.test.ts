@@ -1,27 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
-import type { StreamParseSink } from '#/llm/protocol/format';
-import { anthropicFormat } from '#/llm/requester/bases/anthropic/format';
-import { createOpenAIFormat } from '#/llm/requester/bases/openai/format';
-import type { TokenUsage } from '#/llm/usage';
-
-const openAIFormat = createOpenAIFormat();
+import type { DecodeSink } from '#/llm/protocol/protocol';
+import { createDecoder as createAnthropicDecoder } from '#/llm/builtin/protocol/anthropic/decode';
+import { createDecoder as createOpenAIDecoder } from '#/llm/builtin/protocol/openai/decode';
+import type { TokenUsage } from '#/llm-requester/usage';
 
 function createSink() {
   const usages: Partial<TokenUsage>[] = [];
-  const sink: StreamParseSink = {
+  const sink: DecodeSink = {
     onDelta: () => {},
     onFinish: () => {},
+    onMessageId: () => {},
     onUsage: (usage) => usages.push(usage),
+    onError: () => {},
+    onToolCallEnd: () => {},
   };
   return { sink, usages };
 }
 
-describe('openAIFormat stream usage', () => {
+describe('openai decoder stream usage', () => {
   it('emits usage from the usage chunk', () => {
     const { sink, usages } = createSink();
     const raw = { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 };
-    openAIFormat.createStreamParser()({ choices: [], usage: raw }, sink);
+    createOpenAIDecoder(sink).push({ choices: [], usage: raw });
     expect(usages).toEqual([
       { inputOther: 120, output: 30, inputCacheRead: 0, inputCacheCreation: 0, raw },
     ]);
@@ -35,7 +36,7 @@ describe('openAIFormat stream usage', () => {
       prompt_tokens_details: { cached_tokens: 80 },
       completion_tokens_details: { reasoning_tokens: 12 },
     };
-    openAIFormat.createStreamParser()({ usage: raw }, sink);
+    createOpenAIDecoder(sink).push({ usage: raw });
     expect(usages).toEqual([
       { inputOther: 120, output: 50, inputCacheRead: 80, inputCacheCreation: 0, raw },
     ]);
@@ -43,17 +44,17 @@ describe('openAIFormat stream usage', () => {
 
   it('emits nothing for chunks without usage', () => {
     const { sink, usages } = createSink();
-    const parse = openAIFormat.createStreamParser();
-    parse({ choices: [] }, sink);
-    parse({ usage: null }, sink);
+    const decoder = createOpenAIDecoder(sink);
+    decoder.push({ choices: [] });
+    decoder.push({ usage: null });
     expect(usages).toEqual([]);
   });
 });
 
-describe('anthropicFormat stream usage', () => {
+describe('anthropic decoder stream usage', () => {
   it('emits message_start input usage and message_delta output usage as they arrive', () => {
     const { sink, usages } = createSink();
-    const parse = anthropicFormat.createStreamParser();
+    const decoder = createAnthropicDecoder(sink);
     const startRaw = {
       input_tokens: 500,
       output_tokens: 1,
@@ -61,8 +62,8 @@ describe('anthropicFormat stream usage', () => {
       cache_creation_input_tokens: 100,
     };
     const deltaRaw = { output_tokens: 87 };
-    parse({ type: 'message_start', message: { usage: startRaw } }, sink);
-    parse({ type: 'message_delta', usage: deltaRaw }, sink);
+    decoder.push({ type: 'message_start', message: { usage: startRaw } });
+    decoder.push({ type: 'message_delta', usage: deltaRaw });
     expect(usages).toEqual([
       {
         inputOther: 500,
@@ -76,19 +77,13 @@ describe('anthropicFormat stream usage', () => {
 
   it('emits a message_delta usage on its own', () => {
     const { sink, usages } = createSink();
-    anthropicFormat.createStreamParser()(
-      { type: 'message_delta', usage: { output_tokens: 87 } },
-      sink,
-    );
+    createAnthropicDecoder(sink).push({ type: 'message_delta', usage: { output_tokens: 87 } });
     expect(usages).toEqual([{ output: 87, raw: { output_tokens: 87 } }]);
   });
 
   it('emits nothing for events without usage', () => {
     const { sink, usages } = createSink();
-    anthropicFormat.createStreamParser()(
-      { type: 'content_block_delta', delta: { text: 'hi' } },
-      sink,
-    );
+    createAnthropicDecoder(sink).push({ type: 'content_block_delta', delta: { text: 'hi' } });
     expect(usages).toEqual([]);
   });
 });

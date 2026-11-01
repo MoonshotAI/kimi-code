@@ -94,7 +94,7 @@ class RatingClient {
     bus.publish(new TurnStarted({ agentId: MAIN_AGENT_ID, turnId, origin }));
     during?.(bus);
     bus.publish(new TurnEnded({
-      agentId: MAIN_AGENT_ID, turnId, reason: 'completed', traceId: 'trace-1',
+      agentId: MAIN_AGENT_ID, turnId, reason: 'completed', requestId: 'trace-1',
     }));
   }
 
@@ -516,13 +516,12 @@ describe('session rating lifecycle', () => {
         message: {
           role: 'user',
           content: [{ type: 'text', text: 'Please review this answer.' }],
-          toolCalls: [],
           origin: { kind: 'user' },
         },
       }),
     );
     await dispatcher.dispatch(
-      new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 0, reason: 'completed', traceId: 'trace-1' }),
+      new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 0, reason: 'completed', requestId: 'trace-1' }),
     );
     const turnId = await client.latestTurnId(id);
     expect(await server.core.accessor.get(ISessionManager).closeIfIdle(id, 0)).toBe(true);

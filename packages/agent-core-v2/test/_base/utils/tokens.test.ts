@@ -45,7 +45,6 @@ describe('token estimates for media content parts', () => {
     const estimate = estimateTokensForMessage({
       role: 'user',
       content: [{ type: 'text', text: 'see screenshot' }, imagePart],
-      toolCalls: [],
     });
 
     expect(estimate).toBeGreaterThan(100);

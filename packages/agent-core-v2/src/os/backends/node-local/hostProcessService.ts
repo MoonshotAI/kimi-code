@@ -1,9 +1,8 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { stat } from 'node:fs/promises';
 import type { Readable, Writable } from 'node:stream';
 
 import { BufferedReadable } from '#/_base/execEnv/bufferedReadable';
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
 import {
   HostProcessError,
@@ -187,6 +186,18 @@ export class HostProcessService implements IHostProcessService {
     args: readonly string[] = [],
     options: HostProcessOptions = {},
   ): Promise<IHostProcess> {
+    if (options.cwd !== undefined) {
+      const cwdStat = await stat(options.cwd).catch(() => undefined);
+      if (cwdStat === undefined || !cwdStat.isDirectory()) {
+        throw new HostProcessError(
+          HostProcessErrorCode.SpawnFailed,
+          `Failed to spawn "${command}": cwd ${options.cwd} does not exist or is not a directory`,
+          {
+            details: { command, args: [...args], cwd: options.cwd },
+          },
+        );
+      }
+    }
     const spawnOptions = buildSpawnOptions(options);
     const child = spawn(command, args as string[], spawnOptions);
     try {
@@ -205,11 +216,3 @@ export class HostProcessService implements IHostProcessService {
     return new HostProcess(child, options.mergeStderr ?? false);
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IHostProcessService,
-  HostProcessService,
-  ScopeActivation.OnScopeCreated,
-  'hostProcess',
-);

@@ -16,7 +16,7 @@ import {
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import type { WatchChange } from '#human/utils/watch';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
@@ -1448,6 +1448,7 @@ describe('change-notifier belief seeding', () => {
         notifyAgentsMdChanges: async () => {},
         notifySkillChanges: async () => {},
         notifySubagentChanges: async () => {},
+        notifyWorkspaceDirsChanges: async () => {},
         seedBeliefs,
         mute: () => {},
         unmute: () => {},

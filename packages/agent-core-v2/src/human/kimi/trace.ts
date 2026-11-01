@@ -1,4 +1,4 @@
-import { llmStatusErrorMessage } from '#/llm/errors';
+import { llmStatusErrorMessage } from '#/llm-requester/errors';
 import type { Plugin } from '#/plugin';
 
 export interface TracePlugin extends Plugin {

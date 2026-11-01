@@ -8,7 +8,7 @@ import { runPrompt } from '#/cli/run-prompt';
 import { runShell } from '#/cli/run-shell';
 import { formatStartupError } from '#/cli/startup-error';
 import { runUpdatePreflight } from '#/cli/update/preflight';
-import { handleMainCommand, handleUpgradeCommand, main } from '#/main';
+import { handleMainCommand, handleUpgradeCommand, main } from '#/cli/main';
 
 const mocks = vi.hoisted(() => {
   const parse = vi.fn();
@@ -163,6 +163,7 @@ function defaultOpts(): CLIOptions {
     skillsDirs: [],
     agent: undefined,
     agentFiles: [],
+    environment: undefined,
   };
 }
 

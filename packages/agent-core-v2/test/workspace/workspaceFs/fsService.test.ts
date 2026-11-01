@@ -11,13 +11,16 @@ import {
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { IGitService } from '#/app/git/git';
 import { ErrorCodes, Error2 } from '#/errors';
+import { EnvironmentError } from '#/environment/environmentRegistry';
+import { HandshakeError } from '#/remote/client/connection';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError } from '#/os/interface/hostFsErrors';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/telemetry';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -31,7 +34,7 @@ function stubWorkspaceContext(): IWorkspaceContext {
     workspaceId: 'w',
     cwd: WORK_DIR,
     source: 'local',
-    meta: { id: 'w', root: WORK_DIR, name: 'proj', createdAt: 1, lastOpenedAt: 1 },
+    meta: { id: 'w', root: WORK_DIR, name: 'proj', kind: 'implicit', createdAt: 1, lastOpenedAt: 1 },
     persistenceScope: 'sessions/w',
   };
 }
@@ -41,9 +44,12 @@ function stubWorkspaceDirs(additionalDirs: readonly string[] = []): IWorkspaceDi
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     additionalDirs: [...additionalDirs],
+    sharedAdditionalDirs: [...additionalDirs],
+    primaryByWorkspace: {},
     onDidChange: () => ({ dispose: () => {} }),
     addDir: () => Promise.reject(new Error('not supported in tests')),
     mergeAdditionalDirs: () => Promise.resolve(),
+    reload: () => Promise.resolve(),
     sessionInfo: () => {
       throw new Error('not supported in tests');
     },
@@ -53,8 +59,11 @@ function stubWorkspaceDirs(additionalDirs: readonly string[] = []): IWorkspaceDi
 function workspaceGitStub(git: IGitService): IWorkspaceGitService {
   return {
     _serviceBrand: undefined,
-    status: (filter) => git.status(WORK_DIR, filter),
+    status: (pathFilter) => git.status(WORK_DIR, { pathFilter }),
+    statusAt: (cwd, options) => git.status(cwd, options),
+    pullRequestAt: (cwd) => git.pullRequest(cwd),
     diff: (rel, abs) => git.diff(WORK_DIR, rel, abs),
+    diffAt: (cwd, rel, abs) => git.diff(cwd, rel, abs),
   };
 }
 
@@ -72,7 +81,7 @@ function fakeFs(
     }
   };
   const addAbsAncestors = (abs: string): void => {
-    let dir = abs.slice(0, abs.lastIndexOf('/'));
+    let dir = abs.slice(0, abs.lastIndexOf('/')) || '/';
     while (dir.length > 0 && !dirSet.has(dir)) {
       dirSet.add(dir);
       dir = dir.slice(0, dir.lastIndexOf('/'));
@@ -105,7 +114,32 @@ function fakeFs(
     err.code = 'ENOENT';
     return err;
   };
-  const lstatImpl = async (p: string) => {
+  const resolveSymlinks = (p: string): string => {
+    let cur = p;
+    for (let hops = 0; hops < 10; hops += 1) {
+      let longest: string | undefined;
+      for (const linkPath of symlinkTargetMap.keys()) {
+        if (
+          (cur === linkPath || cur.startsWith(`${linkPath}/`)) &&
+          (longest === undefined || linkPath.length > longest.length)
+        ) {
+          longest = linkPath;
+        }
+      }
+      if (longest === undefined) return cur;
+      const target = symlinkTargetMap.get(longest)!;
+      const resolvedTarget = isAbsolute(target) ? target : join(longest, '..', target);
+      cur = `${resolvedTarget}${cur.slice(longest.length)}`;
+    }
+    return cur;
+  };
+  const resolveParentSymlinks = (p: string): string => {
+    const slash = p.lastIndexOf('/');
+    if (slash <= 0) return p;
+    return `${resolveSymlinks(p.slice(0, slash))}${p.slice(slash)}`;
+  };
+  const lstatImpl = async (rawPath: string) => {
+    const p = resolveParentSymlinks(rawPath);
     if (fileMap.has(p)) {
       const c = fileMap.get(p)!;
       return {
@@ -127,35 +161,28 @@ function fakeFs(
   return {
     _serviceBrand: undefined,
     readText: async (p) => {
-      const c = fileMap.get(p);
+      const c = fileMap.get(resolveSymlinks(p));
       if (c === undefined) throw enoent(p);
       return typeof c === 'string' ? c : c.toString('utf8');
     },
     writeText: async () => {},
     appendText: async () => {},
-    readBytes: async (p, n) => {
-      const c = fileMap.get(p);
+    readBytes: async (p, n, offset = 0) => {
+      const c = fileMap.get(resolveSymlinks(p));
       if (c === undefined) throw enoent(p);
       const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
-      return buf.subarray(0, n ?? buf.length);
+      return buf.subarray(offset, n === undefined ? buf.length : offset + n);
     },
     readLines: async function* (): AsyncGenerator<string> {
     },
     writeBytes: async () => {},
     createExclusive: async () => false,
     lstat: lstatImpl,
-    stat: async (p) => {
-      let cur = p;
-      for (let hops = 0; hops < 10 && symlinkSet.has(cur); hops += 1) {
-        const target = symlinkTargetMap.get(cur);
-        if (target === undefined) break;
-        cur = isAbsolute(target) ? target : join(cur, '..', target);
-      }
-      return lstatImpl(cur);
-    },
+    stat: async (p) => lstatImpl(resolveSymlinks(p)),
     readdir: async (p) => {
-      if (!isDir(p)) throw enoent(p);
-      const prefix = `${p}/`;
+      const dir = resolveSymlinks(p);
+      if (!isDir(dir)) throw enoent(p);
+      const prefix = `${dir}/`;
       const children = new Map<string, HostDirEntry>();
       const addDir = (name: string): void => {
         if (!children.has(name)) {
@@ -173,7 +200,7 @@ function fakeFs(
         }
       };
       const visit = (key: string, kind: 'file' | 'dir' | 'symlink'): void => {
-        if (key === p || !key.startsWith(prefix)) return;
+        if (key === dir || !key.startsWith(prefix)) return;
         const rest = key.slice(prefix.length);
         const first = rest.split('/')[0];
         if (first === undefined || first.length === 0) return;
@@ -359,6 +386,7 @@ function defaultGitStub(): IGitService {
       pullRequest: null,
     }),
     diff: async () => ({ path: '', diff: '', truncated: false }),
+    pullRequest: async () => null,
     findWorkTree: async () => null,
   };
 }
@@ -387,13 +415,9 @@ function makeSession(
       ready: Promise.resolve(),
     }),
   ]);
-  const runtime = new FakeRuntime({ workspaceId: 'w', runtimeId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
-  Object.defineProperty(runtime, 'process', { value: runner ?? fakeRunner(handler) });
-  host.app.instantiation.provide(IRuntimeResolver, {
-    _serviceBrand: undefined,
-    inspect: () => runtime,
-    acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-  });
+  const environment = new FakeEnvironment({ environmentId: 'local', generation: 'test' }, { capabilities: ['process'], pathClass });
+  Object.defineProperty(environment, 'process', { value: runner ?? fakeRunner(handler) });
+  host.app.instantiation.provide(IEnvironmentService, resolverFor(environment));
   const workspace = host.child('program', 'w1', [
     stubPair(IWorkspaceContext, stubWorkspaceContext()),
     stubPair(IWorkspaceDirs, stubWorkspaceDirs(additionalDirs)),
@@ -407,13 +431,47 @@ function makeSession(
 
 const emptyHandler: RunHandler = () => ({ stdout: '', exitCode: 0 });
 
+function resolverFor(environment: FakeEnvironment): EnvironmentResolver {
+  return {
+    _serviceBrand: undefined,
+    inspect: () => environment,
+    acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+    acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+  };
+}
+
+function makeRemoteSession(
+  files: Record<string, string | Buffer>,
+  handler: RunHandler,
+  events: Array<{ event: string; properties: Record<string, unknown> }> = [],
+  environmentId = 'ssh-dev',
+  homeDir = '/home/target',
+  hostFs?: IHostFileSystem,
+): IWorkspaceFsService {
+  const environment = new FakeEnvironment(
+    { environmentId, generation: 'test' },
+    { capabilities: ['process'], host: { homeDir } },
+  );
+  Object.defineProperty(environment, 'process', { value: fakeRunner(handler) });
+  const resolver = resolverFor(environment);
+  return new WorkspaceFsService(
+    stubWorkspaceContext(),
+    stubWorkspaceDirs(),
+    hostFs ?? fakeFs(files),
+    resolver,
+    telemetryStub(events),
+    workspaceGitStub(defaultGitStub()),
+    environmentId,
+  );
+}
+
 describe('WorkspaceFsService.gitStatus', () => {
   it('delegates to IWorkspaceGitService with the handler root and a confined filter', async () => {
-    const calls: Array<{ cwd: string; filter: ReadonlySet<string> | undefined }> = [];
+    const calls: Array<{ cwd: string; options: { pathFilter?: ReadonlySet<string>; scopeToCwd?: boolean } | undefined }> = [];
     const git: IGitService = {
       _serviceBrand: undefined,
-      status: async (cwd, filter) => {
-        calls.push({ cwd, filter });
+      status: async (cwd, options) => {
+        calls.push({ cwd, options });
         return {
           branch: 'main',
           ahead: 0,
@@ -425,16 +483,96 @@ describe('WorkspaceFsService.gitStatus', () => {
         };
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
+      pullRequest: async () => null,
       findWorkTree: async () => null,
     };
     const fs = makeSession({}, emptyHandler, [], git);
     const result = await fs.gitStatus({ paths: ['src/a.ts'] });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.cwd).toBe(WORK_DIR);
-    expect(calls[0]?.filter).toEqual(new Set(['src/a.ts']));
+    expect(calls[0]?.options?.pathFilter).toEqual(new Set(['src/a.ts']));
+    expect(calls[0]?.options?.scopeToCwd).toBe(false);
     expect(result.branch).toBe('main');
     expect(result.entries).toEqual({ 'src/a.ts': 'modified' });
     expect(result.additions).toBe(3);
+  });
+
+  it('delegates a selected additional root with cwd scoping', async () => {
+    const calls: Array<{ cwd: string; options: { scopeToCwd?: boolean } | undefined }> = [];
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async (cwd, options) => {
+        calls.push({ cwd, options });
+        return { branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
+      },
+      diff: async () => ({ path: '', diff: '', truncated: false }),
+      pullRequest: async () => null,
+      findWorkTree: async () => null,
+    };
+    const fs = makeSession({ '/extra/placeholder': '' }, emptyHandler, [], git, [], undefined, {}, ['/extra']);
+
+    await fs.gitStatus({ root: '/extra' });
+    await fs.gitStatus({ root: '/extra', include_pull_request: false });
+
+    expect(calls).toEqual([
+      { cwd: '/extra', options: { pathFilter: undefined, scopeToCwd: true, includePullRequest: true } },
+      { cwd: '/extra', options: { pathFilter: undefined, scopeToCwd: true, includePullRequest: false } },
+    ]);
+  });
+
+  it('resolves status filters from the selected root', async () => {
+    const calls: Array<{ options: { pathFilter?: ReadonlySet<string> } | undefined }> = [];
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async (_cwd, options) => {
+        calls.push({ options });
+        return { branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
+      },
+      diff: async () => ({ path: '', diff: '', truncated: false }),
+      pullRequest: async () => null,
+      findWorkTree: async () => null,
+    };
+    const fs = makeSession(
+      { 'sub/link/file.ts': '', '/outside/file.ts': '' },
+      emptyHandler,
+      [],
+      git,
+      ['/repo/link'],
+      undefined,
+      { '/repo/link': '/outside' },
+    );
+
+    await fs.gitStatus({ root: 'sub', paths: ['link/file.ts'] });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.options?.pathFilter).toEqual(new Set(['link/file.ts']));
+  });
+
+  it('rejects roots outside the workspace and roots that are files', async () => {
+    const fs = makeSession({ 'src/a.ts': '' }, emptyHandler);
+
+    await expect(fs.gitStatus({ root: '/outside' })).rejects.toMatchObject({ code: 'fs.path_escapes' });
+    await expect(fs.gitStatus({ root: 'src/a.ts' })).rejects.toMatchObject({ code: 'fs.git_unavailable' });
+  });
+
+  it('allows a registered filesystem root as a Git root', async () => {
+    const calls: string[] = [];
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async (cwd) => {
+        calls.push(cwd);
+        return { branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
+      },
+      diff: async () => ({ path: '', diff: '', truncated: false }),
+      pullRequest: async () => null,
+      findWorkTree: async () => null,
+    };
+    const fs = makeSession({ '/placeholder': '' }, emptyHandler, [], git, [], undefined, {}, ['/']);
+
+    await fs.gitStatus({ root: '/' });
+    await fs.gitStatusBatch({ roots: ['/'], include_pull_request: false });
+
+    expect(calls).toEqual(['/', '/']);
   });
 
   it('propagates FS_GIT_UNAVAILABLE thrown by IGitService', async () => {
@@ -444,10 +582,106 @@ describe('WorkspaceFsService.gitStatus', () => {
         throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, 'git unavailable at /repo: not a repo');
       },
       diff: async () => ({ path: '', diff: '', truncated: false }),
+      pullRequest: async () => null,
       findWorkTree: async () => null,
     };
     const fs = makeSession({}, emptyHandler, [], git);
     await expect(fs.gitStatus({})).rejects.toMatchObject({ code: 'fs.git_unavailable' });
+  });
+});
+
+describe('WorkspaceFsService git batches', () => {
+  it('returns independent results and errors with bounded concurrency', async () => {
+    let active = 0;
+    let maxActive = 0;
+    let statusCalls = 0;
+    const optionsSeen: Array<{ includePullRequest?: boolean } | undefined> = [];
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async (cwd, options) => {
+        statusCalls += 1;
+        optionsSeen.push(options);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await Promise.resolve();
+        active -= 1;
+        if (cwd === '/b') throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, 'not a repo');
+        return { branch: `branch-${cwd.slice(1)}`, ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
+      },
+      pullRequest: async (cwd) => {
+        if (cwd === '/b') throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, 'not a repo');
+        return cwd === '/a' ? { number: 7, state: 'open', url: 'https://example.com/pull/7' } : null;
+      },
+      diff: async () => ({ path: '', diff: '', truncated: false }),
+      findWorkTree: async () => null,
+    };
+    const fs = makeSession(
+      { '/a/placeholder': '', '/b/placeholder': '', '/c/placeholder': '' },
+      emptyHandler,
+      [],
+      git,
+      [],
+      undefined,
+      {},
+      ['/a', '/b', '/c'],
+    );
+
+    const status = await fs.gitStatusBatch({ roots: ['/a', '/b', '/c', '/a'], include_pull_request: false });
+
+    expect(statusCalls).toBe(3);
+    expect(maxActive).toBeLessThanOrEqual(2);
+    expect(optionsSeen.every(options => options?.includePullRequest === false)).toBe(true);
+    expect(Object.keys(status.results)).toEqual(['/a', '/c']);
+    expect(status.results['/a']?.branch).toBe('branch-a');
+    expect(status.results['/c']?.branch).toBe('branch-c');
+    expect(status.errors['/b']).toEqual({ code: 40908, msg: 'not a repo' });
+
+    const pullRequests = await fs.pullRequestBatch({ roots: ['/a', '/b', '/c'] });
+    expect(pullRequests.results['/a']).toEqual({ number: 7, state: 'open', url: 'https://example.com/pull/7' });
+    expect(pullRequests.results['/c']).toBeNull();
+    expect(pullRequests.errors['/b']).toEqual({ code: 40908, msg: 'not a repo' });
+  });
+
+  it('preserves special root names and established batch error codes', async () => {
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async (cwd) => {
+        if (cwd === '/missing-env') throw new EnvironmentError('environment.not_found', 'missing');
+        if (cwd === '/invalid-cwd') throw new EnvironmentError('environment.invalid_cwd', 'invalid');
+        if (cwd === '/conflict') throw new EnvironmentError('environment.conflict', 'conflict');
+        if (cwd === '/unavailable') throw new EnvironmentError('environment.unavailable', 'unavailable');
+        if (cwd === '/handshake') throw new HandshakeError('handshake');
+        return { branch: 'main', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
+      },
+      pullRequest: async () => null,
+      diff: async () => ({ path: '', diff: '', truncated: false }),
+      findWorkTree: async () => null,
+    };
+    const roots = ['__proto__', '/missing-env', '/invalid-cwd', '/conflict', '/unavailable', '/handshake'];
+    const files = Object.fromEntries(roots.filter(root => root.startsWith('/')).map(root => [`${root}/placeholder`, '']));
+    const fs = makeSession(
+      { '__proto__/placeholder': '', ...files },
+      emptyHandler,
+      [],
+      git,
+      [],
+      undefined,
+      {},
+      roots.filter(root => root.startsWith('/')),
+    );
+
+    const status = await fs.gitStatusBatch({ roots: [...roots, '/outside'], include_pull_request: false });
+
+    expect(Object.hasOwn(status.results, '__proto__')).toBe(true);
+    expect(JSON.stringify(status.results)).toContain('"__proto__"');
+    expect(status.errors).toEqual({
+      '/outside': { code: 41304, msg: 'path "/outside" escapes workspace' },
+      '/missing-env': { code: 40420, msg: 'missing' },
+      '/invalid-cwd': { code: 40001, msg: 'invalid' },
+      '/conflict': { code: 40901, msg: 'conflict' },
+      '/unavailable': { code: 40926, msg: 'unavailable' },
+      '/handshake': { code: 40926, msg: 'handshake' },
+    });
   });
 });
 
@@ -469,6 +703,7 @@ describe('WorkspaceFsService.diff', () => {
         calls.push({ cwd, rel, abs });
         return { path: rel, diff: '-old\n+new\n', truncated: false };
       },
+      pullRequest: async () => null,
       findWorkTree: async () => null,
     };
     const fs = makeSession({ 'src/a.ts': 'content' }, emptyHandler, [], git);
@@ -479,6 +714,46 @@ describe('WorkspaceFsService.diff', () => {
     expect(calls[0]?.abs).toBe(resolve(WORK_DIR, 'src/a.ts'));
     expect(result.diff).toContain('+new');
     expect(result.truncated).toBe(false);
+  });
+
+  it('delegates file diff using the selected additional root', async () => {
+    const calls: Array<{ cwd: string; rel: string; abs: string }> = [];
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async () => ({ branch: '', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null }),
+      diff: async (cwd, rel, abs) => {
+        calls.push({ cwd, rel, abs });
+        return { path: rel, diff: '-old\n+new\n', truncated: false };
+      },
+      pullRequest: async () => null,
+      findWorkTree: async () => null,
+    };
+    const fs = makeSession({ '/extra/src/a.ts': 'content' }, emptyHandler, [], git, [], undefined, {}, ['/extra']);
+
+    const result = await fs.diff({ root: '/extra', path: 'src/a.ts' });
+
+    expect(calls).toEqual([{ cwd: '/extra', rel: 'src/a.ts', abs: '/extra/src/a.ts' }]);
+    expect(result.path).toBe('src/a.ts');
+  });
+
+  it('preserves rootless diffs for allowed sibling directories', async () => {
+    const calls: Array<{ cwd: string; rel: string; abs: string }> = [];
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async () => ({ branch: '', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null }),
+      diff: async (cwd, rel, abs) => {
+        calls.push({ cwd, rel, abs });
+        return { path: rel, diff: '-old\n+new\n', truncated: false };
+      },
+      pullRequest: async () => null,
+      findWorkTree: async () => null,
+    };
+    const fs = makeSession({ '/extra/src/a.ts': 'content' }, emptyHandler, [], git, [], undefined, {}, ['/extra']);
+
+    const result = await fs.diff({ path: '/extra/src/a.ts' });
+
+    expect(calls).toEqual([{ cwd: WORK_DIR, rel: '../extra/src/a.ts', abs: '/extra/src/a.ts' }]);
+    expect(result.diff).toContain('+new');
   });
 
   it('rejects paths that escape the workspace', async () => {
@@ -547,6 +822,27 @@ describe('WorkspaceFsService.search', () => {
     const result = await fs.search({ query: '', limit: 50, follow_gitignore: true });
     expect(result.items.map((i) => i.path)).toEqual(['kept.ts']);
   });
+
+  it('searches additional roots with absolute result paths', async () => {
+    const fs = makeSession(
+      { 'src/foo.ts': '', '/extra/lib/foo.ts': '', '/extra/top.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+
+    const matches = await fs.search({ query: 'foo', limit: 50, follow_gitignore: false });
+    expect(matches.items.map((item) => item.path)).toContain('src/foo.ts');
+    expect(matches.items.map((item) => item.path)).toContain('/extra/lib/foo.ts');
+
+    const topLevel = await fs.search({ query: '', limit: 50, follow_gitignore: false });
+    expect(topLevel.items.map((item) => item.path)).toContain('src');
+    expect(topLevel.items.map((item) => item.path)).toContain('/extra/top.ts');
+  });
 });
 
 describe('WorkspaceFsService.suggest', () => {
@@ -564,7 +860,7 @@ describe('WorkspaceFsService.suggest', () => {
   }
 
   function rgMissingHandler(args: readonly string[]): { stdout: string; exitCode: number } {
-    if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
+    if (args[1] === '--version') return { stdout: '', exitCode: 1 };
     return { stdout: '', exitCode: 0 };
   }
 
@@ -948,6 +1244,23 @@ describe('WorkspaceFsService.suggest', () => {
     expect(result.truncated).toBe(true);
   });
 
+  it('keeps valid roots available when an additional root is missing', async () => {
+    const fs = makeSession(
+      { 'src/a.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/missing'],
+    );
+
+    const result = await fs.suggest({ query: '', limit: 50, follow_gitignore: false, show_hidden: false });
+
+    expect(result.items.map((item) => item.path)).toEqual(['src']);
+  });
+
   it('merges rg candidates across roots with relative paths for the primary root only', async () => {
     const fs = makeSession(
       {
@@ -1213,7 +1526,7 @@ describe('WorkspaceFsService.grep', () => {
     const fs = makeSession(
       { 'src/a.ts': 'hello world\nfoo bar\nhello again\n' },
       (args) => {
-        if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
+        if (args[1] === '--version') return { stdout: '', exitCode: 1 };
         return { stdout: '', exitCode: 0 };
       },
       events,
@@ -1321,9 +1634,170 @@ describe('WorkspaceFsService.grep', () => {
     expect(streaming?.wasKilled()).toBe(true);
     expect(streaming?.yieldedLines()).toBeLessThan(TOTAL);
   });
+
+  it('searches additional roots with rg and preserves unambiguous paths', async () => {
+    const rgFile = (path: string, text: string): string => [
+      { type: 'begin', data: { path: { text: path } } },
+      {
+        type: 'match',
+        data: {
+          path: { text: path },
+          lines: { text: `${text}\n` },
+          line_number: 1,
+          submatches: [{ start: 0, end: 5 }],
+        },
+      },
+      { type: 'end', data: { path: { text: path } } },
+    ].map((record) => JSON.stringify(record)).join('\n');
+    const captured: string[][] = [];
+    const fs = makeSession(
+      {},
+      (args) => {
+        if (args[0] === 'rg' && args[1] === '--version') {
+          return { stdout: 'ripgrep 14.1.0', exitCode: 0 };
+        }
+        if (args[0] === 'rg' && args.includes('--json')) {
+          captured.push([...args]);
+          return {
+            stdout: `${rgFile('src/a.ts', 'hello a')}\n${rgFile('/extra/b.ts', 'hello b')}\n`,
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', exitCode: 0 };
+      },
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+
+    const result = await fs.grep({
+      pattern: 'hello',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: true,
+      max_files: 200,
+      max_matches_per_file: 50,
+      max_total_matches: 5000,
+      context_lines: 0,
+    });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toContain('.');
+    expect(captured[0]).toContain('/extra');
+    expect(result.files.map((file) => file.path)).toEqual(['src/a.ts', '/extra/b.ts']);
+  });
+
+  it('deduplicates primary files emitted through an overlapping ancestor root', async () => {
+    const rgFile = (path: string, text: string): string => [
+      { type: 'begin', data: { path: { text: path } } },
+      {
+        type: 'match',
+        data: {
+          path: { text: path },
+          lines: { text: `${text}\n` },
+          line_number: 1,
+          submatches: [{ start: 0, end: 5 }],
+        },
+      },
+      { type: 'end', data: { path: { text: path } } },
+    ].map((record) => JSON.stringify(record)).join('\n');
+    const fs = makeSession(
+      {},
+      (args) => {
+        if (args[0] === 'rg' && args[1] === '--version') {
+          return { stdout: 'ripgrep 14.1.0', exitCode: 0 };
+        }
+        if (args[0] === 'rg' && args.includes('--json')) {
+          return {
+            stdout: [
+              rgFile('src/a.ts', 'hello primary'),
+              rgFile('/repo/src/a.ts', 'hello duplicate'),
+              rgFile('/other.ts', 'hello other'),
+            ].join('\n') + '\n',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', exitCode: 0 };
+      },
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/'],
+    );
+
+    const result = await fs.grep({
+      pattern: 'hello',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: true,
+      max_files: 2,
+      max_matches_per_file: 50,
+      max_total_matches: 2,
+      context_lines: 0,
+    });
+
+    expect(result.files.map((file) => file.path)).toEqual(['src/a.ts', '/other.ts']);
+    expect(result.files_scanned).toBe(2);
+  });
+
+  it('searches additional roots in the Node fallback', async () => {
+    const fs = makeSession(
+      { 'src/a.ts': 'hello primary\n', '/extra/b.ts': 'hello extra\n' },
+      (args) => {
+        if (args[1] === '--version') return { stdout: '', exitCode: 1 };
+        return { stdout: '', exitCode: 0 };
+      },
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+
+    const result = await fs.grep({
+      pattern: 'hello',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: false,
+      max_files: 200,
+      max_matches_per_file: 50,
+      max_total_matches: 5000,
+      context_lines: 0,
+    });
+
+    expect(result.files.map((file) => file.path)).toEqual(['src/a.ts', '/extra/b.ts']);
+    expect(result.files_scanned).toBe(2);
+  });
 });
 
 describe('WorkspaceFsService.list', () => {
+  it.each(['list', 'suggest'] as const)('rejects an oversized nested directory during %s', async (operation) => {
+    const backend = fakeFs({ 'huge/hidden.txt': '', 'visible.txt': '' });
+    const readdir = backend.readdir;
+    backend.readdir = async (path) => {
+      if (path === '/repo/huge') {
+        throw new HostFsError('os.fs.directory_too_large', 'Directory /repo/huge exceeds 50000 entries');
+      }
+      return readdir(path);
+    };
+    const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
+
+    const result = operation === 'list'
+      ? fs.list({ path: '.', depth: 2, limit: 200, show_hidden: false, follow_gitignore: false, sort: 'name_asc', include_git_status: false })
+      : fs.suggest({ query: 'hidden', limit: 50, show_hidden: false, follow_gitignore: false });
+
+    await expect(result).rejects.toMatchObject({
+      code: 'fs.too_many_results',
+      message: 'Directory /repo/huge exceeds 50000 entries',
+    });
+  });
+
   it('lists files and directories with kinds', async () => {
     const fs = makeSession(
       { 'src/a.ts': '', 'src/sub/b.ts': '', 'README.md': '' },
@@ -1360,6 +1834,386 @@ describe('WorkspaceFsService.list', () => {
     ]);
   });
 
+  it('marks in-workspace symlink directories as expandable and recurses into them', async () => {
+    const fs = makeSession(
+      { 'real/a.txt': '', 'real/sub/b.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {
+        link: '/repo/real',
+        fileLink: '/repo/real/a.txt',
+        broken: '/repo/missing',
+      },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 3,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.find((i) => i.path === 'link')).toMatchObject({
+      kind: 'symlink',
+      is_directory: true,
+    });
+    expect(result.items.find((i) => i.path === 'fileLink')?.is_directory).toBeUndefined();
+    expect(result.items.find((i) => i.path === 'broken')?.is_directory).toBeUndefined();
+    expect(result.children_by_path?.['link']?.map((i) => i.name).toSorted()).toEqual([
+      'a.txt',
+      'sub',
+    ]);
+    expect(result.children_by_path?.['link/sub']?.map((i) => i.name)).toEqual(['b.ts']);
+  });
+
+  it('lists the direct path of an in-workspace symlink directory', async () => {
+    const fs = makeSession(
+      { 'real/a.txt': '', 'real/sub/b.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { link: '/repo/real' },
+    );
+    const result = await fs.list({
+      path: 'link',
+      depth: 1,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.map((i) => i.name).toSorted()).toEqual(['a.txt', 'sub']);
+  });
+
+  it('does not mark symlink directories outside the workspace as expandable', async () => {
+    const fs = makeSession(
+      {},
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { docs: '/outside' },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.find((i) => i.path === 'docs')).toMatchObject({ kind: 'symlink' });
+    expect(result.items.find((i) => i.path === 'docs')?.is_directory).toBeUndefined();
+    expect(result.children_by_path?.['docs']).toBeUndefined();
+  });
+
+  it('expands and reads external symlink directories when explicitly allowed', async () => {
+    const fs = makeSession(
+      { '/outside/secret.txt': 'secret' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { docs: '/outside' },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      allow_external_symlinks: true,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.find((i) => i.path === 'docs')).toMatchObject({
+      kind: 'symlink',
+      is_directory: true,
+    });
+    expect(result.children_by_path?.['docs']?.map((i) => i.name)).toEqual(['secret.txt']);
+
+    const children = await fs.list({
+      path: 'docs',
+      depth: 1,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      allow_external_symlinks: true,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(children.items.map((i) => i.name)).toEqual(['secret.txt']);
+
+    const read = await fs.read({
+      path: 'docs/secret.txt',
+      offset: 0,
+      length: 1024,
+      encoding: 'utf-8',
+      allow_external_symlinks: true,
+    });
+    expect(read.content).toBe('secret');
+
+    const download = await fs.resolveDownload('docs/secret.txt', true);
+    expect(download.absolute).toBe('/repo/docs/secret.txt');
+    expect(download.size).toBe(6);
+  });
+
+  it('marks symlink directories inside additional dirs as expandable', async () => {
+    const fs = makeSession(
+      { '/extra/lib/util.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { extra: '/extra' },
+      ['/extra'],
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.find((i) => i.path === 'extra')).toMatchObject({
+      kind: 'symlink',
+      is_directory: true,
+    });
+    expect(result.children_by_path?.['extra']?.map((i) => i.name)).toEqual(['lib']);
+  });
+
+  it('does not recurse through symlink cycles', async () => {
+    const fs = makeSession(
+      { 'real/a.txt': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { loop: '/repo' },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 3,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.find((i) => i.path === 'loop')).toMatchObject({
+      kind: 'symlink',
+      is_directory: true,
+    });
+    expect(result.children_by_path?.['loop']).toBeUndefined();
+    expect(Object.keys(result.children_by_path ?? {}).some((key) => key.startsWith('loop/'))).toBe(
+      false,
+    );
+  });
+
+  it('keeps recursive children when the top-level limit is smaller', async () => {
+    const fs = makeSession({ 'dir/a.txt': '', 'dir/b.txt': '' }, emptyHandler);
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 1,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.truncated).toBe(false);
+    expect(result.items).toHaveLength(1);
+    expect(result.children_by_path?.['dir']?.map((i) => i.name)).toEqual(['a.txt', 'b.txt']);
+  });
+
+  it('does not cap ordinary recursive directory results', async () => {
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 10_001; index += 1) {
+      files[`bulk/file-${String(index).padStart(5, '0')}.txt`] = '';
+    }
+    const fs = makeSession(files, emptyHandler);
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 1000,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.truncated).toBe(false);
+    expect(result.children_by_path?.['bulk']).toHaveLength(10_001);
+  });
+
+  it('does not count file symlinks in ordinary directories toward the budget', async () => {
+    const symlinks = Array.from(
+      { length: 10_001 },
+      (_, index) => `bulk/link-${String(index).padStart(5, '0')}.txt`,
+    );
+    const fs = makeSession(
+      {},
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      symlinks,
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 1000,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.truncated).toBe(false);
+    expect(result.children_by_path?.['bulk']).toHaveLength(10_001);
+  });
+
+  it('stops recursive symlink expansion at the request-wide output budget', async () => {
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 10_001; index += 1) {
+      files[`real/bulk/file-${String(index).padStart(5, '0')}.txt`] = '';
+    }
+    const fs = makeSession(
+      files,
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { link: '/repo/real' },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 3,
+      limit: 1000,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.truncated).toBe(true);
+    const symlinkDescendantEntries = Object.entries(result.children_by_path ?? {})
+      .filter(([path]) => path === 'link' || path.startsWith('link/'))
+      .reduce((total, [, entries]) => total + entries.length, 0);
+    expect(symlinkDescendantEntries).toBe(10_000);
+    expect(result.children_by_path?.['real/bulk']).toHaveLength(10_001);
+
+    const direct = await fs.list({
+      path: 'link',
+      depth: 2,
+      limit: 1000,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(direct.truncated).toBe(true);
+    expect(
+      Object.values(direct.children_by_path ?? {}).reduce(
+        (total, entries) => total + entries.length,
+        0,
+      ),
+    ).toBe(9_999);
+  });
+
+  it('counts a symlinked workspace root toward the budget', async () => {
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 10_001; index += 1) {
+      files[`/repo-real/bulk/file-${String(index).padStart(5, '0')}.txt`] = '';
+    }
+    const fs = makeSession(
+      files,
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { '': '/repo-real' },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 1000,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.children_by_path?.['bulk']).toHaveLength(9_999);
+  });
+
+  it('counts symlinks in intermediate root path segments', async () => {
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 10_001; index += 1) {
+      files[`real/sub/deep/file-${String(index).padStart(5, '0')}.txt`] = '';
+    }
+    const fs = makeSession(
+      files,
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { link: '/repo/real' },
+    );
+    const result = await fs.list({
+      path: 'link/sub',
+      depth: 2,
+      limit: 1000,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.children_by_path?.['link/sub/deep']).toHaveLength(9_999);
+  });
+
+  it('finds allowed descendants through external symlinks in ignored directories', async () => {
+    const fs = makeSession(
+      { '.gitignore': 'ignored/\n', '/outside/keep.txt': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { 'ignored/link': '/outside' },
+    );
+    const request = {
+      path: '.',
+      depth: 3,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: true,
+      allow_ignored_globs: ['ignored/link/keep.txt'],
+      sort: 'name_asc' as const,
+      include_git_status: false,
+    };
+    const denied = await fs.list(request);
+    expect(denied.items.map((i) => i.path)).not.toContain('ignored');
+
+    const allowed = await fs.list({ ...request, allow_external_symlinks: true });
+    expect(allowed.items.map((i) => i.path)).toContain('ignored');
+    expect(allowed.children_by_path?.['ignored/link']?.map((i) => i.name)).toEqual(['keep.txt']);
+  });
+
   it('rejects paths that escape the workspace', async () => {
     const fs = makeSession({}, emptyHandler);
     await expect(
@@ -1373,6 +2227,123 @@ describe('WorkspaceFsService.list', () => {
         include_git_status: false,
       }),
     ).rejects.toMatchObject({ code: 'fs.path_escapes' });
+  });
+
+  it('lists an additional workspace root by absolute path with request-anchored keys', async () => {
+    const fs = makeSession(
+      { '/extra/notes.md': '', '/extra/sub/more.ts': '', 'src/a.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+    const result = await fs.list({
+      path: '/extra',
+      depth: 2,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.map((i) => i.path).toSorted()).toEqual(['notes.md', 'sub']);
+    expect(result.children_by_path?.['sub']?.map((i) => i.path)).toEqual(['sub/more.ts']);
+
+    const sub = await fs.list({
+      path: '/extra/sub',
+      depth: 1,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(sub.items.map((i) => i.path)).toEqual(['sub/more.ts']);
+  });
+
+  it('expands a symlink directory under an additional root with request-anchored paths', async () => {
+    const fs = makeSession(
+      { '/extra/real/a.txt': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { '../extra/link': '/extra/real' },
+      ['/extra'],
+    );
+
+    const result = await fs.list({
+      path: '/extra',
+      depth: 2,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+
+    expect(result.items.find((item) => item.path === 'link')).toMatchObject({
+      kind: 'symlink',
+      is_directory: true,
+    });
+    expect(result.children_by_path?.['link']?.map((item) => item.path)).toEqual(['link/a.txt']);
+  });
+
+  it('anchors at an additional root whose path length ties with the workdir', async () => {
+    const fs = makeSession(
+      { '/repa/notes.md': '', 'src/a.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/repa'],
+    );
+    const result = await fs.list({
+      path: '/repa',
+      depth: 1,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.map((i) => i.path)).toEqual(['notes.md']);
+  });
+
+  it('rejects absolute paths outside the workspace dir set', async () => {
+    const fs = makeSession({}, emptyHandler);
+    await expect(
+      fs.list({
+        path: '/etc',
+        depth: 1,
+        limit: 200,
+        show_hidden: false,
+        follow_gitignore: false,
+        sort: 'name_asc',
+        include_git_status: false,
+      }),
+    ).rejects.toMatchObject({ code: 'fs.path_escapes' });
+  });
+
+  it('reads a file under an additional workspace root by absolute path', async () => {
+    const fs = makeSession(
+      { '/extra/notes.md': 'hello\n' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+    const result = await fs.stat({ path: '/extra/notes.md' });
+    expect(result.name).toBe('notes.md');
   });
 });
 
@@ -1399,6 +2370,13 @@ describe('WorkspaceFsService.read', () => {
     const result = await fs.read({ path: 'a.txt', offset: 0, length: 5, encoding: 'utf-8' });
     expect(result.content).toBe('hello');
     expect(result.truncated).toBe(true);
+  });
+
+  it('honors a non-zero offset window', async () => {
+    const fs = makeSession({ 'a.txt': 'hello world' }, emptyHandler);
+    const result = await fs.read({ path: 'a.txt', offset: 6, length: 5, encoding: 'utf-8' });
+    expect(result.content).toBe('world');
+    expect(result.truncated).toBe(false);
   });
 
   it('returns base64 for binary content in auto mode', async () => {

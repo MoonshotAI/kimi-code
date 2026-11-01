@@ -27,7 +27,7 @@ import { EventBusService } from '#/app/event/eventBusService';
 import type { Event2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { OrderedHookSlot } from '#/hooks';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import {
   type ApprovalRequest,
   type ApprovalResponse,
@@ -48,7 +48,7 @@ interface ContextOptions {
   readonly display?: ToolInputDisplay;
   readonly description?: string;
   readonly approvalRule?: string;
-  readonly traceId?: string;
+  readonly requestId?: string;
   readonly signal?: AbortSignal;
 }
 
@@ -66,7 +66,7 @@ function makeContext(
   return {
     turnId: 1,
     signal: options.signal ?? new AbortController().signal,
-    trace: options.traceId === undefined ? undefined : { traceId: options.traceId },
+    trace: options.requestId === undefined ? undefined : { requestId: options.requestId },
     toolCall,
     toolCalls: [toolCall],
     args,
@@ -645,7 +645,7 @@ describe('AgentToolApprovalService', () => {
       const svc = make();
 
       await svc.requestToolApproval(
-        makeContext('bash', {}, { traceId: 'trace-approval-1' }),
+        makeContext('bash', {}, { requestId: 'trace-approval-1' }),
         ask(),
         'fallback-ask',
       );
@@ -655,7 +655,7 @@ describe('AgentToolApprovalService', () => {
         properties: expect.objectContaining({
           tool_name: 'bash',
           result: 'approved',
-          trace_id: 'trace-approval-1',
+          request_id: 'trace-approval-1',
         }),
       });
     });

@@ -43,7 +43,7 @@ const TOWER_WORKER_TOOLS = [
 
 const CODER_ROLE =
   `${TASK_AGENT_ROLE_PREFIX}\n\n` +
-  'Your final message is the entire handoff — the parent sees nothing else from your run. ' +
+  'Your final message is the entire handoff. ' +
   'Make it technically complete: what you changed and why, the path of every file you touched, ' +
   'how you verified the change (tests or commands run, with results), and anything left undone ' +
   'or worth follow-up. If you are stopped before finishing, the parent receives only what ' +

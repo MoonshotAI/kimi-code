@@ -68,8 +68,8 @@ export function LoginScreen({ onLoginSuccess, onSkip }: LoginScreenProps) {
           setError(errorMessage);
         }
       }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       if (isPaymentRequiredError(errorMessage)) {
         setShowSubscribeDialog(true);
         setState("idle");

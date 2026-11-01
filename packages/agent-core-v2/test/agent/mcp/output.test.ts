@@ -1,5 +1,6 @@
 import { ContentBlockSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { ContentPart } from '#human/llm/message';
+import { mediaUrlOf } from '#human/llm/protocol/kit/media';
 import { Jimp } from 'jimp';
 import { mkdtemp, readFile, rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,8 @@ import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { StdioMcpClient } from '#/mcpCore/client-stdio';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/mcpCore/types';
 import type { ToolExecution } from '#/tool/toolContract';
 import { sniffImageDimensions } from '#/agent/media/file-type';
@@ -32,6 +34,10 @@ function parseResultExtras(output: string | ContentPart[]): Record<string, unkno
   const json = /<mcp-result-extras>\n([\s\S]*?)\n<\/mcp-result-extras>/.exec(text)?.[1];
   if (json === undefined) throw new Error('Expected model-visible MCP result extras');
   return JSON.parse(json) as Record<string, unknown>;
+}
+
+function media(url: string): { url: string } {
+  return { url };
 }
 
 function assertValidMcpBlock<T extends MCPContentBlock>(block: T): T {
@@ -78,7 +84,7 @@ describe('convertMCPContentBlock', () => {
     const block: MCPContentBlock = { type: 'image', data: 'AAA', mimeType: 'image/jpeg' };
     expect(convertMCPContentBlock(block)).toEqual({
       type: 'image_url',
-      imageUrl: { url: 'data:image/jpeg;base64,AAA' },
+      imageUrl: media('data:image/jpeg;base64,AAA'),
     });
   });
 
@@ -86,7 +92,7 @@ describe('convertMCPContentBlock', () => {
     const block: MCPContentBlock = { type: 'image', data: 'AAA' };
     expect(convertMCPContentBlock(block)).toEqual({
       type: 'image_url',
-      imageUrl: { url: 'data:image/png;base64,AAA' },
+      imageUrl: media('data:image/png;base64,AAA'),
     });
   });
 
@@ -94,7 +100,7 @@ describe('convertMCPContentBlock', () => {
     const block: MCPContentBlock = { type: 'audio', data: 'BBB' };
     expect(convertMCPContentBlock(block)).toEqual({
       type: 'audio_url',
-      audioUrl: { url: 'data:audio/mpeg;base64,BBB' },
+      audioUrl: media('data:audio/mpeg;base64,BBB'),
     });
   });
 
@@ -102,7 +108,7 @@ describe('convertMCPContentBlock', () => {
     const block: MCPContentBlock = { type: 'audio', data: 'BBB', mimeType: 'audio/wav' };
     expect(convertMCPContentBlock(block)).toEqual({
       type: 'audio_url',
-      audioUrl: { url: 'data:audio/wav;base64,BBB' },
+      audioUrl: media('data:audio/wav;base64,BBB'),
     });
   });
 
@@ -133,7 +139,7 @@ describe('convertMCPContentBlock', () => {
     });
     expect(convertMCPContentBlock(block)).toEqual({
       type: 'image_url',
-      imageUrl: { url: 'data:image/webp;base64,III' },
+      imageUrl: media('data:image/webp;base64,III'),
     });
   });
 
@@ -144,7 +150,7 @@ describe('convertMCPContentBlock', () => {
     });
     expect(convertMCPContentBlock(block)).toEqual({
       type: 'audio_url',
-      audioUrl: { url: 'data:audio/wav;base64,AUD' },
+      audioUrl: media('data:audio/wav;base64,AUD'),
     });
   });
 
@@ -155,7 +161,7 @@ describe('convertMCPContentBlock', () => {
     });
     expect(convertMCPContentBlock(block)).toEqual({
       type: 'video_url',
-      videoUrl: { url: 'data:video/mp4;base64,VID' },
+      videoUrl: media('data:video/mp4;base64,VID'),
     });
   });
 
@@ -610,7 +616,7 @@ describe('mcpResultToExecutableOutput', () => {
     expect(out.isError).toBeUndefined();
     expect(out.output).toEqual([
       { type: 'text', text: '<mcp_tool_result name="mcp__github__create_pr">' },
-      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+      { type: 'image_url', imageUrl: media('data:image/png;base64,AAA') },
       { type: 'text', text: '</mcp_tool_result>' },
     ]);
   });
@@ -625,7 +631,7 @@ describe('mcpResultToExecutableOutput', () => {
     );
     expect(out.output).toEqual([
       { type: 'text', text: 'caption' },
-      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+      { type: 'image_url', imageUrl: media('data:image/png;base64,AAA') },
     ]);
   });
 
@@ -706,7 +712,7 @@ describe('mcpResultToExecutableOutput', () => {
     );
     expect(out.output).toEqual([
       { type: 'text', text: 'A'.repeat(100_000) },
-      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,' + 'B'.repeat(500_000) } },
+      { type: 'image_url', imageUrl: media('data:image/png;base64,' + 'B'.repeat(500_000)) },
     ]);
     expect(out.truncated).toBeUndefined();
   });
@@ -725,7 +731,7 @@ describe('mcpResultToExecutableOutput', () => {
     const imagePart = parts.find((p) => p.type === 'image_url');
     expect(imagePart).toBeDefined();
     const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(
-      (imagePart as { imageUrl: { url: string } }).imageUrl.url,
+      imagePart?.type === 'image_url' ? mediaUrlOf(imagePart) : '',
     );
     expect(match).not.toBeNull();
     const dims = sniffImageDimensions(Buffer.from(match![2]!, 'base64'));
@@ -810,7 +816,7 @@ describe('mcpResultToExecutableOutput', () => {
     const out = await mcpResultToExecutableOutput(
       result([{ type: 'image', data: bigBytes.toString('base64'), mimeType: 'image/png' }]),
       'mcp__s__shot',
-      { originalsDir: dir },
+      { originals: { fs: new HostFileSystem(), dir } },
     );
 
     const caption = modelText(out);
@@ -835,7 +841,7 @@ describe('mcpResultToExecutableOutput', () => {
         { type: 'image', data: big, mimeType: 'image/png' },
       ]),
       'mcp__s__shot',
-      { originalsDir: dir },
+      { originals: { fs: new HostFileSystem(), dir } },
     );
 
     const parts = out.output as ContentPart[];
@@ -861,7 +867,7 @@ describe('mcpResultToExecutableOutput', () => {
         { type: 'image', data: big, mimeType: 'image/png' },
       ]),
       'mcp__s__shot',
-      { originalsDir: dir },
+      { originals: { fs: new HostFileSystem(), dir } },
     );
 
     expect(out.truncated).toBeUndefined();
@@ -968,9 +974,9 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
   const fixture = join(import.meta.dirname, '../../mcpCore/fixtures/structured-content-stdio-server.mjs');
 
   async function callFixtureTool(name: string) {
-    const runtime = Object.assign(
-      new FakeRuntime(
-        { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    const environment = Object.assign(
+      new FakeEnvironment(
+        { environmentId: 'local', generation: 'test' },
         { capabilities: ['process'] },
       ),
       { process: new HostProcessService() },
@@ -982,17 +988,21 @@ describe('mcpResultToExecutableOutput over a real stdio server', () => {
         args: [fixture],
       },
       {
-        runtimeResolver: {
+        environmentResolver: {
           _serviceBrand: undefined,
-          inspect: () => runtime,
+          inspect: () => environment,
           acquire: () => ({
-            runtime,
+            environment,
+            track: (resource) => resource,
+            dispose: () => {},
+          }),
+          acquireWhenReady: async () => ({
+            environment,
             track: (resource) => resource,
             dispose: () => {},
           }),
         },
-        workspaceId: 'workspace',
-        runtimeId: 'local',
+        environmentId: 'local',
         defaultCwd: process.cwd(),
       },
     );

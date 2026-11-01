@@ -5,8 +5,8 @@ import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { acquireOrWhenReady, pinnedGeneration, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import {
@@ -38,12 +38,19 @@ import {
 
 const MS_PER_SECOND = 1000;
 
-const SHELL_TIMEOUT_VARS = {
-  DEFAULT_TIMEOUT_S,
-  DEFAULT_BACKGROUND_TIMEOUT_S,
-  MAX_TIMEOUT_S,
-  MAX_BACKGROUND_TIMEOUT_S,
-};
+const BACKGROUND_GUIDANCE =
+  'For long-running builds, tests, watchers, or servers that the conversation should not wait on, set `run_in_background=true` with a short `description`; the call returns a task ID. Set `disable_timeout=true` only when the task should run without a timeout. You are notified automatically when the task completes, so return control to the user instead of waiting on it. Use `TaskOutput` only for a non-blocking snapshot, and `TaskStop` only to cancel.';
+
+const NO_BACKGROUND_GUIDANCE =
+  'Background execution is disabled for this agent. Do not set `run_in_background=true`.';
+
+const TIMEOUT_MOVES_TO_BACKGROUND =
+  'Set `timeout` for possibly long-running commands. A foreground command that hits its timeout is moved to the background instead of being killed, and you are notified when it completes. The user can also move a running foreground command to the background at any time.';
+
+const TIMEOUT_KILLS_WITH_BACKGROUND =
+  'Set `timeout` for possibly long-running commands. A foreground command that hits its timeout is killed. The user can also move a running foreground command to the background at any time.';
+
+const TIMEOUT_KILLS = 'Set `timeout` for possibly long-running commands. A command that hits its timeout is killed.';
 
 function timeoutCapS(isBackground: boolean): number {
   return isBackground ? MAX_BACKGROUND_TIMEOUT_S : MAX_TIMEOUT_S;
@@ -62,44 +69,13 @@ async function disposeProcess(proc: IHostProcess): Promise<void> {
   }
 }
 
-function renderBashDescription(shellName: string): string {
-  return renderPrompt(bashDescriptionTemplate, { ...SHELL_TIMEOUT_VARS, SHELL_NAME: shellName });
-}
-
-function withoutBackgroundDescription(description: string): string {
-  return description
-    .replace(
-      /\r?\n\r?\nIf `run_in_background=true`,[\s\S]*?point them to the background-task panel\./,
-      '\n\nBackground execution is disabled for this agent. Do not set `run_in_background=true`.',
-    )
-    .replace(
-      ` For possibly long-running foreground commands, set the \`timeout\` argument in seconds. Foreground commands default to ${String(DEFAULT_TIMEOUT_S)}s and allow up to ${String(MAX_TIMEOUT_S)}s. When a foreground command hits its timeout it is moved to the background instead of being killed, and you will be automatically notified when it completes.`,
-      ` For possibly long-running commands, set the \`timeout\` argument in seconds. The default is ${String(DEFAULT_TIMEOUT_S)}s; foreground commands allow up to ${String(MAX_TIMEOUT_S)}s; a foreground command that hits its timeout is killed.`,
-    )
-    .replace(
-      ' The user can also move a running foreground command to the background at any time.',
-      '',
-    )
-    .replace(
-      /\r?\n- Prefer `run_in_background=true`[\s\S]*?conversation to continue before the command finishes\./,
-      '\n- Do not set `run_in_background=true`; background task management tools are not available.',
-    );
-}
-
-function withoutAutoBackgroundOnTimeout(description: string): string {
-  return description.replace(
-    ' When a foreground command hits its timeout it is moved to the background instead of being killed, and you will be automatically notified when it completes.',
-    ' A foreground command that hits its timeout is killed.',
-  );
-}
-
 export class BashTool implements IBashTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'Bash' as const;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(BashInputSchema);
 
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
@@ -126,15 +102,20 @@ export class BashTool implements IBashTool {
   }
 
   get description(): string {
-    const renderedDescription = renderBashDescription(inspectAgentRuntime(this.runtime).environment.shellName);
-    if (!this.allowBackground()) return withoutBackgroundDescription(renderedDescription);
-    if (!this.autoBackgroundOnTimeout()) {
-      return withoutAutoBackgroundOnTimeout(renderedDescription);
-    }
-    return renderedDescription;
+    const allowBackground = this.allowBackground();
+    return renderPrompt(bashDescriptionTemplate, {
+      SHELL_NAME: this.environment.inspect().host?.shellName ?? 'sh',
+      TIMEOUT_GUIDANCE: !allowBackground
+        ? TIMEOUT_KILLS
+        : this.autoBackgroundOnTimeout()
+          ? TIMEOUT_MOVES_TO_BACKGROUND
+          : TIMEOUT_KILLS_WITH_BACKGROUND,
+      BACKGROUND_GUIDANCE: allowBackground ? BACKGROUND_GUIDANCE : NO_BACKGROUND_GUIDANCE,
+    });
   }
 
   resolveExecution(args: BashInput): ToolExecution {
+    const expectedGeneration = this.reviewedGeneration();
     const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
     return {
       description: args.run_in_background
@@ -143,15 +124,32 @@ export class BashTool implements IBashTool {
       display: {
         kind: 'command',
         command: args.command,
-        cwd: args.cwd ?? this.ctx.cwd,
+        cwd: this.executionCwd(args),
         description: args.description,
         language: 'bash',
       },
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
       execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
-        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart),
+        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration),
     };
+  }
+
+  private reviewedGeneration(): string | undefined {
+    try {
+      return pinnedGeneration(this.environment.inspect());
+    } catch {
+      return undefined;
+    }
+  }
+
+  private executionCwd(args: BashInput): string {
+    try {
+      const view = new EnvironmentWorkspaceView(this.environment.inspect(), this.workspaceCtx);
+      return view.resolve(args.cwd ?? view.workDir);
+    } catch {
+      return args.cwd ?? this.ctx.cwd;
+    }
   }
 
   private spawn(
@@ -169,7 +167,7 @@ export class BashTool implements IBashTool {
       SHELL: env.shellPath,
     };
 
-    return processService.spawn(env.shellPath, ['-c', shellCommand], { env: noninteractiveEnv });
+    return processService.spawn(env.shellPath, ['-c', shellCommand], { cwd: effectiveCwd, env: noninteractiveEnv });
   }
 
   private async execution(
@@ -178,15 +176,20 @@ export class BashTool implements IBashTool {
     toolCallId: string,
     onUpdate?: (update: ToolUpdate) => void,
     onForegroundTaskStart?: (taskId: string) => void,
+    expectedGeneration?: string,
   ): Promise<ExecutableToolResult> {
     const validationError = this.validateRunRequest(args, signal);
     if (validationError !== undefined) return validationError;
 
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
-    const lease = this.runtime.acquire(['process']);
-    const view = new RuntimeWorkspaceView(lease.runtime, this.workspaceCtx);
-    const env = lease.runtime.environment;
+    const lease = await acquireOrWhenReady(this.environment, ['process']);
+    if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
+      lease.dispose();
+      return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
+    }
+    const view = new EnvironmentWorkspaceView(lease.environment, this.workspaceCtx);
+    const env = view.host;
     const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
     const effectiveCwd = view.resolve(args.cwd ?? view.workDir);
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
@@ -199,7 +202,7 @@ export class BashTool implements IBashTool {
     const builder = new ToolOutputAccumulator();
     let proc: IHostProcess;
     try {
-      proc = lease.track(await this.spawn(lease.runtime.process!, env, effectiveCwd, command));
+      proc = lease.track(await this.spawn(lease.environment.process!, env, effectiveCwd, command), this.ctx.sessionId);
     } catch (error) {
       lease.dispose();
       return {
@@ -439,7 +442,7 @@ export class BashTool implements IBashTool {
 registerAgentToolService(IBashTool, BashTool, {
   name: 'Bash',
   domain: 'os/backends',
-  requiredRuntimeCapabilities: ['process'],
+  requiredEnvironmentCapabilities: ['process'],
 });
 
 function formatTimeoutLabel(timeoutMs: number): string {

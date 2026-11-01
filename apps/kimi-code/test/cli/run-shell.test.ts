@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => {
     tuiGetStartupMcpMs: vi.fn(async () => 0),
     tuiGetCurrentSessionId: vi.fn(() => ''),
     tuiHasSessionContent: vi.fn(() => false),
+    tuiPromptSshPassword: vi.fn(async () => 'secret'),
     createKimiDeviceId: vi.fn<CreateKimiDeviceId>(() => 'device-1'),
     initializeTelemetry: vi.fn(),
     setCrashPhase: vi.fn(),
@@ -140,6 +141,7 @@ vi.mock('../../src/tui/index', () => ({
     getStartupMcpMs = mocks.tuiGetStartupMcpMs;
     getCurrentSessionId = mocks.tuiGetCurrentSessionId;
     hasSessionContent = mocks.tuiHasSessionContent;
+    promptSshPassword = mocks.tuiPromptSshPassword;
   },
 }));
 
@@ -201,6 +203,7 @@ describe('runShell', () => {
     skillsDirs: [],
     agent: undefined,
     agentFiles: [],
+    environment: undefined,
   };
 
   function stubTuiStartup(): void {
@@ -241,6 +244,24 @@ describe('runShell', () => {
     expect(mocks.kimiHarnessConstructor).toHaveBeenCalledTimes(1);
   });
 
+  it('routes SSH password requests to the TUI after startup', async () => {
+    stubTuiStartup();
+    await runShell(minimalCliOptions, '1.2.3-test');
+    const options = mocks.kimiHarnessConstructor.mock.calls[0]![0] as {
+      sshPassword: {
+        prompt: (environmentId: string) => Promise<string | undefined>;
+        askpassCommand: readonly string[];
+      };
+    };
+    await expect(options.sshPassword.prompt('dev-box')).resolves.toBe('secret');
+    expect(mocks.tuiPromptSshPassword).toHaveBeenCalledExactlyOnceWith('dev-box');
+    expect(options.sshPassword.askpassCommand).toEqual([
+      process.execPath,
+      ...process.execArgv,
+      process.argv[1],
+    ]);
+  });
+
   it('constructs KimiHarness and KimiTUI with startup input', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
@@ -263,6 +284,7 @@ describe('runShell', () => {
       skillsDirs: [],
       agent: undefined,
       agentFiles: [],
+      environment: undefined,
       addDirs: ['../shared', '/tmp/extra'],
     };
 
@@ -386,6 +408,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: 'reviewer',
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -429,6 +452,7 @@ describe('runShell', () => {
         skillsDirs: ['/skills'],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -464,6 +488,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -506,6 +531,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -551,6 +577,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -587,6 +614,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -640,6 +668,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -680,6 +709,7 @@ describe('runShell', () => {
         skillsDirs: [],
         agent: undefined,
         agentFiles: [],
+        environment: undefined,
       },
       '1.2.3-test',
     );
@@ -719,6 +749,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       );
@@ -770,6 +801,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       );
@@ -814,6 +846,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       ),
@@ -856,6 +889,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       );
@@ -913,6 +947,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
       );
@@ -961,6 +996,7 @@ describe('runShell', () => {
           skillsDirs: [],
           agent: undefined,
           agentFiles: [],
+          environment: undefined,
         },
         '1.2.3-test',
         { migrateOnly: true },

@@ -13,9 +13,12 @@ import { abortError, isAbortError, isUserCancellation, userCancellationReason } 
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { retryErrorFields } from '#/_base/utils/retry';
-import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
+import { AgentLoopRequester } from './requester';
+import { createAgentMediaPolicy } from './mediaPolicy';
+import type { LoopRequester } from './requesterContract';
+import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
+import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { abortedToolOutput } from '#/agent/toolExecutor/toolExecutorService';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -23,10 +26,9 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IConfigService } from '#/app/config/config';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
-import { type FinishReason } from '#human/llm/finish-reason';
-import { mergeInPlace } from '#/llm-adapter/contract/message';
-import type { ContentPart, UserMessage } from '#human/llm/message';
-import { emptyUsage, type TokenUsage } from '#human/llm/usage';
+import { type FinishReason } from '#human/llm-requester/finish-reason';
+import { mergeInPlace, type ContentPart, type UserMessage } from '#human/llm/message';
+import { emptyUsage, type TokenUsage } from '#human/llm-requester/usage';
 import { BugIndicatingError, ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 
@@ -87,7 +89,7 @@ import {
 } from './loop';
 import { mergeSteerMessages, stripBundledSkillBlocks } from '#human/agent/origin';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
-import { createUserEntry, type UserEntry } from '#human/agent/turn';
+import { createSystemEntry, createUserEntry, type UserEntry } from '#human/agent/turn';
 import {
   AssistantDelta,
   isDisplayablePromptOrigin,
@@ -123,8 +125,8 @@ import {
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
-export const loopLastRequestTraceIdKey = defineState<string | undefined>(
-  'loop.lastRequestTraceId',
+export const loopLastRequestIdKey = defineState<string | undefined>(
+  'loop.lastRequestId',
   () => undefined as string | undefined,
 );
 export const loopDisposingKey = defineState<boolean>('loop.disposing', () => false);
@@ -135,6 +137,8 @@ const TURN_WATCH_WARN_MS = 10 * 60_000;
 
 export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
+
+  readonly requester: LoopRequester;
 
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot(),
@@ -164,7 +168,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IConfigService private readonly config: IConfigService,
@@ -178,10 +181,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IPluginService private readonly plugins: IPluginService,
     @ISessionRunGate private readonly runGate: ISessionRunGate,
     @ILogService private readonly logger: ILogService,
+    @IAgentMediaResolverService mediaResolver: IAgentMediaResolverService,
   ) {
     super();
+    const requester = instantiation.createInstance(AgentLoopRequester);
+    requester.registerMediaPolicy((model, request) =>
+      createAgentMediaPolicy(mediaResolver, model, request),
+    );
+    this.requester = requester;
     this.states.contributeState(turnKey);
-    this.states.contributeState(loopLastRequestTraceIdKey);
+    this.states.contributeState(loopLastRequestIdKey);
     this.states.contributeState(loopDisposingKey);
     this.toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
       await this.deliverToolResult(ctx);
@@ -190,12 +199,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this._register(toDisposable(() => this.disarmTurnWatch()));
   }
 
-  private get lastRequestTraceId(): string | undefined {
-    return this.states.get(loopLastRequestTraceIdKey);
+  private get lastRequestId(): string | undefined {
+    return this.states.get(loopLastRequestIdKey);
   }
 
-  private set lastRequestTraceId(value: string | undefined) {
-    this.states.set(loopLastRequestTraceIdKey, value);
+  private set lastRequestId(value: string | undefined) {
+    this.states.set(loopLastRequestIdKey, value);
   }
 
   private get disposing(): boolean {
@@ -206,10 +215,20 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.states.set(loopDisposingKey, value);
   }
 
+  private requesterFacade(): LoopRequester {
+    return {
+      prepareTurnConfig: (turnId) => this.requester.prepareTurnConfig(turnId),
+      currentCredentialProvider: () => this.requester.currentCredentialProvider(),
+      credentialProviderForTurn: (turnId) => this.requester.credentialProviderForTurn(turnId),
+      request: (overrides, onPart, signal) => this.requester.request(overrides, onPart, signal),
+      start: (overrides, onPart, signal) => this.requester.start(overrides, onPart, signal),
+    };
+  }
+
   private engineOptions(): CreateMachineEngineOptions {
     return {
       model: MACHINE_LOOP_MODEL,
-      llmRequester: this.llmRequester,
+      llmRequester: this.requesterFacade(),
       toolExecutor: this.toolExecutor,
       toolInfos: () => this.toolRegistry.list(),
       maxAttemptsPerStep: this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep,
@@ -218,6 +237,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       trace: () => this.activeRequestTrace,
       toolTurnId: () => this.active?.id,
       steerSignal: () => this.active?.steerController.signal,
+      remind: (message) => this.remind({ message }),
       source: () =>
         this.active === undefined
           ? undefined
@@ -325,7 +345,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       role: 'user',
       content: [...input.message.content],
       id,
-      toolCalls: [],
       origin: meta?.origin as PromptOrigin | undefined,
     };
     if (tracked) {
@@ -447,8 +466,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   notify(note: LoopNotify = {}): LoopNotifyHandle {
+    return this.enqueueNudge(note, 'notify');
+  }
+
+  remind(note: LoopNotify = {}): LoopNotifyHandle {
+    return this.enqueueNudge(note, 'remind');
+  }
+
+  private enqueueNudge(note: LoopNotify, kind: Nudge['kind']): LoopNotifyHandle {
     if (this.disposing) throw abortError('Agent loop disposed');
     const nudge: Nudge = {
+      kind,
       contextMessage: note.message,
       bypassMaxSteps: note.bypassMaxSteps ?? false,
       turnScoped: note.turnScoped ?? true,
@@ -458,10 +486,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.nudges.push(nudge);
     if (this.quiescenceDepth === 0 && this.engine !== undefined) {
       nudge.sentToMachine = true;
-      this.machineEngine().notify(createUserEntry(machineUserMessage(note.message)));
+      this.sendNudge(nudge);
     } else {
-      this.logger.debug('loop notify buffered before reaching the machine', {
+      this.logger.debug('loop message buffered before reaching the machine', {
         agentId: this.scopeContext.agentId,
+        kind,
         buffered: this.nudges.length - this.nudgeCursor,
         quiescenceDepth: this.quiescenceDepth,
         engineAttached: this.engine !== undefined,
@@ -478,6 +507,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         this.maybeSettle();
       },
     };
+  }
+
+  private sendNudge(nudge: Nudge): void {
+    if (nudge.kind === 'remind') {
+      this.machineEngine().remind(machineReminderEntry(nudge.contextMessage));
+      return;
+    }
+    this.machineEngine().notify(createUserEntry(machineUserMessage(nudge.contextMessage)));
   }
 
   private createWaiter(
@@ -529,7 +566,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
               activeToolCalls: turn.activeToolCalls,
               since: this.active?.startedAt,
             },
-      activeTraceId: this.activeRequestTrace?.traceId,
+      activeRequestId: this.activeRequestTrace?.requestId,
     };
   }
 
@@ -602,7 +639,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const promptMessage: ContextMessage = {
       role: 'user',
       content: [...message.content],
-      toolCalls: [],
       id: queueItemId,
       origin: entry.meta?.origin as PromptOrigin | undefined,
     };
@@ -639,8 +675,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         role: 'user',
         content: [...entry.message.content],
         id: waiter.id,
-        toolCalls: [],
-        origin: entry.meta?.origin as PromptOrigin | undefined,
+          origin: entry.meta?.origin as PromptOrigin | undefined,
       });
     }
     waiter.launched.resolve(undefined);
@@ -821,7 +856,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     for (const nudge of this.nudges.slice(this.nudgeCursor)) {
       if (!nudge.dropped && !nudge.sentToMachine) {
         nudge.sentToMachine = true;
-        this.machineEngine().notify(createUserEntry(machineUserMessage(nudge.contextMessage)));
+        this.sendNudge(nudge);
       }
     }
   }
@@ -1035,7 +1070,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     turn.current = step;
     turn.interruptStep = step.number;
     this.activeRequestTrace = undefined;
-    this.telemetry.setContext({ trace_id: undefined });
+    this.telemetry.setContext({ request_id: undefined });
     EventEmitter.setMaxListeners(MAX_STEP_SIGNAL_LISTENERS, turn.controller.signal);
     try {
 
@@ -1205,8 +1240,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         role: 'user',
         content: [...entry.message.content],
         id: waiter.id,
-        toolCalls: [],
-        origin: entry.meta?.origin as PromptOrigin | undefined,
+          origin: entry.meta?.origin as PromptOrigin | undefined,
       },
       userMessageId: entry.meta?.userMessageId ?? '',
       createdAt: entry.meta?.createdAt ?? '',
@@ -1268,7 +1302,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     active.providerType = provider_type;
     active.protocol = protocol;
     this.telemetry.setContext({ turn_id: id });
-    const thinkingEffort = this.llmRequester.prepareTurnConfig(id)?.thinkingEffort;
+    const thinkingEffort = this.requester.prepareTurnConfig(id)?.thinkingEffort;
     this.telemetry.setContext({ thinking_effort: thinkingEffort });
     void this.dispatcher.dispatch(
       new TurnPrompt({
@@ -1307,15 +1341,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private materializeMessage(message: ContextMessage): void {
-    if (message.content.length === 0) return;
+    if (
+      message.content.length === 0 &&
+      (message.role !== 'system' || message.tools === undefined || message.tools.length === 0)
+    ) {
+      return;
+    }
     this.context.append(message);
   }
 
   private consumeDrainedNudges(): { readonly live: number; readonly bypass: boolean } {
     const engine = this.engine;
     if (engine === undefined) return { live: 0, bypass: false };
-    const notificationCount = engine.snapshot().notificationCount;
-    let consumed = this.nudges.length - this.nudgeCursor - notificationCount;
+    const snapshot = engine.snapshot();
+    let consumed =
+      this.nudges.length - this.nudgeCursor - snapshot.notificationCount - snapshot.reminderCount;
     let live = 0;
     let bypass = false;
     while (consumed > 0 && this.nudgeCursor < this.nudges.length) {
@@ -1326,7 +1366,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       live += 1;
       bypass = bypass || nudge.bypassMaxSteps;
       nudge.consumed = true;
-      if (nudge.contextMessage !== undefined && nudge.contextMessage.content.length > 0) {
+      if (
+        nudge.contextMessage !== undefined &&
+        (nudge.contextMessage.content.length > 0 ||
+          (nudge.contextMessage.role === 'system' && (nudge.contextMessage.tools?.length ?? 0) > 0))
+      ) {
         this.materializeMessage(nudge.contextMessage);
         if (
           nudge.promptIds !== undefined &&
@@ -1402,8 +1446,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
                 role: 'user',
                 content: [...entry.message.content],
                 id,
-                toolCalls: [],
-                origin: entry.meta?.origin as PromptOrigin | undefined,
+                          origin: entry.meta?.origin as PromptOrigin | undefined,
               },
               userMessageId: entry.meta?.userMessageId ?? '',
               createdAt: entry.meta?.createdAt ?? '',
@@ -1435,11 +1478,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         const messageId = children.length === 1 ? children[0]!.waiter.id : newMessageId();
         const promptIds = children.map((child) => child.waiter.id);
         this.nudges.push({
+          kind: 'notify',
           contextMessage: {
             role: 'user',
             content: gatedContent,
-            toolCalls: [],
-            origin: markInTurnOrigin(merged.origin),
+                  origin: markInTurnOrigin(merged.origin),
             id: messageId,
           },
           promptIds,
@@ -1569,7 +1612,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           });
         }
         step.contentAppended = true;
-        this.lastRequestTraceId = this.activeRequestTrace?.traceId;
+        this.lastRequestId = this.activeRequestTrace?.requestId;
         const toolCalls = event.entry.message.toolCalls;
         if (toolCalls.length === 0) {
           const finishReason = step.providerFinishReason ?? 'completed';
@@ -1742,6 +1785,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         signal: turn.controller.signal,
         turnId: turn.id,
         trace: this.activeRequestTrace,
+        remind: (message) => this.remind({ message }),
         onToolCall: (payload) => {
           const callUuid = randomUUID();
           step.toolCallUuids.set(payload.toolCallId, callUuid);
@@ -2142,8 +2186,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
     }
     const durationMs = Date.now() - turn.startedAt;
-    const traceId =
-      result.type === 'completed' ? this.lastRequestTraceId : this.activeRequestTrace?.traceId;
+    const requestId =
+      result.type === 'completed' ? this.lastRequestId : this.activeRequestTrace?.requestId;
     const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
     const interruptReason = result.type === 'completed' ? undefined : interruptReasonFor(result);
     void this.dispatcher.dispatch(
@@ -2155,7 +2199,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         durationMs,
         interruptReason,
         stopReason: result.type === 'completed' ? result.stopReason : undefined,
-        traceId,
+        requestId,
       }),
     );
     if (error !== undefined) {
@@ -2171,7 +2215,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         interrupt_reason: interruptReason,
         provider_type: turn.providerType,
         protocol: turn.protocol,
-        trace_id: traceId,
+        request_id: requestId,
       };
       this.telemetry.track2('turn_interrupted', interrupted);
     }
@@ -2183,13 +2227,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       error_type: error?.code,
       provider_type: turn.providerType,
       protocol: turn.protocol,
-      trace_id: traceId,
+      request_id: requestId,
       enabled_plugins: this.plugins.enabledPluginIds()?.join(','),
     };
     this.telemetry.track2('turn_ended', ended);
-    this.telemetry.setContext({ turn_id: undefined, trace_id: undefined, thinking_effort: undefined });
+    this.telemetry.setContext({ turn_id: undefined, request_id: undefined, thinking_effort: undefined });
     this.activeRequestTrace = undefined;
-    this.lastRequestTraceId = undefined;
+    this.lastRequestId = undefined;
     turn.result.resolve(result);
     this.maybeSettle();
   }
@@ -2222,6 +2266,15 @@ function normalizeFinishReason(reason: FinishReason): string {
   if (reason === 'completed') return 'end_turn';
   if (reason === 'truncated') return 'max_tokens';
   return reason;
+}
+
+function machineReminderEntry(
+  message: ContextMessage | undefined,
+): ReturnType<typeof createSystemEntry> | UserEntry {
+  if (message?.role === 'system') {
+    return createSystemEntry({ ...message, content: [...message.content] });
+  }
+  return createUserEntry(machineUserMessage(message));
 }
 
 function machineUserMessage(message: ContextMessage | undefined): UserMessage {
@@ -2262,7 +2315,6 @@ interface SteeredPrompt extends PromptProjection {
 const EMPTY_HANDLE_MESSAGE: ContextMessage = {
   role: 'user',
   content: [],
-  toolCalls: [],
 };
 
 function projectionFromEntry(entry: UserEntry): PromptProjection {
@@ -2274,7 +2326,6 @@ function projectionFromEntry(entry: UserEntry): PromptProjection {
       role: 'user',
       content: [...entry.message.content],
       id: entry.meta?.promptId,
-      toolCalls: [],
       origin: entry.meta?.origin as PromptOrigin | undefined,
     },
     userMessageId: entry.meta?.userMessageId ?? '',
@@ -2283,6 +2334,7 @@ function projectionFromEntry(entry: UserEntry): PromptProjection {
 }
 
 interface Nudge {
+  readonly kind: 'notify' | 'remind';
   readonly contextMessage?: ContextMessage;
   readonly promptIds?: readonly string[];
   readonly bypassMaxSteps: boolean;
