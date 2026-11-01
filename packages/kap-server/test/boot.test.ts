@@ -18,7 +18,11 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
-import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
+import {
+  listenWithPortRetry,
+  type RunningServer,
+  startServer,
+} from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authedFetch } from './helpers/auth';
 

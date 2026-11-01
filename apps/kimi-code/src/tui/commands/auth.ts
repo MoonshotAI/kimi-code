@@ -33,18 +33,23 @@ import type { SlashCommandHost } from './dispatch';
 // ---------------------------------------------------------------------------
 
 export async function handleLoginCommand(host: SlashCommandHost): Promise<void> {
-  const platformId = await promptPlatformSelection(host);
-  if (platformId === undefined) return;
+  const releaseAuthBlock = host.beginAuthBlock();
+  try {
+    const platformId = await promptPlatformSelection(host);
+    if (platformId === undefined) return;
 
-  if (platformId === 'kimi-code' || platformId === KIMI_CODE_GLOBAL_PLATFORM_VALUE) {
-    const region: KimiRegion = platformId === KIMI_CODE_GLOBAL_PLATFORM_VALUE ? 'global' : 'mainland-cn';
-    await handleKimiCodeOAuthLogin(host, region);
-    return;
+    if (platformId === 'kimi-code' || platformId === KIMI_CODE_GLOBAL_PLATFORM_VALUE) {
+      const region: KimiRegion = platformId === KIMI_CODE_GLOBAL_PLATFORM_VALUE ? 'global' : 'mainland-cn';
+      await handleKimiCodeOAuthLogin(host, region);
+      return;
+    }
+
+    const platform = getOpenPlatformById(platformId);
+    if (platform === undefined) return;
+    await handleOpenPlatformLogin(host, platform);
+  } finally {
+    releaseAuthBlock();
   }
-
-  const platform = getOpenPlatformById(platformId);
-  if (platform === undefined) return;
-  await handleOpenPlatformLogin(host, platform);
 }
 
 async function handleKimiCodeOAuthLogin(
@@ -74,6 +79,7 @@ async function handleKimiCodeOAuthLogin(
       },
     });
     refreshKimiRegion();
+    if (host.state.appState.model.trim().length > 0) host.setAuthRequired(false);
     spinner?.stop({ ok: true, label: 'Logged in.' });
     spinner = undefined;
     try {

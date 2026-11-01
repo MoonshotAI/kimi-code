@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createActor, waitFor, type ActorRefFrom } from '#/xstate2';
 
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
 import {
   createAssistantMessage,
   createUserMessage,
   extractText,
-} from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { LlmRequester } from '#/llm/requester/requester';
-import { emptyUsage } from '#/llm/usage';
+} from '#/message';
+import type { LlmModel } from '#/llm-requester/model';
+import type { LlmRequester } from '#/llm-requester/requester';
+import { emptyUsage } from '#/llm-requester/usage';
 import { createAgentMachine, type AgentInput } from '#/agent/machine';
 import { messageAppended, turnEnded } from '#/agent/events';
 import { agentSlices, type AgentEventStore } from '#/agent/slices';

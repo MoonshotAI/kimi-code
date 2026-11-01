@@ -156,5 +156,5 @@ export type {
   McpServerTestResult,
   McpServerTestTarget,
 } from '@moonshot-ai/agent-core-v2/app/mcpManagement/mcpManagement';
-export type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+export type { ContentPart } from '@moonshot-ai/agent-core-v2/human/message';
 export type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';

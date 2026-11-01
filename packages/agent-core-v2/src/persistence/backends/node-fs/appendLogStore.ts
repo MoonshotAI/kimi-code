@@ -4,7 +4,12 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 
-import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import {
+  IFileSystemStorageService,
+  isStorageError,
+  StorageError,
+  StorageErrors,
+} from '#/persistence/interface/storage';
 import {
   AppendLogCorruptedError,
   IAppendLogStore,
@@ -24,11 +29,19 @@ export async function drainAppendLogRetirements(): Promise<void> {
   }
 }
 
+interface AppendRecovery {
+  readonly batch: unknown[];
+  readonly encoded: Uint8Array;
+  readonly baseLength: number;
+  readonly externallyModifiedAtStart: boolean;
+}
+
 interface LogState {
   pending: unknown[];
   flushPromise: Promise<void> | undefined;
   flushScheduled: boolean;
   storageFailure: { readonly error: unknown } | undefined;
+  recovery: AppendRecovery | undefined;
   failureWarned: boolean;
   stuckWatch: NodeJS.Timeout | undefined;
   cutoverEpoch: number;
@@ -163,6 +176,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         await this.storage.write(scope, key, encoded, { atomic: true });
         state.rewriteInFlight = undefined;
         state.storageFailure = undefined;
+        state.recovery = undefined;
         state.knownLength = encoded.length;
         return true;
       } catch (error) {
@@ -207,12 +221,14 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
 
   externallyModified(scope: string, key: string): boolean {
     const state = this.logs.get(logId(scope, key));
+    if (state?.recovery?.externallyModifiedAtStart === true) return true;
     const known = state?.knownLength;
     if (known === undefined) return false;
     const disk = this.diskLength(scope, key);
     if (disk === undefined) return false;
     if (state?.rewriteInFlight !== undefined && disk === state.rewriteInFlight) return false;
-    return disk < known || disk > known + (state?.inFlightBytes ?? 0);
+    const inFlight = state?.recovery?.encoded.length ?? state?.inFlightBytes ?? 0;
+    return disk < known || disk > known + inFlight;
   }
 
   bindWriteGuard(scope: string, key: string, guard: () => boolean): IDisposable {
@@ -254,6 +270,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         flushPromise: undefined,
         flushScheduled: false,
         storageFailure: undefined,
+        recovery: undefined,
         failureWarned: false,
         stuckWatch: undefined,
         cutoverEpoch: 0,
@@ -402,27 +419,83 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     if (state.pending.length > 0 && !this.writeAllowed(scope, key, state)) return false;
     let wrote = false;
     while (state.pending.length > 0) {
-      const batch = state.pending.slice();
-      const encoded = encodeBatch(batch);
+      const recovery = state.recovery;
+      const batch = recovery?.batch ?? state.pending.slice();
+      const encoded = recovery?.encoded ?? encodeBatch(batch);
+      const baseLength = recovery?.baseLength ?? this.diskLength(scope, key);
+      let offset = 0;
+      if (recovery !== undefined) {
+        try {
+          offset = await this.recoveryOffset(scope, key, recovery);
+        } catch (error) {
+          if (isStorageError(error, StorageErrors.codes.STORAGE_CORRUPTED)) {
+            if (state.storageFailure === undefined) {
+              state.storageFailure = { error };
+              state.failureWarned = false;
+            }
+            throw state.storageFailure.error;
+          }
+          throw error;
+        }
+        if (state.cutoverEpoch !== cutoverEpoch) return wrote;
+      }
+      const externallyModifiedAtStart =
+        recovery?.externallyModifiedAtStart ?? this.externallyModified(scope, key);
       try {
-        state.inFlightBytes = encoded.length;
-        await this.storage.append(scope, key, encoded, { durable: true });
+        state.inFlightBytes = encoded.length - offset;
+        await this.storage.append(scope, key, encoded.subarray(offset), { durable: true });
         state.inFlightBytes = 0;
+        state.recovery = undefined;
         wrote = true;
         if (state.knownLength !== undefined) state.knownLength += encoded.length;
         if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {
         state.inFlightBytes = 0;
-        if (state.storageFailure === undefined) {
-          state.storageFailure = { error };
-          state.failureWarned = false;
+        if (baseLength === undefined) {
+          if (state.storageFailure === undefined) {
+            state.storageFailure = { error };
+            state.failureWarned = false;
+          }
+          throw state.storageFailure.error;
         }
-        throw state.storageFailure.error;
+        state.recovery = { batch, encoded, baseLength, externallyModifiedAtStart };
+        throw error;
       }
       if (state.cutoverEpoch !== cutoverEpoch) return wrote;
       state.pending.splice(0, batch.length);
     }
     return wrote;
+  }
+
+  private async recoveryOffset(scope: string, key: string, recovery: AppendRecovery): Promise<number> {
+    const diskLength = (await this.storage.size(scope, key)) ?? 0;
+    const suffixLength = diskLength - recovery.baseLength;
+    if (suffixLength < 0 || suffixLength > recovery.encoded.length) {
+      throw this.recoveryConflict(scope, key, recovery);
+    }
+    if (suffixLength === 0) return 0;
+    let offset = 0;
+    for await (const chunk of this.storage.readStream(scope, key, {
+      start: recovery.baseLength,
+      end: diskLength - 1,
+    })) {
+      for (const byte of chunk) {
+        if (offset >= suffixLength || byte !== recovery.encoded[offset]) {
+          throw this.recoveryConflict(scope, key, recovery);
+        }
+        offset++;
+      }
+    }
+    if (offset !== suffixLength) throw this.recoveryConflict(scope, key, recovery);
+    return suffixLength;
+  }
+
+  private recoveryConflict(scope: string, key: string, recovery: AppendRecovery): StorageError {
+    return new StorageError(
+      StorageErrors.codes.STORAGE_CORRUPTED,
+      `append-log ${scope}/${key}: unexpected content during append recovery`,
+      { details: { scope, key, baseLength: recovery.baseLength } },
+    );
   }
 }
 

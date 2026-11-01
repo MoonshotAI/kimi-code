@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyPatterns, type Pattern, type Rewrite } from '#/llm/protocol/rewrite';
+import { applyPatterns, type Pattern, type Rewrite } from '#/llm/protocol/pattern';
 
 function pairToSum(name: string): Pattern<number> {
   return {

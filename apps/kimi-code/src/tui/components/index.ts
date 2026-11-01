@@ -1,7 +1,6 @@
 export * from './chrome/device-code-box';
 export * from './chrome/footer';
 export * from './chrome/moon-loader';
-export * from './chrome/todo-panel';
 export * from './chrome/welcome';
 export * from './dialogs/approval-panel';
 export * from './dialogs/choice-picker';

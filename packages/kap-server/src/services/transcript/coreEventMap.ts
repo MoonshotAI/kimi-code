@@ -6,20 +6,27 @@ import type {
   CompactionCompleted,
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import { daemonFileRefFromPart, type ContentPart, type ContextUndone, type CronFired, type GoalUpdated } from '@moonshot-ai/agent-core-v2';
+import {
+  daemonFileRefFromPart,
+  type ContextUndone,
+  type CronFired,
+  type GoalUpdated,
+} from '@moonshot-ai/agent-core-v2';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
-import type {
-  AssistantDelta,
-  ThinkingDelta,
-  ToolCallDelta,
-  TurnStarted,
-  TurnStepCompleted,
-  TurnStepInterrupted,
-  TurnStepRetrying,
-  TurnStepStarted,
+import {
+  turnPromptText,
+  type AssistantDelta,
+  type ThinkingDelta,
+  type ToolCallDelta,
+  type TurnStarted,
+  type TurnStepCompleted,
+  type TurnStepInterrupted,
+  type TurnStepRetrying,
+  type TurnStepStarted,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type { TurnEnded, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import type { PluginCommandActivated } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
@@ -91,8 +98,9 @@ import {
 
 import { toLegacyPhase, type LegacyActivityApproval } from '../legacyStatus/legacyStatus';
 import { LegacyActivityTracker, phaseFromDomainEvent } from '../legacyStatus/legacyActivity';
+import { interactionOutcome } from '../../protocol/interaction-wire';
 import { toWireQuestion } from '../../protocol/question-wire';
-import { projectPromptContentParts } from '../messages/messageProjection';
+import { projectPromptContentParts, projectToolResultOutput } from '../messages/messageProjection';
 
 export interface ProjectorInteraction {
   readonly id: string;
@@ -114,6 +122,7 @@ type SteerFileAttachment = { readonly name: string; readonly mediaType: string; 
 
 export type ProjectorBusEvent =
   | PlanRevisionEvent
+  | ({ readonly type: 'turn.prompt' } & TurnPrompt)
   | ({ readonly type: 'turn.started' } & TurnStarted)
   | ({ readonly type: 'turn.ended' } & TurnEnded)
   | ({ readonly type: 'turn.step.started' } & TurnStepStarted)
@@ -229,6 +238,7 @@ export class AgentTranscriptProjector {
   private highWater = -1;
   private highWaterSeeded = false;
   private readonly wireToExport = new Map<number, string>();
+  private taskPrompt: { readonly turnId: number; readonly text: string | undefined } | undefined;
   private pendingTaskNotifications: { text: string; taskId: string | undefined }[] = [];
   private pendingSteers: {
     input: readonly ContentPart[];
@@ -372,6 +382,8 @@ export class AgentTranscriptProjector {
     switch (event.type) {
       case 'plan.revision':
         return this.onPlanRevision(event);
+      case 'turn.prompt':
+        return this.onTurnPrompt(event);
       case 'turn.started':
         return this.onTurnStarted(event);
       case 'turn.ended':
@@ -467,6 +479,18 @@ export class AgentTranscriptProjector {
     }
   }
 
+  private onTurnPrompt(event: TurnPrompt): TranscriptOperation[] {
+    if (event.turnId === undefined || event.origin.kind !== 'task') return [];
+    this.taskPrompt = {
+      turnId: event.turnId,
+      text: turnPromptText(
+        event.input.filter((part) => !isUserPromptSubmitHookPart(part)),
+        event.origin,
+      ),
+    };
+    return [];
+  }
+
   private onTurnStarted(event: {
     turnId: number;
     promptId?: string;
@@ -521,14 +545,20 @@ export class AgentTranscriptProjector {
       ops.push({ op: 'attachment.upsert', attachment });
       attachmentIds.push(attachment.attachmentId);
     }
+    const origin = mapTurnOrigin(event.origin);
+    const prompt =
+      event.prompt ??
+      (origin.kind === 'task' && this.taskPrompt?.turnId === event.turnId
+        ? this.taskPrompt.text
+        : undefined);
     this.currentTurn = {
       kind: 'turn',
       turnId,
       triggerPromptId: event.promptId,
       ordinal,
       state: 'running',
-      origin: mapTurnOrigin(event.origin),
-      prompt: event.prompt,
+      origin,
+      prompt,
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       startedAt: nowIso(),
     };
@@ -600,6 +630,7 @@ export class AgentTranscriptProjector {
     durationMs?: number;
     interruptReason?: string;
   }): TranscriptOperation[] {
+    if (this.taskPrompt?.turnId === event.turnId) this.taskPrompt = undefined;
     const ops: TranscriptOperation[] = [];
     this.flushOpenFrames(ops);
     const turnId = this.exportTurnId(event.turnId);
@@ -1028,11 +1059,12 @@ export class AgentTranscriptProjector {
     const hit = this.toolFrames.get(event.toolCallId) ?? this.adoptToolFrame(event.toolCallId);
     if (hit === undefined) return [];
     const isError = event.isError === true;
+    const output = projectToolResultOutput(event.output);
     const frame: ToolCallFrame = {
       ...hit.frame,
       state: isError ? 'error' : 'done',
-      output: event.output,
-      error: isError && typeof event.output === 'string' ? event.output : undefined,
+      output,
+      error: isError && typeof output === 'string' ? output : undefined,
     };
     this.toolFrames.set(event.toolCallId, { ...hit, frame });
     const ops: TranscriptOperation[] = [
@@ -1697,7 +1729,7 @@ export class AgentTranscriptProjector {
     const record = this.interactions.get(id);
     if (record === undefined) return [];
     this.interactions.delete(id);
-    const state = mapInteractionEndState(record.interactionKind, response);
+    const state = interactionOutcome(record.interactionKind, response);
     const ops: TranscriptOperation[] = [
       { op: 'interaction.upsert', interaction: { ...record, state, response } },
     ];
@@ -1787,17 +1819,6 @@ function mapTaskKind(kind: string): TranscriptTask['kind'] {
   }
 }
 
-function mapInteractionEndState(
-  kind: 'approval' | 'question',
-  response: unknown,
-): TranscriptInteraction['state'] {
-  if (kind === 'question') return response === null ? 'dismissed' : 'answered';
-  const decision = (response as { decision?: unknown } | null | undefined)?.decision;
-  if (decision === 'approved' || decision === 'rejected' || decision === 'cancelled') {
-    return decision;
-  }
-  return 'cancelled';
-}
 
 const TODO_LIST_TOOL_NAME = 'TodoList';
 const TODO_ENTITY_ID = 'todo';

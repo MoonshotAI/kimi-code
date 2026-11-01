@@ -7,6 +7,7 @@ import type { ContentPart } from '#human/llm/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
+import { codePointBoundaryStart } from '#/_base/text/code-points';
 import { defineState } from '#/state/state';
 import {
   abortable,
@@ -29,6 +30,7 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
@@ -238,6 +240,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     undoParticipants: IAgentConversationUndoParticipantRegistry,
     @ILogService private readonly log: ILogService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IFlagService flags: IFlagService,
     @IAgentToolRegistryService tools: IAgentToolRegistryService,
     @IAgentToolPolicyService policy: IAgentToolPolicyService,
@@ -259,6 +262,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       atomicDocs,
       byteStore,
       fallbackRoot,
+      () => environmentTempTarget(this.environment, 'task-output'),
     );
     this._register(
       undoParticipants.register({
@@ -608,7 +612,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   async readOutput(taskId: string, tail?: number): Promise<string> {
     const output = (await this.getOutputSnapshot(taskId, Number.MAX_SAFE_INTEGER)).preview;
     if (tail === undefined) return output;
-    return output.slice(-Math.max(0, Math.trunc(tail)));
+    const tailChars = Math.max(0, Math.trunc(tail));
+    if (tailChars === 0) return output;
+    return output.slice(codePointBoundaryStart(output, Math.max(0, output.length - tailChars)));
   }
 
   async suppressTerminalNotification(taskId: string): Promise<void> {
@@ -1151,7 +1157,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       message: {
         role: 'user',
         content: [...context.content],
-        toolCalls: [],
         origin: context.origin,
       },
       turnScoped: false,
@@ -1274,7 +1279,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.context.append({
       role: 'user',
       content: [...context.content],
-      toolCalls: [],
       origin: context.origin,
     });
     this.fireNotificationHook(context.notification);

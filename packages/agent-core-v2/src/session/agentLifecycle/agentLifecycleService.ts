@@ -25,6 +25,7 @@ import { profileKey } from '#/agent/profile/profileOps';
 import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { withSubagentProfile } from '#/session/agentLifecycle/subagentMetadata';
 import {
@@ -49,8 +50,10 @@ import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
-import { IAgentRuntimeBindingSeed, IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
-import '#/agent/runtimeBinding/runtimeBindingService';
+import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import '#/agent/environmentBinding/environmentBindingService';
+import { EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IWireService } from '#/wire/wire';
@@ -121,6 +124,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionContext private readonly ctx: ISessionContext,
+    @ISessionWorkdir private readonly workdir: ISessionWorkdir,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
@@ -293,9 +297,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
           seeds: [
             [IAgentScopeContext, scopeContext],
             [ITelemetryService, telemetryBinding.telemetry],
-            [IAgentRuntimeBindingSeed, {
+            [IAgentEnvironmentBindingSeed, {
               _serviceBrand: undefined,
-              binding: { workspaceId: this.ctx.workspaceId, runtimeId: opts.runtimeId ?? 'local' },
+              binding: opts.environmentId === undefined
+                ? { environmentId: this.workdir.environmentId, cwd: this.workdir.cwd }
+                : { environmentId: opts.environmentId, cwd: opts.environmentCwd },
             }],
             [IAgentBlobService, blobView],
             [IWireService, wire],
@@ -346,6 +352,16 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.onDidCreateEmitter.fire(agent);
       didCreate = true;
       this.onDidCreateScopeEmitter.fire({ context: agent, handle, meta });
+      stage = 'binding';
+      if (opts.environmentId !== undefined && opts.environmentId !== LOCAL_ENVIRONMENT_ID) {
+        await handle.accessor.get(IEventDispatcher).dispatch(
+          new EnvironmentSetBinding({
+            agentId,
+            environmentId: opts.environmentId,
+            cwd: opts.environmentCwd,
+          }),
+        );
+      }
       stage = 'restore';
       await handle.accessor.get(IEventDispatcher).restore();
       attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
@@ -428,9 +444,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const source = sourceManaged.handle;
     const sourceData = source.accessor.get(IAgentProfileService).data();
     const override = opts?.binding;
+    const sourceBinding = source.accessor.get(IAgentEnvironmentBindingService).current;
     const childContext = await this.create({
       agentId: opts?.agentId,
-      runtimeId: source.accessor.get(IAgentRuntimeBindingService).current.runtimeId,
+      environmentId: sourceBinding.environmentId,
+      environmentCwd: sourceBinding.cwd,
       forkedFrom: source.id,
       labels: withSubagentProfile(opts?.labels, override?.profile ?? sourceData.profileName),
     });

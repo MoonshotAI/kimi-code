@@ -1,11 +1,18 @@
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ToolDescription } from '#human/llm/message';
+import { isMcpToolName } from '#/tool/toolContract';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
+
+import { SELECT_TOOLS_TOOL_NAME, type ToolSelectAnnouncementDisclosure } from './toolSelect';
+import { toolSelectSchemaSignature, type ToolSelectTool } from './toolSelectOps';
 
 export const DYNAMIC_TOOL_SCHEMA_VARIANT = 'dynamic_tool_schema';
-
 export const LOADABLE_TOOLS_VARIANT = 'loadable-tools';
 
-export function isDynamicToolSchemaMessage(message: ContextMessage): boolean {
-  return message.tools !== undefined && message.tools.length > 0;
+export function isDynamicToolSchemaMessage(
+  message: ContextMessage,
+): message is Extract<ContextMessage, { readonly role: 'system' }> {
+  return message.role === 'system' && message.tools !== undefined && message.tools.length > 0;
 }
 
 export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
@@ -14,38 +21,123 @@ export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
   return origin?.kind === 'system_trigger' && origin.name === LOADABLE_TOOLS_VARIANT;
 }
 
-export function stripDynamicToolContext(
+export function isToolSelectAnnouncementDisclosure(
+  value: unknown,
+): value is ToolSelectAnnouncementDisclosure {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Partial<ToolSelectAnnouncementDisclosure>;
+  if (typeof candidate.revision !== 'number') return false;
+  if (candidate.kind === 'snapshot') return Array.isArray(candidate.tools);
+  if (candidate.kind === 'delta') return Array.isArray(candidate.added) && Array.isArray(candidate.removed);
+  return false;
+}
+
+function announcementDisclosure(
+  message: ContextMessage,
+): ToolSelectAnnouncementDisclosure | undefined {
+  if (message.origin?.kind !== 'injection') return undefined;
+  return isToolSelectAnnouncementDisclosure(message.origin.disclosure)
+    ? message.origin.disclosure
+    : undefined;
+}
+
+export function shapeUnsupportedDynamicToolContext(
   history: readonly ContextMessage[],
 ): readonly ContextMessage[] {
-  if (!history.some((m) => isDynamicToolSchemaMessage(m) || isLoadableToolsAnnouncement(m))) {
+  const hiddenCallIds = new Set<string>();
+  for (const message of history) {
+    if (message.role !== 'assistant') continue;
+    for (const call of message.toolCalls) {
+      if (call.name === SELECT_TOOLS_TOOL_NAME) hiddenCallIds.add(call.id);
+    }
+  }
+  if (
+    hiddenCallIds.size === 0 &&
+    !history.some((message) => isDynamicToolSchemaMessage(message) || isLoadableToolsAnnouncement(message))
+  ) {
     return history;
   }
   const out: ContextMessage[] = [];
   for (const message of history) {
-    if (isLoadableToolsAnnouncement(message)) continue;
+    if (isLoadableToolsAnnouncement(message)) {
+      const disclosure = announcementDisclosure(message);
+      if (disclosure?.kind === 'snapshot') continue;
+      const text = message.content.map((part) => part.type === 'text' ? part.text : '').join('');
+      const added = disclosure?.kind === 'delta'
+        ? disclosure.added.map((tool) => tool.name)
+        : matchToolNameBlocks(text, TOOLS_ADDED_BLOCK);
+      const removed = disclosure?.kind === 'delta'
+        ? disclosure.removed.map((tool) => tool.name)
+        : matchToolNameBlocks(text, TOOLS_REMOVED_BLOCK);
+      out.push({
+        ...message,
+        content: [{ type: 'text', text: wrapSystemReminder(renderRuntimeToolChangeReminder(added, removed)) }],
+      });
+      continue;
+    }
     if (isDynamicToolSchemaMessage(message)) {
       const { tools: _tools, ...rest } = message;
       void _tools;
-      if (rest.content.length === 0 && rest.toolCalls.length === 0) continue;
-      out.push(rest);
+      if (rest.content.length > 0) out.push(rest);
       continue;
     }
-    out.push(message);
+    if (message.role === 'tool') {
+      if (message.toolCallId === undefined || !hiddenCallIds.has(message.toolCallId)) out.push(message);
+      continue;
+    }
+    if (message.role !== 'assistant') {
+      out.push(message);
+      continue;
+    }
+    const toolCalls = message.toolCalls.filter((call) => call.name !== SELECT_TOOLS_TOOL_NAME);
+    if (toolCalls.length === message.toolCalls.length) {
+      out.push(message);
+      continue;
+    }
+    if (toolCalls.length > 0 || message.content.length > 0) out.push({ ...message, toolCalls });
   }
   return out;
 }
 
-export function collectLoadedDynamicToolNames(
+export function collectLoadedDynamicTools(
   history: readonly ContextMessage[],
-): Set<string> {
-  const names = new Set<string>();
+  current: readonly ToolSelectTool[],
+): ReadonlyMap<string, ToolDescription> {
+  const loaded = new Map<string, ToolDescription>();
   for (const message of history) {
-    if (message.tools === undefined) continue;
-    for (const tool of message.tools) {
-      names.add(tool.name);
+    if (isLoadableToolsAnnouncement(message)) {
+      const disclosure = announcementDisclosure(message);
+      const removed = disclosure?.kind === 'delta'
+        ? disclosure.removed.map((tool) => tool.name)
+        : matchToolNameBlocks(
+            message.content.map((part) => part.type === 'text' ? part.text : '').join(''),
+            TOOLS_REMOVED_BLOCK,
+          );
+      for (const name of removed) loaded.delete(name);
+      continue;
+    }
+    if (!isDynamicToolSchemaMessage(message)) continue;
+    for (const tool of message.tools ?? []) loaded.set(tool.name, tool);
+  }
+  const currentByName = new Map(current.map((tool) => [tool.name, tool]));
+  for (const [name, schema] of loaded) {
+    const currentTool = currentByName.get(name);
+    if (
+      (currentTool === undefined && !isMcpToolName(name)) ||
+      (currentTool !== undefined &&
+        toolSelectSchemaSignature(schema) !== toolSelectSchemaSignature(currentTool))
+    ) {
+      loaded.delete(name);
     }
   }
-  return names;
+  return loaded;
+}
+
+export function collectLoadedDynamicToolNames(
+  history: readonly ContextMessage[],
+  current: readonly ToolSelectTool[],
+): Set<string> {
+  return new Set(collectLoadedDynamicTools(history, current).keys());
 }
 
 const TOOLS_ADDED_BLOCK = /<tools_added>\n?([\s\S]*?)\n?<\/tools_added>/g;
@@ -56,7 +148,7 @@ export function foldAnnouncedToolNames(history: readonly ContextMessage[]): Set<
   for (const message of history) {
     if (!isLoadableToolsAnnouncement(message)) continue;
     const text = message.content
-      .map((part) => (part.type === 'text' ? part.text : ''))
+      .map((part) => part.type === 'text' ? part.text : '')
       .join('');
     for (const name of matchToolNameBlocks(text, TOOLS_REMOVED_BLOCK)) {
       announced.delete(name);
@@ -108,6 +200,22 @@ export function renderLoadableToolsAnnouncement(
       'directly, never passed to select_tools; plugin, skill, or category names do not work. ' +
       'Names listed as removed are no longer loadable — do not select them. ' +
       'Fold all announcements in this conversation in order to get the current list.',
+  );
+  return sections.join('\n\n');
+}
+
+export function renderRuntimeToolChangeReminder(
+  added: readonly string[],
+  removed: readonly string[],
+): string {
+  const sections: string[] = [];
+  if (added.length > 0) sections.push(`<tools_added>\n${added.join('\n')}\n</tools_added>`);
+  if (removed.length > 0) sections.push(`<tools_removed>\n${removed.join('\n')}\n</tools_removed>`);
+  sections.push(
+    'The available tools changed during this session. The current model cannot load runtime ' +
+      'tool additions or replacements with select_tools. Do not call select_tools. Tools from ' +
+      'the initial session snapshot remain visible, but removed or replaced definitions may be ' +
+      'unavailable or fail when called.',
   );
   return sections.join('\n\n');
 }

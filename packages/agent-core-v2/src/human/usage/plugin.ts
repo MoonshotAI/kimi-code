@@ -1,6 +1,6 @@
 import { createActor, type ActorRefFrom } from '#/xstate2';
 
-import type { LlmModel } from '#/llm/model';
+import type { LlmModel } from '#/llm-requester/model';
 import type { Plugin } from '#/plugin';
 
 import { createUsageMachine } from './machine';

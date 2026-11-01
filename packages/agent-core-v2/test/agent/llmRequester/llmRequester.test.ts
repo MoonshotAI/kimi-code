@@ -1,25 +1,35 @@
-import { APIConnectionError, APIStatusError } from '#/llm-adapter/contract/errors';
+import {
+  APIConnectionError,
+  APIRequestTooLargeError,
+  APIStatusError,
+} from '#/llm-adapter/contract/errors';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
-import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/message';
-import { emptyUsage, inputTotal } from '#human/llm/usage';
+import type {
+  Message,
+  StreamedMessagePart,
+  ToolDescription as Tool,
+} from '#human/llm/message';
+import { emptyUsage } from '#human/llm-requester/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import {
-  IAgentLLMRequesterService,
-  type AgentLLMRequestFinish,
-} from '#/agent/llmRequester/llmRequester';
+import type {
+  LoopRequester,
+  AgentLLMRequestFinish,
+} from '#/agent/loop/requesterContract';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
 import {
   configServices,
   createTestAgent,
+  findGenerateCallPrefixBreak,
   llmGenerateServices,
   logServices,
   requesterFromGenerateFn,
   telemetryServices,
   type TestAgentContext,
 } from '../../harness';
+import { promptCacheComparisons } from '../../harness/prompt-cache-guard';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 interface CapturedLogEntry {
@@ -47,7 +57,7 @@ function captureLogs(): { logger: Logger; entries: CapturedLogEntry[] } {
 describe('LLMRequester service migration coverage', () => {
   describe('wire observability records', () => {
     let ctx: TestAgentContext;
-    let llmRequester: IAgentLLMRequesterService;
+    let llmRequester: LoopRequester;
 
     const requestTools: readonly Tool[] = [
       {
@@ -76,7 +86,7 @@ describe('LLMRequester service migration coverage', () => {
     beforeEach(() => {
       vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
       ctx = createTestAgent();
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.get(IAgentLoopService).requester;
     });
 
     afterEach(async () => {
@@ -188,7 +198,7 @@ describe('LLMRequester service migration coverage', () => {
       await ctx.dispose();
       vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
       ctx = createTestAgent();
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.get(IAgentLoopService).requester;
       ctx.configure({
         modelCapabilities: {
           image_in: false,
@@ -235,7 +245,7 @@ describe('LLMRequester service migration coverage', () => {
           };
         })),
       );
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.get(IAgentLoopService).requester;
 
       await llmRequester.request();
 
@@ -245,60 +255,6 @@ describe('LLMRequester service migration coverage', () => {
       expect(requests[1]?.args).toMatchObject({ projection: 'strict' });
     });
 
-    it('remembers the last completed turn request with its recorded hashes', async () => {
-      ctx.mockNextResponse({ type: 'text', text: 'operation response' });
-      await llmRequester.request({
-        messages: [userMessage('operation request')],
-        systemPrompt: 'request-specific system',
-        tools: requestTools,
-        source: { type: 'operation', requestKind: 'direct_test' },
-      });
-      expect(llmRequester.lastTurnRequest()).toBeUndefined();
-
-      ctx.mockNextResponse({ type: 'text', text: 'turn response' });
-      const finish = await llmRequester.request({
-        messages: [userMessage('turn request')],
-        tools: requestTools,
-        source: { type: 'turn', turnId: 1 },
-      });
-
-      const recorded = wireEvents(ctx, 'llm.request').at(-1)?.args as
-        | Record<string, unknown>
-        | undefined;
-      const snapshot = llmRequester.lastTurnRequest();
-      expect(snapshot).toMatchObject({
-        toolsHash: recorded?.['toolsHash'],
-        systemPromptHash: recorded?.['systemPromptHash'],
-        inputTokens: inputTotal(finish.usage),
-        contextRevision: ctx.get(IAgentContextMemoryService).prefixRevision(),
-      });
-      expect(snapshot!.finishedAt).toBeGreaterThanOrEqual(snapshot!.startedAt);
-    });
-
-    it('outdates the recorded context revision when the context is rewritten', async () => {
-      const context = ctx.get(IAgentContextMemoryService);
-      ctx.mockNextResponse({ type: 'text', text: 'first turn response' });
-      await llmRequester.request({
-        messages: [userMessage('first turn request')],
-        source: { type: 'turn', turnId: 1 },
-      });
-      context.append(userMessage('appended after the request'));
-      expect(llmRequester.lastTurnRequest()?.contextRevision).toBe(context.prefixRevision());
-
-      context.applyCompaction({
-        summary: 'The conversation was compacted.',
-        compactedCount: context.get().length,
-        tokensBefore: 1000,
-      });
-      expect(llmRequester.lastTurnRequest()?.contextRevision).not.toBe(context.prefixRevision());
-
-      ctx.mockNextResponse({ type: 'text', text: 'second turn response' });
-      await llmRequester.request({
-        messages: [userMessage('second turn request')],
-        source: { type: 'turn', turnId: 2 },
-      });
-      expect(llmRequester.lastTurnRequest()?.contextRevision).toBe(context.prefixRevision());
-    });
   });
 
   describe('tool-call deltas', () => {
@@ -399,7 +355,7 @@ describe('LLMRequester service migration coverage', () => {
         })),
         logServices(logger),
       );
-      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const llmRequester = ctx.get(IAgentLoopService).requester;
 
       await expect(
         llmRequester.request({
@@ -432,7 +388,7 @@ describe('LLMRequester service migration coverage', () => {
           throw new APIConnectionError('terminated');
         })),
       );
-      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const llmRequester = ctx.get(IAgentLoopService).requester;
 
       await expect(llmRequester.request()).rejects.toMatchObject({
         name: 'APIConnectionError',
@@ -448,7 +404,7 @@ describe('LLMRequester service migration coverage', () => {
         })),
         telemetryServices(recordingTelemetry(records)),
       );
-      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const llmRequester = ctx.get(IAgentLoopService).requester;
 
       await expect(llmRequester.request()).rejects.toMatchObject({
         name: 'APIStatusError',
@@ -478,7 +434,7 @@ describe('LLMRequester service migration coverage', () => {
         })),
         telemetryServices(recordingTelemetry(records)),
       );
-      const llmRequester = ctx.get(IAgentLLMRequesterService);
+      const llmRequester = ctx.get(IAgentLoopService).requester;
 
       await expect(
         llmRequester.request({ source: { type: 'turn', turnId: 3, step: 1 } }),
@@ -510,7 +466,7 @@ describe('LLMRequester service migration coverage', () => {
 
   describe('request timing and budget', () => {
     let ctx: TestAgentContext;
-    let llmRequester: IAgentLLMRequesterService;
+    let llmRequester: LoopRequester;
     let profile: IAgentProfileService;
     let requestMaxTokens: unknown;
     let logEntries: CapturedLogEntry[];
@@ -556,7 +512,7 @@ describe('LLMRequester service migration coverage', () => {
         })),
         logServices(logger),
       );
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.get(IAgentLoopService).requester;
       profile = ctx.get(IAgentProfileService);
       profile.update({
         modelAlias: 'deepseek/deepseek-v4-flash',
@@ -573,7 +529,7 @@ describe('LLMRequester service migration coverage', () => {
       }
     });
 
-    it('emits stream timing and applies the model output budget through IAgentLLMRequesterService', async () => {
+    it('emits stream timing and applies the model output budget through LoopRequester', async () => {
       const { parts, finish } = await collectLLMRequest((onPart) =>
         llmRequester.request(undefined, onPart),
       );
@@ -650,7 +606,7 @@ describe('LLMRequester service migration coverage', () => {
 
   describe('per-turn intent handoff', () => {
     let ctx: TestAgentContext;
-    let llmRequester: IAgentLLMRequesterService;
+    let llmRequester: LoopRequester;
     let capturedCacheKey: unknown;
 
     beforeEach(() => {
@@ -671,7 +627,7 @@ describe('LLMRequester service migration coverage', () => {
           };
         })),
       );
-      llmRequester = ctx.get(IAgentLLMRequesterService);
+      llmRequester = ctx.get(IAgentLoopService).requester;
     });
 
     afterEach(async () => {
@@ -687,6 +643,69 @@ describe('LLMRequester service migration coverage', () => {
 
       expect(capturedCacheKey).toBe('test-session');
     });
+  });
+
+  describe('media recovery across turns', () => {
+    function countMedia(history: readonly Message[]): number {
+      return history
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url' || part.type === 'video_url').length;
+    }
+
+    it.each([
+      {
+        recovery: 'media-degraded',
+        error: new APIRequestTooLargeError(413, 'Request Entity Too Large'),
+        keptMedia: 2,
+      },
+      {
+        recovery: 'media-stripped',
+        error: new APIStatusError(400, 'unsupported image format: image/avif is not supported'),
+        keptMedia: 0,
+      },
+    ])(
+      'starts the next turn as a prefix extension of the $recovery request the previous turn settled on',
+      async ({ error, keptMedia }) => {
+        const compared = promptCacheComparisons();
+        const ctx = createTestAgent();
+        try {
+          ctx.configure({
+            provider: {
+              type: 'kimi',
+              apiKey: 'test-key',
+              baseUrl: 'https://api.example/v1',
+              model: 'kimi-code',
+            },
+            modelCapabilities: {
+              image_in: true,
+              video_in: true,
+              audio_in: false,
+              thinking: true,
+              tool_use: true,
+              max_context_tokens: 256_000,
+            },
+          });
+          ctx.appendRichToolExchange();
+          ctx.appendRichToolExchange();
+          ctx.mockNextProviderResponse({ error });
+          ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
+          await ctx.rpc.prompt({ input: [{ type: 'text', text: 'describe the media' }] });
+          await ctx.untilTurnEnd();
+          ctx.mockNextResponse({ type: 'text', text: 'Second answer.' });
+          await ctx.rpc.prompt({ input: [{ type: 'text', text: 'and now?' }] });
+          await ctx.untilTurnEnd();
+
+          const [rejected, settled, nextTurn] = ctx.llmCalls;
+          expect(countMedia(rejected!.history)).toBeGreaterThan(2);
+          expect(countMedia(settled!.history)).toBe(keptMedia);
+          expect(findGenerateCallPrefixBreak(settled!, nextTurn!)).toBeUndefined();
+          expect(ctx.llmCalls).toHaveLength(3);
+          expect(promptCacheComparisons()).toBeGreaterThan(compared);
+        } finally {
+          await ctx.dispose();
+        }
+      },
+    );
   });
 
 });
@@ -720,7 +739,7 @@ function wireEvents(
 }
 
 function userMessage(text: string) {
-  return { role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [] };
+  return { role: 'user' as const, content: [{ type: 'text' as const, text }] };
 }
 
 async function collectLLMRequest(

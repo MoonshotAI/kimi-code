@@ -447,7 +447,77 @@ describe('ToolResultTruncationService', () => {
     expect(renderedShortLines).toContain('could not be saved to a file');
     expect(renderedShortLines.length).toBeLessThan(10_000);
   });
+
+  it('does not split a surrogate pair when shaping a long line', async () => {
+    const emojiLine = `${'a'.repeat(1_983)}\u{1F600}${'\u{1F600}'.repeat(20)}`;
+    const full = `${'x'.repeat(49_000)}\n${emojiLine}`;
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Grep',
+      toolCallId: 'call_surrogate_line',
+      result: { output: full },
+    });
+
+    expect(result.truncated).toBe(true);
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain('Per-line truncation occurred');
+    expect(rendered).toContain(`${'a'.repeat(1_983)}\u{1F600}[...truncated]`);
+    expect(LONE_SURROGATE.test(rendered)).toBe(false);
+    await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(full);
+  });
+
+  it('keeps head and tail previews on code point boundaries', async () => {
+    const head = `${'b'.repeat(4_095)}\u{1F600}\n`;
+    const filler = `${'m'.repeat(99)}\n`.repeat(520);
+    const tail = `\u{1F600}${'t'.repeat(1_023)}`;
+    const full = `${head}${filler}${tail}`;
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Bash',
+      toolCallId: 'call_surrogate_preview',
+      result: { output: full },
+    });
+
+    expect(result.truncated).toBe(true);
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain('Tool output exceeded 50000 characters');
+    expect(rendered).toContain(`[preview: chars [0, ${String(4_095)})]`);
+    expect(rendered).toContain(
+      `[elided: chars [${String(4_095)}, ${String(full.length - 1_023)})]`,
+    );
+    expect(rendered).toContain(
+      `[preview: chars [${String(full.length - 1_023)}, ${String(full.length)})]`,
+    );
+    expect(LONE_SURROGATE.test(rendered)).toBe(false);
+    await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(full);
+  });
+
+  it('keeps the retained spill on a code point boundary', async () => {
+    const pad = 'c'.repeat(9_999_999);
+    const full = `${pad}\u{1F600}${'d'.repeat(100)}`;
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'mcp__s__big',
+      toolCallId: 'call_surrogate_retained',
+      result: { output: full },
+    });
+
+    expect(result.truncated).toBe(true);
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain('the first 9999999 characters (of 10000101) were saved');
+    const saved = await readFile(renderedOutputPath(rendered), 'utf8');
+    expect(saved).toBe(pad);
+    expect(LONE_SURROGATE.test(saved)).toBe(false);
+  });
 });
+
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 function renderedOutputPath(output: unknown): string {
   if (typeof output !== 'string') throw new Error('expected rendered output to be a string');

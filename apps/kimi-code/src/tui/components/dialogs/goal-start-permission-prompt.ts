@@ -1,11 +1,13 @@
 import {
   StartPermissionPromptComponent,
   type StartPermissionOption,
+  type StartPermissionPromptOptions,
 } from './start-permission-prompt';
 
 export type GoalStartPermissionChoice = 'auto' | 'yolo' | 'manual' | 'cancel';
 
-export interface GoalStartPermissionPromptOptions {
+export interface GoalStartPermissionPromptOptions
+  extends Pick<StartPermissionPromptOptions, 'layout'> {
   readonly mode: 'manual' | 'yolo';
   readonly onSelect: (choice: GoalStartPermissionChoice) => void;
   readonly onCancel: () => void;
@@ -66,14 +68,12 @@ const MANUAL_OPTIONS = GOAL_START_MANUAL_OPTIONS;
 const YOLO_OPTIONS = GOAL_START_YOLO_OPTIONS;
 
 const MANUAL_NOTICE_LINES = [
-  'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',
-  'Always Ask mode is not suitable for unattended goal work.',
+  'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions, and is not suitable for unattended goal work.',
   'You can go back without losing your command.',
 ] as const;
 
 const YOLO_NOTICE_LINES = [
-  'Ask When Needed mode approves tools automatically.',
-  'Ask When Needed mode can still stop for questions.',
+  'Ask When Needed mode approves tools automatically, but can still stop for questions.',
   'Switch to Never Ask if you want questions skipped during goal work.',
 ] as const;
 
@@ -88,6 +88,7 @@ export class GoalStartPermissionPromptComponent extends StartPermissionPromptCom
       options: opts.mode === 'yolo' ? YOLO_OPTIONS : MANUAL_OPTIONS,
       onSelect: opts.onSelect,
       onCancel: opts.onCancel,
+      layout: opts.layout,
     });
   }
 }

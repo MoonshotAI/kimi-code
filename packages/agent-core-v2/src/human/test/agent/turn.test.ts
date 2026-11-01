@@ -2,15 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assign, createActor, emit, setup } from '#/xstate2';
 
 import { credentialsRecovery } from '#/credentials/credentials';
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import type { LlmErrorMessage } from '#/llm/errors';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
+import type { LlmErrorMessage } from '#/llm-requester/errors';
 import type { ContentPart, Message, UserMessage } from '#/llm/message';
-import { createMediaDegradeRecovery } from '#/llm/media/degrade';
-import type { LlmModel } from '#/llm/model';
-import { createRequestActor, type LlmEvent } from '#/llm/requester/actor';
-import type { LlmRecovery } from '#/llm/requester/recovery';
-import type { LlmCredentialProvider, LlmRequester } from '#/llm/requester/requester';
-import type { LlmRetryOptions } from '#/llm/requester/retry';
+import {
+  MEDIA_DEGRADE_KEEP_RECENT,
+  degradeOlderMediaParts,
+  stripMediaParts,
+} from '#/llm/builtin/policy/media-degrade';
+import type { LlmModel } from '#/llm-requester/model';
+import { createRequestActor, type LlmEvent } from '#/llm-requester/actor';
+import type { LlmRecovery } from '#/llm-requester/recovery';
+import type { LlmCredentialProvider, LlmRequester } from '#/llm-requester/requester';
+import type { LlmRetryOptions } from '#/llm-requester/retry';
 import {
   createTurnMachine,
   createUserEntry,
@@ -480,6 +484,30 @@ function mediaHistory(messages: readonly UserMessage[]): Partial<TurnInput> {
   return { history: messages.map((message) => createUserEntry(message)) };
 }
 
+function createTurnMediaRecovery(): LlmRecovery {
+  return {
+    propose: ({ error, messages, appliedRecoveries }) => {
+      const done = new Set(
+        appliedRecoveries.filter((r) => r.strategy === 'media-degrade').map((r) => r.action),
+      );
+      if (error.kind !== 'request_too_large' && error.kind !== 'image_format') return undefined;
+      if (error.kind === 'request_too_large' && !done.has('degraded')) {
+        const degraded = degradeOlderMediaParts(messages, MEDIA_DEGRADE_KEEP_RECENT);
+        if (degraded !== messages) {
+          return { strategy: 'media-degrade', action: 'degraded', attemptMessageOverride: degraded };
+        }
+      }
+      if (!done.has('stripped')) {
+        const stripped = stripMediaParts(messages);
+        if (stripped !== messages) {
+          return { strategy: 'media-degrade', action: 'stripped', attemptMessageOverride: stripped };
+        }
+      }
+      return undefined;
+    },
+  };
+}
+
 describe('turn machine media recovery', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -498,7 +526,7 @@ describe('turn machine media recovery', () => {
     ]);
     const { actor, recovering, sent, failed } = startTurnActor(
       requester,
-      { recovery: createMediaDegradeRecovery() },
+      { recovery: createTurnMediaRecovery() },
       mediaHistory(messages),
     );
 
@@ -526,7 +554,7 @@ describe('turn machine media recovery', () => {
     const { requester, calls, seen } = createCapturingRequester([tooLargeError(), 'ok']);
     const { actor, recovering } = startTurnActor(
       requester,
-      { recovery: createMediaDegradeRecovery() },
+      { recovery: createTurnMediaRecovery() },
       mediaHistory(messages),
     );
 
@@ -543,7 +571,7 @@ describe('turn machine media recovery', () => {
     const { requester, calls, seen } = createCapturingRequester([imageFormatError(), 'ok']);
     const { actor, recovering, sent } = startTurnActor(
       requester,
-      { recovery: createMediaDegradeRecovery() },
+      { recovery: createTurnMediaRecovery() },
       mediaHistory(messages),
     );
 
@@ -562,7 +590,7 @@ describe('turn machine media recovery', () => {
     const { requester, calls } = createCapturingRequester([tooLargeError()]);
     const { actor, recovering } = startTurnActor(
       requester,
-      { recovery: createMediaDegradeRecovery() },
+      { recovery: createTurnMediaRecovery() },
       mediaHistory([mediaMessage('plain', 0)]),
     );
 
@@ -654,7 +682,7 @@ describe('turn machine credential recovery', () => {
       statusError(401, 'unauthorized'),
       'ok',
     ]);
-    const mediaDegrade = createMediaDegradeRecovery();
+    const mediaDegrade = createTurnMediaRecovery();
     const { actor, recovering } = startTurnActor(
       requester,
       {

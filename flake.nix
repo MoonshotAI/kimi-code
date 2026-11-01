@@ -74,12 +74,12 @@
         ./packages/pi-tui
         ./packages/product
         ./packages/remote-control
+        ./packages/session-import
         ./packages/telemetry
         ./packages/transcript
         ./packages/tree-sitter-bash
         ./apps/kimi-code
         ./apps/vscode
-        ./apps/kimi-inspect
         ./apps/vis
         ./apps/vis/server
         ./apps/vis/web
@@ -99,12 +99,12 @@
         "@moonshot-ai/pi-tui"
         "@moonshot-ai/kimi-code-product"
         "@moonshot-ai/remote-control"
+        "@moonshot-ai/session-import"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/transcript"
         "@moonshot-ai/tree-sitter-bash"
         "@moonshot-ai/kimi-code"
         "kimi-code"
-        "@moonshot-ai/kimi-inspect"
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"
         "@moonshot-ai/vis-web"
@@ -158,7 +158,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-1no6CVTIvsGgNuqbMVvgoOsj6/oh+Ng69mFFgxaxtAk=";
+              hash = "sha256-S7kwWgHbN5ZH4xIH7W/9sbOXi7/JhaitX/ONsLmRr9E=";
             };
 
             nativeBuildInputs = [
