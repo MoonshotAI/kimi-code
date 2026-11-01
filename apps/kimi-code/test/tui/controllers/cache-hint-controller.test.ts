@@ -455,6 +455,44 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     });
   });
 
+  it.each([false, true])('registers stashed originals in the new session and handles failures (%s)', async (fails) => {
+    peekMock.mockReturnValue(CONFIG);
+    const attachFile = fails
+      ? vi.fn().mockRejectedValue(new Error('disk full'))
+      : vi.fn().mockResolvedValue('kimi-file://f_original');
+    const { host, state } = makeHost();
+    vi.mocked(host.createNewSession).mockImplementation(async () => {
+      state.appState.sessionId = 's2';
+      (host as unknown as { session: unknown }).session = { id: 's2', attachFile };
+    });
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const extraction = uploadedExtraction('file-1', 1);
+    extraction.imageSnapshots = [{
+      ...extraction.imageSnapshots[0]!,
+      original: { bytes: new Uint8Array([9]), width: 1280, height: 960, mime: 'image/png' },
+    }];
+    controller.maybeInterceptOnSubmit('describe image', extraction);
+    vi.restoreAllMocks();
+    const dialog = vi.mocked(host.mountEditorReplacement).mock.calls[0]![0] as unknown as {
+      handleInput(data: string): void;
+    };
+    dialog.handleInput('\u001B[B');
+    dialog.handleInput('\r');
+    await flush();
+    expect(attachFile).toHaveBeenCalledWith(new Uint8Array([9]), { name: 'original.png', mimeType: 'image/png' });
+    if (fails) {
+      expect(host.sendNormalUserInput).not.toHaveBeenCalled();
+      expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('disk full'));
+      expect(host.restoreInputText).toHaveBeenCalledWith('describe image');
+    } else {
+      expect(vi.mocked(host.sendNormalUserInput).mock.calls[0]?.[1]?.parts).toContainEqual({
+        type: 'text', text: expect.stringContaining('kimi-file://f_original'),
+      });
+    }
+  });
+
   it('resends every chained uploaded image inline after starting a new session', async () => {
     getMock.mockResolvedValue(CONFIG);
     const { host } = makeHost();

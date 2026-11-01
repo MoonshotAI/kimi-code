@@ -1,7 +1,7 @@
 import { dispatchTools, type PromptGate, type ScopeFactory } from '#/agent/machine';
 import type { AgentEventStore } from '#/agent/slices';
 import { createTurnMachine, type CreateTurnMachineOptions } from '#/agent/turn';
-import type { LlmRequester } from '#/llm/requester/requester';
+import type { LlmRequester } from '#/llm-requester/requester';
 import { createToolMachine } from '#/tool/machine';
 import type { ToolDefinition } from '#/tool/tool';
 

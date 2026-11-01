@@ -34,6 +34,7 @@ function makeHarness(enabled = true, fullscreen = false) {
     clearScreen: () => {},
     setTitle: () => {},
     setProgress: () => {},
+    setProgramStatus: () => {},
   };
   const ui = fullscreen ? new TuiAltScreen(terminal) : new TuiMainScreen(terminal);
   const editor = new CustomEditor(ui);

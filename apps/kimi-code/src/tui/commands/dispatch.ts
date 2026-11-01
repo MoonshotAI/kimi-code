@@ -1,5 +1,7 @@
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
+import type { ReverseRpcModalOwner } from '../reverse-rpc/modal-coordinator';
+
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ColorToken, ThemeName } from '#/tui/theme';
@@ -127,7 +129,12 @@ export interface SlashCommandHost {
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   track(event: string, props?: Record<string, unknown>): void;
-  mountEditorReplacement(panel: Component & Focusable, onDisplaced?: () => void): void;
+  mountEditorReplacement(
+    panel: Component & Focusable,
+    onDisplaced?: () => void,
+    onReplaced?: () => void,
+    owner?: ReverseRpcModalOwner,
+  ): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
   refreshSlashCommandAutocomplete(): void;
@@ -145,10 +152,10 @@ export interface SlashCommandHost {
   /**
    * Seed appState with the config defaults the v2 engine would apply at
    * createSession time (model, permission, plan mode, thinking effort,
-   * context cap). No-op semantics on a live session path: only /reload calls
-   * it while still session-less.
+   * context cap). Only call it while session-less; `includeModel: false`
+   * refreshes the other defaults without changing the pending model choice.
    */
-  hydrateLazyConfigDefaults(): Promise<void>;
+  hydrateLazyConfigDefaults(includeModel?: boolean): Promise<void>;
 
   // Session
   requireSession(): Session;
@@ -177,6 +184,8 @@ export interface SlashCommandHost {
   // UI
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle;
+  beginAuthBlock(): () => void;
+  setAuthRequired(required: boolean): void;
   showProgressSpinner(label: string): LoginProgressSpinnerHandle;
 
   // Theme

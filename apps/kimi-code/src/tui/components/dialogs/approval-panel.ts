@@ -402,9 +402,12 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
 
   private renderHead(width: number): string[] {
     const borderColorBold = (text: string) => currentTheme.boldFg('borderFocus', text);
+    const dim = (text: string) => currentTheme.fg('textDim', text);
+    const environment = this.request.data.environment;
     const lines = [
       currentTheme.fg(this.focused ? 'borderFocus' : 'border', '─'.repeat(width)),
-      `  ${borderColorBold('▶')} ${borderColorBold(headerFor(this.request.data.tool_name))}`,
+      `  ${borderColorBold('▶')} ${borderColorBold(headerFor(this.request.data.tool_name))}` +
+        (environment === undefined ? '' : `  ${dim(environment)}`),
     ];
     if (this.visibleBlocks().length > 0 || this.request.data.description) lines.push('');
     return lines.map((line) => truncateToWidth(line, width));

@@ -62,7 +62,7 @@ Error codes are grouped by band:
 | Band | Meaning | Examples |
 | --- | --- | --- |
 | `0` | Success | |
-| `400xx` | Bad request | `40001` validation failed (`details` lists each field), `40003` provider is OAuth-managed |
+| `400xx` | Bad request | `40001` validation failed (`details` lists each field), `40003` provider is OAuth-managed, `40006` duplicate workspace source folder |
 | `401xx` | Auth and readiness | `40101` unauthorized, `40110` no provider configured, `40113` model not resolved |
 | `404xx` | Not found | `40401` session, `40408` MCP server, `40409` file path |
 | `409xx` | State conflict | `40901` session busy, `40902` approval already resolved, `40922` page conditions mismatch `page_token`, `40931` session occupied by another client, `40932` session updated by another client |
@@ -632,8 +632,8 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `GET /api/v1/sessions/{session_id}/status` | Realtime status rollup |
 | `GET /api/v1/sessions/{session_id}/goal` | Current goal snapshot (`null` when none) |
 | `GET /api/v1/sessions/{session_id}/warnings` | Session-level warnings |
-| `GET /api/v1/sessions/{session_id}/runtime` | Read the main agent's runtime binding |
-| `POST /api/v1/sessions/{session_id}/runtime` | Switch the main agent's runtime binding |
+| `GET /api/v1/sessions/{session_id}/environment` | Read the main agent's environment binding |
+| `GET /api/v1/sessions/{session_id}/environments` | List the environments registered for the session workspace |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream, not enveloped) |
 | `GET /api/v1/sessions/{session_id}/snapshot` | Full snapshot for client rebuilds (with `as_of_seq` and `epoch`) |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | Download prompt media by file id (binary) |
@@ -916,31 +916,29 @@ On success, `data` is `{ warnings }`, each entry `{ code, message, severity }` w
 
 - `40401`: session not found
 
-#### `GET /api/v1/sessions/{session_id}/runtime`
+#### `GET /api/v1/sessions/{session_id}/environment`
 
-Reads the main agent's runtime binding — which runtime the session's agent loop runs on.
+Reads the main agent's environment binding — which environment the session's agent loop runs on.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ workspace_id, runtime_id }`.
+On success, `data` is `{ workspace_id, environment_id, cwd? }`; `cwd` is the working directory on the bound environment, present when the binding carries one.
 
 - `40401`: session not found
 
-#### `POST /api/v1/sessions/{session_id}/runtime`
+#### `GET /api/v1/sessions/{session_id}/environments`
 
-Switches the main agent's runtime binding.
+Lists the environments available to the session.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `runtime_id` | body | string | **Required.** Target runtime id |
 
-On success, `data` is the new binding `{ workspace_id, runtime_id }`.
+On success, `data` is `{ environments }`. Each `environments` entry is `{ environment_id, type, status, connect_error? }` with `type` one of `local` / `ssh` / `docker` / `command` and `status` one of `pending` / `connecting` / `ready` / `disconnected` / `disposed`; `pending` means no live connection and no observed failure (never connected), and `connect_error` carries the recorded failure reason for a `disconnected` entry.
 
-- `40420`: no runtime with that `runtime_id`
-- `40926`: the runtime exists but is unavailable
+- `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}/export`
 
@@ -1565,28 +1563,31 @@ On success, `data` is `{ ok: true }`.
 
 ### Workspaces
 
-Workspaces are the registered project directories sessions live in. These endpoints manage the registry — list, register, rename, unregister — plus the per-workspace trust state that gates project-level MCP config. Every endpoint that returns a workspace uses the wire shape documented once under [The workspace object](#the-workspace-object).
+Workspaces are the registered project directories sessions live in. These endpoints manage the registry — list, register, rename and update source folders, unregister — plus the per-workspace trust state that gates project-level MCP config. Every endpoint that returns a workspace uses the wire shape documented once under [The workspace object](#the-workspace-object).
 
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/workspaces` | List registered workspaces |
-| `POST /api/v1/workspaces` | Register a workspace (idempotent on the root path) |
-| `PATCH /api/v1/workspaces/{workspace_id}` | Rename |
+| `POST /api/v1/workspaces` | Register a workspace (fresh entry per call; retries deduped via `idempotency_key`) |
+| `PATCH /api/v1/workspaces/{workspace_id}` | Rename or replace source folders |
+| `POST /api/v1/workspaces/{workspace_id}/primary` | Promote a source folder to the primary directory |
+| `GET /api/v1/workspaces/project-config-dirs` | Read a project's local.toml additional dirs without mutating anything |
 | `DELETE /api/v1/workspaces/{workspace_id}` | Unregister (keeps on-disk content) |
 | `GET /api/v1/workspaces/{workspace_id}/trust` | Read the trust state |
 | `POST /api/v1/workspaces/{workspace_id}/trust` | Grant trust |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | Revoke trust |
-| `POST /api/v1/workspaces/{workspace_id}/add-dir` | Add an additional directory |
 
 #### The workspace object
 
-Every endpoint that returns a workspace uses this wire shape. Registration and rename broadcast the global `event.workspace.created` / `event.workspace.updated` events.
+Every endpoint that returns a workspace uses this wire shape. Registration and update broadcast the global `event.workspace.created` / `event.workspace.updated` events.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `id` | string | Workspace id, a `wd_<slug>_<hash12>` string derived from the root path |
-| `root` | string | Absolute path of the project directory |
-| `name` | string | Display name, 1–100 characters; defaults to the root's base name |
+| `id` | string | Workspace id: `wd_<slug>_<hash12>` for implicit registration (CLI/VS Code entering a directory), `wm_<uuid>` when created via `POST /api/v1/workspaces` |
+| `root` | string | Absolute path of the primary directory |
+| `name` | string | Display name, 1–100 characters; defaults to the primary directory's base name |
+| `kind` | string | Workspace kind: `managed` (explicitly created, `wm_` id; sessions do not merge the project `local.toml`) or `implicit` (registered by directory, `wd_` id; sessions merge the project `local.toml` for legacy compatibility) |
+| `additional_dirs` | string[] | Registry-managed extra source folders as absolute paths (excludes project `local.toml` and ephemeral sources) |
 | `created_at` | string | Registration time, ISO 8601 |
 | `last_opened_at` | string | Last time the workspace was opened or re-registered, ISO 8601 |
 | `session_count` | integer | Number of sessions in the workspace |
@@ -1599,31 +1600,64 @@ On success, `data` is `{ items }` where each item is [the workspace object](#the
 
 #### `POST /api/v1/workspaces`
 
-Registers a workspace and returns it. Registration is idempotent on the root path: registering an already-registered root returns the existing workspace with only `last_opened_at` refreshed (the stored name is kept), broadcasting `event.workspace.updated` instead of `event.workspace.created`.
+Registers a new workspace and returns it. Every call creates a fresh entry (`wm_<uuid>` id) — even when the same path is already another workspace's primary directory, entries are never folded and no warning is issued. Clients retrying a submission (network retry, double click) should send the same `idempotency_key`; the server dedupes on the key and returns the entry created by the first call.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `root` | body | string | **Required.** Absolute path of an existing directory |
-| `name` | body | string | Display name, 1–100 characters. Default the root's base name |
+| `root` | body | string | **Required.** Absolute path of an existing directory, used as the primary directory |
+| `name` | body | string | Display name, 1–100 characters. Default the primary directory's base name |
+| `additional_dirs` | body | string[] | Extra source folders. Each item resolves like `add-dir` (absolute, relative to the primary directory, or `~` expansion), must exist and be a directory, and must not duplicate the primary directory or another item; at most 64 items |
+| `idempotency_key` | body | string | Client-generated idempotency key, 1–200 characters. Retries with the same key return the workspace created by the first call |
 
 On success, `data` is [the workspace object](#the-workspace-object).
 
-- `40001`: `root` is missing or not an absolute path (`details` lists the field)
-- `40409`: `root` does not exist or is not a directory
+- `40001`: `root` is missing or not an absolute path, or another request validation failure (`details` lists the field)
+- `40006`: `additional_dirs` contains duplicates or the primary directory itself. `msg` is `Duplicate source folder: <actual path>`; `details` is `[{ "path": "additional_dirs.N", "directory": "<resolved absolute path>" }]`, where `path` locates the request field and `directory` is the duplicate directory
+- `40409`: `root` or a path in `additional_dirs` does not exist or is not a directory
 
 #### `PATCH /api/v1/workspaces/{workspace_id}`
 
-Renames a workspace — the display name only; the root path never changes.
+Updates a workspace's display name and/or source folders. `additional_dirs` uses whole-list replace semantics — submit the full edited list; omitting the field keeps the current list; the primary directory never changes. At least one of `name` or `additional_dirs` is required.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **Required.** Workspace id |
-| `name` | body | string | **Required.** New display name, 1–100 characters |
+| `name` | body | string | New display name, 1–100 characters |
+| `additional_dirs` | body | string[] | Full replacement list of extra source folders, resolved and validated like `POST /api/v1/workspaces` |
 
 On success, `data` is [the workspace object](#the-workspace-object).
 
-- `40001`: validation failure (`details` lists each field)
+- `40001`: both fields are missing, or another request validation failure (`details` lists each field)
+- `40006`: duplicate entries or an entry equal to the primary directory; `msg`, `details.path`, and `details.directory` have the same meaning as for `POST /api/v1/workspaces`
+- `40409`: a path in `additional_dirs` does not exist or is not a directory
 - `40410`: workspace not found
+
+#### `POST /api/v1/workspaces/{workspace_id}/primary`
+
+Promotes a source folder in the workspace's dir set to the primary directory. The swap is atomic: the path becomes the new `root` and the previous primary moves into `additional_dirs`; the workspace id and session bucket are unchanged, and all sessions are kept. After the swap, additional directories coming from the previous primary's `local.toml` are no longer merged (`local.toml` follows the primary directory).
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `workspace_id` | path | string | **Required.** Workspace id |
+| `path` | body | string | **Required.** Directory to promote, resolved like `add-dir`; must be in the current dir set (`root` ∪ `additional_dirs`) |
+
+On success, `data` is [the workspace object](#the-workspace-object).
+
+- `40001`: `path` is not in the dir set
+- `40409`: `path` does not exist or is not a directory
+- `40410`: workspace not found
+
+#### `GET /api/v1/workspaces/project-config-dirs`
+
+Reads `workspace.additional_dir` from a project's `local.toml`, read-only: entries are resolved to absolute paths, deduplicated, and the `root` itself is dropped. Neither the registry nor `local.toml` is modified; a missing `local.toml` yields an empty array, while malformed TOML or a configured directory that no longer exists causes the request to fail instead of returning an empty array. Clients can use this to merge legacy project config into a create/edit workspace form, taking effect on save.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `root` | query | string | **Required.** Absolute path of the project primary directory |
+
+On success, `data` is `{ additional_dirs: string[] }`.
+
+- `40001`: `root` is missing or empty
 
 #### `DELETE /api/v1/workspaces/{workspace_id}`
 
@@ -1663,38 +1697,23 @@ On success, `data` is `{ trusted: true }`.
 
 #### `POST /api/v1/workspaces/{workspace_id}/untrust`
 
-Revokes workspace trust, unloading its project-level MCP config.
+Revokes the persisted workspace trust record. Unless a process or config override keeps the workspace trusted, its project-level MCP config unloads.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **Required.** Workspace id |
 
-On success, `data` is `{ trusted: false }`.
+On success, `data` is `{ trusted }`, containing the effective trust state after revocation. It is normally `{ trusted: false }`, but remains `true` when `KIMI_CODE_TRUST_WORKSPACE` or [`[workspace] require_trust = false`](../configuration/config-files.md#workspace-trust) applies.
 
-- `40410`: workspace not found
-
-#### `POST /api/v1/workspaces/{workspace_id}/add-dir`
-
-Adds an additional directory to the workspace, with the same semantics as the CLI `--add-dir` flag and the TUI `/add-dir` command. The path accepts absolute paths, relative paths (resolved against the workspace root), and `~` expansion.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `workspace_id` | path | string | **Required.** Workspace id |
-| `path` | body | string | **Required.** Directory to add |
-| `persist` | body | boolean | Defaults to `true`: appends to `workspace.additional_dir` in `<project root>/.kimi-code/local.toml`. With `false`, the directory only joins the in-memory ephemeral set shared by all sessions of the workspace |
-
-On success, `data` is `{ project_root, config_path, additional_dirs, persisted }`, where `additional_dirs` lists every additional directory (existing ones included) and `persisted` reports whether this call wrote to disk.
-
-- `40001`: validation failure (`details` lists each field), or an engine-side config validation error such as a corrupted project local config
-- `40409`: `path` does not exist or is not a directory
 - `40410`: workspace not found
 
 ### File system
 
-In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{action}` with JSON bodies; actions are `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`. Every action body also accepts an optional `runtime_id` (string, default `local`) selecting the runtime that executes the operation; `open`, `open-in`, and `reveal` only work on the `local` runtime. In addition:
+In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{action}` with JSON bodies; actions are `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `git_status:batch` / `pull_request` / `pull_request:batch` / `diff` / `open` / `open-in` / `reveal`. Actions run on the environment the session was created on; `open`, `open-in`, and `reveal` only work for sessions on the `local` environment. In addition:
 
 | Method and path | Description |
 | --- | --- |
+| `POST /api/v1/workspace/fs:list` | Session-less workspace directory listing |
 | `POST /api/v1/workspace/fs:search` | Session-less workspace search (the body carries the workspace reference) |
 | `POST /api/v1/workspace/fs:suggest` | Session-less file-completion candidates (for `@` file mentions) |
 | `GET /api/v1/sessions/{session_id}/fs/{path}:download` | Download a session file (binary, see below) |
@@ -1855,27 +1874,76 @@ On success, `data` is `{ files, files_scanned, truncated, elapsed_ms }` where ea
 
 #### `POST /api/v1/sessions/{session_id}/fs:git_status`
 
-Reads the git status of the session workspace, optionally restricted to a set of paths.
+Reads git status, optionally restricted to a set of paths. When `root` is provided, entry paths are relative to that directory; when omitted, status covers the whole Git worktree and entry paths are relative to the repository root.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `paths` | body | string[] | Restrict the status to these paths; omitted means the whole workspace |
+| `root` | body | string | Workspace directory to scope to. When omitted, status covers the whole Git worktree; a relative value is resolved from the session work directory |
+| `paths` | body | string[] | Restrict the status to these paths. Relative paths are resolved from `root` when provided, otherwise from the session work directory |
+| `include_pull_request` | body | boolean | Include the associated pull request. Default `true` |
 
 On success, `data` is `{ branch, ahead, behind, entries, additions, deletions, pullRequest }` where `entries` maps each changed path to its status (`clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted`) and `pullRequest` is `{ number, state, url }` (`state` is `open` / `merged` / `closed` / `draft`) or `null`.
 
 - `40001`: body validation failure
 - `40401`: session not found
 - `40908`: git is unavailable (not a repository, or no git binary)
+- `41304`: path escapes the session workspace
 
-#### `POST /api/v1/sessions/{session_id}/fs:diff`
+#### `POST /api/v1/sessions/{session_id}/fs:git_status:batch`
 
-Returns the unified git diff of one file in the session workspace.
+Reads git status for several workspace directories in one call. A failing directory folds into `errors` instead of failing the whole request.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `path` | body | string | **Required.** File to diff, relative to the session work directory |
+| `roots` | body | string[] | **Required.** Workspace directories to inspect, 1–32 entries |
+| `include_pull_request` | body | boolean | Include the associated pull request in each result. Default `true` |
+
+On success, `data` is `{ results, errors }`. `results` maps each successful root to the same status object as `fs:git_status`; `errors` maps each failed root to its `{ code, msg }` error, using the same error codes as the single-directory action.
+
+- `40001`: body validation failure
+- `40401`: session not found
+
+#### `POST /api/v1/sessions/{session_id}/fs:pull_request`
+
+Reads the pull request associated with a session workspace directory.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `root` | body | string | Workspace directory to inspect. Defaults to the session work directory; a relative value is resolved from it |
+
+On success, `data` is `{ number, state, url }` (`state` is `open` / `merged` / `closed` / `draft`) or `null` when no pull request is found.
+
+- `40001`: body validation failure
+- `40401`: session not found
+- `40908`: git is unavailable (not a repository, or no git binary)
+- `41304`: path escapes the session workspace
+
+#### `POST /api/v1/sessions/{session_id}/fs:pull_request:batch`
+
+Reads pull requests for several workspace directories in one call. A failing directory folds into `errors` instead of failing the whole request.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `roots` | body | string[] | **Required.** Workspace directories to inspect, 1–32 entries |
+
+On success, `data` is `{ results, errors }`. `results` maps each successful root to the same pull request object as `fs:pull_request`, or `null`; `errors` maps each failed root to its `{ code, msg }` error.
+
+- `40001`: body validation failure
+- `40401`: session not found
+
+#### `POST /api/v1/sessions/{session_id}/fs:diff`
+
+Returns the unified git diff of one file in a session workspace directory.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `path` | body | string | **Required.** File to diff, relative to `root` |
+| `root` | body | string | Workspace directory to inspect. Defaults to the session work directory; a relative value is resolved from it |
 
 On success, `data` is `{ path, diff, truncated }` where `diff` is the unified diff text and `truncated` reports an over-long diff cut short.
 
@@ -1886,7 +1954,7 @@ On success, `data` is `{ path, diff, truncated }` where `diff` is the unified di
 
 #### `POST /api/v1/sessions/{session_id}/fs:open`
 
-Opens a session file with the host operating system's default handler. Local runtime only.
+Opens a session file with the host operating system's default handler. Local environment only.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1903,7 +1971,7 @@ On success, `data` is `{ opened: true }`.
 
 #### `POST /api/v1/sessions/{session_id}/fs:open-in`
 
-Opens a session file or directory in a specific host application. Local runtime only.
+Opens a session file or directory in a specific host application. Local environment only.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1922,7 +1990,7 @@ On success, `data` is `{ opened: true }`.
 
 #### `POST /api/v1/sessions/{session_id}/fs:reveal`
 
-Reveals a session file in the host operating system's file manager. Local runtime only.
+Reveals a session file in the host operating system's file manager. Local environment only.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1944,12 +2012,37 @@ Downloads a file from the session workspace; `{path}` is the workspace-relative 
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `path` | path | string | **Required.** Workspace-relative file path plus the `:download` suffix |
-| `runtime_id` | query | string | Runtime to read from. Default `local` |
+| `allow_external_symlinks` | query | string | `true` to download through symlinks outside the workspace. Default `false` |
 
 - `40001`: missing or empty path
 - `40401`: session not found
 - `40409`: path not found
 - `41304`: path escapes the session workspace
+
+#### `POST /api/v1/workspace/fs:list`
+
+The session-less form of `fs:list`: the workspace travels in the body instead of the URL.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `workspace` | body | string | **Required.** Registered workspace id or absolute root (registered on the spot) |
+| `path` | body | string | Directory to list, relative to the workspace root. Default `.` |
+| `depth` | body | integer | Recursion depth, 1–10. Default `1` |
+| `limit` | body | integer | Maximum entries, 1–1000. Default `200` |
+| `show_hidden` | body | boolean | Include dotfiles. Default `false` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
+| `exclude_globs` | body | string[] | Additional globs to skip |
+| `allow_ignored_globs` | body | string[] | Globs to show even when gitignored |
+| `allow_external_symlinks` | body | boolean | Follow symlinked directories whose targets are outside the workspace. Default `false` |
+| `sort` | body | string | `type_first` (default) / `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
+
+On success, `data` has the same shape as `fs:list`.
+
+- `40001`: body validation failure
+- `40409`: path not found or not a directory
+- `40410`: workspace not found and not a usable absolute path
+- `40411`: permission denied by the host filesystem
+- `41304`: path escapes the workspace through a symlink and `allow_external_symlinks` is not enabled
 
 #### `POST /api/v1/workspace/fs:search`
 
@@ -1963,7 +2056,6 @@ The session-less form of `fs:search`: the workspace travels in the body instead 
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
 | `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
-| `runtime_id` | body | string | Runtime to search on. Default `local` |
 
 On success, `data` is `{ items, truncated }` with the same hit shape and ordering as `fs:search`.
 
@@ -1983,7 +2075,6 @@ Suggests file and directory completion candidates in a workspace without a sessi
 | `show_hidden` | body | boolean | Include dotfiles. Default `false` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
-| `runtime_id` | body | string | Runtime to complete on. Default `local` |
 
 On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }`, the same hit shape as `fs:search`.
 

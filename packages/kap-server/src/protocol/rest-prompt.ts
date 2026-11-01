@@ -69,6 +69,5 @@ export type PromptSteerResult = z.infer<typeof promptSteerResultSchema>;
 
 export const promptAbortResponseSchema = z.object({
   aborted: z.boolean(),
-  at_seq: z.number().int().nonnegative().optional(),
 });
 export type PromptAbortResponse = z.infer<typeof promptAbortResponseSchema>;

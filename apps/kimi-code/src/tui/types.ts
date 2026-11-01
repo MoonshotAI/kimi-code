@@ -5,6 +5,8 @@ import type {
   PermissionMode,
   ProviderConfig,
   PromptPart,
+  SessionEnvironmentStatus,
+  SessionEnvironmentType,
   ThinkingEffort,
   TokenUsage,
   ToolInputDisplay,
@@ -24,6 +26,14 @@ export interface BannerState {
   subText: string | null;
   display: BannerDisplay;
   ttlHours?: number;
+}
+
+export interface EnvironmentSlotState {
+  readonly environmentId: string;
+  readonly type: SessionEnvironmentType;
+  readonly status: SessionEnvironmentStatus;
+  readonly cwd?: string;
+  readonly connectError?: string;
 }
 
 export interface AppState {
@@ -96,6 +106,11 @@ export interface AppState {
   mcpServersSummary: string | null;
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
+  /**
+   * Current session's environment binding + connection status. Undefined while
+   * unsynced — every consumer must treat that as the plain local session.
+   */
+  environment?: EnvironmentSlotState;
 }
 
 export function sumTokenUsage(total: TokenUsage): number {
@@ -339,10 +354,15 @@ export interface TUIStartupOptions {
   readonly auto: boolean;
   readonly plan: boolean;
   readonly model?: string;
+  readonly additionalDirs?: readonly string[];
   /** Resolved profile name from --agent/--agent-file; bound to the startup session only. */
   readonly agentProfile?: string;
   /** Raw --agent-file paths, passed to session creation alongside `agentProfile`. */
   readonly agentFiles?: readonly string[];
+  /** --environment <id> one-shot binding. The first session consumes it; a later /new keeps the live binding. */
+  readonly environment?: string;
+  /** --environment-cwd <path> override for the startup binding. */
+  readonly environmentCwd?: string;
   readonly startupNotice?: string;
 }
 

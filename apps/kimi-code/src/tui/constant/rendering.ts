@@ -74,6 +74,11 @@ export const SUBAGENT_TOOL_OUTPUT_MAX_CHARS = 8000;
 // chips read args, so long values are truncated; chips become approximate
 // beyond the cap.
 export const SUBAGENT_ARG_STRING_MAX_CHARS = 16 * 1024;
+// The foreground subagent card only ever shows a two-row window of the child
+// agent's streamed text, so the transcript keeps a bounded trailing slice for
+// display. Wrapping cost then stays flat instead of growing with the whole
+// run's output.
+export const SUBAGENT_PREVIEW_TEXT_MAX_CHARS = 8000;
 
 // Retention caps for an agent-swarm member's terminal-state label: terminal
 // cells render a single-line label, so only a bounded prefix of the final

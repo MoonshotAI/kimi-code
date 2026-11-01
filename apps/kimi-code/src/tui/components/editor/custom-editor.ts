@@ -4,6 +4,8 @@
 
 import {
   Editor,
+  FAKE_CURSOR_END,
+  FAKE_CURSOR_START,
   isKeyRelease,
   matchesKey,
   Key,
@@ -347,7 +349,14 @@ export class CustomEditor extends Editor {
     // `editor.borderColor = chalk.hex(primary)`), so we route corners and
     // side bars through the same hook to stay in sync.
     const framed = wrapWithSideBorders(
-      inactive ? lines.map((line) => line.replace(BLOCK_CURSOR, '$1')) : lines,
+      inactive
+        ? lines.map((line) =>
+            line
+              .replace(BLOCK_CURSOR, '$1')
+              .replaceAll(FAKE_CURSOR_START, '')
+              .replaceAll(FAKE_CURSOR_END, ''),
+          )
+        : lines,
       (s: string) => this.borderColor(s),
       {
         connectedAbove: this.connectedAbove && !this.borderHighlighted,

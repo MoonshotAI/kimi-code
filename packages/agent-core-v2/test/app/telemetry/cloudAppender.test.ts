@@ -131,7 +131,7 @@ describe('CloudAppender', () => {
     expect(typeof event?.['timestamp']).toBe('number');
   });
 
-  it('does not send when the env pins the global region', async () => {
+  it('sends to the global collector when the env pins the global region', async () => {
     process.env['KIMI_CODE_OAUTH_HOST'] = 'https://auth.kimi.ai';
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(
@@ -147,10 +147,11 @@ describe('CloudAppender', () => {
     appender.track({ event: 'tool.call', context: {}, properties: { name: 'bash' } });
     await appender.flush();
 
-    expect(requests).toHaveLength(0);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe('https://telemetry-logs.kimi.ai/v1/event');
   });
 
-  it('does not send when the install marker is global', async () => {
+  it('sends to the global collector when the install marker is global', async () => {
     writeFileSync(join(homeDir, 'region'), 'global\n');
     const requests: CapturedRequest[] = [];
     const appender = new CloudAppender(
@@ -166,7 +167,8 @@ describe('CloudAppender', () => {
     appender.track({ event: 'tool.call', context: {}, properties: { name: 'bash' } });
     await appender.flush();
 
-    expect(requests).toHaveLength(0);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe('https://telemetry-logs.kimi.ai/v1/event');
   });
 
   it('honors the marker opt-out from the bootstrap env bag (no process.env needed)', async () => {

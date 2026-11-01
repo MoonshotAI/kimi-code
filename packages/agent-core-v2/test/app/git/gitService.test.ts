@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
@@ -15,9 +15,10 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
-import { IRuntimeResolver, IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { Event } from '#/_base/event';
-import type { Runtime } from '#/runtime/runtime';
+import type { Environment } from '#/environment/environment';
 import { normalize } from 'pathe';
 
 function git(cwd: string, ...args: string[]): string {
@@ -44,18 +45,19 @@ describe('GitService', () => {
     git(repo, 'config', 'commit.gpgsign', 'false');
     disposables = new DisposableStore();
     const process = new HostProcessService();
-    const runtime = { process } as unknown as Runtime;
+    const environment = { process } as unknown as Environment;
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.define(IHostProcessService, HostProcessService);
         reg.define(IHostFileSystem, HostFileSystem);
-        reg.defineInstance(IRuntimeResolver, {
+        reg.definePartialInstance(IEnvironmentService, {
           _serviceBrand: undefined,
-          inspect: () => runtime,
-          acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
+          inspect: () => environment,
+          acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }),
+          acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }),
         });
         reg.definePartialInstance(IWorkspaceInstanceManager, {
-          findByRoot: () => ({ id: 'workspace-1' } as never),
+          findContaining: () => ({ id: 'workspace-1' } as never),
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,
         });
         reg.define(IGitService, GitService);
@@ -65,6 +67,7 @@ describe('GitService', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     disposables.dispose();
     rmSync(repo, { recursive: true, force: true });
   });
@@ -87,6 +90,18 @@ describe('GitService', () => {
       expect(result.pullRequest).toBeNull();
     }, 15000);
 
+    it('skips the PR process when pull requests are excluded', async () => {
+      writeFileSync(join(repo, 'a.txt'), 'hello\n');
+      commitAll('init');
+      const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+
+      const result = await service.status(repo, { includePullRequest: false });
+
+      expect(result.branch).not.toBe('');
+      expect(result.pullRequest).toBeNull();
+      expect(spawn.mock.calls.some(([command]) => command === 'gh')).toBe(false);
+    });
+
     it('reports a modified file with numstat', async () => {
       writeFileSync(join(repo, 'a.txt'), 'line1\n');
       commitAll('init');
@@ -105,8 +120,60 @@ describe('GitService', () => {
       writeFileSync(join(repo, 'a.txt'), 'a2\n');
       writeFileSync(join(repo, 'b.txt'), 'b2\n');
 
-      const result = await service.status(repo, new Set(['a.txt']));
+      const result = await service.status(repo, { pathFilter: new Set(['a.txt']) });
       expect(result.entries).toEqual({ 'a.txt': 'modified' });
+    });
+
+    it('scopes entries and numstat to the selected cwd', async () => {
+      mkdirSync(join(repo, 'a'), { recursive: true });
+      mkdirSync(join(repo, 'b'), { recursive: true });
+      writeFileSync(join(repo, 'a/file.txt'), 'one\n');
+      writeFileSync(join(repo, 'a/other.txt'), 'one\n');
+      writeFileSync(join(repo, 'b/file.txt'), 'one\n');
+      commitAll('init');
+      writeFileSync(join(repo, 'a/file.txt'), 'one\ntwo\n');
+      writeFileSync(join(repo, 'a/other.txt'), 'one\ntwo\nthree\n');
+      writeFileSync(join(repo, 'b/file.txt'), 'one\ntwo\nthree\n');
+
+      const result = await service.status(join(repo, 'a'), {
+        scopeToCwd: true,
+        pathFilter: new Set(['file.txt']),
+        includePullRequest: false,
+      });
+
+      expect(result.entries).toEqual({ 'file.txt': 'modified' });
+      expect(result.additions).toBe(1);
+      expect(result.deletions).toBe(0);
+    });
+
+    it('preserves a file named __proto__ in a selected cwd', async () => {
+      mkdirSync(join(repo, 'sub'), { recursive: true });
+      writeFileSync(join(repo, 'sub/__proto__'), 'one\n');
+      commitAll('init');
+      writeFileSync(join(repo, 'sub/__proto__'), 'one\ntwo\n');
+
+      const result = await service.status(join(repo, 'sub'), {
+        scopeToCwd: true,
+        includePullRequest: false,
+      });
+
+      expect(Object.hasOwn(result.entries, '__proto__')).toBe(true);
+      expect(JSON.stringify(result.entries)).toContain('"__proto__"');
+    });
+
+    it('preserves whitespace in the selected cwd prefix', async () => {
+      mkdirSync(join(repo, ' lead'), { recursive: true });
+      writeFileSync(join(repo, ' lead/file.txt'), 'one\n');
+      commitAll('init');
+      writeFileSync(join(repo, ' lead/file.txt'), 'one\ntwo\n');
+
+      const result = await service.status(join(repo, ' lead'), {
+        scopeToCwd: true,
+        pathFilter: new Set(['file.txt']),
+        includePullRequest: false,
+      });
+
+      expect(result.entries).toEqual({ 'file.txt': 'modified' });
     });
 
     it('reports a non-ASCII path without quoting', async () => {
@@ -133,6 +200,19 @@ describe('GitService', () => {
       const notRepo = mkdtempSync(join(tmpdir(), 'not-repo-'));
       try {
         await expect(service.status(notRepo)).rejects.toMatchObject({
+          code: ErrorCodes.FS_GIT_UNAVAILABLE,
+        });
+      } finally {
+        rmSync(notRepo, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('pullRequest', () => {
+    it('throws FS_GIT_UNAVAILABLE when not a repo', async () => {
+      const notRepo = mkdtempSync(join(tmpdir(), 'not-repo-'));
+      try {
+        await expect(service.pullRequest(notRepo)).rejects.toMatchObject({
           code: ErrorCodes.FS_GIT_UNAVAILABLE,
         });
       } finally {

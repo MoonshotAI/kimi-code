@@ -1,4 +1,4 @@
-import { resetCapabilitiesCache, setCapabilities, visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
+import { resetCapabilitiesCache, setCapabilities, Text, visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -1847,6 +1847,204 @@ describe('ToolCallComponent', () => {
     expect(thinkingRows.length).toBe(2);
     expect(lines.join('\n')).toContain('seg29');
     expect(lines.join('\n')).not.toContain('seg00');
+  });
+
+  it('keeps a leading blank row when the subagent tail starts with a newline', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_leading_blank',
+        name: 'Agent',
+        args: { description: 'blank first row' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_blank',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.appendSubagentText('\nanswer', 'text');
+
+    const rows = strip(component.render(60).join('\n'))
+      .split('\n')
+      .filter((line) => line.includes('│'));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).not.toContain('answer');
+    expect(rows[1]).toContain('answer');
+    component.dispose();
+  });
+
+  it('keeps the two-row window identical for multi-line text past the preview cap', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_long_multiline',
+        name: 'Agent',
+        args: { description: 'long multi-line output' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_long_multiline',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    // Well past SUBAGENT_PREVIEW_TEXT_MAX_CHARS.
+    const text = Array.from({ length: 900 }, (_, i) => `line ${String(i)} with a few words`).join('\n');
+    component.appendSubagentText(text, 'text');
+
+    const rows = strip(component.render(60).join('\n'))
+      .split('\n')
+      .filter((line) => line.includes('│'));
+    // The reference is the unbounded render: the preview cap must not move rows.
+    const reference = new Text(text, 0, 0).render(56).slice(-2);
+    expect(rows.map((line) => line.trimEnd())).toEqual(
+      reference.map((line) => strip(`  │ ${line}`).trimEnd()),
+    );
+    component.dispose();
+  });
+
+  it('keeps the newest line visible when the tail is one long line then a short one', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_long_line_then_short',
+        name: 'Agent',
+        args: { description: 'long line then done' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_long_line_then_short',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.appendSubagentText(`${'x'.repeat(8001)}\ndone`, 'text');
+
+    const rows = strip(component.render(60).join('\n'))
+      .split('\n')
+      .filter((line) => line.includes('│'));
+    expect(rows).toHaveLength(2);
+    // The partial first line still fills the upper row; the short line stays.
+    expect(rows[0]).toContain('x');
+    expect(rows[1]).toContain('done');
+    component.dispose();
+  });
+
+  it('strips control sequences from the retained tail past the preview cap', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_ansi_tail',
+        name: 'Agent',
+        args: { description: 'colored tail' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_ansi_tail',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    // Past the cap, so the tail is trimmed; the SGR codes sit inside it.
+    const text = `${'plain line\n'.repeat(900)}${ESC}[31mfinal answer${ESC}[0m`;
+    component.appendSubagentText(text, 'text');
+
+    const raw = component.render(60).join('\n');
+    expect(raw).toContain('final answer');
+    // The retained tail carries no source styling, so its colour code is gone
+    // instead of being replayed without the matching reset.
+    expect(raw).not.toContain(`${ESC}[31m`);
+    component.dispose();
+  });
+
+  it('keeps the long line in the finished window when the tail ends with a blank', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_long_line_trailing_blank',
+        name: 'Agent',
+        args: { description: 'long line then done then blank' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_long_line_trailing_blank',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    component.appendSubagentText(`${'x'.repeat(8001)}\ndone\n`, 'text');
+    component.onSubagentCompleted({ contextTokens: 0, resultSummary: '' } as never);
+
+    const rows = strip(component.render(60).join('\n'))
+      .split('\n')
+      .filter((line) => line.includes('│'));
+    expect(rows).toHaveLength(2);
+    // The finished window filters blank lines, so the trailing blank must not
+    // be counted as the second retained line.
+    expect(rows[0]).toContain('x');
+    expect(rows[1]).toContain('done');
+    component.dispose();
+  });
+
+  it('keeps the first error line for grouped failures', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_long_error',
+        name: 'Agent',
+        args: { description: 'fails with a long error' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_long_error',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    const error = `boom: request failed\n${'stack line\n'.repeat(2000)}`;
+    component.onSubagentFailed({ error });
+
+    // AgentGroup renders errorText.split('\n').at(0).
+    expect(component.getSubagentSnapshot().errorText?.split('\n').at(0)).toBe(
+      'boom: request failed',
+    );
+    component.dispose();
+  });
+
+  it('bounds a single logical line longer than the two-row window', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_agent_long_line',
+        name: 'Agent',
+        args: { description: 'long single line' },
+      },
+      undefined,
+    );
+    component.onSubagentSpawned({
+      agentId: 'sub_long_line',
+      agentName: 'explore',
+      runInBackground: false,
+    });
+    const tokens = Array.from({ length: 20_000 }, (_, i) => `tok${String(i).padStart(5, '0')}`);
+    component.appendSubagentText(tokens.join(' '), 'text');
+
+    const rows = strip(component.render(80).join('\n'))
+      .split('\n')
+      .filter((line) => line.includes('│'));
+    expect(rows).toHaveLength(2);
+    expect(rows.join('\n')).toContain('tok19999');
+    expect(rows.join('\n')).not.toContain('tok00000');
+    component.dispose();
   });
 
   it('shows a two-row tail of an ongoing subagent Bash output', () => {

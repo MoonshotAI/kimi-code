@@ -11,7 +11,7 @@ import type {
   GoalSnapshot,
   GoalStatus,
 } from '#/features/goal/types';
-import { createToolMessage } from '#/llm-adapter/contract/message';
+import { createToolMessage } from '#human/llm/message';
 import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import {
   isNewerWireVersion,
@@ -70,10 +70,13 @@ const COMPACT_USER_MESSAGE_MAX_TOKENS = 20_000;
 const GOAL_FORK_CLEARED_REMINDER =
   'This fork does not have a current goal. Ignore earlier active-goal reminders from the source session. Handle requests normally unless the user starts a new goal.';
 
-export function foldWireRecords(records: readonly WireRecord[]): WireReplayFold {
+export function foldWireRecords(
+  records: readonly WireRecord[],
+  decodePersistent?: (record: WireRecord) => WireRecord,
+): WireReplayFold {
   const fold = new WireReplayFoldState();
   for (const record of migrateJournalRecords(records)) {
-    fold.apply(record);
+    fold.apply(decodePersistent === undefined ? record : decodePersistent(record));
   }
   fold.finish();
   return { replay: fold.replay, toolStore: fold.toolStore };
@@ -251,7 +254,7 @@ class WireReplayFoldState {
       }
       case 'tool.call': {
         const openStep = this.openSteps.get(event.stepUuid);
-        if (openStep === undefined) {
+        if (openStep === undefined || openStep.role !== 'assistant') {
           throw new Error(
             `Received tool_call for unknown step_uuid '${event.stepUuid}' (no open step_begin)`,
           );
@@ -347,7 +350,6 @@ class WireReplayFoldState {
     const summaryMessage: ContextMessage = {
       role: 'user',
       content: [{ type: 'text', text: contextSummary }],
-      toolCalls: [],
       origin: { kind: 'compaction_summary' },
     };
     this.history =
@@ -456,8 +458,7 @@ class WireReplayFoldState {
         content: [
           { type: 'text', text: `<system-reminder>\n${GOAL_FORK_CLEARED_REMINDER}\n</system-reminder>` },
         ],
-        toolCalls: [],
-        origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
+          origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
       },
       time,
     );

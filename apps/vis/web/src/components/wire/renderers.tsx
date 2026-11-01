@@ -504,7 +504,7 @@ export const WIRE_RENDERERS: RendererMap = {
     label: 'message',
     headline: (r) => {
       const m = r.message;
-      const tc = m.toolCalls.length > 0 ? `${m.toolCalls.length} tool_call(s)` : '';
+      const tc = m.role === 'assistant' && m.toolCalls.length > 0 ? `${m.toolCalls.length} tool_call(s)` : '';
       return {
         main: (
           <span className="flex items-center gap-2 min-w-0">
@@ -1168,6 +1168,38 @@ export const WIRE_RENDERERS: RendererMap = {
     ),
   },
 
+  'mcp.server_failed': {
+    tone: 'error',
+    label: 'mcp✗',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.serverName}</Mono>
+          <Dim>{r.transport}</Dim>
+          {r.error !== undefined ? (
+            <span className="truncate text-fg-3" title={r.error}>
+              {truncate(r.error, 80)}
+            </span>
+          ) : null}
+        </span>
+      ),
+    }),
+  },
+
+  'mcp.server_failure_resolved': {
+    tone: 'tools',
+    label: 'mcp✓',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.serverName}</Mono>
+          <Dim>{r.transport}</Dim>
+          <Dim>{r.resolution}</Dim>
+        </span>
+      ),
+    }),
+  },
+
   'mcp.tools_discovered': {
     tone: 'tools',
     label: 'mcp·list',
@@ -1189,6 +1221,34 @@ export const WIRE_RENDERERS: RendererMap = {
         ) : (
           <Mono>#{r.hash.slice(0, 8)}</Mono>
         ),
+    }),
+  },
+
+  'tool_select.initialized': {
+    tone: 'tools',
+    label: 'tools·init',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.tools.length} tool{r.tools.length === 1 ? '' : 's'}</Mono>
+          <Dim>initial snapshot</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'tool_select.tools_changed': {
+    tone: 'tools',
+    label: 'tools·delta',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>
+            +{r.added.length} / −{r.removed.length}
+          </Mono>
+          <Dim>runtime change</Dim>
+        </span>
+      ),
     }),
   },
 
@@ -1488,14 +1548,14 @@ export const WIRE_RENDERERS: RendererMap = {
     }),
   },
 
-  'runtime.set_binding': {
+  'environment.set_binding': {
     tone: 'meta',
-    label: 'runtime',
+    label: 'environment',
     headline: (r) => ({
       main: (
         <span className="flex items-center gap-2 min-w-0">
-          <Mono>{r.runtimeId}</Mono>
-          <Dim className="truncate">workspace {r.workspaceId}</Dim>
+          <Mono>{r.environmentId}</Mono>
+          {r.cwd === undefined ? null : <Dim className="truncate">{r.cwd}</Dim>}
         </span>
       ),
     }),

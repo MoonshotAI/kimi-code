@@ -6,10 +6,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createActor, waitFor } from '#/xstate2';
 
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import { createUserMessage, extractText } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { LlmRequester } from '#/llm/requester/requester';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
+import { createUserMessage, extractText } from '#/message';
+import type { LlmModel } from '#/llm-requester/model';
+import type { LlmRequester } from '#/llm-requester/requester';
 import { createAgentMachine } from '#/agent/machine';
 import type { StateUpdated } from '#/agent/events';
 import type { AgentEventStore, TurnIndexState } from '#/agent/slices';
