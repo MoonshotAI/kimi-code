@@ -24,6 +24,7 @@ import {
   IAgentConversationUndoService,
   IAgentCronService,
   IAgentLifecycleService,
+  IAgentTowerService,
   IEventBus,
   IEventDispatcher,
   IEventService,
@@ -881,6 +882,31 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(after.body.data.plan_mode).toBe(true);
     expect(after.body.data.swarm_mode).toBe(true);
     expect(after.body.data.permission).toBe('yolo');
+  });
+
+  it('rejects plan_mode and swarm_mode agent_config while tower mode is on without touching tower', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+    await postJson(`/api/v1/sessions/${id}/profile`, { agent_config: { permission_mode: 'manual' } });
+    const tower = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf(MAIN_AGENT_ID)!
+      .accessor.get(IAgentTowerService);
+    const towerActive = vi.spyOn(tower, 'isActive', 'get').mockReturnValue(true);
+    const exitTower = vi.spyOn(tower, 'exit');
+
+    const plan = await postJson<null>(`/api/v1/sessions/${id}/profile`, { agent_config: { plan_mode: true } });
+    expect(plan.body.code).toBe(40933);
+    expect(plan.body.details).toEqual({ requested: 'plan', conflict: 'tower' });
+    const swarm = await postJson<null>(`/api/v1/sessions/${id}/profile`, { agent_config: { swarm_mode: true } });
+    expect(swarm.body.code).toBe(40933);
+    expect(exitTower).not.toHaveBeenCalled();
+
+    const status = await getJson<{ plan_mode: boolean; swarm_mode: boolean }>(`/api/v1/sessions/${id}/status`);
+    expect(status.body.data.plan_mode).toBe(false);
+    expect(status.body.data.swarm_mode).toBe(false);
+    towerActive.mockRestore();
   });
 
   it('rejects tower_mode agent_config when the tower feature is unavailable', async () => {

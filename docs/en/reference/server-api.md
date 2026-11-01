@@ -65,7 +65,7 @@ Error codes are grouped by band:
 | `400xx` | Bad request | `40001` validation failed (`details` lists each field), `40003` provider is OAuth-managed, `40006` duplicate workspace source folder |
 | `401xx` | Auth and readiness | `40101` unauthorized, `40110` no provider configured, `40113` model not resolved |
 | `404xx` | Not found | `40401` session, `40408` MCP server, `40409` file path |
-| `409xx` | State conflict | `40901` session busy, `40902` approval already resolved, `40922` page conditions mismatch `page_token`, `40931` session occupied by another client, `40932` session updated by another client |
+| `409xx` | State conflict | `40901` session busy, `40902` approval already resolved, `40922` page conditions mismatch `page_token`, `40931` session occupied by another client, `40932` session updated by another client, `40933` mode conflict, `40934` input with a mode cannot start now |
 | `410xx` | Expired | `41001` approval timed out, `41002` question timed out, `41003` temporary file expired |
 | `413xx` | Size or boundary exceeded | `41302` file read over 10 MB, `41304` path escapes the session directory |
 | `429xx` | Rate limited | `42901` auth-failure ban, `42902` too many fs watches |
@@ -616,7 +616,7 @@ On success, `data` is the directory entry (same shape as a `GET /api/v1/catalog/
 
 ### Sessions
 
-These endpoints create, list, and inspect sessions, drive session-level actions (fork, undo, and friends), and read per-session rollups. Most of them return a session in the wire shape documented once under [The session object](#the-session-object); non-CRUD operations use the `:{action}` convention described above.
+These endpoints create, list, and inspect sessions, drive session-level actions (fork, compact, undo, and friends), and read per-session rollups. Most of them return a session in the wire shape documented once under [The session object](#the-session-object); non-CRUD operations use the `:{action}` convention described above.
 
 | Method and path | Description |
 | --- | --- |
@@ -626,7 +626,7 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `GET /api/v1/sessions/{session_id}/profile` | Read the session profile |
 | `POST /api/v1/sessions/{session_id}/profile` | Update title, metadata, agent config |
 | `POST /api/v1/sessions/{session_id}/title/generate` | Generate a title via the managed `chat_title` tool |
-| `POST /api/v1/sessions/{session_id}:{action}` | Session actions: `fork` / `undo` / `abort` / `btw` / `archive` / `restore` |
+| `POST /api/v1/sessions/{session_id}:{action}` | Session actions: `fork` / `compact` / `undo` / `abort` / `btw` / `archive` / `restore` |
 | `GET /api/v1/sessions/{session_id}/children` | List child sessions |
 | `POST /api/v1/sessions/{session_id}/children` | Create a child session (fork with a tag) |
 | `GET /api/v1/sessions/{session_id}/status` | Realtime status rollup |
@@ -750,7 +750,10 @@ The schema also accepts `system_prompt`, `tools`, `mcp_servers` inside `agent_co
 
 On success, `data` is the updated [session object](#the-session-object).
 
+`plan_mode`, `swarm_mode` and `goal_objective` are mutually exclusive with tower mode, and `goal_objective` also with plan mode. When a mode the request turns on conflicts with a mode that is on, the whole request is rejected and nothing changes; the server never turns the conflicting mode off for the caller, so turn it off first in its own request.
+
 - `40401`: session not found
+- `40933`: a mode the request turns on conflicts with a mode that is on; `details` is `{ requested, conflict }`
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
 
@@ -783,6 +786,18 @@ Copies the session — its transcript, agent state, and files — into a new ses
 On success, `data` is [the session object](#the-session-object) of the new session.
 
 - `40901`: the session has an active turn and cannot be forked
+
+#### `POST /api/v1/sessions/{session_id}:compact`
+
+Starts a manual full compaction of the main agent's context. The call returns immediately; progress and completion are delivered as the `compaction.*` WebSocket events. It does not go through the queue; to compact after the running turn, submit `compact` through `POST /api/v1/sessions/{session_id}/prompts`.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `instruction` | body | string | Extra guidance for the compaction summary; a blank value is ignored |
+
+On success, `data` is an empty object.
+
+- `40910`: a turn or another context change is active, or the history has nothing to compact
 
 #### `POST /api/v1/sessions/{session_id}:undo`
 
@@ -1071,13 +1086,26 @@ A prompt is one unit of user input. Each agent owns a queue of accepted prompts 
 
 | Method and path | Description |
 | --- | --- |
+| `GET /api/v1/sessions/{session_id}/prompts` | Active and queued prompts |
 | `POST /api/v1/sessions/{session_id}/prompts` | Submit an input or a compaction |
-| `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | Abort a running prompt |
+| `POST /api/v1/sessions/{session_id}/prompts:steer` | Turn queued prompts into steers |
+| `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | Abort a running prompt or withdraw a queued one |
+| `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:steer` | Turn one queued prompt into a steer |
 | `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue:pause` | Pause the queue |
 | `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue:resume` | Resume the queue |
-| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:steer` | Turn a queued prompt into a steer |
 | `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` | Reorder a queued prompt |
-| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:cancel` | Withdraw a queued prompt or steer |
+
+#### `GET /api/v1/sessions/{session_id}/prompts`
+
+Reads the main agent's prompt snapshot.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+
+On success, `data` is `{ active, queued }`: `active` is the running prompt (`null` when idle) and `queued` lists the pending prompts in the order they will run, including the inputs in the queue (compactions excluded). A prompt is `{ prompt_id, user_message_id, status, content, created_at }` with `status` one of `running` / `queued` / `blocked` and `content` in the content-part format accepted by `POST /api/v1/sessions/{session_id}/prompts`.
+
+- `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}/prompts`
 
@@ -1092,8 +1120,8 @@ Submits an input or a manual compaction. The body only describes the input: agen
 | `prompt_id` | body | string | Client-chosen prompt id; an id already used in the session fails `40927` |
 | `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, args? }`; every skill must exist and be user-activatable |
 | `metadata` | body | object | Opaque client data, echoed back as `client_metadata` |
-| `delivery` | body | string | Where the input goes while the agent is busy: `queue` (default) waits for the running turn to end, `steer` enters the running turn at the next safe point. Ignored when the agent is idle |
-| `mode` | body | string | `plan` / `swarm` / `goal` — the mode the input starts its turn in. It is applied once the input reaches the head of the queue and the agent is idle, while the input stays in the queue, and the input then starts like any other; a mode that is already on is left as is. `plan` and `swarm` also leave tower mode, `goal` uses the input's `metadata.display_text` (or its text) as the objective and is skipped when a goal appeared while the input waited. Main agent only; cannot be combined with `delivery: "steer"` |
+| `delivery` | body | string | Where the input goes while the agent is busy: `queue` (default) waits for the running turn to end, `steer` enters the running turn at the next safe point. Ignored when the agent is idle. While the agent waits on background tasks with `WaitFor` and no input is waiting in the queue, a `queue` input enters the running turn as well |
+| `mode` | body | string | `plan` / `swarm` / `goal` — the mode the input starts a turn in. Only accepted when the agent is idle and the queue is empty and not paused; otherwise it fails `40934` and the input is not queued. The mode is applied first and the turn then starts; a mode that is already on is left as is. `plan`, `swarm` and `goal` are mutually exclusive with tower mode and `goal` also with plan mode: a conflict fails `40933`, and the server never turns the conflicting mode off for the caller. `goal` uses the input's `metadata.display_text` (or its text) as the objective. Main agent only; cannot be combined with `delivery: "steer"` |
 
 Each `content` part is an object discriminated by `type`:
 
@@ -1105,23 +1133,40 @@ Each `content` part is an object discriminated by `type`:
 
 The schema also accepts the `tool_use`, `tool_result`, and `thinking` parts of the shared message format, but they are not meaningful in a user prompt. Unknown or mis-kinded `file_id` references are rejected before the prompt is created.
 
-On success, `data` is `{ prompt_id, user_message_id, status, content, created_at, metadata?, accepted_as }` for an input and `{ prompt_id, accepted_as }` for a compaction. `accepted_as` is `turn` (the input started a turn), `steer` (it entered the running turn, or waits in the queue as a steer while the queue is paused), `queue` (it waits in the queue) or `compact` (the compaction started).
+On success, `data` is `{ prompt_id, user_message_id, status, content, created_at, metadata?, accepted_as }` for an input and `{ prompt_id, accepted_as }` for a compaction. `accepted_as` is `turn` (the input started a turn), `steer` (it entered the running turn, or waits in the queue as a steer while the queue is paused), `queue` (it waits in the queue, or a steer that could not enter the running turn and will start the next turn) or `compact` (the compaction started).
 
 - `40001`: validation failure — for example an unknown field, `compact` combined with `content`, or `mode` on a steer or a non-main agent
 - `40401`: session or agent not found
 - `40407`: a referenced `file_id` does not exist (or does not match the part's media kind)
 - `40415`: a `skills` entry names an unknown skill
 - `40901`: the agent was closed, for example by a concurrent reload, before the input or compaction was accepted; submit it again
-- `40910`: the compaction cannot start, for example because the history has nothing to compact
+- `40910`: the compaction cannot start, for example because the history has nothing to compact, or another compaction is already running or queued
 - `40912`: the skill exists but cannot be activated by the user
 - `40913`: `mode: "goal"` while the agent already has a goal at submission
 - `40917`: `mode: "goal"` with an empty objective
 - `40918`: `mode: "goal"` with an objective longer than 4,000 characters
 - `40927`: `prompt_id` is already used in the session
+- `40933`: `mode` conflicts with a mode that is on; `details` is `{ requested, conflict }`
+- `40934`: an input with a `mode` cannot start a turn right away (the agent is busy, or the queue is not empty or is paused)
+
+#### `POST /api/v1/sessions/{session_id}/prompts:steer`
+
+Turns queued prompts into steers: an input in the main agent's queue becomes a steer, placed after existing steers, and the queue hands it to the running turn; a prompt already handed to the engine but not started enters the running turn directly.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `prompt_ids` | body | array | **Required.** Non-empty array of queued prompt ids |
+
+On success, `data` is `{ steered: true, prompt_ids }`.
+
+- `40001`: validation failure, for example steering a compaction
+- `40401`: session not found
+- `40402`: a listed prompt id is not in the queue
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort`
 
-Aborts a running prompt, or withdraws it from the main agent's queue when it has not started yet (the same as the queue `:cancel` action). The route is `POST /api/v1/sessions/{session_id}/prompts/{tail}`: the tail is parsed as `{prompt_id}:{action}`, and a missing or unknown action fails `40001` (`unsupported action: ...`).
+Aborts a running prompt, or withdraws it from the main agent's queue when it has not started yet; a queued compaction is withdrawn the same way. This endpoint and `:steer` below share the route `POST /api/v1/sessions/{session_id}/prompts/{tail}`: the tail is parsed as `{prompt_id}:{action}`, and a missing or unknown action fails `40001` (`unsupported action: ...`).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1133,15 +1178,29 @@ On success, `data` is `{ aborted: true }`.
 - `40401`: session not found
 - `40402`: no prompt with that id
 
+#### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:steer`
+
+Turns one queued prompt into a steer — the single-prompt form of `POST /api/v1/sessions/{session_id}/prompts:steer`.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `prompt_id` | path | string | **Required.** Queued prompt id |
+
+On success, `data` is `{ steered: true, prompt_ids: [prompt_id] }`.
+
+- `40401`: session not found
+- `40402`: no queued prompt with that id
+
 #### Queue operations
 
-The queue lists steers first, in the order they became steers, then queued prompts and compactions in their queue order. Every change is pushed as a `queue` frame. When an input at the head cannot start, for example because its mode cannot be applied, the queue pauses with that input left at its head and the session receives a warning. All operations take `session_id` and `agent_id` in the path, and fail `40401` for an unknown session or agent and `40402` when the prompt is no longer in the queue (it already entered a turn or was withdrawn).
+The queue lists steers first, in the order they became steers, then queued prompts and compactions in their queue order. Every change is pushed as a `queue` frame. When an input at the head cannot start, the queue pauses with that input left at its head and the session receives a warning. All operations take `session_id` and `agent_id` in the path, and fail `40401` for an unknown session or agent and `40402` when the prompt is no longer in the queue (it already entered a turn or was withdrawn).
 
-- `queue:pause` — nothing leaves the queue until it is resumed: steers do not enter the running turn and queued prompts do not start new turns. The running turn keeps going, and an input or a compaction submitted while the agent is idle still starts right away. `data` is `{ paused: true }`.
+While the agent waits on background tasks with `WaitFor`, the queue turns the inputs at its head, up to the first compaction, into steers and hands them to the running turn. Turn prompts into steers with `prompts:steer` / `prompts/{prompt_id}:steer`, and withdraw them with `prompts/{prompt_id}:abort`.
+
+- `queue:pause` — nothing leaves the queue until it is resumed: steers do not enter the running turn and queued prompts do not start new turns; inputs and compactions submitted afterwards wait in the queue too, even while the agent is idle. The running turn keeps going. `data` is `{ paused: true }`.
 - `queue:resume` — resumes the queue. `data` is `{ paused: false }`.
-- `queue/{prompt_id}:steer` — turns a queued input into a steer, placed after existing steers; a prompt submitted with a `mode` or a compaction cannot be steered (`40001`). `data` is `{}`.
 - `queue/{prompt_id}:move` — optional body `{ before_prompt_id? }`; moves a queued prompt before another queued prompt, or to the end when omitted. Steers keep their place (`40001`). `data` is `{}`.
-- `queue/{prompt_id}:cancel` — withdraws a queued prompt, steer or compaction. `data` is `{}`.
 
 ### Approvals and questions
 
@@ -2459,7 +2518,7 @@ After reconnecting, pass each session's last applied `{seq, epoch}` in `subscrib
 
 ### Queue frame
 
-After every accepted `subscribe_v2`, the server sends one `queue` frame for each subscribed agent (every agent whose grade is not `off`), and another one whenever that agent's queue changes: `{ "type": "queue", "session_id", "agent_id", "event_created_at", "paused", "inputs" }`. `inputs` lists `{ prompt_id, user_message_id, kind, delivery, content, skills?, mode?, instruction?, client_metadata?, created_at }`, steers first; `kind` is `input` or `compact`, and a compaction has an empty `content`. Replace the agent's local queue with each frame instead of merging; an input leaves the list once it enters a turn or is withdrawn.
+After every accepted `subscribe_v2`, the server sends one `queue` frame for each subscribed agent (every agent whose grade is not `off`), and another one whenever that agent's queue changes: `{ "type": "queue", "session_id", "agent_id", "event_created_at", "paused", "inputs" }`. `inputs` lists `{ prompt_id, user_message_id, kind, delivery, content, skills?, instruction?, client_metadata?, created_at }`, steers first; `kind` is `input` or `compact`, and a compaction has an empty `content`. Replace the agent's local queue with each frame instead of merging; an input leaves the list once it enters a turn or is withdrawn.
 
 ## Binary and streaming endpoints
 

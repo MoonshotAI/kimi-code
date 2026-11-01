@@ -422,13 +422,18 @@ describe('transcript contract e2e', () => {
     expect(await rest(server!, base, `${queuePath}:pause`, { method: 'POST', body: {} })).toEqual({ paused: true });
     await rest(server!, base, `${queuePath}/${third.prompt_id}:move`, { method: 'POST', body: { before_prompt_id: second.prompt_id } });
     expect(order()).toEqual([`${third.prompt_id}:queue`, `${second.prompt_id}:queue`]);
-    await rest(server!, base, `${queuePath}/${second.prompt_id}:steer`, { method: 'POST', body: {} });
+    expect(
+      await rest(server!, base, `/api/v1/sessions/${sid}/prompts/${second.prompt_id}:steer`, { method: 'POST', body: {} }),
+    ).toEqual({ steered: true, prompt_ids: [second.prompt_id] });
     expect(order()).toEqual([`${second.prompt_id}:steer`, `${third.prompt_id}:queue`]);
 
-    expect(await restCode(server!, base, `${queuePath}/${third.prompt_id}:cancel`)).toBe(0);
-    expect(await restCode(server!, base, `${queuePath}/${third.prompt_id}:cancel`)).toBe(40402);
+    expect(
+      await rest(server!, base, `/api/v1/sessions/${sid}/prompts/${third.prompt_id}:abort`, { method: 'POST', body: {} }),
+    ).toEqual({ aborted: true });
+    expect(order()).toEqual([`${second.prompt_id}:steer`]);
     expect(await restCode(server!, base, `${queuePath}/${second.prompt_id}:move`, { before_prompt_id: 7 })).toBe(40001);
-    expect(await restCode(server!, base, `${queuePath}/${second.prompt_id}:bogus`)).toBe(40001);
+    expect(await restCode(server!, base, `${queuePath}/${second.prompt_id}:steer`)).toBe(40001);
+    expect(await restCode(server!, base, `${queuePath}/${second.prompt_id}:cancel`)).toBe(40001);
     expect(await restCode(server!, base, `/api/v1/sessions/${sid}/agents/missing/queue:pause`)).toBe(40401);
 
     const fourth = await submitPrompt(server!, base, sid, 'fourth prompt');

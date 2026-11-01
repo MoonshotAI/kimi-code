@@ -334,8 +334,8 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(first.body.data.accepted_as).toBe('turn');
     expect(enter).toHaveBeenCalledTimes(1);
     expect(enter).toHaveBeenCalledWith('manual');
-    expect(enter.mock.invocationCallOrder[0]!).toBeLessThan(exitTower.mock.invocationCallOrder[0]!);
-    expect(exitTower.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[0]!);
+    expect(enter.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[0]!);
+    expect(exitTower).not.toHaveBeenCalled();
     expect(swarm.isActive).toBe(true);
 
     await vi.waitFor(() => expect(loop.canLaunchPrompt()).toBe(true));
@@ -410,22 +410,53 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).not.toBe(0);
   });
 
-  it('leaves an existing goal and plan mode alone when a queued goal-mode prompt reaches its turn', async () => {
+  it('rejects a mode that conflicts with an active mode instead of switching it off', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const session = getLiveSessionById(server!.core.accessor, id)!;
     const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const goals = agent.accessor.get(IAgentGoalService);
+    const tower = agent.accessor.get(IAgentTowerService);
     const plan = agent.accessor.get(IAgentPlanService);
-    await goals.createGoal({ objective: 'Existing goal' });
+    const createGoal = vi.spyOn(agent.accessor.get(IAgentGoalService), 'createGoal');
+    const exitTower = vi.spyOn(tower, 'exit');
+    const towerActive = vi.spyOn(tower, 'isActive', 'get').mockReturnValue(true);
+
+    for (const mode of ['plan', 'swarm', 'goal'] as const) {
+      await expect(applyPromptLaunchMode(agent, mode, 'Ship it')).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_MODE_CONFLICT,
+        details: { requested: mode, conflict: 'tower' },
+      });
+    }
+    expect(exitTower).not.toHaveBeenCalled();
+    expect(await plan.status()).toBeNull();
+
+    towerActive.mockReturnValue(false);
     await plan.enter();
-    const createGoal = vi.spyOn(goals, 'createGoal');
-
-    await applyPromptLaunchMode(agent, 'goal', 'Another goal');
-
+    await expect(applyPromptLaunchMode(agent, 'goal', 'Ship it')).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_MODE_CONFLICT,
+      details: { requested: 'goal', conflict: 'plan' },
+    });
     expect(createGoal).not.toHaveBeenCalled();
-    expect(goals.getGoal().goal?.objective).toBe('Existing goal');
     expect(await plan.status()).not.toBeNull();
+  });
+
+  it('answers 40933 for a conflicting mode prompt and 40934 for a mode prompt that cannot start now', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const prompts = `/api/v1/sessions/${id}/prompts`;
+    const queue = agent.accessor.get(IAgentPromptQueueService);
+
+    const towerActive = vi.spyOn(agent.accessor.get(IAgentTowerService), 'isActive', 'get').mockReturnValue(true);
+    const conflict = await call<null>('POST', prompts, { content: [{ type: 'text', text: 'plan it' }], mode: 'plan' });
+    expect(conflict.body.code).toBe(40933);
+    towerActive.mockRestore();
+
+    vi.spyOn(agent.accessor.get(IAgentLoopService), 'canLaunchPrompt').mockReturnValue(false);
+    const busy = await call<null>('POST', prompts, { content: [{ type: 'text', text: 'plan it' }], mode: 'plan' });
+    expect(busy.body.code).toBe(40934);
+    expect(queue.snapshot().items).toHaveLength(0);
   });
 
   it('keeps plan mode when a goal-mode prompt is rejected because a goal already exists', async () => {

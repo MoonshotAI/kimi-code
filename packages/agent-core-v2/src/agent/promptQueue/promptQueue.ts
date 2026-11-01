@@ -1,4 +1,5 @@
 import { createDecorator } from '#/_base/di/instantiation';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Event } from '#/_base/event';
 import type { PromptHandle } from '#/agent/loop/loop';
 import type { UserEntry } from '#human/agent/turn';
@@ -14,7 +15,6 @@ export interface QueuedPromptInput {
   readonly id: string;
   readonly delivery: PromptDelivery;
   readonly entry: UserEntry;
-  readonly mode?: PromptLaunchMode;
   readonly createdAt: string;
 }
 
@@ -37,8 +37,8 @@ export interface PromptQueueInputRequest {
   readonly id: string;
   readonly entry: UserEntry;
   readonly delivery: PromptDelivery;
-  readonly mode?: PromptLaunchMode;
   readonly prepare?: () => Promise<void>;
+  readonly onStart?: () => Promise<void>;
   readonly onDrop?: () => void;
 }
 
@@ -76,6 +76,8 @@ export interface IAgentPromptQueueService {
   move(id: string, beforeId?: string): void;
 
   cancel(id: string): void;
+
+  openSteerWindow(): IDisposable;
 }
 
 export const IAgentPromptQueueService = createDecorator<IAgentPromptQueueService>('agentPromptQueueService');

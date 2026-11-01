@@ -8,6 +8,7 @@ import {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
+import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import type { AgentTaskInfo, AgentTaskOutputSnapshot } from '#/agent/task/task';
@@ -134,6 +135,7 @@ export class WaitForTool implements IWaitForTool {
     @IFlagService private readonly flags: IFlagService,
     @IAgentGoalService private readonly goals: IAgentGoalService,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IAgentPromptQueueService private readonly promptQueue?: IAgentPromptQueueService,
   ) {
     this.isSubagent = scopeContext.agentId !== MAIN_AGENT_ID;
   }
@@ -189,6 +191,7 @@ export class WaitForTool implements IWaitForTool {
       ? ctx.signal
       : AbortSignal.any([ctx.signal, ctx.steerSignal]);
     const progress = startWaitProgress(args, this.tasks, ctx.onUpdate, startedAt);
+    const steerWindow = ctx.steerSignal === undefined ? undefined : this.promptQueue?.openSteerWindow();
     try {
       waited =
         args.task_id === undefined
@@ -209,6 +212,7 @@ export class WaitForTool implements IWaitForTool {
       this.track(args, startedAt, timeoutMs, 'aborted', 0);
       throw error;
     } finally {
+      steerWindow?.dispose();
       progress.stop();
     }
     tally.waitedMs += Date.now() - startedAt;

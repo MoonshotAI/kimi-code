@@ -34,13 +34,17 @@ import type {
 } from '@moonshot-ai/kap-server/protocol/rest-modelCatalog';
 import type {
   PromptAbortResponse,
+  PromptListResponse,
   PromptPermissionMode,
   PromptSubmission,
+  PromptSteerResult,
   PromptSubmitResult,
   PromptThinking,
   QueuePauseResponse,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
 import type {
+  CompactSessionRequest,
+  CompactSessionResponse,
   ForkSessionRequest,
   SessionAbortResponse,
   UndoSessionRequest,
@@ -214,7 +218,10 @@ export class DaemonClient {
   forkSession(sid: string, body: ForkSessionRequest = {}): Promise<Session> {
     return this.http.forkSession(sid, body);
   }
-  compactSession(sid: string, body: { instruction?: string } = {}): Promise<PromptSubmitResult> {
+  compactSession(
+    sid: string,
+    body: CompactSessionRequest = {},
+  ): Promise<CompactSessionResponse> {
     return this.http.compactSession(sid, body);
   }
   undoSession(
@@ -288,20 +295,23 @@ export class DaemonClient {
   ): Promise<PromptSubmitResult> {
     return this.http.submitPrompt(sid, body);
   }
+  listPrompts(sid: string): Promise<PromptListResponse> {
+    return this.http.listPrompts(sid);
+  }
+  steerPrompt(sid: string, pid: string): Promise<PromptSteerResult> {
+    return this.http.steerPrompt(sid, pid);
+  }
+  steerPrompts(sid: string, promptIds: readonly string[]): Promise<PromptSteerResult> {
+    return this.http.steerPrompts(sid, promptIds);
+  }
   pauseQueue(sid: string, agentId?: string): Promise<QueuePauseResponse> {
     return this.http.pauseQueue(sid, agentId);
   }
   resumeQueue(sid: string, agentId?: string): Promise<QueuePauseResponse> {
     return this.http.resumeQueue(sid, agentId);
   }
-  steerQueued(sid: string, pid: string, agentId?: string): Promise<Record<string, never>> {
-    return this.http.steerQueued(sid, pid, agentId);
-  }
   moveQueued(sid: string, pid: string, beforePromptId?: string, agentId?: string): Promise<Record<string, never>> {
     return this.http.moveQueued(sid, pid, beforePromptId, agentId);
-  }
-  cancelQueued(sid: string, pid: string, agentId?: string): Promise<Record<string, never>> {
-    return this.http.cancelQueued(sid, pid, agentId);
   }
   abortPrompt(sid: string, pid: string): Promise<PromptAbortResponse> {
     return this.http.abortPrompt(sid, pid);

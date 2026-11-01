@@ -11,6 +11,8 @@ export const SessionErrors = {
     SESSION_INIT_FAILED: 'session.init_failed',
     SESSION_PLAN_MODE_INVALID: 'session.plan_mode_invalid',
     SESSION_TOWER_MODE_INVALID: 'session.tower_mode_invalid',
+    SESSION_MODE_CONFLICT: 'session.mode_conflict',
+    SESSION_MODE_UNAVAILABLE: 'session.mode_unavailable',
     SESSION_OCCUPIED: 'session.occupied',
     SESSION_STALE: 'session.stale',
   },

@@ -32,10 +32,15 @@ import type {
 } from './skill';
 import { SkillActivated } from './skillOps';
 
+export interface PreparedSkillPrompt {
+  readonly entry: UserEntry;
+  readonly onStart: () => Promise<void>;
+}
+
 export interface IAgentSkillService {
   readonly _serviceBrand: undefined;
   activate(input: SkillActivationInput): Promise<PromptLaunchResult>;
-  preparePromptWithSkills(input: PromptWithSkillsInput, promptId?: string): Promise<UserEntry>;
+  preparePromptWithSkills(input: PromptWithSkillsInput, promptId?: string): Promise<PreparedSkillPrompt>;
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
   recordModelToolActivation(origin: SkillActivationOrigin): void;
 }
@@ -124,7 +129,7 @@ export class AgentSkillService implements IAgentSkillService {
     return { turn_id: turn.id };
   }
 
-  async preparePromptWithSkills(input: PromptWithSkillsInput, promptId?: string): Promise<UserEntry> {
+  async preparePromptWithSkills(input: PromptWithSkillsInput, promptId?: string): Promise<PreparedSkillPrompt> {
     if (input.input.length === 0) {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'promptWithSkills requires a non-empty prompt');
     }
@@ -137,39 +142,45 @@ export class AgentSkillService implements IAgentSkillService {
     const catalog = this.catalog;
     await catalog.ready;
     const prepared = input.skills.map((skill) => this.prepareBundled(skill));
-    if (this.scopeContext.agentContext.agentId === MAIN_AGENT_ID) {
-      await applyPromptMetadataUpdate(
-        {
-          metadata: this.metadata,
-          eventService: this.eventService,
-          sessionId: this.sessionContext.sessionId,
-        },
-        promptMetadataTextFromContentParts(input.input, input.clientMetadata),
-      );
-    }
-    for (const activation of prepared) {
-      void this.recordActivation(activation.origin);
-    }
+    const onStart = async (): Promise<void> => {
+      if (this.scopeContext.agentContext.agentId === MAIN_AGENT_ID) {
+        await applyPromptMetadataUpdate(
+          {
+            metadata: this.metadata,
+            eventService: this.eventService,
+            sessionId: this.sessionContext.sessionId,
+          },
+          promptMetadataTextFromContentParts(input.input, input.clientMetadata),
+        );
+      }
+      for (const activation of prepared) {
+        void this.recordActivation(activation.origin);
+      }
+    };
     return {
-      message: {
-        role: 'user',
-        content: [...prepared.map((activation) => activation.part), ...input.input],
+      entry: {
+        message: {
+          role: 'user',
+          content: [...prepared.map((activation) => activation.part), ...input.input],
+        },
+        meta: {
+          promptId,
+          origin: {
+            kind: 'user',
+            skillActivations: prepared.map((activation) => activation.entry),
+            clientMetadata: input.clientMetadata,
+            attachments: input.attachments,
+          } as PromptOrigin,
+          tracked: true,
+        },
       },
-      meta: {
-        promptId,
-        origin: {
-          kind: 'user',
-          skillActivations: prepared.map((activation) => activation.entry),
-          clientMetadata: input.clientMetadata,
-          attachments: input.attachments,
-        } as PromptOrigin,
-        tracked: true,
-      },
+      onStart,
     };
   }
 
   async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult> {
-    const entry = await this.preparePromptWithSkills(input);
+    const { entry, onStart } = await this.preparePromptWithSkills(input);
+    await onStart();
     const status = this.loop.snapshot();
     const steerable =
       input.steerIfActive === true &&

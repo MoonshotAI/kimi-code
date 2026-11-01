@@ -18,32 +18,74 @@ import type { SessionAgentConfigPartial } from '@moonshot-ai/agent-core-v2/app/s
 
 import { ensureMainAgent } from '../transport/mainAgent';
 
+type SessionMode = 'plan' | 'swarm' | 'tower' | 'goal';
+
+const MODE_CONFLICTS: Record<SessionMode, readonly SessionMode[]> = {
+  plan: ['tower'],
+  swarm: ['tower'],
+  tower: ['plan', 'swarm'],
+  goal: ['tower', 'plan'],
+};
+
+async function activeModes(agent: Pick<IAgentScopeHandle, 'accessor'>): Promise<Set<SessionMode>> {
+  const modes = new Set<SessionMode>();
+  if ((await agent.accessor.get(IAgentPlanService).status()) !== null) modes.add('plan');
+  if (agent.accessor.get(IAgentSwarmService).isActive) modes.add('swarm');
+  if (agent.accessor.get(IAgentTowerService).isActive) modes.add('tower');
+  return modes;
+}
+
+function assertModesCompatible(requested: Iterable<SessionMode>, modes: ReadonlySet<SessionMode>): void {
+  for (const mode of requested) {
+    const conflict = MODE_CONFLICTS[mode].find((other) => modes.has(other));
+    if (conflict !== undefined) {
+      throw new Error2(
+        ErrorCodes.SESSION_MODE_CONFLICT,
+        `${mode} mode is not available while ${conflict} mode is on`,
+        { details: { requested: mode, conflict } },
+      );
+    }
+  }
+}
+
 export async function applyPromptLaunchMode(
   agent: Pick<IAgentScopeHandle, 'accessor'>,
   mode: PromptLaunchMode,
   objective: string,
 ): Promise<void> {
-  const plan = agent.accessor.get(IAgentPlanService);
+  const modes = await activeModes(agent);
+  assertModesCompatible([mode], modes);
   switch (mode) {
     case 'plan':
-      if ((await plan.status()) === null) await plan.enter();
-      await agent.accessor.get(IAgentTowerService).exit();
+      if (!modes.has('plan')) await agent.accessor.get(IAgentPlanService).enter();
       return;
-    case 'swarm': {
-      const swarm = agent.accessor.get(IAgentSwarmService);
-      if (!swarm.isActive) swarm.enter('manual');
-      await agent.accessor.get(IAgentTowerService).exit();
+    case 'swarm':
+      if (!modes.has('swarm')) agent.accessor.get(IAgentSwarmService).enter('manual');
       return;
-    }
-    case 'goal': {
-      const goals = agent.accessor.get(IAgentGoalService);
-      if (goals.getGoal().goal !== null) return;
-      await agent.accessor.get(IAgentTowerService).exit();
-      await goals.createGoal({ objective });
-      if ((await plan.status()) !== null) plan.exit();
+    case 'goal':
+      await agent.accessor.get(IAgentGoalService).createGoal({ objective });
       return;
-    }
   }
+}
+
+async function assertConfigModesCompatible(
+  agent: Pick<IAgentScopeHandle, 'accessor'>,
+  agentConfig: SessionAgentConfigPartial,
+): Promise<void> {
+  const toggles: ReadonlyArray<readonly [SessionMode, boolean | undefined]> = [
+    ['plan', agentConfig.plan_mode],
+    ['swarm', agentConfig.swarm_mode],
+    ['tower', agentConfig.tower_mode],
+    ['goal', agentConfig.goal_objective === undefined ? undefined : true],
+  ];
+  if (!toggles.some(([, on]) => on === true)) return;
+  const modes = await activeModes(agent);
+  for (const [mode, on] of toggles) {
+    if (on === false) modes.delete(mode);
+  }
+  const requested = toggles.filter(([mode, on]) => on === true && !modes.has(mode)).map(([mode]) => mode);
+  for (const mode of requested) modes.add(mode);
+  assertModesCompatible(requested, modes);
 }
 
 export async function applySessionAgentConfig(
@@ -56,6 +98,7 @@ export async function applySessionAgentConfig(
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
   const agent = await ensureMainAgent(session);
+  await assertConfigModesCompatible(agent, agentConfig);
 
   const profile = agent.accessor.get(IAgentProfileService);
   if (agentConfig.model !== undefined && agentConfig.model !== '') {

@@ -88,6 +88,23 @@ export const promptSubmitResultSchema = z.union([
 ]);
 export type PromptSubmitResult = z.infer<typeof promptSubmitResultSchema>;
 
+export const promptListResponseSchema = z.object({
+  active: promptItemSchema.nullable(),
+  queued: z.array(promptItemSchema),
+});
+export type PromptListResponse = z.infer<typeof promptListResponseSchema>;
+
+export const promptSteerRequestSchema = z.object({
+  prompt_ids: z.array(z.string().min(1)).min(1),
+});
+export type PromptSteerRequest = z.infer<typeof promptSteerRequestSchema>;
+
+export const promptSteerResultSchema = z.object({
+  steered: z.literal(true),
+  prompt_ids: z.array(z.string().min(1)).min(1),
+});
+export type PromptSteerResult = z.infer<typeof promptSteerResultSchema>;
+
 export const promptAbortResponseSchema = z.object({
   aborted: z.boolean(),
 });
@@ -100,7 +117,6 @@ export const queuedInputSchema = z.object({
   delivery: promptDeliverySchema,
   content: z.array(messageContentSchema),
   skills: z.array(promptSkillActivationSchema).optional(),
-  mode: promptLaunchModeSchema.optional(),
   instruction: z.string().optional(),
   client_metadata: z.record(z.string(), z.unknown()).optional(),
   created_at: isoDateTimeSchema,

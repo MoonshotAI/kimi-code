@@ -116,7 +116,7 @@ describe('AgentPromptQueueService', () => {
     expect(queue.snapshot().items).toEqual([]);
   });
 
-  it('holds queued inputs while paused and lets an idle submit bypass them', async () => {
+  it('holds queued inputs and new submissions while paused until it resumes', async () => {
     setup();
     respond(3);
     const release = await startHeldTurn();
@@ -128,16 +128,15 @@ describe('AgentPromptQueueService', () => {
     await Promise.resolve();
     expect(launched).toEqual(['first']);
     expect(queue.snapshot()).toMatchObject({ paused: true });
-    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
 
-    const direct = await queue.submitInput({ id: 'p3', entry: entry('p3', 'third'), delivery: 'queue' });
-    expect(direct.acceptedAs).toBe('turn');
-    await loop.settled();
-    expect(launched).toEqual(['first', 'third']);
-    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
+    const held = await queue.submitInput({ id: 'p3', entry: entry('p3', 'third'), delivery: 'queue' });
+    expect(held.acceptedAs).toBe('queue');
+    await Promise.resolve();
+    expect(launched).toEqual(['first']);
+    expect(ids(queue.snapshot())).toEqual(['p2:queue', 'p3:queue']);
 
     queue.resume();
-    await vi.waitFor(() => expect(launched).toEqual(['first', 'third', 'second']));
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second', 'third']));
     await loop.settled();
   });
 
@@ -226,65 +225,38 @@ describe('AgentPromptQueueService', () => {
     respond(1);
     const release = await startHeldTurn();
     queue.pause();
+    const prepare = vi.fn(async () => {});
 
     await expect(
-      queue.submitInput({ id: 'p2', entry: entry('p2', 'two'), delivery: 'steer', mode: 'plan' }),
+      queue.submitInput({ id: 'p2', entry: entry('p2', 'two'), delivery: 'steer', prepare }),
     ).rejects.toMatchObject({ code: ErrorCodes.REQUEST_INVALID });
-    await queue.submitInput({ id: 'p3', entry: entry('p3', 'three'), delivery: 'queue', mode: 'swarm' });
-    expect(() => queue.steer('p3')).toThrow(expect.objectContaining({ code: ErrorCodes.REQUEST_INVALID }));
+    await queue.submitInput({ id: 'p3', entry: entry('p3', 'three'), delivery: 'queue' });
     await expect(
       queue.submitInput({ id: 'p3', entry: entry('p3', 'again'), delivery: 'queue' }),
     ).rejects.toMatchObject({ code: ErrorCodes.PROMPT_ID_CONFLICT });
-    expect(queue.snapshot().items).toMatchObject([{ id: 'p3', mode: 'swarm' }]);
-    release();
-  });
-
-  it('applies a queued mode right before its turn starts', async () => {
-    setup();
-    respond(2);
-    const release = await startHeldTurn();
-    const order: string[] = [];
-    const prepare = vi.fn(async () => {
-      order.push(`prepare:${launched.length}`);
-    });
-
-    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'plan', prepare });
     expect(prepare).not.toHaveBeenCalled();
-
     release();
-    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
-    await loop.settled();
-    expect(prepare).toHaveBeenCalledOnce();
-    expect(order).toEqual(['prepare:1']);
   });
 
-  it('pauses the queue and keeps an input whose mode cannot be applied', async () => {
+  it('rejects a prompt with a mode unless it can start a turn right away', async () => {
     setup();
-    respond(2);
-    const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
+    respond(1);
+    const prepare = vi.fn(async () => {});
     const release = await startHeldTurn();
-    const prepare = vi.fn<() => Promise<void>>()
-      .mockRejectedValueOnce(new Error('plan directory is not writable'))
-      .mockResolvedValue(undefined);
-    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'plan', prepare });
 
+    await expect(
+      queue.submitInput({ id: 'p2', entry: entry('p2', 'busy'), delivery: 'queue', prepare }),
+    ).rejects.toMatchObject({ code: ErrorCodes.SESSION_MODE_UNAVAILABLE });
     release();
-    await vi.waitFor(() => expect(queue.snapshot().paused).toBe(true));
     await loop.settled();
-    expect(launched).toEqual(['first']);
-    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
-    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'warning',
-      code: 'queued-prompt-failed',
-      message: expect.stringContaining('plan directory is not writable'),
-    }));
 
-    queue.resume();
-    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
-    await loop.settled();
-    expect(prepare).toHaveBeenCalledTimes(2);
+    queue.pause();
+    await expect(
+      queue.submitInput({ id: 'p3', entry: entry('p3', 'paused'), delivery: 'queue', prepare }),
+    ).rejects.toMatchObject({ code: ErrorCodes.SESSION_MODE_UNAVAILABLE });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(queue.snapshot().items).toEqual([]);
   });
-
   it('starts the next queued input only after the previous turn has been torn down', async () => {
     setup();
     respond(2);
@@ -345,103 +317,10 @@ describe('AgentPromptQueueService', () => {
     });
 
     await expect(
-      queue.submitInput({ id: 'p1', entry: entry('p1', 'hello'), delivery: 'queue', mode: 'goal', prepare }),
+      queue.submitInput({ id: 'p1', entry: entry('p1', 'hello'), delivery: 'queue', prepare }),
     ).rejects.toThrow('session is stale');
     expect(prepare).not.toHaveBeenCalled();
     expect(launched).toEqual([]);
-  });
-
-  it('pauses instead of applying a queued mode when the session is no longer current', async () => {
-    setup();
-    respond(2);
-    const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
-    const release = await startHeldTurn();
-    const prepare = vi.fn(async () => {});
-    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'goal', prepare });
-    const begin = vi.spyOn(ctx.get(ISessionRunGate), 'begin').mockImplementationOnce(() => {
-      throw new Error('session is stale');
-    });
-
-    release();
-    await vi.waitFor(() => expect(queue.snapshot().paused).toBe(true));
-    expect(prepare).not.toHaveBeenCalled();
-    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
-    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ code: 'queued-prompt-failed' }));
-
-    begin.mockRestore();
-    queue.resume();
-    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
-    await loop.settled();
-    expect(prepare).toHaveBeenCalledOnce();
-  });
-
-  it('does not apply a mode again when a prepared prompt is restored after it could not start', async () => {
-    setup();
-    respond(2);
-    const release = await startHeldTurn();
-    const prepare = vi.fn(async () => {});
-    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'goal', prepare });
-    const submit = vi.spyOn(loop, 'submit').mockImplementationOnce(() => {
-      throw new Error('session is stale');
-    });
-
-    release();
-    await vi.waitFor(() => expect(queue.snapshot().paused).toBe(true));
-    submit.mockRestore();
-    queue.resume();
-
-    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
-    await loop.settled();
-    expect(prepare).toHaveBeenCalledOnce();
-  });
-
-  it('takes an input off the queue while its mode is applied and starts it next', async () => {
-    setup();
-    respond(3);
-    const release = await startHeldTurn();
-    let finishPrepare!: () => void;
-    const prepare = vi.fn(() => new Promise<void>((resolve) => {
-      finishPrepare = resolve;
-    }));
-    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'plan', prepare });
-    await queue.submitInput({ id: 'p3', entry: entry('p3', 'third'), delivery: 'queue' });
-
-    release();
-    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
-    expect(ids(queue.snapshot())).toEqual(['p3:queue']);
-    expect(queue.hasPendingInputs()).toBe(true);
-    expect(() => queue.cancel('p2')).toThrow(expect.objectContaining({ code: ErrorCodes.PROMPT_NOT_FOUND }));
-    finishPrepare();
-
-    await vi.waitFor(() => expect(launched).toEqual(['first', 'second', 'third']));
-    await loop.settled();
-    expect(prepare).toHaveBeenCalledOnce();
-  });
-
-  it('keeps an input queued when other work starts while its mode is applied', async () => {
-    setup();
-    respond(3);
-    const release = await startHeldTurn();
-    let finishPrepare!: () => void;
-    const prepare = vi.fn(() => new Promise<void>((resolve) => {
-      finishPrepare = resolve;
-    }));
-    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'plan', prepare });
-
-    release();
-    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
-    const hold = holdNextStep();
-    loop.submit(entry('p3', 'direct'));
-    await hold.started;
-    finishPrepare();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(launched).toEqual(['first', 'direct']);
-    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
-
-    hold.release();
-    await vi.waitFor(() => expect(launched).toEqual(['first', 'direct', 'second']));
-    await loop.settled();
-    expect(prepare).toHaveBeenCalledOnce();
   });
 
   it('queues an idle input at the head when other work starts while its mode is applied', async () => {
@@ -451,7 +330,7 @@ describe('AgentPromptQueueService', () => {
     const prepare = vi.fn(() => new Promise<void>((resolve) => {
       finishPrepare = resolve;
     }));
-    const submitted = queue.submitInput({ id: 'p1', entry: entry('p1', 'first'), delivery: 'queue', mode: 'plan', prepare });
+    const submitted = queue.submitInput({ id: 'p1', entry: entry('p1', 'first'), delivery: 'queue', prepare });
     await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
     const hold = holdNextStep();
     loop.submit(entry('p2', 'direct'));
@@ -466,26 +345,78 @@ describe('AgentPromptQueueService', () => {
     expect(prepare).toHaveBeenCalledOnce();
   });
 
-  it('starts an input whose mode is being applied even when the queue is paused meanwhile', async () => {
+
+  it('counts an idle input as pending while its mode is applied', async () => {
     setup();
-    respond(2);
-    const release = await startHeldTurn();
+    respond(1);
     let finishPrepare!: () => void;
     const prepare = vi.fn(() => new Promise<void>((resolve) => {
       finishPrepare = resolve;
     }));
-    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', mode: 'plan', prepare });
-
-    release();
+    const submitted = queue.submitInput({ id: 'p1', entry: entry('p1', 'first'), delivery: 'queue', prepare });
     await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
-    queue.pause();
     expect(queue.hasPendingItems()).toBe(true);
+    expect(queue.hasPendingInputs()).toBe(true);
     finishPrepare();
 
+    await expect(submitted).resolves.toMatchObject({ acceptedAs: 'turn' });
+    expect(queue.hasPendingItems()).toBe(false);
+    await loop.settled();
+    expect(launched).toEqual(['first']);
+  });
+
+  it('reports a steer that falls back to the next turn as queued', async () => {
+    setup();
+    respond(2);
+    const release = await startHeldTurn();
+    vi.spyOn(loop, 'steer').mockRejectedValueOnce(new Error('the turn already ended'));
+
+    const result = await queue.submitInput({ id: 'p2', entry: entry('p2', 'late steer'), delivery: 'steer' });
+
+    expect(result.acceptedAs).toBe('queue');
+    release();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'late steer']));
+    await loop.settled();
+  });
+
+  it('steers queued inputs into an open steer window and new inputs while it stays open', async () => {
+    setup();
+    respond(3);
+    const release = await startHeldTurn();
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'two'), delivery: 'queue' });
+    await queue.submitInput({ id: 'p3', entry: entry('p3', 'three'), delivery: 'queue' });
+
+    const window = queue.openSteerWindow();
+    await vi.waitFor(() => expect(loop.promptHandle('p3')?.state).toBe('steered'));
+    expect(loop.promptHandle('p2')?.state).toBe('steered');
+    expect(queue.snapshot().items).toEqual([]);
+    const during = await queue.submitInput({ id: 'p4', entry: entry('p4', 'four'), delivery: 'queue' });
+    expect(during.acceptedAs).toBe('steer');
+
+    window.dispose();
+    const after = await queue.submitInput({ id: 'p5', entry: entry('p5', 'five'), delivery: 'queue' });
+    expect(after.acceptedAs).toBe('queue');
+    queue.cancel('p5');
+    release();
+    await loop.settled();
+  });
+
+  it('runs start bookkeeping only when an input starts', async () => {
+    setup();
+    respond(2);
+    const release = await startHeldTurn();
+    const startedSecond = vi.fn(async () => {});
+    const startedCancelled = vi.fn(async () => {});
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', onStart: startedSecond });
+    await queue.submitInput({ id: 'p3', entry: entry('p3', 'third'), delivery: 'queue', onStart: startedCancelled });
+    expect(startedSecond).not.toHaveBeenCalled();
+
+    queue.cancel('p3');
+    release();
     await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
     await loop.settled();
-    expect(queue.snapshot()).toEqual({ paused: true, items: [] });
-    expect(queue.hasPendingItems()).toBe(false);
+    expect(startedSecond).toHaveBeenCalledOnce();
+    expect(startedCancelled).not.toHaveBeenCalled();
   });
 
   it('rejects every operation once the queue is disposed', async () => {
@@ -509,7 +440,7 @@ describe('AgentPromptQueueService', () => {
     const prepare = vi.fn(() => new Promise<void>((resolve) => {
       finishPrepare = resolve;
     }));
-    const submitted = queue.submitInput({ id: 'p1', entry: entry('p1', 'hello'), delivery: 'queue', mode: 'plan', prepare });
+    const submitted = queue.submitInput({ id: 'p1', entry: entry('p1', 'hello'), delivery: 'queue', prepare });
     await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
     (queue as unknown as { dispose(): void }).dispose();
     finishPrepare();
@@ -569,6 +500,40 @@ describe('AgentPromptQueueService', () => {
       expect(() => queue.submitCompaction({ id: 'c1' })).toThrow(
         expect.objectContaining({ code: ErrorCodes.COMPACTION_UNABLE }),
       );
+    });
+
+    it('rejects a compaction while another one is queued', async () => {
+      setup(fakeCompaction(() => true));
+      respond(1);
+      const release = await startHeldTurn();
+
+      queue.submitCompaction({ id: 'c1' });
+      expect(() => queue.submitCompaction({ id: 'c2' })).toThrow(
+        expect.objectContaining({ code: ErrorCodes.COMPACTION_UNABLE }),
+      );
+      expect(ids(queue.snapshot())).toEqual(['c1:queue']);
+      release();
+      await loop.settled();
+    });
+
+    it('promotes only the inputs ahead of a queued compaction into a steer window', async () => {
+      setup(fakeCompaction(() => true));
+      respond(4);
+      const release = await startHeldTurn();
+      await queue.submitInput({ id: 'p2', entry: entry('p2', 'two'), delivery: 'queue' });
+      queue.submitCompaction({ id: 'c1' });
+      await queue.submitInput({ id: 'p3', entry: entry('p3', 'three'), delivery: 'queue' });
+
+      const window = queue.openSteerWindow();
+      await vi.waitFor(() => expect(loop.promptHandle('p2')?.state).toBe('steered'));
+      expect(ids(queue.snapshot())).toEqual(['c1:queue', 'p3:queue']);
+      const during = await queue.submitInput({ id: 'p4', entry: entry('p4', 'four'), delivery: 'queue' });
+      expect(during.acceptedAs).toBe('queue');
+      window.dispose();
+      queue.cancel('p3');
+      queue.cancel('p4');
+      release();
+      await loop.settled();
     });
 
     it('queues a compaction behind a running turn and starts it once the agent is idle', async () => {

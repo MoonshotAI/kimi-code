@@ -1533,7 +1533,6 @@ describe('SessionEventBroadcaster', () => {
             kind: 'input',
             id: 'p1',
             delivery: 'queue',
-            mode: 'plan',
             createdAt: '2026-01-01T00:00:00.000Z',
             entry: {
               message: { role: 'user', content: [{ type: 'text', text: 'later' }] },
@@ -1571,7 +1570,6 @@ describe('SessionEventBroadcaster', () => {
             user_message_id: 'p1',
             kind: 'input',
             delivery: 'queue',
-            mode: 'plan',
             content: [{ type: 'text', text: 'later' }],
             client_metadata: { display_text: 'later' },
             created_at: '2026-01-01T00:00:00.000Z',
