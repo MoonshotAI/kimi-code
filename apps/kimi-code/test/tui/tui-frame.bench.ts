@@ -51,6 +51,7 @@ class StubTerminal implements Terminal {
   clearScreen(): void {}
   setTitle(): void {}
   setProgress(): void {}
+  setProgramStatus(): void {}
 }
 
 /** Returns the same array reference every frame, mirroring the app's cached message components. */

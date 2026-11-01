@@ -27,6 +27,7 @@ export interface EffortSelectorOptions {
    * line; wraps instead of truncating when it exceeds the width (e.g. the
    * mid-conversation switch cost notice). */
   readonly warning?: string;
+  readonly descriptions?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -96,6 +97,8 @@ export class EffortSelectorComponent extends Container implements Focusable {
         : currentTheme.fg('text', `  ${label}  `);
     });
     lines.push(`  ${segments.join('  ')}`);
+    const description = this.opts.descriptions?.[this.opts.efforts[this.activeIndex]!];
+    if (description !== undefined) lines.push(currentTheme.fg('textMuted', ` ${description}`));
 
     lines.push('');
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));

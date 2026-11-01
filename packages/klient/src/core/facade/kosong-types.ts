@@ -9,9 +9,9 @@ import type { Message } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/me
 import type {
   StreamedMessagePart,
   ToolDescription as Tool,
-} from '@moonshot-ai/agent-core-v2/human/llm/message';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm/usage';
-import type { ResponseFormat } from '@moonshot-ai/agent-core-v2/human/llm/response-format';
+} from '@moonshot-ai/agent-core-v2/human/message';
+import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm-requester/usage';
+import type { ResponseFormat } from '@moonshot-ai/agent-core-v2/human/llm-requester/response-format';
 
 // ---------------------------------------------------------------------------
 // Provider auth

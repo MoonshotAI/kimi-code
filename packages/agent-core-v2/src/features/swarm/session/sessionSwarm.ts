@@ -1,4 +1,4 @@
-import type { TokenUsage } from '#human/llm/usage';
+import type { TokenUsage } from '#human/llm-requester/usage';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { SubagentSpawnPlan } from '#/session/subagent/spawn';

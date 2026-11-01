@@ -38,8 +38,8 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { WireRecord } from '#/wire/record';
 import { IEventBus } from '#/app/event/eventBus';
 import { APIConnectionError, APIStatusError } from '#/llm-adapter/contract/errors';
-import type { ToolCall } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm/usage';
+import type { ToolCall } from '#human/message';
+import type { TokenUsage } from '#human/llm-requester/usage';
 import { ErrorCodes, Error2, errorInfo, toKimiErrorPayload } from '#/errors';
 import type { ExecutableTool, RunnableToolExecution } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -1238,7 +1238,6 @@ describe('AgentGoalService core workflow hooks', () => {
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'queued work' }],
-        toolCalls: [],
         origin: USER_PROMPT_ORIGIN,
       },
     });

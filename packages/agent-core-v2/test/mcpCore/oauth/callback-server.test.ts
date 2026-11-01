@@ -1,5 +1,6 @@
+import { once } from 'node:events';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
-import type { AddressInfo as HttpAddress } from 'node:net';
+import { connect, type AddressInfo as HttpAddress } from 'node:net';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -21,6 +22,14 @@ afterEach(async () => {
 
 function trackServer(server: CallbackServer): void {
   cleanups.push(() => server.close());
+}
+
+async function openUnusedConnection(server: CallbackServer): Promise<void> {
+  const socket = connect(Number(new URL(server.redirectUri).port), '127.0.0.1');
+  cleanups.push(() => {
+    socket.destroy();
+  });
+  await once(socket, 'connect');
 }
 
 async function startRegistrationServer(): Promise<{ readonly url: string }> {
@@ -57,6 +66,54 @@ async function startRegistrationServer(): Promise<{ readonly url: string }> {
 }
 
 describe('startCallbackServer', () => {
+  it.each([
+    { query: 'code=code-1&state=state-1', status: 200, heading: 'Sign-in complete' },
+    { query: 'error=access_denied', status: 400, heading: 'Sign-in failed' },
+  ])('closes unused connections and delivers the full $status HTML', async ({ query, status, heading }) => {
+    const server = await startCallbackServer();
+    trackServer(server);
+    await openUnusedConnection(server);
+    const pending = server.waitForCode({ timeoutMs: 10_000 }).catch((error: unknown) => error);
+
+    const response = await fetch(`${server.redirectUri}?${query}`);
+    await server.close();
+
+    expect(response.status).toBe(status);
+    const html = await response.text();
+    expect(html).toContain(heading);
+    expect(html.endsWith('</body></html>')).toBe(true);
+    const result = await pending;
+    if (status === 200) {
+      expect(result).toEqual({ code: 'code-1', state: 'state-1' });
+    } else {
+      expect(result).toEqual(new Error('OAuth error: access_denied'));
+    }
+  }, 2_000);
+
+  it.each(['close', 'abort', 'timeout'] as const)('releases unused connections on %s', async (reason) => {
+    const server = await startCallbackServer();
+    trackServer(server);
+    await openUnusedConnection(server);
+    const controller = new AbortController();
+    const pending = server.waitForCode({
+      signal: controller.signal,
+      timeoutMs: reason === 'timeout' ? 10 : 10_000,
+    });
+    const rejection = expect(pending).rejects.toThrow(
+      reason === 'close'
+        ? 'OAuth callback listener closed'
+        : reason === 'abort'
+          ? 'cancelled'
+          : 'OAuth callback timed out',
+    );
+
+    if (reason === 'abort') controller.abort(new Error('cancelled'));
+    if (reason === 'timeout') await rejection;
+    await server.close();
+
+    await rejection;
+  }, 2_000);
+
   it('resolves a late waitForCode with a callback that arrived before it', async () => {
     const server = await startCallbackServer();
     trackServer(server);

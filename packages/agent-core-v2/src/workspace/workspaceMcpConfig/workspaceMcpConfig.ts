@@ -13,6 +13,8 @@ export interface McpTunables {
   readonly startupTimeoutMs?: number;
   readonly toolTimeoutMs?: number;
   readonly defaultDeferred?: boolean;
+  readonly reconnectInitialDelayMs?: number;
+  readonly reconnectMaxDelayMs?: number;
 }
 
 export interface IWorkspaceMcpConfigService {
@@ -25,6 +27,8 @@ export interface IWorkspaceMcpConfigService {
   tunables(): McpTunables;
 
   readonly onDidChange: Event<McpServersChangeEvent>;
+
+  readonly onDidChangeTunables: Event<McpTunables>;
 }
 
 export const IWorkspaceMcpConfigService: ServiceIdentifier<IWorkspaceMcpConfigService> =

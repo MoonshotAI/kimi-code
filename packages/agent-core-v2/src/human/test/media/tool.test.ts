@@ -13,7 +13,7 @@ import { journalFromBranch } from '#/eventStore/journal';
 import { MemoryBackend } from '#/store/backend/memory';
 import { TreeStore } from '#/store/store';
 import { testScopeFactory } from '#/test/agent/scope-factory';
-import type { ModelCapability } from '#/llm/capability';
+import type { ModelCapability } from '#/llm-requester/capability';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -22,13 +22,15 @@ import {
   type ToolCall,
   type VideoURLPart,
 } from '#/llm/message';
-import { createMemoryMediaUploadCache } from '#/llm/media/cache';
-import { createMediaRefResolver } from '#/llm/media/resolver';
-import { createMemoryMediaStore } from '#/llm/media/store';
-import type { LlmModel } from '#/llm/model';
-import { createProvider } from '#/llm/provider/definition';
-import type { LlmRequester } from '#/llm/requester/requester';
-import { openAIBase, prepareOpenAIRequest } from '#/llm/requester/bases/openai/requester';
+import { fromCorePart, toCorePart } from '#/message';
+import { createMemoryMediaUploadCache } from '#/media/cache';
+import { mediaRefFromPart } from '#/media/ref';
+import { createMediaRefResolver } from '#/media/resolver';
+import { createMemoryMediaStore } from '#/media/store';
+import type { LlmModel } from '#/llm-requester/model';
+import type { CatalogProviderHandle } from '#/provider-catalog/catalog';
+import type { LlmRequester } from '#/llm-requester/requester';
+import { createOpenAIRequester } from '#/llm-requester/factories';
 import { createReadMediaFileTool } from '#/media/tool';
 
 const CAPABILITY: ModelCapability = {
@@ -80,8 +82,11 @@ describe('ReadMediaFile tool', () => {
     expect(result.isError).toBeUndefined();
     const mediaPart = result.content[1];
     if (mediaPart?.type !== 'image_url') throw new Error('expected an image part');
-    expect(mediaPart.imageUrl.url.startsWith('media://')).toBe(true);
+    if (!mediaPart.imageUrl.url.startsWith('media://')) throw new Error('expected a stored media ref');
     const ref = mediaPart.imageUrl.url.slice('media://'.length);
+    const restored = toCorePart(fromCorePart(mediaPart));
+    expect(restored).toEqual({ type: 'image_url', imageUrl: { url: `media://${ref}` } });
+    expect(mediaRefFromPart(restored)).toEqual({ kind: 'image', ref });
     const stored = await store.get(ref);
     expect(stored?.bytes).toEqual(new Uint8Array([1, 2, 3]));
     expect(stored?.mimeType).toBe('image/png');
@@ -139,11 +144,10 @@ describe('media stack wiring', () => {
       videoUrl: { url: 'ms://file-1', id: 'file-1' },
     };
     const uploadVideo = vi.fn(async () => uploadedPart);
-    const provider = createProvider({
+    const provider: CatalogProviderHandle = {
       id: 'test-media',
-      protocols: { openai: { base: openAIBase } },
       media: { uploadVideo },
-    });
+    };
     const store = createMemoryMediaStore();
     const capability = CAPABILITY;
     const tools =
@@ -209,12 +213,36 @@ describe('media stack wiring', () => {
     ]);
     expect(uploadVideo).toHaveBeenCalledTimes(1);
 
-    const wire = prepareOpenAIRequest({
-      model,
-      messages: seenMessages[1] as readonly Message[],
-      tools: [],
+    const captured: Record<string, unknown>[] = [];
+    const wireRequester = createOpenAIRequester({
+      clientFactory: () =>
+        ({
+          chat: {
+            completions: {
+              create: (params: Record<string, unknown>) => {
+                captured.push(params);
+                return {
+                  withResponse: async () => ({
+                    data: {
+                      id: 'chatcmpl-1',
+                      choices: [
+                        { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+                      ],
+                    },
+                    response: new Response(null),
+                  }),
+                };
+              },
+            },
+          },
+        }) as never,
     });
-    const wireMessages = wire.params.messages as unknown as Record<string, unknown>[];
+    await wireRequester.generate(
+      { model },
+      { messages: seenMessages[1] as readonly Message[] },
+      { signal: new AbortController().signal },
+    );
+    const wireMessages = captured[0]?.['messages'] as Record<string, unknown>[];
     const toolWire = wireMessages.find((message) => message['role'] === 'tool');
     expect(String(toolWire?.['content'])).not.toContain('video omitted');
     const mediaUser = wireMessages.find(
@@ -224,5 +252,27 @@ describe('media stack wiring', () => {
       type: 'video_url',
       video_url: { url: 'ms://file-1', id: 'file-1' },
     });
+
+    const codecsUrl = 'data:video/mp4;codecs=avc1;base64,AQID';
+    await wireRequester.generate(
+      { model },
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [
+              toCorePart({ type: 'video_url', videoUrl: { url: 'media://ref-1' } }),
+              toCorePart({ type: 'video_url', videoUrl: { url: codecsUrl } }),
+            ],
+          },
+        ],
+      },
+      { signal: new AbortController().signal },
+    );
+    const directMessages = captured.at(-1)?.['messages'] as Record<string, unknown>[];
+    expect(directMessages[0]?.['content']).toEqual([
+      { type: 'video_url', video_url: { url: 'media://ref-1' } },
+      { type: 'video_url', video_url: { url: codecsUrl } },
+    ]);
   });
 });

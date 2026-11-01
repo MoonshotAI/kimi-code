@@ -163,12 +163,19 @@ function mapInteractionEndState(
   kind: TranscriptInteraction['interactionKind'],
   response: unknown,
 ): TranscriptInteraction['state'] {
+  if (isEngineCancellation(response)) return 'cancelled';
   if (kind === 'question') return response === null ? 'dismissed' : 'answered';
   const decision = (response as { decision?: unknown } | null | undefined)?.decision;
   if (decision === 'approved' || decision === 'rejected' || decision === 'cancelled') {
     return decision;
   }
   return 'cancelled';
+}
+
+function isEngineCancellation(response: unknown): boolean {
+  if (typeof response !== 'object' || response === null) return false;
+  const { cancelled, reason } = response as { cancelled?: unknown; reason?: unknown };
+  return cancelled === true && (reason === 'turn_ended' || reason === 'agent_closed');
 }
 
 function mapTurnEndReason(reason: unknown): TranscriptTurn['state'] | undefined {

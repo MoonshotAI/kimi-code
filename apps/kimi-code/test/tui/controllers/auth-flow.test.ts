@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import {
   AuthFlowController,
@@ -42,17 +42,20 @@ function makeHost(
         models: { k2: { provider: 'managed:kimi-code', model: 'kimi-k2', maxContextSize: 200_000 } },
         providers: {},
       })),
+      auth: { getCachedAccessToken: vi.fn(async () => 'test-token') },
     },
     options: { startup: {} },
     setAppState: vi.fn((patch: Record<string, unknown>) => Object.assign(appState, patch)),
     setStartupReady: vi.fn(),
     resetSessionRuntime: vi.fn(),
+    setAuthRequired: vi.fn(),
     setSession: vi.fn(async (next: unknown) => {
       (host as { session: unknown }).session = next;
     }),
     syncRuntimeState: vi.fn(async () => {}),
     appendStartupNotice: vi.fn(),
     hydrateLazyConfigDefaults: vi.fn(async () => {}),
+    waitForSessionAssembly: vi.fn(async () => {}),
     sessionEventHandler: { startSubscription: vi.fn() },
     fetchSessions: vi.fn(async () => {}),
     updateTerminalTitle: vi.fn(),
@@ -69,7 +72,42 @@ function makeHost(
   return { host, appState, session };
 }
 
+beforeEach(() => {
+  resetModelSwitchConfirmConfigCache();
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      new Response(JSON.stringify({ name: 'model_switch_confirm', config: { enable: false, rules: [] } })),
+    ),
+  );
+});
+
+afterEach(() => {
+  resetModelSwitchConfirmConfigCache();
+  vi.unstubAllGlobals();
+});
+
+describe('login-required startup', () => {
+  it('marks the application as blocked until authentication is resolved', () => {
+    const { host } = makeHost();
+    const authFlow = new AuthFlowController(host);
+
+    authFlow.enterLoginRequiredStartupState();
+
+    expect(host.setAuthRequired).toHaveBeenCalledWith(true);
+  });
+});
+
 describe('activateModelAfterLogin', () => {
+  it('clears auth required after a model is activated', async () => {
+    const { host } = makeHost();
+    const authFlow = new AuthFlowController(host);
+
+    await authFlow.activateModelAfterLogin('k2', 'high');
+
+    expect(host.setAuthRequired).toHaveBeenCalledWith(false);
+  });
+
   it('reports an engine-tracked switch when the pick changes the bound alias', async () => {
     const { host, session } = makeHost({ withSession: true });
     const authFlow = new AuthFlowController(host);
@@ -132,24 +170,31 @@ describe('refreshConfigAfterLogin', () => {
 });
 
 describe('refreshConfigAfterLogin with a matching cloud rule', () => {
-  afterEach(() => {
-    resetModelSwitchConfirmConfigCache();
-  });
-
-  async function makeGateHost() {
-    const { host, session, appState } = makeHost({ withSession: true, defaultModel: 'k2' });
+  async function makeGateHost(
+    options: { withSession?: boolean; sessionType?: 'old' | 'new' | 'all' } = {},
+  ) {
+    const withSession = options.withSession ?? true;
+    const sessionType = options.sessionType ?? 'old';
+    const { host, session, appState } = makeHost({ withSession, defaultModel: 'k2' });
     (appState as Record<string, unknown>)['streamingPhase'] = 'idle';
     host.harness.getConfig = vi.fn(async () => ({
       defaultModel: 'k2',
       models: {
         'old-model': { provider: 'managed:kimi-code', model: 'upstream-old', maxContextSize: 200_000 },
-        k2: { provider: 'managed:kimi-code', model: 'upstream-new', maxContextSize: 200_000 },
+        k2: {
+          provider: 'managed:kimi-code',
+          model: 'upstream-new',
+          maxContextSize: 200_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+          defaultEffort: 'high',
+        },
       },
       providers: {},
     }));
-    (host as unknown as { state: Record<string, unknown> }).state['transcriptEntries'] = [
-      { kind: 'user', bullet: 'hi' },
-    ];
+    (host as unknown as { state: Record<string, unknown> }).state['transcriptEntries'] = withSession
+      ? [{ kind: 'user', bullet: 'hi' }]
+      : [];
     const mountEditorReplacement = vi.fn();
     (host as unknown as Record<string, unknown>)['mountEditorReplacement'] = mountEditorReplacement;
     (host as unknown as Record<string, unknown>)['restoreEditor'] = vi.fn();
@@ -157,20 +202,26 @@ describe('refreshConfigAfterLogin with a matching cloud rule', () => {
     (host as unknown as Record<string, unknown>)['showError'] = vi.fn();
     (host as unknown as Record<string, unknown>)['showNotice'] = vi.fn();
     (host as unknown as Record<string, unknown>)['track'] = vi.fn();
+    (host as unknown as Record<string, unknown>)['authFlow'] = new AuthFlowController(host);
     await refreshModelSwitchConfirmConfig({
-      fetchImpl: vi.fn(
-        async () =>
-          new Response(
-            JSON.stringify({
-              name: 'model_switch_confirm',
-              config: {
-                enable: true,
-                rules: [{ from: 'upstream-old', to: 'upstream-new' }],
-              },
-            }),
-          ),
+      fetchImpl: vi.fn(async () =>
+        new Response(JSON.stringify({ name: 'model_switch_confirm', config: { enable: false, rules: [] } })),
       ) as unknown as typeof fetch,
     });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            name: 'model_switch_confirm',
+            config: {
+              enable: true,
+              rules: [{ from: 'upstream-old', to: 'upstream-new', session_type: sessionType }],
+            },
+          }),
+        ),
+      ),
+    );
     return { host, session, appState, mountEditorReplacement };
   }
 
@@ -197,6 +248,26 @@ describe('refreshConfigAfterLogin with a matching cloud rule', () => {
     expect(result).toBe('gated');
     expect(session!.setModel).not.toHaveBeenCalled();
     expect(mountEditorReplacement).toHaveBeenCalledTimes(1);
+  });
+
+  it('hydrates non-model defaults and uses the target effort after a session-less confirmation', async () => {
+    const { host, appState, mountEditorReplacement } = await makeGateHost({
+      withSession: false,
+      sessionType: 'new',
+    });
+
+    const result = await new AuthFlowController(host).refreshConfigAfterLogin();
+
+    expect(result).toBe('gated');
+    expect(host.hydrateLazyConfigDefaults).toHaveBeenCalledWith(false);
+    expect(appState.model).toBe('old-model');
+    const dialog = mountEditorReplacement.mock.calls[0]?.[0] as unknown as {
+      opts: { onSelect: (action: string) => void };
+    };
+    dialog.opts.onSelect('continue');
+    await vi.waitFor(() => {
+      expect(appState).toMatchObject({ model: 'k2', thinkingEffort: 'high', lazySessionThinking: 'high' });
+    });
   });
 
   it('forwards the caller picked effort to the gated dialog', async () => {

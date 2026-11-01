@@ -1,6 +1,5 @@
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ContentPart } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm/usage';
+import type { ContentPart, Message } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm-requester/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
@@ -133,8 +132,10 @@ export interface ContextMessageTiming {
 export type ContextMessage = Message & {
   readonly id?: string;
   readonly providerMessageId?: string;
+  readonly name?: string;
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
+  readonly partial?: boolean;
   toolCallDisplays?: Record<string, ToolInputDisplay>;
   readonly note?: string;
   readonly usage?: TokenUsage;

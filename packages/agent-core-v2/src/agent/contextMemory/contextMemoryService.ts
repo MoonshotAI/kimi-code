@@ -37,6 +37,11 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   ) {
     super();
     this.agentState.contributeState(contextMemoryKey);
+    this._register(
+      this.agentState.onDidChange(contextMemoryKey)(() => {
+        if (this.dispatcher.restorePhase === 'restoring') this.revision += 1;
+      }),
+    );
   }
 
   private get tokenEstimateFns(): TokenEstimate {

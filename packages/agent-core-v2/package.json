@@ -35,6 +35,14 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./remote": {
+      "types": "./src/remote/index.ts",
+      "default": "./src/remote/index.ts"
+    },
+    "./remote/server": {
+      "types": "./src/remote/server/index.ts",
+      "default": "./src/remote/server/index.ts"
+    },
     "./package.json": {
       "types": "./package.json",
       "default": "./package.json"
@@ -65,6 +73,7 @@
     "@moonshot-ai/minidb": "workspace:^",
     "@moonshot-ai/tree-sitter-bash": "workspace:^",
     "@mozilla/readability": "^0.6.0",
+    "@noble/hashes": "^2.0.0",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
     "chokidar": "^4.0.3",
@@ -76,6 +85,7 @@
     "openai": "^6.34.0",
     "pathe": "^2.0.3",
     "picomatch": "^4.0.4",
+    "proper-lockfile": "^4.1.2",
     "radashi": "^12.9.1",
     "retry": "0.13.1",
     "semver": "^7.7.4",
@@ -92,6 +102,7 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/picomatch": "^4.0.3",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/retry": "0.12.0",
     "@types/semver": "^7.7.0",
     "@types/sinon": "^21.0.1",

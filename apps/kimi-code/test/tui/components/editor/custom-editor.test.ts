@@ -1,5 +1,7 @@
 import {
   CURSOR_MARKER,
+  FAKE_CURSOR_END,
+  FAKE_CURSOR_START,
   type AutocompleteItem,
   type AutocompleteProvider,
   type AutocompleteSuggestions,
@@ -688,13 +690,16 @@ describe('CustomEditor shortcut telemetry hooks', () => {
     editor.focused = true;
     const focused = editor.render(40);
     expect(focused.join('\n')).not.toContain(faint);
-    expect(focused[1]).toContain('\u001B[7m');
+    expect(focused[1]).toContain(FAKE_CURSOR_START);
+    expect(focused[1]).toContain(FAKE_CURSOR_END);
 
     editor.focused = false;
     const unfocused = editor.render(40);
     expect(unfocused.every((line) => line.startsWith(faint))).toBe(true);
     expect(unfocused[1]).toContain(`${primary}\u001B[1m/help\u001B[22m${faint}`);
     expect(unfocused[1]).not.toContain('\u001B[7m');
+    expect(unfocused[1]).not.toContain(FAKE_CURSOR_START);
+    expect(unfocused[1]).not.toContain(FAKE_CURSOR_END);
 
     editor.focused = true;
     editor.terminalFocused = false;

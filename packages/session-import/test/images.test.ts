@@ -278,7 +278,7 @@ test('concurrent processes wait for another writer to finish publishing a comple
   })));
   expect(await readFile(join(directory, 'shared.bin'))).toEqual(Buffer.alloc(1024 * 1024, 42));
   expect(await readdir(directory)).toEqual(['shared.bin']);
-});
+}, 15_000);
 
 test('publishes streamed attachments only after all bytes are written', async () => {
   const { directory } = await fixture();

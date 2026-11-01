@@ -6,9 +6,9 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { IFileEditService } from '#/app/edit/fileEdit';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import type { Runtime } from '#/runtime/runtime';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
+import { IAgentPlanService } from '#/features/plan/plan';
+import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -29,60 +29,85 @@ export class EditTool implements IEditTool {
 
   constructor(
     @IFileEditService private readonly editor: IFileEditService,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    @IAgentPlanService private readonly planService?: IAgentPlanService,
   ) {}
 
-  private workspaceConfig(runtime: Runtime): WorkspaceConfig {
-    const view = new RuntimeWorkspaceView(runtime, {
-      workDir: this.workspaceCtx.workDir,
-      additionalDirs: [
-        ...this.workspaceCtx.additionalDirs,
-        ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
-      ],
-    });
+  private workspaceConfig(view: EnvironmentWorkspaceView): WorkspaceConfig {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  resolveExecution(args: EditInput): ToolExecution {
-    const inspected = inspectAgentRuntime(this.runtime);
-    const env = inspected.environment;
-    const workspace = this.workspaceConfig(inspected);
-    const path = resolvePathAccessPath(args.path, {
-      env,
-      workspace,
-      operation: 'write',
-    });
-    return {
-      accesses: ToolAccesses.readWriteFile(path),
-      description: `Editing ${args.path}`,
-      display: {
-        kind: 'file_io',
-        operation: 'edit',
-        path,
-        before: args.old_string,
-        after: args.new_string,
-      },
-      approvalRule: literalRulePattern(this.name, path),
-      matchesRule: (ruleArgs) =>
-        matchesPathRuleSubject(ruleArgs, path, {
-          cwd: workspace.workspaceDir,
-          pathClass: env.pathClass,
-          homeDir: env.homeDir,
+  async resolveExecution(args: EditInput): Promise<ToolExecution> {
+    const planTarget = await this.planService?.resolveFile(args.path);
+    if (planTarget !== undefined) {
+      const path = planTarget.path;
+      return {
+        accesses: ToolAccesses.readWriteFile(path),
+        description: `Editing ${args.path}`,
+        display: { kind: 'file_io', operation: 'edit', path, before: args.old_string, after: args.new_string },
+        approvalRule: literalRulePattern(this.name, path),
+        matchesRule: (ruleArgs) => matchesPathRuleSubject(ruleArgs, path, {
+          cwd: planTarget.environmentPath.dirname(path), pathClass: planTarget.pathClass,
         }),
-      execute: async () => {
-        const lease = this.runtime.acquire(['fs']);
-        try {
-          if (lease.runtime.identity.generation !== inspected.identity.generation) {
-            return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
+        execute: async () => {
+          const current = await this.planService?.resolveFile(path);
+          if (current === undefined || current.path !== path) return { isError: true, output: 'The active plan changed before execution. Retry the tool call.' };
+          return this.execution(args, path, current.fs);
+        },
+      };
+    }
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    try {
+      const inspected = resolutionLease.environment;
+      const expectedGeneration = pinnedGeneration(inspected);
+      const view = new EnvironmentWorkspaceView(inspected, {
+        workDir: this.workspaceCtx.workDir,
+        additionalDirs: [
+          ...this.workspaceCtx.additionalDirs,
+          ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+        ],
+      });
+      const env = view.host;
+      const workspace = this.workspaceConfig(view);
+      const path = resolvePathAccessPath(args.path, {
+        env,
+        workspace,
+        operation: 'write',
+      });
+      return {
+        accesses: ToolAccesses.readWriteFile(path),
+        description: `Editing ${args.path}`,
+        display: {
+          kind: 'file_io',
+          operation: 'edit',
+          path,
+          before: args.old_string,
+          after: args.new_string,
+        },
+        approvalRule: literalRulePattern(this.name, path),
+        matchesRule: (ruleArgs) =>
+          matchesPathRuleSubject(ruleArgs, path, {
+            cwd: workspace.workspaceDir,
+            pathClass: env.pathClass,
+            homeDir: env.homeDir,
+          }),
+        execute: async () => {
+          const lease = await acquireOrWhenReady(this.environment, ['fs']);
+          try {
+            if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
+              return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
+            }
+            return await this.execution(args, path, lease.environment.fs!);
+          } finally {
+            lease.dispose();
           }
-          return await this.execution(args, path, lease.runtime.fs!);
-        } finally {
-          lease.dispose();
-        }
-      },
-    };
+        },
+      };
+    } finally {
+      resolutionLease.dispose();
+    }
   }
 
   private async execution(
@@ -108,12 +133,15 @@ export class EditTool implements IEditTool {
       return { isError: true, output: result.error };
     }
     const word = result.count === 1 ? 'occurrence' : 'occurrences';
-    return { output: `Replaced ${String(result.count)} ${word} in ${args.path}` };
+    return {
+      output: `Replaced ${String(result.count)} ${word} in ${args.path}`,
+      note: '<system>The change is applied; there is no need to Read the file back to check it.</system>',
+    };
   }
 }
 
 registerAgentToolService(IEditTool, EditTool, {
   name: 'Edit',
   domain: 'edit',
-  requiredRuntimeCapabilities: ['fs'],
+  requiredEnvironmentCapabilities: ['fs'],
 });

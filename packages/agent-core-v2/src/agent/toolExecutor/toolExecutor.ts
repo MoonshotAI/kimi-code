@@ -1,7 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Event } from '#/_base/event';
-import type { ToolResult } from '#/tool/toolContract';
+import type { ToolRemind, ToolResult, ToolSource } from '#/tool/toolContract';
 import type {
   BeforeToolExecuteEvent,
   ToolDidExecuteContext,
@@ -11,7 +11,6 @@ import type { ToolCall } from '#human/llm/message';
 import type { OrderedHookSlot } from '#/hooks';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import type { ToolSource } from '#/tool/toolContract';
 
 export interface ToolCallStartedPayload {
   readonly toolCallId: string;
@@ -25,6 +24,7 @@ export interface ToolExecutorExecuteOptions {
   readonly steerSignal?: AbortSignal;
   readonly turnId: number;
   readonly trace?: LLMRequestTrace;
+  readonly remind?: ToolRemind;
   readonly onToolCall?: (payload: ToolCallStartedPayload) => void;
 }
 

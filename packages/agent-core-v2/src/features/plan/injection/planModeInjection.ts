@@ -1,11 +1,12 @@
 import { Service } from '#/_base/di/service';
-import { defineState } from '#/state/state';
-import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentPlanService } from '#/features/plan/plan';
 import type { PlanFilePath } from '#/features/plan/plan';
-import { IAgentStateService } from '#/agent/state/agentState';
+import type { IAgentReminderService } from '#/features/reminder/reminderService';
+import { defineState } from '#/state/state';
+
 import PLAN_MODE_EXIT_REMINDER from './plan-mode-exit-reminder.md?raw';
 import PLAN_MODE_FULL_REMINDER from './plan-mode-full-reminder.md?raw';
 import PLAN_MODE_INLINE_FULL_REMINDER from './plan-mode-inline-full-reminder.md?raw';
@@ -70,7 +71,7 @@ function planModeReminderVariant(
       assistantTurnsSince += 1;
       continue;
     }
-    if (message.role === 'user') {
+    if (message.role === 'user' && message.origin?.kind !== 'injection') {
       return 'full';
     }
   }

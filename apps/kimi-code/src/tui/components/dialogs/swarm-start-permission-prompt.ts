@@ -32,8 +32,7 @@ const OPTIONS: readonly StartPermissionOption<SwarmStartPermissionChoice>[] = [
 ];
 
 const NOTICE_LINES = [
-  'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',
-  'Always Ask mode can block swarm work while agents are running.',
+  'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions, and can block swarm work while agents are running.',
   'You can go back without losing your command.',
 ] as const;
 
