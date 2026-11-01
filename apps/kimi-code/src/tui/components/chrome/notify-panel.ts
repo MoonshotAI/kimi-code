@@ -1,30 +1,53 @@
 /**
- * NotifyPanel — mid-turn updates, shown as a bordered box right above the
- * input area (below the Todo panel), visually matching the editor.
+ * NotifyPanel — mid-turn updates, shown right above the input area.
  *
  * Updates are grouped into CHANNELS, one per agent: the main agent plus one
- * channel per subagent that posts a `NotifyUser` update. The top border is a
- * tab strip of channel labels; `Ctrl+N` focuses the box, then `←`/`→` switch
- * channels and `↑`/`↓` page through the current channel's updates. While the
- * user is not focused, the view follows the latest activity across channels;
- * while focused it stays put and other channels collect an unread dot.
- * Entries render at their natural height — the box adapts instead of
- * truncating. When the turn ends the box folds to a one-line stub until the
- * user focuses it; the host clears the box when the next turn starts.
+ * channel per subagent that posts a `NotifyUser` update. The head is a rule
+ * labelled with the channel tabs and a pager; the body is the current update.
+ * `Ctrl+N` or a click gives the panel keyboard focus, then `←`/`→` switch
+ * channels, `Shift+←`/`→` page through the channel's updates, `↑`/`↓` scroll
+ * a docked body, and `Esc`/`Ctrl+N`/`↵` hand focus back to the input area.
+ * Any other key hands focus back and goes to the editor, or is ignored while
+ * an approval or question stands in for the editor. The wheel scrolls without
+ * taking focus. Until the user picks a channel or page, an unfocused panel
+ * follows the newest update across channels. A manual selection pins that
+ * view; its channel follows its own tail only while unfocused and already on
+ * the latest page. Focus freezes the view, and other channels collect an
+ * unread dot. Clearing for a new turn restores automatic following.
+ *
+ * The panel folds to a one-line stub when the turn ends, and while an
+ * approval or question waits on a short screen. Focus always
+ * unfolds it; once the turn has ended, an ordinary blur keeps it open until
+ * an explicit close. The host clears the panel when the next turn starts.
  */
 
-import type { Component } from '@moonshot-ai/pi-tui';
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@moonshot-ai/pi-tui';
-import chalk from 'chalk';
+import {
+  Key,
+  matchesKey,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+  type Focusable,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
+} from '@moonshot-ai/pi-tui';
 
 import { Markdown } from '#/tui/components/markdown/markdown';
 
 import { MAIN_AGENT_ID } from '#/tui/constant/kimi-tui';
+import { UPDATES_PROMPT_FOLD_SCREEN_ROWS } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
 
-import { wrapWithSideBorders } from '../editor/custom-editor';
+import { normalizeCapsLockedCtrl } from '../editor/custom-editor';
+
+import { DockSection, type DockLayout, type DockPart } from './dock-section';
+
+export interface NotifyPanelLayout extends DockLayout {
+  /** Current terminal height; a short screen folds the panel while a prompt waits. */
+  readonly screenRows?: () => number;
+}
 
 export interface NotifyEntry {
   readonly id: string;
@@ -52,42 +75,82 @@ interface NotifyChannel {
   readonly unreadIds: Set<string>;
 }
 
-function padToVisibleWidth(text: string, target: number): string {
-  const truncated = truncateToWidth(text, target);
-  const gap = target - visibleWidth(truncated);
-  return gap > 0 ? truncated + ' '.repeat(gap) : truncated;
+/** What a click on a head segment does. */
+type HeadAction =
+  | { readonly kind: 'channel'; readonly key: string }
+  | { readonly kind: 'prev' }
+  | { readonly kind: 'next' }
+  | { readonly kind: 'close' }
+  | { readonly kind: 'expand' };
+
+interface HeadSegment {
+  readonly text: string;
+  readonly style: (text: string) => string;
+  readonly action?: HeadAction;
 }
 
-export class NotifyPanelComponent implements Component {
+interface HitTarget {
+  readonly from: number;
+  readonly to: number;
+  readonly action: HeadAction;
+}
+
+const BODY_INDENT = '  ';
+
+export class NotifyPanelComponent extends DockSection implements Focusable {
   private readonly channels: NotifyChannel[] = [];
   /** Key of the channel on display; channels themselves are append-only. */
   private activeKey = MAIN_AGENT_ID;
-  private focused = false;
+  /** Follow updates across channels until the user picks a channel or page. */
+  private followLatest = true;
+  private hasFocus = false;
   private ended = false;
-  /** Turn ended and no one is reading: the box folds to a one-line stub. */
-  private collapsed = false;
+  /** Focused since the turn ended: stays open after an ordinary blur, until an explicit close. */
+  private keptOpen = false;
+  /** Set while an approval or question waits. */
+  private promptPending = false;
+  private readonly screenRows: (() => number) | undefined;
+  private hitTargets: readonly HitTarget[] = [];
+  /**
+   * Hands keyboard focus back to the input area. `key` is a key the panel
+   * does not own, for the editor; undefined when there is nothing to forward.
+   */
+  onReturnFocus: ((key: string | undefined) => void) | undefined;
+
+  constructor(layout?: NotifyPanelLayout) {
+    super(layout);
+    this.screenRows = layout?.screenRows;
+  }
 
   /**
-   * Add or update an entry in a channel. A repeated `id` updates the entry in
-   * place; a new id appends. While unfocused the view jumps to the entry's
-   * channel and its tail — the latest activity always wins; while focused the
-   * user's page stays put and background channels collect unread instead.
+   * Add or update an entry. A repeated `id` updates in place. An unfocused
+   * panel follows activity across channels until a manual selection pins it.
+   * While pinned, the current channel follows its own tail only at the latest
+   * page, and other channels collect unread entries.
    */
   upsert(entry: NotifyEntry): void {
     const ch = this.channelFor(entry);
+    const following =
+      !this.hasFocus && ch.key === this.activeKey && ch.page === ch.entries.length - 1;
     const existing = ch.entries.find((item) => item.id === entry.id);
-    const isNew = existing === undefined;
-    if (existing !== undefined) ch.entries[ch.entries.indexOf(existing)] = entry;
-    else ch.entries.push(entry);
-    if (!this.focused) {
+    if (existing !== undefined) {
+      ch.entries[ch.entries.indexOf(existing)] = entry;
+    } else {
+      ch.entries.push(entry);
+    }
+    if (!this.hasFocus && this.followLatest) {
+      const moved = this.activeKey !== ch.key || ch.page !== ch.entries.length - 1;
       this.activeKey = ch.key;
       ch.page = ch.entries.length - 1;
       ch.unreadIds.clear();
-    } else if (isNew && ch.key !== this.activeKey) {
-      ch.unreadIds.add(entry.id);
+      if (moved) this.scrollBodyToTop();
+    } else if (existing === undefined) {
+      if (ch.key !== this.activeKey) ch.unreadIds.add(entry.id);
+      else if (following) {
+        ch.page = ch.entries.length - 1;
+        this.scrollBodyToTop();
+      }
     }
-    this.ended = false;
-    this.collapsed = false;
   }
 
   remove(id: string): boolean {
@@ -97,21 +160,28 @@ export class NotifyPanelComponent implements Component {
     ch.entries.splice(index, 1);
     if (ch.entries.length === 0) {
       this.channels.splice(this.channels.indexOf(ch), 1);
-      if (ch.key === this.activeKey) this.activeKey = this.channels.at(-1)?.key ?? MAIN_AGENT_ID;
+      if (ch.key === this.activeKey) {
+        this.activeKey = this.channels.at(-1)?.key ?? MAIN_AGENT_ID;
+        this.followLatest = true;
+      }
     } else {
       ch.page = Math.min(ch.page, ch.entries.length - 1);
       ch.unreadIds.delete(id);
     }
-    if (this.channels.length === 0) this.focused = false;
+    if (this.channels.length === 0) {
+      this.followLatest = true;
+      this.dropFocus();
+    }
     return true;
   }
 
-  clear(): void {
+  clearUpdates(): void {
     this.channels.length = 0;
     this.activeKey = MAIN_AGENT_ID;
-    this.focused = false;
+    this.followLatest = true;
+    this.dropFocus();
     this.ended = false;
-    this.collapsed = false;
+    this.keptOpen = false;
   }
 
   isEmpty(): boolean {
@@ -132,44 +202,105 @@ export class NotifyPanelComponent implements Component {
   }
 
   /**
-   * The turn that produced these updates has ended: dim the title and fold
-   * the box down to a one-line stub so the final reply owns the screen. A
-   * focused user keeps reading — the fold lands when they blur.
+   * The turn that produced these updates has ended: fold the panel down to
+   * a one-line stub so the final reply owns the screen. A
+   * focused user keeps reading, and an ordinary blur does not fold it. Only
+   * an explicit Escape, Ctrl+N or close action folds it after the turn ends.
    */
   setEnded(ended: boolean): void {
+    if (ended && !this.ended && this.hasFocus) this.keptOpen = true;
     this.ended = ended;
-    if (ended && !this.focused) this.collapsed = true;
-    if (!ended) this.collapsed = false;
   }
 
-  /** Grab keyboard paging for the box; returns false when there is nothing to read. */
+  /**
+   * An approval or question waits. The panel keeps its size and focus; only
+   * a docked panel on a short screen folds, so the prompt keeps its rows.
+   */
+  setPrompt(pending: boolean): void {
+    this.promptPending = pending;
+  }
+
+  /** Set by the TUI when keyboard focus moves to or away from the panel. */
+  get focused(): boolean {
+    return this.hasFocus;
+  }
+
+  set focused(value: boolean) {
+    if (value) this.focus();
+    else this.blur();
+  }
+
+  /** Whether there is something to read. */
+  canFocus(): boolean {
+    return this.channels.length > 0;
+  }
+
   focus(): boolean {
-    if (this.channels.length === 0) return false;
-    this.focused = true;
-    this.collapsed = false;
+    if (!this.canFocus()) return false;
+    if (this.ended) this.keptOpen = true;
+    this.hasFocus = true;
     this.activeChannel().unreadIds.clear();
     return true;
   }
 
   blur(): boolean {
-    if (!this.focused) return false;
-    this.focused = false;
-    if (this.ended) this.collapsed = true;
+    if (!this.hasFocus) return false;
+    this.hasFocus = false;
     return true;
   }
 
-  isFocused(): boolean {
-    return this.focused;
+  /** Folded to the one-line stub while unfocused: the turn ended, or a prompt needs the rows. */
+  private isFolded(): boolean {
+    return !this.hasFocus && (this.promptNeedsRows() || (this.ended && !this.keptOpen));
+  }
+
+  /** An approval or question waits on a screen too short to also show the docked body. */
+  private promptNeedsRows(): boolean {
+    const screenRows = this.screenRows?.();
+    return this.promptPending && screenRows !== undefined && screenRows < UPDATES_PROMPT_FOLD_SCREEN_ROWS;
+  }
+
+  /** Hand the keyboard back after an explicit close: a panel that folds unfocused folds now. */
+  private close(): void {
+    this.keptOpen = false;
+    if (this.hasFocus) this.onReturnFocus?.(undefined);
+  }
+
+  /** Nothing is left to read: hand the keyboard back to the input area. */
+  private dropFocus(): void {
+    if (!this.hasFocus) return;
+    this.hasFocus = false;
+    this.onReturnFocus?.(undefined);
+  }
+
+  handleInput(data: string): void {
+    const key = normalizeCapsLockedCtrl(data);
+    if (matchesKey(key, Key.escape) || matchesKey(key, Key.ctrl('n'))) {
+      this.close();
+    } else if (matchesKey(key, 'shift+left')) {
+      this.prevPage();
+    } else if (matchesKey(key, 'shift+right')) {
+      this.nextPage();
+    } else if (matchesKey(key, Key.left)) {
+      this.prevChannel();
+    } else if (matchesKey(key, Key.right)) {
+      this.nextChannel();
+    } else if (matchesKey(key, Key.up)) {
+      this.scrollBody(-1);
+    } else if (matchesKey(key, Key.down)) {
+      this.scrollBody(1);
+    } else if (matchesKey(key, Key.enter)) {
+      this.onReturnFocus?.(undefined);
+    } else {
+      this.onReturnFocus?.(data);
+    }
   }
 
   /** Older channel (`←`), landing on its latest update; false on the leftmost tab. */
   prevChannel(): boolean {
     const index = this.activeIndex();
     if (index <= 0) return false;
-    this.activeKey = this.channels[index - 1]!.key;
-    const ch = this.activeChannel();
-    ch.page = ch.entries.length - 1;
-    ch.unreadIds.clear();
+    this.showChannel(this.channels[index - 1]!.key);
     return true;
   }
 
@@ -177,76 +308,259 @@ export class NotifyPanelComponent implements Component {
   nextChannel(): boolean {
     const index = this.activeIndex();
     if (index >= this.channels.length - 1) return false;
-    this.activeKey = this.channels[index + 1]!.key;
-    const ch = this.activeChannel();
-    ch.page = ch.entries.length - 1;
-    ch.unreadIds.clear();
+    this.showChannel(this.channels[index + 1]!.key);
     return true;
   }
 
-  /** Older update in the current channel (`↑`); false on the first page. */
+  /** Older update in the current channel (`Shift+←`); false on the first page. */
   prevPage(): boolean {
     if (this.channels.length === 0) return false;
     const ch = this.activeChannel();
     if (ch.page <= 0) return false;
+    this.followLatest = false;
     ch.page -= 1;
+    this.scrollBodyToTop();
     return true;
   }
 
-  /** Newer update in the current channel (`↓`); false on the latest page. */
+  /** Newer update in the current channel (`Shift+→`); false on the latest page. */
   nextPage(): boolean {
     if (this.channels.length === 0) return false;
     const ch = this.activeChannel();
     if (ch.page >= ch.entries.length - 1) return false;
+    this.followLatest = false;
     ch.page += 1;
+    this.scrollBodyToTop();
     return true;
   }
 
-  invalidate(): void {}
-
-  render(width: number): string[] {
+  protected renderPart(part: DockPart, width: number): string[] {
     if (this.channels.length === 0) return [];
-    const c = currentTheme.palette;
-    const paint = chalk.hex(this.focused ? c.primary : c.border);
+    if (part === 'foot') return [];
+    const folded = this.isFolded();
+    if (part === 'body') return folded ? [] : this.bodyRows(width);
+    const segments = folded ? this.stubSegments(width) : this.headSegments(width);
+    return [this.paintSegments(segments, width)];
+  }
 
-    if (this.collapsed) {
-      return ['', this.stubLine(width)].map((line) => truncateToWidth(line, width));
+  /**
+   * A click anywhere takes keyboard focus, on top of what the clicked head
+   * segment does; `close` only closes. A press on a head segment is claimed
+   * so it does not start a text selection, while the body stays selectable.
+   */
+  protected override handlePartMouse(
+    part: DockPart,
+    event: TuiMouseEvent,
+  ): TuiMouseEventResult | undefined {
+    if (event.button !== 'left') return undefined;
+    const target =
+      part === 'head' && event.y === 0
+        ? this.hitTargets.find((hit) => event.x >= hit.from && event.x < hit.to)
+        : undefined;
+    if (event.type === 'press' || event.type === 'release') {
+      return target === undefined ? undefined : { handled: true };
     }
+    if (event.type !== 'click') return undefined;
+    const takesFocus = target === undefined || this.runAction(target.action);
+    return takesFocus ? { handled: true, focus: true } : { handled: true };
+  }
 
-    const innerWidth = Math.max(1, width - 6);
-    const ch = this.activeChannel();
-    const entry = ch.entries[Math.min(ch.page, ch.entries.length - 1)]!;
+  /** Run a clicked head action; false when it hands the keyboard away rather than taking it. */
+  private runAction(action: HeadAction): boolean {
+    switch (action.kind) {
+      case 'channel':
+        this.showChannel(action.key);
+        return true;
+      case 'prev':
+        this.prevPage();
+        return true;
+      case 'next':
+        this.nextPage();
+        return true;
+      case 'expand':
+        return true;
+      case 'close':
+        this.close();
+        return false;
+    }
+  }
+
+  private showChannel(key: string): void {
+    const ch = this.channels.find((channel) => channel.key === key);
+    if (ch === undefined) return;
+    this.followLatest = false;
+    const moved = this.activeKey !== key || ch.page !== ch.entries.length - 1;
+    this.activeKey = key;
+    ch.page = ch.entries.length - 1;
+    ch.unreadIds.clear();
+    if (moved) this.scrollBodyToTop();
+  }
+
+  private bodyRows(width: number): string[] {
+    const inner = Math.max(1, width - BODY_INDENT.length);
+    const entry = this.currentEntry();
     const titleRows =
       entry.title === undefined
         ? []
-        : [
-            ...wrapTextWithAnsi(entry.title, innerWidth).map((row) =>
-              chalk.hex(c.textStrong).bold(row),
-            ),
-            '',
-          ];
-    const bodyRows = [
-      ...titleRows,
-      ...new Markdown(
-        entry.text.trim(),
-        0,
-        0,
-        createMarkdownTheme(),
-        undefined,
-        createMarkdownOptions(),
-      ).render(innerWidth),
-    ];
+        : wrapTextWithAnsi(entry.title, inner).map((row) => currentTheme.boldFg('textStrong', row));
+    const textRows = new Markdown(
+      entry.text.trim(),
+      0,
+      0,
+      createMarkdownTheme(),
+      undefined,
+      createMarkdownOptions(),
+    ).render(inner);
+    return [...titleRows, ...textRows].map((row) => truncateToWidth(`${BODY_INDENT}${row}`, width));
+  }
 
-    const padRow = (row: string): string => `   ${padToVisibleWidth(row, width - 6)}   `;
-    const emptyRow = ' '.repeat(width);
-    const lines: string[] = ['─'.repeat(width), emptyRow];
-    for (const row of bodyRows) {
-      lines.push(padRow(row));
+  private paintSegments(segments: readonly HeadSegment[], width: number): string {
+    const targets: HitTarget[] = [];
+    let x = 0;
+    let line = '';
+    for (const segment of segments) {
+      const segmentWidth = visibleWidth(segment.text);
+      line += segment.style(segment.text);
+      if (segment.action !== undefined) {
+        targets.push({ from: x, to: x + segmentWidth, action: segment.action });
+      }
+      x += segmentWidth;
     }
-    lines.push(emptyRow, '─'.repeat(width));
+    this.hitTargets = targets.filter((target) => target.to <= width);
+    return truncateToWidth(line, width);
+  }
 
-    const boxed = wrapWithSideBorders(lines, paint, { label: this.title(width) });
-    return ['', ...boxed].map((line) => truncateToWidth(line, width));
+  /**
+   * The expanded head: a rule labelled with the channel tabs, the pager and a
+   * key hint, plus a leave button while focused or kept open. Slims down as
+   * width shrinks: first the hint goes, then the other tabs, then the label
+   * altogether.
+   */
+  private headSegments(width: number): HeadSegment[] {
+    const rule = (text: string) => currentTheme.fg(this.hasFocus ? 'primary' : 'border', text);
+    const dim = (text: string) => currentTheme.fg('textDim', text);
+    const ch = this.activeChannel();
+    const label = (tabs: HeadSegment[], hint: string): HeadSegment[] => {
+      const segments: HeadSegment[] = [{ text: '─ ', style: rule }, ...tabs];
+      if (hint.length > 0) segments.push({ text: ` · ${hint}`, style: dim });
+      segments.push({ text: ' ', style: rule });
+      return segments;
+    };
+    const leave = (text: string): HeadSegment[] => {
+      if (!this.hasFocus && !this.keptOpen) return [];
+      return [
+        { text: ' ', style: rule },
+        { text: this.hasFocus ? text : 'close', style: dim, action: { kind: 'close' } },
+        { text: ' ─', style: rule },
+      ];
+    };
+    const focusedHints: string[] = [];
+    if (this.channels.length > 1) focusedHints.push('←→ agent');
+    if (this.bodyOverflows(width)) focusedHints.push('↑↓ scroll');
+    if (ch.entries.length > 1) focusedHints.push('shift+←→ update');
+    const hint = this.hasFocus ? focusedHints.join(' · ') : 'ctrl+n to browse';
+    const escape = this.ended || this.promptNeedsRows() ? 'esc close' : 'esc back';
+    const candidates: [HeadSegment[], HeadSegment[]][] = [
+      [label(this.tabSegments(true), hint), leave(escape)],
+      [label(this.tabSegments(true), ''), leave(escape)],
+      [label(this.tabSegments(true, [ch]), ''), leave('esc')],
+    ];
+    for (const [left, right] of candidates) {
+      const fill = width - segmentsWidth(left) - segmentsWidth(right);
+      if (fill >= 1) return [...left, { text: '─'.repeat(fill), style: rule }, ...right];
+    }
+    return [{ text: '─'.repeat(width), style: rule }];
+  }
+
+  /**
+   * The collapsed one-liner: an expand marker, the channel tabs, the total
+   * update count, and a preview of the current entry's first line —
+   * everything the user needs to decide whether to open the panel. A click on
+   * a tab opens that channel; anywhere else opens the current one.
+   */
+  private stubSegments(width: number): HeadSegment[] {
+    const dim = (text: string) => currentTheme.fg('textDim', text);
+    const expand: HeadAction = { kind: 'expand' };
+    const marker: HeadSegment = {
+      text: ' ▸ ',
+      style: (text) => currentTheme.fg('primary', text),
+      action: expand,
+    };
+    const total = this.channels.reduce((sum, ch) => sum + ch.entries.length, 0);
+    const count = `${String(total)} ${total === 1 ? 'update' : 'updates'}`;
+    const tail: HeadSegment = { text: ' · ctrl+n to expand', style: dim, action: expand };
+    const head = [marker, ...this.tabSegments(), { text: ` · ${count}`, style: dim, action: expand }];
+    const preview = this.previewText(this.currentEntry());
+    if (preview !== undefined) {
+      const budget = width - segmentsWidth(head) - segmentsWidth([tail]) - 3;
+      if (budget >= 12) {
+        return [...head, { text: ` · ${truncateToWidth(preview, budget)}`, style: dim, action: expand }, tail];
+      }
+    }
+    if (segmentsWidth(head) + segmentsWidth([tail]) <= width) return [...head, tail];
+    return [marker, { text: `${count} · ctrl+n to expand`, style: dim, action: expand }];
+  }
+
+  private tabSegments(
+    withPager = false,
+    channels: readonly NotifyChannel[] = this.channels,
+  ): HeadSegment[] {
+    const segments: HeadSegment[] = [];
+    for (const [index, channel] of channels.entries()) {
+      if (index > 0) segments.push({ text: ' · ', style: (text) => currentTheme.fg('textDim', text) });
+      const active = channel.key === this.activeKey;
+      segments.push(this.tabSegment(channel, active));
+      if (withPager && active && channel.entries.length > 1) {
+        const strong = (text: string) =>
+          this.hasFocus ? currentTheme.boldFg('primary', text) : currentTheme.boldFg('textDim', text);
+        segments.push(
+          { text: ' ', style: strong },
+          { text: '<', style: strong, action: { kind: 'prev' } },
+          { text: ` ${String(channel.page + 1)}/${String(channel.entries.length)} `, style: strong },
+          { text: '>', style: strong, action: { kind: 'next' } },
+        );
+      }
+    }
+    return segments;
+  }
+
+  private tabSegment(channel: NotifyChannel, active: boolean): HeadSegment {
+    const action: HeadAction = { kind: 'channel', key: channel.key };
+    if (active) {
+      return {
+        text: channel.label,
+        style: (text) =>
+          this.hasFocus ? currentTheme.boldFg('primary', text) : currentTheme.boldFg('textDim', text),
+        action,
+      };
+    }
+    if (channel.unreadIds.size === 0) {
+      return { text: channel.label, style: (text) => currentTheme.fg('textDim', text), action };
+    }
+    return {
+      text: `${channel.label}●`,
+      style: (text) =>
+        currentTheme.fg('textDim', text.slice(0, -1)) + currentTheme.fg('primary', '●'),
+      action,
+    };
+  }
+
+  /** An entry's title, else its first non-empty line stripped of list/bold markers. */
+  private previewText(entry: NotifyEntry): string | undefined {
+    if (entry.title !== undefined) return entry.title;
+    const firstLine = entry.text
+      .trim()
+      .split('\n')
+      .find((line) => line.trim().length > 0)
+      ?.trim()
+      .replace(/^[-*#>\s]+/, '')
+      .replaceAll('**', '');
+    return firstLine === undefined || firstLine.length === 0 ? undefined : firstLine;
+  }
+
+  private currentEntry(): NotifyEntry {
+    const ch = this.activeChannel();
+    return ch.entries[Math.min(ch.page, ch.entries.length - 1)]!;
   }
 
   private channelFor(entry: NotifyEntry): NotifyChannel {
@@ -260,17 +574,18 @@ export class NotifyPanelComponent implements Component {
       page: 0,
       unreadIds: new Set(),
     };
+    if (this.channels.length === 0) this.activeKey = key;
     if (key === MAIN_AGENT_ID) this.channels.unshift(created);
     else this.channels.push(created);
     return created;
   }
 
-  /** Dedup identical labels as `explore`, `explore(2)`, `explore(3)`, … */
+  /** Dedup identical labels as `explore`, `explore_2`, `explore_3`, … */
   private labelFor(base: string): string {
     if (!this.channels.some((ch) => ch.label === base)) return base;
     let n = 2;
-    while (this.channels.some((ch) => ch.label === `${base}(${String(n)})`)) n += 1;
-    return `${base}(${String(n)})`;
+    while (this.channels.some((ch) => ch.label === `${base}_${String(n)}`)) n += 1;
+    return `${base}_${String(n)}`;
   }
 
   private activeIndex(): number {
@@ -281,73 +596,8 @@ export class NotifyPanelComponent implements Component {
   private activeChannel(): NotifyChannel {
     return this.channels[this.activeIndex()]!;
   }
+}
 
-  /**
-   * The collapsed one-liner: an expand hint marker, the channel tabs, the
-   * total update count, and a preview of the current entry's first line —
-   * everything the user needs to decide whether to open the box.
-   */
-  private stubLine(width: number): string {
-    const c = currentTheme.palette;
-    const dim = chalk.hex(c.textDim);
-    const marker = chalk.hex(c.primary)('▸');
-    const tabs = this.channels
-      .map((channel) => this.renderTab(channel, channel.key === this.activeKey))
-      .join(dim(' · '));
-    const total = this.channels.reduce((sum, ch) => sum + ch.entries.length, 0);
-    const noun = total === 1 ? 'update' : 'updates';
-    const head = ` ${marker} ${tabs} ${dim(`· ${String(total)} ${noun}`)}`;
-    const tail = ` ${dim('· ctrl+n')}`;
-    const preview = this.stubPreviewText();
-    if (preview !== undefined) {
-      const budget = width - visibleWidth(head) - visibleWidth(tail) - 3;
-      if (budget >= 12) return `${head} ${dim('·')} ${dim(truncateToWidth(preview, budget))}${tail}`;
-    }
-    if (visibleWidth(head) + visibleWidth(tail) <= width) return `${head}${tail}`;
-    return ` ${marker} ${dim(`${String(total)} ${noun} · ctrl+n`)}`;
-  }
-
-  /** The current entry's title, else its first non-empty line stripped of list/bold markers. */
-  private stubPreviewText(): string | undefined {
-    const ch = this.activeChannel();
-    const entry = ch.entries[Math.min(ch.page, ch.entries.length - 1)];
-    if (entry === undefined) return undefined;
-    if (entry.title !== undefined) return entry.title;
-    const firstLine = entry.text
-      .trim()
-      .split('\n')
-      .find((line) => line.trim().length > 0)
-      ?.trim()
-      .replace(/^[-*#>\s]+/, '')
-      .replaceAll('**', '');
-    return firstLine === undefined || firstLine.length === 0 ? undefined : firstLine;
-  }
-
-  /**
-   * The styled top-border label: a tab strip of channel labels (active tab
-   * highlighted, background channels with unread dotted), then the page
-   * indicator and key hints, slimmed down progressively as width shrinks.
-   */
-  private title(width: number): string | undefined {
-    const c = currentTheme.palette;
-    const ch = this.activeChannel();
-    const page = `${String(ch.page + 1)}/${String(ch.entries.length)}`;
-    const state = this.ended ? ' · turn ended' : '';
-    const hint = this.focused ? ' · ← → agent · ↑ ↓ update · esc close' : ' · ctrl+n page';
-    const paintTitle = this.ended ? chalk.hex(c.textDim).bold : chalk.hex(c.primary).bold;
-    const tabs = this.channels
-      .map((channel) => this.renderTab(channel, channel.key === this.activeKey))
-      .join(chalk.hex(c.textDim)(' · '));
-    const full = ` ${tabs} · Updates ${page}${state}${hint} `;
-    if (visibleWidth(full) <= width - 4) return paintTitle(full);
-    const compact = ` ${ch.label} · Updates ${page}${state} `;
-    return visibleWidth(compact) <= width - 4 ? paintTitle(compact) : undefined;
-  }
-
-  private renderTab(channel: NotifyChannel, active: boolean): string {
-    const c = currentTheme.palette;
-    if (active) return chalk.hex(c.primary).bold(channel.label);
-    const label = channel.unreadIds.size > 0 ? `${channel.label}●` : channel.label;
-    return channel.unreadIds.size > 0 ? chalk.hex(c.primary)(label) : chalk.hex(c.textDim)(label);
-  }
+function segmentsWidth(segments: readonly HeadSegment[]): number {
+  return segments.reduce((sum, segment) => sum + visibleWidth(segment.text), 0);
 }

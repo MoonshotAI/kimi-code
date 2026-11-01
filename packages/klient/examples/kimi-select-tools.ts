@@ -61,18 +61,35 @@ import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-cor
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { renderLoadableToolsAnnouncement } from '@moonshot-ai/agent-core-v2/agent/toolSelect/dynamicTools';
 import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/capability';
-import type { Message } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
-import type { ToolDescription as Tool } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { Message, ToolDescription as Tool } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import { createStaticCredentialProvider } from '@moonshot-ai/agent-core-v2/human/credentials/credentials';
 import type { Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import type {
-  ModelRequestInput,
-  ModelRequester,
-} from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester';
-import { ModelRequesterImpl } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester-impl';
+import {
+  generateModel,
+  type ModelRequestEvent,
+  type ModelRequestInput,
+  type ModelRequestParams,
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
 import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocolAdapterRegistry';
+
+interface Requester {
+  readonly model: Model;
+  request(
+    input: ModelRequestInput,
+    signal?: AbortSignal,
+    params?: ModelRequestParams,
+  ): AsyncIterable<ModelRequestEvent>;
+}
+
+function createRequester(model: Model, registry: IProtocolAdapterRegistry): Requester {
+  return {
+    model,
+    request: (input, signal, params) =>
+      generateModel(registry.request(model, params), input, signal, params),
+  };
+}
 
 function assert(cond: boolean, message: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${message}`);
@@ -179,15 +196,13 @@ const SYSTEM_PROMPT =
 const userMessage = (text: string): Message => ({
   role: 'user',
   content: [{ type: 'text', text }],
-  toolCalls: [],
 });
 
 /** The schema-injection message the engine appends after a successful load. */
 const toolDeclarationMessage = (tools: readonly Tool[]): Message => ({
   role: 'system',
   content: [],
-  toolCalls: [],
-  tools,
+  tools: [...tools],
 });
 
 const announcementMessage = (names: readonly string[]): Message => ({
@@ -195,7 +210,6 @@ const announcementMessage = (names: readonly string[]): Message => ({
   content: [
     { type: 'text', text: renderLoadableToolsAnnouncement(names, []) },
   ],
-  toolCalls: [],
 });
 
 // ---------------------------------------------------------------------------
@@ -209,7 +223,7 @@ interface Collected {
 }
 
 async function collect(
-  requester: ModelRequester,
+  requester: Requester,
   input: ModelRequestInput,
   signal?: AbortSignal,
 ): Promise<Collected> {
@@ -285,7 +299,7 @@ async function probeWireEncoding(): Promise<void> {
   const port = (server.address() as AddressInfo).port;
 
   const registry = new ProtocolAdapterRegistry();
-  const makeRequester = (providerType?: string): ModelRequester => {
+  const makeRequester = (providerType?: string): Requester => {
     const model: Model = {
       id: 'probe',
       name: 'probe-model',
@@ -300,7 +314,7 @@ async function probeWireEncoding(): Promise<void> {
       providerName: providerType ?? 'probe',
       credentialProvider: createStaticCredentialProvider('sk-probe'),
     };
-    return new ModelRequesterImpl(model, registry);
+    return createRequester(model, registry);
   };
 
   const input: ModelRequestInput = {
@@ -404,7 +418,7 @@ const SCENARIOS: readonly Scenario[] = [
   },
 ];
 
-async function step1Select(requester: ModelRequester, scenario: Scenario): Promise<Step1Outcome> {
+async function step1Select(requester: Requester, scenario: Scenario): Promise<Step1Outcome> {
   try {
     const result = await withTimeout(
       collect(requester, {
@@ -443,7 +457,7 @@ async function step1Select(requester: ModelRequester, scenario: Scenario): Promi
 }
 
 async function step2UseLoadedTool(
-  requester: ModelRequester,
+  requester: Requester,
   step1: Extract<Step1Outcome, { kind: 'selected' }>,
   scenario: Scenario,
 ): Promise<Step2Outcome> {
@@ -477,8 +491,7 @@ async function step2UseLoadedTool(
         role: 'tool',
         toolCallId: step1.callId,
         content: [{ type: 'text', text: `Loaded: ${loadName}` }],
-        toolCalls: [],
-      },
+            },
       // The schema-injection message — the exact wire shape whose acceptance
       // this probe measures. Dropped entirely in the isolation retry below.
       ...(withDeclaration ? [toolDeclarationMessage([loadedTool])] : []),
@@ -524,6 +537,7 @@ async function probeLiveKimiProviders(): Promise<void> {
   try {
     await app.accessor.get(IConfigService).ready;
     const catalog = app.accessor.get(IModelCatalog);
+    const registry = app.accessor.get(IProtocolAdapterRegistry);
 
     const filter = process.env['KIMI_SELECT_TOOLS_MODELS']?.split(',').map((s) => s.trim());
     const models = await catalog.listModels();
@@ -541,7 +555,7 @@ async function probeLiveKimiProviders(): Promise<void> {
     for (const m of targets) {
       const model = catalog.get(m.model);
       const declared = model.capabilities.dynamically_loaded_tools === true;
-      const requester = catalog.getRequester(m.model);
+      const requester = createRequester(model, registry);
 
       for (const scenario of SCENARIOS) {
         const startedAt = Date.now();
@@ -692,7 +706,7 @@ async function probeTappedContext(): Promise<void> {
       const port = (server.address() as AddressInfo).port;
 
       try {
-        const tapped = new ModelRequesterImpl(
+        const tapped = createRequester(
           { ...model, baseUrl: `http://127.0.0.1:${String(port)}` },
           registry,
         );

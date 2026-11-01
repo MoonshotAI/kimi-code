@@ -5,28 +5,29 @@ import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager, type ISessionManager as SessionManager } from '#/app/sessionManager/sessionManager';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, isError2 } from '#/errors';
-import type { Program } from '#/program/program';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ResumeSessionOptions } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IWorkspaceInstanceManager, type WorkspaceInstanceLease } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 export async function programForSession(
   accessor: ServicesAccessor,
   sessionId: string,
-): Promise<Program | undefined> {
+): Promise<WorkspaceInstanceLease | undefined> {
   const manager = accessor.get(ISessionManager);
   const live = manager.get(sessionId);
   if (live !== undefined) {
-    const workspaceId = live.accessor.get(ISessionContext).workspaceId;
-    return accessor.get(IWorkspaceInstanceManager).get(workspaceId)?.program;
+    const context = live.accessor.get(ISessionContext);
+    return accessor.get(IWorkspaceInstanceManager).acquire({
+      workspaceId: context.workspaceId,
+      root: context.cwd,
+    });
   }
   const summary = await accessor.get(ISessionIndex).get(sessionId);
   if (summary === undefined) return undefined;
-  const workspace = await accessor.get(IWorkspaceInstanceManager).getOrCreate({
+  return accessor.get(IWorkspaceInstanceManager).acquire({
     workspaceId: summary.workspaceId,
     root: summary.cwd,
   });
-  return workspace.program;
 }
 
 export async function resumeSessionById(

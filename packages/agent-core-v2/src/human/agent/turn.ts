@@ -1,8 +1,8 @@
 import { assign, fromPromise, raise, setup } from '#/xstate2';
 
-import { emptyResponseError } from '#/llm/empty-response';
-import type { LlmErrorMessage } from '#/llm/errors';
-import { NO_FINISH, type FinishInfo } from '#/llm/finish-reason';
+import { emptyResponseError } from '#/llm-requester/empty-response';
+import type { LlmErrorMessage } from '#/llm-requester/errors';
+import { NO_FINISH, type FinishInfo } from '#/llm-requester/finish-reason';
 import {
   createMessageAccumulator,
   createToolMessage,
@@ -15,15 +15,15 @@ import {
   type ToolMessage,
   type UserMessage,
 } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import { createRequestActor, type LlmEvent, type MessageResolver } from '#/llm/requester/actor';
+import type { LlmModel } from '#/llm-requester/model';
+import { createRequestActor, type LlmEvent, type MessageResolver } from '#/llm-requester/actor';
 import type {
   LlmRecovery,
   LlmRecoveryContext,
   LlmRecoveryProposal,
   LlmRecoveryRecord,
-} from '#/llm/requester/recovery';
-import type { LlmRequestConfig, LlmRequester } from '#/llm/requester/requester';
+} from '#/llm-requester/recovery';
+import type { LlmRequestConfig, LlmRequester } from '#/llm-requester/requester';
 import {
   readRetryAfterMs,
   resolveMaxAttempts,
@@ -31,9 +31,8 @@ import {
   retryErrorFields,
   shouldRetry,
   type LlmRetryOptions,
-} from '#/llm/requester/retry';
-import { ToolCallIdNormalizer } from '#/llm/toolCallIdNormalizer';
-import { emptyUsage, type TokenUsage } from '#/llm/usage';
+} from '#/llm-requester/retry';
+import { emptyUsage, type TokenUsage } from '#/llm-requester/usage';
 import type { ToolResult } from '#/tool/executor';
 import type { ToolOutput } from '#/tool/machine';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
@@ -109,7 +108,6 @@ export function toInputMessages(history: readonly HistoryMessage[]): Message[] {
 
 export interface HistoryAccumulator {
   push(part: StreamedMessagePart): StreamedMessagePart;
-  rollback(): void;
   pushUsage(usage: Partial<TokenUsage>): void;
   pushHeaders(headers: Record<string, string>): void;
   pushFinish(finish: FinishInfo): void;
@@ -117,31 +115,16 @@ export interface HistoryAccumulator {
   finish(meta?: AssistantMetaInput): AssistantEntry;
 }
 
-export function createHistoryAccumulator(
-  meta?: AssistantMetaInput,
-  toolCallIds?: ToolCallIdNormalizer,
-): HistoryAccumulator {
+export function createHistoryAccumulator(meta?: AssistantMetaInput): HistoryAccumulator {
   const inner = createMessageAccumulator();
-  const response = toolCallIds?.beginResponse();
   let usage: TokenUsage | undefined;
   let headers: Record<string, string> | undefined;
   let finish: FinishInfo | undefined;
   let messageId: string | undefined;
   return {
     push: (part) => {
-      if (response !== undefined && part.type === 'function') {
-        const id = response.remapStreamedId(part.id, part._streamIndex);
-        if (id !== part.id) {
-          const remapped = { ...part, id, rawId: part.rawId ?? part.id };
-          inner.push(remapped);
-          return remapped;
-        }
-      }
       inner.push(part);
       return part;
-    },
-    rollback: () => {
-      response?.rollback();
     },
     pushUsage: (value) => {
       usage = {
@@ -222,7 +205,6 @@ export interface TurnMachineContext {
   input: TurnInput;
   produced: HistoryMessage[];
   accumulator: HistoryAccumulator;
-  toolCallIds: ToolCallIdNormalizer;
   llmScope: AbortScope;
   pendingToolCalls: ToolCall[];
   outcomes: Record<string, ToolOutput>;
@@ -399,11 +381,7 @@ export function createTurnMachine(
         self._parent?.send(params);
       },
       discardAttemptStream: ({ context }) => {
-        context.accumulator.rollback();
-        context.accumulator = createHistoryAccumulator(
-          modelMeta(context.input.request.model),
-          context.toolCallIds,
-        );
+        context.accumulator = createHistoryAccumulator(modelMeta(context.input.request.model));
       },
       salvageAborted: assign(({ context }) => {
         const partial = context.accumulator.finish({ source: 'salvaged' });
@@ -428,13 +406,10 @@ export function createTurnMachine(
     id: 'turn',
     initial: 'gating',
     context: ({ input }) => {
-      const toolCallIds = new ToolCallIdNormalizer();
-      toolCallIds.seedFrom(toInputMessages(input.history));
       return {
         input,
         produced: [],
-        accumulator: createHistoryAccumulator(modelMeta(input.request.model), toolCallIds),
-        toolCallIds,
+        accumulator: createHistoryAccumulator(modelMeta(input.request.model)),
         llmScope: createAbortScope(),
         pendingToolCalls: [],
         outcomes: {},
@@ -477,7 +452,7 @@ export function createTurnMachine(
         entry: [
           assign({
             accumulator: ({ context }) =>
-              createHistoryAccumulator(modelMeta(context.input.request.model), context.toolCallIds),
+              createHistoryAccumulator(modelMeta(context.input.request.model)),
             llmScope: ({ context }) =>
               context.input.parentSignal !== undefined
                 ? withAbort(context.input.parentSignal)
@@ -647,8 +622,7 @@ export function createTurnMachine(
               target: 'thinking',
               reenter: true,
               actions: [
-                ({ context, event }) => {
-                  context.accumulator.rollback();
+                ({ event }) => {
                   event.proposal?.beforeNextAttempt?.();
                 },
                 assign(({ context, event }) => {
@@ -677,9 +651,6 @@ export function createTurnMachine(
                 shouldRetry(retry, context.attempt, event.cause.error),
               target: 'retrying',
               actions: [
-                ({ context }) => {
-                  context.accumulator.rollback();
-                },
                 assign({
                   delayMs: ({ context, event }) =>
                     readRetryAfterMs(event.cause.error) ??

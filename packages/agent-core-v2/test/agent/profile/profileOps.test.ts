@@ -105,15 +105,6 @@ function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): I
       if (model === undefined) throw new Error(`Unknown model: ${id}`);
       return model;
     },
-    getRequester: () => {
-      throw new Error('not exercised');
-    },
-    generate: () => {
-      throw new Error('not exercised');
-    },
-    ping: () => {
-      throw new Error('not exercised');
-    },
     findByName: () => [],
     listModels: () => {
       throw new Error('not exercised');

@@ -93,8 +93,14 @@ describe('server-v2 /api/v1 skills', () => {
     if (agents.handleOf('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
-  async function registerWorkspace(root: string): Promise<string> {
-    const { body } = await postJson<{ id: string }>('/api/v1/workspaces', { root });
+  async function registerWorkspace(
+    root: string,
+    additionalDirs?: readonly string[],
+  ): Promise<string> {
+    const { body } = await postJson<{ id: string }>('/api/v1/workspaces', {
+      root,
+      additional_dirs: additionalDirs,
+    });
     expect(body.code).toBe(0);
     return body.data.id;
   }
@@ -531,6 +537,53 @@ describe('server-v2 /api/v1 skills', () => {
       const sessSkills = listSkillsResponseSchema.parse(sessRes.body.data).skills;
       const names = (xs: readonly { name: string }[]) => xs.map((s) => s.name).toSorted();
       expect(names(wsSkills)).toEqual(names(sessSkills));
+    });
+
+    it('lists and activates additional-dir skills with primary winning collisions', async () => {
+      const primary = await makeWorkspaceDir();
+      const secondary = await makeWorkspaceDir();
+      await seedProjectSkill(primary, 'e2e-primary');
+      await seedProjectSkill(primary, 'e2e-shared');
+      await seedProjectSkill(secondary, 'e2e-secondary');
+      await seedProjectSkill(secondary, 'e2e-shared');
+      const wid = await registerWorkspace(primary, [secondary]);
+
+      const workspaceResponse = await getJson<{ skills: SkillWire[] }>(
+        `/api/v1/workspaces/${wid}/skills`,
+      );
+      expect(workspaceResponse.body.code).toBe(0);
+      const workspaceSkills = listSkillsResponseSchema.parse(workspaceResponse.body.data).skills;
+      expect(workspaceSkills.some((skill) => skill.name === 'e2e-primary')).toBe(true);
+      expect(workspaceSkills.some((skill) => skill.name === 'e2e-secondary')).toBe(true);
+      expect(workspaceSkills.find((skill) => skill.name === 'e2e-shared')?.path).toContain(primary);
+
+      const created = await postJson<{ id: string }>('/api/v1/sessions', { workspace_id: wid });
+      expect(created.body.code).toBe(0);
+      const sid = created.body.data.id;
+      const sessionResponse = await getJson<{ skills: SkillWire[] }>(
+        `/api/v1/sessions/${sid}/skills`,
+      );
+      const sessionSkills = listSkillsResponseSchema.parse(sessionResponse.body.data).skills;
+      expect(sessionSkills.map((skill) => skill.name)).toEqual(
+        workspaceSkills.map((skill) => skill.name),
+      );
+
+      await createMainAgent(sid);
+      const activated = await postJson<{ activated: boolean; skill_name: string }>(
+        `/api/v1/sessions/${sid}/skills/e2e-secondary:activate`,
+        { args: 'additional args' },
+      );
+      expect(activated.body.code).toBe(0);
+      const messages = await getJson<{
+        items: { role: string; content: { type: string; text?: string }[] }[];
+      }>(`/api/v1/sessions/${sid}/messages`);
+      const input = messages.body.data.items.find(
+        (message) =>
+          message.role === 'user' &&
+          message.content.some((part) => part.text?.includes('User activated the skill')),
+      );
+      const modelText = input?.content.map((part) => part.text ?? '').join('\n') ?? '';
+      expect(modelText).toContain('Say hello to additional args.');
     });
 
     it('honors explicit skill dirs in workspace preview', async () => {

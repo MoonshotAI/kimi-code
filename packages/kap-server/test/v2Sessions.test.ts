@@ -150,6 +150,7 @@ const gitStub: IGitService = {
       pullRequest: preset.pullRequest,
     };
   },
+  pullRequest: async (cwd: string) => gitState.responses.get(cwd)?.pullRequest ?? null,
   diff: async () => {
     throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, 'not used in these tests');
   },

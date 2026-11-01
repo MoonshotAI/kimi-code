@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import {
+  codePointBoundaryStart,
+  sliceOnCodePointBoundary,
+} from '#/_base/text/code-points';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
@@ -56,7 +60,7 @@ export class ToolResultTruncationService implements IAgentToolResultTruncationSe
     const retainedText =
       rawText.length <= DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS
         ? rawText
-        : rawText.slice(0, DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS);
+        : sliceOnCodePointBoundary(rawText, DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS);
     const shaped = shapeOutput(result.output, TOOL_RESULT_MAX_LINE_CHARS);
     const totalChars = spill?.totalChars ?? rawText.length;
     const suffix = spill?.suffix ?? '';
@@ -183,7 +187,7 @@ function shapeStringPerLine(
       const lineBreak = /[\r\n]+$/.exec(line)?.[0] ?? '';
       const suffix = TRUNCATION_MARKER + lineBreak;
       const effectiveMaxLength = Math.max(maxLineChars, suffix.length);
-      line = line.slice(0, effectiveMaxLength - suffix.length) + suffix;
+      line = sliceOnCodePointBoundary(line, effectiveMaxLength - suffix.length) + suffix;
       truncated = true;
     }
     out.push(line);
@@ -306,8 +310,11 @@ function renderUnpersistedToolResult(
 }
 
 function appendPreviewLines(lines: string[], previewText: string): void {
-  const head = previewText.slice(0, TOOL_RESULT_PREVIEW_HEAD_CHARS);
-  const tailStart = Math.max(head.length, previewText.length - TOOL_RESULT_PREVIEW_TAIL_CHARS);
+  const head = sliceOnCodePointBoundary(previewText, TOOL_RESULT_PREVIEW_HEAD_CHARS);
+  const tailStart = codePointBoundaryStart(
+    previewText,
+    Math.max(head.length, previewText.length - TOOL_RESULT_PREVIEW_TAIL_CHARS),
+  );
   const tail = previewText.slice(tailStart);
   lines.push('', `[preview: chars [0, ${String(head.length)})]`, head);
   if (tail !== '') {
@@ -329,8 +336,8 @@ function dropInlineSuffixLines(suffix: string, shapedText: string): string {
 
 function safeToolResultFileStem(toolName: string, toolCallId: string): string {
   const label = `${toolName}-${toolCallId}`
-    .replace(/[^a-zA-Z0-9._-]+/g, '_')
-    .replace(/^_+|_+$/g, '')
+    .replaceAll(/[^a-zA-Z0-9._-]+/g, '_')
+    .replaceAll(/^_+|_+$/g, '')
     .slice(0, 80);
   return label || 'tool-result';
 }

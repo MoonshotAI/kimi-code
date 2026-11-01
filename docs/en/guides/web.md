@@ -72,7 +72,7 @@ How the two sides compare:
 | Background tasks | ✓ | ✓ | Web shows live progress in the task panel |
 | Files and changes | ✓ | ✓ | Web has a changed-files summary card and per-file diffs |
 | Settings | ✓ | ✓ | Web adds a settings UI (providers, account & usage, Lab experiments) |
-| Global search | — | ✓ | Web searches across sessions and workspaces |
+| Global search | — | ✓ | Set `[database] global_search = true` in `config.toml` first; Web then searches across sessions and workspaces |
 | Mobile layout | — | ✓ | With LAN sharing on (`--host`), it works in phone browsers on the same network |
 
 </div>

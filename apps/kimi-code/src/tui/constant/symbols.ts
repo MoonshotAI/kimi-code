@@ -7,6 +7,10 @@ export const USER_MESSAGE_BULLET = '❯ ';
 export const SUCCESS_MARK = '✓ ';
 export const FAILURE_MARK = '✗ ';
 
+// Notification badge, including its horizontal padding.
+export const NOTIFY_USER_MARK = ' Update ';
+export const NOTIFY_USER_MARK_FOREGROUND = '#FFFFFF';
+
 // Shared selector markers — keep every list picker visually consistent.
 // SELECT_POINTER marks the highlighted row; CURRENT_MARK is appended to the
 // row that is the currently-active value. See .agents/skills/write-tui/DESIGN.md.

@@ -72,6 +72,21 @@ describe('context-projector', () => {
         raw: {},
       },
       {
+        lineNo: 4.5,
+        data: {
+          type: 'context.append_loop_event' as const,
+          event: {
+            type: 'content.part' as const,
+            uuid: 'c2', turnId: 't1', step: 0, stepUuid: 's1',
+            part: {
+              type: 'image_url' as const,
+              imageUrl: { url: 'data:image/png;base64,AAA' },
+            },
+          },
+        },
+        raw: {},
+      },
+      {
         lineNo: 5,
         data: {
           type: 'context.append_loop_event' as const,
@@ -111,9 +126,13 @@ describe('context-projector', () => {
 
     expect(proj.messages[0]!.message.role).toBe('user');
 
-    expect(proj.messages[1]!.message.role).toBe('assistant');
-    expect(proj.messages[1]!.message.content).toEqual([{ type: 'text', text: 'Let me check' }]);
-    expect(proj.messages[1]!.message.toolCalls).toEqual([
+    const assistant = proj.messages[1]!.message;
+    if (assistant.role !== 'assistant') throw new Error('expected assistant message');
+    expect(assistant.content).toEqual([
+      { type: 'text', text: 'Let me check' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+    ]);
+    expect(assistant.toolCalls).toEqual([
       { type: 'function', id: 'call_1', name: 'LS', arguments: '{"path":"/"}' },
     ]);
     // The assistant message was opened by step.begin (line 3), so its
@@ -122,9 +141,10 @@ describe('context-projector', () => {
     expect(proj.messages[1]!.lineNo).toBe(3);
     expect(proj.messages[1]!.toolStepUuids).toEqual(['s1']);
 
-    expect(proj.messages[2]!.message.role).toBe('tool');
-    expect(proj.messages[2]!.message.toolCallId).toBe('call_1');
-    expect(proj.messages[2]!.message.content).toEqual([
+    const tool = proj.messages[2]!.message;
+    if (tool.role !== 'tool') throw new Error('expected tool message');
+    expect(tool.toolCallId).toBe('call_1');
+    expect(tool.content).toEqual([
       { type: 'text', text: 'file1.txt\nfile2.txt' },
     ]);
   });
@@ -304,7 +324,7 @@ describe('context-projector', () => {
 
   it('tool.result: error string output is prefixed with the error sentinel', () => {
     const msg = projectToolResult({ output: 'boom: file not found', isError: true });
-    expect(msg.role).toBe('tool');
+    if (msg.role !== 'tool') throw new Error('expected tool message');
     expect(msg.toolCallId).toBe('call_1');
     expect(msg.isError).toBe(true);
     expect(msg.content).toEqual([
@@ -1224,7 +1244,7 @@ describe('context-projector', () => {
       { lineNo: 5, data: { type: 'task.started' as const, agentId: 'main', info: { taskId: 'bash-abc12345', description: 'x', status: 'running' as const, startedAt: 1, endedAt: null } }, raw: {} },
       { lineNo: 6, data: { type: 'cron.add' as const, agentId: 'main', task: { id: '01ARZ3NDEKTSV4RRFFQ69G5FAV', cron: '* * * * *', prompt: 'p', createdAt: 1 } }, raw: {} },
       { lineNo: 7, data: { type: 'plan.revision' as const, agentId: 'main', id: 'plan1', version: 2, key: 'k', sha256: 's', bytes: 10 }, raw: {} },
-      { lineNo: 8, data: { type: 'runtime.set_binding' as const, agentId: 'main', workspaceId: 'w', runtimeId: 'r' }, raw: {} },
+      { lineNo: 8, data: { type: 'environment.set_binding' as const, agentId: 'main', workspaceId: 'w', environmentId: 'r' }, raw: {} },
       { lineNo: 9, data: { type: 'staleGuard.recorded' as const, path: '/x', mtimeMs: 1 }, raw: {} },
       { lineNo: 10, data: { type: 'interruptionReminder.recorded' as const, agentId: 'main', turnId: 1 }, raw: {} },
     ];

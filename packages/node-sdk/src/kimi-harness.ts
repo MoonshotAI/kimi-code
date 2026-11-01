@@ -51,9 +51,10 @@ import type {
   Unsubscribe,
   UploadFileOptions,
   WorkspaceTrustInfo,
+  WorkspaceTrustInfoOptions,
 } from '#/types';
 
-export interface KimiHarnessRuntimeOptions {
+export interface KimiHarnessEnvironmentOptions {
   readonly identity?: KimiHostIdentity;
   readonly uiMode?: string;
   readonly homeDir: string;
@@ -73,6 +74,9 @@ export interface KimiHarnessRuntimeOptions {
   readonly sessionStartedDynamicProperties?: () => TelemetryProperties;
   readonly imageLimits?: ImageLimits | undefined;
 }
+
+/** @deprecated Use {@link KimiHarnessEnvironmentOptions}. */
+export type KimiHarnessRuntimeOptions = KimiHarnessEnvironmentOptions;
 
 export class KimiHarness {
   readonly homeDir: string;
@@ -97,7 +101,7 @@ export class KimiHarness {
 
   constructor(
     private readonly rpc: SDKRpcClientBase,
-    options: KimiHarnessRuntimeOptions,
+    options: KimiHarnessEnvironmentOptions,
   ) {
     this.identity = options.identity;
     this.uiMode = options.uiMode ?? DEFAULT_SESSION_STARTED_UI_MODE;
@@ -138,6 +142,10 @@ export class KimiHarness {
 
   setTelemetryContext(patch: TelemetryContextPatch): void {
     this.telemetry.setContext?.(patch);
+  }
+
+  async resolveSessionEnvironment(options: Pick<CreateSessionOptions, 'workDir' | 'environmentId' | 'environmentCwd'>) {
+    return this.rpc.resolveSessionEnvironment(options);
   }
 
   async createSession(options: CreateSessionOptions): Promise<Session> {
@@ -332,6 +340,10 @@ export class KimiHarness {
     return this.rpc.listWorkspaceSkills(workDir);
   }
 
+  async getWorkspaceAdditionalDirs(workDir: string): Promise<readonly string[]> {
+    return this.rpc.getWorkspaceAdditionalDirs(workDir);
+  }
+
   /**
    * File suggestions for @ mention-style completion under `workDir`, no
    * session required. `undefined` on the v1 engine, which has no equivalent
@@ -415,8 +427,11 @@ export class KimiHarness {
    * always-trusted workspace). Querying may register the workDir as a
    * workspace, which session creation would do anyway.
    */
-  async getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo> {
-    return this.rpc.getWorkspaceTrustInfo(workDir);
+  async getWorkspaceTrustInfo(
+    workDir: string,
+    options?: WorkspaceTrustInfoOptions,
+  ): Promise<WorkspaceTrustInfo> {
+    return this.rpc.getWorkspaceTrustInfo(workDir, options);
   }
 
   /** Mark `workDir` as trusted; project-level MCP servers connect live afterwards. */

@@ -53,7 +53,6 @@ export type InputNotified = ReturnType<typeof inputNotified>;
 export const inputReminded = defineEvent({
   type: 'input.reminded',
   schema: z.object({
-    key: z.string(),
     message: z.union([userEntrySchema, systemEntrySchema, userMessageSchema, systemMessageSchema]),
   }),
 });

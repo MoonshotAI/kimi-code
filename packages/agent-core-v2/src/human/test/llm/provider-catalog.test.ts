@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import type { LlmModel } from '#/llm/model';
-import type { CatalogModelDefinition } from '#/llm/provider-catalog';
-import { createProviderCatalog } from '#/llm/provider-catalog';
-import type { Provider } from '#/llm/provider/definition';
-import type { LlmRequester } from '#/llm/requester/requester';
+import type { LlmModel } from '#/llm-requester/model';
+import type { LlmRequestPart, LlmRequester as CoreLlmRequester } from '#/llm/requester';
+import type { LlmOutcome } from '#/llm/response';
+import type { CatalogModelDefinition, CatalogProviderHandle } from '#/provider-catalog/catalog';
+import { createProviderCatalog } from '#/provider-catalog/catalog';
 
 const modelDef: CatalogModelDefinition = {
   provider: 'test',
@@ -19,39 +19,40 @@ const modelDef: CatalogModelDefinition = {
   maxContextSize: 4096,
 };
 
-function failingRequester(message: string): LlmRequester {
+function doneOutcome(): LlmOutcome {
   return {
-    generate: (_config, _content, { onEvent }) => {
-      onEvent?.({
-        type: 'llm.failed.remote',
-        error: {
-          kind: 'status',
-          statusCode: 500,
-          message,
-          requestId: null,
-          retryAfterMs: null,
-          headers: null,
-        },
-      });
-      return Promise.resolve();
-    },
+    type: 'done',
+    message: { role: 'assistant', content: [{ type: 'text', text: 'pong' }], toolCalls: [] },
   };
+}
+
+function requesterOf(
+  outcome: LlmOutcome | (() => LlmOutcome),
+  onWith?: (part: LlmRequestPart) => void,
+): CoreLlmRequester<'protocol'> {
+  const requester = {
+    with: (part: LlmRequestPart) => {
+      onWith?.(part);
+      return requester;
+    },
+    request: () => {
+      throw new Error('unused');
+    },
+    generate: async () => (typeof outcome === 'function' ? outcome() : outcome),
+  };
+  return requester as unknown as CoreLlmRequester<'protocol'>;
+}
+
+function failingRequester(message: string): CoreLlmRequester<'protocol'> {
+  return requesterOf({ type: 'failed', error: { kind: 'provider', message } });
 }
 
 function stubProvider(
   id: string,
-  requester: LlmRequester,
+  requester: CoreLlmRequester<'protocol'>,
   listModels: () => Promise<readonly LlmModel[]> = () => Promise.resolve([]),
-): Provider {
-  return {
-    id,
-    protocols: ['openai'],
-    listModels,
-    resolveModel: () => {
-      throw new Error('unused');
-    },
-    createRequester: () => requester,
-  };
+): CatalogProviderHandle {
+  return { id, requester, listModels };
 }
 
 async function until(predicate: () => boolean): Promise<void> {
@@ -64,27 +65,7 @@ async function until(predicate: () => boolean): Promise<void> {
 describe('providerCatalog ping', () => {
   it('marks a failing model and emits changed, then clears the mark after a successful ping', async () => {
     let failing = true;
-    const requester: LlmRequester = {
-      generate: (_config, _content, { onEvent }) => {
-        if (failing) {
-          onEvent?.({
-            type: 'llm.failed.remote',
-            error: {
-              kind: 'status',
-              statusCode: 500,
-              message: 'boom',
-              requestId: null,
-              retryAfterMs: null,
-              headers: null,
-            },
-          });
-        } else {
-          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'pong' } });
-          onEvent?.({ type: 'llm.done' });
-        }
-        return Promise.resolve();
-      },
-    };
+    const requester = requesterOf(() => (failing ? { type: 'failed', error: { kind: 'provider', message: 'boom' } } : doneOutcome()));
     const catalog = await createProviderCatalog();
     const changed: string[][] = [];
     catalog.onChanged((event) => changed.push([...event.providers]));
@@ -137,21 +118,8 @@ describe('providerCatalog ping', () => {
   });
 
   it('carries the model protocol flags into the ping generate config', async () => {
-    const seen: LlmModel[] = [];
-    const provider: Provider = {
-      id: 'test',
-      protocols: ['anthropic'],
-      listModels: () => Promise.resolve([]),
-      resolveModel: () => {
-        throw new Error('unused');
-      },
-      createRequester: () => ({
-        generate: (config) => {
-          seen.push(config.model);
-          return Promise.resolve();
-        },
-      }),
-    };
+    const seen: LlmRequestPart[] = [];
+    const provider = stubProvider('test', requesterOf(doneOutcome(), (part) => seen.push(part)));
     const catalog = await createProviderCatalog();
     catalog.upsert({
       provider,
@@ -161,7 +129,7 @@ describe('providerCatalog ping', () => {
     catalog.ping('test', 'm1');
 
     await until(() => seen.length > 0);
-    expect(seen[0]?.betaApi).toBe(true);
+    expect(seen[0]?.protocol?.options).toMatchObject({ betaApi: true });
     catalog.stop();
   });
 

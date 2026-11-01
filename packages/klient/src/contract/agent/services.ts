@@ -21,7 +21,7 @@ import {
   promptWithSkillsPayloadSchema,
   promptWithSkillsResultSchema,
   runShellCommandPayloadSchema,
-  runtimeBindingSchema,
+  environmentBindingSchema,
   setModelResultSchema,
   shellCommandResultSchema,
   steerPayloadSchema,
@@ -60,10 +60,8 @@ export const agentCommandContract = {
   run: { input: z.tuple([z.string(), z.string().optional()]), output: noResult },
 } satisfies ServiceContract;
 
-export const agentRuntimeBindingContract = {
-  get: { input: z.tuple([]), output: runtimeBindingSchema },
-  set: { input: z.tuple([runtimeBindingSchema]), output: runtimeBindingSchema },
-  switch: { input: z.tuple([z.string()]), output: runtimeBindingSchema },
+export const agentEnvironmentBindingContract = {
+  current: { input: z.tuple([]), output: environmentBindingSchema },
 } satisfies ServiceContract;
 
 /** `history` items are full `ContextMessage`s, mirrored as `unknown`. */
@@ -108,6 +106,7 @@ export const mcpServerEntrySchema = z.object({
   status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth', 'removed']),
   toolCount: z.number(),
   error: z.string().optional(),
+  nextRetryAt: z.number().optional(),
 });
 
 export const agentMcpContract = {
