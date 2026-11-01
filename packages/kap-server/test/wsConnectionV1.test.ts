@@ -54,6 +54,7 @@ function makeBroadcaster(overrides: Record<string, unknown> = {}): SessionEventB
     removeGlobalTarget: () => {},
     addDiEventTarget: () => {},
     sendPendingInteractions: () => {},
+    sendQueueSnapshots: () => {},
     ...overrides,
   } as unknown as SessionEventBroadcaster;
 }

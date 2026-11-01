@@ -44,7 +44,7 @@ import type { Environment, EnvironmentLease, EnvironmentPath } from '@moonshot-a
 
 import type { PromptSubmission } from '../protocol/rest-prompt';
 
-type WireContent = PromptSubmission['content'];
+type WireContent = NonNullable<PromptSubmission['content']>;
 
 export async function assertPromptFileRefs(content: WireContent, store: IFileService): Promise<void> {
   for (const part of content) {

@@ -450,6 +450,18 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/sessions/{session_id}/agents/{agent_id}/queue:pause",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/agents/{agent_id}/queue:resume",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/agents/{agent_id}/queue/{tail}",
+    ],
+    [
+      "POST",
       "/api/v1/sessions/{session_id}/children",
     ],
     [

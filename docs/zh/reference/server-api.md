@@ -786,15 +786,15 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
-对 main agent 的上下文发起一次手动全量压缩。调用立即返回；进度与完成通过 `compaction.*` WebSocket 事件投递。
+对 main agent 的上下文发起一次手动全量压缩；Agent 忙碌、或其提示词队列已暂停或不为空时，压缩进入队列。调用立即返回；进度与完成通过 `compaction.*` WebSocket 事件投递。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `instruction` | body | string | 给压缩摘要的额外指引；空值会被忽略 |
 
-成功时，`data` 为空对象。
+成功时，`data` 为 `{ accepted_as, prompt_id }`：压缩已开始时 `accepted_as` 为 `compact`，在 main agent 的[提示词队列](#提示词队列)中等待时为 `queue`；`prompt_id` 标识这个队列条目。排队的压缩轮到队首时开始；那时无法开始的，会话会记录一条警告，队列继续往下处理。
 
-- `40910`：有轮次或其他上下文变更正在进行，或历史中没有可压缩的内容
+- `40910`：已有压缩正在进行或在排队，或历史中没有可压缩的内容
 
 #### `POST /api/v1/sessions/{session_id}:undo`
 
@@ -840,7 +840,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 成功时，`data` 为 [session 对象](#session-对象)。
 
-- `40901`：会话有正在运行的轮次，无法重新加载
+- `40901`：会话有正在运行的轮次，或其提示词队列已暂停或不为空，无法重新加载；被其他客户端修改过的会话仍可重新加载，队列随之丢弃
 
 #### `POST /api/v1/sessions/{session_id}:takeover`
 
@@ -1079,7 +1079,11 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 ### 提示词
 
-提示词是一次用户输入的单位：提交一条提示词会把它排入会话的 main agent（或指定 Agent）的队列，排队中的提示词可以插入进行中的轮次，运行中的提示词可以中止。轮次进度本身通过 WebSocket [事件](#事件) 流式推送，不经过这些端点。
+提示词是一次用户输入的单位：提交一条提示词会在会话的 main agent（或指定 Agent）上开启一个轮次或进入队列，排队中的提示词可以插入进行中的轮次，运行中或排队中的提示词可以中止。轮次进度本身通过 WebSocket [事件](#事件) 流式推送，不经过这些端点。
+
+#### 提示词队列
+
+每个 Agent 在服务端有一个提示词队列。只有 Agent 空闲、且队列为空并未暂停时，提示词才立即开启轮次；否则进入队列，轮到队首且 Agent 空闲时再开启轮次。插话排在队首，在排队的提示词和压缩之前。队列通过 WebSocket 的 [`queue` 帧](#事件) 推送，可以用下面的队列路由暂停、恢复和调整顺序。队列暂停期间不会送出任何条目，新提交的提示词和压缩都会进入队列。排队的提示词无法开始时，队列暂停并留下警告，这条提示词保留在队首。队列只在服务端内存中，服务端重启后排队的提示词会丢失。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -1088,6 +1092,9 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `POST /api/v1/sessions/{session_id}/prompts:steer` | 把排队的提示词插入进行中的轮次 |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | 中止运行中的提示词 |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:steer` | 插入单条排队的提示词 |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue:pause` | 暂停 Agent 的提示词队列 |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue:resume` | 恢复 Agent 的提示词队列 |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` | 调整排队提示词的顺序 |
 
 #### `GET /api/v1/sessions/{session_id}/prompts`
 
@@ -1097,28 +1104,32 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 
-成功时，`data` 为 `{ active, queued }`：`active` 是运行中的提示词（空闲时为 `null`），`queued` 按顺序列出等待中的提示词。提示词为 `{ prompt_id, user_message_id, status, content, created_at }`，其中 `status` 为 `running` / `queued` / `blocked` 之一，`content` 采用 `POST /api/v1/sessions/{session_id}/prompts` 接受的内容块格式。
+成功时，`data` 为 `{ active, queued }`：`active` 是运行中的提示词（空闲时为 `null`），`queued` 按顺序列出等待中的提示词，包括[提示词队列](#提示词队列)中的提示词，不包括排队的压缩。提示词为 `{ prompt_id, user_message_id, status, content, created_at }`，其中 `status` 为 `running` / `queued` / `blocked` 之一，`content` 采用 `POST /api/v1/sessions/{session_id}/prompts` 接受的内容块格式。
 
 - `40401`：会话不存在
 
 #### `POST /api/v1/sessions/{session_id}/prompts`
 
-向会话提交一条用户提示词。先校验媒体引用，然后把可选的覆盖项应用到目标 Agent——`profile`（与 `model` / `thinking` 一起绑定），接着是 `model`、`thinking`、`permission_mode` 和 `disabled_tools`——随后提示词入队；响应在提示词被接受后立即返回，不等待轮次执行。提供 `skills` 时，提示词以打包的 Skill 激活方式运行，而不是普通用户提示词。
+向会话提交一条用户提示词。先校验媒体引用，然后提示词开启轮次或进入[提示词队列](#提示词队列)；响应在提示词被接受后立即返回，不等待轮次执行。可选的覆盖项在提示词开始前应用到目标 Agent——立即开启轮次时马上应用，排队时在离开队列时应用——顺序为 `profile`（与 `model` / `thinking` 一起绑定），接着是 `model`、`thinking`、`permission_mode`、`swarm_mode`、`disabled_tools`、`plan_mode` 和 `goal_objective`。因此排在运行中轮次之后的提示词不会改变那个轮次的设置。提供 `skills` 时，提示词以打包的 Skill 激活方式运行，而不是普通用户提示词。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 | `content` | body | array | **必填。** 非空的内容块数组；变体见下 |
 | `agent_id` | body | string | 目标 Agent。默认为 main agent |
-| `prompt_id` | body | string | 客户端选定的提示词 id，用于幂等提交；已被进行中提示词占用的 id 返回 `40927`，已完成的返回 `40903`。不能与 `skills` 同用 |
+| `prompt_id` | body | string | 客户端选定的提示词 id，用于幂等提交；已被进行中提示词占用的 id 返回 `40927`，已完成的返回 `40903` |
 | `skills` | body | array | 打包的 Skill 激活，至少 1 个 `{ name, args? }` 条目；每个 Skill 必须存在且可由用户激活 |
 | `profile` | body | string | 提交前要绑定的 Agent 档案 |
 | `model` | body | string | 要切换到的模型别名 |
 | `thinking` | body | string | Thinking 强度等级 |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
 | `disabled_tools` | body | array | 要为会话禁用的工具名 |
+| `swarm_mode` | body | boolean | 进入或退出 swarm 模式 |
+| `plan_mode` | body | boolean | `true` 时进入 Plan 模式，先退出 Tower 模式；`false` 会被忽略 |
+| `goal_objective` | body | string | 退出 Plan 模式，并以此为目标描述创建目标 |
+| `metadata` | body | object | 客户端元数据，随提示词回显 |
 
-schema 还接受 `metadata`、`plan_mode`、`swarm_mode`、`goal_objective` 和 `goal_control`，但提交路由当前不会应用它们。每个 `content` 内容块是按 `type` 区分的对象：
+schema 还接受 `goal_control`，但提交路由不会应用它。每个 `content` 内容块是按 `type` 区分的对象：
 
 | 内容块 | 字段 | 说明 |
 | --- | --- | --- |
@@ -1130,7 +1141,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 成功时，`data` 为被接受的提示词 `{ prompt_id, user_message_id, status, content, created_at }`。
 
-- `40001`：校验失败——例如 `prompt_id` 与 `skills` 同用，或未知的 `profile`
+- `40001`：校验失败——例如未知的 `profile`
 - `40110`：尚未配置供应商——请先完成登录
 - `40111`：解析出的供应商没有凭据（`details.provider_id`）
 - `40112`：供应商的凭据被拒绝（`details.provider_id`）
@@ -1140,11 +1151,12 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 - `40415`：某个 `skills` 条目指向未知的 Skill
 - `40903`：`prompt_id` 属于已完成的提示词；`data` 携带 `{ aborted: false }`
 - `40912`：Skill 存在但无法由用户激活
+- `40913` / `40917` / `40918`：`goal_objective` 被拒绝——已有目标，或目标描述为空或过长
 - `40927`：`prompt_id` 已被进行中的提示词占用
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`
 
-把排队的提示词插入进行中的轮次，让运行中的轮次立即消费它们，而不是先运行结束。
+把排队的提示词插入进行中的轮次，让运行中的轮次立即消费它们，而不是先运行结束。[提示词队列](#提示词队列)中的提示词会成为队首的插话：先应用它的覆盖项再进入进行中的轮次；队列暂停时在队首等待；没有运行中的轮次时开启下一个轮次。修改任何提示词之前会先检查所有列出的 id。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1153,13 +1165,13 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 成功时，`data` 为 `{ steered: true, prompt_ids }`。
 
-- `40001`：校验失败
+- `40001`：校验失败，包括 `prompt_ids` 中有排队的压缩
 - `40401`：会话不存在
 - `40402`：所列提示词 id 不在队列中
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort`
 
-中止运行中的提示词。本端点与下面的 `:steer` 通过同一条路由 `POST /api/v1/sessions/{session_id}/prompts/{tail}` 分发：尾部解析为 `{prompt_id}:{action}`，动作缺失或未知时返回 `40001`（`unsupported action: ...`）。
+中止运行中的提示词，或移除仍在[提示词队列](#提示词队列)中等待的提示词或压缩。本端点与下面的 `:steer` 通过同一条路由 `POST /api/v1/sessions/{session_id}/prompts/{tail}` 分发：尾部解析为 `{prompt_id}:{action}`，动作缺失或未知时返回 `40001`（`unsupported action: ...`）。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1185,6 +1197,36 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 - `40401`：会话不存在
 - `40402`：没有该 id 的排队提示词
+
+#### `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue:pause`
+
+暂停 Agent 的[提示词队列](#提示词队列)：插话不进入进行中的轮次，排队的提示词不开启轮次，新提交的提示词和压缩都进入队列，直到恢复。运行中的轮次不受影响。`:resume` 的路由形式相同，恢复后按顺序送出。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `agent_id` | path | string | **必填。** Agent id，main agent 为 `main` |
+
+成功时，`data` 为 `{ paused }`。暂停已暂停的队列、恢复未暂停的队列都会成功，不产生变化。
+
+- `40401`：会话或 Agent 不存在
+
+#### `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move`
+
+移动一条排队的提示词或压缩。插话保持在队首的顺序，不能移动。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `agent_id` | path | string | **必填。** Agent id |
+| `prompt_id` | path | string | **必填。** 排队中的提示词 id |
+| `before_prompt_id` | body | string | 移到这个排队条目之前；省略时移到末尾 |
+
+成功时，`data` 为空对象。
+
+- `40001`：校验失败，包括移动插话或移到插话之前
+- `40401`：会话或 Agent 不存在
+- `40402`：提示词 id 不在队列中
 
 ### 审批与提问
 
@@ -2490,6 +2532,8 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | subagent | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
 | 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
 | 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
+
+订阅的连接还会收到每个 Agent [提示词队列](#提示词队列)的 `queue` 帧：`{ "type": "queue", "session_id", "agent_id", "event_created_at", "paused", "inputs" }`。每次订阅成功后以及队列每次变化时发送，始终携带完整队列，客户端整体替换本地副本。`inputs` 的每个条目为 `{ prompt_id, user_message_id, kind, delivery, content, skills?, instruction?, client_metadata?, created_at }`：`kind` 为 `input` 或 `compact`，插话的 `delivery` 为 `steer`，其余为 `queue`；压缩带 `instruction`，`content` 为空。
 
 有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 

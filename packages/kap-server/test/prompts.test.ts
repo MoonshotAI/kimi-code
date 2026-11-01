@@ -11,7 +11,10 @@ import {
   IAgentContextMemoryService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
+  IAgentPlanService,
   IAgentProfileService,
+  IAgentPromptQueueService,
+  IAgentTowerService,
   IAgentLoopService,
   IAgentStateService,
   IAgentSwarmService,
@@ -285,6 +288,16 @@ describe('server-v2 /api/v1 prompts', () => {
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
   }
 
+  async function stopRunningTurn(sessionId: string): Promise<void> {
+    const session = getLiveSessionById(server!.core.accessor, sessionId);
+    const agent = session?.accessor.get(IAgentLifecycleService).handleOf('main');
+    if (agent === undefined) throw new Error(`main agent of session ${sessionId} not found`);
+    const loop = agent.accessor.get(IAgentLoopService);
+    const active = loop.snapshot().activePromptId;
+    if (active !== undefined) loop.cancel({ promptId: active });
+    await loop.settled();
+  }
+
   async function setSessionModel(sessionId: string, model: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
@@ -348,6 +361,87 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(exit).toHaveBeenCalledTimes(1);
     expect(exit.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[2]!);
     expect(swarm.isActive).toBe(false);
+  });
+
+  it('applies the settings of a prompt queued behind a running turn only when it starts', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const agent = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!;
+    const loop = agent.accessor.get(IAgentLoopService);
+    const permission = agent.accessor.get(IAgentPermissionModeService);
+    const plan = agent.accessor.get(IAgentPlanService);
+    const tower = agent.accessor.get(IAgentTowerService);
+    vi.spyOn(tower, 'isActive', 'get').mockReturnValue(true);
+    const exitTower = vi.spyOn(tower, 'exit').mockResolvedValue(undefined as never);
+
+    const first = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'first' }],
+      model: 'stub',
+      permission_mode: 'manual',
+    });
+    expect(first.body.code).toBe(0);
+    const second = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'second' }],
+      permission_mode: 'yolo',
+      plan_mode: true,
+    });
+    expect(second.body.data.status).toBe('queued');
+    expect(agent.accessor.get(IAgentPromptQueueService).snapshot().items.map((item) => item.id))
+      .toEqual([second.body.data.prompt_id]);
+    expect(permission.mode).toBe('manual');
+    expect(await plan.status()).toBeNull();
+    expect(exitTower).not.toHaveBeenCalled();
+
+    loop.cancel({ promptId: first.body.data.prompt_id });
+    await vi.waitFor(() => expect(loop.snapshot().activePromptId).toBe(second.body.data.prompt_id));
+    expect(permission.mode).toBe('yolo');
+    expect(await plan.status()).not.toBeNull();
+    expect(exitTower).toHaveBeenCalledOnce();
+    await stopRunningTurn(id);
+  });
+
+  it('lists, steers and aborts prompts held in the server queue through the prompt routes', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const queue = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentPromptQueueService);
+    const post = (text: string) =>
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text }],
+        model: 'stub',
+      });
+    await post('first');
+    const second = (await post('second')).body.data.prompt_id;
+    const third = (await post('third')).body.data.prompt_id;
+    const queuePause = await call<{ paused: boolean }>('POST', `/api/v1/sessions/${id}/agents/main/queue:pause`, {});
+    expect(queuePause.body.data).toEqual({ paused: true });
+
+    const listed = await call<{ queued: { prompt_id: string }[] }>('GET', `/api/v1/sessions/${id}/prompts`);
+    expect(listed.body.data.queued.map((prompt) => prompt.prompt_id)).toEqual([second, third]);
+
+    const steered = await call<{ steered: boolean }>('POST', `/api/v1/sessions/${id}/prompts:steer`, {
+      prompt_ids: [third],
+    });
+    expect(steered.body.code).toBe(0);
+    expect(queue.snapshot().items.map((item) => `${item.id}:${item.delivery}`)).toEqual([
+      `${third}:steer`,
+      `${second}:queue`,
+    ]);
+
+    const aborted = await call<{ aborted: boolean }>('POST', `/api/v1/sessions/${id}/prompts/${second}:abort`, {});
+    expect(aborted.body.data).toEqual({ aborted: true });
+    expect(queue.snapshot().items.map((item) => item.id)).toEqual([third]);
+
+    const invalid = await call<null>('POST', `/api/v1/sessions/${id}/prompts:steer`, {
+      prompt_ids: [third, 'missing-prompt'],
+    });
+    expect(invalid.body.code).not.toBe(0);
+    expect(queue.snapshot().items.map((item) => `${item.id}:${item.delivery}`)).toEqual([`${third}:steer`]);
+    await stopRunningTurn(id);
   });
 
   it('accepts a prompt-carried model when default_model is not configured', async () => {
@@ -766,21 +860,6 @@ describe('server-v2 /api/v1 prompts', () => {
       skills: [{ name: 'does-not-exist' }],
     });
     expect(submitted.body.code).toBe(40415);
-
-    const session = getLiveSessionById(server!.core.accessor, id);
-    expect(session!.accessor.get(IAgentLifecycleService).handleOf('main')).toBeUndefined();
-  });
-
-  it('rejects a bundled prompt_id combination before any override or agent materialization', async () => {
-    const id = await createSession(home as string);
-
-    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'text', text: 'Review this change.' }],
-      permission_mode: 'yolo',
-      prompt_id: 'submission-1',
-      skills: [{ name: 'update-config' }],
-    });
-    expect(submitted.body.code).toBe(40001);
 
     const session = getLiveSessionById(server!.core.accessor, id);
     expect(session!.accessor.get(IAgentLifecycleService).handleOf('main')).toBeUndefined();
@@ -2094,6 +2173,7 @@ describe('server-v2 /api/v1 prompts', () => {
       model: 'stub',
     });
     expect(first.body.code).toBe(0);
+    await stopRunningTurn(id);
 
     const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'again' }],
@@ -2141,6 +2221,7 @@ describe('server-v2 /api/v1 prompts', () => {
       .get(IAgentToolPolicyService);
     expect(toolPolicy?.isToolActive('Bash')).toBe(false);
     expect(toolPolicy?.isToolActive('Read')).toBe(true);
+    await stopRunningTurn(id);
 
     const replaced = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'again' }],
@@ -2149,6 +2230,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(replaced.body.code).toBe(0);
     expect(toolPolicy?.isToolActive('Bash')).toBe(true);
     expect(toolPolicy?.isToolActive('Write')).toBe(false);
+    await stopRunningTurn(id);
 
     const cleared = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'once more' }],

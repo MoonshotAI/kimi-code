@@ -5,6 +5,7 @@ import { createControlledPromise } from '@antfu/utils';
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { IInstantiationService } from '#/_base/di/instantiation';
+import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -146,6 +147,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     onBeforeSubmitPrompt: new OrderedHookSlot(),
   };
 
+  private readonly onDidChangeActivityEmitter = this._register(new Emitter<void>());
+  readonly onDidChangeActivity = this.onDidChangeActivityEmitter.event;
+
   private readonly errorHandlers: LoopErrorHandler[] = [];
   private readonly promptWaiters = new Map<string, PromptWaiter>();
   private readonly steered = new Map<string, SteeredPrompt>();
@@ -163,6 +167,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private machineTurnSuppressed = false;
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
+  private endingTurns = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
   private engine: MachineEngine | undefined;
 
@@ -978,7 +983,29 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     });
   }
 
+  canLaunchPrompt(): boolean {
+    return (
+      !this.disposing &&
+      this.quiescenceDepth === 0 &&
+      this.active === undefined &&
+      this.endingTurns === 0 &&
+      this.pendingMachineTurn === undefined &&
+      !this.hasPendingRequests()
+    );
+  }
+
+  canSteerPrompt(): boolean {
+    return (
+      !this.disposing &&
+      this.quiescenceDepth === 0 &&
+      this.engine !== undefined &&
+      this.active !== undefined &&
+      this.active.prompt.tracked
+    );
+  }
+
   private maybeSettle(): void {
+    this.onDidChangeActivityEmitter.fire();
     if (
       this.active !== undefined ||
       this.pendingMachineTurn !== undefined ||
@@ -1337,6 +1364,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       enabled_plugins: this.plugins.enabledPluginIds()?.join(','),
     };
     this.telemetry.track2('turn_started', started);
+    this.onDidChangeActivityEmitter.fire();
     return active;
   }
 
@@ -2165,6 +2193,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private async endTurn(turn: ActiveTurn, result: TurnResult): Promise<void> {
     if (this.active !== turn) return;
     this.active = undefined;
+    this.endingTurns += 1;
+    try {
+      await this.finishTurn(turn, result);
+    } finally {
+      this.endingTurns -= 1;
+    }
+    this.maybeSettle();
+  }
+
+  private async finishTurn(turn: ActiveTurn, result: TurnResult): Promise<void> {
     this.disarmTurnWatch();
     await this.wire.drainPersisted().catch(() => undefined);
     for (const nudge of this.nudges.slice(this.nudgeCursor)) {
@@ -2235,7 +2273,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.activeRequestTrace = undefined;
     this.lastRequestId = undefined;
     turn.result.resolve(result);
-    this.maybeSettle();
   }
 
   private emitStepInterrupted(

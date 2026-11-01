@@ -23,6 +23,7 @@ import {
   type AfterStepContext,
   type PromptHandle,
 } from '#/agent/loop/loop';
+import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
@@ -1252,6 +1253,20 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(context.get().at(-1)?.origin).toEqual(USER_PROMPT_ORIGIN);
   });
 
+  it('does not launch a continuation while the prompt queue has inputs waiting', async () => {
+    const pending = vi.spyOn(ctx!.get(IAgentPromptQueueService), 'hasPendingItems').mockReturnValue(true);
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.markBlocked({ reason: 'need credentials' });
+
+    await goals.resumeGoal({ continueIfBlocked: true });
+    expect(loopService.launches).toEqual([]);
+
+    pending.mockReturnValue(false);
+    await goals.markBlocked({ reason: 'need credentials' });
+    await goals.resumeGoal({ continueIfBlocked: true });
+    expect(loopService.launches).toHaveLength(1);
+  });
+
   it('launches only one continuation when blocked resume is repeated', async () => {
     await goals.createGoal({ objective: 'finish the task' });
     await goals.markBlocked({ reason: 'need credentials' });
@@ -1294,6 +1309,110 @@ describe('AgentGoalService core workflow hooks', () => {
     await vi.waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
     expect(resumed.status).toBe('active');
     expect(goals.getGoal().goal?.status).toBe('active');
+  });
+
+  it('defers an automatic continuation behind queued input and launches it once the queue drains', async () => {
+    const queue = ctx!.get(IAgentPromptQueueService);
+    const pending = vi.spyOn(queue, 'hasPendingItems').mockReturnValue(true);
+    await goals.createGoal({ objective: 'finish the task' });
+
+    const turn = makeTurn(1);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+    await runGoalStep(loopService, turn);
+    endTurn(eventBus, turn);
+    await vi.waitFor(() => expect(goals.getGoal().goal?.turnsUsed).toBe(1));
+    await Promise.resolve();
+    expect(loopService.launches).toEqual([]);
+
+    pending.mockReturnValue(false);
+    queue.pause();
+
+    await vi.waitFor(() => expect(loopService.launches).toHaveLength(1));
+    expect(loopService.drainNextBatch(context)).toBeDefined();
+    expect(context.get().at(-1)?.origin).toEqual({ kind: 'system_trigger', name: 'goal_continuation' });
+  });
+
+  it('keeps a deferred continuation until the loop can launch again', async () => {
+    const queue = ctx!.get(IAgentPromptQueueService);
+    const pending = vi.spyOn(queue, 'hasPendingItems').mockReturnValue(true);
+    const launchable = vi.spyOn(loopService, 'canLaunchPrompt').mockReturnValue(false);
+    await goals.createGoal({ objective: 'finish the task' });
+
+    const turn = makeTurn(1);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+    await runGoalStep(loopService, turn);
+    endTurn(eventBus, turn);
+    await vi.waitFor(() => expect(goals.getGoal().goal?.turnsUsed).toBe(1));
+
+    pending.mockReturnValue(false);
+    queue.pause();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(loopService.launches).toEqual([]);
+
+    launchable.mockReturnValue(true);
+    queue.resume();
+    await vi.waitFor(() => expect(loopService.launches).toHaveLength(1));
+  });
+
+  it('defers an explicitly requested continuation behind queued work', async () => {
+    const queue = ctx!.get(IAgentPromptQueueService);
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.pauseGoal();
+    const pending = vi.spyOn(queue, 'hasPendingItems').mockReturnValue(true);
+
+    await goals.resumeGoal({ continueIfPaused: true });
+    await Promise.resolve();
+    expect(loopService.launches).toEqual([]);
+
+    pending.mockReturnValue(false);
+    queue.pause();
+    await vi.waitFor(() => expect(loopService.launches).toHaveLength(1));
+  });
+
+  it('drops a deferred continuation when the goal is paused before the queue drains', async () => {
+    const queue = ctx!.get(IAgentPromptQueueService);
+    const pending = vi.spyOn(queue, 'hasPendingItems').mockReturnValue(true);
+    await goals.createGoal({ objective: 'finish the task' });
+
+    const turn = makeTurn(1);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+    await runGoalStep(loopService, turn);
+    endTurn(eventBus, turn);
+    await vi.waitFor(() => expect(goals.getGoal().goal?.turnsUsed).toBe(1));
+
+    await goals.pauseGoal();
+    await goals.resumeGoal();
+    pending.mockReturnValue(false);
+    queue.pause();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(goals.getGoal().goal?.status).toBe('active');
+    expect(loopService.launches).toEqual([]);
+  });
+
+  it('drops a deferred continuation once a queued input starts its own goal turn', async () => {
+    const queue = ctx!.get(IAgentPromptQueueService);
+    const pending = vi.spyOn(queue, 'hasPendingItems').mockReturnValue(true);
+    await goals.createGoal({ objective: 'finish the task' });
+
+    const first = makeTurn(1);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: first.id, origin: USER_PROMPT_ORIGIN }));
+    await runGoalStep(loopService, first);
+    endTurn(eventBus, first);
+    await vi.waitFor(() => expect(goals.getGoal().goal?.turnsUsed).toBe(1));
+
+    const queued = makeTurn(2);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: queued.id, origin: USER_PROMPT_ORIGIN }));
+    pending.mockReturnValue(false);
+    queue.pause();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(loopService.launches).toEqual([]);
+
+    await runGoalStep(loopService, queued);
+    endTurn(eventBus, queued);
+    await vi.waitFor(() => expect(loopService.launches).toHaveLength(1));
   });
 
   it('counts an active goal turn and launches the next continuation', async () => {

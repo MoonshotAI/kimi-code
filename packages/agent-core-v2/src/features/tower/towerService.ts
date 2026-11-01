@@ -8,6 +8,7 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
+import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptSubmitted } from '#/agent/prompt/promptEvents';
@@ -121,6 +122,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IEventBus eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
+    @IAgentPromptQueueService private readonly promptQueue: IAgentPromptQueueService | undefined,
     @IAgentTaskService private readonly tasks: IAgentTaskService | undefined,
     @ISessionEventBus sessionBus: ISessionEventBus,
     @IBashParserService private readonly bashParser: IBashParserService,
@@ -206,7 +208,13 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
           return;
         }
         if (!this.wakeAbortedForUserPrompt) return;
-        if (this.loop === undefined || this.loop.snapshot().queue.length > 0) return;
+        if (
+          this.loop === undefined ||
+          this.loop.snapshot().queue.length > 0 ||
+          this.promptQueue?.hasPendingInputs() === true
+        ) {
+          return;
+        }
         this.wakeAbortedForUserPrompt = false;
         const batch = this.wakeTurnBatch;
         this.wakeTurnBatch = undefined;

@@ -71,3 +71,45 @@ export const promptAbortResponseSchema = z.object({
   aborted: z.boolean(),
 });
 export type PromptAbortResponse = z.infer<typeof promptAbortResponseSchema>;
+
+export const promptDeliverySchema = z.enum(['queue', 'steer']);
+export type PromptDelivery = z.infer<typeof promptDeliverySchema>;
+
+export const queuedInputSchema = z.object({
+  prompt_id: z.string().min(1),
+  user_message_id: z.string().min(1),
+  kind: z.enum(['input', 'compact']),
+  delivery: promptDeliverySchema,
+  content: z.array(messageContentSchema),
+  skills: z.array(promptSkillActivationSchema).optional(),
+  instruction: z.string().optional(),
+  client_metadata: z.record(z.string(), z.unknown()).optional(),
+  created_at: isoDateTimeSchema,
+});
+export type QueuedInputWire = z.infer<typeof queuedInputSchema>;
+
+export const queueStateSchema = z.object({
+  paused: z.boolean(),
+  inputs: z.array(queuedInputSchema),
+});
+export type QueueStateWire = z.infer<typeof queueStateSchema>;
+
+export const queueEventMessageSchema = queueStateSchema.extend({
+  type: z.literal('queue'),
+  session_id: z.string().min(1),
+  agent_id: z.string().min(1),
+  event_created_at: isoDateTimeSchema,
+});
+export type QueueEventMessage = z.infer<typeof queueEventMessageSchema>;
+
+export const queueMoveRequestSchema = z
+  .object({
+    before_prompt_id: z.string().min(1).optional(),
+  })
+  .strict();
+export type QueueMoveRequest = z.infer<typeof queueMoveRequestSchema>;
+
+export const queuePauseResponseSchema = z.object({
+  paused: z.boolean(),
+});
+export type QueuePauseResponse = z.infer<typeof queuePauseResponseSchema>;
