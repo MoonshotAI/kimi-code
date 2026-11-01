@@ -51,7 +51,7 @@ describe('RestGateway', () => {
     ix = disposables.add(new TestInstantiationService());
     promptCalls = [];
     turnService = stubLoopWithHooks({ hasActiveTurn: true });
-    turnService.submit = (input: UserEntry) => { promptCalls.push({ ...input.message, toolCalls: [], origin: input.meta?.origin as PromptOrigin | undefined }); return { id: 'p' }; };
+    turnService.submit = (input: UserEntry) => { promptCalls.push({ ...input.message, origin: input.meta?.origin as PromptOrigin | undefined }); return { id: 'p' }; };
 
     const agentHandle: IAgentScopeHandle = {
       id: 'main',

@@ -6,13 +6,12 @@ import {
   type ImportCustomRegistryResult,
   DEFAULT_CATALOG_URL,
   resolveCatalogImport,
-  SECONDARY_DERIVED_MODEL_ALIAS,
   type Catalog,
   type RefreshProviderModelsResponse,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { createKimiCodeUserAgent } from '#/cli/version';
+import { createKimiCodeUserAgent } from '#/cli/host-identity';
 import { fetchCatalogOrBuiltIn } from '#/utils/catalog-fetch';
 import { refreshKimiRegion } from '#/utils/region';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
@@ -333,19 +332,14 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
     );
   }
 
-  // Build a merged model dictionary that includes existing models plus the
-  // newly-persisted provider's models, so the tabbed selector shows every
+  // The config's model table already holds the newly-persisted provider's
+  // models next to the existing ones, so the tabbed selector shows every
   // provider's tab (the new provider's tab starts active via initialTabId).
-  // The v1 runtime may carry the synthesized `__secondary__` derived entry —
-  // never selectable in a picker.
   const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
-  const mergedModels = { ...stateModels };
-  delete mergedModels[SECONDARY_DERIVED_MODEL_ALIAS];
-
   const selector = new TabbedModelSelectorComponent({
-    models: mergedModels,
+    models: stateModels,
     currentValue: host.state.appState.model,
-    selectedValue: Object.keys(mergedModels).find((a) => a.startsWith(`${providerId}/`)),
+    selectedValue: Object.keys(stateModels).find((a) => a.startsWith(`${providerId}/`)),
     currentThinkingEffort: host.state.appState.thinkingEffort,
     initialTabId: providerId,
     onSelect: ({ alias, thinking }) => {
@@ -460,10 +454,8 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
   }
 
   // Offer the model selector so the user can pick a default, just like the
-  // catalog (known-provider) flow. Copy without the v1-synthesized
-  // `__secondary__` derived entry — never selectable in a picker.
-  const stateModels = { ...(await host.harness.getConfig().then((c) => c.models ?? {})) };
-  delete stateModels[SECONDARY_DERIVED_MODEL_ALIAS];
+  // catalog (known-provider) flow.
+  const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
   const firstNewAlias = Object.keys(stateModels).find((a) =>
     addedProviderIds.some((pid) => a.startsWith(`${pid}/`)),
   );

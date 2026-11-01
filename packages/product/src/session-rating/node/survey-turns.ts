@@ -13,7 +13,7 @@ interface SurveyTurnHistory {
   readonly currentOrigin?: unknown;
   readonly evaluation?: {
     readonly origin: unknown;
-    readonly traceId?: string;
+    readonly requestId?: string;
     readonly endedAt?: number;
   };
 }
@@ -22,7 +22,7 @@ export interface SurveyTurnRecovery {
   readonly userTurnCount: number;
   readonly firstPromptAt?: number;
   readonly origin: unknown;
-  readonly traceId?: string;
+  readonly requestId?: string;
   readonly endedAt?: number;
 }
 
@@ -68,7 +68,7 @@ function observeHistory(
       evaluation: isSurveyTurnOrigin(origin) === true
         ? {
             origin,
-            traceId: 'traceId' in record && typeof record.traceId === 'string' ? record.traceId : undefined,
+            requestId: 'requestId' in record && typeof record.requestId === 'string' ? record.requestId : undefined,
             endedAt: time,
           }
         : undefined,
@@ -139,7 +139,7 @@ export function mountSurveyTurnCounter(dispatcher: IEventDispatcher): MountedSur
         userTurnCount,
         firstPromptAt: state.history.firstPromptAt,
         origin: evaluation.origin,
-        traceId: evaluation.traceId,
+        requestId: evaluation.requestId,
         endedAt: evaluation.endedAt,
       };
     },

@@ -1,15 +1,6 @@
 /**
- * ModelSwitchConfirmDialog — cloud-gated confirmation shown when switching
- * models in a session that already has conversation history: the accumulated
- * context will be re-sent to a different model, so the prompt cache is lost
- * and output quality may vary. Offers new session / compact / continue /
- * cancel.
- *
- * The body hint comes from the matched `model_switch_confirm` rule (English
- * arm over the built-in default); the title, option labels, and keyboard hint
- * stay local per the DESIGN.md vocabulary. Layout mirrors the list-dialog
- * spec: top border, title, hint, body line, then options with right-column
- * descriptions.
+ * Cloud-gated model or effort confirmation. Model switches keep their
+ * session-specific actions; effort switches offer only confirm and cancel.
  */
 
 import {
@@ -25,7 +16,7 @@ import { currentTheme } from '#/tui/theme';
 import { SearchableList } from '#/tui/utils/searchable-list';
 import type { ModelSwitchAction } from '#/utils/model-switch-confirm-config';
 
-const TITLE = 'Switch model?';
+const MODEL_TITLE = 'Switch model?';
 
 interface ModelSwitchOption {
   readonly value: ModelSwitchAction;
@@ -33,12 +24,7 @@ interface ModelSwitchOption {
   readonly description?: string;
 }
 
-const OPTIONS: readonly ModelSwitchOption[] = [
-  {
-    value: 'new',
-    label: 'Start a new session',
-    description: 'No extra cost · best for a new task',
-  },
+const OLD_SESSION_OPTIONS: readonly ModelSwitchOption[] = [
   {
     value: 'compact',
     label: 'Compact and continue',
@@ -52,14 +38,23 @@ const OPTIONS: readonly ModelSwitchOption[] = [
   { value: 'cancel', label: 'Cancel', description: 'Stay on the current model' },
 ];
 
+const NEW_SESSION_OPTIONS: readonly ModelSwitchOption[] = [
+  { value: 'continue', label: 'Confirm switch' },
+  { value: 'cancel', label: 'Cancel', description: 'Stay on the current model' },
+];
+
+const EFFORT_SESSION_OPTIONS: readonly ModelSwitchOption[] = [
+  { value: 'continue', label: 'Confirm switch' },
+  { value: 'cancel', label: 'Cancel', description: 'Stay on the current effort' },
+];
+
 export interface ModelSwitchConfirmDialogOptions {
-  /** Display name of the model in effect before the switch. */
   readonly fromModel: string;
-  /** Display name of the model the user is switching to. */
   readonly toModel: string;
-  /** Body text explaining the consequences of the switch; no body line when
-   *  absent. */
+  readonly sessionType: 'old' | 'new';
+  readonly kind?: 'model' | 'effort';
   readonly hint?: string;
+  readonly warning?: string;
   readonly onSelect: (action: ModelSwitchAction) => void;
   readonly onCancel: () => void;
 }
@@ -73,7 +68,12 @@ export class ModelSwitchConfirmDialogComponent extends Container implements Focu
     super();
     this.opts = opts;
     this.list = new SearchableList({
-      items: OPTIONS,
+      items:
+        opts.kind === 'effort'
+          ? EFFORT_SESSION_OPTIONS
+          : opts.sessionType === 'old'
+            ? OLD_SESSION_OPTIONS
+            : NEW_SESSION_OPTIONS,
       toSearchText: (o) => o.label,
       initialIndex: 0,
       searchable: false,
@@ -95,11 +95,17 @@ export class ModelSwitchConfirmDialogComponent extends Container implements Focu
 
   override render(width: number): string[] {
     const view = this.list.view();
-    const modelSuffix = `${this.opts.fromModel} → ${this.opts.toModel}`;
+    const title =
+      this.opts.kind === 'effort'
+        ? `Switch effort from ${this.opts.fromModel} to ${this.opts.toModel}?`
+        : MODEL_TITLE;
+    const titleSuffix =
+      this.opts.kind === 'effort'
+        ? ''
+        : currentTheme.fg('textMuted', `  ${this.opts.fromModel} → ${this.opts.toModel}`);
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
-      currentTheme.boldFg('primary', ` ${TITLE}`) +
-        currentTheme.fg('textMuted', `  ${modelSuffix}`),
+      currentTheme.boldFg('primary', ` ${title}`) + titleSuffix,
       currentTheme.fg('textMuted', ' ↑↓ navigate · Enter select · Esc cancel'),
       '',
     ];
@@ -108,8 +114,13 @@ export class ModelSwitchConfirmDialogComponent extends Container implements Focu
         lines.push(currentTheme.fg('text', ` ${hintLine}`));
       }
     }
+    if (this.opts.warning !== undefined) {
+      for (const warningLine of this.opts.warning.split(/\r\n|\r|\n/)) {
+        lines.push(currentTheme.boldFg('warning', ` ${warningLine}`));
+      }
+    }
 
-    const maxLabelWidth = Math.max(...OPTIONS.map((o) => visibleWidth(o.label)));
+    const maxLabelWidth = Math.max(...view.items.map((o) => visibleWidth(o.label)));
     for (let i = view.page.start; i < view.page.end; i++) {
       const opt = view.items[i]!;
       const isSelected = i === view.selectedIndex;

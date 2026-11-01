@@ -51,7 +51,7 @@ Wording:
 - An internal change does not enter the CLI or is not user-perceivable → write nothing; if it is written, list only that internal package.
 - Never mix packages ignored in `.changeset/config.json` with non-ignored packages in one frontmatter.
 - pi-tui exception: pi-tui-only changes list `@moonshot-ai/pi-tui`; if the same change is also visible to CLI users, write a separate CLI changeset (two files, never mixed).
-- kimi-inspect and the vis packages never appear in a changeset.
+- The vis packages never appear in a changeset.
 
 ## 5. Workflow
 

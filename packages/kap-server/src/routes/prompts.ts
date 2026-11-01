@@ -6,9 +6,11 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
-  IAgentRuntimeBindingService,
+  IAgentEnvironmentBindingService,
+  IAgentEnvironmentService,
   IAgentToolPolicyService,
   IAgentSkillService,
+  IAgentSwarmService,
   IEventBus,
   IEventService,
   IFileService,
@@ -51,7 +53,10 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
-import { sendMappedError, sessionConflictErrors } from './sessionErrors';
+import {
+  sendMappedError as sendSessionMappedError,
+  sessionConflictErrors,
+} from './sessionErrors';
 import {
   assertPromptFileRefs,
   assertPromptPathRefs,
@@ -59,12 +64,14 @@ import {
   contentToCoreParts,
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
+  environmentMediaTargets,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
+import { sendEnvironmentError } from './environment';
 
 interface PromptRouteHost {
   get(
@@ -118,7 +125,9 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
-    binding: agent.accessor.get(IAgentRuntimeBindingService),
+    binding: agent.accessor.get(IAgentEnvironmentBindingService),
+    environment: agent.accessor.get(IAgentEnvironmentService),
+    swarm: agent.accessor.get(IAgentSwarmService),
   };
 }
 
@@ -202,6 +211,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         ...sessionConflictErrors,
       },
       description: 'Submit a prompt to a session',
@@ -219,10 +230,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           let resolved: Awaited<ReturnType<typeof resolvePromptFromSession>> | undefined;
           if (contentHasPathRefs(req.body.content)) {
             resolved = await resolvePromptFromSession(session, req.body.agent_id);
-            if (resolved.binding.get().runtimeId !== 'local') {
+            if (resolved.binding.current.environmentId !== 'local') {
               throw new Error2(
                 ErrorCodes.REQUEST_INVALID,
-                'file attachments by server-local path require the local runtime',
+                'file attachments by server-local path require the local environment',
               );
             }
           }
@@ -248,25 +259,40 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           reservation = reservePromptId(session_id, req.body.prompt_id);
 
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
-          preparedMedia = await resolvePromptMediaFiles(
-            resolvedSessionMedia,
-            core.accessor.get(IFileService),
-            core.accessor.get(IBootstrapService).cacheDir,
-            {
-              telemetry,
-              providerType: resolved.profile.getModelProviderType(req.body.model),
-              resolveOriginalsDir: async () => {
-                const session = await resumeSessionById(core.accessor, session_id);
-                if (session === undefined) return undefined;
-                return sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir);
+          const environmentMedia = environmentMediaTargets(resolved.binding.current, resolved.environment);
+          try {
+            preparedMedia = await resolvePromptMediaFiles(
+              resolvedSessionMedia,
+              core.accessor.get(IFileService),
+              core.accessor.get(IBootstrapService).cacheDir,
+              {
+                telemetry,
+                providerType: resolved.profile.getModelProviderType(req.body.model),
+                resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => {
+                  try {
+                    const session = await resumeSessionById(core.accessor, session_id);
+                    return session === undefined
+                      ? undefined
+                      : { dir: sessionMediaOriginalsDir(session.accessor.get(ISessionContext).sessionDir) };
+                  } catch {
+                    return undefined;
+                  }
+                }),
+                resolveAttachmentsTarget: environmentMedia.resolveAttachmentsTarget ?? (async () => {
+                  try {
+                    const session = await resumeSessionById(core.accessor, session_id);
+                    return session === undefined
+                      ? undefined
+                      : { dir: join(session.accessor.get(ISessionContext).sessionDir, 'attachments') };
+                  } catch {
+                    return undefined;
+                  }
+                }),
               },
-              resolveAttachmentsDir: async () => {
-                const session = await resumeSessionById(core.accessor, session_id);
-                if (session === undefined) return undefined;
-                return join(session.accessor.get(ISessionContext).sessionDir, 'attachments');
-              },
-            },
-          );
+            );
+          } finally {
+            environmentMedia.dispose();
+          }
           const resolvedContent = preparedMedia.content;
           const promptAttachments =
             preparedMedia.attachments.length > 0 ? preparedMedia.attachments : undefined;
@@ -285,6 +311,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           if (req.body.thinking !== undefined && !thinkingConsumed)
             resolved.profile.setThinking(req.body.thinking);
           if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
+          if (req.body.swarm_mode !== undefined && resolved.swarm.isActive !== req.body.swarm_mode) {
+            if (req.body.swarm_mode) resolved.swarm.enter('manual');
+            else resolved.swarm.exit();
+          }
           if (req.body.disabled_tools !== undefined) {
             try {
               await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
@@ -362,7 +392,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           );
           reply.send(okEnvelope(projectPromptHandle(handle), req.id));
         } catch (error) {
-          if (!enqueued) await preparedMedia?.discard();
+          if (!enqueued) await preparedMedia?.discardStaged();
           throw error;
         } finally {
           reservation?.dispose();
@@ -490,7 +520,7 @@ function projectPromptList(loop: IAgentLoopService) {
           userMessageId: item.meta?.userMessageId ?? '',
           createdAt: item.meta?.createdAt ?? '',
           state: 'pending',
-          message: { ...item.message, toolCalls: [], origin: item.meta?.origin as PromptOrigin | undefined },
+          message: { ...item.message, origin: item.meta?.origin as PromptOrigin | undefined },
         }),
       ),
   };
@@ -607,4 +637,13 @@ export function watchPromptSettlements(events: IEventBus): {
       subscription.dispose();
     },
   };
+}
+
+function sendMappedError(
+  reply: { send(payload: unknown): unknown },
+  req: { id: string },
+  error: unknown,
+): void {
+  if (sendEnvironmentError(reply, req.id, error)) return;
+  sendSessionMappedError(reply, req, error);
 }

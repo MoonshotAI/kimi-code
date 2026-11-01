@@ -1,9 +1,8 @@
-import type { ProtocolBase } from '#human/llm/protocol/base';
-import type { ProtocolTraitFor } from '#human/llm/provider/definition';
-import { anthropicBase } from '#human/llm/requester/bases/anthropic/requester';
-import { googleGenAIBase } from '#human/llm/requester/bases/google-genai/requester';
-import { openAIBase } from '#human/llm/requester/bases/openai/requester';
-import { openAIResponsesBase } from '#human/llm/requester/bases/openai-responses/requester';
+import { anthropicProtocol } from '#human/llm/builtin/protocol/anthropic/index';
+import { googleGenAIProtocol } from '#human/llm/builtin/protocol/google-genai/index';
+import { openAIProtocol } from '#human/llm/builtin/protocol/openai/index';
+import { openAIResponsesProtocol } from '#human/llm/builtin/protocol/openai-responses/index';
+import type { Protocol as CoreProtocol } from '#human/llm/protocol/protocol';
 
 import type { Protocol } from './protocol';
 
@@ -11,19 +10,20 @@ export type ProtocolBaseId = Protocol;
 
 export interface ProtocolBaseDefinition {
   readonly id: ProtocolBaseId;
-  readonly base: ProtocolBase<ProtocolTraitFor<Protocol>>;
+  readonly capability?: CoreProtocol['capability'];
 }
 
 export interface ResolvedAdapterIdentity {
   readonly baseId: ProtocolBaseId;
-  readonly trait?: ProtocolTraitFor<Protocol>;
+  readonly thinkingDriven?: boolean;
+  readonly strictThinkingValidation?: boolean;
 }
 
 const PROTOCOL_BASES: readonly ProtocolBaseDefinition[] = [
-  { id: 'openai', base: openAIBase },
-  { id: 'openai_responses', base: openAIResponsesBase },
-  { id: 'anthropic', base: anthropicBase },
-  { id: 'google-genai', base: googleGenAIBase },
+  { id: 'openai', capability: openAIProtocol.capability },
+  { id: 'openai_responses', capability: openAIResponsesProtocol.capability },
+  { id: 'anthropic', capability: anthropicProtocol.capability },
+  { id: 'google-genai', capability: googleGenAIProtocol.capability },
 ];
 
 export function getProtocolBase(id: ProtocolBaseId): ProtocolBaseDefinition | undefined {

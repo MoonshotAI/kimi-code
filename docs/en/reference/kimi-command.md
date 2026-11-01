@@ -28,7 +28,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--agent-file <path>` | | Load a custom agent from a Markdown file for the new session and select it. Cannot be repeated or combined with `--agent`, `--session`, or `--continue` |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
-`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
+`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output. The hidden `--environment <id>` flag binds the new session to a configured remote environment, and `--environment-cwd <path>` overrides that environment's working directory (see [Remote environments](../guides/remote-environment.md#kimi-environment-and-environment-cwd)).
 
 ::: warning
 `--yolo` skips human approval for regular tool calls, including file writes and shell command execution. Use it only in trusted working directories. Plan mode exit approval is not bypassed by `--yolo`; `Bash` inside Plan mode is handled under the regular allow rules.
@@ -42,6 +42,8 @@ The following combinations are rejected at startup:
 - `--yolo` and `--auto` are mutually exclusive — the two permission modes cannot be combined
 - `--prompt` cannot be used with `--yolo`, `--auto`, or `--plan` — non-interactive mode uses `auto` permission by default
 - `--output-format` can only be used together with `--prompt`
+- `--environment` cannot be combined with `--session`/`--continue` — the environment is bound at session creation and the bound environment is restored automatically on resume
+- `--environment-cwd` requires `--environment`; both flags are creation-only and cannot be combined with `--session`/`--continue`
 
 Nobody can review a plan in non-interactive mode, so `default_plan_mode` is not applied to new sessions. A resumed session that is already in Plan mode still runs and stays in Plan mode, but its plan cannot be approved in non-interactive mode: it waits for your review the next time you open the session with `kimi -r`.
 
@@ -135,7 +137,7 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `import-sessions` (import Claude Code and Codex sessions), `upgrade` (check for updates), and `provider` (manage providers).
 
 ### `kimi login`
 
@@ -241,7 +243,7 @@ When an explicit path is passed, the file must exist. The command exits with `0`
 # Check the default config files
 kimi doctor
 
-# Check only the default runtime config
+# Check only the default environment config
 kimi doctor config
 
 # Check a candidate TUI config before replacing the live config
@@ -285,6 +287,20 @@ kimi migrate
 ```
 
 For full migration instructions, see [Migrating from kimi-cli](../guides/migration.md).
+
+### `kimi import-sessions`
+
+Import recent Claude Code and Codex sessions as regular Kimi Code sessions. The command opens an interactive page: choose the last 15 days (the default) or the last 30 days, then follow the progress and the summary. Inside the TUI, `/import-sessions` opens the same page.
+
+```sh
+kimi import-sessions
+```
+
+- Each run imports at most the newest 100 sessions; sessions imported before are skipped.
+- Sessions without a prompt, subagent sessions, and non-interactive runs such as `codex exec` are not listed. Sessions whose project folder no longer exists, sessions still being written, and Codex sessions that were forked or restarted from an earlier message are skipped and reported.
+- Sessions are read from `~/.claude` and `~/.codex`; set `CLAUDE_CONFIG_DIR` or `CODEX_HOME` to read them from other locations. The original session files are not changed.
+
+See [Importing sessions from Claude Code and Codex](../guides/sessions.md#importing-sessions-from-claude-code-and-codex) for what an imported session contains.
 
 ### `kimi upgrade`
 

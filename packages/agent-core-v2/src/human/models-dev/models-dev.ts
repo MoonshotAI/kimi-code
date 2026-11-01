@@ -1,4 +1,4 @@
-import type { CatalogModelDefinition } from '#/llm/provider-catalog';
+import type { CatalogModelDefinition } from '#/provider-catalog/catalog';
 
 export type ModelsDevWire =
   | 'anthropic'

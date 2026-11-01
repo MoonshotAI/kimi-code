@@ -7,6 +7,7 @@ export interface ISessionWorkspaceInfo {
 
   readonly ready: Promise<void>;
   readonly additionalDirs: readonly string[];
+  readonly primaryByWorkspace: Readonly<Record<string, string>>;
   readonly onDidChange: Event<void>;
 }
 

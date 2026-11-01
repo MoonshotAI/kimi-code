@@ -29,6 +29,7 @@ function stubTerminal(): Terminal {
     clearScreen: () => {},
     setTitle: () => {},
     setProgress: () => {},
+    setProgramStatus: () => {},
   };
 }
 

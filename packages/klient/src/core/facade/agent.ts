@@ -9,9 +9,8 @@
  */
 
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
-import type { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
 import type { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
-import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
+import type { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBinding';
 
 import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
@@ -20,7 +19,21 @@ import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent
 import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
 import type { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
 import type { ISessionUsageService } from '@moonshot-ai/agent-core-v2/session/usage/sessionUsage';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import {
+  fromCoreMessage,
+  type ContentPart,
+} from '@moonshot-ai/agent-core-v2/human/message';
+import {
+  fromLlmMessage,
+  type Message as LegacyMessage,
+} from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
+import type {
+  ContextMessage as CoreContextMessage,
+  ContextMessageTiming,
+  PromptOrigin,
+} from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
+import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
+import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm-requester/usage';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 
 import type { ScopeRef } from '../channel.js';
@@ -29,21 +42,42 @@ import type { ScopedCaller } from './session.js';
 // Wire-type aliases derived through the engine service interfaces (keeps
 // klient free of protocol-package imports).
 export type PromptLaunchResult = import('@moonshot-ai/agent-core-v2/agent/loop/loop').PromptLaunchResult | undefined;
-export type PromptWithSkillsInput = Parameters<IAgentSkillService['promptWithSkills']>[0];
+export type PromptWithSkillsInput = Omit<Parameters<IAgentSkillService['promptWithSkills']>[0], 'input'> & {
+  input: readonly ContentPart[];
+};
 export type PromptWithSkillsResult = Awaited<ReturnType<IAgentSkillService['promptWithSkills']>>;
 export type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
 export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
 export type ThinkingLevel = ReturnType<IAgentProfileService['getEffectiveThinkingLevel']>;
 export type UsageStatus = Awaited<ReturnType<ISessionUsageService['status']>>;
+type AgentContextMessage = LegacyMessage & {
+  readonly id?: string;
+  readonly providerMessageId?: string;
+  readonly origin?: PromptOrigin;
+  readonly isError?: boolean;
+  toolCallDisplays?: Record<string, ToolInputDisplay>;
+  readonly note?: string;
+  readonly usage?: TokenUsage;
+  readonly llmTiming?: ContextMessageTiming;
+  readonly durationMs?: number;
+};
 export type AgentContextData = {
-  history: ReturnType<IAgentContextMemoryService['get']>;
+  history: readonly AgentContextMessage[];
   tokenCount: ReturnType<ISessionTokenCountingService['statusSize']>;
 };
 export type AgentCommandInfo = Awaited<ReturnType<IAgentCommandService['list']>>[number];
-export type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
+export type EnvironmentBinding = IAgentEnvironmentBindingService['current'];
 export type PlanData = Awaited<ReturnType<IAgentPlanService['status']>>;
 export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[number];
 export type McpServerEntry = ReturnType<IAgentMcpService['list']>[number];
+
+function withoutUndefined<T extends object>(value: T): T {
+  const output = { ...value };
+  for (const key of Object.keys(output) as (keyof T)[]) {
+    if (output[key] === undefined) delete output[key];
+  }
+  return output;
+}
 
 export interface AgentFacade {
   prompt(input: {
@@ -80,8 +114,7 @@ export interface AgentFacade {
   getContext(): Promise<AgentContextData>;
   listCommands(): Promise<readonly AgentCommandInfo[]>;
   runCommand(input: { name: string; args?: string }): Promise<void>;
-  getRuntime(): Promise<RuntimeBinding>;
-  switchRuntime(runtimeId: string): Promise<RuntimeBinding>;
+  getEnvironment(): Promise<EnvironmentBinding>;
   getPlan(): Promise<PlanData>;
   enterPlan(): Promise<void>;
   clearPlan(): Promise<void>;
@@ -136,7 +169,23 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
         call(scope, 'agentContextMemoryService', 'get', []),
         call(scope, 'agentTokenCountingService', 'statusSize', []),
       ]);
-      return { history, tokenCount } as AgentContextData;
+      const legacyHistory = (history as readonly CoreContextMessage[]).map((message) =>
+        withoutUndefined({
+          ...fromLlmMessage(fromCoreMessage(message)),
+          id: message.id,
+          providerMessageId: message.providerMessageId,
+          name: message.name,
+          origin: message.origin,
+          isError: message.isError,
+          partial: message.partial,
+          toolCallDisplays: message.toolCallDisplays,
+          note: message.note,
+          usage: message.usage,
+          llmTiming: message.llmTiming,
+          durationMs: message.durationMs,
+        }),
+      );
+      return { history: legacyHistory, tokenCount: tokenCount as AgentContextData['tokenCount'] };
     },
     listCommands: () =>
       call(scope, 'agentCommandService', 'list', []) as Promise<readonly AgentCommandInfo[]>,
@@ -149,10 +198,8 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
         'run',
         input.args === undefined ? [input.name] : [input.name, input.args],
       ) as Promise<void>,
-    getRuntime: () =>
-      call(scope, 'agentRuntimeBindingService', 'get', []) as Promise<RuntimeBinding>,
-    switchRuntime: (runtimeId) =>
-      call(scope, 'agentRuntimeBindingService', 'switch', [runtimeId]) as Promise<RuntimeBinding>,
+    getEnvironment: () =>
+      call(scope, 'agentEnvironmentBindingService', 'current', []) as Promise<EnvironmentBinding>,
     getPlan: () => call(scope, 'agentPlanService', 'status', []) as Promise<PlanData>,
     enterPlan: () => call(scope, 'agentPlanService', 'enter', []) as Promise<void>,
     clearPlan: () => call(scope, 'agentPlanService', 'clear', []) as Promise<void>,

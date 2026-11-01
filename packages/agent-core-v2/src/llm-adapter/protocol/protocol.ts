@@ -4,7 +4,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 
 import type { ModelCapability } from '../contract/capability';
 import type { Model } from '../model/catalog';
-import type { ResolvedLlmModel } from '../model/model-requester-impl';
+import type { InitializedLlmRequester, ModelRequestParams } from '../model/generate';
 
 import type { ProtocolBaseId, ResolvedAdapterIdentity } from './protocol-base';
 
@@ -50,7 +50,7 @@ export interface IProtocolAdapterRegistry {
     providerType?: string,
   ): ModelCapability;
 
-  resolve(model: Model): ResolvedLlmModel;
+  request(model: Model, params?: ModelRequestParams): InitializedLlmRequester;
 }
 
 export const IProtocolAdapterRegistry: ServiceIdentifier<IProtocolAdapterRegistry> =

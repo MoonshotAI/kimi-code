@@ -14,6 +14,7 @@ import {
   type AgentActorRestoreEvent,
 } from '#/agent/actorService/agentActorService';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/features/goal/injection/goalInjection';
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
@@ -726,7 +727,6 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
           : prompt,
       },
     ],
-    toolCalls: [],
     origin: GOAL_CONTINUATION_ORIGIN,
   };
   const loop = context.runtime.get(IAgentLoopService);
@@ -1201,7 +1201,11 @@ const goalEffects = fromCallback(({
   const disposables: IDisposable[] = [deadline];
   if (input.runtime.agent.agentId === MAIN_AGENT_ID) {
     disposables.push(input.runtime.get(IAgentLifecycleService).onWillClose(handlers.closing));
-    disposables.push(new GoalInjection(handlers.injection, reminderOf(input.runtime)));
+    disposables.push(new GoalInjection(
+      handlers.injection,
+      reminderOf(input.runtime),
+      input.runtime.get(IAgentContextMemoryService),
+    ));
     disposables.push(input.runtime.get(IEventBus).subscribe(TurnStarted, handlers.turnStarted));
     disposables.push(input.runtime.get(ISessionUsageService).onDidRecord(handlers.usageRecorded));
     const loop = input.runtime.get(IAgentLoopService);

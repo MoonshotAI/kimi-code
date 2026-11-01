@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   clientConfigsBaseUrl,
+  EFFORT_SWITCH_CONFIG_NAME,
   fetchClientConfig,
   isRegisteredClientConfig,
   MODEL_SWITCH_CONFIRM_CONFIG_NAME,
@@ -53,7 +54,7 @@ describe('fetchClientConfig', () => {
         name: MODEL_SWITCH_CONFIRM_CONFIG_NAME,
         config: {
           enable: true,
-          rules: [{ from: 'kimi-k2.5', to: 'kimi-k3', hint: { en: 'heads-up', zh: '注意' } }],
+          rules: [{ session_type: 'old', from: 'kimi-k2.5', to: 'kimi-k3', hint: { en: 'heads-up', zh: '注意' } }],
         },
       }),
     );
@@ -64,7 +65,7 @@ describe('fetchClientConfig', () => {
     );
     expect(config).toEqual({
       enable: true,
-      rules: [{ from: 'kimi-k2.5', to: 'kimi-k3', hint: { en: 'heads-up', zh: '注意' } }],
+      rules: [{ session_type: 'old', from: 'kimi-k2.5', to: 'kimi-k3', hint: { en: 'heads-up', zh: '注意' } }],
     });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
@@ -120,7 +121,7 @@ describe('fetchClientConfig', () => {
         name: MODEL_SWITCH_CONFIRM_CONFIG_NAME,
         config: {
           enable: 'yes',
-          rules: [{ from: 'a' }, { from: 'a', to: 'b' }, 'junk'],
+          rules: [{ session_type: 'old', from: 'a' }, { session_type: 'old', from: 'a', to: 'b' }, 'junk'],
         },
       }),
     );
@@ -130,7 +131,7 @@ describe('fetchClientConfig', () => {
         'https://example.com',
         fetchImpl as unknown as typeof fetch,
       ),
-    ).toEqual({ enable: false, rules: [{ from: 'a', to: 'b' }] });
+    ).toEqual({ enable: false, rules: [{ session_type: 'old', from: 'a', to: 'b' }] });
 
     const nonObject = vi.fn(async () =>
       jsonResponse({ name: MODEL_SWITCH_CONFIRM_CONFIG_NAME, config: 42 }),
@@ -151,11 +152,11 @@ describe('fetchClientConfig', () => {
         config: {
           enable: true,
           rules: [
-            { from: ['a', 'b'], to: 'c' },
-            { from: 'd', to: ['e', 'f'] },
-            { from: [], to: 'g' },
-            { from: ['a', 1], to: 'c' },
-            { from: 'h', to: [1] },
+            { session_type: 'old', from: ['a', 'b'], to: 'c' },
+            { session_type: 'old', from: 'd', to: ['e', 'f'] },
+            { session_type: 'old', from: [], to: 'g' },
+            { session_type: 'old', from: ['a', 1], to: 'c' },
+            { session_type: 'old', from: 'h', to: [1] },
           ],
         },
       }),
@@ -169,8 +170,8 @@ describe('fetchClientConfig', () => {
     ).toEqual({
       enable: true,
       rules: [
-        { from: ['a', 'b'], to: 'c' },
-        { from: 'd', to: ['e', 'f'] },
+        { session_type: 'old', from: ['a', 'b'], to: 'c' },
+        { session_type: 'old', from: 'd', to: ['e', 'f'] },
       ],
     });
   });
@@ -261,12 +262,23 @@ describe('server-v2 POST /api/v1/client_configs', () => {
     return (await res.json()) as Envelope<{ name: string; config: unknown }>;
   }
 
-  it('returns the parsed config inside the ok envelope', async () => {
+  it('preserves session type and warning inside the ok envelope', async () => {
     cloudBehavior = {
       status: 200,
       body: {
         name: MODEL_SWITCH_CONFIRM_CONFIG_NAME,
-        config: { enable: true, rules: [{ from: 'a', to: 'b', hint: { en: 'hi' } }] },
+        config: {
+          enable: true,
+          rules: [
+            {
+              session_type: 'new',
+              from: 'a',
+              to: 'b',
+              hint: { en: 'hi' },
+              warning: { en: 'warning', zh: '警告' },
+            },
+          ],
+        },
       },
     };
     await boot();
@@ -276,8 +288,56 @@ describe('server-v2 POST /api/v1/client_configs', () => {
     expect(typeof body.request_id).toBe('string');
     expect(body.data).toEqual({
       name: MODEL_SWITCH_CONFIRM_CONFIG_NAME,
-      config: { enable: true, rules: [{ from: 'a', to: 'b', hint: { en: 'hi' } }] },
+      config: {
+        enable: true,
+        rules: [
+          {
+            session_type: 'new',
+            from: 'a',
+            to: 'b',
+            hint: { en: 'hi' },
+            warning: { en: 'warning', zh: '警告' },
+          },
+        ],
+      },
     });
+  });
+
+  it('preserves effort descriptions and confirm rules inside the ok envelope', async () => {
+    cloudBehavior = {
+      status: 200,
+      body: {
+        name: EFFORT_SWITCH_CONFIG_NAME,
+        config: {
+          descriptions: {
+            enable: true,
+            items: {
+              low: { en: 'Light reasoning.', zh: '轻量思考。' },
+              high: { en: 'Deeper reasoning.', zh: '深入思考。' },
+              max: { en: 'Maximum reasoning.', zh: '最大思考强度。' },
+            },
+          },
+          confirm: {
+            enable: true,
+            rules: [
+              {
+                from: 'low',
+                to: 'high',
+                session_type: 'old',
+                hint: { en: 'Switch effort?', zh: '切换思考强度？' },
+                warning: { en: 'Cache may be lost.', zh: '缓存可能失效。' },
+              },
+            ],
+          },
+        },
+      },
+    };
+    await boot();
+
+    const body = await postClientConfigs(EFFORT_SWITCH_CONFIG_NAME);
+
+    expect(body.code).toBe(0);
+    expect(body.data).toEqual(cloudBehavior.body);
   });
 
   it('fetches the cloud on every request, so config changes are picked up immediately', async () => {
@@ -285,22 +345,22 @@ describe('server-v2 POST /api/v1/client_configs', () => {
       status: 200,
       body: {
         name: MODEL_SWITCH_CONFIRM_CONFIG_NAME,
-        config: { enable: true, rules: [{ from: 'a', to: 'b' }] },
+        config: { enable: true, rules: [{ session_type: 'old', from: 'a', to: 'b' }] },
       },
     };
     await boot();
     const first = await postClientConfigs(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
-    expect(first.data.config).toEqual({ enable: true, rules: [{ from: 'a', to: 'b' }] });
+    expect(first.data.config).toEqual({ enable: true, rules: [{ session_type: 'old', from: 'a', to: 'b' }] });
 
     cloudBehavior = {
       status: 200,
       body: {
         name: MODEL_SWITCH_CONFIRM_CONFIG_NAME,
-        config: { enable: true, rules: [{ from: ['a', 'c'], to: 'b' }] },
+        config: { enable: true, rules: [{ session_type: 'old', from: ['a', 'c'], to: 'b' }] },
       },
     };
     const second = await postClientConfigs(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
-    expect(second.data.config).toEqual({ enable: true, rules: [{ from: ['a', 'c'], to: 'b' }] });
+    expect(second.data.config).toEqual({ enable: true, rules: [{ session_type: 'old', from: ['a', 'c'], to: 'b' }] });
   });
 
   it('returns null config for an unregistered name', async () => {

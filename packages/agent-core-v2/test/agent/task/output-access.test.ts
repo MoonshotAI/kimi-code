@@ -5,13 +5,18 @@ import type { Writable } from 'node:stream';
 import { join } from 'pathe';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IReadTool } from '#/agent/tools/os/read/read';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { createMapFs, stubPlanEnvironment } from '../../features/plan/stubs';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { createAgentTaskPersistence, type TaskServiceTestManager } from './stubs';
-import { taskServices, createTestAgent, homeDirServices, type TestAgentContext } from '../../harness';
+import { agentService, taskServices, createTestAgent, homeDirServices, type TestAgentContext } from '../../harness';
 import { executeTool, type TestExecutableToolContext } from '../../tools/fixtures/execute-tool';
 
 interface TaskServiceFixture {
@@ -155,6 +160,51 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     expect(snapshot.fullOutputAvailable).toBe(true);
   });
 
+  it('reads the actual server-local fallback under a remote binding without exposing unrelated host files', async () => {
+    const remoteFiles = new Map<string, string>();
+    const remoteFs = createMapFs(remoteFiles, {
+      mkdir: async () => { throw new Error('remote offline'); },
+      writeText: async () => { throw new Error('remote offline'); },
+      appendText: async () => { throw new Error('remote offline'); },
+    });
+    const environment = stubPlanEnvironment({ fs: remoteFs, tempDir: '/remote/tmp' });
+    const remoteCtx = createTestAgent([
+      homeDirServices(join(sessionDir, 'remote-home')), taskServices(), agentService(IAgentEnvironmentService, environment),
+    ]);
+    const remoteManager = remoteCtx.get(IAgentTaskService) as TaskServiceTestManager;
+    try {
+      const id = registerProcess(remoteManager, immediateProcess(0, 'retained local output\n'), 'echo', 'demo');
+      await remoteManager.wait(id);
+      const snapshot = await remoteManager.getOutputSnapshot(id, 1_000);
+      expect(snapshot.outputPath).toBe(join(remoteCtx.get(ISessionContext).sessionDir, 'agents', 'main', 'tasks', id, 'output.log'));
+      const acquire = vi.spyOn(environment, 'acquire').mockImplementation(() => { throw new Error('remote disconnected'); });
+      const read = remoteCtx.get(IReadTool);
+      const result = await executeTool(read, toolContext('read_local_fallback', { path: snapshot.outputPath! }));
+      expect(result.isError ?? false).toBe(false);
+      expect(outputString(result)).toContain('retained local output');
+      expect(acquire).not.toHaveBeenCalled();
+      acquire.mockRestore();
+      const current = remoteCtx.get(ISessionContext).sessionDir;
+      const unrelated = [
+        join(current, 'private.txt'),
+        join(current, 'agents', 'another-agent', 'tasks', id, 'output.log'),
+        join(current, '..', 'another-session', 'agents', 'main', 'tasks', id, 'output.log'),
+      ];
+      const host = remoteCtx.get(IHostFileSystem);
+      for (const path of unrelated) {
+        await host.mkdir(path.slice(0, path.lastIndexOf('/')), { recursive: true });
+        await host.writeText(path, 'host secret');
+        remoteFiles.set(path, 'remote counterpart');
+        const other = await executeTool(read, toolContext('read_not_local', { path }));
+        expect(outputString(other)).toContain('remote counterpart');
+        expect(outputString(other)).not.toContain('host secret');
+      }
+    } finally {
+      await waitForTaskNotifications(remoteCtx, remoteManager);
+      await remoteCtx.dispose();
+    }
+  });
+
   it('getOutputSnapshot truncates large persisted output to a tail preview with paging metadata', async () => {
     const head = 'HEAD-MARKER\n';
     const tail = 'TAIL-MARKER\n';
@@ -283,6 +333,39 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     await waitForOutput(manager, taskId, 'ddddd');
 
     expect(await manager.readOutput(taskId, 5)).toBe('ddddd');
+    await manager.wait(taskId);
+  });
+
+  it('readOutput returns the full output for a nonpositive tail', async () => {
+    const taskId = registerProcess(
+      manager,
+      immediateProcess(0, 'aaaaa-bbbbb-ccccc-ddddd'),
+      'echo',
+      'demo',
+    );
+
+    await waitForOutput(manager, taskId, 'ddddd');
+
+    const full = await manager.readOutput(taskId);
+    expect(await manager.readOutput(taskId, 0)).toBe(full);
+    expect(await manager.readOutput(taskId, -7)).toBe(full);
+    await manager.wait(taskId);
+  });
+
+  it('readOutput does not split a surrogate pair at the tail boundary', async () => {
+    const emoji = String.fromCodePoint(0x1f600);
+    const taskId = registerProcess(
+      manager,
+      immediateProcess(0, `aaaaa-bbbbb-${emoji}cc`),
+      'echo',
+      'demo',
+    );
+
+    await waitForOutput(manager, taskId, 'cc');
+
+    expect(await manager.readOutput(taskId, 3)).toBe('cc');
+    expect(await manager.readOutput(taskId, 2)).toBe('cc');
+    expect(await manager.readOutput(taskId, 4)).toBe(`${emoji}cc`);
     await manager.wait(taskId);
   });
 });

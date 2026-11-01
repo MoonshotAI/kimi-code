@@ -6,7 +6,7 @@ export interface SecurityHeadersOptions {
 
 const HSTS_VALUE = 'max-age=31536000';
 const CONTENT_SECURITY_POLICY =
-  "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'self'";
+  "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' data: blob:; font-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'self'";
 
 export function createSecurityHeadersHook(
   opts: SecurityHeadersOptions,

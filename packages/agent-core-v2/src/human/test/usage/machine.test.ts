@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { createActor, waitFor } from '#/xstate2';
 
 import { connectPlugins } from '#/plugin';
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import { createUserMessage } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { LlmRequester } from '#/llm/requester/requester';
-import type { TokenUsage } from '#/llm/usage';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
+import { createUserMessage } from '#/message';
+import type { LlmModel } from '#/llm-requester/model';
+import type { LlmRequester } from '#/llm-requester/requester';
+import type { TokenUsage } from '#/llm-requester/usage';
 import { createAgentMachine } from '#/agent/machine';
 import { agentSlices, type AgentEventStore } from '#/agent/slices';
 import { createEventStore } from '#/eventStore/eventStore';

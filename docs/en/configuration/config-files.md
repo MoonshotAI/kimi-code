@@ -112,8 +112,10 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`task`](#task) | `table` | — | Background task and Tower agent runtime parameters; `background` is the legacy section name |
 | [`tools`](#tools) | `table` | — | Global tool switch |
 | [`image`](#image) | `table` | — | Image compression parameters |
+| [`workspace`](#workspace-trust) | `table` | — | Workspace settings, including the trust gate |
 | [`services`](#services) | `table` | — | Built-in external service configuration |
 | [`permission`](#permission) | `table` | — | Initial permission rules |
+| [`environments`](#environments) | `table` | — | Remote environment declarations |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | Lifecycle hooks |
 | [`identity`](#identity) | `table` | — | Custom agent identity |
 
@@ -173,7 +175,7 @@ max_context_size = 1047576
 
 ### Model overrides
 
-Use `[models."<alias>".overrides]` for user overrides that must survive provider-model refreshes. Runtime consumers read the effective value: the override when present, otherwise the top-level field.
+Use `[models."<alias>".overrides]` for user overrides that must survive provider-model refreshes. Environment consumers read the effective value: the override when present, otherwise the top-level field.
 
 ```toml
 [models."kimi-code/kimi-for-coding"]
@@ -209,22 +211,20 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | The default model for subagents |
 | `models` | `table<string, string>` | — | Subagent model pool; each key is the alias of a configured [`[models]`](#models) entry, each value a selection hint |
-| `force` | `boolean` | `false` | Pin every subagent to `default_model`, taking the choice away from the main agent |
 | `default_effort` | `string` | — | The thinking effort every spawned subagent binds with; outranks the bound model entry's own `default_effort` |
 
 Constraints between the fields:
 
 - `default_model`: required when a `models` table is configured, and must be one of its keys.
 - `models`: values may be Chinese or English; an empty string lists the alias with no hint.
-- `force`: requires `default_model` and cannot be combined with a `models` table: the table exists to offer a choice, and force removes it.
-- `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry (or the forced model). For per-entry efforts, leave it unset and use model variants (see below).
-- `primary` is a reserved alias (see below) and cannot be a pool key.
+- `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry. For per-entry efforts, leave it unset and use model variants (see below).
+- `primary` is a reserved alias and cannot be a pool key.
 
 Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias. Fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
 
 In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately, no session restart needed.
 
-A configured pool (an explicit `models` table or a lone `default_model`) enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Pool keys can only reference configured [`[models]`](#models) entries. The `kimi-code/*` aliases below are provisioned by `/login`:
+Subagents only run on models listed in the pool. A lone `default_model` (or a `models` table with a single entry) pins every subagent to that model. A pool with two or more entries enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Pool keys can only reference configured [`[models]`](#models) entries. The `kimi-code/*` aliases below are provisioned by `/login`:
 
 ```toml
 [secondary_model]
@@ -242,21 +242,12 @@ A spawn resolves the subagent's model in this order:
 
 Rules for the `model` parameter:
 
-- It accepts any pool alias, or `"primary"`, the model the caller itself is running; always valid even when not in the pool.
-- When neither `default_model` nor `models` is configured, the parameter is not advertised and subagents inherit the caller's model.
-- Binding a pool alias does not inherit the caller's thinking effort. The section's `default_effort` wins when set. Otherwise, `[thinking].enabled = false` keeps Thinking off; when Thinking is enabled, resolution continues with the bound model entry's `default_effort`, the global `[thinking].effort`, then the middle of the bound model's `support_efforts`.
-- `"primary"` inherits both the model and the effort level from the caller.
-- A value that is neither a pool alias nor `"primary"` fails the spawn with an error listing the available choices.
+- It accepts pool aliases only. The main agent's own model is not an implicit choice: to let it run hard subtasks on the main model, list that model's alias in the pool explicitly.
+- When neither `default_model` nor `models` is configured, the parameter is not advertised and subagents inherit the caller's model. With a single-entry pool it is not advertised either.
+- Binding a pool alias does not inherit the caller's thinking effort, even when the alias is the caller's own model. The section's `default_effort` wins when set. Otherwise, `[thinking].enabled = false` keeps Thinking off; when Thinking is enabled, resolution continues with the bound model entry's `default_effort`, the global `[thinking].effort`, then the middle of the bound model's `support_efforts`.
+- A value that is not a pool alias fails the spawn with an error listing the available choices.
 
-To take the choice away from the main agent and run every subagent on one fixed model, add `force = true`:
-
-```toml
-[secondary_model]
-default_model = "kimi-code/kimi-for-coding-highspeed"
-force = true
-```
-
-With `force` set, the `model` parameter is not advertised (just like when nothing is configured) and every spawn binds `default_model`; an explicit `model` argument, `"primary"` included, is rejected with an error.
+The former `force` key has been removed: a lone `default_model` already pins every subagent to one model. A configuration that still sets `force` loads with a warning and the key is ignored.
 
 ### Different thinking efforts per pool entry
 
@@ -295,8 +286,7 @@ Note the asymmetry between the main agent and pool-bound subagents: for the main
 ::: warning Note
 Configuration errors fail loudly instead of falling back silently. Session creation, resume, and fork all fail at startup when:
 
-- `default_model` is missing, is not a pool key, or a pool key does not resolve to a configured [`[models]`](#models) entry;
-- `force` is set without `default_model`, or combined with a `models` table.
+- `default_model` is missing, is not a pool key, or a pool key does not resolve to a configured [`[models]`](#models) entry.
 :::
 
 ## `thinking`
@@ -395,8 +385,12 @@ In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent
 | `startup_timeout_ms` | `integer` | `30000` (30 seconds) | Global default connection (startup + tool discovery) timeout in milliseconds for all MCP servers; a per-server `startupTimeoutMs` in `mcp.json` wins |
 | `tool_timeout_ms` | `integer` | `60000` (60 seconds) | Global default single tool-call timeout in milliseconds for all MCP servers; a per-server `toolTimeoutMs` in `mcp.json` wins |
 | `default_deferred` | `boolean` | `false` | Global default for [loading tools on demand](../customization/mcp.md#loading-tools-on-demand): when `true`, every MCP server's tools load on demand unless the server opts out; a per-server `deferred` field in `mcp.json` wins |
+| `reconnect_initial_delay_ms` | `integer` | `5000` (5 seconds) | Initial delay in milliseconds before the first automatic reconnect attempt for a workspace-level MCP server that failed to connect or dropped unexpectedly; the delay doubles after each failed attempt |
+| `reconnect_max_delay_ms` | `integer` | `300000` (5 minutes) | Cap in milliseconds for the automatic reconnect backoff delay of workspace-level MCP servers |
 
 `startup_timeout_ms` and `tool_timeout_ms` can be overridden by the `KIMI_MCP_STARTUP_TIMEOUT_MS` and `KIMI_MCP_TOOL_TIMEOUT_MS` environment variables respectively, which take higher priority than `config.toml`. See [MCP](../customization/mcp.md) for the full MCP server configuration.
+
+`reconnect_initial_delay_ms` and `reconnect_max_delay_ms` can likewise be overridden by the `KIMI_MCP_RECONNECT_INITIAL_DELAY_MS` and `KIMI_MCP_RECONNECT_MAX_DELAY_MS` environment variables. Automatic reconnect applies only to workspace-level MCP servers and stops for permanent failures (unknown command, invalid configuration, rejected static credentials); see [MCP](../customization/mcp.md).
 
 ## `identity`
 
@@ -448,15 +442,15 @@ Like the `tools` / `disallowedTools` fields of an agent file, this section shape
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `default_max_chars` | `integer` | `100000` | Character budget when the tool call omits `max_chars` |
-| `max_chars` | `integer` | `500000` | Maximum character budget a tool call may request |
+| `max_chars` | `integer` | `100000` | Maximum character budget a tool call may request |
 
 ```toml
 [read]
 default_max_chars = 100000
-max_chars = 500000
+max_chars = 100000
 ```
 
-Both values must be positive integers. A call's `max_chars` overrides the default, but is capped at the configured maximum; the result reports the effective budget. If the configured default exceeds the maximum, the maximum also limits default reads. Raise `default_max_chars` when you want larger documents to be returned in one call without the agent requesting a larger budget.
+Both values must be positive integers. A call's `max_chars` overrides the default, but is capped at the configured maximum; the result reports the effective budget. If the configured default exceeds the maximum, the maximum also limits default reads. Each call also stops at about `max_chars` / 4 estimated tokens, counting one token per non-ASCII character and per four ASCII characters, so text with many non-ASCII characters, such as Chinese, returns fewer characters per call. Raise `max_chars` to let a call return more than 100000 characters or about 25000 tokens, and raise `default_max_chars` as well when you want larger documents to be returned in one call without the agent requesting a larger budget.
 
 ## `image`
 
@@ -471,14 +465,15 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 ## `database`
 
-`database` controls the embedded storage engines behind session indexing and global search. Both keys default to `true` and act as kill switches that fall back to the legacy behavior when set to `false`.
+`database` controls the embedded storage engines behind session indexing and global search. Session indexing is on by default; the global full-text search index is off by default and, once enabled, scans past sessions in the background and serves `POST /api/v1/search`.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `base` | `boolean` | `true` | Use the minidb-backed read model for session indexing; `false` falls back to reading session metadata directly |
-| `search` | `boolean` | `true` | Run the global search index in a dedicated worker thread; `false` runs it in the server process |
+| `global_search` | `boolean` | `false` | Build the global full-text search index and serve `POST /api/v1/search`; when off, no sessions are scanned, no search worker starts, and the search endpoint reports the index as unavailable |
+| `search` | `boolean` | `true` | With global search enabled, run the index in a dedicated worker thread; `false` runs it in the server process |
 
-`base` can be overridden by the `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` environment variable and `search` by `KIMI_CODE_SEARCH_WORKER`; both take higher priority than `config.toml`.
+`base` can be overridden by the `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` environment variable, `global_search` by `KIMI_CODE_GLOBAL_SEARCH`, and `search` by `KIMI_CODE_SEARCH_WORKER`; all take higher priority than `config.toml`.
 
 ## `watch`
 
@@ -489,6 +484,25 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 | `enabled` | `boolean` | `true` | Attach filesystem watchers; `false` disables every `watch()` for the process |
 
 `enabled` can be overridden by the `KIMI_CODE_WATCH` environment variable, which takes higher priority than `config.toml`.
+
+## `workspace trust`
+
+`workspace` groups workspace-related settings in the user-level `config.toml`. Its `require_trust` field controls whether Kimi Code asks for trust confirmation when an untrusted workspace is opened for the first time; confirmation is required by default.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `require_trust` | `boolean` | `true` | Require trust confirmation when first opening an untrusted workspace; `false` treats every workspace as trusted and skips the startup trust prompt |
+
+```toml
+[workspace]
+require_trust = false
+```
+
+::: warning Note
+Disabling the trust requirement loads project-level MCP servers and other trust-gated project configuration without confirmation. Use this setting only when every workspace is already trusted. It does not change permission modes, tool approvals, or dangerous-command guards.
+:::
+
+Changes take effect on `/reload`; a running TUI does not show a startup trust prompt retroactively. `KIMI_CODE_TRUST_WORKSPACE=1` remains an independent per-process trust override, and a falsy value does not restore the first-open requirement when `require_trust` is `false`. Existing trust records are preserved and used again if the requirement is re-enabled.
 
 <!--
 ## `experimental`
@@ -560,6 +574,73 @@ pattern = "Bash"
 MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project-local `.kimi-code/mcp.json`, not in `config.toml`. The interactive configuration entry point is `/mcp-config`; see [Model Context Protocol](../customization/mcp.md).
 :::
 
+## `environments`
+
+`environments` declares remote environments — SSH hosts, Docker-compatible containers, or custom launcher commands — that sessions can bind to so the agent's tools execute in the target environment. See [Remote environments](../guides/remote-environment.md) for the feature walkthrough, boundaries, and limitations.
+
+Each entry is keyed by its environment id: at most 64 characters, no leading or trailing whitespace, and `local` and `default` are reserved words. Within one entry, `type` and `command` are mutually exclusive.
+
+Remote working directories must be absolute POSIX paths; relative paths and `~` are not expanded.
+
+The optional top-level `default` names the environment a session binds to when creation does not specify one. It must reference a configured entry, and that entry must set `defaultCwd` — a binding pairs an environment with a working directory, so a default without one would dangle. Without a `default`, those sessions start on the `local` environment. A TUI `/new` does not use this default: it keeps the current environment. See [Remote environments](../guides/remote-environment.md).
+
+### SSH entries
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `type` | `string` | Yes | `"ssh"` |
+| `host` | `string` | Yes | SSH host; spawned through the system `ssh`, so `~/.ssh/config` (user, port, key, `ProxyJump`, `ControlMaster`) applies |
+| `remoteBin` | `string` | No | Executor path on the target; defaults to `~/.kimi-code/bin/kimi` |
+| `defaultCwd` | `string` | No | Working-directory prefill when binding a session; not validated locally |
+
+### Docker entries
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `type` | `string` | Yes | `"docker"` |
+| `container` | `string` | Yes | Running container name or id; attached with `docker exec` |
+| `context` | `string` | No | Docker context (for example `orbstack`) |
+| `remoteBin` | `string` | No | Executor path inside the container; defaults to `~/.kimi-code/bin/kimi` under the container user's home. The launcher runs through `docker exec … sh -c`, so a leading `~` is expanded by the container's shell |
+| `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
+
+### Command entries
+
+The generic launcher form, for any environment the built-in launchers do not cover (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes). The command and `args` describe how to reach the target: the launcher must run the arguments that follow it on the target, as `ssh host`, `kubectl exec -i pod --` and `docker exec -i container` do. Kimi Code appends `<remoteBin> exec-server` to `args`, unless `args` already invokes `exec-server`.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `command` | `string` | Yes | Launcher executable: a name resolved against `PATH`, or an absolute path. A resolution landing inside the working directory is refused, so a project cannot shadow the launcher with a same-named binary |
+| `args` | `array<string>` | No | Launcher arguments that reach the target. When an argument already invokes `exec-server` (for example `--command "~/.kimi-code/bin/kimi exec-server"`), nothing is appended and the arguments run as written |
+| `env` | `table<string, string>` | No | Environment for the launcher process on your machine; never propagated into commands running on the target |
+| `remoteBin` | `string` | No | Executor path on the target, appended after `args`; defaults to `~/.kimi-code/bin/kimi`. Use a plain path without spaces or shell metacharacters. `~` only expands when the launcher runs the arguments through a shell on the target, as ssh does; launchers that pass arguments straight through, such as `kubectl exec` and `docker exec`, need an absolute path |
+| `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
+
+```toml
+[environments]
+default = "dev-box"
+
+[environments.dev-box]
+type = "ssh"
+host = "dev-box"
+defaultCwd = "/home/me/projects"
+
+[environments.dev-container]
+type = "docker"
+container = "myapp-dev"
+
+[environments.sandbox]
+command = "sandbox"
+args = ["ssh", "i-1234567890", "--"]
+env = { SANDBOX_TOKEN = "..." }
+defaultCwd = "/home/me/kimi-code"
+
+[environments.k8s]
+command = "kubectl"
+args = ["exec", "-i", "dev-pod", "--"]
+remoteBin = "/root/.kimi-code/bin/kimi"
+defaultCwd = "/workspace"
+```
+
 ## `tui.toml`
 
 Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a companion `tui.toml` in the same directory (`~/.kimi-code/tui.toml`, or `$KIMI_CODE_HOME/tui.toml` when overridden). It is created with defaults on first run, and the interactive commands `/config`, `/theme`, and `/editor` write to it for you, so you rarely need to edit it by hand. If the file is malformed, the CLI falls back to defaults and shows a notice instead of failing to start.
@@ -616,7 +697,7 @@ Changes apply on the next start, or immediately with `/reload-tui` (which reload
 
 In addition to the user-level files under `~/.kimi-code`, Kimi Code reads a project-local configuration file at `<project-root>/.kimi-code/local.toml`. It holds settings that are specific to one project checkout and typically should not be shared with teammates.
 
-The file is created automatically when you add an extra workspace directory with [`/add-dir`](../reference/slash-commands.md) and choose to remember it for the project. You rarely need to edit it by hand.
+Earlier versions of [`/add-dir`](../reference/slash-commands.md) wrote remembered directories to this file; current versions write them to the workspace registry in `~/.kimi-code/projects.json` instead, and `local.toml` is now a read-only legacy field that nothing writes to. Sessions of implicit workspaces (entered by directory in the terminal) still merge its `additional_dir` into the additional directories; sessions of explicitly created (managed) workspaces no longer read it. To move legacy entries into the registry, use the import action in the client's create/edit workspace dialog (backed by [`GET /api/v1/workspaces/project-config-dirs`](../reference/server-api.md#get-apiv1workspacesproject-config-dirs)); imported entries are registry-managed and removals take effect immediately.
 
 ### `[workspace]`
 
@@ -624,7 +705,7 @@ The `[workspace]` table groups project-level workspace settings:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `additional_dir` | `array<string>` | No | Additional workspace directories (absolute paths); written automatically when you confirm "remember this directory" in `/add-dir`, and available in every session of this project |
+| `additional_dir` | `array<string>` | No | Additional workspace directories (absolute paths, legacy compatibility field); written by older versions of `/add-dir` and never written by current versions; still merged for implicit-workspace sessions and ignored by managed workspaces |
 
 ```toml
 [workspace]
@@ -632,6 +713,8 @@ additional_dir = ["/absolute/path/to/shared"]
 ```
 
 Because directories are stored as absolute paths, which are specific to your machine, we recommend adding `.kimi-code/local.toml` to your project's `.gitignore` so it is not committed.
+
+Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the folder in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
 
 ## Next steps
 
