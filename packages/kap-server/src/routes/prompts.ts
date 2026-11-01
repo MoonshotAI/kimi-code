@@ -245,7 +245,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               {
                 telemetry,
                 providerType: resolved.profile.getModelProviderType(),
-                stagingNamespace: reservation.id,
                 resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => {
                   try {
                     const session = await resumeSessionById(core.accessor, session_id);
@@ -325,7 +324,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                   : () => applyPromptLaunchMode(resolved.agent, mode, promptObjectiveText(parts, req.body.metadata)),
               onDrop: () => {
                 settlement.dispose();
-                void staging.discardStaged();
+                void staging.discard();
               },
             });
           } catch (error) {
@@ -443,6 +442,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
   const queueErrors = {
     [ErrorCode.VALIDATION_FAILED]: {},
     [ErrorCode.SESSION_NOT_FOUND]: {},
+    [ErrorCode.SESSION_BUSY]: {},
     [ErrorCode.PROMPT_NOT_FOUND]: {},
   };
 

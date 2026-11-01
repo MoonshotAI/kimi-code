@@ -29,6 +29,8 @@ type QueueEntry = QueuedPromptItem & {
   readonly onDrop?: () => void;
 };
 
+type InputEntry = QueueEntry & { readonly kind: 'input' };
+
 export class AgentPromptQueueService extends Disposable implements IAgentPromptQueueService {
   declare readonly _serviceBrand: undefined;
 
@@ -37,7 +39,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
 
   private entries: QueueEntry[] = [];
   private paused = false;
-  private busy = false;
+  private launching = false;
   private pumpScheduled = false;
   private disposed = false;
 
@@ -65,11 +67,11 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   }
 
   hasPendingInputs(): boolean {
-    return !this.paused && this.entries.some((item) => item.kind === 'input');
+    return this.launching || (!this.paused && this.entries.some((item) => item.kind === 'input'));
   }
 
   hasPendingItems(): boolean {
-    return !this.paused && this.entries.length > 0;
+    return this.launching || (!this.paused && this.entries.length > 0);
   }
 
   async submitInput(request: PromptQueueInputRequest): Promise<PromptQueueSubmitResult> {
@@ -78,10 +80,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     if (request.mode !== undefined && request.delivery === 'steer') {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'a prompt with a mode cannot be steered');
     }
-    if (request.delivery === 'steer' && !this.paused && !this.busy && this.loop.canSteerPrompt()) {
-      return { acceptedAs: 'steer', handle: await this.handOffSteer(request.entry) };
-    }
-    const entry: QueueEntry = {
+    const entry: InputEntry = {
       kind: 'input',
       id: request.id,
       delivery: request.delivery,
@@ -91,34 +90,18 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       prepare: request.prepare,
       onDrop: request.onDrop,
     };
-    if (!this.canStartNow()) {
+    const steerNow = entry.delivery === 'steer' && !this.paused && this.loop.canSteerPrompt();
+    if (this.launching || (!steerNow && !this.canStartNow())) {
       this.insert(entry);
       return { acceptedAs: request.delivery };
     }
-    if (request.prepare === undefined) {
-      return { acceptedAs: 'turn', handle: this.launch(request.entry) };
-    }
-    this.busy = true;
-    try {
-      this.runGate.begin();
-      await request.prepare();
-      this.assertOpen();
-      if (this.loop.canLaunchPrompt()) {
-        return { acceptedAs: 'turn', handle: this.launch(request.entry) };
-      }
-      this.restoreAtHead({ ...entry, prepare: undefined });
-      this.emitChange();
-      return { acceptedAs: 'queue' };
-    } finally {
-      this.busy = false;
-      this.schedulePump();
-    }
+    return this.start(entry, false);
   }
 
   submitCompaction(request: PromptQueueCompactionRequest): PromptQueueSubmitResult {
     this.assertOpen();
     this.assertNewId(request.id);
-    if (this.canStartNow()) {
+    if (!this.launching && this.canStartNow()) {
       this.startCompaction(request.instruction);
       return { acceptedAs: 'compact' };
     }
@@ -133,12 +116,14 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   }
 
   pause(): void {
+    this.assertOpen();
     if (this.paused) return;
     this.paused = true;
     this.emitChange();
   }
 
   resume(): void {
+    this.assertOpen();
     if (!this.paused) return;
     this.paused = false;
     this.emitChange();
@@ -146,6 +131,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   }
 
   steer(id: string): void {
+    this.assertOpen();
     const entry = this.find(id);
     if (entry.kind !== 'input') {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'only an input can be steered');
@@ -159,6 +145,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   }
 
   move(id: string, beforeId?: string): void {
+    this.assertOpen();
     const entry = this.find(id);
     if (entry.delivery === 'steer') {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'steers keep their order ahead of queued prompts');
@@ -177,6 +164,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   }
 
   cancel(id: string): void {
+    this.assertOpen();
     const entry = this.find(id);
     this.entries = this.entries.filter((item) => item !== entry);
     this.emitChange();
@@ -192,11 +180,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   }
 
   private canStartNow(): boolean {
-    return (
-      !this.busy &&
-      (this.paused || this.entries.length === 0) &&
-      this.loop.canLaunchPrompt()
-    );
+    return (this.paused || this.entries.length === 0) && this.loop.canLaunchPrompt();
   }
 
   private insert(entry: QueueEntry): void {
@@ -258,59 +242,56 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   }
 
   private async pump(): Promise<void> {
-    if (this.disposed || this.paused || this.busy || this.entries.length === 0) return;
+    if (this.disposed || this.paused || this.launching || this.entries.length === 0) return;
     const head = this.entries[0]!;
-    if (head.kind === 'input' && head.delivery === 'steer' && this.loop.canSteerPrompt()) {
-      await this.runBusy(async () => {
-        this.take(head);
-        const id = this.submitTaken(head);
-        if (id !== undefined) await this.steerSubmitted(id);
-      });
-      return;
-    }
-    if (!this.loop.canLaunchPrompt()) return;
     if (head.kind === 'compact') {
+      if (!this.loop.canLaunchPrompt()) return;
       this.take(head);
       this.startQueuedCompaction(head.instruction);
       this.schedulePump();
       return;
     }
-    if (head.prepare !== undefined) {
-      await this.runBusy(() => this.applyMode(head));
-      return;
-    }
-    this.take(head);
-    this.submitTaken(head);
+    const steerNow = head.delivery === 'steer' && this.loop.canSteerPrompt();
+    if (!steerNow && !this.loop.canLaunchPrompt()) return;
+    await this.start(head, true);
   }
 
-  private async applyMode(entry: QueueEntry): Promise<void> {
+  private async start(entry: InputEntry, fromQueue: boolean): Promise<PromptQueueSubmitResult> {
+    this.launching = true;
+    if (fromQueue) this.take(entry);
+    let current = entry;
     try {
-      this.runGate.begin();
-      await entry.prepare?.();
+      if (current.delivery === 'steer' && this.loop.canSteerPrompt()) {
+        const { id } = this.loop.submit(current.entry);
+        const handle = this.loop.promptHandle(id);
+        await this.steerSubmitted(id);
+        return { acceptedAs: 'steer', handle };
+      }
+      if (current.prepare !== undefined) {
+        this.runGate.begin();
+        await current.prepare();
+        current = { ...current, prepare: undefined };
+        this.assertOpen();
+        if (!this.loop.canLaunchPrompt()) {
+          this.restoreAtHead(current);
+          this.emitChange();
+          return { acceptedAs: 'queue' };
+        }
+      }
+      return { acceptedAs: 'turn', handle: this.launch(current.entry) };
     } catch (error) {
-      if (this.entries.includes(entry)) this.pauseAfterFailedStart(entry, error);
-      return;
-    }
-    this.entries = this.entries.map((item) => (item === entry ? { ...item, prepare: undefined } : item));
-  }
-
-  private async runBusy(run: () => Promise<void>): Promise<void> {
-    this.busy = true;
-    try {
-      await run();
+      if (!fromQueue) throw error;
+      if (this.disposed) {
+        current.onDrop?.();
+      } else {
+        this.restoreAtHead(current);
+        this.pauseAfterFailedStart(current, error);
+      }
+      return { acceptedAs: 'queue' };
     } finally {
-      this.busy = false;
+      this.launching = false;
+      if (!this.disposed) this.onDidChangeEmitter.fire(this.snapshot());
       this.schedulePump();
-    }
-  }
-
-  private submitTaken(entry: QueueEntry & { readonly kind: 'input' }): string | undefined {
-    try {
-      return this.loop.submit(entry.entry).id;
-    } catch (error) {
-      this.restoreAtHead(entry);
-      this.pauseAfterFailedStart(entry, error);
-      return undefined;
     }
   }
 
@@ -336,13 +317,6 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   private launch(entry: UserEntry): PromptHandle | undefined {
     const { id } = this.loop.submit(entry);
     return this.loop.promptHandle(id);
-  }
-
-  private async handOffSteer(entry: UserEntry): Promise<PromptHandle | undefined> {
-    const { id } = this.loop.submit(entry);
-    const handle = this.loop.promptHandle(id);
-    await this.steerSubmitted(id);
-    return handle;
   }
 
   private async steerSubmitted(id: string): Promise<void> {
