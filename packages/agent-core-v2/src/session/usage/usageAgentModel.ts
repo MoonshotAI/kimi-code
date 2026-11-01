@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import type { UsageStatus } from '#/agent/usage/usage';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import {
@@ -9,7 +9,7 @@ import {
   type UsageModelState,
   type UsageRecordScope,
 } from '#/agent/usage/usageOps';
-import { addUsage, type TokenUsage } from '#human/llm/usage';
+import { addUsage, type TokenUsage } from '#human/llm-requester/usage';
 import { AgentModel, defineAgentModel, type AgentModelContext } from '#/state/agentModel';
 
 export interface UsageRecordInput {

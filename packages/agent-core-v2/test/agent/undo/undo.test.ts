@@ -105,7 +105,6 @@ describe('AgentConversationUndoService', () => {
         ctx.context.append({
           role: 'user',
           content: [{ type: 'text', text: 'restored notification' }],
-          toolCalls: [],
           origin: { kind: 'task', taskId: 'task-1', status: 'completed', notificationId: 'notification-1' },
         });
         restored = true;
@@ -435,7 +434,10 @@ describe('AgentConversationUndoService', () => {
           if (mode === 'degraded' && images.length > 3) {
             throw new APIRequestTooLargeError(413, 'Request Entity Too Large');
           }
-          if (mode === 'stripped' && images.some((part) => part.imageUrl.url.endsWith('/1-0.png'))) {
+          if (
+            mode === 'stripped' &&
+            images.some((part) => part.imageUrl.url.endsWith('/1-0.png'))
+          ) {
             throw new APIStatusError(400, 'unsupported image format');
           }
           return {
@@ -461,7 +463,9 @@ describe('AgentConversationUndoService', () => {
               { type: 'text', text: 'describe the images' },
               ...Array.from({ length: count }, (_, index) => ({
                 type: 'image_url' as const,
-                imageUrl: { url: `https://example.test/${imageCounts.length}-${index}.png` },
+                imageUrl: {
+                  url: `https://example.test/${imageCounts.length}-${index}.png`,
+                },
               })),
             ],
           },
@@ -587,7 +591,6 @@ describe('AgentConversationUndoService', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'u2' }],
-        toolCalls: [],
         origin: { kind: 'user' },
       },
       {
@@ -785,7 +788,6 @@ describe('AgentConversationUndoService', () => {
         userPromptSubmitHookPart('<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>'),
         { type: 'text', text: 'u2' },
       ],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     ctx.appendTurnExchange('u3', 'a3');
@@ -827,7 +829,7 @@ describe('AgentConversationUndoService', () => {
       paused: false,
       hasPendingRequests: true,
       turn: undefined,
-      activeTraceId: undefined,
+      activeRequestId: undefined,
     });
 
     try {

@@ -180,7 +180,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
       const normalized = normalizeQuestionResult(result);
       if (normalized === null || Object.keys(normalized.answers).length === 0) {
         const properties: QuestionDismissedEvent = {
-          trace_id: trace?.traceId,
+          request_id: trace?.requestId,
         };
         this.telemetry.track2('question_dismissed', properties);
         return dismissedQuestionResult();
@@ -188,7 +188,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
 
       const properties: QuestionAnsweredEvent = {
         answered: Object.keys(normalized.answers).length,
-        trace_id: trace?.traceId,
+        request_id: trace?.requestId,
       };
       if (normalized.method !== undefined) properties.method = normalized.method;
       this.telemetry.track2('question_answered', properties);

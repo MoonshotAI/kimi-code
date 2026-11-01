@@ -34,22 +34,24 @@ export {
 export { Service } from '#/_base/di/service';
 export * from './errors';
 export * from './events';
-export * from '#/runtime/runtime';
-export * from '#/runtime/runtimeRegistry';
-export * from '#/runtime/runtimeWorkspaceView';
-export * from '#/runtime/runtimeProvider';
-export * from '#/runtime/runtimeUnitHost';
-export * from '#/runtime/localRuntime';
-export * from '#/runtime/standaloneRuntime';
+export * from '#/environment/environment';
+export * from '#/app/environment/environment';
+export * from '#/app/environment/environmentService';
+export * from '#/environment/environmentRegistry';
+export * from '#/environment/environmentProvider';
+export * from '#/remote/declaration/remoteEnvironmentDeclaration';
+import '#/remote/declaration/configSection';
 export * from '#/program/program';
 export * from '#/workspace/workspaceInstance/workspaceInstance';
 export * from '#/workspace/workspaceInstance/workspaceInstanceManager';
 export * from '#/workspace/workspaceInstance/workspaceInstanceManagerService';
-export * from '#/agent/runtimeBinding/runtimeBinding';
-export * from '#/agent/runtimeBinding/runtimeBindingService';
-export * from '#/agent/runtimeBinding/agentRuntime';
+export * from '#/agent/environmentBinding/environmentBinding';
+export * from '#/agent/environmentBinding/environmentBindingService';
+export * from '#/agent/environmentBinding/agentEnvironment';
 export * from '#/app/sessionManager/sessionManager';
 export * from '#/app/sessionManager/sessionManagerService';
+export * from '#/app/environmentDeclaration/environmentDeclaration';
+export * from '#/app/environmentDeclaration/environmentDeclarationService';
 
 export * from '#/_base/log/log';
 export * from '#/_base/log/logConfig';
@@ -79,6 +81,7 @@ export * from '#/os/backends/node-local/hostClockService';
 export * from '#/os/backends/node-local/hostEnvironmentService';
 export * from '#/os/backends/node-local/hostFsService';
 export * from '#/os/backends/node-local/hostProcessService';
+import '#/os/backends/node-local/hostServices';
 export * from '#/agent/tools/os/bash/bash';
 import '#/agent/tools/os/bash/bashTool';
 export * from '#/agent/tools/os/glob/glob';
@@ -141,22 +144,22 @@ export {
   type ToolCall,
   type ToolCallPart,
   type VideoURLPart,
-} from '#human/llm/message';
-export type { ToolDescription as Tool } from '#human/llm/message';
-export { addUsage, emptyUsage, grandTotal, inputTotal, type TokenUsage } from '#human/llm/usage';
-export type { FinishReason } from '#human/llm/finish-reason';
+} from '#human/message';
+export type { ToolDescription as Tool } from '#human/message';
+export { addUsage, emptyUsage, grandTotal, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
+export type { FinishReason } from '#human/llm-requester/finish-reason';
 export type {
   JsonObjectResponseFormat,
   JsonSchemaObject,
   JsonSchemaResponseFormat,
   ResponseFormat,
-} from '#human/llm/response-format';
-export type { ThinkingEffort, ThinkingRequestOptions } from '#human/llm/thinking';
-export type { VideoUploadInput } from '#human/llm/media/upload';
-export type { ToolCallIdPolicy } from '#human/llm/requester/requester';
-export type { SamplingOptions } from '#/llm-adapter/model/model-requester';
+} from '#human/llm-requester/response-format';
+export type { ThinkingEffort, ThinkingRequestOptions } from '#human/llm-requester/thinking';
+export type { VideoUploadInput } from '#human/media/upload';
+export type { ToolCallIdPolicy } from '#human/llm-requester/requester';
+export type { SamplingOptions } from '#/llm-adapter/model/generate';
 export * from '#/llm-adapter/contract/request-trace';
-export type { KimiThinkingConfig } from '#human/llm-kimi/trait';
+export type { KimiThinkingConfig } from '#human/llm/builtin/provider/kimi/protocol';
 
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';
@@ -204,7 +207,7 @@ export * from '#/llm-adapter/model/model-service';
 export * from '#/llm-adapter/model/thinking';
 export * from '#/llm-adapter/model/catalog';
 export * from '#/llm-adapter/model/catalog-service';
-export * from '#/llm-adapter/model/model-requester';
+export * from '#/llm-adapter/model/generate';
 import '#/llm-adapter/model/errors';
 export {
   MODEL_CATALOG_SECTION,
@@ -297,6 +300,7 @@ export * from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 export * from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService';
 export * from '#/session/sessionInstructions/instructionsProvider';
 export * from '#/session/workspaceInfo/workspaceInfo';
+export * from '#/session/workdir/workdir';
 export * from '#/workspace/workspaceDirs/workspaceDirs';
 export * from '#/workspace/workspaceDirs/workspaceDirsService';
 export * from '#/features/skill/workspace/workspaceSkillCatalog';
@@ -411,12 +415,11 @@ import '#/agent/toolSelect/flag';
 export * from '#/agent/tools/select-tools/select-tools';
 import '#/agent/tools/select-tools/selectToolsTool';
 export * from '#/agent/toolSelect/dynamicTools';
+export * from '#/agent/toolSelect/toolSelectOps';
 export * from '#/agent/toolSelect/toolSelect';
 export * from '#/agent/toolSelect/toolSelectService';
 export * from '#/agent/toolSelect/toolSelectAnnouncements';
 export * from '#/agent/toolSelect/toolSelectAnnouncementsService';
-export * from '#/agent/toolSelect/toolSelectSchemas';
-export * from '#/agent/toolSelect/toolSelectSchemasService';
 import '#/agent/toolPolicy/configSection';
 export * from '#/agent/toolPolicy/configSection';
 export * from '#/agent/toolPolicy/evaluate';
@@ -526,6 +529,7 @@ export * from '#/app/gateway/gatewayService';
 
 export * from '#/session/workspaceContext/workspaceContext';
 export * from '#/session/workspaceContext/workspaceContextService';
+import '#/session/workspaceContext/agentWorkspaceContextService';
 export * from '#/app/projectLocalConfig/projectLocalConfig';
 export * from '#/app/workspace/workspace';
 export * from '#/app/workspace/workspaceService';
@@ -550,6 +554,7 @@ export * from '#/workspace/workspaceGit/workspaceGit';
 export * from '#/workspace/workspaceGit/workspaceGitService';
 export * from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 export * from '#/session/sessionToolPolicyGate/sessionToolPolicyGateService';
+export * from '#/workspace/workspaceTrust/configSection';
 export * from '#/workspace/workspaceTrust/workspaceTrust';
 export * from '#/workspace/workspaceTrust/workspaceTrustService';
 export * from '#/workspace/workspaceTrust/workspaceTrustStore';
@@ -600,7 +605,7 @@ export {
   resolveMaxImageEdgePx,
   resolveReadImageByteBudget,
 } from '#/agent/media/image-compress';
-export { providerImagePolicy, type ProviderImagePolicy } from '#human/llm/media/image-formats';
+export { providerImagePolicy, type ProviderImagePolicy } from '#human/llm/protocol/kit/media';
 export {
   buildImageConversionGuidance,
   buildUnsupportedImageNotice,
@@ -646,9 +651,6 @@ export * from '#/features/reminder/types';
 import '#/features/reminder/reminderFeature';
 export * from '#/features/dateChange/dateChange';
 export * from '#/features/dateChange/dateChangeService';
-export * from '#/agent/contextProjector/contextProjector';
-export * from '#/agent/contextProjector/contextProjectorService';
-export * from '#/agent/contextProjector/mediaProjection';
 export * from '#/agent/tokenCounting/tokenCounting';
 export * from '#/agent/tokenCounting/tokenCountingOps';
 export * from '#/session/tokenCounting/sessionTokenCounting';
@@ -668,9 +670,8 @@ export * from '#/agent/fullCompaction/compactionOps';
 export * from '#/agent/fullCompaction/types';
 export * from '#/agent/fullCompaction/contextRecovery';
 export * from '#/agent/fullCompaction/compactionInstruction';
-export * from '#/agent/llmRequester/llmRequester';
-export * from '#/agent/llmRequester/llmRequesterService';
-export * from '#/agent/llmRequester/llmRequestOps';
+export * from '#/agent/loop/requesterContract';
+export * from '#/agent/loop/llmRequestOps';
 export * from '#/_base/utils/promise';
 export * from '#/_base/utils/retry';
 export * from '#/_base/utils/timer';

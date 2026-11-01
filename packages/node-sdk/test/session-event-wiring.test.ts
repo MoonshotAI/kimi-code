@@ -120,6 +120,11 @@ describe('SessionEventWiring status snapshot fold', () => {
     bindStatusServices(sub, 'sub-model');
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
+    const steerInput = [
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+      { type: 'audio_url', audioUrl: { url: 'https://example.com/a.mp3' } },
+      { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
+    ];
     try {
       // The v2 model slice rides only the subagent's bind-time emission, which
       // reaches clients before `subagent.spawned` and is dropped there; a
@@ -127,11 +132,19 @@ describe('SessionEventWiring status snapshot fold', () => {
       sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
       // Non-status events pass through untouched.
       sub.bus.emit({ type: 'assistant.delta', delta: 'Hi', time: 1_700_000_000_123 });
+      sub.bus.emit({
+        type: 'tool.result',
+        output: [
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+          { type: 'custom', source: { kind: 'inline' } },
+        ],
+      });
+      sub.bus.emit({ type: 'turn.steer', input: steerInput });
     } finally {
       wiring.dispose();
     }
 
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(4);
     expect(events[0]).toMatchObject({
       type: 'agent.status.updated',
       sessionId: 's1',
@@ -148,6 +161,17 @@ describe('SessionEventWiring status snapshot fold', () => {
       time: 1_700_000_000_123,
     });
     expect(events[1]).not.toHaveProperty('model');
+    expect(events[2]).toMatchObject({
+      type: 'tool.result',
+      sessionId: 's1',
+      agentId: 'agent-1',
+      output: [
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+        { type: 'custom', source: { kind: 'inline' } },
+      ],
+    });
+    expect(events[3]).toMatchObject({ type: 'turn.steer', input: steerInput });
+    expect(JSON.stringify(events[3])).not.toContain('"source"');
   });
 
   it('forwards prompt.completed so gate-blocked prompts can settle clients', () => {
@@ -209,7 +233,7 @@ describe('SessionEventWiring status snapshot fold', () => {
     expect(events[0]).not.toHaveProperty('model');
   });
 
-  it('strips the internal promptAttachments field from turn.started', () => {
+  it('forwards turn.prompt and strips the internal promptAttachments field from turn.started', () => {
     const sub = new FakeAgentHandle('agent-1');
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
@@ -217,6 +241,12 @@ describe('SessionEventWiring status snapshot fold', () => {
       // `promptAttachments` is transcript-projection metadata: kap-server
       // strips it from the WS wire event, so SDK consumers must not see it
       // either.
+      sub.bus.emit({
+        type: 'turn.prompt',
+        turnId: 1,
+        input: [{ type: 'text', text: '<notification>internal only</notification>' }],
+        origin: { kind: 'task', taskId: 'task_1' },
+      });
       sub.bus.emit({
         type: 'turn.started',
         turnId: 1,
@@ -228,14 +258,21 @@ describe('SessionEventWiring status snapshot fold', () => {
       wiring.dispose();
     }
 
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(2);
     expect(events[0]).toMatchObject({
+      type: 'turn.prompt',
+      turnId: 1,
+      sessionId: 's1',
+      agentId: 'agent-1',
+      input: [{ type: 'text', text: '<notification>internal only</notification>' }],
+    });
+    expect(events[1]).toMatchObject({
       type: 'turn.started',
       turnId: 1,
       sessionId: 's1',
       agentId: 'agent-1',
       prompt: 'describe this',
     });
-    expect(events[0]).not.toHaveProperty('promptAttachments');
+    expect(events[1]).not.toHaveProperty('promptAttachments');
   });
 });

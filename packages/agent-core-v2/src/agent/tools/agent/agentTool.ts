@@ -27,7 +27,7 @@ import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import {
@@ -67,13 +67,15 @@ import { type AgentMeta, ISessionMetadata } from '#/session/sessionMetadata/sess
 import { emitAgentRunSpawned, mirrorAgentRun, SubagentStarted } from '#/session/subagent/mirrorAgentRun';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
-import { FORK_EXPERIMENTAL_UNAVAILABLE, forkIncompatibility } from '#/session/subagent/spawn';
+import {
+  FORK_EXPERIMENTAL_UNAVAILABLE,
+  forkIncompatibility,
+} from '#/session/subagent/spawn';
 import { SUBAGENT_FORK_FLAG_ID } from '#/session/subagent/flag';
 import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
-  isSubagentModelForced,
   resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
@@ -131,7 +133,7 @@ export class SubagentTool implements ISubagentTool {
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IInstantiationService private readonly instantiationService: IInstantiationService,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
@@ -185,10 +187,7 @@ export class SubagentTool implements ISubagentTool {
     if (typeLines) {
       description += `\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`;
     }
-    const modelLines = buildSubagentModelDescriptions(
-      this.config,
-      this.profile.data().modelAlias,
-    );
+    const modelLines = buildSubagentModelDescriptions(this.config);
     if (modelLines !== undefined) {
       description += `\n\n${modelLines}`;
     }
@@ -216,7 +215,7 @@ export class SubagentTool implements ISubagentTool {
     this.instantiationService.invokeFunction((accessor) => {
       for (const { options } of this.contributions.items) {
         if (refs.get(options.name)?.source === 'user') continue;
-        if (isToolAvailable(options, accessor, this.runtime)) {
+        if (isToolAvailable(options, accessor, this.environment)) {
           refs.set(options.name, { name: options.name, source: options.source ?? 'builtin' });
         } else {
           refs.delete(options.name);
@@ -242,20 +241,8 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private anySubagentModelSupports(supports: (capabilities: ModelCapability) => boolean): boolean {
-    if (isSubagentModelForced(this.config)) {
-      const forced = resolveSubagentModelPool(this.config)?.defaultModel;
-      if (forced === undefined) return false;
-      try {
-        const capabilities = this.modelCatalog.get(forced).capabilities;
-        return supports(capabilities);
-      } catch {
-        return false;
-      }
-    }
-    const own = this.profile.getModelCapabilities();
-    if (supports(own)) return true;
     const pool = resolveSubagentModelPool(this.config);
-    if (pool === undefined) return false;
+    if (pool === undefined) return supports(this.profile.getModelCapabilities());
     for (const alias of Object.keys(pool.models)) {
       try {
         const capabilities = this.modelCatalog.get(alias).capabilities;
@@ -684,7 +671,7 @@ function truncateReason(reason: string): string {
 registerAgentToolService(ISubagentTool, SubagentTool, {
   name: 'Agent',
   domain: 'subagent',
-  requiredRuntimeCapabilities: ['process'],
+  requiredEnvironmentCapabilities: ['process'],
 });
 
 function buildProfileDescriptions(

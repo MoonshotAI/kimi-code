@@ -97,7 +97,7 @@ async function handleAddDirChoice(
     host.refreshSlashCommandAutocomplete();
     host.showStatus(
       choice === 'remember'
-        ? `Added workspace directory:\n  ${path}\n  Saved to:\n  ${result.configPath}`
+        ? `Added workspace directory:\n  ${path}\n  Remembered in the workspace registry`
         : `Added workspace directory:\n  ${path}\n  For this session only`,
       'success',
     );

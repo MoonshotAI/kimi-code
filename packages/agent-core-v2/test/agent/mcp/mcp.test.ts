@@ -1,4 +1,4 @@
-import type { ContentPart, ToolDescription as KosongTool } from '#human/llm/message';
+import type { ContentPart, ToolDescription as KosongTool } from '#human/message';
 import { Jimp } from 'jimp';
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1172,7 +1172,7 @@ describe('AgentMcpService', () => {
       { type: 'text', text: '<mcp_tool_result name="mcp__s__snap">' },
       {
         type: 'image_url',
-        imageUrl: { url: 'data:image/png;base64,' + 'x'.repeat(100_000) },
+        imageUrl: { url: `data:image/png;base64,${'x'.repeat(100_000)}` },
       },
       { type: 'text', text: '</mcp_tool_result>' },
     ]);

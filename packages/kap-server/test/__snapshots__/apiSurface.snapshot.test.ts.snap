@@ -90,7 +90,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/debug/session/{session_id}/agent/{agent_id}/runtime-binding",
+      "/api/v1/debug/session/{session_id}/agent/{agent_id}/environment-binding",
     ],
     [
       "GET",
@@ -198,6 +198,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/sessions/{session_id}/environment",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/environments",
+    ],
+    [
+      "GET",
       "/api/v1/sessions/{session_id}/file-history/changes",
     ],
     [
@@ -234,15 +242,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/runtime",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/skills",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/snapshot",
     ],
     [
       "GET",
@@ -291,6 +291,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/workspaces/{workspace_id}/trust",
+    ],
+    [
+      "GET",
+      "/api/v1/workspaces/project-config-dirs",
     ],
     [
       "GET",
@@ -482,10 +486,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/sessions/{session_id}/runtime",
-    ],
-    [
-      "POST",
       "/api/v1/sessions/{session_id}/skills/{tail}",
     ],
     [
@@ -502,6 +502,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/workspace/fs:list",
+    ],
+    [
+      "POST",
       "/api/v1/workspace/fs:search",
     ],
     [
@@ -514,7 +518,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/workspaces/{workspace_id}/add-dir",
+      "/api/v1/workspaces/{workspace_id}/primary",
     ],
     [
       "POST",

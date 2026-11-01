@@ -8,13 +8,14 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (29 sections · 2 overlay(s))
+# Index (31 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
 #   database                 src/persistence/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/features/plan/configSection.ts
+#   environments             src/remote/declaration/configSection.ts
 #   experimental             src/app/flag/flag.ts
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/features/skill/catalog/configSection.ts
@@ -38,6 +39,7 @@
 #   tokenCounting            src/agent/tokenCounting/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
 #   watch                    src/app/watch/configSection.ts
+#   workspace                src/workspace/workspaceTrust/configSection.ts
 #   (overlay) servicesCredentialEnvOverlay  src/app/auth/configSection.ts
 #   (overlay) kimiModelEnvOverlay  src/app/kosongConfig/envOverlay.ts
 
@@ -106,6 +108,7 @@ manual_tick = false
 #   hooks: stripEnv
 #   env:
 #     base <- KIMI_CODE_PERSISTENCE_MINIDB_READMODEL (custom parse)
+#     global_search <- KIMI_CODE_GLOBAL_SEARCH (custom parse)
 #     search <- KIMI_CODE_SEARCH_WORKER (custom parse)
 #     search_sync_session_cap <- KIMI_CODE_SEARCH_SYNC_SESSION_CAP (custom parse)
 #     search_sync_debounce_ms <- KIMI_CODE_SEARCH_SYNC_DEBOUNCE_MS (custom parse)
@@ -113,6 +116,7 @@ manual_tick = false
 
 [database]
 # base: boolean
+# global_search: boolean
 # search: boolean
 # search_sync_session_cap: integer
 # search_sync_debounce_ms: integer
@@ -132,6 +136,15 @@ manual_tick = false
 # ##########################################################################
 
 default_plan_mode = false
+
+# ##########################################################################
+# environments
+#   owner: src/remote/declaration/configSection.ts
+#   scope: core
+# ##########################################################################
+
+[environments]
+# default: string
 
 # ##########################################################################
 # experimental
@@ -374,18 +387,8 @@ merge_all_available_skills = true
 [secondary_model]
 # default_model: string
 # models: record<string, string>
-# force: boolean
 # model: string
-# max_context_size: integer
-# max_input_size: integer
-# max_output_size: integer
-# capabilities: string[]
-# display_name: string
-# reasoning_key: string
-# adaptive_thinking: boolean
-# support_efforts: string[]
 # default_effort: string
-# off_effort: string
 
 # ##########################################################################
 # services
@@ -515,3 +518,12 @@ strategy = "measured+estimated"
 
 [watch]
 # enabled: boolean
+
+# ##########################################################################
+# workspace
+#   owner: src/workspace/workspaceTrust/configSection.ts
+#   scope: core
+# ##########################################################################
+
+[workspace]
+require_trust = true

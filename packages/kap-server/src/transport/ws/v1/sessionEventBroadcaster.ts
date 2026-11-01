@@ -1,10 +1,7 @@
-import { rm } from 'node:fs/promises';
-
 import type {
   ApprovalRequest,
   ApprovalResponse,
   Event2,
-  IAgentScopeHandle,
   IDisposable,
   Interaction,
   ISessionScopeHandle,
@@ -15,16 +12,11 @@ import type {
   Workspace,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  IAgentLifecycleService,
-  IAgentLoopService,
-  IEventBus,
   IEventService,
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
   ISessionActivityView,
-  ISessionIndex,
   ISessionManager,
-  MAIN_AGENT_ID,
   followSessionLifecycles,
   getLiveSessionById,
   resumeSessionById,
@@ -41,15 +33,11 @@ import type {
   SessionMetaUpdatedEvent,
   Event,
 } from './events';
-import { isVolatileEventType } from './events';
-import type { SessionCursor } from '../../../protocol/ws-control';
 import {
   configChangedEventSchema,
   modelCatalogChangedEventSchema,
 } from '../../../protocol/events-zod';
-import type { InFlightTurn, SnapshotSubagent } from '../../../protocol/rest-snapshot';
 import {
-  detachGrades,
   filterOpsForGrade,
   gradeFor,
   needsResetOnTransition,
@@ -71,37 +59,18 @@ import {
 } from '../../../protocol/interaction-wire';
 import { toWireQuestion } from '../../../protocol/question-wire';
 import { toWireWorkspace } from '../../../routes/workspaces';
-import { projectPromptContentParts } from '../../../services/messages/messageProjection';
-import { readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
-import {
-  legacyApprovalsOf,
-  LegacyActivityTracker,
-  phaseFromDomainEvent,
-} from '../../../services/legacyStatus/legacyActivity';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
-import { InFlightTurnTracker } from './inFlightTurnTracker';
-import { SubagentRosterTracker } from './subagentRosterTracker';
-import {
-  type EventEnvelope,
-  type JournalLogger,
-  SessionEventJournal,
-  sessionJournalPath,
-} from './sessionEventJournal';
 
-export type ResyncReason = 'buffer_overflow' | 'session_recreated' | 'epoch_changed';
-
-export interface BufferedSinceResult {
-  events: Array<{ seq: number; envelope: EventEnvelope }>;
-  resyncRequired: ResyncReason | false;
-  currentSeq: number;
-  epoch: string;
+export interface EventEnvelope {
+  readonly type: string;
+  readonly session_id?: string;
+  readonly timestamp: string;
+  readonly payload: unknown;
 }
 
-export interface SessionSnapshotState {
-  seq: number;
-  epoch: string;
-  inFlightTurn: InFlightTurn | null;
-  subagents: SnapshotSubagent[];
+export interface BroadcastLogger {
+  warn(obj: unknown, msg: string): void;
+  error?(obj: unknown, msg: string): void;
 }
 
 export type BroadcastDelivery = 'subscription' | 'immediate';
@@ -112,13 +81,6 @@ export interface BroadcastTarget {
   send(frame: BroadcastFrame, delivery?: BroadcastDelivery): void;
 }
 
-export type AgentFilter = ReadonlySet<string> | undefined;
-
-export interface TargetSubscription {
-  readonly agentFilter?: AgentFilter;
-  readonly transcriptGrades?: TranscriptGradeSpec;
-}
-
 interface TranscriptStream {
   readonly store: TranscriptStore;
   readonly knownAgents: Set<string>;
@@ -126,43 +88,33 @@ interface TranscriptStream {
 
 interface SessionState {
   readonly sessionId: string;
-  readonly journal: SessionEventJournal;
-  readonly tracker: InFlightTurnTracker;
-  readonly roster: SubagentRosterTracker;
-  deferredWork?: SessionActivityState;
   detached?: true;
-  readonly tail: Array<{ seq: number; envelope: EventEnvelope }>;
-  readonly targets: Map<BroadcastTarget, TargetSubscription>;
-  queue: Promise<void>;
-  readonly agentDisposables: Map<string, IDisposable>;
+  readonly targets: Map<BroadcastTarget, TranscriptGradeSpec>;
   readonly lifecycleDisposables: IDisposable[];
   readonly knownInteractions: Map<string, Interaction>;
   transcriptStream?: TranscriptStream;
   readonly transcriptSeeded: Set<BroadcastTarget>;
-  readonly deferredTranscriptSeeds: Map<
-    BroadcastTarget,
-    { readonly spec: TranscriptGradeSpec; readonly transcriptSince?: Record<string, number> }
-  >;
 }
 
-export const DEFAULT_MAX_BUFFER_SIZE = 1000;
+interface WorkTracker {
+  readonly subscription: IDisposable;
+  deferred?: SessionActivityState;
+}
+
 const GLOBAL_SESSION_ID = '__global__';
 const TRANSCRIPT_RESET_TAIL_TURNS = 0;
 
-async function disposeSessionState(state: SessionState): Promise<void> {
+function disposeSessionState(state: SessionState): void {
   for (const d of state.lifecycleDisposables) d.dispose();
-  for (const d of state.agentDisposables.values()) d.dispose();
-  await state.journal.close();
+  state.lifecycleDisposables.length = 0;
 }
 
 export class SessionEventBroadcaster {
   private readonly sessions = new Map<string, SessionState>();
+  private readonly workTrackers = new Map<string, WorkTracker>();
   private readonly globalTargets = new Set<BroadcastTarget>();
   private readonly diEventTargets = new Set<BroadcastTarget>();
-  private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
-  private readonly evictions = new Map<string, Promise<void>>();
-  private readonly activityTrackers = new Map<string, LegacyActivityTracker>();
-  private readonly maxBufferSize: number;
+  private globalQueue: Promise<void> = Promise.resolve();
   private readonly coreEventSubscription: IDisposable;
   private readonly deletionSubscription: IDisposable | undefined;
   private readonly createSubscription: IDisposable | undefined;
@@ -171,25 +123,22 @@ export class SessionEventBroadcaster {
 
   constructor(
     private readonly opts: {
-      readonly eventsDir: string;
       readonly core: Scope;
-      readonly logger?: JournalLogger;
-      readonly maxBufferSize?: number;
+      readonly logger?: BroadcastLogger;
       readonly transcriptService?: TranscriptService;
     },
   ) {
-    this.maxBufferSize = opts.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
     const sessionManager = opts.core.accessor.get(ISessionManager);
-    this.deletionSubscription = sessionManager.onWillDeleteSession?.(
-      (event) => {
-        event.waitUntil(this.purgeSession(event.sessionId));
-      },
-    );
+    this.deletionSubscription = sessionManager.onWillDeleteSession?.((event) => {
+      this.evictSession(event.sessionId);
+    });
     this.lifecycleSubscription = followSessionLifecycles(opts.core.accessor, (service) => {
       const closeSubscription = service.onDidCloseSession((event) => {
+        this.untrackWork(event.sessionId);
         this.detachSession(event.sessionId);
       });
       const archiveSubscription = service.onDidArchiveSession((event) => {
+        this.untrackWork(event.sessionId);
         this.evictSession(event.sessionId);
       });
       return {
@@ -200,6 +149,7 @@ export class SessionEventBroadcaster {
       };
     });
     this.createSubscription = sessionManager.onDidCreateSession?.((event) => {
+      this.trackWork(event.sessionId, event.handle);
       void this.reattachSession(event.sessionId).catch((error: unknown) =>
         this.opts.logger?.warn(
           { sessionId: event.sessionId, err: error },
@@ -207,6 +157,7 @@ export class SessionEventBroadcaster {
         ),
       );
     });
+    for (const session of sessionManager.list()) this.trackWork(session.id, session);
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)
       .subscribe((event) => this.onCoreEvent(event));
@@ -228,9 +179,8 @@ export class SessionEventBroadcaster {
   async subscribe(
     sessionId: string,
     target: BroadcastTarget,
-    filter?: AgentFilter,
-    transcriptGrades?: TranscriptGradeSpec,
-    opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> },
+    transcriptGrades: TranscriptGradeSpec,
+    transcriptSince?: Record<string, number>,
   ): Promise<boolean> {
     try {
       await resumeSessionById(this.opts.core.accessor, sessionId);
@@ -244,35 +194,37 @@ export class SessionEventBroadcaster {
     const state = await this.ensureState(sessionId);
     if (state === undefined || this.sessions.get(sessionId) !== state) return false;
     const prev = state.targets.get(target);
-    state.targets.set(target, { agentFilter: filter, transcriptGrades });
-    if (transcriptGrades !== undefined) {
-      if (opts?.deferTranscriptReset === true) {
-        state.transcriptSeeded.delete(target);
-        state.deferredTranscriptSeeds.set(target, {
-          spec: transcriptGrades,
-          transcriptSince: opts.transcriptSince,
-        });
-      } else {
-        state.deferredTranscriptSeeds.delete(target);
-        const gated = this.willSendTranscriptReset(state, transcriptGrades, prev);
-        if (gated) state.transcriptSeeded.delete(target);
-        await this.subscribeTranscript(
-          state,
-          target,
-          transcriptGrades,
-          prev?.transcriptGrades,
-          opts?.transcriptSince,
-        );
-        if (state.targets.has(target)) state.transcriptSeeded.add(target);
-      }
+    state.targets.set(target, transcriptGrades);
+    if (this.willSendTranscriptReset(state, transcriptGrades, prev)) {
+      state.transcriptSeeded.delete(target);
     }
+    await this.subscribeTranscript(state, target, transcriptGrades, prev, transcriptSince);
+    if (state.targets.has(target)) state.transcriptSeeded.add(target);
     return true;
+  }
+
+  unsubscribe(sessionId: string, target: BroadcastTarget): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined) return;
+    state.targets.delete(target);
+    state.transcriptSeeded.delete(target);
+    this.evictDetachedSession(sessionId);
+  }
+
+  updateTranscriptGrades(
+    sessionId: string,
+    target: BroadcastTarget,
+    transcriptGrades: TranscriptGradeSpec,
+  ): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined || !state.targets.has(target)) return;
+    state.targets.set(target, transcriptGrades);
   }
 
   private willSendTranscriptReset(
     state: SessionState,
     spec: TranscriptGradeSpec,
-    prev: TargetSubscription | undefined,
+    prev: TranscriptGradeSpec | undefined,
   ): boolean {
     const service = this.opts.transcriptService;
     if (service === undefined) return false;
@@ -281,50 +233,9 @@ export class SessionEventBroadcaster {
     for (const descriptor of store.agents()) {
       const grade = gradeFor(spec, descriptor.agentId);
       if (grade === 'off') continue;
-      if (needsResetOnTransition(gradeFor(prev?.transcriptGrades, descriptor.agentId), grade)) {
-        return true;
-      }
+      if (needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade)) return true;
     }
     return false;
-  }
-
-  async flushTranscriptSeed(sessionId: string, target: BroadcastTarget): Promise<void> {
-    const state = this.sessions.get(sessionId);
-    if (state === undefined) return;
-    const deferred = state.deferredTranscriptSeeds.get(target);
-    if (deferred === undefined) return;
-    state.deferredTranscriptSeeds.delete(target);
-    await this.subscribeTranscript(state, target, deferred.spec, undefined, deferred.transcriptSince);
-    if (state.targets.has(target)) state.transcriptSeeded.add(target);
-  }
-
-  unsubscribe(sessionId: string, target: BroadcastTarget): void {
-    const state = this.sessions.get(sessionId);
-    if (state === undefined) return;
-    state.targets.delete(target);
-    state.transcriptSeeded.delete(target);
-    state.deferredTranscriptSeeds.delete(target);
-    this.evictDetachedSession(sessionId);
-  }
-
-  unsubscribeTranscript(
-    sessionId: string,
-    target: BroadcastTarget,
-    agentIds?: readonly string[],
-  ): void {
-    const state = this.sessions.get(sessionId);
-    if (state === undefined) return;
-    const sub = state.targets.get(target);
-    if (sub === undefined) return;
-    const next =
-      agentIds === undefined ? undefined : detachGrades(sub.transcriptGrades, agentIds);
-    if (next === undefined) {
-      state.targets.set(target, { agentFilter: sub.agentFilter, transcriptGrades: undefined });
-      state.transcriptSeeded.delete(target);
-      state.deferredTranscriptSeeds.delete(target);
-    } else {
-      state.targets.set(target, { agentFilter: sub.agentFilter, transcriptGrades: next });
-    }
   }
 
   private async subscribeTranscript(
@@ -348,9 +259,8 @@ export class SessionEventBroadcaster {
     await Promise.all(
       [...backfill].map((agentId) => service.ensureAgentHistory(state.sessionId, agentId)),
     );
-    const current = state.targets.get(target);
-    if (current?.transcriptGrades === undefined) return;
-    const currentSpec = current.transcriptGrades;
+    const currentSpec = state.targets.get(target);
+    if (currentSpec === undefined) return;
     this.ensureTranscriptStream(state, store);
     for (const descriptor of store.agents()) {
       const grade = gradeFor(currentSpec, descriptor.agentId);
@@ -365,9 +275,7 @@ export class SessionEventBroadcaster {
           continue;
         }
       }
-      if (!needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade)) {
-        continue;
-      }
+      if (!needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade)) continue;
       this.sendTranscriptReset(state, target, transcript, grade);
     }
   }
@@ -384,7 +292,7 @@ export class SessionEventBroadcaster {
       if (filtered.length === 0) continue;
       try {
         target.send(
-          this.buildTranscriptEnvelope(state, 'transcript.ops', {
+          buildTranscriptEnvelope(state.sessionId, 'transcript.ops', {
             agent_id: agentId,
             ops: filtered,
             seq: batch.seq,
@@ -406,14 +314,13 @@ export class SessionEventBroadcaster {
     state.transcriptStream = stream;
 
     const opsDisposable = service.onSessionOps(state.sessionId, ({ agentId, ops }, seq) => {
-      for (const [target, sub] of state.targets) {
+      for (const [target, spec] of state.targets) {
         if (!state.transcriptSeeded.has(target)) continue;
-        const grade = gradeFor(sub.transcriptGrades, agentId);
-        const filtered = filterOpsForGrade(grade, ops);
+        const filtered = filterOpsForGrade(gradeFor(spec, agentId), ops);
         if (filtered.length === 0) continue;
         try {
           target.send(
-            this.buildTranscriptEnvelope(state, 'transcript.ops', {
+            buildTranscriptEnvelope(state.sessionId, 'transcript.ops', {
               agent_id: agentId,
               ops: filtered,
               seq,
@@ -432,9 +339,9 @@ export class SessionEventBroadcaster {
           stream.knownAgents.add(descriptor.agentId);
           const transcript = store.getAgent(descriptor.agentId);
           if (transcript === undefined) continue;
-          for (const [target, sub] of state.targets) {
+          for (const [target, spec] of state.targets) {
             if (!state.transcriptSeeded.has(target)) continue;
-            const grade = gradeFor(sub.transcriptGrades, descriptor.agentId);
+            const grade = gradeFor(spec, descriptor.agentId);
             if (grade === 'off') continue;
             try {
               this.sendTranscriptReset(state, target, transcript, grade);
@@ -457,118 +364,13 @@ export class SessionEventBroadcaster {
       transcript.snapshot({ tailTurns: TRANSCRIPT_RESET_TAIL_TURNS }),
     );
     target.send(
-      this.buildTranscriptEnvelope(state, 'transcript.reset', {
+      buildTranscriptEnvelope(state.sessionId, 'transcript.reset', {
         agent_id: transcript.agentId,
         snapshot,
         has_more_older: snapshot.hasMoreOlder ?? false,
         seq: this.opts.transcriptService?.getSeqWatermark(state.sessionId, transcript.agentId),
       }),
     );
-  }
-
-  private buildTranscriptEnvelope(
-    state: SessionState,
-    type: 'transcript.reset' | 'transcript.ops',
-    payload: Omit<TranscriptResetEvent, 'type'> | Omit<TranscriptOpsEvent, 'type'>,
-  ): EventEnvelope {
-    return {
-      type,
-      seq: state.journal.seq,
-      epoch: state.journal.epoch,
-      volatile: true,
-      session_id: state.sessionId,
-      timestamp: new Date().toISOString(),
-      payload: { type, ...payload },
-    };
-  }
-
-  async getBufferedSince(
-    sessionId: string,
-    cursor: SessionCursor,
-    filter?: AgentFilter,
-    transcriptGrades?: TranscriptGradeSpec,
-  ): Promise<BufferedSinceResult> {
-    const state = await this.ensureState(sessionId);
-    if (state === undefined) {
-      return { events: [], resyncRequired: 'session_recreated', currentSeq: 0, epoch: '' };
-    }
-    await state.queue;
-    const { journal, tail } = state;
-    const currentSeq = journal.seq;
-    const { epoch } = journal;
-
-    if (cursor.epoch !== undefined && cursor.epoch !== epoch) {
-      return { events: [], resyncRequired: 'epoch_changed', currentSeq, epoch };
-    }
-    if (cursor.seq > currentSeq) {
-      return { events: [], resyncRequired: 'epoch_changed', currentSeq, epoch };
-    }
-    if (cursor.seq === currentSeq) {
-      return { events: [], resyncRequired: false, currentSeq, epoch };
-    }
-    if (currentSeq - cursor.seq > this.maxBufferSize) {
-      return { events: [], resyncRequired: 'buffer_overflow', currentSeq, epoch };
-    }
-
-    const applyFilter = (
-      entries: Array<{ seq: number; envelope: EventEnvelope }>,
-    ): Array<{ seq: number; envelope: EventEnvelope }> =>
-      filter === undefined && transcriptGrades === undefined
-        ? entries
-        : entries.filter(
-            ({ envelope }) =>
-              matchesAgentFilter(envelope, filter) &&
-              !suppressedByTranscript(envelope, transcriptGrades),
-          );
-
-    const tailStart = tail[0]?.seq;
-    if (tailStart !== undefined && tailStart <= cursor.seq + 1) {
-      const events = applyFilter(tail.filter((e) => e.seq > cursor.seq));
-      return { events, resyncRequired: false, currentSeq, epoch };
-    }
-    const fromDisk = await journal.readSince(cursor.seq, this.maxBufferSize);
-    return { events: applyFilter(fromDisk), resyncRequired: false, currentSeq, epoch };
-  }
-
-  async getCursor(sessionId: string): Promise<{ seq: number; epoch: string }> {
-    const state = await this.ensureState(sessionId);
-    if (state === undefined) {
-      const cold = await this.readColdWatermark(sessionId);
-      return cold ?? { seq: 0, epoch: '' };
-    }
-    await state.queue;
-    return { seq: state.journal.seq, epoch: state.journal.epoch };
-  }
-
-  async getSnapshotState(sessionId: string): Promise<SessionSnapshotState> {
-    const state = await this.ensureState(sessionId);
-    if (state === undefined) {
-      const cold = await this.readColdWatermark(sessionId);
-      return cold !== undefined
-        ? { ...cold, inFlightTurn: null, subagents: [] }
-        : { seq: 0, epoch: '', inFlightTurn: null, subagents: [] };
-    }
-    await state.queue;
-    return {
-      seq: state.journal.seq,
-      epoch: state.journal.epoch,
-      inFlightTurn: state.tracker.get(sessionId),
-      subagents: state.roster.get(sessionId),
-    };
-  }
-
-  private async readColdWatermark(
-    sessionId: string,
-  ): Promise<{ seq: number; epoch: string } | undefined> {
-    const summary = await this.opts.core.accessor.get(ISessionIndex).get(sessionId);
-    if (summary === undefined) return undefined;
-    const journal = await SessionEventJournal.open(
-      sessionJournalPath(this.opts.eventsDir, sessionId),
-      this.opts.logger,
-    );
-    const watermark = { seq: journal.seq, epoch: journal.epoch };
-    await journal.close();
-    return watermark;
   }
 
   async close(): Promise<void> {
@@ -578,72 +380,21 @@ export class SessionEventBroadcaster {
     this.deletionSubscription?.dispose();
     this.createSubscription?.dispose();
     this.lifecycleSubscription.dispose();
-    const disposals: Promise<void>[] = [];
+    for (const sessionId of this.workTrackers.keys()) this.untrackWork(sessionId);
     for (const [sessionId, state] of this.sessions) {
-      disposals.push(disposeSessionState(state));
-      this.dropActivityTrackers(sessionId);
+      disposeSessionState(state);
       this.opts.transcriptService?.dropSession(sessionId);
     }
     this.sessions.clear();
-    await Promise.all(
-      [...this.pendingStates.values()].map((pending) => pending.catch(() => undefined)),
-    );
-    await Promise.all(
-      [...this.evictions.values()].map((eviction) => eviction.catch(() => undefined)),
-    );
-    await Promise.all(disposals);
-  }
-
-  private dropActivityTrackers(sessionId: string): void {
-    for (const key of this.activityTrackers.keys()) {
-      if (key.startsWith(`${sessionId}:`)) this.activityTrackers.delete(key);
-    }
-  }
-
-  private async purgeSession(sessionId: string): Promise<void> {
-    this.evictSession(sessionId);
-    await this.evictions.get(sessionId);
-    await rm(sessionJournalPath(this.opts.eventsDir, sessionId), { force: true });
+    await this.globalQueue;
   }
 
   private evictSession(sessionId: string): void {
     const state = this.sessions.get(sessionId);
-    const pending = this.pendingStates.get(sessionId);
-    if (state === undefined && pending === undefined) {
-      this.opts.transcriptService?.dropSession(sessionId);
-      return;
-    }
-    if (state !== undefined) this.sessions.delete(sessionId);
-    const eviction = this.disposeLifecycleState(sessionId, state, pending).catch(
-      (error: unknown) => this.logDispatchDropped(sessionId, 'session.evict', error),
-    );
-    this.evictions.set(sessionId, eviction);
-    void eviction.finally(() => {
-      if (this.evictions.get(sessionId) === eviction) this.evictions.delete(sessionId);
-    });
-  }
-
-  private async disposeLifecycleState(
-    sessionId: string,
-    state: SessionState | undefined,
-    pending: Promise<SessionState | undefined> | undefined,
-  ): Promise<void> {
-    if (pending !== undefined) {
-      await pending.catch(() => undefined);
-      const late = this.sessions.get(sessionId);
-      if (late !== undefined) this.sessions.delete(sessionId);
-      await this.disposeEvicted(sessionId, state ?? late);
-      return;
-    }
-    await this.disposeEvicted(sessionId, state);
-  }
-
-  private async disposeEvicted(sessionId: string, state: SessionState | undefined): Promise<void> {
     if (state !== undefined) {
+      this.sessions.delete(sessionId);
       state.targets.clear();
-      await state.queue.catch(() => undefined);
-      await disposeSessionState(state);
-      this.dropActivityTrackers(sessionId);
+      disposeSessionState(state);
     }
     this.opts.transcriptService?.dropSession(sessionId);
   }
@@ -652,18 +403,10 @@ export class SessionEventBroadcaster {
     const state = this.sessions.get(sessionId);
     if (state === undefined || state.detached === true) return;
     state.detached = true;
-    for (const disposable of state.lifecycleDisposables) disposable.dispose();
-    state.lifecycleDisposables.length = 0;
-    for (const disposable of state.agentDisposables.values()) disposable.dispose();
-    state.agentDisposables.clear();
+    disposeSessionState(state);
     state.knownInteractions.clear();
-    state.tracker.clear(sessionId);
-    state.roster.clear(sessionId);
-    state.deferredWork = undefined;
     state.transcriptSeeded.clear();
-    state.deferredTranscriptSeeds.clear();
     state.transcriptStream = undefined;
-    this.dropActivityTrackers(sessionId);
     this.opts.transcriptService?.dropSession(sessionId);
     this.evictDetachedSession(sessionId);
   }
@@ -675,127 +418,90 @@ export class SessionEventBroadcaster {
   }
 
   private async reattachSession(sessionId: string): Promise<void> {
-    await this.pendingStates.get(sessionId);
     const state = this.sessions.get(sessionId);
     if (state === undefined || state.detached !== true) return;
-    const session = getLiveSessionById(this.opts.core.accessor, sessionId);
-    if (session === undefined) return;
+    if (getLiveSessionById(this.opts.core.accessor, sessionId) === undefined) return;
     state.detached = undefined;
-    this.attachWorkView(session, state);
-    this.attachAgents(sessionId, session, state);
     this.attachInteractions(sessionId, state);
-    for (const [target, subscription] of state.targets) {
-      if (subscription.transcriptGrades === undefined) continue;
-      await this.subscribeTranscript(state, target, subscription.transcriptGrades, undefined);
+    for (const [target, spec] of state.targets) {
+      await this.subscribeTranscript(state, target, spec, undefined);
       if (state.targets.has(target)) state.transcriptSeeded.add(target);
     }
   }
 
   private async ensureState(sessionId: string): Promise<SessionState | undefined> {
     if (this.closed) return undefined;
-    await this.evictions.get(sessionId);
     const existing = this.sessions.get(sessionId);
     if (existing !== undefined) {
       if (existing.detached !== true) return existing;
       await this.reattachSession(sessionId);
       return existing.detached === true ? undefined : existing;
     }
-    let pending = this.pendingStates.get(sessionId);
-    if (pending === undefined) {
-      pending = this.createSessionState(sessionId).finally(() => {
-        if (this.pendingStates.get(sessionId) === pending) {
-          this.pendingStates.delete(sessionId);
-        }
-      });
-      this.pendingStates.set(sessionId, pending);
-    }
-    return pending;
-  }
-
-  private async createSessionState(sessionId: string): Promise<SessionState | undefined> {
-    if (this.closed) return undefined;
-
-    const session = getLiveSessionById(this.opts.core.accessor, sessionId);
-    if (session === undefined) return undefined;
-
-    const journal = await SessionEventJournal.open(
-      sessionJournalPath(this.opts.eventsDir, sessionId),
-      this.opts.logger,
-    );
-    if (this.closed || getLiveSessionById(this.opts.core.accessor, sessionId) !== session) {
-      await journal.close();
-      return undefined;
-    }
+    if (getLiveSessionById(this.opts.core.accessor, sessionId) === undefined) return undefined;
     const state: SessionState = {
       sessionId,
-      journal,
-      tracker: new InFlightTurnTracker(),
-      roster: new SubagentRosterTracker(),
-      tail: [],
       targets: new Map(),
-      queue: Promise.resolve(),
-      agentDisposables: new Map(),
       lifecycleDisposables: [],
       knownInteractions: new Map(),
       transcriptSeeded: new Set(),
-      deferredTranscriptSeeds: new Map(),
     };
     this.sessions.set(sessionId, state);
+    this.attachInteractions(sessionId, state);
+    return state;
+  }
+
+  private trackWork(sessionId: string, session: ISessionScopeHandle): void {
+    if (this.closed) return;
+    this.untrackWork(sessionId);
+    let workView: ISessionActivityView;
     try {
-      this.attachWorkView(session, state);
-      this.attachAgents(sessionId, session, state);
-      this.attachInteractions(sessionId, state);
+      workView = session.accessor.get(ISessionActivityView);
+      workView.state();
     } catch (error) {
-      this.sessions.delete(sessionId);
-      await disposeSessionState(state);
-      this.dropActivityTrackers(sessionId);
-      if (error instanceof Error && error.message === 'InstantiationService has been disposed') return undefined;
-      throw error;
+      this.opts.logger?.warn({ sessionId, err: error }, 'session work tracking failed');
+      return;
     }
-    return state;
-  }
-
-  private ensureGlobalState(): Promise<SessionState | undefined> {
-    if (this.closed) return Promise.resolve(undefined);
-    const existing = this.sessions.get(GLOBAL_SESSION_ID);
-    if (existing !== undefined) return Promise.resolve(existing);
-    let pending = this.pendingStates.get(GLOBAL_SESSION_ID);
-    if (pending === undefined) {
-      pending = this.createGlobalState().finally(() => {
-        if (this.pendingStates.get(GLOBAL_SESSION_ID) === pending) {
-          this.pendingStates.delete(GLOBAL_SESSION_ID);
+    const tracker: WorkTracker = {
+      subscription: workView.onDidChange(({ state: work, cause }) => {
+        if (cause === 'turn_ended') {
+          tracker.deferred = work;
+          queueMicrotask(() => {
+            if (this.workTrackers.get(sessionId) !== tracker) return;
+            this.flushDeferredWork(sessionId, tracker);
+          });
+          return;
         }
-      });
-      this.pendingStates.set(GLOBAL_SESSION_ID, pending);
-    }
-    return pending;
+        this.flushDeferredWork(sessionId, tracker);
+        this.enqueueWorkChanged(sessionId, work);
+      }),
+    };
+    this.workTrackers.set(sessionId, tracker);
   }
 
-  private async createGlobalState(): Promise<SessionState | undefined> {
-    const journal = await SessionEventJournal.open(
-      sessionJournalPath(this.opts.eventsDir, GLOBAL_SESSION_ID),
-      this.opts.logger,
-    );
-    if (this.closed) {
-      await journal.close();
-      return undefined;
-    }
-    const state: SessionState = {
-      sessionId: GLOBAL_SESSION_ID,
-      journal,
-      tracker: new InFlightTurnTracker(),
-      roster: new SubagentRosterTracker(),
-      tail: [],
-      targets: new Map(),
-      queue: Promise.resolve(),
-      agentDisposables: new Map(),
-      lifecycleDisposables: [],
-      knownInteractions: new Map(),
-      transcriptSeeded: new Set(),
-      deferredTranscriptSeeds: new Map(),
-    };
-    this.sessions.set(GLOBAL_SESSION_ID, state);
-    return state;
+  private untrackWork(sessionId: string): void {
+    const tracker = this.workTrackers.get(sessionId);
+    if (tracker === undefined) return;
+    this.workTrackers.delete(sessionId);
+    tracker.subscription.dispose();
+  }
+
+  private flushDeferredWork(sessionId: string, tracker: WorkTracker): void {
+    const deferred = tracker.deferred;
+    if (deferred === undefined) return;
+    tracker.deferred = undefined;
+    this.enqueueWorkChanged(sessionId, deferred);
+  }
+
+  private enqueueWorkChanged(sessionId: string, work: SessionActivityState): void {
+    this.enqueueGlobal('event.session.work_changed', () => ({
+      type: 'event.session.work_changed',
+      busy: work.busy,
+      main_turn_active: work.mainTurnActive,
+      pending_interaction: work.pendingInteraction,
+      last_turn_reason: work.lastTurnReason,
+      agentId: 'main',
+      sessionId,
+    }));
   }
 
   private onCoreEvent(event: Event2<any>): void {
@@ -803,39 +509,41 @@ export class SessionEventBroadcaster {
     if (event.type === 'event.session.created') {
       const payload = sessionCreatedPayload(corePayload);
       if (payload === undefined) return;
-      void this.dispatchSessionEvent(payload.sessionId, {
+      this.enqueueGlobal(event.type, () => ({
         type: 'event.session.created',
         session: payload.session,
         agentId: 'main',
         sessionId: payload.sessionId,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(payload.sessionId, 'event.session.created', error),
-      );
+      }));
       return;
     }
     if (event.type === 'event.session.archived') {
       const payload = sessionArchivedPayload(corePayload);
       if (payload === undefined) return;
-      void this.dispatchGlobal({
-        type: 'event.session.archived',
-        workspace_id: payload.workspaceId,
-        agentId: 'main',
-        sessionId: payload.sessionId,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(GLOBAL_SESSION_ID, 'event.session.archived', error),
+      this.enqueueGlobal(
+        event.type,
+        () => ({
+          type: 'event.session.archived',
+          workspace_id: payload.workspaceId,
+          agentId: 'main',
+          sessionId: payload.sessionId,
+        }),
+        GLOBAL_SESSION_ID,
       );
       return;
     }
     if (event.type === 'event.session.deleted') {
       const payload = sessionDeletedPayload(corePayload);
       if (payload === undefined) return;
-      void this.dispatchGlobal({
-        type: 'event.session.deleted',
-        workspace_id: payload.workspaceId,
-        agentId: 'main',
-        sessionId: payload.sessionId,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(GLOBAL_SESSION_ID, 'event.session.deleted', error),
+      this.enqueueGlobal(
+        event.type,
+        () => ({
+          type: 'event.session.deleted',
+          workspace_id: payload.workspaceId,
+          agentId: 'main',
+          sessionId: payload.sessionId,
+        }),
+        GLOBAL_SESSION_ID,
       );
       return;
     }
@@ -843,29 +551,24 @@ export class SessionEventBroadcaster {
       const workspace = workspaceLifecyclePayload(corePayload);
       if (workspace === undefined) return;
       const type = event.type;
-      void (async () => {
-        const wire = await toWireWorkspace(this.opts.core, workspace);
-        await this.dispatchGlobal({
-          type,
-          workspace: wire,
-          agentId: 'main',
-          sessionId: GLOBAL_SESSION_ID,
-        } as Event);
-      })().catch((error: unknown) => this.logDispatchError(GLOBAL_SESSION_ID, type, error));
+      this.enqueueGlobal(type, async () => ({
+        type,
+        workspace: await toWireWorkspace(this.opts.core, workspace),
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      }));
       return;
     }
     if (event.type === 'event.workspace.deleted') {
       const payload = workspaceDeletedPayload(corePayload);
       if (payload === undefined) return;
-      void this.dispatchGlobal({
+      this.enqueueGlobal(event.type, () => ({
         type: 'event.workspace.deleted',
         workspace_id: payload.workspaceId,
         root: payload.root,
         agentId: 'main',
         sessionId: GLOBAL_SESSION_ID,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(GLOBAL_SESSION_ID, 'event.workspace.deleted', error),
-      );
+      }));
       return;
     }
     if (event.type === 'session.meta.updated') {
@@ -873,70 +576,60 @@ export class SessionEventBroadcaster {
       if (payload === undefined) return;
       const sessionId = sessionMetaUpdatedSessionId(corePayload);
       if (sessionId === undefined) return;
-      void this.dispatchSessionEvent(sessionId, {
+      this.enqueueGlobal(event.type, () => ({
         type: 'session.meta.updated',
         ...payload,
         agentId: 'main',
         sessionId,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(sessionId, 'session.meta.updated', error),
-      );
+      }));
       return;
     }
     if (event.type === 'event.plugin.changed') {
-      void this.dispatchGlobal({
+      this.enqueueGlobal(event.type, () => ({
         type: 'event.plugin.changed',
         agentId: 'main',
         sessionId: GLOBAL_SESSION_ID,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(GLOBAL_SESSION_ID, 'event.plugin.changed', error),
-      );
+      }));
       return;
     }
     if (event.type === 'event.capability.changed') {
       const payload = capabilityChangedPayload(corePayload);
       if (payload === undefined) return;
-      void this.dispatchGlobal({
+      this.enqueueGlobal(event.type, () => ({
         type: 'event.capability.changed',
         ...payload,
         agentId: 'main',
         sessionId: GLOBAL_SESSION_ID,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(GLOBAL_SESSION_ID, 'event.capability.changed', error),
-      );
+      }));
       return;
     }
     if (event.type === 'event.config.warning') {
       const payload = configWarningPayload(corePayload);
       if (payload === undefined) return;
-      void this.dispatchGlobal({
+      this.enqueueGlobal(event.type, () => ({
         type: 'event.config.warning',
         warnings: payload.warnings,
         agentId: 'main',
         sessionId: GLOBAL_SESSION_ID,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(GLOBAL_SESSION_ID, 'event.config.warning', error),
-      );
+      }));
       return;
     }
     if (event.type === 'event.config.changed') {
       const payload = configChangedPayload(corePayload);
       if (payload === undefined) return;
-      void this.dispatchGlobal({
+      this.enqueueGlobal(event.type, () => ({
         type: 'event.config.changed',
         changedFields: payload.changedFields,
         config: payload.config,
         agentId: 'main',
         sessionId: GLOBAL_SESSION_ID,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(GLOBAL_SESSION_ID, 'event.config.changed', error),
-      );
+      }) as Event);
       return;
     }
     if (event.type === 'event.model_catalog.changed') {
       const payload = modelCatalogChangedPayload(corePayload);
       if (payload === undefined) return;
-      void this.dispatchGlobal({
+      this.enqueueGlobal(event.type, () => ({
         type: 'event.model_catalog.changed',
         changed: payload.changed,
         unchanged: payload.unchanged,
@@ -944,204 +637,49 @@ export class SessionEventBroadcaster {
         retired_default: payload.retired_default,
         agentId: 'main',
         sessionId: GLOBAL_SESSION_ID,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(GLOBAL_SESSION_ID, 'event.model_catalog.changed', error),
-      );
+      }));
       return;
     }
     if (event.type === 'event.di.unit_changed') {
       const payload = diUnitChangedPayload(corePayload);
       if (payload === undefined) return;
-      void this.dispatchGlobal({
+      this.enqueueGlobal(event.type, () => ({
         type: 'event.di.unit_changed',
         ...payload,
         agentId: 'main',
         sessionId: GLOBAL_SESSION_ID,
-      } as Event).catch((error: unknown) =>
-        this.logDispatchError(GLOBAL_SESSION_ID, 'event.di.unit_changed', error),
-      );
-      return;
+      }));
     }
   }
 
-  private async dispatchGlobal(event: Event): Promise<void> {
-    const state = await this.ensureGlobalState();
-    if (state === undefined) return;
-    state.queue = state.queue
-      .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
-      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
+  private enqueueGlobal(
+    eventType: string,
+    build: () => Event | Promise<Event>,
+    envelopeSessionId?: string,
+  ): void {
+    if (this.closed) return;
+    this.globalQueue = this.globalQueue
+      .then(async () => {
+        const event = await build();
+        this.sendGlobal(event, envelopeSessionId ?? event.sessionId);
+      })
+      .catch((error: unknown) => this.logDispatchError(eventType, error));
   }
 
-  private async dispatchSessionEvent(sessionId: string, event: Event): Promise<void> {
-    let state: SessionState | undefined;
-    try {
-      state = await this.ensureState(sessionId);
-    } catch (error) {
-      if (error instanceof Error && error.message === 'InstantiationService has been disposed') {
-        return;
-      }
-      throw error;
-    }
-    if (state === undefined) return;
-    state.queue = state.queue
-      .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
-      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
-  }
-
-  private attachWorkView(session: ISessionScopeHandle, state: SessionState): void {
-    const workView = session.accessor.get(ISessionActivityView);
-    workView.state();
-    state.lifecycleDisposables.push(
-      workView.onDidChange(({ state: work, cause }) => {
-        if (cause === 'turn_ended') {
-          state.deferredWork = work;
-          queueMicrotask(() => {
-            if (this.sessions.get(state.sessionId) !== state) return;
-            this.flushDeferredWork(state);
-          });
-          return;
-        }
-        this.flushDeferredWork(state);
-        this.enqueueWorkChanged(state, work);
-      }),
-    );
-  }
-
-  private flushDeferredWork(state: SessionState): void {
-    const deferred = state.deferredWork;
-    if (deferred === undefined) return;
-    state.deferredWork = undefined;
-    this.enqueueWorkChanged(state, deferred);
-  }
-
-  private attachAgents(sessionId: string, session: ISessionScopeHandle, state: SessionState): void {
-    const agents = session.accessor.get(IAgentLifecycleService);
-    const subscribeAgent = (handle: IAgentScopeHandle): void => {
-      if (state.agentDisposables.has(handle.id)) return;
-      state.agentDisposables.set(handle.id, this.attachAgent(sessionId, handle));
+  private sendGlobal(event: Event, envelopeSessionId: string): void {
+    const envelope: EventEnvelope = {
+      type: event.type,
+      session_id: envelopeSessionId,
+      timestamp:
+        event.time !== undefined ? new Date(event.time).toISOString() : new Date().toISOString(),
+      payload: event,
     };
-    for (const agent of agents.list()) {
-      const handle = agents.handleOf(agent.agentId);
-      if (handle !== undefined) subscribeAgent(handle);
-    }
-    state.lifecycleDisposables.push(
-      agents.onDidCreate((context) => {
-        const handle = agents.handleOf(context.agentId);
-        if (handle !== undefined) subscribeAgent(handle);
-        this.enqueueDurable(state, {
-          type: 'agent.created',
-          agentId: context.agentId,
-          sessionId,
-        });
-      }),
-      agents.onDidClose((context) => {
-        const agentId = context.agentId;
-        const d = state.agentDisposables.get(agentId);
-        if (d !== undefined) {
-          d.dispose();
-          state.agentDisposables.delete(agentId);
-          this.activityTrackers.delete(`${sessionId}:${agentId}`);
-          this.enqueueDurable(state, {
-            type: 'agent.disposed',
-            agentId,
-            sessionId,
-          });
-        }
-      }),
-    );
-  }
-
-  private attachAgent(sessionId: string, handle: IAgentScopeHandle): IDisposable {
-    const eventBus = handle.accessor.get(IEventBus);
-    this.activityTrackers.set(
-      `${sessionId}:${handle.id}`,
-      new LegacyActivityTracker(
-        () => handle.accessor.get(IAgentLoopService).snapshot(),
-        () => legacyApprovalsOf(handle),
-      ),
-    );
-    let lastLegacyStatus: string | undefined;
-    const emitLegacyStatus = (): void => {
-      const snapshot = readLegacyStatus(handle);
-      if (snapshot === undefined) return;
-      const key = JSON.stringify(snapshot);
-      if (key === lastLegacyStatus) return;
-      lastLegacyStatus = key;
-      this.onAgentEvent(sessionId, MAIN_AGENT_ID, {
-        type: 'agent.status.updated',
-        ...snapshot,
-      } as unknown as Event2<any>);
-    };
-    const disposables: IDisposable[] = [
-      eventBus.subscribe((event) => {
-        let projected: Event2<any> = event;
-        if (event.type === 'agent.status.updated') {
-          const snapshot = readLegacyStatus(handle);
-          if (snapshot !== undefined) {
-            lastLegacyStatus = JSON.stringify(snapshot);
-            projected = Object.assign({}, event, snapshot) as unknown as Event2<any>;
-          }
-        }
-        if (handle.id === MAIN_AGENT_ID && event.type === 'context.spliced') {
-          emitLegacyStatus();
-        }
-        this.onAgentEvent(sessionId, handle.id, projected);
-      }),
-    ];
-
-    return { dispose: () => disposables.forEach((disposable) => disposable.dispose()) };
-  }
-
-  private onAgentEvent(sessionId: string, agentId: string, event: Event2<any>): void {
-    const state = this.sessions.get(sessionId);
-    if (state === undefined) return;
-
-    if (
-      event.type === 'agent.status.updated' &&
-      (event as { phase?: unknown }).phase !== undefined
-    ) {
-      return;
-    }
-
-    let wireEvent: Event;
-    if (event.type === 'turn.started') {
-      const { promptAttachments: _internal, ...wireFields } = event as typeof event & {
-        promptAttachments?: unknown;
-      };
-      wireEvent = Object.assign({}, wireFields, { agentId, sessionId }) as unknown as Event;
-    } else if (event.type === 'prompt.steered' || event.type === 'prompt.queued' || event.type === 'prompt.submitted') {
-      const content = (event as unknown as { content: Parameters<typeof projectPromptContentParts>[0] }).content;
-      wireEvent = Object.assign({}, event, {
-        content: projectPromptContentParts(content),
-        agentId,
-        sessionId,
-      }) as unknown as Event;
-    } else {
-      wireEvent = Object.assign({}, event, { agentId, sessionId }) as unknown as Event;
-    }
-    const volatile = isVolatileSignal(event.type);
-    state.queue = state.queue
-      .then(() => this.dispatch(state, wireEvent, volatile))
-      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, wireEvent.type, error));
-    const legacy = legacyTaskEvent(event, agentId, sessionId);
-    if (legacy !== undefined) {
-      state.queue = state.queue
-        .then(() => this.dispatch(state, legacy, volatile))
-        .catch((error: unknown) => this.logDispatchDropped(state.sessionId, legacy.type, error));
-    }
-    const tracker = this.activityTrackers.get(`${sessionId}:${agentId}`);
-    if (tracker !== undefined) {
-      const phase = phaseFromDomainEvent(tracker, event);
-      if (phase !== undefined) {
-        const phaseEvent = {
-          type: 'agent.status.updated',
-          phase,
-          agentId,
-          sessionId,
-        } as unknown as Event;
-        state.queue = state.queue
-          .then(() => this.dispatch(state, phaseEvent, true))
-          .catch((error: unknown) => this.logDispatchDropped(state.sessionId, phaseEvent.type, error));
+    const diGated = event.type.startsWith('event.di.');
+    for (const target of this.globalTargets) {
+      if (diGated && !this.diEventTargets.has(target)) continue;
+      try {
+        target.send(envelope, 'immediate');
+      } catch {
       }
     }
   }
@@ -1155,10 +693,7 @@ export class SessionEventBroadcaster {
     }
   }
 
-  private attachInteractions(
-    sessionId: string,
-    state: SessionState,
-  ): void {
+  private attachInteractions(sessionId: string, state: SessionState): void {
     for (const i of pendingInteractionsOf(sessionId)) {
       state.knownInteractions.set(i.id, i);
     }
@@ -1168,7 +703,7 @@ export class SessionEventBroadcaster {
           for (const i of pendingInteractionsOf(sessionId)) {
             if (state.knownInteractions.has(i.id)) continue;
             state.knownInteractions.set(i.id, i);
-            this.enqueueInteraction(state, interactionMessage(i, sessionId));
+            this.sendInteraction(state, interactionMessage(i, sessionId));
           }
         }),
       ),
@@ -1177,256 +712,44 @@ export class SessionEventBroadcaster {
           const known = state.knownInteractions.get(id);
           if (known === undefined) return;
           state.knownInteractions.delete(id);
-          this.enqueueInteraction(state, interactionMessage(known, sessionId, { response }));
+          this.sendInteraction(state, interactionMessage(known, sessionId, { response }));
         }),
       ),
     );
   }
 
-  private enqueueInteraction(state: SessionState, message: InteractionEventMessage | undefined): void {
+  private sendInteraction(state: SessionState, message: InteractionEventMessage | undefined): void {
     if (message === undefined) return;
-    state.queue = state.queue.then(() => {
-      for (const target of state.targets.keys()) {
-        try {
-          target.send(message);
-        } catch {
-        }
+    for (const target of state.targets.keys()) {
+      try {
+        target.send(message);
+      } catch {
       }
-    });
+    }
   }
 
-  private enqueueDurable(state: SessionState, event: Event): void {
-    state.queue = state.queue
-      .then(() => this.dispatch(state, event, false))
-      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
-  }
-
-  private enqueueWorkChanged(state: SessionState, work: SessionActivityState): void {
-    state.queue = state.queue
-      .then(() =>
-        this.dispatch(
-          state,
-          {
-            type: 'event.session.work_changed',
-            busy: work.busy,
-            main_turn_active: work.mainTurnActive,
-            pending_interaction: work.pendingInteraction,
-            last_turn_reason: work.lastTurnReason,
-            agentId: 'main',
-            sessionId: state.sessionId,
-          } as Event,
-          false,
-        ),
-      )
-      .catch((error: unknown) =>
-        this.logDispatchDropped(state.sessionId, 'event.session.work_changed', error),
-      );
-  }
-
-  private logDispatchError(sessionId: string, eventType: string, error: unknown): void {
+  private logDispatchError(eventType: string, error: unknown): void {
     const logger = this.opts.logger;
     if (logger === undefined) return;
     if (logger.error !== undefined) {
-      logger.error({ sessionId, eventType, err: error }, 'session event dispatch failed');
+      logger.error({ eventType, err: error }, 'session event dispatch failed');
     } else {
-      logger.warn({ sessionId, eventType, err: error }, 'session event dispatch failed');
-    }
-  }
-
-  private logDispatchDropped(sessionId: string, eventType: string, error: unknown): void {
-    this.opts.logger?.warn(
-      { sessionId, eventType, err: error },
-      'session event dispatch failed; event dropped',
-    );
-  }
-
-  private async dispatch(state: SessionState, event: Event, volatile: boolean): Promise<void> {
-    const { journal, tracker, roster, tail, targets, sessionId } = state;
-    const annotation = tracker.apply(sessionId, event);
-    roster.apply(sessionId, event);
-
-    let envelope: EventEnvelope;
-    if (volatile) {
-      envelope = this.buildEnvelope(journal.seq, sessionId, event, {
-        epoch: journal.epoch,
-        volatile: true,
-        ...(annotation.offset !== undefined ? { offset: annotation.offset } : {}),
-      });
-    } else {
-      const seq = journal.nextSeq();
-      envelope = this.buildEnvelope(seq, sessionId, event, { epoch: journal.epoch });
-      journal.append(seq, envelope);
-      tail.push({ seq, envelope });
-      while (tail.length > this.maxBufferSize) tail.shift();
-    }
-
-    if (isGlobalEvent(event.type)) {
-      const recipients = new Set<BroadcastTarget>(this.globalTargets);
-      for (const target of this.allTargets()) recipients.add(target);
-      const diGated = event.type.startsWith('event.di.');
-      for (const target of recipients) {
-        if (diGated && !this.diEventTargets.has(target)) continue;
-        try {
-          target.send(envelope, 'immediate');
-        } catch {
-        }
-      }
-    } else {
-      for (const [target, sub] of targets) {
-        if (!matchesAgentFilter(envelope, sub.agentFilter)) continue;
-        if (suppressedByTranscript(envelope, sub.transcriptGrades)) continue;
-        try {
-          target.send(envelope);
-        } catch {
-        }
-      }
-    }
-  }
-
-  private buildEnvelope(
-    seq: number,
-    sessionId: string,
-    event: Event,
-    extras: { epoch?: string; volatile?: boolean; offset?: number },
-  ): EventEnvelope {
-    return {
-      type: event.type,
-      seq,
-      session_id: sessionId,
-      timestamp:
-        event.time !== undefined
-          ? new Date(event.time).toISOString()
-          : new Date().toISOString(),
-      payload: event,
-      ...extras,
-    };
-  }
-
-  private *allTargets(): Iterable<BroadcastTarget> {
-    for (const state of this.sessions.values()) {
-      for (const target of state.targets.keys()) yield target;
+      logger.warn({ eventType, err: error }, 'session event dispatch failed');
     }
   }
 }
 
-const VOLATILE_SIGNAL_TYPES = [
-  'assistant.delta',
-  'thinking.delta',
-  'tool.call.delta',
-  'tool.progress',
-  'shell.output',
-  'shell.started',
-  'shell.completed',
-  'agent.status.updated',
-] as const;
-
-const volatileSignalTypeSet: ReadonlySet<string> = new Set(VOLATILE_SIGNAL_TYPES);
-
-function isVolatileSignal(type: string): boolean {
-  return volatileSignalTypeSet.has(type);
-}
-
-function legacyTaskEvent(event: Event2<any>, agentId: string, sessionId: string): Event | undefined {
-  if (event.type !== 'task.started' && event.type !== 'task.terminated') return undefined;
-  const legacyType =
-    event.type === 'task.started' ? 'background.task.started' : 'background.task.terminated';
-  return Object.assign({}, event, { type: legacyType, agentId, sessionId }) as unknown as Event;
-}
-
-function isGlobalEvent(type: string): boolean {
-  return (
-    type === 'session.meta.updated' ||
-    type.startsWith('event.session.') ||
-    type.startsWith('event.workspace.') ||
-    type.startsWith('event.config.') ||
-    type.startsWith('event.model_catalog.') ||
-    type.startsWith('event.plugin.') ||
-    type.startsWith('event.capability.') ||
-    type.startsWith('event.di.')
-  );
-}
-
-function isAgentLifecycleEvent(type: string): boolean {
-  return type === 'agent.created' || type === 'agent.disposed';
-}
-
-function matchesAgentFilter(envelope: EventEnvelope, filter: AgentFilter): boolean {
-  if (filter === undefined) return true;
-  if (isGlobalEvent(envelope.type)) return true;
-  if (isAgentLifecycleEvent(envelope.type)) return true;
-  const payload = envelope.payload;
-  const agentId =
-    typeof payload === 'object' && payload !== null
-      ? (payload as { agentId?: unknown }).agentId
-      : undefined;
-  if (typeof agentId !== 'string') return true;
-  return filter.has(agentId);
-}
-
-const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
-  'turn.started',
-  'turn.ended',
-  'turn.step.started',
-  'turn.step.completed',
-  'turn.step.interrupted',
-  'turn.step.retrying',
-  'assistant.delta',
-  'thinking.delta',
-  'tool.call.delta',
-  'tool.call.started',
-  'tool.progress',
-  'tool.result',
-  'shell.started',
-  'shell.output',
-  'shell.completed',
-  'task.started',
-  'task.terminated',
-  'background.task.started',
-  'background.task.terminated',
-  'task.notified',
-  'subagent.spawned',
-  'subagent.started',
-  'subagent.completed',
-  'subagent.failed',
-  'subagent.cancelled',
-  'subagent.suspended',
-  'compaction.started',
-  'compaction.blocked',
-  'compaction.cancelled',
-  'compaction.completed',
-  'skill.activated',
-  'plugin_command.activated',
-  'cron.fired',
-  'error',
-  'warning',
-  'goal.updated',
-  'plan.revision',
-  'context.spliced',
-  'agent.status.updated',
-  'hook.result',
-  'prompt.submitted',
-  'prompt.started',
-  'prompt.completed',
-  'prompt.aborted',
-  'prompt.steered',
-  'turn.steer',
-]);
-
-function suppressedByTranscript(
-  envelope: EventEnvelope,
-  spec: TranscriptGradeSpec | undefined,
-): boolean {
-  if (spec === undefined) return false;
-  if (isGlobalEvent(envelope.type)) return false;
-  if (isAgentLifecycleEvent(envelope.type)) return false;
-  const payload = envelope.payload;
-  const agentId =
-    typeof payload === 'object' && payload !== null
-      ? (payload as { agentId?: unknown }).agentId
-      : undefined;
-  if (typeof agentId !== 'string') return false;
-  if (gradeFor(spec, agentId) === 'off') return false;
-  return TRANSCRIPT_PROJECTED_EVENT_TYPES.has(envelope.type);
+function buildTranscriptEnvelope(
+  sessionId: string,
+  type: 'transcript.reset' | 'transcript.ops',
+  payload: Omit<TranscriptResetEvent, 'type'> | Omit<TranscriptOpsEvent, 'type'>,
+): EventEnvelope {
+  return {
+    type,
+    session_id: sessionId,
+    timestamp: new Date().toISOString(),
+    payload: { type, ...payload },
+  };
 }
 
 function pendingInteractionsOf(sessionId: string): readonly Interaction[] {
@@ -1619,10 +942,15 @@ function workspaceLifecyclePayload(payload: unknown): Workspace | undefined {
   if (typeof ws.root !== 'string' || ws.root.length === 0) return undefined;
   if (typeof ws.name !== 'string') return undefined;
   if (typeof ws.createdAt !== 'number' || typeof ws.lastOpenedAt !== 'number') return undefined;
+  const additionalDirs = Array.isArray(ws.additionalDirs)
+    ? ws.additionalDirs.filter((dir): dir is string => typeof dir === 'string')
+    : [];
   return {
     id: ws.id,
     root: ws.root,
     name: ws.name,
+    kind: ws.kind === 'managed' ? 'managed' : 'implicit',
+    additionalDirs,
     createdAt: ws.createdAt,
     lastOpenedAt: ws.lastOpenedAt,
   };

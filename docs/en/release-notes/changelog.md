@@ -6,6 +6,40 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.4.1 (2026-10-30)
+
+### Polish
+
+- A single file read by the agent now returns at most 100,000 characters or about 25,000 tokens, whichever comes first, instead of up to 500,000 characters; set `max_chars` under `[read]` in config.toml to raise both limits again.
+- Optimize built-in prompts.
+
+### Bug Fixes
+
+- web: Improved interactions and fixed known bugs.
+
+## 2.4.0 (2026-10-28)
+
+### Features
+
+- Add `/import-sessions` and `kimi import-sessions` to import Claude Code and Codex sessions from the last 15 or 30 days. Run either one and choose a time range.
+- Add `/provider refresh [providerId]` to re-fetch provider model lists at runtime.
+- Expand streaming thinking with Ctrl-O.
+- Report main-session and subagent status to compatible terminals with OSC 7501, including pending interactions and retained results.
+- Support per-task model selection and the `max_running_tasks` limit in Tower, and raise its default agent concurrency limit from 16 to 256.
+
+### Polish
+
+- Plan mode can now only be enabled by the user instead of being entered automatically by the agent; every plan requires user review, Never Ask no longer approves plans automatically, and `kimi -p` skips `default_plan_mode` and cannot approve a plan in a session already in Plan mode.
+- Web sessions now unload from memory after 30 minutes idle and resume transparently on next access.
+- Improve the layout and interaction experience of some Fullscreen components, including approval option display, mouse selection, and focus switching.
+- Move todo lists into expandable transcript cards and remove the old input-area panel and `Ctrl-T` shortcut.
+- Improve the built-in `/import-from-cc-codex` skill.
+
+### Bug Fixes
+
+- Reconnect workspace MCP servers automatically with backoff when the initial connection fails or the connection drops; tune the interval with `[mcp] reconnect_initial_delay_ms` and `reconnect_max_delay_ms`.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 2.3.3 (2026-10-26)
 
 ### Polish

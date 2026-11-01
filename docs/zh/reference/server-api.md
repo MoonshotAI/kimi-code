@@ -40,7 +40,7 @@
 ```
 
 - `code`：业务结果，`0` 表示成功；错误码分段见下文。
-- `data`：成功时的业务数据。部分错误信封也携带非空 `data`，客户端应先判 `code` 再看 `data`。
+- `data`：成功时的业务数据。注意部分「错误」信封也携带非空 `data`——例如重复解决审批返回 `40902` 且 `data.resolved` 为 `false`——客户端应先判 `code` 再看 `data`。
 - `request_id`：本次请求的 ULID；客户端可用 `X-Request-Id` 请求头指定，非法值会被服务端重新生成。
 
 HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
@@ -62,10 +62,10 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 | 段位 | 含义 | 示例 |
 | --- | --- | --- |
 | `0` | 成功 | |
-| `400xx` | 请求参数错误 | `40001` 校验失败（`details` 逐字段说明）、`40003` 供应商由 OAuth 托管 |
+| `400xx` | 请求参数错误 | `40001` 校验失败（`details` 逐字段说明）、`40003` 供应商由 OAuth 托管、`40006` 工作区源文件夹重复 |
 | `401xx` | 鉴权与就绪状态 | `40101` 未授权、`40110` 未配置供应商、`40113` 模型未解析 |
 | `404xx` | 资源不存在 | `40401` 会话、`40408` MCP 服务、`40409` 文件路径 |
-| `409xx` | 状态冲突 | `40901` 会话忙、`40902` 交互已结束、`40922` 分页条件与 `page_token` 不符、`40931` 会话正被其他客户端使用、`40932` 会话已被其他客户端更新 |
+| `409xx` | 状态冲突 | `40901` 会话忙、`40902` 审批已解决、`40922` 分页条件与 `page_token` 不符、`40931` 会话正被其他客户端使用、`40932` 会话已被其他客户端更新 |
 | `410xx` | 资源已过期 | `41001` 审批超时、`41002` 提问超时、`41003` 临时文件过期 |
 | `413xx` | 体积或边界超限 | `41302` 读取文件超 10 MB、`41304` 路径越出会话目录 |
 | `429xx` | 限流 | `42901` 鉴权失败封禁、`42902` 文件监听数超限 |
@@ -632,8 +632,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/sessions/{session_id}/status` | 实时状态汇总 |
 | `GET /api/v1/sessions/{session_id}/goal` | 当前目标快照（无则 `null`） |
 | `GET /api/v1/sessions/{session_id}/warnings` | 会话级告警 |
-| `GET /api/v1/sessions/{session_id}/runtime` | 读取 main agent 的运行时绑定 |
-| `POST /api/v1/sessions/{session_id}/runtime` | 切换 main agent 的运行时绑定 |
+| `GET /api/v1/sessions/{session_id}/environment` | 读取 main agent 的环境绑定 |
+| `GET /api/v1/sessions/{session_id}/environments` | 列出会话工作区已注册的环境 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流，不走信封） |
 | `GET /api/v1/sessions/{session_id}/snapshot` | 客户端重建用全量快照（含 `as_of_seq` 与 `epoch`） |
 | `POST /api/v1/sessions/{session_id}/media` | 从远程图片 URL 创建会话媒体 |
@@ -917,31 +917,29 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 - `40401`：会话不存在
 
-#### `GET /api/v1/sessions/{session_id}/runtime`
+#### `GET /api/v1/sessions/{session_id}/environment`
 
-读取 main agent 的运行时绑定——即该会话的 Agent 循环运行在哪个运行时上。
+读取 main agent 的环境绑定——即该会话的 Agent 循环运行在哪个环境上。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 
-成功时，`data` 为 `{ workspace_id, runtime_id }`。
+成功时，`data` 为 `{ workspace_id, environment_id, cwd? }`；`cwd` 是被绑定环境上的工作目录，绑定带有该值时返回。
 
 - `40401`：会话不存在
 
-#### `POST /api/v1/sessions/{session_id}/runtime`
+#### `GET /api/v1/sessions/{session_id}/environments`
 
-切换 main agent 的运行时绑定。
+列出会话可用的环境。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `runtime_id` | body | string | **必填。** 目标运行时 id |
 
-成功时，`data` 为新的绑定 `{ workspace_id, runtime_id }`。
+成功时，`data` 为 `{ environments }`。`environments` 每项为 `{ environment_id, type, status, connect_error? }`，其中 `type` 取 `local` / `ssh` / `docker` / `command` 之一，`status` 取 `pending` / `connecting` / `ready` / `disconnected` / `disposed` 之一；`pending` 表示没有可用连接且未观察到失败（尚未连接过），`connect_error` 记录 `disconnected` 条目的失败原因。
 
-- `40420`：不存在该 `runtime_id` 的运行时
-- `40926`：运行时存在但不可用
+- `40401`：会话不存在
 
 #### `POST /api/v1/sessions/{session_id}/export`
 
@@ -1211,39 +1209,75 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 审批与提问
 
-审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。WebSocket 上的每次变化都以 `interaction` 事件到达（见[事件](#事件)），回应两类交互共用一个端点。
+审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。这些端点用于列出和答复它们；新的请求通过 WebSocket 以 `event.approval.requested` 与 `event.question.requested` 到达。
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}` | 回应审批或提问 |
+| `GET /api/v1/sessions/{session_id}/approvals` | 列出待处理的审批请求（必须 `status=pending`） |
+| `POST /api/v1/sessions/{session_id}/approvals/{approval_id}` | 答复审批 |
+| `GET /api/v1/sessions/{session_id}/questions` | 列出待处理的提问（必须 `status=pending`） |
+| `POST /api/v1/sessions/{session_id}/questions/{question_id}` | 回答提问 |
+| `POST /api/v1/sessions/{session_id}/questions/{question_id}:dismiss` | 忽略提问 |
 
-#### `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`
+#### `GET /api/v1/sessions/{session_id}/approvals`
 
-回应一个待处理的审批或提问。请求体的 `kind` 必须与交互的类型一致；subagent 发起的交互由服务端交回发起它的 agent，因此不需要 `agent_id`。客户端应在收到 `status: "ended"` 的 `interaction` 事件时关闭卡片，而不是依据本接口的响应，这样所有打开该会话的客户端会一起关闭。
+列出会话待处理的审批请求——即工具调用发起的权限提示。读取列表会在会话为冷态时将其恢复。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `interaction_id` | path | string | **必填。** 事件中的 `interaction_id` |
-| `kind` | body | string | **必填。** `approval` / `question` |
+| `status` | query | string | **必填。** 必须为 `pending` |
 
-`kind: "approval"` 时：
+成功时，`data` 为 `{ items }`，每个元素为 `{ approval_id, session_id, agent_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`：`agent_id` 是发起审批的 agent id（主 agent 为 `main`）；`tool_name` / `action` / `tool_input_display` 描述等待许可的调用，`expires_at` 为 `created_at` 之后 24 小时。
 
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `decision` | string | **必填。** `approved` / `rejected` / `cancelled` |
-| `scope` | string | 与 `approved` 同用时，`session`（唯一取值）会在本会话剩余时间内记住该审批规则 |
-| `feedback` | string | 交还给 agent 的自由文本反馈 |
-| `selected_label` | string | 当请求提供带标签的选项时（例如计划审阅），所选选项的标签 |
+- `40001`：`status` 缺失或不是 `pending`
+- `40401`：会话不存在
 
-`kind: "question"` 时，`answers` 与 `dismissed` 必须且只能传一个：
+#### `POST /api/v1/sessions/{session_id}/approvals/{approval_id}`
 
-| 参数 | 类型 | 说明 |
-| --- | --- | --- |
-| `answers` | object | 提问条目 id（`q_0`……）到答案对象的映射；变体见下 |
-| `dismissed` | `true` | 不回答，直接关闭提问 |
-| `method` | string | 答案的产生方式：`enter` / `space` / `number_key` / `click` |
-| `note` | string | 附在回答上的自由文本备注 |
+答复一个待处理的审批请求，让等待中的工具调用继续执行（或不执行）。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `approval_id` | path | string | **必填。** 审批请求 id |
+| `decision` | body | string | **必填。** `approved` / `rejected` / `cancelled` |
+| `scope` | body | string | 配合 `approved` 使用，`session`（唯一取值）还会让该审批规则在会话的剩余时间内被记住 |
+| `feedback` | body | string | 回传给 Agent 的自由文本反馈 |
+| `selected_label` | body | string | 当请求提供了带标签的选项时（例如计划审阅），所选选项的标签 |
+
+成功时，`data` 为 `{ resolved: true, resolved_at }`。
+
+- `40001`：校验失败
+- `40401`：会话不存在
+- `40404`：没有该 id 的待处理审批
+- `40902`：审批已被答复；`data` 携带 `{ resolved: false }`
+
+#### `GET /api/v1/sessions/{session_id}/questions`
+
+列出会话待处理的提问。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `status` | query | string | **必填。** 必须为 `pending` |
+
+成功时，`data` 为 `{ items }`，每个元素为 `{ question_id, session_id, agent_id?, turn_id?, tool_call_id?, questions, created_at }`。`agent_id?` 是发起提问的 agent id（已知时；主 agent 为 `main`）。`questions` 包含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }` 条目，每个条目带 2–4 个 `{ id, label, description? }` 形式的 `options`；`multi_select` 允许选择多个选项，`allow_other` 允许自由文本回答。
+
+- `40001`：`status` 缺失或不是 `pending`
+- `40401`：会话不存在
+
+#### `POST /api/v1/sessions/{session_id}/questions/{question_id}`
+
+回答一个待处理的提问。两个提问端点通过同一条路由 `POST /api/v1/sessions/{session_id}/questions/{tail}` 分发：单独的提问 id 表示回答问题，`{question_id}:dismiss` 尾部表示忽略问题，其他情况返回 `40001`。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `question_id` | path | string | **必填。** 提问 id |
+| `answers` | body | object | **必填。** 提问条目 id（`q_0`……）到答案对象的映射；变体见下 |
+| `method` | body | string | 答案的产生方式：`enter` / `space` / `number_key` / `click` |
+| `note` | body | string | 附在回答上的自由文本备注 |
 
 每个答案是按 `kind` 区分的对象：
 
@@ -1255,12 +1289,27 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `multi_with_other` | `option_ids`、`other_text` | 选项加自由文本 |
 | `skipped` | — | 跳过了该条目 |
 
-成功时，`data` 为 `{ outcome, ended_at }`，审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed`。
+成功时，`data` 为 `{ resolved: true, resolved_at }`。
 
-- `40001`：校验失败（`details` 列出每个字段），或 `kind` 与交互类型不一致
+- `40001`：校验失败（`details` 列出每个字段）
 - `40401`：会话不存在
-- `40404`：会话中没有该 id 的交互
-- `40902`：交互已结束——已被其他客户端回应，或因所在轮次结束、agent 关闭而取消
+- `40405`：没有该 id 的待处理提问
+- `40902`：提问已被答复；`data` 携带 `{ resolved: false }`
+
+#### `POST /api/v1/sessions/{session_id}/questions/{question_id}:dismiss`
+
+忽略一个待处理的提问，不作回答。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `question_id` | path | string | **必填。** 提问 id |
+
+成功时信封的 `code` 是 `40909`（`question dismissed`）而不是 `0`，`data` 为 `{ dismissed: true, dismissed_at }`——客户端必须特殊处理该端点的成功码。
+
+- `40401`：会话不存在
+- `40405`：没有该 id 的待处理提问
+- `40902`：提问已被答复；`data` 携带 `{ resolved: false }`
 
 ### 后台任务
 
@@ -1535,28 +1584,31 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 工作区
 
-工作区是已注册的项目目录，会话都落在其中。这组端点管理注册表——列出、注册、重命名、注销——以及控制项目级 MCP 配置是否加载的每工作区信任状态。所有返回工作区的端点都使用 [workspace 对象](#workspace-对象) 中统一说明的传输结构。
+工作区是已注册的项目目录，会话都落在其中。这组端点管理注册表——列出、注册、重命名与更新源文件夹、注销——以及控制项目级 MCP 配置是否加载的每工作区信任状态。所有返回工作区的端点都使用 [workspace 对象](#workspace-对象) 中统一说明的传输结构。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/workspaces` | 列出已注册工作区 |
-| `POST /api/v1/workspaces` | 注册工作区（按根路径幂等） |
-| `PATCH /api/v1/workspaces/{workspace_id}` | 重命名 |
+| `POST /api/v1/workspaces` | 注册工作区（每次调用创建新条目；重试经 `idempotency_key` 去重） |
+| `PATCH /api/v1/workspaces/{workspace_id}` | 重命名或整体替换源文件夹 |
+| `POST /api/v1/workspaces/{workspace_id}/primary` | 将某个源文件夹提升为主目录 |
+| `GET /api/v1/workspaces/project-config-dirs` | 只读获取项目 local.toml 的附加目录 |
 | `DELETE /api/v1/workspaces/{workspace_id}` | 注销（保留磁盘内容） |
 | `GET /api/v1/workspaces/{workspace_id}/trust` | 读取信任状态 |
 | `POST /api/v1/workspaces/{workspace_id}/trust` | 授予信任 |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | 撤销信任 |
-| `POST /api/v1/workspaces/{workspace_id}/add-dir` | 添加附加目录 |
 
 #### workspace 对象
 
-所有返回工作区的端点都使用此传输结构。注册与重命名会广播全局事件 `event.workspace.created` / `event.workspace.updated`。
+所有返回工作区的端点都使用此传输结构。注册与更新会广播全局事件 `event.workspace.created` / `event.workspace.updated`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | string | 工作区 id，由根路径派生的 `wd_<slug>_<hash12>` 字符串 |
-| `root` | string | 项目目录的绝对路径 |
-| `name` | string | 显示名，1–100 个字符；默认取根目录的基名 |
+| `id` | string | 工作区 id：隐式渠道（CLI/VS Code 按目录进入）为 `wd_<slug>_<hash12>`，经 `POST /api/v1/workspaces` 显式创建为 `wm_<uuid>` |
+| `root` | string | 主目录的绝对路径 |
+| `name` | string | 显示名，1–100 个字符；默认取主目录的基名 |
+| `kind` | string | 工作区类别：`managed`（经显式创建，`wm_` id；会话不合并项目 `local.toml`）或 `implicit`（按目录隐式注册，`wd_` id；会话合并项目 `local.toml` 以兼容旧配置） |
+| `additional_dirs` | string[] | 注册表管理的额外源文件夹绝对路径（不含项目 `local.toml` 与临时来源） |
 | `created_at` | string | 注册时间，ISO 8601 |
 | `last_opened_at` | string | 最近一次打开或重新注册工作区的时间，ISO 8601 |
 | `session_count` | integer | 工作区内的会话数 |
@@ -1569,31 +1621,64 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/workspaces`
 
-注册工作区并返回它。注册按根路径幂等：重复注册同一根路径会返回已存在的工作区，仅刷新 `last_opened_at`（保留已存名称），并广播 `event.workspace.updated` 而非 `event.workspace.created`。
+注册一个新工作区并返回它。每次调用都创建新条目（`wm_<uuid>` id）——即使同一路径已是其他工作区的主目录也不会折叠或提示。客户端重复提交（网络重试、重复点击）应携带同一个 `idempotency_key`，服务端按键去重并返回首次创建的条目。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `root` | body | string | **必填。** 已存在目录的绝对路径 |
-| `name` | body | string | 显示名，1–100 个字符。默认根目录的基名 |
+| `root` | body | string | **必填。** 已存在目录的绝对路径，作为主目录 |
+| `name` | body | string | 显示名，1–100 个字符。默认主目录的基名 |
+| `additional_dirs` | body | string[] | 额外源文件夹。每项按 `add-dir` 相同规则解析（绝对路径、相对主目录或 `~` 展开），须已存在且为目录，不得与主目录或彼此重复，最多 64 项 |
+| `idempotency_key` | body | string | 客户端生成的幂等键，1–200 个字符。相同键的重试返回首次创建的工作区 |
 
 成功时 `data` 为 [workspace 对象](#workspace-对象)。
 
-- `40001`：`root` 缺失或不是绝对路径（`details` 会列出该字段）
-- `40409`：`root` 不存在或不是目录
+- `40001`：`root` 缺失或不是绝对路径，或其他请求校验失败（`details` 会列出该字段）
+- `40006`：`additional_dirs` 含重复项或与主目录相同。`msg` 为 `Duplicate source folder: <实际路径>`；`details` 为 `[{ "path": "additional_dirs.N", "directory": "<解析后的绝对路径>" }]`，其中 `path` 是请求字段位置，`directory` 是重复目录
+- `40409`：`root` 或 `additional_dirs` 中的路径不存在或不是目录
 
 #### `PATCH /api/v1/workspaces/{workspace_id}`
 
-重命名工作区——仅修改显示名，根路径不变。
+更新工作区的显示名与/或源文件夹。`additional_dirs` 为整体替换语义——提交编辑后的完整列表，省略该字段则保持不变；主目录不可修改。`name` 与 `additional_dirs` 至少提供其一。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **必填。** 工作区 id |
-| `name` | body | string | **必填。** 新的显示名，1–100 个字符 |
+| `name` | body | string | 新的显示名，1–100 个字符 |
+| `additional_dirs` | body | string[] | 替换后的完整额外源文件夹列表，解析与校验规则同 `POST /api/v1/workspaces` |
 
 成功时 `data` 为 [workspace 对象](#workspace-对象)。
 
-- `40001`：校验失败（`details` 逐字段说明）
+- `40001`：两个字段都缺失，或其他请求校验失败（`details` 逐字段说明）
+- `40006`：目录项重复或与主目录相同，`msg`、`details.path` 和 `details.directory` 的含义同 `POST /api/v1/workspaces`
+- `40409`：`additional_dirs` 中的路径不存在或不是目录
 - `40410`：工作区不存在
+
+#### `POST /api/v1/workspaces/{workspace_id}/primary`
+
+将目录集内的某个源文件夹提升为主目录。服务端做原子交换：该路径成为新的 `root`，原主目录进入 `additional_dirs`；工作区 id 与会话桶不变，全部会话保留。交换后原主目录 `local.toml` 中的附加目录将不再并入（`local.toml` 跟随主目录生效）。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `workspace_id` | path | string | **必填。** 工作区 id |
+| `path` | body | string | **必填。** 要提升的目录，解析规则同 `add-dir`；必须在当前目录集（`root` ∪ `additional_dirs`）内 |
+
+成功时 `data` 为 [workspace 对象](#workspace-对象)。
+
+- `40001`：`path` 不在目录集内
+- `40409`：`path` 不存在或不是目录
+- `40410`：工作区不存在
+
+#### `GET /api/v1/workspaces/project-config-dirs`
+
+只读返回指定项目 `local.toml` 的 `workspace.additional_dir`：解析为绝对路径、去重、剔除 `root` 自身。不修改注册表，也不修改 `local.toml`；`local.toml` 缺失时返回空数组，TOML 损坏或配置的目录已不存在时请求失败，不会按空配置返回。客户端可凭此把项目旧配置并入新建或编辑工作区的表单，随保存生效。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `root` | query | string | **必填。** 项目主目录的绝对路径 |
+
+成功时 `data` 为 `{ additional_dirs: string[] }`。
+
+- `40001`：`root` 缺失或为空
 
 #### `DELETE /api/v1/workspaces/{workspace_id}`
 
@@ -1633,38 +1718,26 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/workspaces/{workspace_id}/untrust`
 
-撤销工作区信任，并卸载其项目级 MCP 配置。
+撤销工作区的持久化信任记录。如果进程或配置覆盖没有使工作区保持受信任，则同时卸载其项目级 MCP 配置。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **必填。** 工作区 id |
 
-成功时 `data` 为 `{ trusted: false }`。
+成功时 `data` 为 `{ trusted }`，表示撤销后的有效信任状态。通常为 `{ trusted: false }`；如果 `KIMI_CODE_TRUST_WORKSPACE` 或 [`[workspace] require_trust = false`](../configuration/config-files.md#workspace-trust) 生效，则仍为 `true`。
 
 - `40410`：工作区不存在
 
-#### `POST /api/v1/workspaces/{workspace_id}/add-dir`
-
-为工作区添加附加目录，语义与 CLI `--add-dir` 及 TUI `/add-dir` 一致。路径支持绝对路径、相对路径（相对工作区根目录解析）与 `~` 展开。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `workspace_id` | path | string | **必填。** 工作区 id |
-| `path` | body | string | **必填。** 要添加的目录 |
-| `persist` | body | boolean | 缺省 `true`：追加到 `<项目根>/.kimi-code/local.toml` 的 `workspace.additional_dir`；为 `false` 时仅加入内存中的临时集合（同一工作区所有会话共享），不写盘 |
-
-成功时 `data` 为 `{ project_root, config_path, additional_dirs, persisted }`，其中 `additional_dirs` 是全部附加目录（含既有目录），`persisted` 表示本次是否写盘。
-
-- `40001`：校验失败（`details` 逐字段说明），或项目本地配置损坏等引擎校验错误
 - `40409`：`path` 不存在或不是目录
 - `40410`：工作区不存在
 
 ### 文件系统
 
-会话内文件操作走 `POST /api/v1/sessions/{session_id}/fs:{action}`，请求体为 JSON；动作包括 `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`。每个动作的请求体还接受可选的 `runtime_id`（string，默认 `local`），用于选择执行操作的运行时；`open`、`open-in` 与 `reveal` 仅在 `local` 运行时上可用。另有：
+会话内文件操作走 `POST /api/v1/sessions/{session_id}/fs:{action}`，请求体为 JSON；动作包括 `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `git_status:batch` / `pull_request` / `pull_request:batch` / `diff` / `open` / `open-in` / `reveal`。动作在会话创建时所在的环境上执行；`open`、`open-in` 与 `reveal` 仅对 `local` 环境上的会话可用。另有：
 
 | 方法与路径 | 说明 |
 | --- | --- |
+| `POST /api/v1/workspace/fs:list` | 无会话的工作区目录列举 |
 | `POST /api/v1/workspace/fs:search` | 无会话的工作区搜索（body 携带工作区引用） |
 | `POST /api/v1/workspace/fs:suggest` | 无会话的文件补全候选（用于 `@` 文件提及） |
 | `GET /api/v1/sessions/{session_id}/fs/{path}:download` | 下载会话文件（二进制，见下文） |
@@ -1825,27 +1898,76 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/fs:git_status`
 
-读取会话工作区的 git 状态，可选限定在一组路径内。
+读取 git 状态，可选限定在一组路径内。提供 `root` 时，返回条目的路径相对于该目录；省略时，查询整个 Git worktree，条目路径相对于仓库根目录。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `paths` | body | string[] | 将状态限定在这些路径；省略表示整个工作区 |
+| `root` | body | string | 要限定查询范围的工作区目录；省略时查询整个 Git worktree，相对路径从会话工作目录解析 |
+| `paths` | body | string[] | 将状态限定在这些路径；相对路径在提供 `root` 时从该目录解析，否则从会话工作目录解析 |
+| `include_pull_request` | body | boolean | 是否包含关联的 Pull Request。默认 `true` |
 
 成功时 `data` 为 `{ branch, ahead, behind, entries, additions, deletions, pullRequest }`，其中 `entries` 把每个变更路径映射到其状态（`clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted`），`pullRequest` 为 `{ number, state, url }`（`state` 为 `open` / `merged` / `closed` / `draft`）或 `null`。
 
 - `40001`：请求体校验失败
 - `40401`：会话不存在
 - `40908`：git 不可用（不是仓库，或没有 git 可执行文件）
+- `41304`：路径越出会话工作区
 
-#### `POST /api/v1/sessions/{session_id}/fs:diff`
+#### `POST /api/v1/sessions/{session_id}/fs:git_status:batch`
 
-返回会话工作区内单个文件的 unified git diff。
+一次调用读取多个工作区目录的 git 状态；失败的目录会折进 `errors`，而不是让整个请求失败。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `path` | body | string | **必填。** 要 diff 的文件，相对于会话工作目录 |
+| `roots` | body | string[] | **必填。** 要查询的工作区目录，1–32 条 |
+| `include_pull_request` | body | boolean | 是否在每项结果中包含关联的 Pull Request。默认 `true` |
+
+成功时 `data` 为 `{ results, errors }`。`results` 把每个成功的 root 映射到与 `fs:git_status` 相同的状态对象；`errors` 把每个失败的 root 映射到其 `{ code, msg }` 错误，错误码与单目录动作一致。
+
+- `40001`：请求体校验失败
+- `40401`：会话不存在
+
+#### `POST /api/v1/sessions/{session_id}/fs:pull_request`
+
+读取会话工作区中指定目录关联的 Pull Request。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `root` | body | string | 要查询的工作区目录，默认是会话工作目录；相对路径从会话工作目录解析 |
+
+成功时 `data` 为 `{ number, state, url }`（`state` 为 `open` / `merged` / `closed` / `draft`）；未找到 Pull Request 时为 `null`。
+
+- `40001`：请求体校验失败
+- `40401`：会话不存在
+- `40908`：git 不可用（不是仓库，或没有 git 可执行文件）
+- `41304`：路径越出会话工作区
+
+#### `POST /api/v1/sessions/{session_id}/fs:pull_request:batch`
+
+一次调用读取多个工作区目录关联的 Pull Request；失败的目录会折进 `errors`，而不是让整个请求失败。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `roots` | body | string[] | **必填。** 要查询的工作区目录，1–32 条 |
+
+成功时 `data` 为 `{ results, errors }`。`results` 把每个成功的 root 映射到与 `fs:pull_request` 相同的对象或 `null`；`errors` 把每个失败的 root 映射到其 `{ code, msg }` 错误。
+
+- `40001`：请求体校验失败
+- `40401`：会话不存在
+
+#### `POST /api/v1/sessions/{session_id}/fs:diff`
+
+返回会话工作区中指定目录内单个文件的 unified git diff。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `path` | body | string | **必填。** 要 diff 的文件，相对于 `root` |
+| `root` | body | string | 要查询的工作区目录，默认是会话工作目录；相对路径从会话工作目录解析 |
 
 成功时 `data` 为 `{ path, diff, truncated }`，其中 `diff` 为 unified diff 文本，`truncated` 表示过长的 diff 被截断。
 
@@ -1856,7 +1978,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/fs:open`
 
-用宿主操作系统的默认程序打开会话文件。仅限 local 运行时。
+用宿主操作系统的默认程序打开会话文件。仅限 local 环境。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1873,7 +1995,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/fs:open-in`
 
-在指定的宿主应用程序中打开会话文件或目录。仅限 local 运行时。
+在指定的宿主应用程序中打开会话文件或目录。仅限 local 环境。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1892,7 +2014,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/fs:reveal`
 
-在宿主操作系统的文件管理器中显示会话文件。仅限 local 运行时。
+在宿主操作系统的文件管理器中显示会话文件。仅限 local 环境。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1914,12 +2036,37 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 | `path` | path | string | **必填。** 相对于工作区的文件路径，加 `:download` 后缀 |
-| `runtime_id` | query | string | 从哪个运行时读取。默认 `local` |
+| `allow_external_symlinks` | query | string | 传 `true` 时允许通过工作区外的软链接下载。默认 `false` |
 
 - `40001`：路径缺失或为空
 - `40401`：会话不存在
 - `40409`：路径不存在
 - `41304`：路径越出会话工作区
+
+#### `POST /api/v1/workspace/fs:list`
+
+`fs:list` 的无会话形式：工作区改由请求体而非 URL 携带。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `workspace` | body | string | **必填。** 已注册工作区 id 或绝对根路径（当场注册） |
+| `path` | body | string | 要列举的目录，相对于工作区根。默认 `.` |
+| `depth` | body | integer | 递归深度，1–10。默认 `1` |
+| `limit` | body | integer | 最大条目数，1–1000。默认 `200` |
+| `show_hidden` | body | boolean | 是否包含点文件。默认 `false` |
+| `follow_gitignore` | body | boolean | 是否跳过 gitignore 路径。默认 `true` |
+| `exclude_globs` | body | string[] | 额外要跳过的 glob |
+| `allow_ignored_globs` | body | string[] | 即使被 gitignore 也要显示的 glob |
+| `allow_external_symlinks` | body | boolean | 是否跟随目标在工作区外的软链接目录。默认 `false` |
+| `sort` | body | string | `type_first`（默认）/ `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
+
+成功时 `data` 与 `fs:list` 形状相同。
+
+- `40001`：请求体校验失败
+- `40409`：路径不存在或不是目录
+- `40410`：工作区不存在，且不是可用的绝对路径
+- `40411`：宿主文件系统拒绝访问
+- `41304`：路径通过软链接越出工作区，且未启用 `allow_external_symlinks`
 
 #### `POST /api/v1/workspace/fs:search`
 
@@ -1933,7 +2080,6 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `include_globs` | body | string[] | 只保留匹配这些 glob 之一的路径 |
 | `exclude_globs` | body | string[] | 跳过匹配这些 glob 的路径 |
 | `follow_gitignore` | body | boolean | 跳过 gitignore 的路径。默认 `true` |
-| `runtime_id` | body | string | 在哪个运行时上搜索。默认 `local` |
 
 成功时 `data` 为 `{ items, truncated }`，命中结构与排序同 `fs:search`。
 
@@ -1953,7 +2099,6 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `show_hidden` | body | boolean | 包含点文件。默认 `false` |
 | `include_globs` | body | string[] | 只保留匹配这些 glob 之一的路径 |
 | `exclude_globs` | body | string[] | 跳过匹配这些 glob 的路径 |
-| `runtime_id` | body | string | 在哪个运行时上补全。默认 `local` |
 
 成功时 `data` 为 `{ items, truncated }`，每项为 `{ path, name, kind, score, match_positions }`，命中结构同 `fs:search`。
 
@@ -2362,7 +2507,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | 轮次 | `turn.started`、`turn.ended`、`turn.step.started` / `completed` / `interrupted` / `retrying` |
 | 流式文本 | `assistant.delta`、`thinking.delta`（带 `offset` 用于对齐） |
 | 工具调用 | `tool.call.started`、`tool.call.delta`、`tool.progress`、`tool.result` |
-| 交互 | `interaction` |
+| 交互 | `event.approval.requested` / `resolved`、`event.question.requested` / `answered` / `dismissed` |
 | subagent | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
 | 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
 | 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
@@ -2370,8 +2515,6 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
 事件另分持久与易失两种：持久事件带严格递增的 `seq`，落盘并可回放；易失事件（各 `*.delta`、`tool.progress`、`shell.*` 等）标 `volatile: true`，不回放。消费易失文本流时用 `offset`（该轮次内的累计字符偏移）与本地已累积文本比对：小于本地长度说明是重复帧，大于说明有缺漏、需走快照恢复。
-
-会话内所有 agent（含 subagent）的审批与提问都以 `interaction` 帧到达。与其他事件不同，它是平铺的——没有 `seq`、`timestamp` 和 `payload` 包装——且从不写入日志、不回放：`{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`。审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed` / `cancelled`。审批的 `request` 为 `{ tool_name, action, tool_input_display?, expires_at }`，`expires_at` 为发起后 24 小时；提问的为 `{ questions }`，含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`，每个带 2–4 个 `{ id, label, description? }` 形式的 `options`。服务端会在每次 `client_hello` / `subscribe` / `subscribe_v2` 成功确认后立即补发该会话当前待处理的交互，因此客户端应在收到确认时清空该会话的待处理列表，再用随后到达的帧重建。回应交互使用 [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id)。
 
 ### 断线恢复
 

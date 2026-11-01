@@ -97,7 +97,6 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
       all.push({
         role: 'user',
         content: [...item.message.content],
-        toolCalls: [],
         origin: item.meta?.origin as PromptOrigin | undefined,
       });
     }

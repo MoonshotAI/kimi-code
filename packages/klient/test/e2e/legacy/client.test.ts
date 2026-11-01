@@ -104,7 +104,7 @@ describeLive('DaemonClient (live server required)', () => {
     created.push({ client, sid: session.id });
     log('created session', session);
     await client.connect();
-    log('subscribe request', { type: 'subscribe', session_ids: [session.id] });
+    log('subscribe request', { type: 'subscribe_v2', session_id: session.id });
     await expect(client.subscribe(session.id)).resolves.toBeUndefined();
     log('subscribe accepted', { session_id: session.id });
   });
@@ -231,7 +231,7 @@ describeLive('DaemonClient (live server required)', () => {
             },
           ],
         },
-        { waitFor: 'prompt.completed', timeoutMs: PROMPT_TIMEOUT_MS },
+        { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       successLog('seed prompt completed', {
         prompt_id: promptResult.prompt_id,
@@ -253,14 +253,13 @@ describeLive('DaemonClient (live server required)', () => {
         body: populatedCompactRequest,
       });
 
-      const completedPromise = client.waitForFrame(
-        (f) => f.type === 'compaction.completed' && f.session_id === populated.id,
+      const compaction = await client.runUntilIdle(
+        populated.id,
+        () => client.compactSession(populated.id, populatedCompactRequest),
         { timeoutMs: PROMPT_TIMEOUT_MS },
       );
-      const compactResponse = await client.compactSession(populated.id, populatedCompactRequest);
-      successLog('rest response', compactResponse);
-      const completedFrame = await completedPromise;
-      successLog('compaction completed frame', frameForLog(completedFrame));
+      successLog('rest response', compaction.result);
+      successLog('compaction idle frame', frameForLog(compaction.finalFrame));
 
       const afterCompact = await client.listMessages(populated.id, { page_size: 100 });
       successLog('messages after compact', afterCompact);
@@ -294,7 +293,7 @@ describeLive('DaemonClient (live server required)', () => {
       const keepPrompt = await client.submitAndWait(
         session.id,
         { content: [{ type: 'text', text: 'Remember KEEP. Reply with "OK".' }] },
-        { waitFor: 'prompt.completed', timeoutMs: PROMPT_TIMEOUT_MS },
+        { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       log('keep prompt completed', {
         prompt_id: keepPrompt.prompt_id,
@@ -305,7 +304,7 @@ describeLive('DaemonClient (live server required)', () => {
       const undoPrompt = await client.submitAndWait(
         session.id,
         { content: [{ type: 'text', text: 'Remember UNDO-ME. Reply with "OK".' }] },
-        { waitFor: 'prompt.completed', timeoutMs: PROMPT_TIMEOUT_MS },
+        { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       log('undo prompt completed', {
         prompt_id: undoPrompt.prompt_id,
@@ -605,7 +604,6 @@ function okEnvelope<T>(data: T): { code: 0; msg: string; data: T; request_id: st
 
 function frameForLog(frame: {
   type: string;
-  seq?: number;
   session_id?: string;
   id?: string;
   code?: number;
@@ -614,7 +612,6 @@ function frameForLog(frame: {
 }): Record<string, unknown> {
   return {
     type: frame.type,
-    seq: frame.seq,
     session_id: frame.session_id,
     id: frame.id,
     code: frame.code,
@@ -645,7 +642,6 @@ function testSession(overrides: Partial<Session> = {}): Session {
     },
     permission_rules: [],
     message_count: 0,
-    last_seq: 0,
   };
   return {
     ...base,

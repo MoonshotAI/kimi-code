@@ -1,13 +1,12 @@
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { toLlmMessage } from '#/llm-adapter/contract/message';
 import type { HistoryMessage } from '#human/agent/turn';
 import type { UserMessage } from '#human/llm/message';
-import { emptyUsage } from '#human/llm/usage';
+import { emptyUsage } from '#human/llm-requester/usage';
 
 export const EMPTY_MACHINE_PROMPT: UserMessage = { role: 'user', content: [] };
 
 export function historyEntryFromContext(message: ContextMessage): HistoryMessage {
-  const converted = toLlmMessage(message);
+  const converted = message;
   switch (converted.role) {
     case 'system':
       return { message: converted, meta: {} };

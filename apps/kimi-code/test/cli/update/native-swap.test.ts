@@ -247,14 +247,14 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
   });
 
   describe('channel switch', () => {
-    const DEV_VERSION = '0.0.0-dev.42';
+    const CANARY_VERSION = '0.5.0-canary.20261028012345-0123456';
     const STABLE_VERSION = '0.5.0';
 
-    it('swaps stable over dev only when the stage carries confirmed switch intent', async () => {
+    it('swaps stable over canary only when the stage carries confirmed switch intent', async () => {
       await seedStagedUpdate(exePath, STABLE_VERSION, { manual: true, intent: 'switch-channel' });
       const { calls, spawnImpl } = createSpawnMock({ smokeStdout: `${STABLE_VERSION}\n` });
       const relaunched = await maybeRelaunchWithStagedNativeUpdate(
-        makeDeps(exePath, { spawnImpl, currentVersion: DEV_VERSION }),
+        makeDeps(exePath, { spawnImpl, currentVersion: CANARY_VERSION }),
       );
 
       expect(relaunched).toBe(true);
@@ -266,7 +266,7 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
       await seedStagedUpdate(exePath, STABLE_VERSION, { manual: true });
       const { calls, spawnImpl } = createSpawnMock({ smokeStdout: `${STABLE_VERSION}\n` });
       const relaunched = await maybeRelaunchWithStagedNativeUpdate(
-        makeDeps(exePath, { spawnImpl, currentVersion: DEV_VERSION }),
+        makeDeps(exePath, { spawnImpl, currentVersion: CANARY_VERSION }),
       );
 
       expect(relaunched).toBe(false);
@@ -274,10 +274,10 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
       expect(await readFile(exePath, 'utf-8')).toBe('old-binary');
     });
 
-    it('swaps dev over stable when the switch was confirmed', async () => {
-      const target = '0.0.0-dev.43';
+    it('swaps canary over stable when the switch was confirmed', async () => {
+      const target = '0.5.0-canary.20261029012345-89abcde';
       await seedStagedUpdate(exePath, target, {
-        channel: 'dev',
+        channel: 'canary',
         manual: true,
         intent: 'switch-channel',
       });
@@ -291,14 +291,14 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
     });
 
     it('discards an older same-channel stage even when it carries switch intent', async () => {
-      await seedStagedUpdate(exePath, '0.0.0-dev.41', {
-        channel: 'dev',
+      await seedStagedUpdate(exePath, '0.5.0-canary.20261027235959-fffffff', {
+        channel: 'canary',
         manual: true,
         intent: 'switch-channel',
       });
       const { calls, spawnImpl } = createSpawnMock({});
       const relaunched = await maybeRelaunchWithStagedNativeUpdate(
-        makeDeps(exePath, { spawnImpl, currentVersion: DEV_VERSION }),
+        makeDeps(exePath, { spawnImpl, currentVersion: CANARY_VERSION }),
       );
 
       expect(relaunched).toBe(false);

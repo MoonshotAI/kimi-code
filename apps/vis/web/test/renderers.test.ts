@@ -85,6 +85,17 @@ describe('wire renderers', () => {
     const markup = renderToStaticMarkup(headline.main);
     expect(markup).toContain('example');
     expect(markup).toContain('recovered');
+    const mediaDetail = WIRE_RENDERERS['context.append_message'].detail?.({
+      type: 'context.append_message',
+      agentId: 'main',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+        ],
+      },
+    } as never);
+    expect(renderToStaticMarkup(mediaDetail)).toContain('data:image/png;base64,AAA');
   });
 
   it('renders a change-notifier snapshot written before the belief fields existed', () => {

@@ -17,9 +17,9 @@
 | `Glob` | 自动放行 | 按 glob 模式查找文件 |
 | `ReadMediaFile` | 自动放行 | 读取图片或视频文件 |
 
-**`Read`** 接受文件路径（`path`）以及可选的 `line_offset`（起始行号，支持负数从末尾倒数）、`column_offset`（正向读取时，起始行内从 0 开始的位置）、`n_lines`（请求读取的源文件行数）和 `max_chars`（结果的字符上限，包含行号和状态信息）。省略 `n_lines` 时向文件末尾读取。默认上限为 100,000 字符，调用可申请到 500,000 字符；两个值都可通过 [`read` 配置](../configuration/config-files.md#read) 修改。字符数和列偏移按显示文本的 JavaScript 字符串长度计算，列偏移不包含行号前缀：常见字母和汉字各计 1，许多 emoji 计 2。
+**`Read`** 接受文件路径（`path`）以及可选的 `line_offset`（起始行号，支持负数从末尾倒数）、`column_offset`（正向读取时，起始行内从 0 开始的位置）、`n_lines`（请求读取的源文件行数）和 `max_chars`（结果的字符上限，包含行号和状态信息）。省略 `n_lines` 时向文件末尾读取。默认上限和调用可申请的最大值都是 100,000 字符，单次调用还会在估算 token 数达到最大值的四分之一（默认 25,000）时停止，因此中文等非 ASCII 字符较多的文本每次返回的字符更少；两个值都可通过 [`read` 配置](../configuration/config-files.md#read) 修改。如果调用指定了范围（带 `n_lines` 或负的 `line_offset`），而 `max_chars` 之内放得下的行仍超过 token 上限，`Read` 会返回错误并建议一个放得下的范围，而不是只返回其中一部分；只被 `max_chars` 截短的范围仍会返回一页内容并附带 `Next Read` 参数。字符数和列偏移按显示文本的 JavaScript 字符串长度计算，列偏移不包含行号前缀：常见字母和汉字各计 1，许多 emoji 计 2。
 
-`Read` 优先返回完整行，结果不会再被通用工具输出限制缩短。如果单独一行也无法在一页中容纳，工具会返回片段，并在状态中说明列范围及 `Next Read` 参数，无需提高额度即可继续读取。拼接同一行的片段时不要额外插入换行。一行只返回部分内容时，仍会计入剩余的 `n_lines` 范围，直到行尾返回为止。非法列偏移会明确报错，不会跳过内容。
+`Read` 优先返回完整行，结果不会再被通用工具输出限制缩短。除非一次就返回了整个文件且没有需要说明的情况，否则内容后面会附带状态信息。如果单独一行也无法在一页中容纳，工具会返回片段，并在状态中说明列范围及 `Next Read` 参数，无需提高额度即可继续读取。拼接同一行的片段时不要额外插入换行。一行只返回部分内容时，仍会计入剩余的 `n_lines` 范围，直到行尾返回为止。非法列偏移会明确报错，不会跳过内容。
 
 尾读优先返回请求范围中较新的完整行。如果连一条完整行都无法容纳，结果会给出未读范围的正向 `Next Read` 参数；`column_offset` 不能与负数 `line_offset` 同时使用。续读位置针对文件的当前内容，文件变化后应重新读取。如果尾读提示读取期间文件发生变化，请基于更新后的文件重试。10 MiB 以内的 UTF-16 LE/BE 文件会先尝试严格解码；失败后，`Read` 会将损坏序列替换为 `�` 并返回可读文本，同时在每一页提示发生了有损解码、文本可能与原文不同。告警也计入字符额度；有效文件中原本就有的 `�` 不会触发告警。图片和视频请使用 `ReadMediaFile`。
 
@@ -63,6 +63,8 @@
 
 **`FetchURL`** 接受单个 `url` 参数，返回页面内容。对 HTML 页面，宿主会提取正文而非返回完整 HTML；纯文本或 Markdown 页面直接透传。同样需要宿主注入实现。
 
+这两个网络工具始终从运行 Kimi Code 的机器发起请求，即使会话绑定了 [远程环境](../guides/remote-environment.md)——请求不会从目标环境出网。
+
 ## Plan 模式
 
 | 工具 | 默认审批 | 说明 |
@@ -93,9 +95,9 @@ Plan 模式是一种受约束的工作状态，只能由用户打开（`Shift-Ta
 | `NotifyUser` | 自动放行 | 在轮次进行中向用户展示一条简短的进展更新 |
 | `Skill` | 自动放行 | 调用已注册的 inline Skill |
 
-**`Agent`** 将子任务委托给 subagent 执行。必填参数：`prompt`（完整任务描述）和 `description`（3–5 个词的简短说明）。可选参数：`subagent_type`（默认 `coder`）、`resume`（恢复已有 Agent 的 ID，与 `subagent_type` 互斥）、`run_in_background`（默认 false）和 `model`（在配置 [subagent 模型池](../configuration/config-files.md#subagent-模型池) 后可用——`[secondary_model.models]` 表或仅一行 `default_model`：池中别名，或 `"primary"` 表示调用方自己运行的模型；resume 时无效）。未传入时 subagent 绑定池的 `default_model`；未配置模型池时，subagent 一律继承调用方模型。Agent 任务默认 2 小时超时，可通过 `config.toml` 的 `[subagent] timeout_ms`（`0` = 无超时，或 `KIMI_SUBAGENT_TIMEOUT_MS` 环境变量）配置，且在 print 模式（`kimi -p`）下默认无超时。前台模式下父 Agent 等待 subagent 完成再继续；后台模式立即返回任务 ID，完成时通过合成 User 消息自动回到 main agent。subagent 在完成前被停止、超时或失败时，父 Agent 仍会收到它在这次运行中已写出的文字，并标注为未完成。多个前台 `Agent` 调用在同一步运行时，TUI 会合并展示，并为每个 subagent 显示运行、等待、完成或失败状态以及已耗时长。subagent 体系细节见 [Agent 与 subagent](../customization/agents.md)。
+**`Agent`** 将子任务委托给 subagent 执行。必填参数：`prompt`（完整任务描述）和 `description`（3–5 个词的简短说明）。可选参数：`subagent_type`（默认 `coder`）、`resume`（恢复已有 Agent 的 ID，与 `subagent_type` 互斥）、`run_in_background`（默认 false）和 `model`（[subagent 模型池](../configuration/config-files.md#subagent-模型池) 中有两个及以上模型时可用：池中别名；resume 时无效）。未传入时 subagent 绑定池的 `default_model`；未配置模型池时，subagent 一律继承调用方模型。Agent 任务默认 2 小时超时，可通过 `config.toml` 的 `[subagent] timeout_ms`（`0` = 无超时，或 `KIMI_SUBAGENT_TIMEOUT_MS` 环境变量）配置，且在 print 模式（`kimi -p`）下默认无超时。前台模式下父 Agent 等待 subagent 完成再继续；后台模式立即返回任务 ID，完成时通过合成 User 消息自动回到 main agent。subagent 在完成前被停止、超时或失败时，父 Agent 仍会收到它在这次运行中已写出的文字，并标注为未完成。多个前台 `Agent` 调用在同一步运行时，TUI 会合并展示，并为每个 subagent 显示运行、等待、完成或失败状态以及已耗时长。subagent 体系细节见 [Agent 与 subagent](../customization/agents.md)。
 
-**`AgentSwarm`** 可以从共享的 `prompt_template` 和 `items` 数组启动 subagent，也可以通过 `resume_agent_ids` 恢复已有 subagent，或在一次调用中同时使用两者。本工具仅在 swarm mode 开启时运行，且 swarm mode 只能由你手动开启（例如使用 `/swarm`）；swarm mode 未开启时，调用会被拒绝，不会启动任何 subagent。模板必须包含 `{{item}}` 占位符；每个 item 会替换该占位符，并启动一个新的 subagent。传入 `subagent_type` 可以指定整个 swarm 中所有新启动的 subagent 使用的 profile；省略时默认使用 `coder`。传入 `model`（在配置 [subagent 模型池](../configuration/config-files.md#subagent-模型池) 后可用——`[secondary_model.models]` 表或仅一行 `default_model`）可以让新启动的 subagent 运行在池中别名指定的模型或调用方自己的模型（`"primary"`）上。未传入时新启动的 subagent 绑定池的 `default_model`；未配置模型池时则继承调用方模型。恢复的 subagent 保持其原有模型。不传 `resume_agent_ids` 时，本工具要求至少 2 个 item；传入 `resume_agent_ids` 时，可以恢复 1 个或多个已有 subagent。本工具最多支持 128 个 subagent，会等待全部 subagent 完成，并返回聚合报告。每个 subagent 默认 2 小时超时，可通过 `config.toml` 的 [`[swarm] timeout_ms`](../configuration/config-files.md#swarm)（`0` = 无超时，或 `KIMI_CODE_SWARM_TIMEOUT_MS` 环境变量）配置，且在 print 模式（`kimi -p`）下默认无超时；超时的 subagent 会被中止，并在聚合报告中标记为失败。在 TUI 中，前台 swarm 会在输入框上方显示实时 `Agent swarm` 进度面板。若一次模型响应调用 `AgentSwarm`，该调用必须是该响应中的唯一工具调用；如需运行多个 swarm，应先调用一个 `AgentSwarm` 并等待结果，再调用下一个，若单个模板可以覆盖这些工作，也可以合并为一个 swarm。swarm mode 开启期间，`AgentSwarm` 会自动放行。权限规则只能按工具名 `AgentSwarm` 匹配，不支持 `AgentSwarm(swarm)` 这类参数模式。默认情况下，本工具会逐步提升并发且不设上限（立即启动 5 个 subagent，之后每 700 毫秒再启动 1 个）；将 `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` 设为正整数可限制该阶段同时运行的 subagent 数量，不设置则表示不限制。若设置为非正整数的值，本次 AgentSwarm 调用会立即失败。
+**`AgentSwarm`** 可以从共享的 `prompt_template` 和 `items` 数组启动 subagent，也可以通过 `resume_agent_ids` 恢复已有 subagent，或在一次调用中同时使用两者。本工具仅在 swarm mode 开启时运行，且 swarm mode 只能由你手动开启（例如使用 `/swarm`）；swarm mode 未开启时，调用会被拒绝，不会启动任何 subagent。模板必须包含 `{{item}}` 占位符；每个 item 会替换该占位符，并启动一个新的 subagent。传入 `subagent_type` 可以指定整个 swarm 中所有新启动的 subagent 使用的 profile；省略时默认使用 `coder`。传入 `model`（[subagent 模型池](../configuration/config-files.md#subagent-模型池) 中有两个及以上模型时可用）可以让新启动的 subagent 运行在池中别名指定的模型上。未传入时新启动的 subagent 绑定池的 `default_model`；未配置模型池时则继承调用方模型。恢复的 subagent 保持其原有模型。不传 `resume_agent_ids` 时，本工具要求至少 2 个 item；传入 `resume_agent_ids` 时，可以恢复 1 个或多个已有 subagent。本工具最多支持 128 个 subagent，会等待全部 subagent 完成，并返回聚合报告。每个 subagent 默认 2 小时超时，可通过 `config.toml` 的 [`[swarm] timeout_ms`](../configuration/config-files.md#swarm)（`0` = 无超时，或 `KIMI_CODE_SWARM_TIMEOUT_MS` 环境变量）配置，且在 print 模式（`kimi -p`）下默认无超时；超时的 subagent 会被中止，并在聚合报告中标记为失败。在 TUI 中，前台 swarm 会在输入框上方显示实时 `Agent swarm` 进度面板。若一次模型响应调用 `AgentSwarm`，该调用必须是该响应中的唯一工具调用；如需运行多个 swarm，应先调用一个 `AgentSwarm` 并等待结果，再调用下一个，若单个模板可以覆盖这些工作，也可以合并为一个 swarm。swarm mode 开启期间，`AgentSwarm` 会自动放行。权限规则只能按工具名 `AgentSwarm` 匹配，不支持 `AgentSwarm(swarm)` 这类参数模式。默认情况下，本工具会逐步提升并发且不设上限（立即启动 5 个 subagent，之后每 700 毫秒再启动 1 个）；将 `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` 设为正整数可限制该阶段同时运行的 subagent 数量，不设置则表示不限制。若设置为非正整数的值，本次 AgentSwarm 调用会立即失败。
 
 **`AskUserQuestion`** 以结构化多选题的形式向用户提问，适用于需要消歧或选择方案的场景。`questions` 参数接受 1–4 道题，每道题需提供 `question`（以 `?` 结尾）、`options`（2–4 个选项，每项含 `label` 和 `description`）以及可选的 `header`（最多 12 字符）和 `multi_select`（默认 false）。系统自动附加"其他"选项。在 Kimi Code for VS Code 中，包含多道题的提问支持 Back 导航，并在题目之间切换时保留已选择或自定义的答案。`background` 为 true 时启动后台问题任务并立即返回任务 ID；问题在本轮结束后仍保持待答，用户作答后答案会以通知形式直接送回 Agent。宿主未实现交互式提问能力时返回失败提示，Agent 应改为在文本回复中直接提问。
 
@@ -155,3 +157,4 @@ Plan 模式是一种受约束的工作状态，只能由用户打开（`Shift-Ta
 - [Agent 与 subagent](../customization/agents.md) — `Agent` 工具的调度机制与上下文隔离
 - [Hooks](../customization/hooks.md) — 在工具调用前后触发本地脚本
 - [斜杠命令](./slash-commands.md) — TUI 内置控制命令速查
+- [远程环境](../guides/remote-environment.md) — 创建时绑定环境与声明式环境配置

@@ -30,24 +30,29 @@ import { KIMI_MCP_CLIENT_NAME } from '#/mcpCore/client-shared';
 import { McpConnectionManager, type McpConnectionManagerOptions, type McpServerEntry } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import type { EnvironmentBinding } from '#/environment/environment';
 import { HostProcessError, HostProcessErrorCode } from '#/os/interface/hostProcess';
-import type { RuntimeBinding } from '#/runtime/runtime';
 
-const testRuntimeBinding: RuntimeBinding = { workspaceId: 'test-workspace', runtimeId: 'local' };
+const testEnvironmentBinding: EnvironmentBinding = { environmentId: 'local' };
 const testProcess = new HostProcessService();
-const testRuntime = Object.assign(
-  new FakeRuntime({ ...testRuntimeBinding, generation: 'test-generation' }, {
+const testEnvironment = Object.assign(
+  new FakeEnvironment({ ...testEnvironmentBinding, generation: 'test-generation' }, {
     capabilities: ['process'],
   }),
   { process: testProcess },
 );
-const testRuntimeResolver = {
+const testEnvironmentResolver = {
   _serviceBrand: undefined,
-  inspect: () => testRuntime,
+  inspect: () => testEnvironment,
   acquire: () => ({
-    runtime: testRuntime,
+    environment: testEnvironment,
+    track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
+    dispose: () => {},
+  }),
+  acquireWhenReady: async () => ({
+    environment: testEnvironment,
     track: <T extends { dispose(): void | Promise<void> }>(resource: T): T => resource,
     dispose: () => {},
   }),
@@ -55,9 +60,8 @@ const testRuntimeResolver = {
 
 function createManager(options: McpConnectionManagerOptions = {}): McpConnectionManager {
   return new McpConnectionManager({
-    runtimeResolver: testRuntimeResolver,
-    workspaceId: testRuntimeBinding.workspaceId,
-    runtimeId: testRuntimeBinding.runtimeId,
+    environmentResolver: testEnvironmentResolver,
+    environmentId: testEnvironmentBinding.environmentId,
     stdioCwd: process.cwd(),
     ...options,
   });
@@ -377,6 +381,7 @@ describe('McpConnectionManager', () => {
       await rm(cwd, { recursive: true, force: true });
     }
   }, 15000);
+
 
   it('announces the resolved custom identity as the MCP client name', async () => {
     const cm = createManager({ resolveClientName: () => 'acme-dev' });
@@ -943,9 +948,6 @@ describe('McpConnectionManager', () => {
         'pending',
         'failed',
         'failed',
-        'pending',
-        'failed',
-        'pending',
         'connected',
       ]);
     } finally {
@@ -1040,9 +1042,6 @@ describe('McpConnectionManager', () => {
       expect(seen.filter((s) => s.name === 'remote').map((s) => s.status)).toEqual([
         'pending',
         'failed',
-        'pending',
-        'failed',
-        'pending',
         'connected',
       ]);
     } finally {
@@ -1406,11 +1405,13 @@ describe('McpConnectionManager', () => {
       expect(recovered?.status).toBe('connected');
       expect(recovered?.toolCount).toBe(1);
       expect(recovered?.nextRetryAt).toBeUndefined();
-      expect(cm.resolved('remote')).toBeDefined();
+      const client = cm.resolved('remote')?.client;
+      if (client === undefined) throw new Error('expected a reconnected client');
+      const result = await client.callTool('echo', { text: 'recovered' });
+      expect(result.content).toEqual([{ type: 'text', text: 'recovered' }]);
 
       const remoteStatuses = seen.filter((s) => s.name === 'remote').map((s) => s.status);
-      expect(remoteStatuses.slice(0, 3)).toEqual(['pending', 'connected', 'failed']);
-      expect(remoteStatuses.slice(-2)).toEqual(['pending', 'connected']);
+      expect(remoteStatuses).toEqual(['pending', 'connected', 'failed', 'connected']);
     } finally {
       await cm.shutdown();
       await closeServer(httpServer);

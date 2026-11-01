@@ -8,8 +8,8 @@ import {
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextOps';
 import { createLoopEventFold } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type {
-  ContentPart,
   ContextMessage,
   PermissionMode,
   TokenUsage,
@@ -167,7 +167,7 @@ export function projectContext(
       };
     },
     appendOpenToolCall: (call) => {
-      if (openMessage === undefined) return;
+      if (openMessage === undefined || openMessage.message.role !== 'assistant') return;
       openMessage.message = {
         ...openMessage.message,
         toolCalls: [...openMessage.message.toolCalls, call],
@@ -567,7 +567,7 @@ export function projectContext(
       case 'cron.delete':
       case 'plan.revision':
       case 'plugin.session_start':
-      case 'runtime.set_binding':
+      case 'environment.set_binding':
       case 'staleGuard.recorded':
       case 'staleGuard.cleared':
       case 'interruptionReminder.recorded':
@@ -583,6 +583,8 @@ export function projectContext(
       case 'llm.tools_snapshot':
       case 'llm.request':
       case 'mcp.tools_discovered':
+      case 'tool_select.initialized':
+      case 'tool_select.tools_changed':
       case 'mcp.server_failed':
       case 'mcp.server_failure_resolved':
       case 'file_history.checkpoint':

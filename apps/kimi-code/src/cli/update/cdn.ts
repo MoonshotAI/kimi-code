@@ -2,7 +2,7 @@ import { valid } from 'semver';
 import { z } from 'zod';
 
 import {
-  kimiCodeCdnDevChannelUrl,
+  kimiCodeCdnCanaryChannelUrl,
   kimiCodeCdnLatestJsonUrl,
   kimiCodeCdnLatestUrl,
 } from '#/constant/app';
@@ -127,7 +127,7 @@ export interface ChannelFeed extends FetchLatestResult {
   readonly channel: UpdateChannel;
 }
 
-/** Dev failures stay failures because stable is a different release line. */
+/** Canary failures stay failures because stable is a different release line. */
 export async function fetchChannelFeed(
   channel: UpdateChannel,
   fetchImpl: typeof fetch = fetch,
@@ -136,6 +136,6 @@ export async function fetchChannelFeed(
   if (channel === 'stable') {
     return { channel, ...(await fetchLatestFromCdn(fetchImpl, timeoutMs)) };
   }
-  const manifest = await fetchManifestFromCdn(fetchImpl, kimiCodeCdnDevChannelUrl(), timeoutMs);
+  const manifest = await fetchManifestFromCdn(fetchImpl, kimiCodeCdnCanaryChannelUrl(), timeoutMs);
   return { channel, latest: manifest.version, manifest };
 }
