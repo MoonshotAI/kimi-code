@@ -89,10 +89,10 @@ interface UnregisterToolPayload { readonly name: string }
 import { type UsageStatus } from '#/agent/usage/usage';
 import { type PromptWithSkillsInput, type PromptWithSkillsResult, type SkillActivationInput } from '#/features/skill/skill';
 import { IAgentSkillService } from '#/features/skill/skillService';
-import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import type { RuntimeLease } from '#/runtime/runtime';
-import { LocalRuntime } from '#/runtime/localRuntime';
+import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { EnvironmentBinding, EnvironmentLease } from '#/environment/environment';
+import { LocalEnvironment } from '#/environment/localEnvironment';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import type {
   ExecutableToolOutput as ToolOutput,
@@ -102,6 +102,7 @@ import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { ISessionStateService } from '#/session/state/sessionState';
+import { workspaceContextAdditionalDirsKey } from '#/session/workspaceContext/workspaceContextService';
 import type { StateKey } from '#/state/state';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
@@ -120,7 +121,7 @@ import {
 } from '#human/llm/message';
 import { type ThinkingEffort } from '#human/llm-requester/thinking';
 import { type TokenUsage } from '#human/llm-requester/usage';
-import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import { type AgentModelDefinition } from '#/state/agentModel';
 import { type AgentModelInstanceOf } from '#/agent/agentContext/agentSpace';
 import { IAgentTodoService } from '#/features/todo/todoService';
@@ -147,11 +148,9 @@ import {
   IBootstrapService,
   IConfigService,
   IAgentContextMemoryService,
-  IAgentContextProjectorService,
   IAgentExternalHooksService,
   IExternalHooksRunnerService,
   IAgentFullCompactionService,
-  IAgentLLMRequesterService,
   ILogService,
   IAgentPermissionGate,
   IAgentPermissionModeService,
@@ -160,6 +159,7 @@ import {
   IHostProcessService,
   ISessionBtwService,
   ISessionContext,
+  ISessionWorkdir,
   IAgentScopeContext,
   makeAgentScopeContext,
   IAgentShellCommandService,
@@ -216,7 +216,6 @@ import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { ModelCatalog } from '#/llm-adapter/model/catalog-service';
 import { IProviderCatalogRuntime } from '#/llm-adapter/model/catalog-runtime';
 import { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
-import type { ModelRequestParams, ModelRequester } from '#/llm-adapter/model/model-requester';
 import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
 import {
   IProviderService,
@@ -241,8 +240,9 @@ import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
-import { guardPromptCachePrefix, PromptCacheGuardedLLMRequesterService } from './prompt-cache-guard';
-import { createScriptedGenerate } from './scripted-generate';
+import { guardPromptCachePrefix, PromptCacheGuardedLoopRequester } from './prompt-cache-guard';
+import { coreRequesterFromA, createScriptedGenerate } from './scripted-generate';
+import { project as projectContext } from '#/agent/loop/projection';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
   type EventSnapshot,
@@ -731,6 +731,7 @@ const noopHookRunner: IExternalHooksRunnerService = {
   _serviceBrand: undefined,
   ready: Promise.resolve(),
   onDidReload: Event.None as Event<void>,
+  onDidHookError: Event.None as IExternalHooksRunnerService['onDidHookError'],
   trigger: async () => [],
   triggerBlock: async () => undefined,
   fireAndForgetTrigger: async () => [],
@@ -1080,22 +1081,9 @@ class ConfigBackedModelCatalog extends ModelCatalog {
 
   override get(id: string): Model {
     this.syncRegistriesFromConfig();
-    return super.get(id);
-  }
-
-  override getRequester(id: string): ModelRequester {
-    this.syncRegistriesFromConfig();
-    const requester = super.getRequester(id);
+    const model = super.get(id);
     const cacheKey = this.options.promptCacheKey;
-    if (cacheKey === undefined) return requester;
-    return {
-      ...requester,
-      request: (
-        input: Parameters<ModelRequester['request']>[0],
-        signal?: AbortSignal,
-        params?: ModelRequestParams,
-      ) => requester.request(input, signal, { cacheKey, ...params }),
-    };
+    return cacheKey === undefined ? model : Object.assign(model, { promptCacheKey: cacheKey });
   }
 
   override findByName(name: string): readonly string[] {
@@ -1313,6 +1301,12 @@ export class AgentTestContext {
               primaryByWorkspace: {},
               onDidChange: Event.None as Event<void>,
             } satisfies ISessionWorkspaceInfo);
+            reg.defineInstance(ISessionWorkdir, {
+              _serviceBrand: undefined,
+              environmentId: 'local',
+              cwd: this.cwd,
+              fs: undefined as never,
+            });
             reg.defineInstance(
               IWorkspaceStateService,
               new WorkspaceStateService(this.root.accessor.get(IAppStateService)),
@@ -1354,28 +1348,42 @@ export class AgentTestContext {
       seeds: collectScopeSeed(
         [
           (reg) => {
-            reg.defineInstance(IAgentRuntimeBindingSeed, {
+            reg.defineInstance(IAgentEnvironmentBindingSeed, {
               _serviceBrand: undefined,
-              binding: { workspaceId: 'workspace-1', runtimeId: 'local' },
+              binding: { environmentId: 'local' },
             });
-            const runtime = new LocalRuntime(
-              'workspace-1',
-              this.root.accessor.get(IHostEnvironment),
+            const harnessBinding = { environmentId: 'local' };
+            reg.defineInstance<IAgentEnvironmentBindingService>(IAgentEnvironmentBindingService, {
+              _serviceBrand: undefined,
+              onDidChange: Event.None as IAgentEnvironmentBindingService['onDidChange'],
+              get current() {
+                return harnessBinding;
+              },
+              bind: (environmentId: string, cwd?: string) => ({ ...harnessBinding, environmentId, cwd }),
+            });
+            const environment = new LocalEnvironment(this.root.accessor.get(IHostEnvironment),
               this.root.accessor.get(IHostFileSystem),
               this.root.accessor.get(IHostProcessService),
             );
-            reg.defineInstance<IAgentRuntimeService>(IAgentRuntimeService, {
+            reg.defineInstance<IAgentEnvironmentService>(IAgentEnvironmentService, {
               _serviceBrand: undefined,
               onDidChange: () => ({ dispose: () => {} }),
-              isAvailable: (required = []) => required.every((capability) => runtime.capabilities.has(capability)),
-              inspect: () => runtime,
-              acquire: (required = []): RuntimeLease => {
-                const missing = required.filter((capability) => !runtime.capabilities.has(capability));
+              isAvailable: (required = []) => required.every((capability) => environment.capabilities.has(capability)),
+              inspect: () => environment,
+              acquire: (required = []): EnvironmentLease => {
+                const missing = required.filter((capability) => !environment.capabilities.has(capability));
                 if (missing.length > 0) {
-                  throw new Error(`test runtime missing capabilities: ${missing.join(', ')}`);
+                  throw new Error(`test environment missing capabilities: ${missing.join(', ')}`);
                 }
-                return { runtime, track: (resource) => resource, dispose: () => {} };
+                return { environment, track: (resource) => resource, dispose: () => {} };
               },
+              acquireWhenReady(required = []) { return Promise.resolve(this.acquire(required)); },
+              workspaceRoots: () => ({
+                workDir: this.session.accessor.get(ISessionContext).cwd,
+                additionalDirs: this.session.accessor
+                  .get(ISessionStateService)
+                  .get(workspaceContextAdditionalDirsKey),
+              }),
             });
             reg.defineDescriptor(
               IWireService,
@@ -1387,10 +1395,6 @@ export class AgentTestContext {
             );
             reg.defineDescriptor(IAgentBlobService, new SyncDescriptor(AgentBlobServiceImpl));
             reg.defineDescriptor(IAgentProfileService, new SyncDescriptor(AgentProfileService));
-            reg.defineDescriptor(
-              IAgentLLMRequesterService,
-              new SyncDescriptor(PromptCacheGuardedLLMRequesterService),
-            );
             reg.defineDescriptor(
               IAgentExternalHooksService,
               new SyncDescriptor(AgentExternalHooksService),
@@ -1432,6 +1436,13 @@ export class AgentTestContext {
     this.session.accessor
       .get(ISessionEventBus)
       .activateAgent(harnessAgentContext);
+    const loop = this.agent.accessor.get(IAgentLoopService) as {
+      requester: IAgentLoopService['requester'];
+    };
+    loop.requester = new PromptCacheGuardedLoopRequester(
+      loop.requester,
+      this.agent.accessor.get(IAgentContextMemoryService),
+    );
     adoptAgent!();
     this.installInteractionBridge();
     reassertServiceOverrides(this.serviceOverrides, 'agent', this.agent.instantiation);
@@ -1666,7 +1677,7 @@ export class AgentTestContext {
     void plan.status();
 
     this.get(IAgentUserToolService);
-    this.get(IAgentLLMRequesterService);
+    this.get(IAgentLoopService);
     this.get(IAgentFullCompactionService);
     this.get(IAgentProfileService);
     const agentState = this.get(IAgentStateService);
@@ -1726,9 +1737,7 @@ export class AgentTestContext {
   }
 
   project(messages?: readonly ContextMessage[]) {
-    const context = this.get(IAgentContextMemoryService);
-    const projector = this.get(IAgentContextProjectorService);
-    return projector.project(messages ?? context.get());
+    return projectContext(messages ?? this.get(IAgentContextMemoryService).get());
   }
 
   toolsData(): Array<
@@ -2349,6 +2358,7 @@ function createWorkspaceContextStub(
       }
       return target;
     },
+    setWorkDir: () => {},
   };
 }
 
@@ -2811,7 +2821,18 @@ function createGenerateBackedGateway(requester: LlmRequester): IProtocolAdapterR
       real.resolveProviderBaseId(protocol, providerType),
     resolveCapability: (protocol, modelName, providerType) =>
       real.resolveCapability(protocol, modelName, providerType),
-    resolve: (model) => ({ ...real.resolve(model), requester }),
+    request: (model, params) => {
+      const cacheKey = (model as Model & { readonly promptCacheKey?: string }).promptCacheKey;
+      return coreRequesterFromA(real.request(model, { cacheKey, ...params }), {
+        ...requester,
+        generate: (config, content, control) =>
+          requester.generate(
+            { ...config, maxCompletionTokens: params?.maxCompletionTokens },
+            content,
+            control,
+          ),
+      });
+    },
   };
 }
 

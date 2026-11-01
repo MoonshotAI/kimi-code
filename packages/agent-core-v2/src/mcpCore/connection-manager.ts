@@ -113,10 +113,10 @@ export interface McpDefaults {
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
   readonly stdioCwd?: string;
-  readonly runtimeResolver?: import('#/workspace/workspaceInstance/workspaceInstanceManager').IRuntimeResolver;
-  readonly workspaceId?: string;
-  readonly runtimeId?: string;
-  readonly requireStdioRuntimeId?: boolean;
+  readonly environmentResolver?: import('#/app/environment/environment').EnvironmentResolver;
+  readonly environmentId?: string;
+  readonly requireStdioEnvironmentId?: boolean;
+  readonly sessionId?: string;
   readonly reconnectRetryEnabled?: boolean;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
@@ -484,6 +484,7 @@ export class McpConnectionManager implements McpConnectionView {
   private transition(entry: InternalEntry, event: McpEntryEvent): void {
     const plan = this.planTransition(entry, event);
     if (plan === undefined) return;
+    const automaticRetry = entry.state === 'connecting' && entry.failureStreak > 0;
     const before = toPublicEntry(entry);
     const fromFamily = entry.state === 'connected' || entry.state === 'probing';
     const toFamily = plan.target === 'connected' || plan.target === 'probing';
@@ -570,7 +571,8 @@ export class McpConnectionManager implements McpConnectionView {
         break;
     }
     const after = toPublicEntry(entry);
-    if (plan.forceEmit === true || !publicEntriesEqual(before, after)) {
+    const suppressRetryStatus = event.type === 'retryDue' || (automaticRetry && plan.target === 'retryWaiting');
+    if (!suppressRetryStatus && (plan.forceEmit === true || !publicEntriesEqual(before, after))) {
       this.emit(entry);
     }
     this.scheduleReconcile();
@@ -792,13 +794,12 @@ export class McpConnectionManager implements McpConnectionView {
       config.toolTimeoutMs ?? this.options.resolveDefaults?.().toolTimeoutMs;
     const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
-      const runtimeResolver = this.options.runtimeResolver;
-      const workspaceId = this.options.workspaceId;
-      const runtimeId = config.runtime_id ?? this.options.runtimeId;
-      if (runtimeResolver === undefined || workspaceId === undefined || runtimeId === undefined || (this.options.requireStdioRuntimeId === true && config.runtime_id === undefined)) {
+      const environmentResolver = this.options.environmentResolver;
+      const environmentId = config.environment_id ?? this.options.environmentId;
+      if (environmentResolver === undefined || environmentId === undefined || (this.options.requireStdioEnvironmentId === true && config.environment_id === undefined)) {
         throw new McpClassifiedStartupError(
           'config',
-          'MCP stdio requires runtime_id and runtime binding',
+          'MCP stdio requires environment_id and environment binding',
         );
       }
       return new StdioMcpClient(config, {
@@ -806,9 +807,9 @@ export class McpConnectionManager implements McpConnectionView {
         toolCallTimeoutMs,
         defaultCwd: this.options.stdioCwd,
         clientName,
-        runtimeResolver,
-        workspaceId,
-        runtimeId,
+        environmentResolver,
+        environmentId,
+        sessionId: this.options.sessionId,
       });
     }
     if (config.transport === 'sse') {

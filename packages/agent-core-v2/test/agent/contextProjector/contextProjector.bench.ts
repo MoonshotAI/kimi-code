@@ -1,12 +1,11 @@
 import { bench, describe } from 'vitest';
 
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import { TestInstantiationService } from '#/_base/di/test';
 import { ILogService, type ILogger } from '#/_base/log/log';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
-import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
+import { AgentLoopProjector } from '#/agent/loop/projector';
+import { AgentStateService } from '#/agent/state/agentStateService';
+import { recordingTelemetry } from '../../app/telemetry/stubs';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart, Message, TextPart, ToolCall } from '#human/llm/message';
 
@@ -182,11 +181,8 @@ function makeMixedHistory(turns: number): ContextMessage[] {
   return history;
 }
 
-function createProjector(disposables: DisposableStore): IAgentContextProjectorService {
-  const ix = disposables.add(new TestInstantiationService());
-  ix.set(ILogService, noopLogService);
-  ix.set(IAgentContextProjectorService, new SyncDescriptor(AgentContextProjectorService));
-  return ix.get(IAgentContextProjectorService);
+function createProjector(_disposables: DisposableStore): AgentLoopProjector {
+  return new AgentLoopProjector(noopLogService, recordingTelemetry([]), new AgentStateService());
 }
 
 const disposables = new DisposableStore();

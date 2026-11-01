@@ -55,6 +55,8 @@ import {
 } from '#/llm-requester/factories';
 import { createRunRequester } from '#/llm-requester/run';
 import { createRequester as createCoreRequester } from '#/llm/requester';
+import type { LlmRunStarted } from '#/llm/response';
+import { sha256Hex } from '#/utils/hash';
 import { resolveModelConnection } from '#/llm-requester/connection';
 
 const model: LlmModel = {
@@ -1378,6 +1380,7 @@ describe('request resolvers and recoveries', () => {
         resolvers: [
           {
             id: 'whole-request',
+            recoveryRequest: 'resolved',
             resolve: (request) => {
               seen.push(request.profile?.systemPrompt ?? '');
               return Promise.resolve({
@@ -1399,12 +1402,19 @@ describe('request resolvers and recoveries', () => {
             id: 'chained',
             resolve: (request, ctl) => {
               seen.push(
-                `${request.profile?.systemPrompt ?? ''}:${request.model.spec.name}:${ctl.signal.aborted}`,
+                `${request.profile?.systemPrompt ?? ''}:${request.model.spec.name}:${ctl.signal.aborted}:${ctl.appliedRecoveries.map((recovery) => `${recovery.strategy}/${recovery.action}`).join(',')}`,
               );
               ctl.report({ code: 'resolver.chained', message: 'chained' });
               return Promise.resolve({
                 ...request,
-                profile: { ...request.profile, systemPrompt: 'chained' },
+                profile: {
+                  ...request.profile,
+                  systemPrompt: 'chained',
+                  tools: [
+                    { name: 'resolved', description: 'resolved tool', parameters: {} },
+                    { name: 'deferred', description: 'deferred tool', parameters: {}, deferred: true },
+                  ],
+                },
               });
             },
           },
@@ -1412,15 +1422,22 @@ describe('request resolvers and recoveries', () => {
       },
     });
     const resolverNotices: string[] = [];
+    const runEvents: string[] = [];
+    let started: LlmRunStarted | undefined;
     const outcome = await requester.generate(
       {
         model: { spec: { provider: model.provider, name: model.model } },
-        profile: { systemPrompt: 'sys' },
+        profile: {
+          systemPrompt: 'sys',
+          tools: [{ name: 'original', description: 'original tool', parameters: {} }],
+        },
         content: { messages },
       },
       {
         signal: new AbortController().signal,
         onEvent: (event) => {
+          runEvents.push(event.type);
+          if (event.type === 'llm.started') started = event;
           if (event.type === 'llm.notice') {
             resolverNotices.push(`${event.notice.source}:${event.notice.code}`);
           }
@@ -1429,14 +1446,25 @@ describe('request resolvers and recoveries', () => {
     );
     expect(outcome.type).toBe('done');
     expect(attempts).toBe(2);
-    expect(recoverySeen).toEqual(['sys:test-model']);
+    expect(recoverySeen).toEqual(['resolved:resolved-model']);
     expect(seen).toEqual([
       'sys',
-      'resolved:resolved-model:false',
+      'resolved:resolved-model:false:',
       'recovered',
-      'resolved:resolved-model:false',
+      'resolved:resolved-model:false:request/rewrite',
     ]);
     expect(resolverNotices).toEqual(['chained:resolver.chained', 'chained:resolver.chained']);
+    expect(started).toMatchObject({
+      model: 'resolved-model',
+      messageCount: 1,
+      toolsHash: sha256Hex(
+        new TextEncoder().encode(
+          JSON.stringify([{ name: 'resolved', description: 'resolved tool', parameters: {} }]),
+        ),
+      ),
+    });
+    expect(runEvents.slice(0, 3)).toEqual(['llm.started', 'llm.notice', 'llm.sent']);
+    expect(runEvents.filter((type) => type === 'llm.started')).toHaveLength(1);
     const body = client.body();
     expect(body['model']).toBe('resolved-model');
     expect(body['temperature']).toBe(0.25);

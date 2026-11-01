@@ -17,7 +17,6 @@ import {
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import type { ModelCapability } from '../contract/capability';
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
-import type { TokenUsage } from '#human/llm-requester/usage';
 import {
   IProtocolAdapterRegistry,
   type Protocol,
@@ -33,7 +32,6 @@ import {
   IModelCatalog,
   type Model,
   type ModelCatalogItem,
-  type ModelPingResult,
   type ProviderCatalogItem,
   type ProviderCredentialState,
   type SetDefaultModelResponse,
@@ -42,10 +40,6 @@ import {
   toProtocolProvider,
 } from './catalog';
 import { IProviderCatalogRuntime, rawRecordOf } from './catalog-runtime';
-import {
-  runWithCredentialRecovery,
-  streamWithCredentialRecovery,
-} from './credential-recovery';
 import { ModelCatalogErrors } from './errors';
 import { IHostRequestHeaders } from './host-request-headers';
 import { IModelService, type ModelRecord } from './model';
@@ -59,27 +53,15 @@ import {
 } from './model-auth';
 import { IModelOAuthTokens } from './model-oauth';
 import type { ResolvedModelAuthMaterial } from './model.types';
-import type {
-  ModelRequestEvent,
-  ModelRequestInput,
-  ModelRequestParams,
-  ModelRequester,
-} from './model-requester';
-import { ModelRequesterImpl } from './model-requester-impl';
 
 type MutableProtocolProviderOptions = {
   -readonly [K in keyof ProtocolProviderOptions]: ProtocolProviderOptions[K];
 };
 
-interface CatalogEntry {
-  readonly model: Model;
-  readonly requester: ModelRequester;
-}
-
 export class ModelCatalog extends Disposable implements IModelCatalog {
   declare readonly _serviceBrand: undefined;
 
-  private readonly cache = new Map<string, CatalogEntry>();
+  private readonly cache = new Map<string, Model>();
 
   constructor(
     @IProviderCatalogRuntime private readonly runtime: IProviderCatalogRuntime,
@@ -105,19 +87,15 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
   private invalidate(providerIds: readonly string[]): void {
     if (providerIds.length === 0) return;
     const changed = new Set(providerIds);
-    for (const [alias, entry] of this.cache) {
-      if (changed.has(entry.model.providerName)) {
+    for (const [alias, model] of this.cache) {
+      if (changed.has(model.providerName)) {
         this.cache.delete(alias);
       }
     }
   }
 
   get(id: string): Model {
-    return this.entry(id).model;
-  }
-
-  getRequester(id: string): ModelRequester {
-    return this.entry(id).requester;
+    return this.entry(id);
   }
 
   findByName(name: string): readonly string[] {
@@ -133,75 +111,13 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     return out;
   }
 
-  private entry(id: string): CatalogEntry {
+  private entry(id: string): Model {
     this.runtime.sync();
     const cached = this.cache.get(id);
     if (cached !== undefined) return cached;
     const model = this.buildModel(id);
-    const entry: CatalogEntry = {
-      model,
-      requester: new ModelRequesterImpl(model, this.protocolRegistry),
-    };
-    this.cache.set(id, entry);
-    return entry;
-  }
-
-  async *generate(
-    id: string,
-    input: ModelRequestInput,
-    signal?: AbortSignal,
-    params?: ModelRequestParams,
-  ): AsyncIterable<ModelRequestEvent> {
-    const { requester } = this.entry(id);
-    yield* streamWithCredentialRecovery(
-      requester.model.credentialProvider,
-      () => requester.request(input, signal, params),
-      signal,
-    );
-  }
-
-  async ping(id: string): Promise<ModelPingResult> {
-    const { requester } = this.entry(id);
-    const startedAt = Date.now();
-    try {
-      const consume = async () => {
-        let text = '';
-        let usage: TokenUsage | undefined;
-        let finishReason: string | undefined;
-        for await (const event of requester.request(
-          {
-            systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
-            tools: [],
-            messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }],
-          },
-          undefined,
-          { maxCompletionTokens: 512 },
-        )) {
-          if (event.type === 'part' && event.part.type === 'text') {
-            text += event.part.text;
-          } else if (event.type === 'usage') {
-            usage = event.usage;
-          } else if (event.type === 'finish') {
-            finishReason = event.providerFinishReason ?? event.rawFinishReason;
-          }
-        }
-        return { text: text.trim(), usage, finishReason };
-      };
-      const result = await runWithCredentialRecovery(requester.model.credentialProvider, consume);
-      return {
-        ok: true,
-        durationMs: Date.now() - startedAt,
-        text: result.text,
-        finishReason: result.finishReason,
-        usage: result.usage,
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        durationMs: Date.now() - startedAt,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
+    this.cache.set(id, model);
+    return model;
   }
 
   async listModels(): Promise<readonly ModelCatalogItem[]> {

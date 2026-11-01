@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import type { ContentPart } from '#human/llm/message';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ILogService } from '#/_base/log/log';
+import type { HookExecutionError } from '#/features/externalHooks/app/externalHooksRunner';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 
+import { stubLog } from '../../_base/log/stubs';
 import { makeHookRunner } from './runner-stub';
 
 function nodeCommand(source: string): string {
@@ -228,35 +231,6 @@ describe('ExternalHooksRunnerService', () => {
     expect(results).toHaveLength(0);
   });
 
-  it('fails open when trigger input preparation throws', async () => {
-    const inputData = {};
-    Object.defineProperty(inputData, 'broken', {
-      enumerable: true,
-      get() {
-        throw new Error('broken input');
-      },
-    });
-    const runner = makeHookRunner([
-      { event: 'PreToolUse', matcher: 'Bash', command: nodeCommand('process.stdout.write("should-not-run");') },
-    ]);
-
-    await expect(
-      runner.trigger('PreToolUse', { matcherValue: 'Bash', inputData }),
-    ).resolves.toEqual([]);
-    await expect(
-      runner.triggerBlock('PreToolUse', { matcherValue: 'Bash', inputData }),
-    ).resolves.toBeUndefined();
-  });
-
-  it('fails open when fireAndForgetTrigger sees a synchronous trigger error', async () => {
-    const runner = makeHookRunner([]);
-    vi.spyOn(runner, 'trigger').mockImplementation(() => {
-      throw new Error('trigger failed');
-    });
-
-    await expect(runner.fireAndForgetTrigger('Notification')).resolves.toEqual([]);
-  });
-
   it('invokes onTriggered with (event,target,count) and onResolved with (event,target,action)', async () => {
     const triggered: Array<[string, string, number]> = [];
     const resolved: Array<[string, string, string]> = [];
@@ -386,5 +360,69 @@ describe('ExternalHooksRunnerService', () => {
     expect(runner.hasHooksFor('PreToolUse')).toBe(true);
     expect(runner.hasHooksFor('SessionHeartbeat')).toBe(true);
     expect(runner.hasHooksFor('Stop')).toBe(false);
+  });
+
+  function captureWarnings(): { log: ILogService; warnings: string[] } {
+    const warnings: string[] = [];
+    const log = {
+      ...stubLog(),
+      warn: (message: string) => {
+        warnings.push(message);
+      },
+    } as ILogService;
+    return { log, warnings };
+  }
+
+  function failingRunner(hooks: Parameters<typeof makeHookRunner>[0]) {
+    const { log, warnings } = captureWarnings();
+    const failures: HookExecutionError[] = [];
+    const runner = makeHookRunner(hooks, { log });
+    runner.onDidHookError((failure) => failures.push(failure));
+    return { runner, warnings, failures };
+  }
+
+  it('logs and reports a hook that exits with a non-zero, non-block code while failing open', async () => {
+    const { runner, warnings, failures } = failingRunner([
+      {
+        event: 'PostToolUse',
+        command: nodeCommand('process.stderr.write("boom"); process.exit(1);'),
+        timeout: 5,
+      },
+    ]);
+
+    const results = await runner.trigger('PostToolUse', {
+      inputData: { toolName: 'Write' },
+      sessionId: 'ses_1',
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.action).toBe('allow');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('PostToolUse');
+    expect(failures).toEqual([
+      expect.objectContaining({
+        event: 'PostToolUse',
+        sessionId: 'ses_1',
+        message: expect.stringContaining('exit code 1'),
+      }),
+    ]);
+    expect(failures[0]?.command).toContain('node');
+  });
+
+  it('does not report a deliberate block (exit code 2) as a failure', async () => {
+    const { runner, warnings, failures } = failingRunner([
+      {
+        event: 'PreToolUse',
+        matcher: 'Read',
+        command: nodeCommand('process.stderr.write("blocked"); process.exit(2);'),
+        timeout: 5,
+      },
+    ]);
+
+    await expect(
+      runner.triggerBlock('PreToolUse', { matcherValue: 'Read', inputData: {} }),
+    ).resolves.toEqual({ block: true, reason: 'blocked' });
+    expect(warnings).toHaveLength(0);
+    expect(failures).toHaveLength(0);
   });
 });

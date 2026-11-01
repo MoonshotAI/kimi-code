@@ -108,9 +108,9 @@ export const setModelResultSchema = z.object({
   providerName: z.string().optional(),
 });
 
-export const runtimeBindingSchema = z.object({
-  workspaceId: z.string(),
-  runtimeId: z.string(),
+export const environmentBindingSchema = z.object({
+  environmentId: z.string(),
+  cwd: z.string().optional(),
 });
 
 export const permissionModeSchema = z.enum(['manual', 'yolo', 'auto']);
@@ -160,7 +160,7 @@ export const planDataSchema = z.union([
   z.object({
     id: z.string(),
     content: z.string(),
-    path: z.string(),
+    path: z.string().nullable(),
   }),
 ]);
 

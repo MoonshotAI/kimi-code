@@ -31,11 +31,11 @@ describe('install prompt helpers', () => {
     const choices = createInstallPromptChoices({
       kind: 'switch-channel',
       sourceChannel: 'stable',
-      target: { channel: 'dev', version: '0.0.0-dev.42' },
+      target: { channel: 'canary', version: '2.3.3-canary.20261028012345-0123456' },
     });
 
     expect(choices).toEqual([
-      { value: 'install', label: 'Switch to dev now (0.0.0-dev.42)' },
+      { value: 'install', label: 'Switch to canary now (2.3.3-canary.20261028012345-0123456)' },
       { value: 'skip', label: 'Stay on stable' },
     ]);
   });
@@ -72,9 +72,9 @@ describe('promptForInstallChoice', () => {
       plan: {
         kind: 'switch-channel',
         sourceChannel: 'stable',
-        target: { channel: 'dev', version: '0.0.0-dev.42' },
+        target: { channel: 'canary', version: '2.3.3-canary.20261028012345-0123456' },
       },
-      installCommand: 'npm install -g @moonshot-ai/kimi-code@0.0.0-dev.42',
+      installCommand: 'npm install -g @moonshot-ai/kimi-code@2.3.3-canary.20261028012345-0123456',
       installSource: 'npm-global',
       input,
       output,
@@ -86,8 +86,8 @@ describe('promptForInstallChoice', () => {
     const rendered = outputChunks.join('');
     expect(rendered).toContain(CHANGELOG_URL);
     expect(rendered).toContain('View changelog');
-    expect(rendered).toContain('stable -> dev');
+    expect(rendered).toContain('stable -> canary');
     expect(rendered).toContain('2.3.3');
-    expect(rendered).toContain('0.0.0-dev.42');
+    expect(rendered).toContain('2.3.3-canary.20261028012345-0123456');
   });
 });

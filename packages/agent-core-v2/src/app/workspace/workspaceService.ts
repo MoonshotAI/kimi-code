@@ -67,7 +67,22 @@ export class WorkspaceService implements IWorkspaceService {
 
   createOrTouch(root: string, name?: string): Promise<Workspace> {
     return this.runExclusive(async () => {
-      await this.requireDirectory(root);
+      let stat;
+      try {
+        stat = await this.hostFs.stat(root);
+      } catch {
+        stat = undefined;
+      }
+      if (stat !== undefined && !stat.isDirectory) {
+        try {
+          stat = await this.hostFs.stat(await this.hostFs.realpath(root));
+        } catch {
+          stat = undefined;
+        }
+      }
+      if (stat !== undefined && !stat.isDirectory) {
+        throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} is not a directory`);
+      }
       await this.ensureMerged();
       let ws!: Workspace;
       let existing: Workspace | undefined;

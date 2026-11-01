@@ -59,7 +59,7 @@ importers:
         version: 1.11.1
       tsdown:
         specifier: 0.23.1
-        version: 0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2))(vue-tsc@3.2.9(typescript@7.0.2))
+        version: 0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0))(vue-tsc@3.2.9(typescript@7.0.2))
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
@@ -179,49 +179,6 @@ importers:
       '@mariozechner/clipboard':
         specifier: ^0.3.9
         version: 0.3.9
-
-  apps/kimi-inspect:
-    dependencies:
-      '@moonshot-ai/agent-core-v2':
-        specifier: workspace:^
-        version: link:../../packages/agent-core-v2
-      '@moonshot-ai/transcript':
-        specifier: workspace:^
-        version: link:../../packages/transcript
-      '@tanstack/react-query':
-        specifier: ^5.74.4
-        version: 5.99.2(react@19.2.5)
-      react:
-        specifier: ^19.1.0
-        version: 19.2.5
-      react-dom:
-        specifier: ^19.1.0
-        version: 19.2.5(react@19.2.5)
-    devDependencies:
-      '@tailwindcss/vite':
-        specifier: ^4.1.4
-        version: 4.1.18(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
-      '@types/react':
-        specifier: ^19.1.2
-        version: 19.2.14
-      '@types/react-dom':
-        specifier: ^19.1.2
-        version: 19.2.3(@types/react@19.2.14)
-      '@vitejs/plugin-react':
-        specifier: ^4.4.1
-        version: 4.7.0(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
-      tailwindcss:
-        specifier: ^4.1.4
-        version: 4.1.18
-      typescript:
-        specifier: 7.0.2
-        version: 7.0.2
-      vite:
-        specifier: ^6.3.3
-        version: 6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
-      vitest:
-        specifier: 4.1.4
-        version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
 
   apps/vis:
     devDependencies:
@@ -11276,6 +11233,13 @@ snapshots:
       '@tybys/wasm-util': 0.10.1
     optional: true
 
+  '@napi-rs/wasm-runtime@1.1.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
+    dependencies:
+      '@emnapi/core': 1.10.0
+      '@emnapi/runtime': 1.10.0
+      '@tybys/wasm-util': 0.10.1
+    optional: true
+
   '@napi-rs/wasm-runtime@1.1.4(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)':
     dependencies:
       '@emnapi/core': 1.9.2
@@ -12342,9 +12306,9 @@ snapshots:
   '@rolldown/binding-openharmony-arm64@1.2.15':
     optional: true
 
-  '@rolldown/binding-wasm32-wasi@1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)':
+  '@rolldown/binding-wasm32-wasi@1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
     dependencies:
-      '@napi-rs/wasm-runtime': 1.1.4(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
+      '@napi-rs/wasm-runtime': 1.1.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
     transitivePeerDependencies:
       - '@emnapi/core'
       - '@emnapi/runtime'
@@ -13260,7 +13224,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.0.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
+      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.17)(typescript@7.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
 
   '@vitest/expect@4.1.4':
     dependencies:
@@ -17419,7 +17383,7 @@ snapshots:
     transitivePeerDependencies:
       - oxc-resolver
 
-  rolldown@1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2):
+  rolldown@1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0):
     dependencies:
       '@oxc-project/types': 0.122.0
       '@rolldown/pluginutils': 1.0.0-rc.12
@@ -17436,7 +17400,7 @@ snapshots:
       '@rolldown/binding-linux-x64-gnu': 1.0.0-rc.12
       '@rolldown/binding-linux-x64-musl': 1.0.0-rc.12
       '@rolldown/binding-openharmony-arm64': 1.0.0-rc.12
-      '@rolldown/binding-wasm32-wasi': 1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
+      '@rolldown/binding-wasm32-wasi': 1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
       '@rolldown/binding-win32-arm64-msvc': 1.0.0-rc.12
       '@rolldown/binding-win32-x64-msvc': 1.0.0-rc.12
     transitivePeerDependencies:
@@ -18159,7 +18123,7 @@ snapshots:
       minimist: 1.2.8
       strip-bom: 3.0.0
 
-  tsdown@0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2))(vue-tsc@3.2.9(typescript@7.0.2)):
+  tsdown@0.23.1(@arethetypeswrong/core@0.18.2)(@volar/typescript@2.4.28)(@vue/language-core@3.2.9)(publint@0.3.18)(tsx@4.21.0)(typescript@7.0.2)(unrun@0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0))(vue-tsc@3.2.9(typescript@7.0.2)):
     dependencies:
       cac: 7.1.0
       defu: 6.1.7
@@ -18180,7 +18144,7 @@ snapshots:
       publint: 0.3.18
       tsx: 4.21.0
       typescript: 7.0.2
-      unrun: 0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
+      unrun: 0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
     transitivePeerDependencies:
       - '@typescript/native-preview'
       - '@volar/typescript'
@@ -18339,9 +18303,9 @@ snapshots:
 
   unpipe@1.0.0: {}
 
-  unrun@0.2.34(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2):
+  unrun@0.2.34(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0):
     dependencies:
-      rolldown: 1.0.0-rc.12(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)
+      rolldown: 1.0.0-rc.12(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
     transitivePeerDependencies:
       - '@emnapi/core'
       - '@emnapi/runtime'

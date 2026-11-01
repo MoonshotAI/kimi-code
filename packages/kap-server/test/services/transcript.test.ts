@@ -1948,27 +1948,6 @@ describe('AgentTranscriptProjector', () => {
     expect(steps[1]!.frames.map((f) => f.kind === 'text' && f.taskId)).toEqual(['task_1', 'task_2']);
   });
 
-  it('drops a task notification that is the turn prompt itself', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-
-    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'task', taskId: 'task_1' } }));
-    feed(
-      ev({
-        type: 'task.notified',
-        notificationType: 'task.completed',
-        title: 'Background agent completed',
-        body: 'inspect done.',
-        severity: 'info',
-        sourceKind: 'background_task',
-        sourceId: 'task_1',
-      }),
-    );
-    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
-    expect(turnOps('t1', tx.getItems()).steps[0]!.frames).toHaveLength(0);
-  });
-
   it('keeps a different task’s notification in a task-origin turn', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
@@ -3279,7 +3258,7 @@ describe('AgentTranscriptProjector', () => {
       const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
       await mkdir(wireDir, { recursive: true });
       const notification =
-        '<notification id="task:task_9:completed" category="task" type="task.completed" source_kind="background_task" source_id="task_9">\nTitle: Background agent completed\nSeverity: info\ninspect done.\n</notification>';
+        '<notification id="task:task_9:completed" category="task" type="task.completed" source_kind="background_task" source_id="task_9">\nTitle: Background agent completed\nSeverity: info\ninspect done.\n<output-file path="/tmp/task_9/output.log" bytes="4">\nRead the output file.\n</output-file>\n</notification>';
       const taskOrigin = { kind: 'task', taskId: 'task_9', status: 'completed', notificationId: 'n1' };
       const opening = [
         { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
@@ -3297,6 +3276,35 @@ describe('AgentTranscriptProjector', () => {
         .filter((item) => item.kind === 'turn')
         .map((item) => (item.kind === 'turn' ? item.origin.kind : ''));
       expect(originKinds).toEqual(['user', 'task']);
+      const coldTaskTurn = withBoundary!.items.find(
+        (item): item is TranscriptTurn => item.kind === 'turn' && item.origin.kind === 'task',
+      );
+      if (coldTaskTurn === undefined) throw new Error('expected cold task turn');
+      expect(coldTaskTurn.prompt).toBe(notification);
+
+      const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+      const liveTx = new AgentTranscript('main');
+      const feed = (event: ProjectorBusEvent): void => void liveTx.apply(projector.map(event));
+      feed(ev({ type: 'turn.prompt', turnId: 1, input: [{ type: 'text', text: notification }], origin: taskOrigin }));
+      feed(ev({ type: 'turn.started', turnId: 1, origin: taskOrigin }));
+      feed(ev({
+        type: 'task.notified',
+        notificationType: 'task.completed',
+        title: 'Background agent completed',
+        body: 'inspect done.',
+        severity: 'info',
+        sourceKind: 'background_task',
+        sourceId: 'task_9',
+      }));
+      feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+      liveTx.apply(healTurnOps(coldTaskTurn, turnOps('t1', liveTx.getItems())));
+      const healed = turnOps('t1', liveTx.getItems());
+      expect(healed.prompt).toBe(notification);
+      expect(
+        healed.steps.flatMap((step) => step.frames).filter(
+          (frame) => frame.kind === 'text' && frame.role === 'user' && frame.taskId === 'task_9',
+        ),
+      ).toHaveLength(0);
 
       await write([...opening, delivered, reply]);
       const withoutBoundary = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
@@ -3928,6 +3936,57 @@ describe('bindSessionTranscript', () => {
       .filter((op): op is InteractionUpsertOp => op.op === 'interaction.upsert')
       .map((op) => op.interaction.state);
     expect(states).toEqual(['pending', 'approved']);
+    binding.dispose();
+  });
+
+  it('projects the observable task prompt and keeps one notification after heal', () => {
+    const notification = '<notification id="task:task_1:completed" category="task" type="task.completed" source_kind="background_task" source_id="task_1">\nTitle: Background agent completed\nSeverity: info\ninspect done.\n<output-file path="/tmp/task_1/output.log" bytes="4">\nRead the output file.\n</output-file>\n</notification>';
+    const agents = new FakeAgents();
+    const store = new TranscriptStore('s1');
+    const binding = bindSessionTranscript(store, fakeSession(agents));
+    const main = agents.add('main');
+
+    main.bus.emit(ev({
+      type: 'turn.prompt',
+      turnId: 1,
+      input: [{ type: 'text', text: notification }],
+      origin: { kind: 'task', taskId: 'task_1' },
+    }));
+    main.bus.emit(ev({
+      type: 'turn.started',
+      turnId: 1,
+      origin: { kind: 'task', taskId: 'task_1' },
+    }));
+    main.bus.emit(ev({
+      type: 'task.notified',
+      notificationType: 'task.completed',
+      title: 'Background agent completed',
+      body: 'inspect done.',
+      severity: 'info',
+      sourceKind: 'background_task',
+      sourceId: 'task_1',
+    }));
+    main.bus.emit(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+
+    const transcript = store.ensureAgent('main');
+    const live = turnOps('t1', transcript.getItems());
+    expect(live.prompt).toBe(notification);
+    expect(live.steps[0]!.frames).toHaveLength(0);
+
+    const coldTurn: TranscriptTurn = {
+      ...live,
+      state: 'completed',
+      steps: [{
+        ...live.steps[0]!,
+        state: 'completed',
+        frames: [{ kind: 'text', frameId: 'cold-answer', role: 'assistant', text: 'ack' }],
+      }],
+    };
+    transcript.apply(healTurnOps(coldTurn, live));
+    const healed = turnOps('t1', transcript.getItems());
+    expect(healed.prompt).toBe(notification);
+    expect(healed.steps[0]!.frames).toHaveLength(1);
+    expect(healed.steps[0]!.frames[0]).toMatchObject({ kind: 'text', role: 'assistant', text: 'ack' });
     binding.dispose();
   });
 

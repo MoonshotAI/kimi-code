@@ -17,7 +17,7 @@ export interface UpdateTarget {
   readonly version: string;
 }
 
-export const UPDATE_CHANNELS = ['stable', 'dev'] as const;
+export const UPDATE_CHANNELS = ['stable', 'canary'] as const;
 
 /** Release line selected after resolving install source, installed version, and environment. */
 export type UpdateChannel = (typeof UPDATE_CHANNELS)[number];

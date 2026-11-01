@@ -17,32 +17,24 @@ import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IWorkspaceService } from '#/app/workspace/workspace';
 import type { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import type { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/extraAgentProfileLoader';
 import type { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
 import type { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
-import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import type { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
+import type { ProgramWorkdir } from './programWorkdirs';
 
 export interface ProgramSessionControllerInput {
   readonly context: IWorkspaceContext;
-  readonly fs: IHostFileSystem;
-  readonly workspaceAgentProfiles: IWorkspaceAgentProfileLoader;
   readonly extraAgentProfiles: IExtraAgentProfileLoader;
   readonly explicitAgentProfiles: IExplicitAgentProfileLoader;
   readonly userAgentProfiles: IUserAgentProfileLoader;
   readonly pluginAgentProfiles: IPluginAgentProfileLoader;
-  readonly dirs: IWorkspaceDirs;
-  readonly skills: IWorkspaceSkillCatalog;
-  readonly instructions: IWorkspaceInstructionsService;
   readonly mcp: IWorkspaceMcpService;
+  readonly acquireWorkdir: (environmentId: string, cwd: string) => Promise<ProgramWorkdir>;
   readonly onDispose: () => void;
 }
 

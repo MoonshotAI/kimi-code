@@ -116,8 +116,12 @@ describe('WorkspaceMcpConfigService', () => {
           get ready() {
             return trustReady();
           },
+          get: async () => {
+            await trustReady();
+            return trusted;
+          },
           isTrusted: () => trusted,
-          onDidChange: trustFlips.event,
+          onDidChange: trustFlips.event as IWorkspaceTrust['onDidChange'],
         });
         reg.definePartialInstance(IMcpConfigStore, { onDidWrite: storeWrites.event });
         reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);

@@ -162,7 +162,6 @@ export class WsConnectionV1 implements BroadcastTarget {
   private async onClientHello(frame: InboundFrame): Promise<void> {
     if (!(await this.authorize(frame))) return;
     this.gotClientHello = true;
-    if (frame.payload?.['client_id'] === 'kimi-inspect') this.broadcaster.addDiEventTarget(this);
     this.sendImmediateFrame(buildAck(frame.id ?? '', 0, 'success', {}));
   }
 

@@ -233,7 +233,7 @@ describe('SessionEventWiring status snapshot fold', () => {
     expect(events[0]).not.toHaveProperty('model');
   });
 
-  it('strips the internal promptAttachments field from turn.started', () => {
+  it('forwards turn.prompt and strips the internal promptAttachments field from turn.started', () => {
     const sub = new FakeAgentHandle('agent-1');
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
@@ -241,6 +241,12 @@ describe('SessionEventWiring status snapshot fold', () => {
       // `promptAttachments` is transcript-projection metadata: kap-server
       // strips it from the WS wire event, so SDK consumers must not see it
       // either.
+      sub.bus.emit({
+        type: 'turn.prompt',
+        turnId: 1,
+        input: [{ type: 'text', text: '<notification>internal only</notification>' }],
+        origin: { kind: 'task', taskId: 'task_1' },
+      });
       sub.bus.emit({
         type: 'turn.started',
         turnId: 1,
@@ -252,14 +258,21 @@ describe('SessionEventWiring status snapshot fold', () => {
       wiring.dispose();
     }
 
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(2);
     expect(events[0]).toMatchObject({
+      type: 'turn.prompt',
+      turnId: 1,
+      sessionId: 's1',
+      agentId: 'agent-1',
+      input: [{ type: 'text', text: '<notification>internal only</notification>' }],
+    });
+    expect(events[1]).toMatchObject({
       type: 'turn.started',
       turnId: 1,
       sessionId: 's1',
       agentId: 'agent-1',
       prompt: 'describe this',
     });
-    expect(events[0]).not.toHaveProperty('promptAttachments');
+    expect(events[1]).not.toHaveProperty('promptAttachments');
   });
 });

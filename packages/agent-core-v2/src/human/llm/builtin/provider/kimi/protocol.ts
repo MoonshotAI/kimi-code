@@ -1,9 +1,9 @@
 import type { Message, ToolDescription, ContentPart } from '#/llm/message';
 import { providerImagePolicy } from '#/llm/protocol/kit/media';
 import { requestIdFromHeader } from '#/llm/protocol/kit/http';
-import type { Decoder } from '#/llm/protocol/protocol';
+import type { Decoder, LlmErrorDiagnosticsInput } from '#/llm/protocol/protocol';
 import type { LlmModelSpec, ThinkingRequestOptions } from '#/llm/request';
-import type { LlmRemoteErrorMessage } from '#/llm/response';
+import { llmStatusErrorMessage, type LlmRemoteErrorMessage } from '#/llm/response';
 import {
   anthropicProtocol,
   CONTEXT_MANAGEMENT_BETA,
@@ -136,8 +136,16 @@ function withKimiErrors(base: { readonly decodeError: (error: unknown) => LlmRem
   return (error: unknown) => classifyKimiQuotaError(error) ?? base.decodeError(error);
 }
 
+function diagnoseKimiError({ error, headers }: LlmErrorDiagnosticsInput) {
+  const currentHeaders = headers ?? llmStatusErrorMessage(error)?.headers ?? undefined;
+  const requestId =
+    currentHeaders === undefined ? undefined : requestIdFromHeader('x-trace-id')(currentHeaders);
+  return requestId === undefined ? {} : { requestId };
+}
+
 export const kimiOpenAIProtocol = openAIProtocol.with((base) => ({
   requestId: requestIdFromHeader('x-trace-id'),
+  diagnoseError: diagnoseKimiError,
   legality: {
     ...openAIModelLegality,
     fillMaxOutputTokens: fillKimiMaxOutputTokens,
@@ -175,6 +183,7 @@ export const kimiOpenAIProtocol = openAIProtocol.with((base) => ({
 
 export const kimiAnthropicProtocol = anthropicProtocol.with((base) => ({
   requestId: requestIdFromHeader('x-trace-id'),
+  diagnoseError: diagnoseKimiError,
   thinking: (thinking) =>
     thinking === undefined
       ? undefined
@@ -191,6 +200,7 @@ export const kimiAnthropicProtocol = anthropicProtocol.with((base) => ({
 
 export const kimiResponsesProtocol = openAIResponsesProtocol.with((base) => ({
   requestId: requestIdFromHeader('x-trace-id'),
+  diagnoseError: diagnoseKimiError,
   legality: {
     ...openAIResponsesModelLegality,
     fillMaxOutputTokens: fillKimiMaxOutputTokens,

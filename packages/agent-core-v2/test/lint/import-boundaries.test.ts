@@ -77,7 +77,7 @@ describe('check-import-boundaries', () => {
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/only llm-adapter, agent\/loop\/machine and session\/agentLifecycle may import the human implementation/);
+    expect(violations[0]?.message).toMatch(/only llm-adapter, agent\/loop and session\/agentLifecycle may import the human implementation/);
   });
 
   it('allows a non-adapter v2 file importing human vocabulary', () => {
@@ -102,7 +102,7 @@ describe('check-import-boundaries', () => {
       at('agent', 'loop.ts'),
     );
     expect(violations).toHaveLength(1);
-    expect(violations[0]?.message).toMatch(/only llm-adapter, agent\/loop\/machine and session\/agentLifecycle may import the human implementation/);
+    expect(violations[0]?.message).toMatch(/only llm-adapter, agent\/loop and session\/agentLifecycle may import the human implementation/);
   });
 
   it('allows a built-in provider importing a protocol lower module', () => {
@@ -186,5 +186,68 @@ describe('check-import-boundaries', () => {
       at('log', 'log.ts'),
     );
     expect(violations).toHaveLength(0);
+  });
+
+  it('flags the environment layer importing the remote stack', () => {
+    const violations = checkSource(
+      `import { DEFAULT_REMOTE_BIN } from '#/remote/client/launchers';
+import type { RemoteEnvironmentEntry } from '#/remote/declaration/remoteEnvironmentDeclaration';`,
+      at('environment', 'environmentRegistry.ts'),
+    );
+    expect(violations).toHaveLength(2);
+    expect(violations[0]?.message).toMatch(/environment layer never imports the remote stack/);
+  });
+
+  it('flags remote declarations importing the remote client', () => {
+    const violations = checkSource(
+      `import type { LauncherSpec } from '../client/launchers';`,
+      at('remote/declaration', 'remoteEnvironmentDeclaration.ts'),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/declarations stay transport-free/);
+  });
+
+  it('allows the remote stack to import the environment layer', () => {
+    const violations = checkSource(
+      `import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';`,
+      at('remote/declaration', 'remoteEnvironmentDeclaration.ts'),
+    );
+    expect(violations).toHaveLength(0);
+  });
+
+  it('lets the remote executor reuse only the DI-free node-local fs and process backends', () => {
+    const violations = checkSource(
+      `import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import '#/os/backends/node-local/hostServices';
+import { HostEnvironmentService } from '#/os/backends/node-local/hostEnvironmentService';`,
+      at('remote/server', 'stdioHost.ts'),
+    );
+    expect(violations).toHaveLength(2);
+    expect(violations.every((violation) => violation.message.includes('remote executor stays light'))).toBe(true);
+  });
+
+  it('keeps the remote os backend free of the remote transport and engine domains', () => {
+    const violations = checkSource(
+      `import type { ExecChannel } from '#/remote/protocol/channel';
+import { type IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { decodeTextWithErrors } from '#/_base/execEnv/decodeText';
+import { RemoteExecConnection } from '#/remote/client/connection';
+import { IEnvironmentService } from '#/app/environment/environment';`,
+      at('os/backends/remote', 'remoteFileSystem.ts'),
+    );
+    expect(violations).toHaveLength(2);
+    expect(violations.every((violation) => violation.message.includes('remote os backend is a sibling of node-local'))).toBe(true);
+  });
+
+  it('keeps the SSH askpass helper on node builtins only', () => {
+    const violations = checkSource(
+      `import { createConnection } from 'node:net';
+import { shQuote } from './client/launchers';
+import { ErrorCodes } from '#/errors/codes';`,
+      at('remote', 'askpass.ts'),
+    );
+    expect(violations).toHaveLength(2);
+    expect(violations.every((violation) => violation.message.includes('SSH askpass helper stays light'))).toBe(true);
   });
 });

@@ -80,7 +80,6 @@
         ./packages/tree-sitter-bash
         ./apps/kimi-code
         ./apps/vscode
-        ./apps/kimi-inspect
         ./apps/vis
         ./apps/vis/server
         ./apps/vis/web
@@ -106,7 +105,6 @@
         "@moonshot-ai/tree-sitter-bash"
         "@moonshot-ai/kimi-code"
         "kimi-code"
-        "@moonshot-ai/kimi-inspect"
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"
         "@moonshot-ai/vis-web"

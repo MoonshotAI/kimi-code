@@ -397,13 +397,11 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(40410);
   });
 
-  it('rejects create when metadata.cwd does not exist (40409)', async () => {
+  it('rejects a session for a missing metadata.cwd for a local binding', async () => {
     const missing = join(home as string, 'never-created');
-    const { body } = await postJson<null>('/api/v1/sessions', { metadata: { cwd: missing } });
-    expect(body.code).toBe(40409);
+    const created = await postJson<null>('/api/v1/sessions', { metadata: { cwd: missing } });
+    expect(created.body.code).toBe(40409);
 
-    const workspaces = await getJson<{ items: { root: string }[] }>('/api/v1/workspaces');
-    expect(workspaces.body.data.items.some((w) => w.root === missing)).toBe(false);
     const sessions = await getJson<PageWire>('/api/v1/sessions');
     expect(sessions.body.data.items.some((s) => s.metadata.cwd === missing)).toBe(false);
   });
@@ -1111,7 +1109,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   }, 30_000);
 
-  it('archives a cold session after a failed resume when the workspace root is gone', async () => {
+  it('resumes a session whose workspace root is gone (root validity deferred to binding) and still archives it', async () => {
     const cwd = join(home as string, 'gone-ws');
     await mkdir(cwd);
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -1122,9 +1120,8 @@ describe('server-v2 /api/v1/sessions', () => {
       .delete(encodeWorkDirKey(cwd));
     await rm(cwd, { recursive: true, force: true });
 
-    await expect(
-      resumeSessionById((server as RunningServer).core.accessor, id),
-    ).rejects.toThrow(/does not exist/);
+    const resumed = await resumeSessionById((server as RunningServer).core.accessor, id);
+    expect(resumed?.id).toBe(id);
 
     const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
     expect(archived.body.code).toBe(0);
@@ -1768,7 +1765,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const sourceAgents = session.accessor.get(IAgentLifecycleService);
     await sourceAgents.create({ agentId: MAIN_AGENT_ID });
     let reader = sourceAgents.handleOf(MAIN_AGENT_ID)!.accessor.get(IReadTool);
-    let args: ReadInput | undefined = { path: reference, max_chars: 500 };
+    let args: ReadInput | undefined = { path: reference, max_chars: 1000 };
     const firstExecution = await reader.resolveExecution(args);
     if (firstExecution.isError === true) throw new Error(JSON.stringify(firstExecution.output));
     const first = await firstExecution.execute({ turnId: 1, toolCallId: 'read-first', signal: new AbortController().signal });

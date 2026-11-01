@@ -35,6 +35,14 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./remote": {
+      "types": "./src/remote/index.ts",
+      "default": "./src/remote/index.ts"
+    },
+    "./remote/server": {
+      "types": "./src/remote/server/index.ts",
+      "default": "./src/remote/server/index.ts"
+    },
     "./package.json": {
       "types": "./package.json",
       "default": "./package.json"

@@ -185,6 +185,7 @@ describe('WorkspaceDirsService (registry source)', () => {
 
     await dirs.addDir({ path: dirC, persist: false });
     expect(dirs.additionalDirs).toEqual([dirB, dirC]);
+    expect(dirs.sharedAdditionalDirs).toEqual([dirB]);
   });
 
   it('pushes registry updates live through the persistence change event', async () => {
@@ -278,6 +279,27 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(fired).toBe(1);
     await dirs.reload();
     expect(fired).toBe(1);
+  });
+
+  it('emits when a directory moves between ephemeral and shared sets', async () => {
+    const project = await workspaces.create({ root: dirA, name: 'proj' });
+    const dirs = createDirs(dirA, project.id, 'managed');
+    await dirs.ready;
+    await dirs.addDir({ path: dirB, persist: false });
+    let fired = 0;
+    dirs.onDidChange(() => {
+      fired += 1;
+    });
+
+    await dirs.addDir({ path: dirB, persist: true });
+    await vi.waitFor(() => expect(fired).toBeGreaterThan(0));
+    expect(dirs.sharedAdditionalDirs).toEqual([dirB]);
+
+    fired = 0;
+    await workspaces.update(project.id, { additionalDirs: [] });
+    await vi.waitFor(() => expect(fired).toBeGreaterThan(0));
+    expect(dirs.sharedAdditionalDirs).toEqual([]);
+    expect(dirs.additionalDirs).toEqual([dirB]);
   });
 
   it('observes a primary swap from a member cwd even when additional dirs stay unchanged', async () => {

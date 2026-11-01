@@ -16,15 +16,16 @@ import {
   verifyArchiveChecksum,
   type RgProbe,
 } from '#/os/backends/node-local/tools/rgLocator';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { Environment } from '#/environment/environment';
+import { stubRgProbe } from '../../../stubs';
 
 vi.mock('tar', () => ({ extract: vi.fn() }));
 
 function probeWith(
   resolveExitCode: (args: readonly string[]) => number,
 ): RgProbe & { exec: ReturnType<typeof vi.fn> } {
-  return {
-    exec: vi.fn(async (args: readonly string[]) => ({ exitCode: resolveExitCode(args) })),
-  };
+  return stubRgProbe(resolveExitCode);
 }
 
 function noRgProbe(): RgProbe & { exec: ReturnType<typeof vi.fn> } {
@@ -91,6 +92,85 @@ describe('findExistingRg', () => {
 
     expect(result).toEqual({ path: systemRg, source: 'system-path' });
     expect(probe.exec).not.toHaveBeenCalled();
+  });
+});
+
+describe('ensureRgPath remote environment branch', () => {
+  let savedFetch: typeof globalThis.fetch | undefined;
+  beforeEach(() => {
+    savedFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    if (savedFetch === undefined) {
+      delete (globalThis as unknown as { fetch?: typeof fetch }).fetch;
+    } else {
+      globalThis.fetch = savedFetch;
+    }
+    vi.restoreAllMocks();
+  });
+
+  function remoteEnvironment(
+    environmentId: string,
+    options: { readonly generation?: string; readonly osKind?: string; readonly osArch?: string; readonly withFs?: boolean } = {},
+  ): Environment {
+    const environment = new FakeEnvironment(
+      { environmentId, generation: options.generation ?? `${environmentId}-g1` },
+      {
+        capabilities: ['fs', 'process'],
+        host: {
+          osKind: options.osKind ?? 'Linux',
+          osArch: options.osArch ?? 'x64',
+          homeDir: '/home/remote',
+        },
+      },
+    );
+    if (options.withFs !== false) {
+      Object.assign(environment, {
+        fs: {
+          mkdir: vi.fn(async () => {}),
+          writeBytes: vi.fn(async () => {}),
+          rename: vi.fn(async () => {}),
+          remove: vi.fn(async () => {}),
+        },
+        process: {},
+      });
+    }
+    return environment;
+  }
+
+  it('requires allowCachedFallback before touching the share bin or the network', async () => {
+    const probe = noRgProbe();
+    const environment = remoteEnvironment('remote-no-fallback');
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(ensureRgPath(probe, { environment })).rejects.toThrow(/on PATH/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(environment.fs!.mkdir as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+
+  it('keeps the local flow for the local environment', async () => {
+    const probe = noRgProbe();
+    const environment = new FakeEnvironment(
+      { environmentId: 'local', generation: 'local-g1' },
+      { capabilities: ['fs', 'process'] },
+    );
+    const fakeShare = join(tmpdir(), `kimi-rg-local-${String(Date.now())}-${String(Math.random()).slice(2)}`);
+    mkdirSync(join(fakeShare, 'bin'), { recursive: true });
+    const savedPath = process.env['PATH'];
+    process.env['PATH'] = '';
+    try {
+      writeFileSync(join(fakeShare, 'bin', process.platform === 'win32' ? 'rg.exe' : 'rg'), 'fake rg');
+      const resolution = await ensureRgPath(probe, { environment, shareDir: fakeShare, allowCachedFallback: true });
+      expect(resolution.source).toBe('share-bin-cached');
+    } finally {
+      if (savedPath === undefined) {
+        delete process.env['PATH'];
+      } else {
+        process.env['PATH'] = savedPath;
+      }
+      rmSync(fakeShare, { recursive: true, force: true });
+    }
   });
 });
 

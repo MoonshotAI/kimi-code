@@ -1,22 +1,22 @@
 /**
- * Probe the ModelRequester problem boundary, in two parts.
+ * Probe the Requester problem boundary, in two parts.
  *
  * Part 1 — real config: bootstraps the agent-core-v2 App scope on the REAL
  * Kimi home (`KIMI_CODE_HOME` or `~/.kimi-code`), resolves `IModelCatalog`
  * with the providers/auth from `config.toml`, lists every provider/model, and
- * pings every configured model through its `ModelRequester` (one tiny live
+ * pings every configured model through its `Requester` (one tiny live
  * request per model, real credentials). This is the "does the assembled
  * pipeline actually reach each provider" smoke.
  *
  * Part 2 — deterministic boundary probes: points hand-built Models at a local
  * stub HTTP server (OpenAI Chat Completions wire) and drives failure modes
- * through `ModelRequesterImpl`, recording for each one WHO owned it:
+ * through `RequesterImpl`, recording for each one WHO owned it:
  *
  *   - wrapped by ChatProvider  — the wire adapter converted the SDK/transport
  *     failure into the typed `ChatProviderError` family (APIStatusError /
  *     APIConnectionError / APIEmptyResponseError / ...), so the requester could
  *     translate it into a coded `Error2` (`provider.*` / `context.overflow`).
- *   - owned by ModelRequester  — behavior the ChatProvider layer CANNOT
+ *   - owned by Requester  — behavior the ChatProvider layer CANNOT
  *     provide: per-request credential injection (credentials.resolve per
  *     attempt), plus the final `translateProviderError` safety net that
  *     turns even unwrapped raw errors into `Error2` (`internal`).
@@ -70,12 +70,31 @@ import type {
 import type { LlmCredentialProvider } from '@moonshot-ai/agent-core-v2/human/llm-requester/requester';
 import type { Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import type {
-  ModelRequestInput,
-  ModelRequester,
-} from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester';
-import { ModelRequesterImpl } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester-impl';
+import {
+  generateModel,
+  type ModelRequestEvent,
+  type ModelRequestInput,
+  type ModelRequestParams,
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
+import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocolAdapterRegistry';
+
+interface Requester {
+  readonly model: Model;
+  request(
+    input: ModelRequestInput,
+    signal?: AbortSignal,
+    params?: ModelRequestParams,
+  ): AsyncIterable<ModelRequestEvent>;
+}
+
+function createRequester(model: Model, registry: IProtocolAdapterRegistry): Requester {
+  return {
+    model,
+    request: (input, signal, params) =>
+      generateModel(registry.request(model, params), input, signal, params),
+  };
+}
 
 function assert(cond: boolean, message: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${message}`);
@@ -100,6 +119,7 @@ async function probeRealConfig(): Promise<void> {
     // Config (and every section on top of it) loads asynchronously.
     await app.accessor.get(IConfigService).ready;
     const catalog = app.accessor.get(IModelCatalog);
+    const registry = app.accessor.get(IProtocolAdapterRegistry);
 
     const providers = await catalog.listProviders();
     for (const p of providers) {
@@ -117,7 +137,7 @@ async function probeRealConfig(): Promise<void> {
     for (const m of targets) {
       const startedAt = Date.now();
       const result = await Promise.race([
-        catalog.ping(m.model),
+        pingModel(createRequester(catalog.get(m.model), registry)),
         tick(45_000).then(() => ({ ok: false as const, durationMs: 45_000, error: 'ping timed out after 45s' })),
       ]);
       if (result.ok) {
@@ -193,7 +213,7 @@ interface Collected {
 }
 
 async function collect(
-  requester: ModelRequester,
+  requester: Requester,
   signal?: AbortSignal,
   input: ModelRequestInput = PING_INPUT,
 ): Promise<Collected> {
@@ -214,7 +234,27 @@ async function collect(
   return { events, text, toolCalls, usage, finishReason };
 }
 
-async function collectWithRecovery(requester: ModelRequester): Promise<Collected> {
+async function pingModel(requester: Requester) {
+  const startedAt = Date.now();
+  try {
+    const result = await collect(requester);
+    return {
+      ok: true as const,
+      durationMs: Date.now() - startedAt,
+      text: result.text,
+      finishReason: result.finishReason,
+      usage: result.usage,
+    };
+  } catch (error) {
+    return {
+      ok: false as const,
+      durationMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function collectWithRecovery(requester: Requester): Promise<Collected> {
   const credentialProvider = requester.model.credentialProvider;
   try {
     return await collect(requester);
@@ -308,8 +348,8 @@ function describeCaught(error: unknown): { outcome: string; wrappedBy: string } 
       outcome: `Error2 ${error.code} (cause: ${cause?.name ?? (error.cause instanceof Error ? error.cause.name : 'none')})`,
       wrappedBy:
         cause !== undefined
-          ? 'ChatProvider wrapped → ModelRequester translated'
-          : 'NOT wrapped by ChatProvider — raw error caught by the ModelRequester safety net',
+          ? 'ChatProvider wrapped → Requester translated'
+          : 'NOT wrapped by ChatProvider — raw error caught by the Requester safety net',
     };
   }
   if (error instanceof ChatProviderError) {
@@ -363,7 +403,7 @@ async function probeBoundaries(): Promise<void> {
   const baseUrl = `http://127.0.0.1:${String(port)}`;
 
   const registry = new ProtocolAdapterRegistry();
-  const makeRequester = (credentialProvider: LlmCredentialProvider, url = baseUrl): ModelRequester => {
+  const makeRequester = (credentialProvider: LlmCredentialProvider, url = baseUrl): Requester => {
     const model: Model = {
       id: 'probe',
       name: 'probe-model',
@@ -377,7 +417,7 @@ async function probeBoundaries(): Promise<void> {
       providerName: 'probe',
       credentialProvider,
     };
-    return new ModelRequesterImpl(model, registry);
+    return createRequester(model, registry);
   };
   const resetCounts = (): void => {
     requestCount = 0;
@@ -427,7 +467,7 @@ async function probeBoundaries(): Promise<void> {
     assert(replayed.text === 'pong', 'refresh+replay succeeds');
     assert(resolveCalls === 2, 'resolve called twice (normal + forced)');
     assert(requests() === 2, 'exactly one replay after the 401');
-    report('auth-401-refresh-replay', `success after ${String(requestCount)} attempts`, 'caller-owned recovery (ModelRequester surfaces the 401)');
+    report('auth-401-refresh-replay', `success after ${String(requestCount)} attempts`, 'caller-owned recovery (Requester surfaces the 401)');
 
     // 4) 401 that survives a forced refresh: the provider rejected the account
     // — surfaced as provider.auth_error, not a re-login prompt.
@@ -555,7 +595,7 @@ async function probeBoundaries(): Promise<void> {
     // --- tool-call boundary probes -------------------------------------------
     // Response side: streamed `delta.tool_calls` fragments are buffered per
     // index by the OpenAI base and routed into `message.toolCalls` by the
-    // contract's generate() driver — both BELOW the ModelRequester, which just
+    // contract's generate() driver — both BELOW the Requester, which just
     // forwards the parts. Request side: tool declarations and tool-result
     // history are encoded by the ChatProvider.
 

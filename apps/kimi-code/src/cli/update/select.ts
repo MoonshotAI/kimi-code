@@ -11,7 +11,7 @@ import {
 export const UPDATE_CHANNEL_ENV = 'KIMI_CODE_UPDATE_CHANNEL';
 
 export function updateChannelForVersion(version: string): UpdateChannel {
-  if (valid(version) !== null && prerelease(version)?.[0] === 'dev') return 'dev';
+  if (valid(version) !== null && prerelease(version)?.[0] === 'canary') return 'canary';
   return 'stable';
 }
 
@@ -25,7 +25,7 @@ export function resolveUpdateChannel(
   const raw = (env[UPDATE_CHANNEL_ENV] ?? '').trim();
   if (raw === '') return { channel: installed, origin: 'default' };
   const normalized = raw.toLowerCase();
-  if (normalized === 'stable' || normalized === 'dev') {
+  if (normalized === 'stable' || normalized === 'canary') {
     return { channel: normalized, origin: 'env' };
   }
   return { channel: installed, origin: 'invalid', raw };
@@ -35,7 +35,7 @@ export function formatUpdateChannelWarning(selection: ChannelSelection): string 
   if (selection.origin !== 'invalid') return null;
   return (
     `warning: ignoring ${UPDATE_CHANNEL_ENV}=${JSON.stringify(selection.raw)}; ` +
-    `expected "stable" or "dev". Using ${selection.channel}.\n`
+    `expected "stable" or "canary". Using ${selection.channel}.\n`
   );
 }
 

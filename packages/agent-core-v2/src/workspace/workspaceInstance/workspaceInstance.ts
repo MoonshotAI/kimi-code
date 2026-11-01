@@ -1,8 +1,7 @@
 import type { Workspace } from '#/app/workspace/workspace';
 import { Program, type ProgramSnapshot } from '#/program/program';
 import type { ProgramDependencies } from '#/program/programDependencies';
-import type { RuntimeRegistry, RuntimeRegistrySnapshot } from '#/runtime/runtimeRegistry';
-import type { RuntimeUnitHost } from '#/runtime/runtimeUnitHost';
+import type { IEnvironmentService } from '#/app/environment/environment';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 export type WorkspaceInstanceLifecycle = 'materializing' | 'active' | 'closing' | 'disposed';
@@ -11,25 +10,19 @@ export interface WorkspaceInstanceSnapshot {
   readonly metadata: Workspace;
   readonly lifecycle: WorkspaceInstanceLifecycle;
   readonly program: ProgramSnapshot;
-  readonly runtimes: RuntimeRegistrySnapshot;
 }
 
 export class WorkspaceInstance {
-  readonly runtimes: RuntimeRegistry;
-  readonly unitHost: RuntimeUnitHost;
   readonly program: Program;
   private lifecycle: WorkspaceInstanceLifecycle = 'materializing';
 
   constructor(
     readonly metadata: Workspace,
-    runtimes: RuntimeRegistry,
-    unitHost: RuntimeUnitHost,
+    environments: IEnvironmentService,
     context: IWorkspaceContext,
     dependencies: ProgramDependencies,
   ) {
-    this.runtimes = runtimes;
-    this.unitHost = unitHost;
-    this.program = new Program(metadata.id, this.runtimes, context, dependencies);
+    this.program = new Program(metadata.id, environments, context, dependencies);
   }
 
   get id(): string {
@@ -49,7 +42,6 @@ export class WorkspaceInstance {
       metadata: this.metadata,
       lifecycle: this.lifecycle,
       program: this.program.snapshot(),
-      runtimes: this.runtimes.snapshot(),
     };
   }
 
@@ -59,16 +51,6 @@ export class WorkspaceInstance {
     const errors: unknown[] = [];
     try {
       await this.program.dispose();
-    } catch (error) {
-      errors.push(error);
-    }
-    try {
-      await this.unitHost.dispose();
-    } catch (error) {
-      errors.push(error);
-    }
-    try {
-      await this.runtimes.dispose();
     } catch (error) {
       errors.push(error);
     }
