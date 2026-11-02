@@ -54,7 +54,6 @@ class DeclaredRemoteEnvironment implements Environment {
     readText: async (path, options) => this.connected().fs.readText(path, options),
     readWholeFile: async (path) => this.connected().fs.readWholeFile!(path),
     writeText: async (path, data) => this.connected().fs.writeText(path, data),
-    writeTextWithParent: async (path, data, mode, parent) => this.connected().fs.writeTextWithParent!(path, data, mode, parent),
     appendText: async (path, data) => this.connected().fs.appendText(path, data),
     readBytes: async (path, n, offset) => this.connected().fs.readBytes(path, n, offset),
     writeBytes: async (path, data) => this.connected().fs.writeBytes(path, data),

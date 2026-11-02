@@ -69,7 +69,6 @@ export interface FsWriteFileParams {
   readonly path: string;
   readonly dataBase64: string;
   readonly mode: FsWriteMode;
-  readonly parent?: string;
 }
 
 export interface FsCreateDirectoryParams {

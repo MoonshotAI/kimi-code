@@ -80,15 +80,6 @@ describe('fs group over a subprocess loopback', () => {
     expect(await readFile(path, 'utf8')).toBe('before\nnew value\n');
   });
 
-  it('creates the parent and writes text in one RPC', async () => {
-    const parent = join(workDir, 'created', 'nested');
-    const path = join(parent, 'out.txt');
-    const calls = vi.spyOn(connection, 'call');
-    await fs.writeTextWithParent(path, 'hello', 'overwrite', parent);
-    expect(calls.mock.calls.map(([method]) => method)).toEqual(['fs/writeFile']);
-    expect(await readFile(path, 'utf8')).toBe('hello');
-  });
-
   it('writes a byte stream progressively without retaining the complete input', async () => {
     const path = join(workDir, 'stream.bin');
     await fs.writeText(path, 'old content');

@@ -93,17 +93,17 @@ export class RemoteFileSystem implements IHostFileSystem {
     return this.call<FsReadFileResult>(FS_READ_FILE_METHOD, { path, offset, maxBytes });
   }
 
-  private async writeMode(path: string, data: Uint8Array, mode: FsWriteMode, parent?: string): Promise<void> {
-    await this.call(FS_WRITE_FILE_METHOD, { path, dataBase64: encodeBase64(data), mode, parent });
+  private async writeMode(path: string, data: Uint8Array, mode: FsWriteMode): Promise<void> {
+    await this.call(FS_WRITE_FILE_METHOD, { path, dataBase64: encodeBase64(data), mode });
   }
 
-  private async writeChunked(path: string, data: Uint8Array, mode: FsWriteMode, parent?: string): Promise<void> {
+  private async writeChunked(path: string, data: Uint8Array, mode: FsWriteMode): Promise<void> {
     if (data.byteLength <= FS_WRITE_FILE_CHUNK_BYTES) {
-      await this.writeMode(path, data, mode, parent);
+      await this.writeMode(path, data, mode);
       return;
     }
     for (let offset = 0; offset < data.byteLength; offset += FS_WRITE_FILE_CHUNK_BYTES) {
-      await this.writeMode(path, data.subarray(offset, offset + FS_WRITE_FILE_CHUNK_BYTES), offset === 0 ? mode : 'append', offset === 0 ? parent : undefined);
+      await this.writeMode(path, data.subarray(offset, offset + FS_WRITE_FILE_CHUNK_BYTES), offset === 0 ? mode : 'append');
     }
   }
 
@@ -130,10 +130,6 @@ export class RemoteFileSystem implements IHostFileSystem {
 
   async writeText(path: string, data: string): Promise<void> {
     await this.writeChunked(path, Buffer.from(data, 'utf8'), 'truncate');
-  }
-
-  async writeTextWithParent(path: string, data: string, mode: 'overwrite' | 'append', parent: string): Promise<void> {
-    await this.writeChunked(path, Buffer.from(data, 'utf8'), mode === 'append' ? 'append' : 'truncate', parent);
   }
 
   async appendText(path: string, data: string): Promise<void> {

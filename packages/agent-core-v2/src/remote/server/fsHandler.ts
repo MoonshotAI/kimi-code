@@ -1,7 +1,7 @@
 import { isAbsolute } from 'node:path';
 
 import type { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { HostFsError, isHostFsNotFound, OsFsErrors, toHostFsError } from '#/os/interface/hostFsErrors';
+import { HostFsError, OsFsErrors, toHostFsError } from '#/os/interface/hostFsErrors';
 
 import { RpcError, RpcErrorCode } from '#/remote/protocol/errors';
 import {
@@ -140,24 +140,6 @@ export class FsHandler {
       throw new RpcError(RpcErrorCode.InvalidParams, 'mode must be truncate, append or exclusive');
     }
     const data = Buffer.from(dataBase64, 'base64');
-    if (params['parent'] !== undefined) {
-      const parent = requireAbsolutePath(params, 'parent');
-      try {
-        const stat = await this.fs.stat(parent);
-        if (!stat.isDirectory) {
-          throw new RpcError(RpcErrorCode.InvalidRequest, `Parent path is not a directory: ${parent}.`);
-        }
-      } catch (error) {
-        if (error instanceof RpcError) throw error;
-        if (isHostFsNotFound(error)) {
-          try {
-            await this.fs.mkdir(parent, { recursive: true });
-          } catch (mkdirError) {
-            throw new RpcError(RpcErrorCode.InvalidRequest, mkdirError instanceof Error ? mkdirError.message : String(mkdirError));
-          }
-        }
-      }
-    }
     try {
       if (mode === 'truncate') {
         await this.fs.writeBytes(path, data);
