@@ -318,6 +318,27 @@ describe("Webview model catalog refresh", () => {
     expect(useSettingsStore.getState().currentModel).toBe("plain");
   });
 
+  it("validates a rollback against the refreshed catalog even when the new selection remains valid", async () => {
+    useSettingsStore.getState().initModels(MODELS, "always", false);
+    let rejectSave!: (error: Error) => void;
+    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    useSettingsStore.getState().updateModel("reasoning");
+
+    useSettingsStore.getState().refreshModels({
+      models: [MODELS[0], MODELS[1]],
+      defaultModel: "plain",
+      defaultThinking: false,
+    });
+    rejectSave(new Error("save failed"));
+
+    await vi.waitFor(() => {
+      expect(useSettingsStore.getState().currentModel).toBe("plain");
+    });
+    expect(useSettingsStore.getState().currentModel).toBe("plain");
+  });
+
   it("uses the valid current model when retrying a cached model that was removed", () => {
     useChatStore.setState({
       pendingInput: { content: "hello", model: "removed" },

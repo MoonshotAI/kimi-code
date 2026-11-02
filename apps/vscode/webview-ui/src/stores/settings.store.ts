@@ -23,6 +23,13 @@ function saveConfigWithRollback(
     // would overwrite the user's latest choice.
     if (revision !== settingsSaveRevision) return;
     set(rollback);
+    const state = useSettingsStore.getState();
+    state.refreshModels({
+      models: state.models,
+      defaultModel: state.defaultModel,
+      defaultThinking: state.defaultThinking,
+      defaultThinkingEffort: state.defaultThinkingEffort,
+    });
     toast.error(`Failed to save model settings: ${error instanceof Error ? error.message : String(error)}`);
   });
 }
