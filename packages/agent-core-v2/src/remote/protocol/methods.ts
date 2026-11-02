@@ -51,16 +51,13 @@ export interface FsReadFileParams {
   readonly path: string;
   readonly offset?: number;
   readonly maxBytes?: number;
+  readonly includeMetadata?: boolean;
 }
 
 export interface FsReadFileResult {
   readonly dataBase64: string;
   readonly eof: boolean;
-  readonly stat?: {
-    readonly isFile: boolean;
-    readonly isDirectory: boolean;
-    readonly size: number;
-  };
+  readonly metadata?: FsGetMetadataResult;
 }
 
 export type FsWriteMode = 'truncate' | 'append' | 'exclusive';

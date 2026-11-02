@@ -184,6 +184,12 @@ function fakeFs(
       const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
       return buf.subarray(offset, n === undefined ? buf.length : offset + n);
     },
+    readFileHead: async (p, maxBytes) => {
+      const stat = await lstatImpl(resolveSymlinks(p));
+      const c = fileMap.get(resolveSymlinks(p));
+      const buf = c === undefined ? Buffer.alloc(0) : Buffer.isBuffer(c) ? c : Buffer.from(c);
+      return { stat, bytes: stat.isFile ? buf.subarray(0, maxBytes) : new Uint8Array() };
+    },
     readLines: async function* (): AsyncGenerator<string> {
     },
     writeBytes: async () => {},

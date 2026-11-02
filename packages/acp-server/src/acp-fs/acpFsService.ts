@@ -19,6 +19,7 @@ import { RequestError } from '@agentclientprotocol/sdk';
 import {
   HostFileSystem,
   type HostDirEntry,
+  type HostFileHead,
   type HostFileStat,
   type HostWalkOptions,
   type HostWalkResult,
@@ -114,6 +115,10 @@ export class AcpHostFileSystem implements IHostFileSystem {
 
   readBytes(path: string, n?: number): Promise<Uint8Array> {
     return this.inner.readBytes(path, n);
+  }
+
+  readFileHead(path: string, maxBytes: number): Promise<HostFileHead> {
+    return this.inner.readFileHead(path, maxBytes);
   }
 
   /**

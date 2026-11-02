@@ -52,10 +52,10 @@ class DeclaredRemoteEnvironment implements Environment {
   readonly fs: IHostFileSystem = {
     _serviceBrand: undefined,
     readText: async (path, options) => this.connected().fs.readText(path, options),
-    readWholeFile: async (path) => this.connected().fs.readWholeFile!(path),
     writeText: async (path, data) => this.connected().fs.writeText(path, data),
     appendText: async (path, data) => this.connected().fs.appendText(path, data),
     readBytes: async (path, n, offset) => this.connected().fs.readBytes(path, n, offset),
+    readFileHead: async (path, maxBytes) => this.connected().fs.readFileHead(path, maxBytes),
     writeBytes: async (path, data) => this.connected().fs.writeBytes(path, data),
     readLines: (path, options) => this.readLines(path, options),
     createExclusive: async (path, data) => this.connected().fs.createExclusive(path, data),

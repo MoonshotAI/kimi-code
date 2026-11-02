@@ -8,6 +8,7 @@ import {
 import { splitLinesKeepingTerminator } from '#/_base/text/line-endings';
 import type {
   HostDirEntry,
+  HostFileHead,
   HostFileStat,
   HostWalkOptions,
   HostWalkResult,
@@ -72,6 +73,17 @@ export function toRemoteFsError(error: unknown): Error {
   return new HostFsError(fallback, error.message, { details: { rpcCode: error.code } });
 }
 
+function toHostFileStat(metadata: FsGetMetadataResult): HostFileStat {
+  return {
+    isFile: metadata.isFile,
+    isDirectory: metadata.isDirectory,
+    isSymbolicLink: metadata.isSymlink,
+    size: metadata.size,
+    mtimeMs: metadata.modifiedAtMs,
+    mode: metadata.mode,
+  };
+}
+
 function isUtf8Encoding(encoding: BufferEncoding): boolean {
   return encoding === 'utf-8' || encoding === 'utf8';
 }
@@ -107,23 +119,20 @@ export class RemoteFileSystem implements IHostFileSystem {
     }
   }
 
-  async readWholeFile(path: string) {
-    try {
-      const result = await this.readRange(path, 0);
-      if (result.stat === undefined) return undefined;
-      const bytes = decodeBase64(result.dataBase64);
-      return { bytes, stat: result.stat };
-    } catch {
-      return undefined;
-    }
+  async readFileHead(path: string, maxBytes: number): Promise<HostFileHead> {
+    const result = await this.call<FsReadFileResult>(FS_READ_FILE_METHOD, {
+      path,
+      maxBytes: Math.min(maxBytes, FS_READ_FILE_MAX_BYTES),
+      includeMetadata: true,
+    });
+    return { stat: toHostFileStat(result.metadata!), bytes: decodeBase64(result.dataBase64) };
   }
 
   async readText(
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): Promise<string> {
-    const whole = await this.readWholeFile(path);
-    const bytes = whole === undefined ? await this.readBytes(path) : whole.bytes;
+    const bytes = await this.readBytes(path);
     const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     return decodeTextWithErrors(buffer, options?.encoding ?? 'utf-8', options?.errors ?? 'strict');
   }
@@ -221,18 +230,10 @@ export class RemoteFileSystem implements IHostFileSystem {
   }
 
   private async metadata(path: string, followSymlinks: boolean): Promise<HostFileStat> {
-    const result = await this.call<FsGetMetadataResult>(FS_GET_METADATA_METHOD, {
+    return toHostFileStat(await this.call<FsGetMetadataResult>(FS_GET_METADATA_METHOD, {
       path,
       followSymlinks,
-    });
-    return {
-      isFile: result.isFile,
-      isDirectory: result.isDirectory,
-      isSymbolicLink: result.isSymlink,
-      size: result.size,
-      mtimeMs: result.modifiedAtMs,
-      mode: result.mode,
-    };
+    }));
   }
 
   async stat(path: string): Promise<HostFileStat> {

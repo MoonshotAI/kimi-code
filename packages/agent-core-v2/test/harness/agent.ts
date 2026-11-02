@@ -582,6 +582,7 @@ function isFullHostFs(input: unknown): boolean {
     'writeText',
     'appendText',
     'readBytes',
+    'readFileHead',
     'writeBytes',
     'readLines',
     'createExclusive',

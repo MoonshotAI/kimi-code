@@ -60,9 +60,7 @@ deviations per the design spec, plus one forced addition:
   end to end).
 - `fs/readFile` takes `offset`/`maxBytes` (stateless range read, `maxBytes ≤
   1MiB`) instead of codex's open/readBlock/close handle trio. Whole-file reads
-  without `maxBytes` are capped well below the 64MiB frame cap. Responses carry
-  the actual file type and size; clients use bounded reads when an older
-  executor omits them.
+  without `maxBytes` are capped well below the 64MiB frame cap.
 - `fs/writeFile` takes `mode: truncate|append|exclusive` (codex only has
   truncate); `exclusive` maps EEXIST to `os.fs.already_exists`, which the
   client maps back to `createExclusive === false`.

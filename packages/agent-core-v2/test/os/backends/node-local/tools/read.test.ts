@@ -108,8 +108,12 @@ function createSpiedFs(content: string) {
   );
   const readLines = vi.fn().mockImplementation(() => generateLines(content));
   const readText = vi.fn(async () => content);
-  const stat = vi.fn(async () => ({ isFile: true, isDirectory: false, size: bytes.length }));
-  const fs = { cwd: '/', readBytes, readLines, readText, stat } as unknown as IHostFileSystem;
+  const stat = vi.fn(async (_path: string) => ({ isFile: true, isDirectory: false, size: bytes.length }));
+  const readFileHead = async (path: string, maxBytes: number) => {
+    const fileStat = await stat(path);
+    return { stat: fileStat, bytes: fileStat.isFile ? await readBytes(path, maxBytes) : new Uint8Array() };
+  };
+  const fs = { cwd: '/', readBytes, readFileHead, readLines, readText, stat } as unknown as IHostFileSystem;
   return { fs, readBytes, readLines, readText, stat };
 }
 
@@ -151,7 +155,11 @@ function createSpiedMapFs(files: Record<string, FakeFile>) {
       size: file.size ?? file.bytes.length,
     };
   });
-  const fs = { cwd: '/', readBytes, readLines, readText, stat } as unknown as IHostFileSystem;
+  const readFileHead = async (path: string, maxBytes: number) => {
+    const fileStat = await stat(path);
+    return { stat: fileStat, bytes: fileStat.isFile ? await readBytes(path, maxBytes) : new Uint8Array() };
+  };
+  const fs = { cwd: '/', readBytes, readFileHead, readLines, readText, stat } as unknown as IHostFileSystem;
   return { fs, readBytes, readLines, readText, stat };
 }
 
@@ -453,25 +461,6 @@ describe('ReadTool', () => {
         '2 lines read from file starting from line 1. Total lines in file: 2. Requested range complete. Effective max_chars: 100000. End of file reached.',
       ),
     });
-  });
-
-  it('uses a whole-file capability without separate stat, sniff and line reads', async () => {
-    const { fs, stat, readBytes, readLines } = createSpiedFs('alpha\nbeta\n');
-    const bytes = Buffer.from('alpha\nbeta\n');
-    const readWholeFile = vi.fn(async () => ({
-      stat: { isFile: true, isDirectory: false, size: bytes.length },
-      bytes,
-    }));
-    fs.readWholeFile = readWholeFile;
-    const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
-
-    const result = await execute(tool, { path: '/tmp/a.txt' });
-
-    expect(result.output).toBe('1\talpha\n2\tbeta');
-    expect(readWholeFile).toHaveBeenCalledWith('/tmp/a.txt');
-    expect(stat).not.toHaveBeenCalled();
-    expect(readBytes).not.toHaveBeenCalled();
-    expect(readLines).not.toHaveBeenCalled();
   });
 
   it('stats the resolved target so symlinked files stay readable', async () => {
@@ -1319,8 +1308,9 @@ describe('ReadTool', () => {
     const readBytes = vi.fn(async (_path: string, n?: number) =>
       n === undefined ? bytes : bytes.subarray(0, n),
     );
-    const stat = vi.fn(async () => ({ isFile: true, isDirectory: false, size: bytes.length }));
-    const fs = { cwd: '/', readBytes, readLines, readText, stat } as unknown as IHostFileSystem;
+    const stat = { isFile: true, isDirectory: false, size: bytes.length };
+    const readFileHead = async (path: string, maxBytes: number) => ({ stat, bytes: await readBytes(path, maxBytes) });
+    const fs = { cwd: '/', readBytes, readFileHead, readLines, readText } as unknown as IHostFileSystem;
     const tool = createReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
 
     const result = await execute(tool, { path: '/tmp/large.txt' });

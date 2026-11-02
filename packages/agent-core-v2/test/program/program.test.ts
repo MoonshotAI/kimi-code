@@ -347,6 +347,7 @@ function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additi
     writeText: (path, data) => { assert(path); return inner.writeText(path, data); },
     appendText: (path, data) => { assert(path); return inner.appendText(path, data); },
     readBytes: (path, n, offset) => { assert(path); return inner.readBytes(path, n, offset); },
+    readFileHead: (path, maxBytes) => { assert(path); return inner.readFileHead(path, maxBytes); },
     writeBytes: (path, data) => { assert(path); return inner.writeBytes(path, data); },
     readLines: (path, options) => { assert(path); return inner.readLines(path, options); },
     createExclusive: (path, data) => { assert(path); return inner.createExclusive(path, data); },

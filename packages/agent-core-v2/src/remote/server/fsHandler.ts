@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path';
 
 import type { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import type { HostFileStat } from '#/os/interface/hostFileSystem';
 import { HostFsError, OsFsErrors, toHostFsError } from '#/os/interface/hostFsErrors';
 
 import { RpcError, RpcErrorCode } from '#/remote/protocol/errors';
@@ -82,6 +83,17 @@ function optionalStringArray(params: Params, name: string): readonly string[] | 
   return value;
 }
 
+function toMetadata(stat: HostFileStat): FsGetMetadataResult {
+  return {
+    isDirectory: stat.isDirectory,
+    isFile: stat.isFile,
+    isSymlink: stat.isSymbolicLink ?? false,
+    size: stat.size,
+    modifiedAtMs: stat.mtimeMs ?? 0,
+    mode: stat.mode,
+  };
+}
+
 function fsDomainError(error: unknown, ctx: { path: string; op: string }): RpcError {
   const hostError = toHostFsError(error, ctx);
   const code =
@@ -107,9 +119,14 @@ export class FsHandler {
     const path = requireAbsolutePath(params, 'path');
     const offset = optionalInteger(params, 'offset', 0, Number.MAX_SAFE_INTEGER) ?? 0;
     const maxBytes = optionalInteger(params, 'maxBytes', 1, FS_READ_FILE_MAX_BYTES);
+    const includeMetadata = optionalBoolean(params, 'includeMetadata') ?? false;
     try {
-      const { size, isFile, isDirectory } = await this.fs.stat(path);
-      const stat = { isFile, isDirectory, size };
+      const stat = await this.fs.stat(path);
+      const metadata = includeMetadata ? toMetadata(stat) : undefined;
+      if (metadata !== undefined && !stat.isFile) {
+        return { dataBase64: '', eof: true, metadata };
+      }
+      const { size } = stat;
       const length = maxBytes ?? size - offset;
       if (length > FS_READ_FILE_WHOLE_MAX_BYTES) {
         throw new RpcError(
@@ -118,10 +135,10 @@ export class FsHandler {
         );
       }
       if (offset >= size) {
-        return { dataBase64: '', eof: true, stat };
+        return { dataBase64: '', eof: true, metadata };
       }
       const data = await this.fs.readBytes(path, Math.min(length, size - offset), offset);
-      return { dataBase64: Buffer.from(data).toString('base64'), eof: offset + data.byteLength >= size, stat };
+      return { dataBase64: Buffer.from(data).toString('base64'), eof: offset + data.byteLength >= size, metadata };
     } catch (error) {
       if (error instanceof RpcError) throw error;
       throw fsDomainError(error, { path, op: 'read' });
@@ -174,15 +191,7 @@ export class FsHandler {
     const path = requireAbsolutePath(params, 'path');
     const followSymlinks = optionalBoolean(params, 'followSymlinks') ?? true;
     try {
-      const result = followSymlinks ? await this.fs.stat(path) : await this.fs.lstat(path);
-      return {
-        isDirectory: result.isDirectory,
-        isFile: result.isFile,
-        isSymlink: result.isSymbolicLink ?? false,
-        size: result.size,
-        modifiedAtMs: result.mtimeMs ?? 0,
-        mode: result.mode,
-      };
+      return toMetadata(followSymlinks ? await this.fs.stat(path) : await this.fs.lstat(path));
     } catch (error) {
       throw fsDomainError(error, { path, op: 'stat' });
     }

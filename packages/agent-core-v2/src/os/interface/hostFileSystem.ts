@@ -11,7 +11,7 @@ export interface HostFileStat {
   readonly mode?: number;
 }
 
-export interface HostWholeFile {
+export interface HostFileHead {
   readonly stat: HostFileStat;
   readonly bytes: Uint8Array;
 }
@@ -51,10 +51,10 @@ export interface IHostFileSystem {
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): Promise<string>;
-  readWholeFile?(path: string): Promise<HostWholeFile | undefined>;
   writeText(path: string, data: string): Promise<void>;
   appendText(path: string, data: string): Promise<void>;
   readBytes(path: string, n?: number, offset?: number): Promise<Uint8Array>;
+  readFileHead(path: string, maxBytes: number): Promise<HostFileHead>;
   writeBytes(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void>;
   readLines(
     path: string,

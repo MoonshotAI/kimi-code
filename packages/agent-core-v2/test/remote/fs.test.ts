@@ -47,20 +47,23 @@ describe('fs group over a subprocess loopback', () => {
     vi.restoreAllMocks();
   });
 
-  it('reads a small whole file in one RPC', async () => {
-    const path = join(workDir, 'whole.txt');
+  it('reads metadata and the file head in one RPC', async () => {
+    const path = join(workDir, 'head.txt');
     await writeFile(path, 'alpha\nbeta\n');
     const calls = vi.spyOn(connection, 'call');
-    const result = await fs.readWholeFile(path);
-    expect(Buffer.from(result?.bytes ?? []).toString('utf8')).toBe('alpha\nbeta\n');
-    expect(result?.stat).toEqual({ isFile: true, isDirectory: false, size: 11 });
+    const head = await fs.readFileHead(path, 5);
+    expect(Buffer.from(head.bytes).toString('utf8')).toBe('alpha');
+    expect(head.stat).toMatchObject({ isFile: true, isDirectory: false, size: 11 });
+    expect(head.stat.mtimeMs).toBeGreaterThan(0);
     expect(calls.mock.calls.map(([method]) => method)).toEqual(['fs/readFile']);
   });
 
-  it('preserves non-file metadata on zero-length whole reads', async () => {
-    const result = await fs.readWholeFile('/dev/null');
-    expect(result?.bytes).toHaveLength(0);
-    expect(result?.stat).toMatchObject({ isFile: false, isDirectory: false });
+  it('returns metadata without bytes for directories and devices', async () => {
+    for (const target of [workDir, '/dev/null']) {
+      const head = await fs.readFileHead(target, 5);
+      expect(head.stat.isFile).toBe(false);
+      expect(head.bytes.byteLength).toBe(0);
+    }
   });
 
   it('edits a small file with one read and one write RPC', async () => {
@@ -178,28 +181,6 @@ describe('fs protocol semantics', () => {
     maxEntries: 100_000,
     maxResponseBytes: 8 * 1024 * 1024,
   };
-
-  it.each(['rejection', 'missing metadata'] as const)('falls back to bounded reads after whole-file %s', async (failure) => {
-    const calls: Array<{ maxBytes?: number }> = [];
-    const fs = new RemoteFileSystem({
-      call: async (method, params) => {
-        if (method !== 'fs/readFile') throw new Error(`unexpected method: ${method}`);
-        const maxBytes = (params as { maxBytes?: number }).maxBytes;
-        calls.push({ maxBytes });
-        if (maxBytes === undefined) {
-          if (failure === 'rejection') throw new Error('whole read rejected');
-          return { dataBase64: Buffer.from('legacy').toString('base64'), eof: true };
-        }
-        return { dataBase64: Buffer.from('fallback').toString('base64'), eof: true };
-      },
-      notify: () => {},
-      onNotification: () => () => {},
-      onDidClose: () => {},
-    });
-
-    expect(await fs.readText('/tmp/file.txt')).toBe('fallback');
-    expect(calls).toEqual([{ maxBytes: undefined }, { maxBytes: 1024 * 1024 }]);
-  });
 
   it('honors the caller deadline before and during a remote walk', async () => {
     const calls: Array<{ method: string; timeoutMs?: number }> = [];

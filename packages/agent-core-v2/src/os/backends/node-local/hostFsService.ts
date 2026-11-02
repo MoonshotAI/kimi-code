@@ -16,6 +16,7 @@ import { decodeTextWithErrors, readUtf8Lines, type TextDecodeErrors } from '#/_b
 
 import {
   type HostDirEntry,
+  type HostFileHead,
   type HostFileStat,
   type HostWalkOptions,
   type HostWalkResult,
@@ -85,6 +86,11 @@ export class HostFileSystem implements IHostFileSystem {
     } catch (error) {
       throw toHostFsError(error, { path, op: 'append' });
     }
+  }
+
+  async readFileHead(path: string, maxBytes: number): Promise<HostFileHead> {
+    const stat = await this.stat(path);
+    return { stat, bytes: stat.isFile ? await this.readBytes(path, maxBytes) : new Uint8Array() };
   }
 
   async readBytes(path: string, n?: number, offset = 0): Promise<Uint8Array> {

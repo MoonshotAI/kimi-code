@@ -5,7 +5,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { isTaskOutputFilePath } from '#/agent/task/persist';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { type HostFileHead, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
@@ -318,22 +318,20 @@ export class ReadTool implements IReadTool {
     eventLog: boolean,
   ): Promise<ExecutableToolResult> {
     try {
-      let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
-      let whole: Awaited<ReturnType<NonNullable<FileReadSource['readWholeFile']>>> | undefined;
+      let head: HostFileHead;
       try {
-        if ((args.line_offset ?? 1) >= 0) whole = await source.readWholeFile?.();
-        stat = whole?.stat ?? await source.stat();
+        head = await source.readHead(MEDIA_SNIFF_BYTES);
       } catch (error) {
         if (isHostFsNotFound(error) || isHostFsNotDirectory(error)) {
           return { isError: true, output: `"${args.path}" does not exist.` };
         }
         throw error;
       }
+      const { stat, bytes: header } = head;
       if (!stat.isFile) {
         return { isError: true, output: `"${args.path}" is not a file.` };
       }
 
-      const header = whole?.bytes.subarray(0, MEDIA_SNIFF_BYTES) ?? await source.readBytes(MEDIA_SNIFF_BYTES);
       const fileType = detectFileType(source.name, header);
       if (fileType.kind === 'image' || fileType.kind === 'video') {
         const kind = fileType.kind;
@@ -371,7 +369,7 @@ export class ReadTool implements IReadTool {
               'Convert it to UTF-8 first (e.g. with `iconv`).',
           };
         }
-        const bytes = whole?.bytes ?? await source.readBytes();
+        const bytes = await source.readBytes();
         let decoded: string;
         try {
           decoded = new TextDecoder(detection.encoding, { fatal: true }).decode(bytes);
@@ -388,10 +386,6 @@ export class ReadTool implements IReadTool {
           isError: true,
           output: notReadableFileOutput(args.path),
         };
-      } else if (whole !== undefined) {
-        const decoded = new TextDecoder('utf-8', { fatal: true }).decode(whole.bytes);
-        const content = splitLinesKeepingTerminator(decoded);
-        readLines = () => decodedLines(content);
       } else {
         readLines = () => source.readLines();
       }

@@ -169,6 +169,7 @@ function createTestFs(kaos: FakeKaos): IHostFileSystem {
     writeText: () => notImplemented('writeText'),
     appendText: () => notImplemented('appendText'),
     readBytes: () => notImplemented('readBytes'),
+    readFileHead: () => notImplemented('readFileHead'),
     writeBytes: () => notImplemented('writeBytes'),
     readLines: () => notImplemented('readLines'),
     createExclusive: () => notImplemented('createExclusive'),

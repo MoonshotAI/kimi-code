@@ -50,6 +50,7 @@ function createBackend(options: {
     writeText: () => notImplemented('writeText'),
     appendText: () => notImplemented('appendText'),
     readBytes: () => notImplemented('readBytes'),
+    readFileHead: () => notImplemented('readFileHead'),
     writeBytes: () => notImplemented('writeBytes'),
     readLines: () => notImplemented('readLines'),
     createExclusive: () => notImplemented('createExclusive'),
