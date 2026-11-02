@@ -82,9 +82,25 @@ export class AcpHostFileSystem implements IHostFileSystem {
     }
     // ACP `fs.readTextFile` returns already-decoded UTF-8 text, so the
     // `encoding`/`errors` decode options are a no-op here.
-    const { content } = await this.connection
-      .get()
-      .readTextFile({ sessionId: this.ctx.sessionId, path });
+    let content: string;
+    try {
+      ({ content } = await this.connection
+        .get()
+        .readTextFile({ sessionId: this.ctx.sessionId, path }));
+    } catch (error) {
+      // ACP clients surface a missing file as a structured resource-not-found
+      // RequestError rather than an errno. Map it to the same `os.fs.not_found`
+      // HostFsError the node-local backend raises so downstream consumers
+      // (e.g. plan mode reading a not-yet-created plan file) can treat it as
+      // "empty" instead of a hard failure.
+      if (isResourceNotFound(error)) {
+        throw new HostFsError(OsFsErrors.codes.OS_FS_NOT_FOUND, `read failed: path does not exist`, {
+          details: { path, op: 'read' },
+          cause: error,
+        });
+      }
+      throw error;
+    }
     return content;
   }
 
