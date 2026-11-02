@@ -189,7 +189,6 @@ export function foldWireRecordFacts(
 ): AgentTranscriptSnapshot {
   const materializedTurnIds = new Set<number>();
   let currentTurnId: number | undefined;
-  const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
   const endedTurns = new Map<number, HistoryWireRecord>();
   const interruptedSteps = new Map<number, Map<number, HistoryWireRecord>>();
