@@ -16,7 +16,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/logout` | — | Clear credentials for the currently selected account | No |
 | `/provider` | — | Open the interactive provider manager to view, add, and remove configured providers. See [Platforms & Models — `/provider` and provider management](../configuration/providers.md#provider-—-interactive-provider-management) | Yes |
 | `/provider refresh [providerId]` | — | Re-fetch model lists from providers at runtime: without an argument, refresh every provider; with one, refresh only that provider. Added and removed models are reported per provider | Yes |
-| `/model` | — | Switch the LLM model used in the current session; when used while the agent is busy, the switch applies from the next turn | Yes |
+| `/model` | — | Switch the LLM model used in the current session; when used while the agent is busy, a turn that has already started calling the model keeps its current model, and the switch applies from the next turn | Yes |
 | `/secondary-model` | `/subagent-model` | Pick the default model for subagents (writes `[secondary_model] default_model`; see the [subagent model pool](../configuration/config-files.md#subagent-model-pool)) | Yes |
 | `/settings` | `/config` | Open the settings panel inside the TUI | Yes |
 | `/experiments` | `/experimental` | Open the experimental feature panel | Yes |
