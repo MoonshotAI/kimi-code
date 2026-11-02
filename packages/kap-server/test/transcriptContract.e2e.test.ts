@@ -82,6 +82,8 @@ interface LlmRoute {
   readonly match: (body: string) => boolean;
   readonly respond: () => string;
   readonly delayMs?: number;
+  readonly status?: number;
+  readonly hold?: () => Promise<void>;
 }
 
 interface MockLlm {
@@ -101,10 +103,16 @@ async function startMockLlm(routes: readonly LlmRoute[], fallback: () => string 
       const route = routes.find((r) => r.match(body));
       const respond = route?.respond ?? fallback;
       const send = (): void => {
+        if (route?.status !== undefined) {
+          res.writeHead(route.status, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: respond(), type: 'invalid_request_error' } }));
+          return;
+        }
         res.writeHead(200, { 'content-type': 'text/event-stream' });
         res.end(respond());
       };
-      if (route?.delayMs !== undefined) setTimeout(send, route.delayMs);
+      if (route?.hold !== undefined) void route.hold().then(send);
+      else if (route?.delayMs !== undefined) setTimeout(send, route.delayMs);
       else send();
     });
   });
@@ -588,6 +596,372 @@ describe('transcript contract e2e', () => {
     } finally {
       channel.close();
     }
+  });
+
+  describe('prompt queue', () => {
+    function gate(): { readonly wait: () => Promise<void>; readonly open: () => void } {
+      let open!: () => void;
+      const opened = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return { wait: () => opened, open };
+    }
+
+    function heldOnce(hold: () => Promise<void>, match: (body: string) => boolean = () => true): LlmRoute {
+      let served = false;
+      return {
+        match: (body) => {
+          if (served || !match(body)) return false;
+          served = true;
+          return true;
+        },
+        respond: () => sseText('held done'),
+        hold,
+      };
+    }
+
+    const firstHit = (marker: string): number => llm!.hits.findIndex((hit) => hit.includes(marker));
+    const ranInOrder = (markers: readonly string[]): boolean => {
+      const hits = markers.map(firstHit);
+      return hits.every((hit, index) => hit > 0 && (index === 0 || hit > hits[index - 1]!));
+    };
+    const post = <T,>(path: string, body: unknown = {}): Promise<T> => rest<T>(server!, base, path, { method: 'POST', body });
+    const submit = (sid: string, text: string, extra: Record<string, unknown> = {}) =>
+      post<{ prompt_id: string; status: string }>(`/api/v1/sessions/${sid}/prompts`, {
+        content: [{ type: 'text', text }],
+        model: 'stub',
+        permission_mode: 'yolo',
+        ...extra,
+      });
+    const compact = (sid: string, instruction?: string) =>
+      post<{ prompt_id: string; accepted_as: string }>(`/api/v1/sessions/${sid}:compact`, instruction === undefined ? {} : { instruction });
+    const mainQueue = (channel: TranscriptChannel): { paused: boolean; ids: string[] } | undefined => {
+      const frame = channel.frames.filter((f) => f.type === 'queue' && f.agent_id === 'main').at(-1);
+      return frame === undefined ? undefined : { paused: frame.paused, ids: frame.inputs.map((input: any) => input.prompt_id) };
+    };
+    const turnsOf = async (sid: string) => (await getTranscript(server!, base, sid)).items.filter((item) => item.kind === 'turn');
+
+    it('runs queued prompts once each, in submission order, and mirrors them in frames and GET /prompts', async () => {
+      const hold = gate();
+      await boot([heldOnce(hold.wait)]);
+      const sid = await createSession(server!, base);
+      await submit(sid, 'first prompt');
+      const channel = await subscribeTranscript(server!, sid);
+      try {
+        await until('first request', () => llm!.hits.length === 1);
+        const queued = [];
+        for (const text of ['queued one', 'queued two', 'queued three']) queued.push(await submit(sid, text));
+        expect(queued.map((item) => item.status)).toEqual(['queued', 'queued', 'queued']);
+        const ids = queued.map((item) => item.prompt_id);
+        await until('frame lists the queue', () => mainQueue(channel)?.ids.length === 3);
+        expect(mainQueue(channel)).toEqual({ paused: false, ids });
+        const listed = await rest<{ queued: { prompt_id: string }[] }>(server!, base, `/api/v1/sessions/${sid}/prompts`);
+        expect(listed.queued.map((item) => item.prompt_id)).toEqual(ids);
+
+        hold.open();
+        await until('queue drained', () => mainQueue(channel)?.ids.length === 0 && firstHit('queued three') > 0, 30000);
+        await idle(server!, base, sid);
+        expect(ranInOrder(['queued one', 'queued two', 'queued three'])).toBe(true);
+        expect(await turnsOf(sid)).toHaveLength(4);
+        const tx = await getTranscript(server!, base, sid);
+        expect(tx.prompts.map((prompt) => prompt.status)).toEqual(['completed', 'completed', 'completed', 'completed']);
+      } finally {
+        channel.close();
+      }
+    });
+
+    it('pauses without stopping the running turn, holds prompts on an idle paused queue, and resumes in order', async () => {
+      const hold = gate();
+      await boot([heldOnce(hold.wait)]);
+      const sid = await createSession(server!, base);
+      const queuePath = `/api/v1/sessions/${sid}/agents/main/queue`;
+      await submit(sid, 'first prompt');
+      const channel = await subscribeTranscript(server!, sid);
+      try {
+        await until('first request', () => llm!.hits.length === 1);
+        expect(await post(`${queuePath}:pause`)).toEqual({ paused: true });
+        const a = await submit(sid, 'paused one');
+        hold.open();
+        await until('first prompt finished', async () => (await getTranscript(server!, base, sid)).prompts[0]?.status === 'completed');
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        expect(firstHit('paused one')).toBe(-1);
+        const b = await submit(sid, 'paused two');
+        expect(b.status).toBe('queued');
+        await until('paused frame', () => mainQueue(channel)?.ids.length === 2);
+        expect(mainQueue(channel)).toEqual({ paused: true, ids: [a.prompt_id, b.prompt_id] });
+
+        expect(await post(`${queuePath}:resume`)).toEqual({ paused: false });
+        await until('queue drained', () => firstHit('paused two') > 0 && mainQueue(channel)?.ids.length === 0, 30000);
+        await idle(server!, base, sid);
+        expect(ranInOrder(['paused one', 'paused two'])).toBe(true);
+        expect(mainQueue(channel)?.paused).toBe(false);
+      } finally {
+        channel.close();
+      }
+    });
+
+    it('reorders prompts and a compaction while paused and runs them in the new order', async () => {
+      await boot([{ match: (body) => body.includes('keep the plan'), respond: () => sseText('Compacted summary.') }]);
+      const sid = await createSession(server!, base);
+      const queuePath = `/api/v1/sessions/${sid}/agents/main/queue`;
+      await submit(sid, 'warm up');
+      await idle(server!, base, sid);
+      const channel = await subscribeTranscript(server!, sid);
+      try {
+        await post(`${queuePath}:pause`);
+        const a = (await submit(sid, 'prompt A')).prompt_id;
+        const b = (await submit(sid, 'prompt B')).prompt_id;
+        const k = (await compact(sid, 'keep the plan')).prompt_id;
+        const c = (await submit(sid, 'prompt C')).prompt_id;
+        await until('frame lists the queue', () => mainQueue(channel)?.ids.length === 4);
+        expect(mainQueue(channel)?.ids).toEqual([a, b, k, c]);
+
+        await post(`${queuePath}/${c}:move`, { before_prompt_id: a });
+        await post(`${queuePath}/${k}:move`, { before_prompt_id: a });
+        await until('moved frame', () => mainQueue(channel)?.ids.join() === [c, k, a, b].join());
+        expect(await restCode(server!, base, `${queuePath}/missing:move`)).toBe(40402);
+        expect(await restCode(server!, base, `${queuePath}/${a}:move`, { before_prompt_id: 'missing' })).toBe(40402);
+        expect(await restCode(server!, base, `${queuePath}/${a}:move`, { before_prompt_id: 7 })).toBe(40001);
+
+        await post(`${queuePath}:resume`);
+        await until('queue drained', () => mainQueue(channel)?.ids.length === 0, 30000);
+        await idle(server!, base, sid);
+        expect(ranInOrder(['prompt C', 'keep the plan', 'prompt A', 'prompt B'])).toBe(true);
+      } finally {
+        channel.close();
+      }
+    });
+
+    it('withdraws queued prompts and a queued compaction, and reports prompts that are no longer queued', async () => {
+      const hold = gate();
+      await boot([heldOnce(hold.wait)]);
+      const sid = await createSession(server!, base);
+      const first = await submit(sid, 'first prompt');
+      const channel = await subscribeTranscript(server!, sid);
+      try {
+        await until('first request', () => llm!.hits.length === 1);
+        const a = (await submit(sid, 'withdrawn prompt')).prompt_id;
+        const k = (await compact(sid, 'keep the plan')).prompt_id;
+        const b = (await submit(sid, 'kept prompt')).prompt_id;
+        expect(await post(`/api/v1/sessions/${sid}/prompts/${a}:abort`)).toEqual({ aborted: true });
+        expect(await post(`/api/v1/sessions/${sid}/prompts/${k}:abort`)).toEqual({ aborted: true });
+        expect(await restCode(server!, base, `/api/v1/sessions/${sid}/prompts/missing:abort`)).toBe(40402);
+        await until('frame keeps one prompt', () => mainQueue(channel)?.ids.join() === b);
+
+        hold.open();
+        await until('kept prompt ran', () => firstHit('kept prompt') > 0, 30000);
+        await idle(server!, base, sid);
+        expect(firstHit('withdrawn prompt')).toBe(-1);
+        expect(firstHit('keep the plan')).toBe(-1);
+        expect(await restCode(server!, base, `/api/v1/sessions/${sid}/prompts/${first.prompt_id}:abort`)).toBe(40402);
+        expect(mainQueue(channel)?.ids).toEqual([]);
+      } finally {
+        channel.close();
+      }
+    });
+
+    it('enters Plan mode for a queued prompt only when it starts and keeps steers from passing it', async () => {
+      const hold = gate();
+      await boot([heldOnce(hold.wait)]);
+      const sid = await createSession(server!, base);
+      try {
+        await submit(sid, 'first prompt');
+        await until('first request', () => llm!.hits.length === 1);
+        const a = (await submit(sid, 'prompt A')).prompt_id;
+        const planned = (await submit(sid, 'plan prompt', { plan_mode: true })).prompt_id;
+        const b = (await submit(sid, 'prompt B')).prompt_id;
+        expect(await restCode(server!, base, `/api/v1/sessions/${sid}/prompts/${planned}:steer`)).toBe(40001);
+        expect(await restCode(server!, base, `/api/v1/sessions/${sid}/prompts/${b}:steer`)).toBe(40001);
+        expect(await post(`/api/v1/sessions/${sid}/prompts/${a}:steer`)).toEqual({ steered: true, prompt_ids: [a] });
+        expect((await getTranscript(server!, base, sid)).meta.modes).not.toMatchObject({ plan: {} });
+
+        hold.open();
+        await until('queue drained', () => firstHit('prompt B') > 0, 30000);
+        await idle(server!, base, sid);
+        expect(ranInOrder(['prompt A', 'plan prompt', 'prompt B'])).toBe(true);
+        expect((await getTranscript(server!, base, sid)).meta.modes).toMatchObject({ plan: {} });
+      } finally {
+        void sid;
+      }
+    });
+
+    it('moves on to the next queued prompt when one fails or the running turn is aborted', async () => {
+      const hold = gate();
+      const slow = gate();
+      await boot([
+        heldOnce(hold.wait),
+        { match: (body) => body.includes('failing prompt') && !body.includes('after failure'), respond: () => 'mock refusal', status: 400 },
+        heldOnce(slow.wait, (body) => body.includes('slow prompt')),
+      ]);
+      const sid = await createSession(server!, base);
+      await submit(sid, 'first prompt');
+      const channel = await subscribeTranscript(server!, sid);
+      try {
+        await until('first request', () => llm!.hits.length === 1);
+        await submit(sid, 'failing prompt');
+        await submit(sid, 'after failure');
+        hold.open();
+        await until('prompt after the failure ran', () => firstHit('after failure') > 0, 30000);
+        await idle(server!, base, sid);
+        const turns = await turnsOf(sid);
+        expect(turns.map((turn) => turn.state)).toEqual(['completed', 'failed', 'completed']);
+
+        const slowPrompt = (await submit(sid, 'slow prompt')).prompt_id;
+        await until('slow request', () => firstHit('slow prompt') > 0);
+        await submit(sid, 'after abort');
+        expect(await post(`/api/v1/sessions/${sid}/prompts/${slowPrompt}:abort`)).toEqual({ aborted: true });
+        await until('prompt after the abort ran', () => firstHit('after abort') > 0, 30000);
+        slow.open();
+        await idle(server!, base, sid);
+        expect((await turnsOf(sid)).map((turn) => turn.state).slice(3)).toEqual(['cancelled', 'completed']);
+        expect(mainQueue(channel)?.ids).toEqual([]);
+      } finally {
+        slow.open();
+        channel.close();
+      }
+    });
+
+    it('moves on to the queued prompts when a queued compaction fails', async () => {
+      const hold = gate();
+      await boot([
+        heldOnce(hold.wait),
+        { match: (body) => body.includes('keep the plan'), respond: () => 'mock refusal', status: 400 },
+      ]);
+      const sid = await createSession(server!, base);
+      await submit(sid, 'first prompt');
+      const channel = await subscribeTranscript(server!, sid);
+      try {
+        await until('first request', () => llm!.hits.length === 1);
+        expect((await compact(sid, 'keep the plan')).accepted_as).toBe('queue');
+        await submit(sid, 'after compaction');
+        hold.open();
+        await until('prompt after the compaction ran', () => firstHit('after compaction') > 0, 30000);
+        await idle(server!, base, sid);
+        expect(ranInOrder(['keep the plan', 'after compaction'])).toBe(true);
+        expect(mainQueue(channel)?.ids).toEqual([]);
+        expect((await compact(sid)).accepted_as).toBe('compact');
+      } finally {
+        channel.close();
+      }
+    });
+
+    it('refuses reload while the queue holds work and queue controls for other agents', async () => {
+      await boot([]);
+      const sid = await createSession(server!, base);
+      const queuePath = `/api/v1/sessions/${sid}/agents/main/queue`;
+      await submit(sid, 'warm up');
+      await idle(server!, base, sid);
+      await post(`${queuePath}:pause`);
+      const held = (await submit(sid, 'held prompt')).prompt_id;
+      expect(await restCode(server!, base, `/api/v1/sessions/${sid}:reload`)).toBe(40901);
+      await post(`/api/v1/sessions/${sid}/prompts/${held}:abort`);
+      expect(await restCode(server!, base, `/api/v1/sessions/${sid}:reload`)).toBe(40901);
+      await post(`${queuePath}:resume`);
+      expect(await restCode(server!, base, `/api/v1/sessions/${sid}:reload`)).toBe(0);
+      for (const action of ['queue:pause', 'queue:resume', `queue/${held}:move`]) {
+        expect(await restCode(server!, base, `/api/v1/sessions/${sid}/agents/agent-0/${action}`)).toBe(40001);
+      }
+      expect(firstHit('held prompt')).toBe(-1);
+    });
+
+    it('sends the current queue to a client that subscribes later', async () => {
+      const hold = gate();
+      await boot([heldOnce(hold.wait)]);
+      const sid = await createSession(server!, base);
+      try {
+        await submit(sid, 'first prompt');
+        await until('first request', () => llm!.hits.length === 1);
+        const a = (await submit(sid, 'prompt A')).prompt_id;
+        const k = (await compact(sid, 'keep the plan')).prompt_id;
+        await post(`/api/v1/sessions/${sid}/agents/main/queue:pause`);
+        const late = await subscribeTranscript(server!, sid);
+        try {
+          await until('late subscriber gets the queue', () => mainQueue(late) !== undefined);
+          expect(mainQueue(late)).toEqual({ paused: true, ids: [a, k] });
+        } finally {
+          late.close();
+        }
+        await post(`/api/v1/sessions/${sid}/prompts/${a}:abort`);
+        await post(`/api/v1/sessions/${sid}/prompts/${k}:abort`);
+        await post(`/api/v1/sessions/${sid}/agents/main/queue:resume`);
+      } finally {
+        hold.open();
+      }
+      await idle(server!, base, sid);
+    });
+
+    it('steers into the running turn while paused, undoes over a paused queue, and compacts an idle paused queue at once', async () => {
+      const hold = gate();
+      await boot([
+        heldOnce(hold.wait),
+        { match: (body) => body.includes('keep the plan'), respond: () => sseText('Compacted summary.') },
+      ]);
+      const sid = await createSession(server!, base);
+      const queuePath = `/api/v1/sessions/${sid}/agents/main/queue`;
+      await submit(sid, 'first prompt');
+      const channel = await subscribeTranscript(server!, sid);
+      try {
+        await until('first request', () => llm!.hits.length === 1);
+        const a = (await submit(sid, 'steered while paused')).prompt_id;
+        const b = (await submit(sid, 'waits while paused')).prompt_id;
+        await post(`${queuePath}:pause`);
+        expect(await post(`/api/v1/sessions/${sid}/prompts/${a}:steer`)).toEqual({ steered: true, prompt_ids: [a] });
+        hold.open();
+        await until('steer answered', () => firstHit('steered while paused') > 0, 30000);
+        await until('first turn settled', async () => !(await getSessionFacts(server!, base, sid)).busy, 30000);
+        expect(firstHit('waits while paused')).toBe(-1);
+        expect(mainQueue(channel)).toEqual({ paused: true, ids: [b] });
+
+        expect(await restCode(server!, base, `/api/v1/sessions/${sid}:undo`, { count: 1 })).toBe(0);
+        expect(await turnsOf(sid)).toHaveLength(0);
+        const queuedCompaction = await compact(sid, 'keep the plan');
+        expect(queuedCompaction.accepted_as).toBe('queue');
+        expect(await post(`/api/v1/sessions/${sid}/prompts/${queuedCompaction.prompt_id}:abort`)).toEqual({ aborted: true });
+
+        await post(`${queuePath}:resume`);
+        await until('waiting prompt ran', () => firstHit('waits while paused') > 0, 30000);
+        await idle(server!, base, sid);
+        const last = llm!.hits.findLast((hit) => hit.includes('waits while paused'))!;
+        expect(last).not.toContain('first prompt');
+        expect(await turnsOf(sid)).toHaveLength(1);
+
+        await post(`${queuePath}:pause`);
+        expect((await compact(sid, 'keep the plan')).accepted_as).toBe('compact');
+        await until('compaction ran', () => firstHit('keep the plan') > 0, 30000);
+        await idle(server!, base, sid);
+        expect(mainQueue(channel)).toEqual({ paused: true, ids: [] });
+        await post(`${queuePath}:resume`);
+      } finally {
+        channel.close();
+      }
+    });
+
+    it('runs concurrent submissions made while busy exactly once each', async () => {
+      const hold = gate();
+      await boot([heldOnce(hold.wait)]);
+      const sid = await createSession(server!, base);
+      await submit(sid, 'first prompt');
+      const channel = await subscribeTranscript(server!, sid);
+      try {
+        await until('first request', () => llm!.hits.length === 1);
+        const texts = ['burst 1', 'burst 2', 'burst 3', 'burst 4', 'burst 5'];
+        const accepted = await Promise.all(texts.map((text) => submit(sid, text)));
+        expect(new Set(accepted.map((item) => item.prompt_id)).size).toBe(5);
+        expect(accepted.every((item) => item.status === 'queued')).toBe(true);
+        await until('frame lists the burst', () => mainQueue(channel)?.ids.length === 5);
+        const frameOrder = mainQueue(channel)!.ids;
+        expect(new Set(frameOrder)).toEqual(new Set(accepted.map((item) => item.prompt_id)));
+
+        hold.open();
+        await until('burst drained', () => texts.every((text) => firstHit(text) > 0) && mainQueue(channel)?.ids.length === 0, 30000);
+        await idle(server!, base, sid);
+        const byId = new Map(accepted.map((item, index) => [item.prompt_id, texts[index]!]));
+        expect(ranInOrder(frameOrder.map((id) => byId.get(id)!))).toBe(true);
+        expect(await turnsOf(sid)).toHaveLength(6);
+      } finally {
+        channel.close();
+      }
+    });
   });
 
   it('undo rebuilds a steered turn consistently over REST and WebSocket', async () => {
