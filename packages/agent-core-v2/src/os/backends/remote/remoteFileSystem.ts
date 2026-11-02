@@ -6,7 +6,10 @@ import {
 import { splitLinesKeepingTerminator } from '#/_base/text/line-endings';
 import type {
   HostDirEntry,
+  HostFileHead,
   HostFileStat,
+  HostWalkOptions,
+  HostWalkVisitor,
   IHostFileSystem,
 } from '#/os/interface/hostFileSystem';
 import {
@@ -28,11 +31,14 @@ import {
   FS_READ_FILE_METHOD,
   FS_REMOVE_METHOD,
   FS_RENAME_METHOD,
+  FS_WALK_DEFAULT_TIMEOUT_MS,
+  FS_WALK_METHOD,
   FS_WRITE_FILE_CHUNK_BYTES,
   FS_WRITE_FILE_METHOD,
   type FsGetMetadataResult,
   type FsReadDirectoryResult,
   type FsReadFileResult,
+  type FsWalkResult,
   type FsWriteMode,
 } from '#/remote/protocol/methods';
 import { rpcDomainError } from './rpcDomainError';
@@ -54,6 +60,17 @@ export function toRemoteFsError(error: unknown): Error {
       ? OsFsErrors.codes.OS_FS_NOT_FOUND
       : OsFsErrors.codes.OS_FS_UNKNOWN;
   return new HostFsError(fallback, error.message, { details: { rpcCode: error.code } });
+}
+
+function toHostFileStat(metadata: FsGetMetadataResult): HostFileStat {
+  return {
+    isFile: metadata.isFile,
+    isDirectory: metadata.isDirectory,
+    isSymbolicLink: metadata.isSymlink,
+    size: metadata.size,
+    mtimeMs: metadata.modifiedAtMs,
+    mode: metadata.mode,
+  };
 }
 
 function isUtf8Encoding(encoding: BufferEncoding): boolean {
@@ -89,6 +106,15 @@ export class RemoteFileSystem implements IHostFileSystem {
     for (let offset = 0; offset < data.byteLength; offset += FS_WRITE_FILE_CHUNK_BYTES) {
       await this.writeMode(path, data.subarray(offset, offset + FS_WRITE_FILE_CHUNK_BYTES), offset === 0 ? mode : 'append');
     }
+  }
+
+  async readFileHead(path: string, maxBytes: number): Promise<HostFileHead> {
+    const result = await this.call<FsReadFileResult>(FS_READ_FILE_METHOD, {
+      path,
+      maxBytes: Math.min(maxBytes, FS_READ_FILE_MAX_BYTES),
+      includeMetadata: true,
+    });
+    return { stat: toHostFileStat(result.metadata!), bytes: decodeBase64(result.dataBase64) };
   }
 
   async readText(
@@ -193,18 +219,10 @@ export class RemoteFileSystem implements IHostFileSystem {
   }
 
   private async metadata(path: string, followSymlinks: boolean): Promise<HostFileStat> {
-    const result = await this.call<FsGetMetadataResult>(FS_GET_METADATA_METHOD, {
+    return toHostFileStat(await this.call<FsGetMetadataResult>(FS_GET_METADATA_METHOD, {
       path,
       followSymlinks,
-    });
-    return {
-      isFile: result.isFile,
-      isDirectory: result.isDirectory,
-      isSymbolicLink: result.isSymlink,
-      size: result.size,
-      mtimeMs: result.modifiedAtMs,
-      mode: result.mode,
-    };
+    }));
   }
 
   async stat(path: string): Promise<HostFileStat> {
@@ -230,6 +248,21 @@ export class RemoteFileSystem implements IHostFileSystem {
       isDirectory: entry.isDirectory,
       isSymbolicLink: entry.isSymlink,
     }));
+  }
+
+  async walk(path: string, options: HostWalkOptions, visit: HostWalkVisitor): Promise<{ readonly truncated: boolean }> {
+    const remainingMs = options.deadlineMs === undefined ? FS_WALK_DEFAULT_TIMEOUT_MS : options.deadlineMs - Date.now();
+    if (remainingMs <= 0) return { truncated: true };
+    const result = await this.call<FsWalkResult>(FS_WALK_METHOD, {
+      path,
+      ignore: options.ignore,
+      timeoutMs: Math.min(remainingMs, FS_WALK_DEFAULT_TIMEOUT_MS),
+    });
+    for (const entry of result.entries) {
+      if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) return { truncated: true };
+      if (await visit(entry) === false) return { truncated: true };
+    }
+    return { truncated: result.truncated };
   }
 
   async mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {
