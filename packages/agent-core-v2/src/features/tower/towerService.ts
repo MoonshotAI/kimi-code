@@ -207,36 +207,29 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
           if (!this.wakeAbortedForUserPrompt) this.wakeTurnBatch = undefined;
           return;
         }
-        if (!this.wakeAbortedForUserPrompt) return;
-        if (
-          this.loop === undefined ||
-          this.loop.snapshot().queue.length > 0 ||
-          this.promptQueue?.hasPendingInputs() === true
-        ) {
-          return;
-        }
-        this.wakeAbortedForUserPrompt = false;
-        const batch = this.wakeTurnBatch;
-        this.wakeTurnBatch = undefined;
-        if (batch !== undefined) this.requeueInboxWake(batch);
-        this.scheduleInboxWake();
+        this.rearmAbortedWake();
       }),
     );
     this._register(
       eventBus.subscribe(PromptSubmitted, (event) => {
         if (this.agentCtx.agentId !== 'main') return;
-        if (!this.isActive) return;
         if (event.agentId !== this.agentCtx.agentId) return;
-        const turnId = this.wakeTurnId;
-        if (turnId === undefined) return;
-        queueMicrotask(() => {
-          if (this.wakeDisposed || !this.isActive || this.loop === undefined) return;
-          if (this.loop.cancel({ turnId }, userCancellationReason())) {
-            this.wakeAbortedForUserPrompt = true;
-          }
-        });
+        this.preemptWakeForUserPrompt();
       }),
     );
+    if (this.promptQueue !== undefined) {
+      const promptQueue = this.promptQueue;
+      this._register(
+        promptQueue.onDidChange(() => {
+          if (this.agentCtx.agentId !== 'main') return;
+          if (promptQueue.hasPendingInputs()) {
+            this.preemptWakeForUserPrompt();
+          } else if (this.wakeTurnId === undefined && this.loop?.canLaunchPrompt() === true) {
+            this.rearmAbortedWake();
+          }
+        }),
+      );
+    }
     this._register(
       toDisposable(() => {
         this.wakeDisposed = true;
@@ -759,6 +752,34 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       this.inboxWakeItems.shift();
       this.inboxWakeOmitted += 1;
     }
+  }
+
+  private preemptWakeForUserPrompt(): void {
+    if (!this.isActive) return;
+    const turnId = this.wakeTurnId;
+    if (turnId === undefined) return;
+    queueMicrotask(() => {
+      if (this.wakeDisposed || !this.isActive || this.loop === undefined) return;
+      if (this.loop.cancel({ turnId }, userCancellationReason())) {
+        this.wakeAbortedForUserPrompt = true;
+      }
+    });
+  }
+
+  private rearmAbortedWake(): void {
+    if (!this.wakeAbortedForUserPrompt) return;
+    if (
+      this.loop === undefined ||
+      this.loop.snapshot().queue.length > 0 ||
+      this.promptQueue?.hasPendingInputs() === true
+    ) {
+      return;
+    }
+    this.wakeAbortedForUserPrompt = false;
+    const batch = this.wakeTurnBatch;
+    this.wakeTurnBatch = undefined;
+    if (batch !== undefined) this.requeueInboxWake(batch);
+    this.scheduleInboxWake();
   }
 
   private requeueInboxWake(batch: InboxWakeBatch): void {
