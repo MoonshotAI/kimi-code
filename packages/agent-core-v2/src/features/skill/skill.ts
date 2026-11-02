@@ -1,3 +1,4 @@
+import type { PromptLaunch } from '#human/agent/turn';
 import type { ContentPart } from '#human/llm/message';
 import type { PromptFileAttachment } from '#/agent/contextMemory/types';
 
@@ -20,6 +21,7 @@ export interface PromptWithSkillsInput {
   readonly skills: readonly PromptSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];
   readonly steerIfActive?: boolean;
+  readonly launch?: PromptLaunch;
 }
 
 export interface PromptWithSkillsResult {

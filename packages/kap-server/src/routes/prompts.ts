@@ -9,12 +9,8 @@ import {
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
   IAgentToolPolicyService,
-  IAgentGoalService,
-  IAgentPlanService,
-  IAgentPromptQueueService,
   IAgentSkillService,
   IAgentSwarmService,
-  IAgentTowerService,
   IEventBus,
   IEventService,
   IFileService,
@@ -25,10 +21,10 @@ import {
   promptMetadataTextFromContentParts,
   ProfileError,
   type ContextMessage,
+  type PromptHandle,
   type PromptOrigin,
-  type PromptQueueSnapshot,
-  type PromptQueueSubmitResult,
   type PromptState,
+  type PromptWithSkillsResult,
   newMessageId,
   ISessionContext,
   reloadOnStale,
@@ -38,11 +34,9 @@ import {
   Error2,
   ErrorCodes,
   sessionMediaOriginalsDir,
-  type IAgentScopeHandle,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import type { UserEntry } from '@moonshot-ai/agent-core-v2/human/agent/turn';
 import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 import { ErrorCode } from '../protocol/error-codes';
@@ -54,12 +48,7 @@ import {
   promptSteerResultSchema,
   promptSubmissionSchema,
   promptSubmitResultSchema,
-  queueMoveRequestSchema,
-  queuePauseResponseSchema,
   type PromptSkillActivation,
-  type PromptSubmission,
-  type QueuedInputWire,
-  type QueueStateWire,
 } from '../protocol/rest-prompt';
 import { z } from 'zod';
 
@@ -107,15 +96,6 @@ const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
-const queueParamsSchema = z.object({
-  session_id: z.string().min(1),
-  agent_id: z.string().min(1),
-});
-
-const queueActionParamsSchema = queueParamsSchema.extend({
-  tail: z.string().min(1),
-});
-
 const validationDetailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
 async function resolveSession(core: Scope, sessionId: string): Promise<ISessionScopeHandle> {
@@ -139,9 +119,6 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
   return {
-    agentId: agentId ?? MAIN_AGENT_ID,
-    agent,
-    queue: agent.accessor.get(IAgentPromptQueueService),
     prompt: agent.accessor.get(IAgentLoopService),
     skill: agent.accessor.get(IAgentSkillService),
     events: agent.accessor.get(IEventBus),
@@ -211,7 +188,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const result = projectPromptList(await resolvePrompt(core, session_id));
+        const result = projectPromptList((await resolvePrompt(core, session_id)).prompt);
         reply.send(okEnvelope(result, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -234,9 +211,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
-        [ErrorCode.GOAL_ALREADY_EXISTS]: {},
-        [ErrorCode.GOAL_OBJECTIVE_EMPTY]: {},
-        [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         ...sessionConflictErrors,
@@ -266,6 +240,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
           await assertPromptPathRefs(req.body.content);
           if (req.body.skills !== undefined) {
+            if (req.body.prompt_id !== undefined) {
+              throw new Error2(
+                ErrorCodes.REQUEST_INVALID,
+                'prompt_id cannot be combined with a bundled skill submission',
+              );
+            }
             await assertActivatableSkills(
               session.accessor.get(ISessionSkillCatalog),
               req.body.skills,
@@ -313,93 +293,104 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           } finally {
             environmentMedia.dispose();
           }
-          const staging = preparedMedia;
+          const resolvedContent = preparedMedia.content;
           const promptAttachments =
-            staging.attachments.length > 0 ? staging.attachments : undefined;
-          const parts = contentToCoreParts(staging.content);
+            preparedMedia.attachments.length > 0 ? preparedMedia.attachments : undefined;
+
+          let thinkingConsumed = false;
+          if (req.body.profile !== undefined) {
+            thinkingConsumed =
+              (await applyProfileSelection(
+                resolved.profile,
+                req.body.profile,
+                req.body.model,
+                req.body.thinking,
+              )) && req.body.thinking !== undefined;
+          }
+          if (req.body.model !== undefined) await resolved.profile.setModel(req.body.model);
+          if (req.body.thinking !== undefined && !thinkingConsumed)
+            resolved.profile.setThinking(req.body.thinking);
+          if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
+          if (req.body.swarm_mode !== undefined && resolved.swarm.isActive !== req.body.swarm_mode) {
+            if (req.body.swarm_mode) resolved.swarm.enter('manual');
+            else resolved.swarm.exit();
+          }
+          if (req.body.disabled_tools !== undefined) {
+            try {
+              await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
+            } catch (error) {
+              if (error instanceof ProfileError) {
+                throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+              }
+              throw error;
+            }
+          }
+          const parts = contentToCoreParts(resolvedContent);
           const clientMetadata = req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)];
-          const updateMetadata = (): Promise<void> => applyPromptMetadataUpdate({
+          if (req.body.skills !== undefined) {
+            if (req.body.agent_id !== undefined && req.body.agent_id !== MAIN_AGENT_ID) {
+              await applyPromptMetadataUpdate({
+                metadata: session.accessor.get(ISessionMetadata),
+                eventService: core.accessor.get(IEventService),
+                sessionId: session_id,
+              }, promptMetadataTextFromContentParts(parts, clientMetadata));
+            }
+            const settlement = watchPromptSettlements(resolved.events);
+            let result: PromptWithSkillsResult;
+            try {
+              result = await resolved.skill.promptWithSkills({
+                input: parts,
+                clientMetadata,
+                skills: req.body.skills,
+                attachments: promptAttachments,
+              });
+            } catch (error) {
+              settlement.dispose();
+              throw error;
+            }
+            enqueued = true;
+            settlement.settle(result.prompt_id, () => preparedMedia?.discard());
+            reply.send(
+              okEnvelope(
+                {
+                  prompt_id: result.prompt_id,
+                  user_message_id: result.prompt_id,
+                  status: result.state,
+                  content: projectPromptContentParts(parts),
+                  created_at: result.created_at,
+                  metadata: clientMetadata?.[0],
+                },
+                req.id,
+              ),
+            );
+            return;
+          }
+          await applyPromptMetadataUpdate({
             metadata: session.accessor.get(ISessionMetadata),
             eventService: core.accessor.get(IEventService),
             sessionId: session_id,
           }, promptMetadataTextFromContentParts(parts, clientMetadata));
-          let entry: UserEntry;
-          let onStart: () => Promise<void>;
-          if (req.body.skills !== undefined) {
-            const prepared = await resolved.skill.preparePromptWithSkills(
-              { input: parts, clientMetadata, skills: req.body.skills, attachments: promptAttachments },
-              reservation.id,
-            );
-            entry = prepared.entry;
-            onStart = async () => {
-              if (resolved.agentId !== MAIN_AGENT_ID) await updateMetadata();
-              await prepared.onStart();
-            };
-          } else {
-            entry = {
-              message: { role: 'user', content: parts },
-              meta: {
-                promptId: reservation.id,
-                origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
-                tracked: true,
-              },
-            };
-            onStart = updateMetadata;
-          }
-          entry = {
-            ...entry,
-            meta: { ...entry.meta, createdAt: entry.meta?.createdAt ?? new Date().toISOString() },
-          };
-          const settlement = watchPromptSettlements(resolved.events);
-          let result: PromptQueueSubmitResult;
-          try {
-            result = await resolved.queue.submitInput({
-              id: reservation.id,
-              entry,
-              delivery: 'queue',
-              prepare: submissionSettings(resolved, req.body),
-              onStart,
-              onDrop: () => {
-                settlement.dispose();
-                void staging.discard();
-              },
-            });
-          } catch (error) {
-            settlement.dispose();
-            throw error;
-          }
+          const status = resolved.prompt.snapshot();
+          const { id } = resolved.prompt.submit({
+            message: { role: 'user', content: parts },
+            meta: {
+              promptId: reservation.id,
+              origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
+              tracked: true,
+            },
+          });
           reservation.submit();
           enqueued = true;
-          const handle = result.handle;
-          if (handle === undefined) {
-            settlement.settle(reservation.id, () => staging.discard());
-          } else {
-            settlement.dispose();
-            if (result.acceptedAs === 'turn') {
-              await Promise.race([handle.launched, handle.completion]);
-            }
-            void Promise.race([handle.launched, handle.completion]).then(
-              () => staging.discard(),
-              () => staging.discard(),
-            );
-            if (
-              req.body.skills !== undefined &&
-              result.acceptedAs === 'turn' &&
-              (await handle.launched) === undefined &&
-              handle.state !== 'blocked'
-            ) {
-              throw new Error2(ErrorCodes.INTERNAL, 'the skill prompt failed to start a turn');
-            }
+          const handle = resolved.prompt.promptHandle(id)!;
+          if (status.state === 'idle' && !status.paused && status.queue.length === 0) {
+            await Promise.race([handle.launched, handle.completion]);
           }
-          reply.send(okEnvelope(projectPromptSnapshot(
-            handle ?? {
-              id: reservation.id,
-              userMessageId: entry.meta?.userMessageId ?? reservation.id,
-              createdAt: entry.meta?.createdAt ?? '',
-              state: 'pending',
-              message: { ...entry.message, origin: entry.meta?.origin as PromptOrigin | undefined },
-            },
-          ), req.id));
+          const staging = preparedMedia;
+          void Promise.race([handle.launched, handle.completion]).then(
+            () => staging?.discard(),
+            () => staging?.discard(),
+          );
+          reply.send(okEnvelope(projectPromptHandle(handle), req.id));
         } catch (error) {
           if (!enqueued) await preparedMedia?.discardStaged();
           throw error;
@@ -435,7 +426,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        await steerPrompts(await resolvePrompt(core, session_id), req.body.prompt_ids);
+        const resolved = await resolvePrompt(core, session_id);
+        await resolved.prompt.steer(req.body.prompt_ids);
         reply.send(okEnvelope({ steered: true, prompt_ids: [...req.body.prompt_ids] }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -483,94 +475,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     },
   );
   app.post(actionRoute.path, actionRoute.options, actionRoute.handler as Parameters<PromptRouteHost['post']>[2]);
-
-  const queueErrors = {
-    [ErrorCode.VALIDATION_FAILED]: {},
-    [ErrorCode.SESSION_NOT_FOUND]: {},
-    [ErrorCode.SESSION_BUSY]: {},
-    [ErrorCode.PROMPT_NOT_FOUND]: {},
-  };
-
-  const pauseRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/sessions/{session_id}/agents/{agent_id}/queue::pause',
-      params: queueParamsSchema,
-      success: { data: queuePauseResponseSchema },
-      errors: queueErrors,
-      description: 'Pause the queue: queued prompts and steers stay put until it is resumed',
-      tags: ['prompts'],
-      operationId: 'pauseQueue',
-    },
-    async (req, reply) => {
-      try {
-        const { session_id, agent_id } = req.params;
-        (await resolvePrompt(core, session_id, agent_id)).queue.pause();
-        reply.send(okEnvelope({ paused: true }, req.id));
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      }
-    },
-  );
-  app.post(pauseRoute.path, pauseRoute.options, pauseRoute.handler as Parameters<PromptRouteHost['post']>[2]);
-
-  const resumeRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/sessions/{session_id}/agents/{agent_id}/queue::resume',
-      params: queueParamsSchema,
-      success: { data: queuePauseResponseSchema },
-      errors: queueErrors,
-      description: 'Resume the queue',
-      tags: ['prompts'],
-      operationId: 'resumeQueue',
-    },
-    async (req, reply) => {
-      try {
-        const { session_id, agent_id } = req.params;
-        (await resolvePrompt(core, session_id, agent_id)).queue.resume();
-        reply.send(okEnvelope({ paused: false }, req.id));
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      }
-    },
-  );
-  app.post(resumeRoute.path, resumeRoute.options, resumeRoute.handler as Parameters<PromptRouteHost['post']>[2]);
-
-  const queueActionRoute = defineRoute(
-    {
-      method: 'POST',
-      path: '/sessions/{session_id}/agents/{agent_id}/queue/{tail}',
-      params: queueActionParamsSchema,
-      body: z.preprocess((value) => (value === undefined ? {} : value), queueMoveRequestSchema),
-      success: { data: z.object({}) },
-      errors: queueErrors,
-      description: 'Move one queued prompt',
-      tags: ['prompts'],
-      operationId: 'queueAction',
-    },
-    async (req, reply) => {
-      const { session_id, agent_id, tail } = req.params;
-      try {
-        const target = resolveActionTarget({ tail, actions: queueActions, resourceLabel: 'prompt' });
-        if ('message' in target) {
-          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, target.message, req.id));
-          return;
-        }
-        const resolved = await resolvePrompt(core, session_id, agent_id);
-        await runAction({
-          action: target.action,
-          id: target.id,
-          actions: queueActions,
-          extra: { queue: resolved.queue, req, reply },
-          body: req.body,
-        });
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      }
-    },
-  );
-  app.post(queueActionRoute.path, queueActionRoute.options, queueActionRoute.handler as Parameters<PromptRouteHost['post']>[2]);
 }
 
 type PromptActionExtra = {
@@ -589,189 +493,41 @@ const promptActions: ActionTable<'abort' | 'steer', PromptActionExtra> = {
 
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, session_id, req, reply, id } = ctx;
-  if (resolved.queue.has(id)) resolved.queue.cancel(id);
-  else resolved.prompt.cancel({ promptId: id });
+  resolved.prompt.cancel({ promptId: id });
   requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }
 
 async function steerPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, req, reply, id } = ctx;
-  await steerPrompts(resolved, [id]);
+  await resolved.prompt.steer([id]);
   reply.send(okEnvelope({ steered: true, prompt_ids: [id] }, req.id));
 }
 
-type ResolvedPrompt = Awaited<ReturnType<typeof resolvePrompt>>;
-
-async function steerPrompts(resolved: ResolvedPrompt, promptIds: readonly string[]): Promise<void> {
-  const queued = new Map(resolved.queue.snapshot().items.map((item) => [item.id, item]));
-  if (promptIds.some((id) => queued.get(id)?.kind === 'compact')) {
-    throw new Error2(ErrorCodes.REQUEST_INVALID, 'only an input can be steered');
-  }
-  const loopIds = promptIds.filter((id) => !queued.has(id));
-  const loopPending = new Set(resolved.prompt.snapshot().queue.map((item) => item.meta?.promptId));
-  if (loopIds.some((id) => !loopPending.has(id))) {
-    throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
-  }
-  for (const id of promptIds) {
-    if (queued.has(id)) resolved.queue.steer(id);
-  }
-  if (loopIds.length > 0) await resolved.prompt.steer(loopIds);
-}
-
-function submissionSettings(
-  resolved: ResolvedPrompt,
-  body: PromptSubmission,
-): (() => Promise<void>) | undefined {
-  const mainAgent = resolved.agentId === MAIN_AGENT_ID;
-  const enterPlan = mainAgent && body.plan_mode === true;
-  const goalObjective = mainAgent ? body.goal_objective : undefined;
-  const changesSettings =
-    body.profile !== undefined ||
-    body.model !== undefined ||
-    body.thinking !== undefined ||
-    body.permission_mode !== undefined ||
-    body.swarm_mode !== undefined ||
-    body.disabled_tools !== undefined ||
-    enterPlan ||
-    goalObjective !== undefined;
-  if (!changesSettings) return undefined;
-  return async () => {
-    let thinkingConsumed = false;
-    if (body.profile !== undefined) {
-      thinkingConsumed =
-        (await applyProfileSelection(resolved.profile, body.profile, body.model, body.thinking)) &&
-        body.thinking !== undefined;
-    }
-    if (body.model !== undefined) await resolved.profile.setModel(body.model);
-    if (body.thinking !== undefined && !thinkingConsumed) resolved.profile.setThinking(body.thinking);
-    if (body.permission_mode !== undefined) resolved.permissionMode.setMode(body.permission_mode);
-    if (body.swarm_mode !== undefined && resolved.swarm.isActive !== body.swarm_mode) {
-      if (body.swarm_mode) resolved.swarm.enter('manual');
-      else resolved.swarm.exit();
-    }
-    if (body.disabled_tools !== undefined) {
-      try {
-        await resolved.toolPolicy.setSessionDisabledTools(body.disabled_tools);
-      } catch (error) {
-        if (error instanceof ProfileError) {
-          throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
-        }
-        throw error;
-      }
-    }
-    if (enterPlan) await enterPlanMode(resolved.agent);
-    if (goalObjective !== undefined) await startGoal(resolved.agent, goalObjective);
-  };
-}
-
-async function enterPlanMode(agent: IAgentScopeHandle): Promise<void> {
-  const plan = agent.accessor.get(IAgentPlanService);
-  if ((await plan.status()) === null) await plan.enter();
-  const tower = agent.accessor.get(IAgentTowerService);
-  if (tower.isActive) await tower.exit();
-}
-
-async function startGoal(agent: IAgentScopeHandle, objective: string): Promise<void> {
-  await agent.accessor.get(IAgentGoalService).createGoal({ objective });
-  const plan = agent.accessor.get(IAgentPlanService);
-  if ((await plan.status()) !== null) plan.exit();
-}
-
-function projectPromptList(resolved: ResolvedPrompt) {
-  const snapshot = resolved.prompt.snapshot();
+function projectPromptList(loop: IAgentLoopService) {
+  const snapshot = loop.snapshot();
   const active =
     snapshot.activePromptId === undefined
       ? undefined
-      : resolved.prompt.promptHandle(snapshot.activePromptId);
-  const loopQueued = snapshot.queue
-    .filter((item) => item.meta?.tracked === true)
-    .map((item) =>
-      projectPromptSnapshot({
-        id: item.meta?.promptId ?? '',
-        userMessageId: item.meta?.userMessageId ?? '',
-        createdAt: item.meta?.createdAt ?? '',
-        state: 'pending',
-        message: { ...item.message, origin: item.meta?.origin as PromptOrigin | undefined },
-      }),
-    );
-  const serverQueued = resolved.queue.snapshot().items.flatMap((item) =>
-    item.kind === 'input'
-      ? [
-          projectPromptSnapshot({
-            id: item.id,
-            userMessageId: item.entry.meta?.userMessageId ?? item.id,
-            createdAt: item.createdAt,
-            state: 'pending',
-            message: { ...item.entry.message, origin: item.entry.meta?.origin as PromptOrigin | undefined },
-          }),
-        ]
-      : [],
-  );
+      : loop.promptHandle(snapshot.activePromptId);
   return {
     active: active === undefined ? null : projectPromptSnapshot(active),
-    queued: [...loopQueued, ...serverQueued],
+    queued: snapshot.queue
+      .filter((item) => item.meta?.tracked === true)
+      .map((item) =>
+        projectPromptSnapshot({
+          id: item.meta?.promptId ?? '',
+          userMessageId: item.meta?.userMessageId ?? '',
+          createdAt: item.meta?.createdAt ?? '',
+          state: 'pending',
+          message: { ...item.message, origin: item.meta?.origin as PromptOrigin | undefined },
+        }),
+      ),
   };
 }
 
-type QueueActionExtra = {
-  readonly queue: IAgentPromptQueueService;
-  readonly req: { readonly id: string };
-  readonly reply: { readonly send: (payload: unknown) => unknown };
-};
-
-type QueueActionCtx = QueueActionExtra & { readonly id: string; readonly body: unknown };
-
-const queueActions: ActionTable<'move', QueueActionExtra> = {
-  move: { handle: ({ queue, req, reply, id, body }: QueueActionCtx) => {
-    const parsed = queueMoveRequestSchema.safeParse(body ?? {});
-    if (!parsed.success) {
-      throw new Error2(ErrorCodes.REQUEST_INVALID, parsed.error.issues.map((issue) => issue.message).join('; '));
-    }
-    queue.move(id, parsed.data.before_prompt_id);
-    reply.send(okEnvelope({}, req.id));
-  } },
-};
-
-export function toWireQueueState(snapshot: PromptQueueSnapshot): QueueStateWire {
-  return {
-    paused: snapshot.paused,
-    inputs: snapshot.items.map((item): QueuedInputWire => {
-      if (item.kind === 'compact') {
-        return {
-          prompt_id: item.id,
-          user_message_id: item.id,
-          kind: 'compact',
-          delivery: 'queue',
-          content: [],
-          instruction: item.instruction,
-          created_at: item.createdAt,
-        };
-      }
-      const origin = item.entry.meta?.origin as PromptOrigin | undefined;
-      const projected = projectPromptSnapshot({
-        id: item.id,
-        userMessageId: item.entry.meta?.userMessageId ?? item.id,
-        createdAt: item.createdAt,
-        state: 'pending',
-        message: { ...item.entry.message, origin },
-      });
-      const skills = origin?.kind === 'user' ? (origin.skillActivations ?? []) : [];
-      return {
-        prompt_id: item.id,
-        user_message_id: projected.user_message_id,
-        kind: 'input',
-        delivery: item.delivery,
-        content: projected.content,
-        skills:
-          skills.length === 0
-            ? undefined
-            : skills.map((skill) => ({ name: skill.skillName, args: skill.skillArgs })),
-        client_metadata: projected.metadata,
-        created_at: item.createdAt,
-      };
-    }),
-  };
+function projectPromptHandle(handle: PromptHandle) {
+  return projectPromptSnapshot(handle);
 }
 
 export function projectPromptSnapshot(prompt: {

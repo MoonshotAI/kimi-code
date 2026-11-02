@@ -827,6 +827,8 @@ describe('AgentConversationUndoService', () => {
       ],
       notificationCount: 0,
       paused: false,
+      queuePaused: false,
+      queueHeld: false,
       hasPendingRequests: true,
       turn: undefined,
       activeRequestId: undefined,

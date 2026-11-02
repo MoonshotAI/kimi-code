@@ -10,8 +10,8 @@ import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from
 import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes, isError2, SessionErrors, unwrapErrorCause } from '#/errors';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentCronService } from '#/features/cron/cronService';
-import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -302,7 +302,8 @@ export class SessionManager implements ISessionManager {
     const holdsWork = agents.list().some((agent) => {
       const accessor = agents.handleOf(agent.agentId)?.accessor;
       if (accessor === undefined) return false;
-      return accessor.get(IAgentCronService).list().length > 0 || accessor.get(IAgentPromptQueueService).holdsWork();
+      const loop = accessor.get(IAgentLoopService).snapshot();
+      return accessor.get(IAgentCronService).list().length > 0 || loop.queuePaused || loop.queue.length > 0;
     });
     if (holdsWork) return true;
     const activity = handle.accessor.get(ISessionActivityView).state();

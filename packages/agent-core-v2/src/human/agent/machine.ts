@@ -90,6 +90,9 @@ export type AgentEvent =
   | { type: 'input.abort'; reason?: unknown }
   | { type: 'input.pause' }
   | { type: 'input.continue' }
+  | { type: 'input.hold' }
+  | { type: 'input.release' }
+  | { type: 'input.move'; id: string; beforeId?: string }
   | { type: 'input.close' }
   | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
@@ -153,6 +156,7 @@ export interface AgentMachineContext {
   drainedId?: string;
   drainedEntry?: UserEntry;
   paused: boolean;
+  held: boolean;
   abortReason?: unknown;
 }
 
@@ -234,6 +238,19 @@ function hasPendingWork(context: AgentMachineContext): boolean {
   return context.notifications.length > 0 || context.queue.length > 0;
 }
 
+function hasStartableWork(context: AgentMachineContext): boolean {
+  return context.notifications.length > 0 || (context.queue.length > 0 && !context.held);
+}
+
+function movedQueue(queue: readonly UserEntry[], id: string, beforeId: string | undefined): UserEntry[] | undefined {
+  const moved = queue.find((item) => item.meta?.promptId === id);
+  if (moved === undefined) return undefined;
+  const rest = queue.filter((item) => item !== moved);
+  const index = beforeId === undefined ? rest.length : rest.findIndex((item) => item.meta?.promptId === beforeId);
+  if (index === -1) return undefined;
+  return [...rest.slice(0, index), moved, ...rest.slice(index)];
+}
+
 function historyEndsMidToolChain(messages: readonly HistoryMessage[]): boolean {
   const last = messages.at(-1);
   if (last === undefined) return false;
@@ -245,20 +262,24 @@ function hasBackgroundWork(context: AgentMachineContext): boolean {
   return Object.keys(context.background).length > 0;
 }
 
-function drainPendingPatch(
+function pendingCommit(
   context: AgentMachineContext,
-): Pick<AgentMachineContext, 'messages' | 'notifications' | 'queue' | 'drainedId' | 'drainedEntry'> {
-  const [head, ...rest] = context.queue;
+  takeHead: boolean,
+): {
+  readonly appended: ReturnType<typeof messageAppended>[];
+  readonly patch: Pick<AgentMachineContext, 'messages' | 'notifications' | 'queue' | 'drainedId' | 'drainedEntry'>;
+} {
+  const head = takeHead ? context.queue[0] : undefined;
+  const committed = head === undefined ? context.notifications : [...context.notifications, head];
   return {
-    messages: [
-      ...context.messages,
-      ...context.notifications,
-      ...(head === undefined ? [] : [head]),
-    ],
-    notifications: [],
-    queue: rest,
-    drainedId: head?.meta?.promptId,
-    drainedEntry: head,
+    appended: committed.map((message) => messageAppended({ message })),
+    patch: {
+      messages: [...context.messages, ...committed],
+      notifications: [],
+      queue: head === undefined ? context.queue : context.queue.slice(1),
+      drainedId: head?.meta?.promptId,
+      drainedEntry: head,
+    },
   };
 }
 
@@ -344,17 +365,14 @@ export function createAgentMachine({
         self._parent?.send(event);
       },
       commitPendingToHistory: enqueueActions(({ context, enqueue }) => {
-        const head = context.queue[0];
-        enqueue.sendTo('store', {
-          type: 'store.append' as const,
-          event: [
-            ...context.notifications.map((entry) => messageAppended({ message: entry })),
-            ...(head === undefined
-              ? []
-              : [messageAppended({ message: head })]),
-          ],
-        });
-        enqueue.assign(drainPendingPatch(context));
+        const { appended, patch } = pendingCommit(context, !context.held);
+        enqueue.sendTo('store', { type: 'store.append' as const, event: appended });
+        enqueue.assign(patch);
+      }),
+      commitGatedHead: enqueueActions(({ context, enqueue }) => {
+        const { appended, patch } = pendingCommit(context, true);
+        enqueue.sendTo('store', { type: 'store.append' as const, event: appended });
+        enqueue.assign(patch);
       }),
       resetMirror: assign(({ context, event }) => {
         if (event.type !== 'store.reset') return {};
@@ -443,6 +461,7 @@ export function createAgentMachine({
       turnId: 0,
       branchId: 'main',
       paused: false,
+      held: false,
     }),
     invoke: {
       src: 'controllerGuard',
@@ -535,6 +554,19 @@ export function createAgentMachine({
       'input.continue': {
         actions: assign({ paused: false }),
       },
+      'input.hold': {
+        actions: assign({ held: true }),
+      },
+      'input.release': {
+        actions: assign({ held: false }),
+      },
+      'input.move': {
+        actions: assign(({ context, event }) => {
+          if (event.type !== 'input.move') return {};
+          const queue = movedQueue(context.queue, event.id, event.beforeId);
+          return queue === undefined ? {} : { queue };
+        }),
+      },
       'store.error': {
         actions: 'forwardToParent',
       },
@@ -624,11 +656,14 @@ export function createAgentMachine({
             always: [
               {
                 guard: ({ context }) =>
-                  context.promptGate !== undefined && context.queue.length > 0 && !context.paused,
+                  context.promptGate !== undefined &&
+                  context.queue.length > 0 &&
+                  !context.held &&
+                  !context.paused,
                 target: 'gating',
               },
               {
-                guard: ({ context }) => hasPendingWork(context) && !context.paused,
+                guard: ({ context }) => hasStartableWork(context) && !context.paused,
                 target: '#agent.running',
                 actions: ['commitPendingToHistory'],
               },
@@ -642,11 +677,14 @@ export function createAgentMachine({
             always: [
               {
                 guard: ({ context }) =>
-                  context.promptGate !== undefined && context.queue.length > 0 && !context.paused,
+                  context.promptGate !== undefined &&
+                  context.queue.length > 0 &&
+                  !context.held &&
+                  !context.paused,
                 target: 'gating',
               },
               {
-                guard: ({ context }) => hasPendingWork(context) && !context.paused,
+                guard: ({ context }) => hasStartableWork(context) && !context.paused,
                 target: '#agent.running',
                 actions: ['commitPendingToHistory'],
               },
@@ -696,7 +734,7 @@ export function createAgentMachine({
                       if (rewritten === undefined || head === undefined) return {};
                       return { queue: [{ ...head, message: rewritten }, ...context.queue.slice(1)] };
                     }),
-                    'commitPendingToHistory',
+                    'commitGatedHead',
                   ],
                 },
               ],

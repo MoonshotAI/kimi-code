@@ -48,12 +48,18 @@ export interface EntryMeta {
 
 export type SystemMeta = EntryMeta;
 
+export interface PromptLaunch {
+  readonly planMode?: boolean;
+  readonly goalObjective?: string;
+}
+
 export interface UserMeta extends EntryMeta {
   promptId?: string;
   origin?: PromptOrigin;
   tracked?: boolean;
   createdAt?: string;
   userMessageId?: string;
+  launch?: PromptLaunch;
 }
 
 export type ToolMeta = EntryMeta;

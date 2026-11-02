@@ -72,6 +72,8 @@ describe('AgentTitlePromptSource', () => {
             })),
             notificationCount: 0,
             paused: false,
+            queuePaused: false,
+            queueHeld: false,
             hasPendingRequests: queue.pending.length > 0,
             turn: undefined,
             activeTraceId: undefined,

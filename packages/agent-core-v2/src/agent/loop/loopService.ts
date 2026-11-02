@@ -85,6 +85,7 @@ import {
   type PromptHandle,
   type PromptState,
   type PromptSubmitContext,
+  type QuiescenceOptions,
   type Turn,
   type TurnResult,
 } from './loop';
@@ -147,9 +148,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     onBeforeSubmitPrompt: new OrderedHookSlot(),
   };
 
-  private readonly onDidChangeActivityEmitter = this._register(new Emitter<void>());
-  readonly onDidChangeActivity = this.onDidChangeActivityEmitter.event;
-
   private readonly errorHandlers: LoopErrorHandler[] = [];
   private readonly promptWaiters = new Map<string, PromptWaiter>();
   private readonly steered = new Map<string, SteeredPrompt>();
@@ -167,8 +165,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private machineTurnSuppressed = false;
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
-  private endingTurns = 0;
   private historySnapshotDepth = 0;
+  private queuePausedByUser = false;
+  private queueHolds = 0;
+  private gatingPromptId: string | undefined;
+  private readonly cancelOnLaunch = new Map<string, unknown>();
+  private readonly onDidChangeQueueEmitter = this._register(new Emitter<void>());
+  readonly onDidChangeQueue = this.onDidChangeQueueEmitter.event;
   private activeRequestTrace: LLMRequestTrace | undefined;
   private engine: MachineEngine | undefined;
 
@@ -289,6 +292,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (this.quiescenceDepth > 0) {
       this.machineEngine().pause();
     }
+    this.applyQueueHold();
     if (!this.disposing) {
       this.drainPendingToMachine();
       this.maybeSettle();
@@ -357,16 +361,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       const queued =
         this.active !== undefined ||
         this.machinePaused() ||
+        this.queueHeld() ||
         (this.engine !== undefined && this.engine.snapshot().queue.length > 0);
       this.publishPromptSubmitted(
         { promptId: id, origin, userMessageId, createdAt, message },
         queued ? 'queued' : 'running',
       );
-      if (queued && options?.announcedAsQueued !== true) this.publishPromptQueued({ promptId: id, origin, message });
+      if (queued) this.publishPromptQueued({ promptId: id, origin, message });
     }
     const entry: UserEntry = {
       message: { role: 'user', content: [...input.message.content] },
-      meta: { promptId: id, origin, tracked, createdAt, userMessageId },
+      meta: { promptId: id, origin, tracked, createdAt, userMessageId, launch: meta?.launch },
     };
     if (this.engine !== undefined) {
       try {
@@ -394,6 +399,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     ) {
       this.machineEngine().steer(id);
     }
+    this.onDidChangeQueueEmitter.fire();
     return { id };
   }
 
@@ -409,6 +415,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const engine = this.machineEngine();
     const ids = new Set(promptIds);
     const queuedIds = new Set(engine.snapshot().queue.map((item) => item.meta?.promptId));
+    if (this.gatingPromptId !== undefined) queuedIds.delete(this.gatingPromptId);
     if (ids.size !== promptIds.length || ![...ids].every((id) => queuedIds.has(id))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
@@ -418,11 +425,68 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     if (
       this.active !== active ||
+      (this.gatingPromptId !== undefined && ids.has(this.gatingPromptId)) ||
       ![...ids].every((id) => new Set(engine.snapshot().queue.map((item) => item.meta?.promptId)).has(id))
     ) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
     }
     engine.steer(promptIds);
+    this.onDidChangeQueueEmitter.fire();
+  }
+
+  pauseQueue(): void {
+    if (this.queuePausedByUser) return;
+    this.queuePausedByUser = true;
+    this.applyQueueHold();
+    this.onDidChangeQueueEmitter.fire();
+  }
+
+  resumeQueue(): void {
+    if (!this.queuePausedByUser) return;
+    this.queuePausedByUser = false;
+    this.applyQueueHold();
+    this.onDidChangeQueueEmitter.fire();
+  }
+
+  holdQueue(): IDisposable {
+    this.queueHolds += 1;
+    this.applyQueueHold();
+    let released = false;
+    return toDisposable(() => {
+      if (released) return;
+      released = true;
+      this.queueHolds -= 1;
+      this.applyQueueHold();
+      this.maybeSettle();
+    });
+  }
+
+  moveQueued(promptId: string, beforePromptId?: string): void {
+    const queued = new Set(
+      (this.engine?.snapshot().queue ?? [])
+        .filter((item) => item.meta?.tracked === true)
+        .map((item) => item.meta?.promptId),
+    );
+    if (this.gatingPromptId !== undefined) queued.delete(this.gatingPromptId);
+    if (!queued.has(promptId) || (beforePromptId !== undefined && !queued.has(beforePromptId))) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'the prompt is not waiting in the queue');
+    }
+    if (beforePromptId === promptId) return;
+    this.machineEngine().move(promptId, beforePromptId);
+    this.onDidChangeQueueEmitter.fire();
+  }
+
+  private queueHeld(): boolean {
+    return this.queuePausedByUser || this.queueHolds > 0;
+  }
+
+  private applyQueueHold(): void {
+    const engine = this.engine;
+    if (engine === undefined || this.disposing) return;
+    const held = this.queueHeld();
+    if (engine.snapshot().held === held) return;
+    if (held) engine.hold();
+    else engine.release();
   }
 
   promptHandle(id: string): PromptHandle | undefined {
@@ -556,6 +620,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       activePromptId:
         this.active !== undefined && this.active.prompt.tracked ? this.active.prompt.id : undefined,
       queue,
+      queuePaused: this.queuePausedByUser,
+      queueHeld: this.queueHeld(),
       notificationCount: engineSnapshot?.notificationCount ?? 0,
       paused: engineSnapshot?.paused ?? false,
       hasPendingRequests: this.hasPendingRequests(),
@@ -581,6 +647,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     void active.turn.result.then((result) =>
       this.settlePromptCompletion(waiter, active.prompt, result),
     );
+    this.onDidChangeQueueEmitter.fire();
+    if (this.cancelOnLaunch.has(waiter.id)) {
+      const reason = this.cancelOnLaunch.get(waiter.id);
+      this.cancelOnLaunch.delete(waiter.id);
+      this.cancelActiveTurn(undefined, reason);
+    }
     if (!active.prompt.tracked) return;
     this.publishPromptStarted(active.prompt.id, active.prompt.origin);
   }
@@ -650,13 +722,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
     const ctx: PromptSubmitContext = {
       promptMessage,
+      launch: entry.meta?.launch,
       isSteer: false,
       hookParts: [],
       block: false,
     };
-    await this.hooks.onBeforeSubmitPrompt.run(ctx);
-    if (ctx.block) return { block: true };
-    await this.materializeDaemonRefs(promptMessage);
+    this.gatingPromptId = queueItemId;
+    try {
+      await this.hooks.onBeforeSubmitPrompt.run(ctx);
+      if (ctx.block) return { block: true };
+      await this.materializeDaemonRefs(promptMessage);
+    } finally {
+      this.gatingPromptId = undefined;
+    }
     return {
       block: false,
       message: {
@@ -676,6 +754,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ): void {
     const waiter = queueItemId === undefined ? undefined : this.promptWaiters.get(queueItemId);
     if (waiter === undefined) return;
+    this.cancelOnLaunch.delete(waiter.id);
     if (state === 'blocked' && entry !== undefined && entry.message.content.length > 0) {
       this.context.append({
         role: 'user',
@@ -804,6 +883,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (active !== undefined && active.prompt.id === waiter.id) {
       return this.cancelActiveTurn(undefined, cancellation);
     }
+    if (waiter.id === this.gatingPromptId) {
+      this.cancelOnLaunch.set(waiter.id, cancellation);
+      return true;
+    }
     const tracked = this.promptProjection(waiter.id)?.tracked === true;
     this.engine?.cancelQueueItem(waiter.id);
     this.settleWaiterCancelled(waiter);
@@ -813,6 +896,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.terminalStates.set(waiter.id, 'cancelled');
     this.promptWaiters.delete(waiter.id);
     this.steered.delete(waiter.id);
+    this.onDidChangeQueueEmitter.fire();
     return true;
   }
 
@@ -826,13 +910,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.maybeSettle();
   }
 
-  tryAcquireQuiescence(): IDisposable | undefined {
+  tryAcquireQuiescence(options?: QuiescenceOptions): IDisposable | undefined {
     if (this.disposing) throw abortError('Agent loop disposed');
     if (
       this.quiescenceDepth > 0 ||
       this.historySnapshotDepth > 0 ||
       this.active !== undefined ||
-      this.hasPendingRequests() ||
+      this.hasPendingRequests(options?.allowHeldQueue === true && this.queueHeld()) ||
       this.pendingMachineTurn !== undefined
     ) {
       return undefined;
@@ -848,6 +932,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.historySnapshotDepth += 1;
     return toDisposable(() => {
       this.historySnapshotDepth -= 1;
+      this.onDidChangeQueueEmitter.fire();
     });
   }
 
@@ -973,10 +1058,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
-  private hasPendingRequests(): boolean {
+  private hasPendingRequests(ignoreQueue = false): boolean {
     return (
       this.pendingSubmissions.length > 0 ||
-      (this.engine?.snapshot().queue.length ?? 0) > 0 ||
+      (!ignoreQueue && (this.engine?.snapshot().queue.length ?? 0) > 0) ||
       this.nudges.slice(this.nudgeCursor).some((nudge) => !nudge.dropped)
     );
   }
@@ -994,29 +1079,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     });
   }
 
-  canLaunchPrompt(): boolean {
-    return (
-      !this.disposing &&
-      this.quiescenceDepth === 0 &&
-      this.active === undefined &&
-      this.endingTurns === 0 &&
-      this.pendingMachineTurn === undefined &&
-      !this.hasPendingRequests()
-    );
-  }
-
-  canSteerPrompt(): boolean {
-    return (
-      !this.disposing &&
-      this.quiescenceDepth === 0 &&
-      this.engine !== undefined &&
-      this.active !== undefined &&
-      this.active.prompt.tracked
-    );
-  }
-
   private maybeSettle(): void {
-    this.onDidChangeActivityEmitter.fire();
+    this.onDidChangeQueueEmitter.fire();
     if (
       this.active !== undefined ||
       this.pendingMachineTurn !== undefined ||
@@ -1375,7 +1439,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       enabled_plugins: this.plugins.enabledPluginIds()?.join(','),
     };
     this.telemetry.track2('turn_started', started);
-    this.onDidChangeActivityEmitter.fire();
     return active;
   }
 
@@ -2204,16 +2267,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private async endTurn(turn: ActiveTurn, result: TurnResult): Promise<void> {
     if (this.active !== turn) return;
     this.active = undefined;
-    this.endingTurns += 1;
-    try {
-      await this.finishTurn(turn, result);
-    } finally {
-      this.endingTurns -= 1;
-    }
-    this.maybeSettle();
-  }
-
-  private async finishTurn(turn: ActiveTurn, result: TurnResult): Promise<void> {
     this.disarmTurnWatch();
     await this.wire.drainPersisted().catch(() => undefined);
     for (const nudge of this.nudges.slice(this.nudgeCursor)) {
@@ -2284,6 +2337,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.activeRequestTrace = undefined;
     this.lastRequestId = undefined;
     turn.result.resolve(result);
+    this.maybeSettle();
   }
 
   private emitStepInterrupted(

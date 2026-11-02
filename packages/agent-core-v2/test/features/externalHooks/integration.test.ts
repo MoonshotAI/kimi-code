@@ -39,7 +39,6 @@ import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { PromptQueued } from '#/agent/prompt/promptEvents';
-import { PromptHeld } from '#/agent/promptQueue/promptQueueEvents';
 import { IAgentTaskService } from '#/agent/task/task';
 import { TaskStarted } from '#/agent/task/taskOps';
 import {
@@ -1280,14 +1279,6 @@ describe('IExternalHooksRunnerService integration', () => {
         }),
       );
       eventBus.publish(
-        new PromptHeld({
-          agentId: 'main',
-          promptId: 'p2',
-          content: [{ type: 'text', text: 'held' }],
-          queueLength: 1,
-        }),
-      );
-      eventBus.publish(
         new TaskStarted({
           agentId: 'main',
           info: {
@@ -1354,17 +1345,6 @@ describe('IExternalHooksRunnerService integration', () => {
               },
             ],
             queueLength: 2,
-          },
-        },
-        {
-          event: 'UserPromptQueued',
-          matcherValue: [{ type: 'text', text: 'held' }],
-          cwd: '/tmp',
-          inputData: {
-            sessionTitle: 'My Session',
-            promptId: 'p2',
-            prompt: [{ type: 'text', text: 'held' }],
-            queueLength: 1,
           },
         },
         {

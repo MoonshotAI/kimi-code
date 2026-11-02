@@ -8,7 +8,6 @@ import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
-import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptSubmitted } from '#/agent/prompt/promptEvents';
@@ -122,7 +121,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IEventBus eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IAgentPromptQueueService private readonly promptQueue: IAgentPromptQueueService | undefined,
     @IAgentTaskService private readonly tasks: IAgentTaskService | undefined,
     @ISessionEventBus sessionBus: ISessionEventBus,
     @IBashParserService private readonly bashParser: IBashParserService,
@@ -205,30 +203,32 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         if (event.turnId === this.wakeTurnId) {
           this.wakeTurnId = undefined;
           if (!this.wakeAbortedForUserPrompt) this.wakeTurnBatch = undefined;
+          return;
         }
-        this.rearmAbortedWake();
+        if (!this.wakeAbortedForUserPrompt) return;
+        if (this.loop === undefined || this.loop.snapshot().queue.length > 0) return;
+        this.wakeAbortedForUserPrompt = false;
+        const batch = this.wakeTurnBatch;
+        this.wakeTurnBatch = undefined;
+        if (batch !== undefined) this.requeueInboxWake(batch);
+        this.scheduleInboxWake();
       }),
     );
     this._register(
       eventBus.subscribe(PromptSubmitted, (event) => {
         if (this.agentCtx.agentId !== 'main') return;
+        if (!this.isActive) return;
         if (event.agentId !== this.agentCtx.agentId) return;
-        this.preemptWakeForUserPrompt();
+        const turnId = this.wakeTurnId;
+        if (turnId === undefined) return;
+        queueMicrotask(() => {
+          if (this.wakeDisposed || !this.isActive || this.loop === undefined) return;
+          if (this.loop.cancel({ turnId }, userCancellationReason())) {
+            this.wakeAbortedForUserPrompt = true;
+          }
+        });
       }),
     );
-    if (this.promptQueue !== undefined) {
-      const promptQueue = this.promptQueue;
-      this._register(
-        promptQueue.onDidChange(() => {
-          if (this.agentCtx.agentId !== 'main') return;
-          if (promptQueue.hasPendingInputs()) {
-            this.preemptWakeForUserPrompt();
-          } else if (this.wakeTurnId === undefined && this.loop?.canLaunchPrompt() === true) {
-            this.rearmAbortedWake();
-          }
-        }),
-      );
-    }
     this._register(
       toDisposable(() => {
         this.wakeDisposed = true;
@@ -751,34 +751,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       this.inboxWakeItems.shift();
       this.inboxWakeOmitted += 1;
     }
-  }
-
-  private preemptWakeForUserPrompt(): void {
-    if (!this.isActive) return;
-    const turnId = this.wakeTurnId;
-    if (turnId === undefined) return;
-    queueMicrotask(() => {
-      if (this.wakeDisposed || !this.isActive || this.loop === undefined) return;
-      if (this.loop.cancel({ turnId }, userCancellationReason())) {
-        this.wakeAbortedForUserPrompt = true;
-      }
-    });
-  }
-
-  private rearmAbortedWake(): void {
-    if (!this.wakeAbortedForUserPrompt) return;
-    if (
-      this.loop === undefined ||
-      this.loop.snapshot().queue.length > 0 ||
-      this.promptQueue?.hasPendingInputs() === true
-    ) {
-      return;
-    }
-    this.wakeAbortedForUserPrompt = false;
-    const batch = this.wakeTurnBatch;
-    this.wakeTurnBatch = undefined;
-    if (batch !== undefined) this.requeueInboxWake(batch);
-    this.scheduleInboxWake();
   }
 
   private requeueInboxWake(batch: InboxWakeBatch): void {

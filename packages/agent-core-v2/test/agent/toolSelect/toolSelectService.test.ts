@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { produce } from 'immer';
 
 import { DisposableStore, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
-import { Event } from '#/_base/event';
 import { createServices, type ServiceRegistration, type TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
 import { OrderedHookSlot } from '#/hooks';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
@@ -244,6 +244,24 @@ class FakeLoopService implements IAgentLoopService {
     throw new Error('unused in this suite');
   }
 
+  readonly onDidChangeQueue = Event.None as Event<void>;
+
+  pauseQueue(): never {
+    throw new Error('unused in this suite');
+  }
+
+  resumeQueue(): never {
+    throw new Error('unused in this suite');
+  }
+
+  holdQueue(): never {
+    throw new Error('unused in this suite');
+  }
+
+  moveQueued(): never {
+    throw new Error('unused in this suite');
+  }
+
   snapshot(): LoopSnapshot {
     return {
       state: 'idle',
@@ -252,6 +270,8 @@ class FakeLoopService implements IAgentLoopService {
       queue: [],
       notificationCount: 0,
       paused: false,
+      queuePaused: false,
+      queueHeld: false,
       hasPendingRequests: false,
       turn: undefined,
       activeRequestId: undefined,
@@ -261,16 +281,6 @@ class FakeLoopService implements IAgentLoopService {
   promptHandle(): never {
     throw new Error('unused in this suite');
   }
-
-  canLaunchPrompt(): boolean {
-    return true;
-  }
-
-  canSteerPrompt(): boolean {
-    return false;
-  }
-
-  readonly onDidChangeActivity = Event.None as Event<void>;
 
   notify(): LoopNotifyHandle {
     throw new Error('unused in this suite');

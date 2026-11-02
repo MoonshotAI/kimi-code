@@ -6,7 +6,6 @@ import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
 import type { ILogService } from '#/_base/log/log';
-import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import type { IConfigService } from '#/app/config/config';
 import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
 import type { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
@@ -16,6 +15,7 @@ import { SessionManager } from '#/app/sessionManager/sessionManagerService';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { ErrorCodes } from '#/errors';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentCronService } from '#/features/cron/cronService';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
@@ -594,9 +594,9 @@ describe('SessionManager closeIfIdle', () => {
       accessor: {
         get: (token: unknown) => {
           if (token === IAgentCronService) return { list: () => Array.from({ length: state.cronTasks }) };
-          if (token === IAgentPromptQueueService) {
+          if (token === IAgentLoopService) {
             return {
-              holdsWork: () => state.queuePaused || state.queuedPrompts > 0,
+              snapshot: () => ({ queuePaused: state.queuePaused, queue: Array.from({ length: state.queuedPrompts }) }),
             };
           }
           return undefined;
@@ -693,8 +693,8 @@ describe('SessionManager closeIfIdle', () => {
     ['a pending approval', { pending: 'approval' }],
     ['a pending question', { pending: 'question' }],
     ['pending cron tasks', { cronTasks: 1 }],
-    ['prompts held in a paused queue', { queuedPrompts: 1, queuePaused: true }],
-    ['an empty paused queue', { queuePaused: true }],
+    ['queued prompts', { queuedPrompts: 1 }],
+    ['a paused queue', { queuePaused: true }],
   ];
 
   it.each(eligibilityCases)('retains sessions with %s', async (_label, guards) => {

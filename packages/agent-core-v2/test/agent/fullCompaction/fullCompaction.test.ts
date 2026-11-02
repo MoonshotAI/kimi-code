@@ -425,6 +425,109 @@ describe('FullCompaction', () => {
     expect(ctx.get(IAgentLoopService).snapshot().activeTurnId).toBeUndefined();
   });
 
+  it('queues a requested compaction behind the active turn and runs it before queued prompts', async () => {
+    const ctx = testAgent(execEnvServices({ processRunner: createCommandRunner('should-not-run') }));
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: ['Bash'],
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    ctx.mockNextResponse({ type: 'text', text: 'I will wait for approval.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the active turn' }] });
+    const approval = await ctx.takeApprovalRequest();
+    const loop = ctx.get(IAgentLoopService);
+    const compaction = ctx.get(IAgentFullCompactionService);
+
+    expect(compaction.request({ id: 'compact-1', instruction: 'Keep the plan' })).toBe('queue');
+    expect(compaction.queued).toMatchObject({ id: 'compact-1', instruction: 'Keep the plan' });
+    expect(compaction.compacting).toBeNull();
+    expect(loop.snapshot().queueHeld).toBe(true);
+    expect(() => compaction.request({ id: 'compact-2' })).toThrow('already running or queued');
+    const queuedId = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'After compaction' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    }).id;
+
+    const order: string[] = [];
+    void ctx.once('compaction.completed').then(() => order.push('compacted'));
+    void loop.promptHandle(queuedId)!.launched.then(() => order.push('prompt started'));
+    ctx.mockNextResponse({ type: 'text', text: 'Turn done.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answered after compaction.' });
+    approval.respond({ decision: 'rejected', selectedLabel: 'reject' });
+
+    await expect(loop.promptHandle(queuedId)!.completion).resolves.toMatchObject({ state: 'completed' });
+    expect(order).toEqual(['compacted', 'prompt started']);
+    expect(compaction.queued).toBeUndefined();
+    expect(loop.snapshot().queueHeld).toBe(false);
+  });
+
+  it('withdraws a queued compaction and releases the queue', async () => {
+    const ctx = testAgent(execEnvServices({ processRunner: createCommandRunner('should-not-run') }));
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: ['Bash'],
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    ctx.mockNextResponse({ type: 'text', text: 'I will wait for approval.' }, bashCall());
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the active turn' }] });
+    const approval = await ctx.takeApprovalRequest();
+    const loop = ctx.get(IAgentLoopService);
+    const compaction = ctx.get(IAgentFullCompactionService);
+    let changes = 0;
+    const watch = compaction.onDidChangeQueued(() => {
+      changes += 1;
+    });
+
+    expect(compaction.request({ id: 'compact-1' })).toBe('queue');
+    expect(compaction.cancelQueued('other')).toBe(false);
+    expect(compaction.cancelQueued('compact-1')).toBe(true);
+    expect(compaction.queued).toBeUndefined();
+    expect(loop.snapshot().queueHeld).toBe(false);
+    expect(changes).toBe(2);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Turn done.' });
+    approval.respond({ decision: 'rejected', selectedLabel: 'reject' });
+    await ctx.untilTurnEnd();
+    await Promise.resolve();
+    expect(eventIndex(ctx.newEvents(), 'compaction.started')).toBe(-1);
+    expect(compaction.compacting).toBeNull();
+    watch.dispose();
+  });
+
+  it('compacts right away while the queue is paused and leaves the queue paused', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const loop = ctx.get(IAgentLoopService);
+    const compaction = ctx.get(IAgentFullCompactionService);
+    loop.pauseQueue();
+    const waiting = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'Waiting prompt' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    }).id;
+    const completed = ctx.once('compaction.completed');
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+
+    expect(compaction.request({ id: 'compact-1' })).toBe('compact');
+    await completed;
+    await compaction.compacting?.promise.catch(() => undefined);
+    expect(loop.snapshot()).toMatchObject({ queuePaused: true, queue: [expect.anything()] });
+    expect(ctx.llmCalls).toHaveLength(1);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Answered.' });
+    loop.resumeQueue();
+    await expect(loop.promptHandle(waiting)!.completion).resolves.toMatchObject({ state: 'completed' });
+  });
+
   it('projects the compacted prefix before sending the summary request', async () => {
     const ctx = testAgent();
     ctx.configure({

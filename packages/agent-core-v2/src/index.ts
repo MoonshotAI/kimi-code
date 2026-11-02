@@ -332,6 +332,8 @@ export * from '#/app/flag/flagService';
 
 export * from '#/agent/modeMutex/modeMutex';
 import '#/agent/modeMutex/modeMutexService';
+export * from '#/agent/promptLaunch/promptLaunch';
+import '#/agent/promptLaunch/promptLaunchService';
 export * from '#/features/btw/btw';
 export * from '#/features/btw/btwService';
 import '#/features/btw/btwFeature';
@@ -679,9 +681,6 @@ import '#/agent/loop/configSection';
 export * from '#/agent/loop/loop';
 export * from '#/agent/loop/loopService';
 export * from '#/agent/loop/promptChannel';
-export * from '#/agent/promptQueue/promptQueue';
-export * from '#/agent/promptQueue/promptQueueEvents';
-export * from '#/agent/promptQueue/promptQueueService';
 export * from '#/agent/interruptionReminder/interruptionReminder';
 export * from '#/agent/interruptionReminder/interruptionReminderService';
 export * from '#/agent/interruptionReminder/interruptionReminderOps';

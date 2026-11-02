@@ -14,7 +14,6 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart } from '#human/llm/message';
 import { skillActivationPart } from '#human/agent/origin';
-import type { UserEntry } from '#human/agent/turn';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -32,15 +31,9 @@ import type {
 } from './skill';
 import { SkillActivated } from './skillOps';
 
-export interface PreparedSkillPrompt {
-  readonly entry: UserEntry;
-  readonly onStart: () => Promise<void>;
-}
-
 export interface IAgentSkillService {
   readonly _serviceBrand: undefined;
   activate(input: SkillActivationInput): Promise<PromptLaunchResult>;
-  preparePromptWithSkills(input: PromptWithSkillsInput, promptId?: string): Promise<PreparedSkillPrompt>;
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
   recordModelToolActivation(origin: SkillActivationOrigin): void;
 }
@@ -129,7 +122,7 @@ export class AgentSkillService implements IAgentSkillService {
     return { turn_id: turn.id };
   }
 
-  async preparePromptWithSkills(input: PromptWithSkillsInput, promptId?: string): Promise<PreparedSkillPrompt> {
+  async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult> {
     if (input.input.length === 0) {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'promptWithSkills requires a non-empty prompt');
     }
@@ -142,29 +135,31 @@ export class AgentSkillService implements IAgentSkillService {
     const catalog = this.catalog;
     await catalog.ready;
     const prepared = input.skills.map((skill) => this.prepareBundled(skill));
-    const onStart = async (): Promise<void> => {
-      if (this.scopeContext.agentContext.agentId === MAIN_AGENT_ID) {
-        await applyPromptMetadataUpdate(
-          {
-            metadata: this.metadata,
-            eventService: this.eventService,
-            sessionId: this.sessionContext.sessionId,
-          },
-          promptMetadataTextFromContentParts(input.input, input.clientMetadata),
-        );
-      }
-      for (const activation of prepared) {
-        void this.recordActivation(activation.origin);
-      }
-    };
-    return {
-      entry: {
+    if (this.scopeContext.agentContext.agentId === MAIN_AGENT_ID) {
+      await applyPromptMetadataUpdate(
+        {
+          metadata: this.metadata,
+          eventService: this.eventService,
+          sessionId: this.sessionContext.sessionId,
+        },
+        promptMetadataTextFromContentParts(input.input, input.clientMetadata),
+      );
+    }
+    for (const activation of prepared) {
+      void this.recordActivation(activation.origin);
+    }
+    const status = this.loop.snapshot();
+    const steerable =
+      input.steerIfActive === true &&
+      status.state === 'running' &&
+      status.activePromptId !== undefined;
+    const { id } = this.loop.submit(
+      {
         message: {
           role: 'user',
           content: [...prepared.map((activation) => activation.part), ...input.input],
         },
         meta: {
-          promptId,
           origin: {
             kind: 'user',
             skillActivations: prepared.map((activation) => activation.entry),
@@ -172,23 +167,16 @@ export class AgentSkillService implements IAgentSkillService {
             attachments: input.attachments,
           } as PromptOrigin,
           tracked: true,
+          launch: input.launch,
         },
       },
-      onStart,
-    };
-  }
-
-  async promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult> {
-    const { entry, onStart } = await this.preparePromptWithSkills(input);
-    await onStart();
-    const status = this.loop.snapshot();
-    const steerable =
-      input.steerIfActive === true &&
-      status.state === 'running' &&
-      status.activePromptId !== undefined;
-    const { id } = this.loop.submit(entry, { steerIfActive: input.steerIfActive });
+      { steerIfActive: input.steerIfActive },
+    );
     const handle = this.loop.promptHandle(id)!;
-    if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
+    if (
+      !steerable &&
+      (status.state === 'running' || status.paused || status.queueHeld || status.queue.length > 0)
+    ) {
       return { prompt_id: id, created_at: handle.createdAt, state: 'queued' };
     }
     await Promise.race([handle.launched, handle.completion]);

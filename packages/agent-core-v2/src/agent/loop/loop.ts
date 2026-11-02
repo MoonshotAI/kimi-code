@@ -1,13 +1,13 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
-import type { Event } from '#/_base/event';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
 import type { ContentPart, TextPart } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm-requester/usage';
 import type { Hooks } from '#/hooks';
-import type { UserEntry } from '#human/agent/turn';
+import type { Event } from '#/_base/event';
+import type { PromptLaunch, UserEntry } from '#human/agent/turn';
 import type { LoopRequester } from './requesterContract';
 import { LoopErrors } from './errors';
 import type {
@@ -38,6 +38,8 @@ export interface LoopSnapshot {
   readonly activeTurnId?: number;
   readonly activePromptId?: string;
   readonly queue: readonly UserEntry[];
+  readonly queuePaused: boolean;
+  readonly queueHeld: boolean;
   readonly notificationCount: number;
   readonly paused: boolean;
   readonly hasPendingRequests: boolean;
@@ -132,7 +134,6 @@ export interface Turn {
 export interface LoopSubmitOptions {
   readonly steerIfActive?: boolean;
   readonly onMaterialize?: () => void;
-  readonly announcedAsQueued?: boolean;
 }
 
 export interface LoopSubmitResult {
@@ -181,12 +182,17 @@ export interface SteerPayload {
   readonly input: readonly ContentPart[];
 }
 
+export interface QuiescenceOptions {
+  readonly allowHeldQueue?: boolean;
+}
+
 export interface PromptLaunchResult {
   readonly turn_id: number;
 }
 
 export interface PromptSubmitContext {
   readonly promptMessage: ContextMessage;
+  readonly launch?: PromptLaunch;
   readonly isSteer: boolean;
   readonly hookParts: TextPart[];
   block: boolean;
@@ -220,13 +226,17 @@ export interface IAgentLoopService {
 
   settled(): Promise<void>;
 
-  canLaunchPrompt(): boolean;
+  tryAcquireQuiescence(options?: QuiescenceOptions): IDisposable | undefined;
 
-  canSteerPrompt(): boolean;
+  readonly onDidChangeQueue: Event<void>;
 
-  readonly onDidChangeActivity: Event<void>;
+  pauseQueue(): void;
 
-  tryAcquireQuiescence(): IDisposable | undefined;
+  resumeQueue(): void;
+
+  holdQueue(): IDisposable;
+
+  moveQueued(promptId: string, beforePromptId?: string): void;
 
   tryAcquireHistorySnapshot(): IDisposable | undefined;
 

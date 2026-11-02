@@ -1756,6 +1756,96 @@ describe('agent machine input.abort', () => {
   });
 });
 
+describe('agent machine input.hold/input.release/input.move', () => {
+  it('keeps held prompts queued while notifications still run, then drains them on release', async () => {
+    const requester = createStubRequester([
+      createAssistantMessage([{ type: 'text', text: 'noted' }], []),
+      createAssistantMessage([{ type: 'text', text: 'answered' }], []),
+    ]);
+    const store = await testStore();
+    const actor = createTestAgent(store, requester);
+    actor.start();
+    actor.send({ type: 'input.hold' });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('queued') } });
+    actor.send({ type: 'input.notify', entry: { message: createUserMessage('notice') } });
+
+    await waitFor(actor, (s) => s.matches('idle') && store.getState().history.length === 2, {
+      timeout: 5000,
+    });
+    expect(rolesAndTexts(store.getState().history)).toEqual(['user:notice', 'assistant:noted']);
+    expect(actor.getSnapshot().context.queue).toHaveLength(1);
+
+    actor.send({ type: 'input.release' });
+    await waitFor(actor, (s) => s.matches('idle') && store.getState().history.length === 4, {
+      timeout: 5000,
+    });
+    expect(rolesAndTexts(store.getState().history).slice(2)).toEqual(['user:queued', 'assistant:answered']);
+    actor.stop();
+  });
+
+  it('reorders queued prompts and ignores unknown ids', async () => {
+    const store = await testStore();
+    const actor = createTestAgent(store, createStubRequester([]));
+    actor.start();
+    actor.send({ type: 'input.hold' });
+    for (const id of ['a', 'b', 'c']) {
+      actor.send({ type: 'input.submit', entry: { message: createUserMessage(id), meta: { promptId: id } } });
+    }
+    const order = () => actor.getSnapshot().context.queue.map((entry) => entry.meta?.promptId);
+
+    actor.send({ type: 'input.move', id: 'c', beforeId: 'a' });
+    expect(order()).toEqual(['c', 'a', 'b']);
+    actor.send({ type: 'input.move', id: 'c' });
+    expect(order()).toEqual(['a', 'b', 'c']);
+    actor.send({ type: 'input.move', id: 'missing', beforeId: 'a' });
+    actor.send({ type: 'input.move', id: 'a', beforeId: 'missing' });
+    expect(order()).toEqual(['a', 'b', 'c']);
+    actor.stop();
+  });
+
+  it('starts a prompt whose gate is already running when the queue gets held', async () => {
+    const requester = createStubRequester([
+      createAssistantMessage([{ type: 'text', text: 'first reply' }], []),
+    ]);
+    const store = await testStore();
+    let openGate!: () => void;
+    const gateOpened = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const gateCalls: string[] = [];
+    const actor = createActor(createAgentMachine({}), {
+      input: {
+        request: { model },
+        scopeFactory: testScopeFactory({
+          store,
+          requester,
+          promptGate: async (_id, message) => {
+            gateCalls.push(extractText(message));
+            await gateOpened;
+            return { block: false, message };
+          },
+        }),
+      },
+    });
+    actor.start();
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('first'), meta: { promptId: 'p1' } } });
+    await vi.waitFor(() => {
+      expect(gateCalls).toEqual(['first']);
+    });
+    actor.send({ type: 'input.hold' });
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('second'), meta: { promptId: 'p2' } } });
+    openGate();
+
+    await waitFor(actor, (s) => s.matches('idle') && store.getState().history.length === 2, {
+      timeout: 5000,
+    });
+    expect(rolesAndTexts(store.getState().history)).toEqual(['user:first', 'assistant:first reply']);
+    expect(actor.getSnapshot().context.queue.map((entry) => entry.meta?.promptId)).toEqual(['p2']);
+    expect(gateCalls).toEqual(['first']);
+    actor.stop();
+  });
+});
+
 describe('agent machine input.pause/input.continue', () => {
   it('gates queue drain while paused and resumes on continue', async () => {
     const requester = createStubRequester([

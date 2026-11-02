@@ -164,6 +164,7 @@ export interface MachineEngineSnapshot {
   readonly aborting: boolean;
   readonly waitingForBackground: boolean;
   readonly paused: boolean;
+  readonly held: boolean;
   readonly queue: readonly UserEntry[];
   readonly queueLength: number;
   readonly queueIds: readonly (string | undefined)[];
@@ -182,6 +183,9 @@ export interface MachineEngine {
   abort(reason?: unknown): void;
   pause(): void;
   resume(): void;
+  hold(): void;
+  release(): void;
+  move(id: string, beforeId?: string): void;
   resetHistory(history: readonly HistoryMessage[]): Promise<void>;
   resetJournal(journal: SyncStoreJournal): Promise<void>;
   stop(): void;
@@ -213,6 +217,7 @@ interface MachineSnapshotLike {
     readonly reminders: readonly unknown[];
     readonly background: Record<string, unknown>;
     readonly paused: boolean;
+    readonly held: boolean;
   };
 }
 
@@ -532,6 +537,15 @@ export function attachMachineEngine(
     resume: () => {
       ref.send({ type: 'input.continue' });
     },
+    hold: () => {
+      ref.send({ type: 'input.hold' });
+    },
+    release: () => {
+      ref.send({ type: 'input.release' });
+    },
+    move: (id, beforeId) => {
+      ref.send({ type: 'input.move', id, beforeId });
+    },
     resetHistory: (history) => {
       const events: ExternalEvent[] = history.map((message) => messageAppended({ message }));
       const nextTurnId = (ref.getSnapshot() as unknown as MachineSnapshotLike).context.turnId;
@@ -590,6 +604,7 @@ export function attachMachineEngine(
           typeof value === 'object' && value !== null && 'idle' in value &&
           (value as { idle?: unknown }).idle === 'waiting',
         paused: snapshot.context.paused,
+        held: snapshot.context.held,
         queue: snapshot.context.queue,
         queueLength: snapshot.context.queue.length,
         queueIds: snapshot.context.queue.map((entry) => entry.meta?.promptId),

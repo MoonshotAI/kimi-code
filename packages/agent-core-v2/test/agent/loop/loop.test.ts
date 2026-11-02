@@ -1023,6 +1023,81 @@ describe('Agent loop', () => {
     }
   });
 
+  it('keeps prompts queued while the queue is paused and runs them in the moved order on resume', async () => {
+    let changes = 0;
+    const watch = loop.onDidChangeQueue(() => {
+      changes += 1;
+    });
+    loop.pauseQueue();
+    expect(loop.snapshot()).toMatchObject({ queuePaused: true, queueHeld: true });
+    const first = submitTracked(loop, 'first');
+    const second = submitTracked(loop, 'second');
+    await Promise.resolve();
+    expect(ctx.llmCalls).toHaveLength(0);
+    expect(changes).toBeGreaterThan(0);
+
+    loop.moveQueued(second, first);
+    expect(loop.snapshot().queue.map((item) => item.meta?.promptId)).toEqual([second, first]);
+    expect(() => loop.moveQueued('missing')).toThrow('not waiting in the queue');
+
+    ctx.mockNextResponse({ type: 'text', text: 'second answer' });
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    loop.resumeQueue();
+    await loop.promptHandle(first)!.completion;
+    expect(userTexts(ctx)).toEqual(['second', 'first']);
+    expect(loop.snapshot()).toMatchObject({ queuePaused: false, queueHeld: false });
+
+    const hold = loop.holdQueue();
+    const held = submitTracked(loop, 'held');
+    await Promise.resolve();
+    expect(loop.snapshot()).toMatchObject({ queuePaused: false, queueHeld: true });
+    ctx.mockNextResponse({ type: 'text', text: 'held answer' });
+    hold.dispose();
+    await loop.promptHandle(held)!.completion;
+    expect(userTexts(ctx)).toEqual(['second', 'first', 'held']);
+    watch.dispose();
+  });
+
+  it('stops a withdrawn prompt as soon as its running gate lets it start', async () => {
+    const gate = deferred();
+    let gated = 0;
+    const hook = loop.hooks.onBeforeSubmitPrompt.register('test-gate', async (_ctx, next) => {
+      gated += 1;
+      if (gated === 1) await gate.promise;
+      await next();
+    });
+    const withdrawn = submitTracked(loop, 'withdrawn');
+    await vi.waitFor(() => {
+      expect(gated).toBe(1);
+    });
+    const next = submitTracked(loop, 'next');
+    expect(() => loop.moveQueued(withdrawn, next)).toThrow('not waiting in the queue');
+    expect(loop.cancel({ promptId: withdrawn }, userCancellationReason())).toBe(true);
+
+    ctx.mockNextResponse({ type: 'text', text: 'next answer' });
+    gate.resolve();
+    const turn = await loop.promptHandle(withdrawn)!.launched;
+    await expect(turn?.result).resolves.toMatchObject({ type: 'cancelled' });
+    await expect(loop.promptHandle(next)!.completion).resolves.toMatchObject({ state: 'completed' });
+    expect(ctx.llmCalls).toHaveLength(1);
+    hook.dispose();
+  });
+
+  it('acquires quiescence over a held queue only when asked to', async () => {
+    loop.pauseQueue();
+    const waiting = submitTracked(loop, 'waiting');
+    await Promise.resolve();
+    expect(loop.tryAcquireQuiescence()).toBeUndefined();
+    const lease = loop.tryAcquireQuiescence({ allowHeldQueue: true });
+    expect(lease).toBeDefined();
+    lease?.dispose();
+    expect(ctx.llmCalls).toHaveLength(0);
+
+    ctx.mockNextResponse({ type: 'text', text: 'waiting answer' });
+    loop.resumeQueue();
+    await expect(loop.promptHandle(waiting)!.completion).resolves.toMatchObject({ state: 'completed' });
+  });
+
   it('can abort an admission while quiescence holds it', async () => {
     const lease = loop.tryAcquireQuiescence();
     expect(lease).toBeDefined();
@@ -2361,6 +2436,20 @@ function submitTurn(loop: IAgentLoopService, text: string): { readonly turn: Tur
     message: { role: 'user', content: [{ type: 'text', text }] },
     meta: { origin: { kind: 'user' } },
   });
+}
+
+function submitTracked(loop: IAgentLoopService, text: string): string {
+  return loop.submit({
+    message: { role: 'user', content: [{ type: 'text', text }] },
+    meta: { origin: { kind: 'user' }, tracked: true },
+  }).id;
+}
+
+function userTexts(ctx: TestAgentContext): string[] {
+  return ctx
+    .contextData()
+    .history.filter((message) => message.role === 'user')
+    .map((message) => message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''));
 }
 
 function replaceLoopRequester(ctx: TestAgentContext, requester: LoopRequester): void {
