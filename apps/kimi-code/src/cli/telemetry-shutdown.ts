@@ -27,14 +27,23 @@ export function createTelemetryShutdownDeadline(
     expiresAtMs,
     remainingMs,
     run: async (pipeline) => {
+      const budgetMs = remainingMs();
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        await pipeline(remainingMs());
+        await Promise.race([
+          pipeline(budgetMs),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Telemetry shutdown timed out')), budgetMs);
+          }),
+        ]);
       } catch (error) {
         try {
           onError(error);
         } catch {
           // A broken stderr/logger boundary must not block later cleanup.
         }
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
       }
     },
   };

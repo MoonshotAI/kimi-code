@@ -193,6 +193,35 @@ describe('telemetry shutdown deadline', () => {
     );
   });
 
+  it('bounds a stalled host telemetry lookup and still runs later cleanup', async () => {
+    const { createTelemetryShutdownDeadline } = await import(
+      '#/cli/telemetry-shutdown'
+    );
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const reportError = vi.fn();
+      const deadline = createTelemetryShutdownDeadline(50, reportError);
+      const stalledHostLookup = vi.fn(
+        async (_remainingMs: number): Promise<void> => new Promise<void>(() => {}),
+      );
+      const laterPipeline = vi.fn(async (_remainingMs: number) => {});
+      const first = deadline.run(stalledHostLookup);
+
+      await vi.advanceTimersByTimeAsync(50);
+      await first;
+      await deadline.run(laterPipeline);
+
+      expect(stalledHostLookup).toHaveBeenCalledWith(50);
+      expect(laterPipeline).toHaveBeenCalledWith(0);
+      expect(reportError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Telemetry shutdown timed out' }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('continues to a later pipeline when the error reporter also throws', async () => {
     const { createTelemetryShutdownDeadline } = await import(
       '#/cli/telemetry-shutdown'
