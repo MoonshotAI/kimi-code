@@ -20,6 +20,7 @@ import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { PluginReloadEvent } from '#/app/plugin/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
+import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -35,6 +36,7 @@ import {
 import type { WatchChange } from '#human/utils/watch';
 
 import { stubLog } from '../../_base/log/stubs';
+import { createMemoryMcpOAuthStore } from '../../mcpCore/stubs';
 
 const watchFires = new Map<string, Emitter<WatchChange>>();
 
@@ -100,6 +102,7 @@ describe('WorkspaceMcpConfigService', () => {
     mcpSection?: McpSection,
     trustReady: () => Promise<void> = () => Promise.resolve(),
     log: ILogService = stubLog(),
+    oauth?: McpOAuthService,
   ): IWorkspaceMcpConfigService {
     const ix = createServices(disposables, {
       strict: true,
@@ -140,7 +143,7 @@ describe('WorkspaceMcpConfigService', () => {
           onDidChange: trustFlips.event as IWorkspaceTrust['onDidChange'],
         });
         reg.definePartialInstance(IMcpConfigStore, { onDidWrite: storeWrites.event });
-        reg.definePartialInstance(IMcpOAuthService, {
+        reg.definePartialInstance(IMcpOAuthService, oauth ?? {
           cancelAuthorization,
           invalidate: (name, url) => invalidate(undefined, name, url),
           invalidateFromConfiguration: invalidate,
@@ -485,6 +488,49 @@ describe('WorkspaceMcpConfigService', () => {
       expect(invalidate).toHaveBeenCalledWith(service, 'alpha', previousUrl);
     });
     expect(invalidate).not.toHaveBeenCalledWith(service, 'alpha', nextUrl);
+  });
+
+  it('keeps untrusted OAuth identities in the shared reference set until re-trust', async () => {
+    const url = 'https://mcp.example.test/mcp';
+    const config: McpServerConfig = { transport: 'http', url, auth: 'oauth' };
+    const oauth = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+    await oauth.getProvider('alpha', url).saveTokens({ access_token: 'a', token_type: 'Bearer' });
+    const cwdA = cwd;
+    try {
+      await writeProjectConfig({ alpha: config });
+      const serviceA = createService(undefined, undefined, undefined, oauth);
+      await serviceA.ready;
+      trusted = false;
+      trustFlips.fire({ trusted: false });
+      await vi.waitFor(() => {
+        expect(serviceA.servers()).toEqual({});
+      });
+
+      trusted = true;
+      cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-cwd-b-'));
+      await writeProjectConfig({ alpha: config });
+      const serviceB = createService(undefined, undefined, undefined, oauth);
+      await serviceB.ready;
+      await writeProjectConfig({});
+      watchFires.get(cwd)?.fire({
+        path: join(cwd, '.kimi-code', 'mcp.json'),
+        action: 'modified',
+        kind: 'file',
+      });
+      await vi.waitFor(() => {
+        expect(serviceB.servers()).toEqual({});
+      });
+      expect((await oauth.tokenState('alpha', url)).hasTokens).toBe(true);
+
+      trustFlips.fire({ trusted: true });
+      await vi.waitFor(() => {
+        expect(serviceA.servers()).toHaveProperty('alpha');
+      });
+      expect((await oauth.tokenState('alpha', url)).hasTokens).toBe(true);
+    } finally {
+      cwd = cwdA;
+      await oauth.dispose();
+    }
   });
 
   it('cancels the previous remote authorization when a plugin server is disabled', async () => {

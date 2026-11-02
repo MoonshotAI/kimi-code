@@ -297,9 +297,10 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   }
 
   private syncOAuthConfiguration(): void {
+    const retained = this.untrustedOAuthServers ?? {};
     this.oauth.setConfigurationSource(
       this,
-      Object.entries(this.current).flatMap(([name, config]) =>
+      [...Object.entries(this.current), ...Object.entries(retained)].flatMap(([name, config]) =>
         'url' in config ? [[name, config.url] as const] : [],
       ),
     );
