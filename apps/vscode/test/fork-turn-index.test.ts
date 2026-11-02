@@ -7,6 +7,7 @@ interface TestMessage {
   readonly role: "user" | "assistant";
   readonly content: string;
   readonly timestamp: number;
+  readonly turnIndex?: number;
   readonly forkable?: boolean;
   readonly steps?: readonly {
     readonly n: number;
@@ -28,15 +29,13 @@ function message(
 }
 
 describe("fork turn index", () => {
-  it("counts a steer embedded in the current assistant response", () => {
+  it("uses the persisted turnId directly when it is present", () => {
     const messages = [
-      message("user"),
-      message("assistant", {
-        steps: [{ n: 1, items: [{ type: "steer", content: "also fix tests" }] }],
-      }),
+      message("user", { turnIndex: 0 }),
+      message("assistant", { turnIndex: 5 }),
     ];
 
-    expect(getForkTurnIndex(messages, 1)).toBe(1);
+    expect(getForkTurnIndex(messages, 1)).toBe(5);
   });
 
   it("carries prior steer turns into later assistant responses", () => {

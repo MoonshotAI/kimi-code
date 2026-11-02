@@ -15,7 +15,7 @@ export interface UsageSummary {
 }
 
 export function emptyUsageSummary(): UsageSummary {
-  return { total: emptyUsage(), byModel: {}, byTurn: {} };
+  return { total: { ...emptyUsage(), inputCacheRead: 0 }, byModel: {}, byTurn: {} };
 }
 
 function addUsage(base: TokenUsage | undefined, usage: Partial<TokenUsage>): TokenUsage {
@@ -23,7 +23,12 @@ function addUsage(base: TokenUsage | undefined, usage: Partial<TokenUsage>): Tok
   return {
     inputOther: next.inputOther + (usage.inputOther ?? 0),
     output: next.output + (usage.output ?? 0),
-    inputCacheRead: next.inputCacheRead + (usage.inputCacheRead ?? 0),
+    inputCacheRead:
+      base === undefined
+        ? usage.inputCacheRead
+        : next.inputCacheRead === undefined || usage.inputCacheRead === undefined
+          ? undefined
+          : next.inputCacheRead + usage.inputCacheRead,
     inputCacheCreation: next.inputCacheCreation + (usage.inputCacheCreation ?? 0),
   };
 }

@@ -164,13 +164,13 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
 
   it("opens one visible turn when replay contains a user prompt", () => {
     const events = replay([
-      record(message("user", [{ type: "text", text: "Fix the test" }], { origin: { kind: "user" } })),
+      { type: "message", message: message("user", [{ type: "text", text: "Fix the test" }], { origin: { kind: "user" } }), time: 1, turnId: 7 },
     ]);
 
     expect(events.filter((event) => event.type !== "StatusUpdate")).toEqual([
       {
         type: "TurnBegin",
-        payload: { user_input: [{ type: "text", text: "Fix the test" }] },
+        payload: { user_input: [{ type: "text", text: "Fix the test" }], turnIndex: 7 },
         _sessionId: "session-1",
       },
       {

@@ -173,14 +173,14 @@ function normalizeFinishReason(raw: string | null | undefined): FinishInfo {
   return { finishReason, rawFinishReason: raw };
 }
 
-export function parseUsage(usage: RawUsage | null | undefined): TokenUsage | undefined {
+export function parseUsage(usage: RawUsage | null | undefined): Partial<TokenUsage> | undefined {
   if (usage === null || usage === undefined) {
     return undefined;
   }
   const promptTokens = usage.prompt_tokens ?? 0;
-  const cached = usage.cached_tokens ?? usage.prompt_tokens_details?.cached_tokens ?? 0;
+  const cached = usage.cached_tokens ?? usage.prompt_tokens_details?.cached_tokens;
   return {
-    inputOther: promptTokens - cached,
+    inputOther: promptTokens - (cached ?? 0),
     output: usage.completion_tokens ?? 0,
     inputCacheRead: cached,
     inputCacheCreation: 0,

@@ -46,7 +46,6 @@ function makeHost() {
     showNotice: vi.fn(),
     track: vi.fn(),
     recordSessionActivity: vi.fn(),
-    noteStepUsage: vi.fn(),
     noteCompactionFinished: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
@@ -182,5 +181,15 @@ describe('SessionEventHandler step retry state', () => {
     handler.clearStepRetryAttemptTimer();
     vi.advanceTimersByTime(10_000);
     expect(host.state.appState.stepRetry).toMatchObject({ phase: 'backoff' });
+  });
+
+  it('records cache activity when a step completes without usage', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    handler.handleEvent(
+      { type: 'turn.step.completed', sessionId: 's1', agentId: 'main', turnId: 1, step: 1 } as any,
+      vi.fn(),
+    );
+    expect(host.recordSessionActivity).toHaveBeenCalledTimes(1);
   });
 });

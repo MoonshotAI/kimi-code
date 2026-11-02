@@ -100,6 +100,37 @@ export interface PromptCacheProbeEvent {
   cache_hit_rate?: number;
 }
 
+export interface CacheBreakDetectedEvent {
+  request_kind?: string;
+  turn_id?: number;
+  step_no?: number;
+  trace_id?: string;
+  prev_request_kind?: string;
+  prev_turn_id?: number;
+  prev_step_no?: number;
+  prev_trace_id?: string;
+  prev_model: string;
+  curr_model: string;
+  prev_effort: string;
+  curr_effort: string;
+  prev_input_cache_read: number;
+  curr_input_cache_read: number;
+  prev_input_other: number;
+  curr_input_other: number;
+  prev_output: number;
+  curr_output: number;
+  prev_input_cache_creation: number;
+  curr_input_cache_creation: number;
+  prev_total_tokens: number;
+  cache_reuse_ratio: number;
+  cache_read_drop_ratio?: number;
+  tools_match: boolean;
+  system_prompt_match: boolean;
+  history_prefix_match: boolean;
+  gap_ms: number;
+  interval_ms: number;
+}
+
 export type ToolCallOutcome = 'success' | 'error' | 'cancelled';
 
 export interface ToolCallEvent {
@@ -735,6 +766,41 @@ export const telemetryEventDefinitions = {
       output_tokens: 'Output tokens of the probed request; absent without response usage',
       cache_hit_rate:
         'Cache-read tokens divided by total input tokens; absent without response usage or when total input is zero',
+    },
+  }),
+  cache_break_detected: defineAgentTelemetryEvent<CacheBreakDetectedEvent>({
+    owner: 'kimi-code',
+    comment: "A completed request's cache read drops sharply or reuses too little of the previous request's full token history.",
+    properties: {
+      request_kind: "Request source vocabulary: 'turn' for turn requests, the operation's requestKind otherwise",
+      turn_id: 'Per-agent turn index of the current request when available',
+      step_no: 'Step index of the current request when available',
+      trace_id: 'Trace id of the current request; absent for non-Kimi protocols',
+      prev_request_kind: 'Request source vocabulary of the actual baseline request',
+      prev_turn_id: 'Per-agent turn index of the actual baseline request when available',
+      prev_step_no: 'Step index of the actual baseline request when available',
+      prev_trace_id: 'Trace id of the actual baseline request; absent for non-Kimi protocols',
+      prev_model: 'Model alias of the baseline request',
+      curr_model: 'Model alias of the current request',
+      prev_effort: 'Thinking effort of the baseline request',
+      curr_effort: 'Thinking effort of the current request',
+      prev_input_cache_read: 'Cache-read input tokens of the baseline request',
+      curr_input_cache_read: 'Cache-read input tokens of the current request',
+      prev_input_other: 'Other input tokens of the baseline request',
+      curr_input_other: 'Other input tokens of the current request',
+      prev_output: 'Output tokens of the baseline request',
+      curr_output: 'Output tokens of the current request',
+      prev_input_cache_creation: 'Cache-creation input tokens of the baseline request',
+      curr_input_cache_creation: 'Cache-creation input tokens of the current request',
+      prev_total_tokens: 'All input and output tokens of the baseline request',
+      cache_reuse_ratio: 'Current cache-read tokens divided by all baseline input and output tokens',
+      cache_read_drop_ratio:
+        'Cache-read token drop from baseline to current request, divided by baseline cache-read tokens; absent when baseline cache read is zero',
+      tools_match: 'Whether the current request sent the same tool definitions as the baseline request',
+      system_prompt_match: 'Whether the current request sent the same system prompt as the baseline request',
+      history_prefix_match: "Whether the current request's history starts with the baseline request's full history",
+      gap_ms: 'Milliseconds from the baseline request finishing to the current request starting',
+      interval_ms: 'Milliseconds from the baseline request finishing to the current request finishing',
     },
   }),
   tool_call: defineAgentTelemetryEvent<ToolCallEvent>({
