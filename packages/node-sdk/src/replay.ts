@@ -55,7 +55,7 @@ export interface SessionMeta {
 }
 
 export type AgentReplayRecordPayload =
-  | { type: 'message'; message: ContextMessage }
+  | { type: 'message'; message: ContextMessage; turnId?: number }
   | { type: 'compaction'; result?: CompactionResult | 'cancelled'; instruction?: string }
   | {
       type: 'goal_updated';
