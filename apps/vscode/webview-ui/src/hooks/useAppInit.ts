@@ -96,7 +96,11 @@ export function useAppInit(skippedLogin = false): AppInitState {
           return;
         }
         refreshModels(kimiConfig);
-        setState((current) => ({ ...current, modelsCount }));
+        setState((current) => ({
+          ...current,
+          status: skippedLogin && current.status === "no-models" ? "ready" : current.status,
+          modelsCount,
+        }));
       }).catch((error: unknown) => {
         console.error("[AppInit] Failed to refresh models:", error);
       });

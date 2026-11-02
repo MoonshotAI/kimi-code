@@ -221,6 +221,27 @@ describe("useAppInit model catalog events", () => {
     expect(appInitBridge.checkWorkspace).toHaveBeenCalledTimes(1);
   });
 
+  it("promotes a skipped empty-model view when models arrive", async () => {
+    appInitBridge.getModels.mockResolvedValue({
+      models: [],
+      defaultModel: null,
+      defaultThinking: false,
+    });
+    const { result } = renderHook(() => useAppInit(true));
+    await waitFor(() => {
+      expect(result.current.status).toBe("no-models");
+    });
+    appInitBridge.getModels.mockResolvedValue(INITIAL_CONFIG);
+
+    await emitModelCatalogChanged();
+
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+    expect(result.current.modelsCount).toBe(1);
+    expect(appInitBridge.checkWorkspace).toHaveBeenCalledTimes(1);
+  });
+
   it("reruns the login gate when the refreshed default requires authentication", async () => {
     const { result } = renderHook(() => useAppInit());
     await waitFor(() => {
