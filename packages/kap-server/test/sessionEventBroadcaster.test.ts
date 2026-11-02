@@ -15,10 +15,13 @@ import {
   LifecycleScope,
   IAgentLifecycleService,
   IAgentConversationUndoParticipantRegistry,
+  IAgentGoalService,
   IAgentLoopService,
+  IAgentPermissionModeService,
   IAgentProfileService,
   IAgentScopeContext,
   IAgentTaskService,
+  IAgentTodoService,
   IEventBus,
   IEventService,
   IModelCatalog,
@@ -56,6 +59,7 @@ import {
   SessionEventBroadcaster,
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
 import { TranscriptService } from '../src/services/transcript/transcriptService';
+import { USAGE_FRAME_INTERVAL_MS } from '../src/transport/ws/v1/sessionAgentFeed';
 
 type FakeBusEvent = { type: string };
 
@@ -1585,7 +1589,7 @@ describe('SessionEventBroadcaster', () => {
           session_id: 's1',
           payload: { agent_id: 'main', has_more_older: false, snapshot: { items: [] } },
         });
-        expect(view.deliveries).toEqual(['subscription', 'subscription']);
+        expect(new Set(view.deliveries)).toEqual(new Set(['subscription']));
       }
 
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
@@ -1593,7 +1597,7 @@ describe('SessionEventBroadcaster', () => {
         const batches = transcriptEnvelopes(view.envelopes).slice(-1);
         for (const ops of batches) expect(ops.type).toBe('transcript.ops');
         expect(batches.map((ops) => (ops.payload as OpsPayload).ops.map((o) => o.op))).toEqual([
-          ['turn.upsert', 'meta.merge', 'meta.merge'],
+          ['turn.upsert'],
         ]);
       }
 
@@ -1798,6 +1802,200 @@ describe('SessionEventBroadcaster', () => {
       expect(types).toContain('transcript.ops');
     });
 
+    type StateFrame = { type: string; agent_id: string } & Record<string, unknown>;
+    const STATE_FRAME_TYPES = new Set(['agent', 'usage', 'goal', 'todo']);
+    const stateFramesOf = (view: ReturnType<typeof collectingTarget>): StateFrame[] =>
+      view.envelopes.filter((frame) => STATE_FRAME_TYPES.has(frame.type)) as unknown as StateFrame[];
+    const settle = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+    function withAgentState(handle: FakeAgentHandle) {
+      let permission = 'manual';
+      let todos: { title: string; status: string }[] = [];
+      let goal: unknown = null;
+      let contextTokens = 0;
+      const todoListeners = new Set<() => void>();
+      handle.set(IAgentPermissionModeService, { get mode() { return permission; } });
+      handle.set(IAgentTodoService, {
+        get: () => todos,
+        onDidChange: (listener: () => void) => {
+          todoListeners.add(listener);
+          return { dispose: () => todoListeners.delete(listener) };
+        },
+      });
+      handle.set(IAgentGoalService, { getGoal: () => ({ goal }) });
+      handle.set(IAgentProfileService, {
+        getModel: () => 'k2',
+        getEffectiveThinkingLevel: () => 'high',
+        getModelCapabilities: () => ({ max_context_tokens: 1000 }),
+      });
+      handle.set(ISessionUsageService, { status: () => undefined });
+      handle.set(ISessionTokenCountingService, { statusSize: () => contextTokens });
+      return {
+        setPermission(mode: string): void {
+          permission = mode;
+          handle.bus.emit(agentEvent('agent.status.updated', { permission: mode }));
+        },
+        setTodos(next: { title: string; status: string }[]): void {
+          todos = next;
+          for (const listener of todoListeners) listener();
+        },
+        setGoal(next: unknown): void {
+          goal = next;
+          handle.bus.emit(agentEvent('goal.updated', {}));
+        },
+        setContextTokens(tokens: number): void {
+          contextTokens = tokens;
+          handle.bus.emit(agentEvent('agent.status.updated', { contextTokens: tokens }));
+        },
+      };
+    }
+
+    it('sends the agent, usage, goal and todo state of each subscribed agent on subscribe', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      const state = withAgentState(main);
+      state.setPermission('yolo');
+      state.setTodos([{ title: 'write tests', status: 'in_progress' }]);
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      const offView = collectingTarget();
+      await bc.subscribe('s1', view.target, { '*': 'turn' });
+      await bc.subscribe('s1', offView.target, { '*': 'off' });
+
+      expect(stateFramesOf(view)).toEqual([
+        expect.objectContaining({
+          type: 'agent',
+          session_id: 's1',
+          agent_id: 'main',
+          status: 'idle',
+          model: 'k2',
+          thinking: 'high',
+          permission_mode: 'yolo',
+          modes: {},
+        }),
+        expect.objectContaining({ type: 'usage', agent_id: 'main', context_tokens: 0, max_context_tokens: 1000 }),
+        expect.objectContaining({ type: 'goal', agent_id: 'main', goal: null }),
+        expect.objectContaining({
+          type: 'todo',
+          agent_id: 'main',
+          items: [{ title: 'write tests', status: 'in_progress' }],
+        }),
+      ]);
+      expect(stateFramesOf(offView)).toEqual([]);
+    });
+
+    it('follows turn events and sends the agent frame after the transcript batch of the same event', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      withAgentState(main);
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, { '*': 'delta' });
+      const before = view.envelopes.length;
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      await settle();
+      const started = view.envelopes.slice(before).map((frame) => frame.type);
+      expect(started).toEqual(['transcript.ops', 'agent']);
+      expect(stateFramesOf(view).at(-1)).toMatchObject({ type: 'agent', status: 'running' });
+
+      main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'hi' }));
+      await settle();
+      expect(stateFramesOf(view).filter((frame) => frame.type === 'agent')).toHaveLength(2);
+
+      const beforeEnd = view.envelopes.length;
+      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+      await settle();
+      expect(view.envelopes.slice(beforeEnd).map((frame) => frame.type)).toEqual(['transcript.ops', 'agent']);
+      expect(stateFramesOf(view).at(-1)).toMatchObject({ type: 'agent', status: 'idle' });
+    });
+
+    it('pushes todo, goal and permission changes and stays quiet when nothing changed', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      const state = withAgentState(main);
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, { '*': 'turn' });
+      const subscribed = stateFramesOf(view).length;
+
+      state.setTodos([{ title: 'ship', status: 'pending' }]);
+      await settle();
+      state.setTodos([]);
+      await settle();
+      state.setPermission('auto');
+      await settle();
+      state.setGoal({
+        objective: 'ship it',
+        status: 'active',
+        turnsUsed: 1,
+        tokensUsed: 10,
+        wallClockMs: 5,
+        budget: {},
+      });
+      await settle();
+      main.bus.emit(agentEvent('agent.status.updated', { permission: 'auto' }));
+      await settle();
+
+      expect(stateFramesOf(view).slice(subscribed)).toEqual([
+        expect.objectContaining({ type: 'todo', items: [{ title: 'ship', status: 'pending' }] }),
+        expect.objectContaining({ type: 'todo', items: [] }),
+        expect.objectContaining({ type: 'agent', permission_mode: 'auto' }),
+        expect.objectContaining({
+          type: 'goal',
+          goal: { objective: 'ship it', status: 'active', turns_used: 1, tokens_used: 10, wall_clock_ms: 5 },
+        }),
+      ]);
+    });
+
+    it('coalesces context usage changes into the latest value', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      const state = withAgentState(main);
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, { '*': 'turn' });
+      const subscribed = stateFramesOf(view).length;
+
+      state.setContextTokens(100);
+      await settle();
+      state.setContextTokens(200);
+      await settle();
+      state.setContextTokens(300);
+      await settle(USAGE_FRAME_INTERVAL_MS + 50);
+
+      expect(stateFramesOf(view).slice(subscribed)).toEqual([
+        expect.objectContaining({ type: 'usage', context_tokens: 300, max_context_tokens: 1000 }),
+      ]);
+    });
+
+    it('announces the state of an agent created after the subscription', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, { '*': 'turn' });
+      const subscribed = stateFramesOf(view).length;
+      lc.addAgent('agent-1');
+      await settle();
+
+      expect(
+        stateFramesOf(view)
+          .slice(subscribed)
+          .map((frame) => `${frame.type}:${frame.agent_id}`),
+      ).toEqual(['agent:agent-1', 'todo:agent-1']);
+    });
+
     it('keeps delivering ops across a no-reset resubscribe', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
@@ -1950,8 +2148,6 @@ describe('SessionEventBroadcaster', () => {
           tasks: unknown[];
           interactions: unknown[];
           attachments: unknown[];
-          todos: unknown[];
-          meta: unknown;
         };
         has_more_older: boolean;
         seq?: number;
@@ -1960,10 +2156,11 @@ describe('SessionEventBroadcaster', () => {
       expect(payload.has_more_older).toBe(true);
       expect(payload.seq).toBeTypeOf('number');
       expect(payload.snapshot).not.toHaveProperty('tasks');
+      expect(payload.snapshot).not.toHaveProperty('todos');
+      expect(payload.snapshot).not.toHaveProperty('meta');
       expect(payload.snapshot).toMatchObject({
         interactions: [],
         attachments: [],
-        todos: [],
       });
       expect(JSON.stringify(payload.snapshot)).not.toContain('secret body');
     });

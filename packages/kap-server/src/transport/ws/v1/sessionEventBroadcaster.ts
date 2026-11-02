@@ -11,7 +11,6 @@ import type {
   SessionActivityState,
   Workspace,
 } from '@moonshot-ai/agent-core-v2';
-import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import {
   IAgentLifecycleService,
   IEventService,
@@ -60,9 +59,11 @@ import {
   interactionOutcome,
 } from '../../../protocol/interaction-wire';
 import { toWireQuestion } from '../../../protocol/question-wire';
+import type { AgentFeedMessage } from '../../../protocol/ws-agent';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
+import { SessionAgentFeed } from './sessionAgentFeed';
 import { SessionTaskFeed } from './sessionTaskFeed';
 import { toTaskMessage } from './taskState';
 
@@ -84,7 +85,8 @@ export type BroadcastFrame =
   | EventEnvelope
   | InteractionEventMessage
   | TaskEventMessage
-  | TaskListMessage;
+  | TaskListMessage
+  | AgentFeedMessage;
 
 export interface BroadcastTarget {
   send(frame: BroadcastFrame, delivery?: BroadcastDelivery): void;
@@ -104,7 +106,8 @@ interface SessionState {
   transcriptStream?: TranscriptStream;
   readonly transcriptSeeded: Set<BroadcastTarget>;
   tasks?: SessionTaskFeed;
-  readonly listedTaskAgents: Map<BroadcastTarget, Set<string>>;
+  agents?: SessionAgentFeed;
+  readonly listedAgents: Map<BroadcastTarget, Set<string>>;
 }
 
 interface WorkTracker {
@@ -206,7 +209,7 @@ export class SessionEventBroadcaster {
     if (state === undefined || this.sessions.get(sessionId) !== state) return false;
     const prev = state.targets.get(target);
     state.targets.set(target, transcriptGrades);
-    this.sendTaskLists(state, target, transcriptGrades);
+    this.sendAgentLists(state, target, transcriptGrades);
     if (this.willSendTranscriptReset(state, transcriptGrades, prev)) {
       state.transcriptSeeded.delete(target);
     }
@@ -220,7 +223,7 @@ export class SessionEventBroadcaster {
     if (state === undefined) return;
     state.targets.delete(target);
     state.transcriptSeeded.delete(target);
-    state.listedTaskAgents.delete(target);
+    state.listedAgents.delete(target);
     this.evictDetachedSession(sessionId);
   }
 
@@ -232,7 +235,7 @@ export class SessionEventBroadcaster {
     const state = this.sessions.get(sessionId);
     if (state === undefined || !state.targets.has(target)) return;
     state.targets.set(target, transcriptGrades);
-    this.sendTaskLists(state, target, transcriptGrades);
+    this.sendAgentLists(state, target, transcriptGrades);
   }
 
   private willSendTranscriptReset(
@@ -437,9 +440,9 @@ export class SessionEventBroadcaster {
     if (getLiveSessionById(this.opts.core.accessor, sessionId) === undefined) return;
     state.detached = undefined;
     this.attachInteractions(sessionId, state);
-    this.attachTasks(sessionId, state);
-    state.listedTaskAgents.clear();
-    for (const [target, spec] of state.targets) this.sendTaskLists(state, target, spec);
+    this.attachAgentFeeds(sessionId, state);
+    state.listedAgents.clear();
+    for (const [target, spec] of state.targets) this.sendAgentLists(state, target, spec);
     for (const [target, spec] of state.targets) {
       await this.subscribeTranscript(state, target, spec, undefined);
       if (state.targets.has(target)) state.transcriptSeeded.add(target);
@@ -461,33 +464,39 @@ export class SessionEventBroadcaster {
       lifecycleDisposables: [],
       knownInteractions: new Map(),
       transcriptSeeded: new Set(),
-      listedTaskAgents: new Map(),
+      listedAgents: new Map(),
     };
     this.sessions.set(sessionId, state);
     this.attachInteractions(sessionId, state);
-    this.attachTasks(sessionId, state);
+    this.attachAgentFeeds(sessionId, state);
     return state;
   }
 
-  private attachTasks(sessionId: string, state: SessionState): void {
+  private attachAgentFeeds(sessionId: string, state: SessionState): void {
     const agents = getLiveSessionById(this.opts.core.accessor, sessionId)?.accessor.get(
       IAgentLifecycleService,
     );
     if (agents === undefined) return;
-    const feed = new SessionTaskFeed(agents, (agentId, info) => this.sendTask(state, agentId, info));
-    state.tasks = feed;
-    state.lifecycleDisposables.push(feed);
+    const tasks = new SessionTaskFeed(agents, (agentId, info) => {
+      this.sendAgentFrame(state, agentId, toTaskMessage(state.sessionId, agentId, info));
+    });
+    const agentStates = new SessionAgentFeed(sessionId, agents, (agentId, message) => {
+      this.sendAgentFrame(state, agentId, message);
+    });
+    state.tasks = tasks;
+    state.agents = agentStates;
+    state.lifecycleDisposables.push(tasks, agentStates);
   }
 
-  private sendTaskLists(state: SessionState, target: BroadcastTarget, spec: TranscriptGradeSpec): void {
-    const feed = state.tasks;
-    if (feed === undefined) return;
-    let listed = state.listedTaskAgents.get(target);
+  private sendAgentLists(state: SessionState, target: BroadcastTarget, spec: TranscriptGradeSpec): void {
+    const tasks = state.tasks;
+    if (tasks === undefined) return;
+    let listed = state.listedAgents.get(target);
     if (listed === undefined) {
       listed = new Set();
-      state.listedTaskAgents.set(target, listed);
+      state.listedAgents.set(target, listed);
     }
-    const agentIds = new Set([...feed.agentIds(), ...Object.keys(spec).filter((id) => id !== '*')]);
+    const agentIds = new Set([...tasks.agentIds(), ...Object.keys(spec).filter((id) => id !== '*')]);
     for (const agentId of agentIds) {
       if (gradeFor(spec, agentId) === 'off') {
         listed.delete(agentId);
@@ -495,24 +504,33 @@ export class SessionEventBroadcaster {
       }
       if (listed.has(agentId)) continue;
       listed.add(agentId);
-      try {
-        target.send({
+      const frames: BroadcastFrame[] = [
+        {
           type: 'task.list',
           session_id: state.sessionId,
           agent_id: agentId,
-          tasks: feed.running(agentId),
-        });
-      } catch {
+          tasks: tasks.running(agentId),
+        },
+        ...(state.agents?.snapshot(agentId) ?? []),
+      ];
+      for (const frame of frames) {
+        try {
+          target.send(frame);
+        } catch {
+        }
       }
     }
   }
 
-  private sendTask(state: SessionState, agentId: string, info: AgentTaskInfo): void {
-    const message = toTaskMessage(state.sessionId, agentId, info);
+  private sendAgentFrame(
+    state: SessionState,
+    agentId: string,
+    frame: TaskEventMessage | AgentFeedMessage,
+  ): void {
     for (const [target, spec] of state.targets) {
       if (gradeFor(spec, agentId) === 'off') continue;
       try {
-        target.send(message);
+        target.send(frame);
       } catch {
       }
     }
