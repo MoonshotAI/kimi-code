@@ -898,7 +898,7 @@ describe('BashTool', () => {
     expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/var/app' && pwd"]);
   });
 
-  it('resolves an omitted cwd from the bound environment workspace, not the host session cwd', async () => {
+  it('keeps the resolve-time environment cwd through execution', async () => {
     const { runner, exec } = createTestRunner(processWithOutput({ stdout: '' }));
     const ctx = createTestCtx('/host/session/cwd');
     const processService: IHostProcessService = {
@@ -912,7 +912,9 @@ describe('BashTool', () => {
       ),
       { host: createTestEnv(), process: processService },
     );
-    const environment = stubAgentEnvironment(backend, { workDir: '/remote-work' });
+    let workDir = '/remote-work';
+    const environment = stubAgentEnvironment(backend, { workDir });
+    environment.workspaceRoots = () => ({ workDir, additionalDirs: [] });
     const tool = new BashTool(
       environment,
       ctx,
@@ -921,7 +923,12 @@ describe('BashTool', () => {
       stubConfig(),
     );
 
-    await executeTool(tool, context({ command: 'pwd', timeout: 60 }));
+    const { args, ...executionContext } = context({ command: 'pwd', timeout: 60 });
+    const execution = await tool.resolveExecution(args);
+    if (execution.isError === true) throw new Error('expected executable Bash tool');
+    expect(execution.display).toMatchObject({ cwd: '/remote-work' });
+    workDir = '/changed-after-resolution';
+    await execution.execute(executionContext);
 
     expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/remote-work' && pwd"]);
   });

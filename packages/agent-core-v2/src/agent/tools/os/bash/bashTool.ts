@@ -122,6 +122,7 @@ export class BashTool implements IBashTool {
         resolutionLease.environment,
         this.environment.workspaceRoots(environmentId),
       );
+      const cwd = view.resolve(args.cwd ?? view.workDir);
       const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
       return {
         description: args.run_in_background
@@ -130,14 +131,14 @@ export class BashTool implements IBashTool {
         display: {
           kind: 'command',
           command: args.command,
-          cwd: view.resolve(args.cwd ?? view.workDir),
+          cwd,
           description: args.description,
           language: 'bash',
         },
         approvalRule: literalRulePattern(this.name, args.command),
         matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
         execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
-          this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration, environmentId),
+          this.execution({ ...args, cwd }, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration, environmentId),
       };
     } finally {
       resolutionLease.dispose();
