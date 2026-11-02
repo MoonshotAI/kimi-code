@@ -1125,8 +1125,8 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
 | `disabled_tools` | body | array | 要为会话禁用的工具名 |
 | `swarm_mode` | body | boolean | 进入或退出 swarm 模式 |
-| `plan_mode` | body | boolean | `true` 时进入 Plan 模式，先退出 Tower 模式；`false` 会被忽略 |
-| `goal_objective` | body | string | 退出 Plan 模式，并以此为目标描述创建目标 |
+| `plan_mode` | body | boolean | `true` 时进入 Plan 模式，随后退出 Tower 模式；`false` 会被忽略 |
+| `goal_objective` | body | string | 以此为目标描述创建目标，成功后退出 Plan 模式 |
 | `metadata` | body | object | 客户端元数据，随提示词回显 |
 
 schema 还接受 `goal_control`，但提交路由不会应用它。每个 `content` 内容块是按 `type` 区分的对象：

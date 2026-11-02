@@ -402,6 +402,44 @@ describe('server-v2 /api/v1 prompts', () => {
     await stopRunningTurn(id);
   });
 
+  it('keeps plan mode when the goal of a prompt cannot be created', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const plan = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentPlanService);
+    await plan.enter();
+
+    const res = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'start' }],
+      goal_objective: '   ',
+    });
+
+    expect(res.body.code).toBe(40917);
+    expect(await plan.status()).not.toBeNull();
+  });
+
+  it('keeps Tower mode when plan mode cannot be entered for a prompt', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const agent = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!;
+    const tower = agent.accessor.get(IAgentTowerService);
+    vi.spyOn(tower, 'isActive', 'get').mockReturnValue(true);
+    const exitTower = vi.spyOn(tower, 'exit').mockResolvedValue(undefined as never);
+    vi.spyOn(agent.accessor.get(IAgentPlanService), 'enter').mockRejectedValue(new Error('plan directory is not writable'));
+
+    const res = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'plan it' }],
+      plan_mode: true,
+    });
+
+    expect(res.body.code).not.toBe(0);
+    expect(exitTower).not.toHaveBeenCalled();
+  });
+
   it('lists, steers and aborts prompts held in the server queue through the prompt routes', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
@@ -432,15 +470,18 @@ describe('server-v2 /api/v1 prompts', () => {
       `${second}:queue`,
     ]);
 
+    const invalid = await call<null>('POST', `/api/v1/sessions/${id}/prompts:steer`, {
+      prompt_ids: [second, 'missing-prompt'],
+    });
+    expect(invalid.body.code).not.toBe(0);
+    expect(queue.snapshot().items.map((item) => `${item.id}:${item.delivery}`)).toEqual([
+      `${third}:steer`,
+      `${second}:queue`,
+    ]);
+
     const aborted = await call<{ aborted: boolean }>('POST', `/api/v1/sessions/${id}/prompts/${second}:abort`, {});
     expect(aborted.body.data).toEqual({ aborted: true });
     expect(queue.snapshot().items.map((item) => item.id)).toEqual([third]);
-
-    const invalid = await call<null>('POST', `/api/v1/sessions/${id}/prompts:steer`, {
-      prompt_ids: [third, 'missing-prompt'],
-    });
-    expect(invalid.body.code).not.toBe(0);
-    expect(queue.snapshot().items.map((item) => `${item.id}:${item.delivery}`)).toEqual([`${third}:steer`]);
     await stopRunningTurn(id);
   });
 

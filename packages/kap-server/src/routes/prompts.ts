@@ -613,10 +613,14 @@ async function steerPrompts(resolved: ResolvedPrompt, promptIds: readonly string
     throw new Error2(ErrorCodes.REQUEST_INVALID, 'only an input can be steered');
   }
   const loopIds = promptIds.filter((id) => !queued.has(id));
-  if (loopIds.length > 0) await resolved.prompt.steer(loopIds);
+  const loopPending = new Set(resolved.prompt.snapshot().queue.map((item) => item.meta?.promptId));
+  if (loopIds.some((id) => !loopPending.has(id))) {
+    throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
+  }
   for (const id of promptIds) {
     if (queued.has(id)) resolved.queue.steer(id);
   }
+  if (loopIds.length > 0) await resolved.prompt.steer(loopIds);
 }
 
 function submissionSettings(
@@ -663,16 +667,16 @@ function submissionSettings(
 }
 
 async function enterPlanMode(agent: IAgentScopeHandle): Promise<void> {
-  const tower = agent.accessor.get(IAgentTowerService);
-  if (tower.isActive) await tower.exit();
   const plan = agent.accessor.get(IAgentPlanService);
   if ((await plan.status()) === null) await plan.enter();
+  const tower = agent.accessor.get(IAgentTowerService);
+  if (tower.isActive) await tower.exit();
 }
 
 async function startGoal(agent: IAgentScopeHandle, objective: string): Promise<void> {
+  await agent.accessor.get(IAgentGoalService).createGoal({ objective });
   const plan = agent.accessor.get(IAgentPlanService);
   if ((await plan.status()) !== null) plan.exit();
-  await agent.accessor.get(IAgentGoalService).createGoal({ objective });
 }
 
 function projectPromptList(resolved: ResolvedPrompt) {
