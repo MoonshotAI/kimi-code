@@ -203,36 +203,10 @@ export const transcriptMarkerSchema = z.object({
   at: z.string().optional(),
 });
 
-export const transcriptTaskRefSchema = z.object({
-  kind: z.literal('taskref'),
-  refId: z.string(),
-  taskId: taskIdSchema,
-  at: z.string().optional(),
-});
-
 export const transcriptItemSchema = z.discriminatedUnion('kind', [
   transcriptTurnSchema,
   transcriptMarkerSchema,
-  transcriptTaskRefSchema,
 ]);
-
-export const transcriptTaskSchema = z.object({
-  taskId: taskIdSchema,
-  kind: z.enum(['shell', 'subagent', 'tool', 'other']),
-  state: z.enum(['running', 'completed', 'failed', 'timed_out', 'killed', 'lost']),
-  detached: z.boolean(),
-  description: z.string().optional(),
-  agentId: agentIdSchema.optional(),
-  outputTail: z.string(),
-  startedAt: z.string().optional(),
-  endedAt: z.string().optional(),
-  resultSummary: z.string().optional(),
-  error: z.string().optional(),
-  stateReason: z.string().optional(),
-  usage: stepUsageSchema.optional(),
-  model: z.string().optional(),
-  thinkingEffort: z.string().optional(),
-});
 
 export const goalMetaSchema = z.object({
   objective: z.string(),
@@ -379,7 +353,6 @@ export const transcriptPromptSchema = z.object({
 
 export const agentTranscriptSnapshotSchema = z.object({
   items: z.array(transcriptItemSchema),
-  tasks: z.array(transcriptTaskSchema),
   interactions: z.array(interactionSchema).default([]),
   attachments: z.array(attachmentSchema).default([]),
   todos: z.array(todoSchema).default([]),
@@ -391,15 +364,12 @@ export const agentTranscriptSnapshotSchema = z.object({
 export const turnHeaderSchema = transcriptTurnSchema.omit({ steps: true });
 export const stepHeaderSchema = transcriptStepSchema.omit({ frames: true });
 
-export const appendTargetSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('frame'),
-    turnId: turnIdSchema,
-    stepId: stepIdSchema,
-    frameId: frameIdSchema,
-  }),
-  z.object({ type: z.literal('task'), taskId: taskIdSchema }),
-]);
+export const appendTargetSchema = z.object({
+  type: z.literal('frame'),
+  turnId: turnIdSchema,
+  stepId: stepIdSchema,
+  frameId: frameIdSchema,
+});
 
 export const transcriptOperationSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('reset'), agentId: agentIdSchema, snapshot: agentTranscriptSnapshotSchema }),
@@ -422,12 +392,6 @@ export const transcriptOperationSchema = z.discriminatedUnion('op', [
     item: transcriptMarkerSchema,
     beforeTurn: z.number().int().optional(),
   }),
-  z.object({
-    op: z.literal('taskref.upsert'),
-    item: transcriptTaskRefSchema,
-    beforeTurn: z.number().int().optional(),
-  }),
-  z.object({ op: z.literal('task.upsert'), task: transcriptTaskSchema }),
   z.object({ op: z.literal('interaction.upsert'), interaction: interactionSchema }),
   z.object({ op: z.literal('attachment.upsert'), attachment: attachmentSchema }),
   z.object({ op: z.literal('todo.upsert'), todo: todoSchema }),
@@ -492,7 +456,6 @@ export const transcriptResponseSchema = z.object({
   agent_id: agentIdSchema,
   items: z.array(transcriptItemSchema),
   has_more: z.boolean(),
-  tasks: z.array(transcriptTaskSchema),
   interactions: z.array(interactionSchema).default([]),
   attachments: z.array(attachmentSchema).default([]),
   todos: z.array(todoSchema).default([]),

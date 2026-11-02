@@ -203,6 +203,26 @@ export class AgentTaskPersistence {
     return textDecoder.decode(output.data.subarray(start, end));
   }
 
+  async readTaskOutputTail(
+    taskId: string,
+    maxBytes: number,
+  ): Promise<{ readonly offset: number; readonly data: Uint8Array } | undefined> {
+    const roots = this.fallbackRoot === undefined ? [this.primaryRoot()] : [this.primaryRoot(), this.fallbackRoot];
+    for (const root of roots) {
+      const scope = this.taskOutputScope(taskId, root);
+      const size = await this.bytes.size(scope, OUTPUT_LOG_KEY);
+      if (size === undefined) continue;
+      const offset = Math.max(0, size - Math.max(0, Math.trunc(maxBytes)));
+      if (offset === size) return { offset, data: new Uint8Array() };
+      const parts: Uint8Array[] = [];
+      for await (const part of this.bytes.readStream(scope, OUTPUT_LOG_KEY, { start: offset, end: size - 1 })) {
+        parts.push(part);
+      }
+      return { offset, data: Buffer.concat(parts) };
+    }
+    return undefined;
+  }
+
   async readTaskOutputSnapshot(
     taskId: string,
     maxPreviewBytes: number,
