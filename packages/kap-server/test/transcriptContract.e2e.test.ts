@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import {
+  IAgentFullCompactionService,
   IAgentLifecycleService,
   IAgentPlanService,
   IAgentTaskService,
@@ -142,6 +143,15 @@ interface Envelope<T> {
   data: T;
 }
 
+async function restCode(server: RunningServer, base: string, path: string, body: unknown = {}): Promise<number> {
+  const res = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: authHeaders(server, { 'content-type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+  return ((await res.json()) as Envelope<unknown>).code;
+}
+
 async function rest<T>(server: RunningServer, base: string, path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   const res = await fetch(`${base}${path}`, {
     method: init?.method ?? 'GET',
@@ -177,8 +187,8 @@ async function createSession(server: RunningServer, base: string): Promise<strin
   return data.id;
 }
 
-function submitPrompt(server: RunningServer, base: string, sid: string, text: string, permissionMode: 'manual' | 'yolo' | 'auto' = 'yolo'): Promise<{ prompt_id: string }> {
-  return rest<{ prompt_id: string }>(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts`, {
+function submitPrompt(server: RunningServer, base: string, sid: string, text: string, permissionMode: 'manual' | 'yolo' | 'auto' = 'yolo'): Promise<{ prompt_id: string; status: string }> {
+  return rest<{ prompt_id: string; status: string }>(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts`, {
     method: 'POST',
     body: { content: [{ type: 'text', text }], model: 'stub', permission_mode: permissionMode },
   });
@@ -405,18 +415,116 @@ describe('transcript contract e2e', () => {
       (await getTranscript(server!, base, sid)).prompts.some((p) => p.status === 'running'),
     );
 
-    await submitPrompt(server!, base, sid, 'second prompt');
-    await until('second prompt queued', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return tx.prompts.some((p) => p.status === 'queued') && tx.prompts.some((p) => p.status === 'running');
-    });
-    const mid = await getTranscript(server!, base, sid);
-    expect(mid.prompts.map((p) => p.status).toSorted()).toEqual(['queued', 'running']);
+    const channel = await subscribeTranscript(server!, sid);
+    try {
+      const second = await submitPrompt(server!, base, sid, 'second prompt');
+      expect(second.status).toBe('queued');
+      await until('second prompt queued', async () => {
+        const tx = await getTranscript(server!, base, sid);
+        return tx.prompts.some((p) => p.status === 'queued') && tx.prompts.some((p) => p.status === 'running');
+      });
+      const mid = await getTranscript(server!, base, sid);
+      expect(mid.prompts.map((p) => p.status).toSorted()).toEqual(['queued', 'running']);
+      const queueFrames = () => channel.frames.filter((f) => f.type === 'queue' && f.agent_id === 'main');
+      await until('queue frame lists the second prompt', () =>
+        queueFrames().some((f) => f.inputs.some((input: any) => input.prompt_id === second.prompt_id)),
+      );
+      expect(queueFrames().at(-1)).toMatchObject({
+        paused: false,
+        inputs: [{ prompt_id: second.prompt_id, kind: 'input', delivery: 'queue', content: [{ type: 'text', text: 'second prompt' }] }],
+      });
 
-    await until('both settled', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return tx.prompts.length > 0 && tx.prompts.every((p) => p.status === 'completed');
-    }, 45000);
+      await until('both settled', async () => {
+        const tx = await getTranscript(server!, base, sid);
+        return tx.prompts.length > 0 && tx.prompts.every((p) => p.status === 'completed');
+      }, 45000);
+      await until('queue drained', () => queueFrames().at(-1)?.inputs.length === 0);
+    } finally {
+      channel.close();
+    }
+  });
+
+  it('pauses, reorders, steers and withdraws prompts queued behind a running turn', async () => {
+    await boot([
+      { match: (body) => body.includes('first prompt'), respond: () => sseText('first done'), delayMs: 3000 },
+      { match: () => true, respond: () => sseText('later done') },
+    ]);
+    const sid = await createSession(server!, base);
+    await submitPrompt(server!, base, sid, 'first prompt');
+    await until('first prompt reaches model', () => llm!.hits.length > 0);
+    const queuePath = `/api/v1/sessions/${sid}/agents/main/queue`;
+    const queued = async () =>
+      (await rest<{ queued: { prompt_id: string }[] }>(server!, base, `/api/v1/sessions/${sid}/prompts`)).queued.map(
+        (prompt) => prompt.prompt_id,
+      );
+
+    const second = await submitPrompt(server!, base, sid, 'second prompt');
+    const third = await submitPrompt(server!, base, sid, 'third prompt');
+    expect([second.status, third.status]).toEqual(['queued', 'queued']);
+
+    expect(await rest(server!, base, `${queuePath}:pause`, { method: 'POST', body: {} })).toEqual({ paused: true });
+    await rest(server!, base, `${queuePath}/${third.prompt_id}:move`, { method: 'POST', body: { before_prompt_id: second.prompt_id } });
+    expect(await queued()).toEqual([third.prompt_id, second.prompt_id]);
+    expect(
+      await rest(server!, base, `/api/v1/sessions/${sid}/prompts/${second.prompt_id}:steer`, { method: 'POST', body: {} }),
+    ).toEqual({ steered: true, prompt_ids: [second.prompt_id] });
+    expect(await queued()).toEqual([third.prompt_id]);
+
+    expect(
+      await rest(server!, base, `/api/v1/sessions/${sid}/prompts/${third.prompt_id}:abort`, { method: 'POST', body: {} }),
+    ).toEqual({ aborted: true });
+    expect(await queued()).toEqual([]);
+    expect(await restCode(server!, base, `${queuePath}/${second.prompt_id}:move`, { before_prompt_id: 7 })).toBe(40001);
+    expect(await restCode(server!, base, `${queuePath}/${second.prompt_id}:move`)).toBe(40402);
+    expect(await restCode(server!, base, `/api/v1/sessions/${sid}/agents/agent-0/queue:pause`)).toBe(40001);
+
+    await idle(server!, base, sid);
+    const fourth = await submitPrompt(server!, base, sid, 'fourth prompt');
+    expect(fourth.status).toBe('queued');
+    expect(await queued()).toEqual([fourth.prompt_id]);
+    expect(
+      await rest(server!, base, `/api/v1/sessions/${sid}/prompts/${fourth.prompt_id}:abort`, { method: 'POST', body: {} }),
+    ).toEqual({ aborted: true });
+    expect(await rest(server!, base, `${queuePath}:resume`, { method: 'POST', body: {} })).toEqual({ paused: false });
+    const tx = await getTranscript(server!, base, sid);
+    expect(tx.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
+    expect(JSON.stringify(tx.items)).toContain('second prompt');
+    expect(JSON.stringify(tx.items)).not.toContain('third prompt');
+    expect(JSON.stringify(tx.items)).not.toContain('fourth prompt');
+  });
+
+  it('queues a compaction requested through :compact behind a running turn', async () => {
+    await boot([{ match: () => true, respond: () => sseText('done'), delayMs: 2000 }]);
+    const sid = await createSession(server!, base);
+    await submitPrompt(server!, base, sid, 'first prompt');
+    await until('first prompt reaches model', () => llm!.hits.length > 0);
+    const compaction = getLiveSessionById(server!.core.accessor, sid)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf(MAIN_AGENT_ID)!
+      .accessor.get(IAgentFullCompactionService);
+    const channel = await subscribeTranscript(server!, sid);
+    try {
+      const queued = await rest<{ prompt_id: string; accepted_as: string }>(
+        server!,
+        base,
+        `/api/v1/sessions/${sid}:compact`,
+        { method: 'POST', body: { instruction: '  keep the plan  ' } },
+      );
+      expect(queued.accepted_as).toBe('queue');
+      expect(compaction.queued).toMatchObject({ id: queued.prompt_id, instruction: 'keep the plan' });
+      expect(await restCode(server!, base, `/api/v1/sessions/${sid}:compact`)).toBe(40910);
+      await until('queue frame lists the compaction', () =>
+        channel.frames.some(
+          (f) => f.type === 'queue' && f.inputs.some((input: any) => input.prompt_id === queued.prompt_id && input.kind === 'compact'),
+        ),
+      );
+
+      await until('queued compaction runs', () => llm!.hits.some((hit) => hit.includes('keep the plan')), 30000);
+      expect(compaction.queued).toBeUndefined();
+      await idle(server!, base, sid);
+    } finally {
+      channel.close();
+    }
   });
 
   it('undo rebuilds a steered turn consistently over REST and WebSocket', async () => {

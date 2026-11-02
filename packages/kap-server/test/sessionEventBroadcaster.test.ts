@@ -15,6 +15,7 @@ import {
   LifecycleScope,
   IAgentLifecycleService,
   IAgentConversationUndoParticipantRegistry,
+  IAgentFullCompactionService,
   IAgentLoopService,
   IAgentProfileService,
   IAgentScopeContext,
@@ -188,7 +189,11 @@ class FakeAgentHandle {
   readonly accessor;
   readonly context: AgentContext;
   activity: AgentActivitySnapshot = {};
+  queue: unknown[] = [];
+  queuePaused = false;
+  queuedCompaction: { id: string; instruction?: string; createdAt: string } | undefined;
   private readonly services = new Map<unknown, unknown>();
+  private readonly queueListeners = new Set<() => void>();
   constructor(readonly id: string) {
     const scope = makeAgentScopeContext({
       agentId: id,
@@ -202,18 +207,32 @@ class FakeAgentHandle {
     this.services.set(IAgentConversationUndoParticipantRegistry, {
       register: () => ({ dispose: () => {} }),
     });
+    const watchQueue = (listener: () => void) => {
+      this.queueListeners.add(listener);
+      return { dispose: () => this.queueListeners.delete(listener) };
+    };
     this.services.set(IAgentLoopService, {
       snapshot: () => ({
         state: this.activity.turn === undefined ? 'idle' : 'running',
         turn: this.activity.turn,
+        queue: this.queue,
+        queuePaused: this.queuePaused,
       }),
+      onDidChangeQueue: watchQueue,
     });
+    this.services.set(
+      IAgentFullCompactionService,
+      Object.defineProperty({ onDidChangeQueued: watchQueue }, 'queued', { get: () => this.queuedCompaction }),
+    );
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
     };
   }
   set(token: unknown, service: unknown): void {
     this.services.set(token, service);
+  }
+  fireQueueChange(): void {
+    for (const listener of [...this.queueListeners]) listener();
   }
   dispose(): void {}
 }
@@ -1540,6 +1559,93 @@ describe('SessionEventBroadcaster', () => {
     });
 
     expect(interactionMessages).toHaveLength(0);
+  });
+
+  it('sends the main queue on request and forwards changes only to targets that follow the main agent', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    lc.addAgent('agent-0');
+    sessions.set('s1', lc);
+    main.queuePaused = true;
+    main.queuedCompaction = { id: 'c1', instruction: 'keep the plan', createdAt: '2026-01-01T00:00:01.000Z' };
+    main.queue = [
+      {
+        message: { role: 'user', content: [{ type: 'text', text: 'later' }] },
+        meta: {
+          promptId: 'p1',
+          userMessageId: 'p1',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          origin: { kind: 'user', clientMetadata: [{ display_text: 'later' }] },
+          tracked: true,
+        },
+      },
+      { message: { role: 'user', content: [{ type: 'text', text: 'continue the goal' }] }, meta: {} },
+    ];
+    const mainView = collectingTarget();
+    const otherView = collectingTarget();
+    await bc.subscribe('s1', mainView.target, { main: 'delta' });
+    await bc.subscribe('s1', otherView.target, { main: 'off', 'agent-0': 'delta' });
+    const queueFrames = (view: ReturnType<typeof collectingTarget>) =>
+      view.envelopes.filter((frame) => frame.type === 'queue') as unknown[];
+
+    bc.sendQueueSnapshot('s1', mainView.target);
+    expect(queueFrames(mainView)).toMatchObject([
+      {
+        type: 'queue',
+        session_id: 's1',
+        agent_id: 'main',
+        paused: true,
+        inputs: [
+          {
+            prompt_id: 'c1',
+            kind: 'compact',
+            delivery: 'queue',
+            content: [],
+            instruction: 'keep the plan',
+            created_at: '2026-01-01T00:00:01.000Z',
+          },
+          {
+            prompt_id: 'p1',
+            user_message_id: 'p1',
+            kind: 'input',
+            delivery: 'queue',
+            content: [{ type: 'text', text: 'later' }],
+            client_metadata: { display_text: 'later' },
+            created_at: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      },
+    ]);
+    expect((queueFrames(mainView)[0] as { inputs: unknown[] }).inputs).toHaveLength(2);
+    expect(mainView.deliveries.at(-1)).toBe('immediate');
+    bc.sendQueueSnapshot('s1', otherView.target);
+    expect(queueFrames(otherView)).toHaveLength(0);
+
+    main.queuePaused = false;
+    main.queue = [];
+    main.queuedCompaction = undefined;
+    main.fireQueueChange();
+    main.fireQueueChange();
+    expect(queueFrames(mainView)).toHaveLength(2);
+    expect(queueFrames(mainView).at(-1)).toMatchObject({ agent_id: 'main', paused: false, inputs: [] });
+    expect(queueFrames(otherView)).toHaveLength(0);
+  });
+
+  it('resends the main queue to existing subscribers when a session reattaches', async () => {
+    const lc = openSession('s1');
+    const main = lc.addAgent('main');
+    main.queuePaused = true;
+    const view = collectingTarget();
+    await bc.subscribe('s1', view.target, { main: 'delta' });
+    const queueFrames = () => view.envelopes.filter((frame) => frame.type === 'queue') as unknown[];
+    expect(queueFrames()).toHaveLength(0);
+
+    managerEvents.fireDidClose('s1');
+    main.queuePaused = false;
+    managerEvents.fireDidCreate('s1', sessionHandle(core, 's1'));
+
+    await vi.waitFor(() => expect(queueFrames()).toHaveLength(1));
+    expect(queueFrames()[0]).toMatchObject({ type: 'queue', agent_id: 'main', paused: false, inputs: [] });
   });
 
   describe('transcript streaming', () => {

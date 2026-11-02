@@ -9,13 +9,16 @@ import {
   agentContextOf,
   IAgentTitlePromptSource,
   IAgentContextMemoryService,
+  IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
+  IAgentPlanService,
   IAgentProfileService,
   IAgentLoopService,
   IAgentStateService,
   IAgentSwarmService,
   IAgentToolPolicyService,
+  IAgentTowerService,
   IBootstrapService,
   IConfigService,
   IEventBus,
@@ -285,6 +288,16 @@ describe('server-v2 /api/v1 prompts', () => {
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
   }
 
+  async function stopRunningTurn(sessionId: string): Promise<void> {
+    const loop = getLiveSessionById(server!.core.accessor, sessionId)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentLoopService);
+    const active = loop.snapshot().activePromptId;
+    if (active !== undefined) loop.cancel({ promptId: active });
+    await loop.settled();
+  }
+
   async function setSessionModel(sessionId: string, model: string): Promise<void> {
     const session = getLiveSessionById(server!.core.accessor, sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
@@ -348,6 +361,68 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(exit).toHaveBeenCalledTimes(1);
     expect(exit.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[2]!);
     expect(swarm.isActive).toBe(false);
+  });
+
+  it('enters plan mode for a queued prompt only when it starts', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const agent = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!;
+    const plan = agent.accessor.get(IAgentPlanService);
+    const tower = agent.accessor.get(IAgentTowerService);
+    vi.spyOn(tower, 'isActive', 'get').mockReturnValue(true);
+    const exitTower = vi.spyOn(tower, 'exit').mockResolvedValue(undefined as never);
+
+    const paused = await call<{ paused: boolean }>('POST', `/api/v1/sessions/${id}/agents/main/queue:pause`, {});
+    expect(paused.body.data).toEqual({ paused: true });
+    const planned = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'plan it' }],
+      model: 'stub',
+      plan_mode: true,
+    });
+    expect(planned.body.data.status).toBe('queued');
+    expect(await plan.status()).toBeNull();
+    expect(exitTower).not.toHaveBeenCalled();
+
+    const resumed = await call<{ paused: boolean }>('POST', `/api/v1/sessions/${id}/agents/main/queue:resume`, {});
+    expect(resumed.body.data).toEqual({ paused: false });
+    await vi.waitFor(async () => {
+      expect(await plan.status()).not.toBeNull();
+    });
+    expect(exitTower).toHaveBeenCalledOnce();
+    await stopRunningTurn(id);
+  });
+
+  it('rejects an invalid or conflicting goal before the prompt is queued', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const agent = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!;
+    const submit = vi.spyOn(agent.accessor.get(IAgentLoopService), 'submit');
+    const post = (objective: string) =>
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'start' }],
+        goal_objective: objective,
+      });
+
+    expect((await post('   ')).body.code).toBe(40917);
+    expect((await post('x'.repeat(4001))).body.code).toBe(40918);
+    const goal = agent.accessor.get(IAgentGoalService);
+    await goal.createGoal({ objective: 'existing goal' });
+    expect((await post('another goal')).body.code).toBe(40913);
+    expect(submit).not.toHaveBeenCalled();
+    await goal.cancelGoal({});
+  });
+
+  it('rejects queue controls for agents other than the main agent', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    for (const path of ['queue:pause', 'queue:resume', 'queue/p1:move']) {
+      const res = await call<null>('POST', `/api/v1/sessions/${id}/agents/agent-0/${path}`, {});
+      expect(res.body.code).toBe(40001);
+    }
   });
 
   it('accepts a prompt-carried model when default_model is not configured', async () => {
@@ -1985,6 +2060,25 @@ describe('server-v2 /api/v1 prompts', () => {
     const main = lifecycle.handleOf('main');
     expect(main).toBeDefined();
     expect(contextHasUserText(main!, 'side question')).toBe(false);
+  });
+
+  it('ignores main-only modes on a prompt for another agent', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const lifecycle = getLiveSessionById(server!.core.accessor, id)!.accessor.get(IAgentLifecycleService);
+    const childContext = await lifecycle.fork(agentContextOf(lifecycle.handleOf('main')!));
+    const main = lifecycle.handleOf('main')!;
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'side question' }],
+      agent_id: childContext.agentId,
+      plan_mode: true,
+      goal_objective: 'not for a side chat',
+    });
+
+    expect(submitted.body.code).toBe(0);
+    expect(await main.accessor.get(IAgentPlanService).status()).toBeNull();
+    expect(main.accessor.get(IAgentGoalService).getGoal().goal).toBeNull();
   });
 
   it('returns 40401 when agent_id names an unknown agent', async () => {

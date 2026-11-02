@@ -20,6 +20,7 @@ import {
   ISessionLegacyService,
   ISessionTitleService,
   IEventService,
+  IWireService,
   SessionCreated,
   IWorkspaceAliases,
   ISessionManager,
@@ -84,6 +85,7 @@ import {
   sendMappedError as sendSessionMappedError,
   sessionConflictErrors,
 } from './sessionErrors';
+import { reservePromptId } from './prompts';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
@@ -953,14 +955,21 @@ async function compactSessionAction(
   ctx: SessionActionCtx<z.infer<typeof compactSessionRequestSchema>>,
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
-  await reloadOnStale(core.accessor, id, async () => {
+  const result = await reloadOnStale(core.accessor, id, async () => {
     const agent = await resolveMainAgent(core, id);
-    agent.accessor
-      .get(IAgentFullCompactionService)
-      .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+    const reservation = reservePromptId(id);
+    try {
+      const acceptedAs = agent.accessor
+        .get(IAgentFullCompactionService)
+        .request({ id: reservation.id, instruction: normalizeOptional(body.instruction) });
+      reservation.submit();
+      return { accepted_as: acceptedAs, prompt_id: reservation.id };
+    } finally {
+      reservation.dispose();
+    }
   });
-  requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
-  reply.send(okEnvelope({}, req.id));
+  requestLog(req)?.info({ session_id: id, action: 'compact', accepted_as: result.accepted_as }, 'session action completed');
+  reply.send(okEnvelope(result, req.id));
 }
 
 async function undoSessionAction(
@@ -1066,10 +1075,14 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
     live === undefined ? await core.accessor.get(ISessionIndex).get(id) : undefined;
   if (live !== undefined) {
     const agentLifecycle = live.accessor.get(IAgentLifecycleService);
+    const stale = agentLifecycle
+      .list()
+      .some((agent) => agentLifecycle.handleOf(agent.agentId)?.accessor.get(IWireService).externallyModified() ?? false);
     for (const agent of agentLifecycle.list()) {
       const agentHandle = agentLifecycle.handleOf(agent.agentId);
       if (agentHandle === undefined) continue;
-      if (agentHandle.accessor.get(IAgentLoopService).snapshot().state === 'running') {
+      const loop = agentHandle.accessor.get(IAgentLoopService).snapshot();
+      if (loop.state === 'running') {
         throw new Error2(
           ErrorCodes.SESSION_BUSY,
           `Session "${id}" cannot be reloaded while a turn is running`,
@@ -1080,6 +1093,17 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
         throw new Error2(
           ErrorCodes.SESSION_BUSY,
           `Session "${id}" cannot be reloaded while compaction is running`,
+          { details: { sessionId: id } },
+        );
+      }
+      const holdsWork =
+        loop.queuePaused ||
+        loop.queue.length > 0 ||
+        agentHandle.accessor.get(IAgentFullCompactionService).queued !== undefined;
+      if (!stale && holdsWork) {
+        throw new Error2(
+          ErrorCodes.SESSION_BUSY,
+          `Session "${id}" cannot be reloaded while its queue is paused or holds prompts`,
           { details: { sessionId: id } },
         );
       }

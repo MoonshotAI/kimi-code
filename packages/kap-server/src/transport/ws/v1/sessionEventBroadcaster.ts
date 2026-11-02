@@ -18,6 +18,7 @@ import {
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
   ISessionActivityView,
+  MAIN_AGENT_ID,
   ISessionManager,
   followSessionLifecycles,
   getLiveSessionById,
@@ -54,6 +55,7 @@ import {
 } from '@moonshot-ai/transcript';
 
 import type { InteractionEventMessage, InteractionOutcome } from '../../../protocol/interaction';
+import type { QueueEventMessage, QueueStateWire } from '../../../protocol/rest-prompt';
 import {
   approvalExpiresAt,
   interactionAgentId,
@@ -63,6 +65,7 @@ import { toWireQuestion } from '../../../protocol/question-wire';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
+import { SessionQueueFeed } from './sessionQueueFeed';
 import { SessionTaskFeed } from './sessionTaskFeed';
 import { toTaskMessage } from './taskState';
 
@@ -83,6 +86,7 @@ export type BroadcastDelivery = 'subscription' | 'immediate';
 export type BroadcastFrame =
   | EventEnvelope
   | InteractionEventMessage
+  | QueueEventMessage
   | TaskEventMessage
   | TaskListMessage;
 
@@ -104,6 +108,7 @@ interface SessionState {
   transcriptStream?: TranscriptStream;
   readonly transcriptSeeded: Set<BroadcastTarget>;
   tasks?: SessionTaskFeed;
+  queue?: SessionQueueFeed;
   readonly listedTaskAgents: Map<BroadcastTarget, Set<string>>;
 }
 
@@ -438,11 +443,14 @@ export class SessionEventBroadcaster {
     state.detached = undefined;
     this.attachInteractions(sessionId, state);
     this.attachTasks(sessionId, state);
+    this.attachQueue(sessionId, state);
     state.listedTaskAgents.clear();
     for (const [target, spec] of state.targets) this.sendTaskLists(state, target, spec);
     for (const [target, spec] of state.targets) {
       await this.subscribeTranscript(state, target, spec, undefined);
-      if (state.targets.has(target)) state.transcriptSeeded.add(target);
+      if (!state.targets.has(target)) continue;
+      state.transcriptSeeded.add(target);
+      this.sendQueueSnapshot(sessionId, target);
     }
   }
 
@@ -466,7 +474,37 @@ export class SessionEventBroadcaster {
     this.sessions.set(sessionId, state);
     this.attachInteractions(sessionId, state);
     this.attachTasks(sessionId, state);
+    this.attachQueue(sessionId, state);
     return state;
+  }
+
+  private attachQueue(sessionId: string, state: SessionState): void {
+    const agents = getLiveSessionById(this.opts.core.accessor, sessionId)?.accessor.get(
+      IAgentLifecycleService,
+    );
+    if (agents === undefined) return;
+    const feed = new SessionQueueFeed(agents, (queue) => this.sendQueue(state, queue));
+    state.queue = feed;
+    state.lifecycleDisposables.push(feed);
+  }
+
+  sendQueueSnapshot(sessionId: string, target: BroadcastTarget): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined || state.detached === true || state.queue === undefined) return;
+    const spec = state.targets.get(target);
+    if (spec === undefined || gradeFor(spec, MAIN_AGENT_ID) === 'off') return;
+    target.send(queueMessage(sessionId, state.queue.current()), 'immediate');
+  }
+
+  private sendQueue(state: SessionState, queue: QueueStateWire): void {
+    const message = queueMessage(state.sessionId, queue);
+    for (const [target, spec] of state.targets) {
+      if (gradeFor(spec, MAIN_AGENT_ID) === 'off') continue;
+      try {
+        target.send(message);
+      } catch {
+      }
+    }
   }
 
   private attachTasks(sessionId: string, state: SessionState): void {
@@ -825,6 +863,16 @@ function pendingInteractionsOf(sessionId: string): readonly Interaction[] {
     resolved: false,
     tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
   });
+}
+
+function queueMessage(sessionId: string, queue: QueueStateWire): QueueEventMessage {
+  return {
+    type: 'queue',
+    session_id: sessionId,
+    agent_id: MAIN_AGENT_ID,
+    event_created_at: new Date().toISOString(),
+    ...queue,
+  };
 }
 
 function interactionMessage(

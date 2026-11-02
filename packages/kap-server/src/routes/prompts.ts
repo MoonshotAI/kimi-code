@@ -8,6 +8,8 @@ import {
   IAgentProfileService,
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
+  IAgentFullCompactionService,
+  IAgentGoalService,
   IAgentToolPolicyService,
   IAgentSkillService,
   IAgentSwarmService,
@@ -34,9 +36,11 @@ import {
   Error2,
   ErrorCodes,
   sessionMediaOriginalsDir,
+  validateGoalObjective,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import type { PromptLaunch } from '@moonshot-ai/agent-core-v2/human/agent/turn';
 import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 import { ErrorCode } from '../protocol/error-codes';
@@ -48,7 +52,12 @@ import {
   promptSteerResultSchema,
   promptSubmissionSchema,
   promptSubmitResultSchema,
+  queueMoveRequestSchema,
+  queuePauseResponseSchema,
   type PromptSkillActivation,
+  type PromptSubmission,
+  type QueuedInputWire,
+  type QueueStateWire,
 } from '../protocol/rest-prompt';
 import { z } from 'zod';
 
@@ -96,6 +105,15 @@ const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
+const queueParamsSchema = z.object({
+  session_id: z.string().min(1),
+  agent_id: z.string().min(1),
+});
+
+const queueActionParamsSchema = queueParamsSchema.extend({
+  tail: z.string().min(1),
+});
+
 const validationDetailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
 async function resolveSession(core: Scope, sessionId: string): Promise<ISessionScopeHandle> {
@@ -119,7 +137,10 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
   return {
+    agentId: agentId ?? MAIN_AGENT_ID,
+    agent,
     prompt: agent.accessor.get(IAgentLoopService),
+    compaction: agent.accessor.get(IAgentFullCompactionService),
     skill: agent.accessor.get(IAgentSkillService),
     events: agent.accessor.get(IEventBus),
     profile: agent.accessor.get(IAgentProfileService),
@@ -211,6 +232,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        [ErrorCode.GOAL_ALREADY_EXISTS]: {},
+        [ErrorCode.GOAL_OBJECTIVE_EMPTY]: {},
+        [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         ...sessionConflictErrors,
@@ -256,6 +280,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             session.accessor.get(ISessionMediaStore),
           );
           resolved ??= await resolvePromptFromSession(session, req.body.agent_id);
+          const launch = promptLaunch(resolved, req.body);
           reservation = reservePromptId(session_id, req.body.prompt_id);
 
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
@@ -343,6 +368,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 clientMetadata,
                 skills: req.body.skills,
                 attachments: promptAttachments,
+                launch,
               });
             } catch (error) {
               settlement.dispose();
@@ -377,12 +403,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               promptId: reservation.id,
               origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
               tracked: true,
+              launch,
             },
           });
           reservation.submit();
           enqueued = true;
           const handle = resolved.prompt.promptHandle(id)!;
-          if (status.state === 'idle' && !status.paused && status.queue.length === 0) {
+          if (status.state === 'idle' && !status.paused && !status.queueHeld && status.queue.length === 0) {
             await Promise.race([handle.launched, handle.completion]);
           }
           const staging = preparedMedia;
@@ -475,6 +502,92 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     },
   );
   app.post(actionRoute.path, actionRoute.options, actionRoute.handler as Parameters<PromptRouteHost['post']>[2]);
+
+  const queueErrors = {
+    [ErrorCode.VALIDATION_FAILED]: {},
+    [ErrorCode.SESSION_NOT_FOUND]: {},
+    [ErrorCode.PROMPT_NOT_FOUND]: {},
+  };
+
+  const pauseRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/agents/{agent_id}/queue::pause',
+      params: queueParamsSchema,
+      success: { data: queuePauseResponseSchema },
+      errors: queueErrors,
+      description: 'Pause the main agent queue: queued prompts wait until it is resumed',
+      tags: ['prompts'],
+      operationId: 'pauseQueue',
+    },
+    async (req, reply) => {
+      try {
+        const { session_id, agent_id } = req.params;
+        (await resolveQueue(core, session_id, agent_id)).prompt.pauseQueue();
+        reply.send(okEnvelope({ paused: true }, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.post(pauseRoute.path, pauseRoute.options, pauseRoute.handler as Parameters<PromptRouteHost['post']>[2]);
+
+  const resumeRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/agents/{agent_id}/queue::resume',
+      params: queueParamsSchema,
+      success: { data: queuePauseResponseSchema },
+      errors: queueErrors,
+      description: 'Resume the main agent queue',
+      tags: ['prompts'],
+      operationId: 'resumeQueue',
+    },
+    async (req, reply) => {
+      try {
+        const { session_id, agent_id } = req.params;
+        (await resolveQueue(core, session_id, agent_id)).prompt.resumeQueue();
+        reply.send(okEnvelope({ paused: false }, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.post(resumeRoute.path, resumeRoute.options, resumeRoute.handler as Parameters<PromptRouteHost['post']>[2]);
+
+  const queueActionRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/agents/{agent_id}/queue/{tail}',
+      params: queueActionParamsSchema,
+      body: z.preprocess((value) => (value === undefined ? {} : value), queueMoveRequestSchema),
+      success: { data: z.object({}) },
+      errors: queueErrors,
+      description: 'Move one queued prompt of the main agent',
+      tags: ['prompts'],
+      operationId: 'queueAction',
+    },
+    async (req, reply) => {
+      const { session_id, agent_id, tail } = req.params;
+      try {
+        const target = resolveActionTarget({ tail, actions: queueActions, resourceLabel: 'prompt' });
+        if ('message' in target) {
+          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, target.message, req.id));
+          return;
+        }
+        await runAction({
+          action: target.action,
+          id: target.id,
+          actions: queueActions,
+          extra: { resolved: await resolveQueue(core, session_id, agent_id), req, reply },
+          body: req.body,
+        });
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.post(queueActionRoute.path, queueActionRoute.options, queueActionRoute.handler as Parameters<PromptRouteHost['post']>[2]);
 }
 
 type PromptActionExtra = {
@@ -493,7 +606,7 @@ const promptActions: ActionTable<'abort' | 'steer', PromptActionExtra> = {
 
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, session_id, req, reply, id } = ctx;
-  resolved.prompt.cancel({ promptId: id });
+  if (!resolved.compaction.cancelQueued(id)) resolved.prompt.cancel({ promptId: id });
   requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }
@@ -502,6 +615,98 @@ async function steerPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, req, reply, id } = ctx;
   await resolved.prompt.steer([id]);
   reply.send(okEnvelope({ steered: true, prompt_ids: [id] }, req.id));
+}
+
+type ResolvedPrompt = Awaited<ReturnType<typeof resolvePrompt>>;
+
+async function resolveQueue(core: Scope, sessionId: string, agentId: string): Promise<ResolvedPrompt> {
+  if (agentId !== MAIN_AGENT_ID) {
+    throw new Error2(ErrorCodes.REQUEST_INVALID, 'only the main agent has a prompt queue');
+  }
+  return resolvePrompt(core, sessionId, agentId);
+}
+
+function promptLaunch(resolved: ResolvedPrompt, body: PromptSubmission): PromptLaunch | undefined {
+  if (resolved.agentId !== MAIN_AGENT_ID) return undefined;
+  const planMode = body.plan_mode === true ? true : undefined;
+  const goalObjective =
+    body.goal_objective === undefined ? undefined : validateGoalObjective(body.goal_objective);
+  if (goalObjective !== undefined && resolved.agent.accessor.get(IAgentGoalService).getGoal().goal !== null) {
+    throw new Error2(ErrorCodes.GOAL_ALREADY_EXISTS, 'A goal already exists; finish or cancel it first');
+  }
+  return planMode === undefined && goalObjective === undefined ? undefined : { planMode, goalObjective };
+}
+
+type QueueActionExtra = {
+  readonly resolved: ResolvedPrompt;
+  readonly req: { readonly id: string };
+  readonly reply: { readonly send: (payload: unknown) => unknown };
+};
+
+type QueueActionCtx = QueueActionExtra & { readonly id: string; readonly body: unknown };
+
+const queueActions: ActionTable<'move', QueueActionExtra> = {
+  move: { handle: ({ resolved, req, reply, id, body }: QueueActionCtx) => {
+    const parsed = queueMoveRequestSchema.safeParse(body ?? {});
+    if (!parsed.success) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, parsed.error.issues.map((issue) => issue.message).join('; '));
+    }
+    resolved.prompt.moveQueued(id, moveTarget(resolved, parsed.data.before_prompt_id));
+    reply.send(okEnvelope({}, req.id));
+  } },
+};
+
+function moveTarget(resolved: ResolvedPrompt, beforePromptId: string | undefined): string | undefined {
+  if (beforePromptId === undefined || beforePromptId !== resolved.compaction.queued?.id) return beforePromptId;
+  return resolved.prompt.snapshot().queue.find((item) => item.meta?.tracked === true)?.meta?.promptId;
+}
+
+export function projectQueueState(
+  loop: IAgentLoopService,
+  compaction: IAgentFullCompactionService,
+): QueueStateWire {
+  const snapshot = loop.snapshot();
+  const queuedCompaction = compaction.queued;
+  const inputs: QueuedInputWire[] =
+    queuedCompaction === undefined
+      ? []
+      : [
+          {
+            prompt_id: queuedCompaction.id,
+            user_message_id: queuedCompaction.id,
+            kind: 'compact',
+            delivery: 'queue',
+            content: [],
+            instruction: queuedCompaction.instruction,
+            created_at: queuedCompaction.createdAt,
+          },
+        ];
+  for (const item of snapshot.queue) {
+    if (item.meta?.tracked !== true) continue;
+    const origin = item.meta.origin as PromptOrigin | undefined;
+    const projected = projectPromptSnapshot({
+      id: item.meta.promptId ?? '',
+      userMessageId: item.meta.userMessageId ?? '',
+      createdAt: item.meta.createdAt ?? '',
+      state: 'pending',
+      message: { ...item.message, origin },
+    });
+    const skills = origin?.kind === 'user' ? (origin.skillActivations ?? []) : [];
+    inputs.push({
+      prompt_id: projected.prompt_id,
+      user_message_id: projected.user_message_id,
+      kind: 'input',
+      delivery: 'queue',
+      content: projected.content,
+      skills:
+        skills.length === 0
+          ? undefined
+          : skills.map((skill) => ({ name: skill.skillName, args: skill.skillArgs })),
+      client_metadata: projected.metadata,
+      created_at: projected.created_at,
+    });
+  }
+  return { paused: snapshot.queuePaused, inputs };
 }
 
 function projectPromptList(loop: IAgentLoopService) {

@@ -330,7 +330,7 @@ export const queueEventOperation = {
   kind: 'event',
   messageSchema: queueEventMessageSchema,
   description:
-    'Full queue state for one subscribed agent: inputs and compactions that have not entered a turn yet, steers first; sent after every accepted subscription and whenever the queue changes.',
+    'Full queue state of the main agent in a subscribed session: prompts and a requested compaction that have not started yet; sent after every accepted subscription and whenever the queue changes.',
 } as const satisfies WsOperationDefinition;
 
 export const taskListEventOperation = {
