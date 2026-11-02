@@ -1523,7 +1523,7 @@ describe('AgentLoopRequester media resolver wiring', () => {
         input.messages.flatMap((message) => message.role === 'tool' ? [message.toolCallId] : []),
       ).toEqual(imageIn ? ['media', 'media2', 'other'] : ['other']);
       const omissions = input.messages.flatMap((message) =>
-        message.role === 'system'
+        message.role === 'user'
           ? message.content.flatMap((part) =>
               part.type === 'text' && part.text.includes('omitted:') ? [part.text] : [],
             )

@@ -4,7 +4,7 @@ import {
   forkMediaRecovery,
   type MediaReplacement,
 } from '#human/llm/builtin/policy/media-degrade';
-import type { Message, SystemMessage, ToolMessage } from '#human/llm/message';
+import type { Message, ToolMessage, UserMessage } from '#human/llm/message';
 import type { LlmRecovery, LlmRecoveryLedger } from '#human/llm/policy/recovery';
 import type { LlmResolver } from '#human/llm/policy/resolver';
 import { mediaUrlOf } from '#human/llm/protocol/kit/media';
@@ -21,12 +21,12 @@ function mediaTagOf(message: ToolMessage): MediaPathTag | undefined {
   return matchMediaPathTags(text).find((entry) => entry.kind === 'image' || entry.kind === 'video');
 }
 
-function omittedReadMediaResult(tag: MediaPathTag): SystemMessage {
+function omittedReadMediaResult(tag: MediaPathTag): UserMessage {
   const hint =
     `[${tag.kind} omitted: a ReadMediaFile tool result was hidden because the current model does not support ${tag.kind} input; ` +
     `use a model with ${tag.kind} input capability to view it]`;
   return {
-    role: 'system',
+    role: 'user',
     content: [{ type: 'text', text: `${hint}\n${buildMediaPathTag(tag.kind, tag.path)}` }],
   };
 }
