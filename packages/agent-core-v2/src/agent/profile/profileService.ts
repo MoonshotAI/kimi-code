@@ -22,6 +22,7 @@ import {
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { AGENT_PROFILE_SOURCE_PRIORITY } from '#/app/agentProfileCatalog/agentProfileContribution';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { ErrorCodes, Error2 } from "#/errors";
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
@@ -70,7 +71,9 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
 import { EXIT_PLAN_MODE_TOOL_NAME } from '#/features/plan/tools/exit-plan-mode/exit-plan-mode';
+import { TODO_SECTION, type TodoConfig } from '#/features/todo/configSection';
 import { TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
+import { isTodoListOptedIn } from '#/features/todo/todoListOptIn';
 import {
   renderAgentProfilePrompt,
   rootDelegationExtras,
@@ -330,8 +333,8 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     await this.catalog.ready;
     await this.identity.resolved();
     this.assertBindable(input.profile);
-    const profile = this.catalog.get(input.profile);
-    if (profile === undefined) {
+    const resolved = this.catalog.get(input.profile);
+    if (resolved === undefined) {
       const available = this.catalog
         .list()
         .map((p) => p.name)
@@ -342,6 +345,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         { profile: input.profile, available },
       );
     }
+    const profile = this.withTodoListOptIn(resolved);
     const alias = input.model ?? this.config.get<string>('defaultModel');
     if (alias === undefined || alias === '') {
       throw new ProfileError(
@@ -458,8 +462,9 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   async applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void> {
-    const context = await this.buildSystemPromptContext(profile, options);
-    this.useProfile(profile, context);
+    const effective = this.withTodoListOptIn(profile);
+    const context = await this.buildSystemPromptContext(effective, options);
+    this.useProfile(effective, context);
     this.seedAgentsMdReminder(context);
     await this.seedChangeNotifierBeliefs(context);
     this.cacheAgentsMdWarning(context);
@@ -947,6 +952,22 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       name,
       source,
     );
+  }
+
+  private withTodoListOptIn(profile: ResolvedAgentProfile): ResolvedAgentProfile {
+    const inspection = this.catalog.inspect(profile.name);
+    const optedIn = isTodoListOptedIn({
+      enabled: this.config.get<TodoConfig | undefined>(TODO_SECTION)?.enabled,
+      allowlist: this.config.get<ToolsConfig | undefined>(TOOLS_SECTION)?.enabled,
+      profileTools: profile.tools,
+      builtinTools: this.builtinProfiles.get(profile.name)?.tools,
+      builtinSource:
+        inspection?.profile === profile &&
+        inspection.priority === AGENT_PROFILE_SOURCE_PRIORITY.builtin,
+    });
+    const disallowedTools = profile.disallowedTools ?? [];
+    if (optedIn || disallowedTools.includes(TODO_LIST_TOOL_NAME)) return profile;
+    return { ...profile, disallowedTools: [...disallowedTools, TODO_LIST_TOOL_NAME] };
   }
 
   private async resolveSkillListing(): Promise<string> {

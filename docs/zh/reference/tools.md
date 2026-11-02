@@ -81,7 +81,7 @@ Plan 模式是一种受约束的工作状态，只能由用户打开（`Shift-Ta
 | --- | --- | --- |
 | `TodoList` | 自动放行 | 管理任务待办列表 |
 
-**`TodoList`** 在多步骤操作中维护一份可见的子任务列表，状态存储在 Agent 会话内。`todos` 参数接受一个数组，每项含 `title` 和 `status`（`pending` / `in_progress` / `done`）；省略 `todos` 则仅查询当前列表，传入空数组则清空列表。
+**`TodoList`** 在多步骤操作中维护一份可见的子任务列表，状态存储在 Agent 会话内。`todos` 参数接受一个数组，每项含 `title` 和 `status`（`pending` / `in_progress` / `done`）；省略 `todos` 则仅查询当前列表，传入空数组则清空列表。该工具默认关闭；在 `config.toml` 中写入 `[todo] enabled = true` 或设置 `KIMI_CODE_TODO=1` 即可开启，仅对之后新建的会话生效，详见 [`todo` 配置](../configuration/config-files.md#todo)。
 
 ## 协作类
 

@@ -23,8 +23,9 @@ import {
 } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentTodoService } from '#/features/todo/todoService';
-import { renderTodoList } from '#/features/todo/todoItem';
+import { renderTodoList, TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import type { WireLineRange } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
@@ -144,6 +145,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
     @IAgentScopeContext private readonly agent: IAgentScopeContext,
     @IAgentTodoService private readonly todo: IAgentTodoService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IEventBus private readonly eventBus: IEventBus,
@@ -626,7 +628,10 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           : undefined;
       const compactionMaxOutputSize = resolvedModel.maxOutputSize ?? defaultCompactionCap;
 
-      const instruction = renderCompactionInstruction({ customInstruction: data.instruction });
+      const instruction = renderCompactionInstruction({
+        customInstruction: data.instruction,
+        todoListActive: this.toolPolicy.isToolActive(TODO_LIST_TOOL_NAME),
+      });
 
       const maxAttempts = resolvedModel.compactionMaxAttempts ?? MAX_COMPACTION_RETRY_ATTEMPTS;
       let attempt: CompactionAttemptResult | undefined;
@@ -842,7 +847,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private async postProcessSummary(summary: string): Promise<string> {
     const todos = this.todo.get();
-    if (todos.length === 0) {
+    if (todos.length === 0 || !this.toolPolicy.isToolActive(TODO_LIST_TOOL_NAME)) {
       return summary;
     }
     return `${summary.trim()}\n\n${renderTodoList(todos, '## TODO List')}`;

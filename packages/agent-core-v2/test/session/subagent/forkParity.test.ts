@@ -37,6 +37,7 @@ import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivati
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
+import { TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
 import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { IFlagService } from '#/app/flag/flag';
@@ -159,6 +160,7 @@ class ToolContributions {
 }
 
 const SENT_ONLY_WITH_DYNAMIC_TOOL_LOADING: ReadonlySet<string> = new Set([SELECT_TOOLS_TOOL_NAME]);
+const OFF_BY_DEFAULT: ReadonlySet<string> = new Set([TODO_LIST_TOOL_NAME]);
 
 const PARENT_SYSTEM_PROMPT = 'You are the parity probe parent.';
 const ACTIVE_TOOL_NAMES = ['Agent', 'Bash', 'Read'];
@@ -424,7 +426,7 @@ describe('subagent task reminders and fork request parity', () => {
     expect(childReq.systemPrompt).toBe(parentReq.systemPrompt);
     expect(parentReq.tools.map((tool) => tool.name).toSorted()).toEqual(
       contributedToolNames()
-        .filter((name) => !SENT_ONLY_WITH_DYNAMIC_TOOL_LOADING.has(name))
+        .filter((name) => !SENT_ONLY_WITH_DYNAMIC_TOOL_LOADING.has(name) && !OFF_BY_DEFAULT.has(name))
         .toSorted(),
     );
     expect(childReq.tools).toEqual(parentReq.tools);

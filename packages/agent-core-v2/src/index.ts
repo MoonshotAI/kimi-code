@@ -738,6 +738,7 @@ export * from '#/features/sessionInit/sessionInit';
 export * from '#/features/sessionInit/sessionInitService';
 export * from '#/features/sessionInit/profile/init';
 import '#/features/sessionInit/sessionInitFeature';
+export * from '#/features/todo/configSection';
 export * from '#/features/todo/todoItem';
 export * from '#/features/todo/todoListReminder';
 export * from '#/features/todo/todoService';

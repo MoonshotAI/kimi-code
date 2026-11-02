@@ -8,14 +8,18 @@ import { Emitter, Event } from '#/_base/event';
 import { InstantiationService } from '#/_base/di/instantiationService';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { ConfigTarget, IConfigService } from '#/app/config/config';
-import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
+import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
   normalizeAgentProfile,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
+import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
+import { TODO_LIST_GUIDANCE } from '#/app/agentProfileCatalog/profile-shared';
+import { TODO_ENV, TODO_SECTION, type TodoConfig } from '#/features/todo/configSection';
+import { TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
 import type { ToolCall } from '#human/message';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import type { WatchChange } from '#human/utils/watch';
@@ -295,7 +299,7 @@ describe('AgentProfileService.bind', () => {
       thinkingEffort: 'on',
       systemPrompt: expect.stringContaining('Kimi Code CLI'),
       activeToolNames: expect.arrayContaining(['Read', 'Write', 'Bash']),
-      disallowedTools: [],
+      disallowedTools: [TODO_LIST_TOOL_NAME],
     });
   });
 
@@ -646,7 +650,10 @@ describe('AgentToolPolicyService tool denylist', () => {
     await ctx.get(IWireService).flush();
 
     const record = persistence.records.find((candidate) => candidate.type === 'profile.bind');
-    expect(record).toMatchObject({ profileName: 'deny-builtin', disallowedTools: ['Bash'] });
+    expect(record).toMatchObject({
+      profileName: 'deny-builtin',
+      disallowedTools: ['Bash', TODO_LIST_TOOL_NAME],
+    });
   });
 
   it('persists an unrestricted tool policy when the profile has no allowlist', async () => {
@@ -1495,5 +1502,161 @@ describe('change-notifier belief seeding', () => {
     });
 
     expect(seedBeliefs).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentProfileService TodoList opt-in', () => {
+  let ctx: TestAgentContext;
+  let homeDir: string;
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-todo-opt-in-home-'));
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await ctx?.dispose();
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  function createAgent(config: Record<string, unknown> = {}): TestAgentContext {
+    ctx = createTestAgent({ initialConfig: config }, hostEnvironmentServices(homeDir));
+    return ctx;
+  }
+
+  function registerProfile(
+    sourceId: string,
+    priority: number,
+    profile: Parameters<typeof normalizeAgentProfile>[0],
+  ): void {
+    ctx.get(IAgentProfileRegistry).register({
+      sourceId,
+      priority,
+      contribution: { profiles: [normalizeAgentProfile(profile)] },
+    });
+  }
+
+  async function bindAndCheck(profile: string = DEFAULT_AGENT_PROFILE_NAME): Promise<boolean> {
+    await ctx.get(IAgentProfileService).bind({ profile, model: MOCK_MODEL });
+    return ctx.get(IAgentToolPolicyService).isToolActive(TODO_LIST_TOOL_NAME);
+  }
+
+  it('leaves TodoList out of builtin profiles by default without writing it to config', async () => {
+    createAgent();
+
+    expect(await bindAndCheck()).toBe(false);
+    expect(ctx.get(IAgentProfileService).data().disallowedTools).toContain(TODO_LIST_TOOL_NAME);
+    expect(ctx.get(IAgentProfileService).getSystemPrompt()).not.toContain(TODO_LIST_GUIDANCE);
+    const config = ctx.get(IConfigService);
+    expect(config.get<TodoConfig | undefined>(TODO_SECTION)?.enabled).toBeUndefined();
+    expect(config.get<ToolsConfig | undefined>(TOOLS_SECTION)?.disabled).toBeUndefined();
+  });
+
+  it('does not offer TodoList to the model by default', async () => {
+    createAgent();
+    await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
+    await ctx.untilTurnEnd();
+
+    const offered = ctx.llmCalls.at(-1)!.tools.map((tool) => tool.name);
+    expect(offered).toContain('Read');
+    expect(offered).not.toContain(TODO_LIST_TOOL_NAME);
+  });
+
+  it('offers TodoList to builtin profiles when [todo] enabled is true', async () => {
+    createAgent({ todo: { enabled: true } });
+
+    expect(await bindAndCheck()).toBe(true);
+    expect(ctx.get(IAgentProfileService).data().disallowedTools).not.toContain(
+      TODO_LIST_TOOL_NAME,
+    );
+    expect(ctx.get(IAgentProfileService).getSystemPrompt()).toContain(TODO_LIST_GUIDANCE);
+  });
+
+  it('lets the environment variable override [todo] enabled', async () => {
+    vi.stubEnv(TODO_ENV, '1');
+    createAgent();
+    expect(await bindAndCheck()).toBe(true);
+    await ctx.dispose();
+
+    vi.stubEnv(TODO_ENV, '0');
+    createAgent({ todo: { enabled: true } });
+    expect(await bindAndCheck()).toBe(false);
+  });
+
+  it('keeps TodoList for a custom profile that lists it even when [todo] enabled is false', async () => {
+    createAgent({ todo: { enabled: false } });
+    registerProfile('workspace', 30, {
+      name: 'tracker',
+      tools: ['Read', TODO_LIST_TOOL_NAME],
+      systemPrompt: () => 'tracker',
+    });
+
+    expect(await bindAndCheck('tracker')).toBe(true);
+  });
+
+  it('follows the default for a custom profile that does not list tools', async () => {
+    createAgent();
+    registerProfile('workspace', 30, { name: 'everything', systemPrompt: () => 'everything' });
+
+    expect(await bindAndCheck('everything')).toBe(false);
+    expect(ctx.get(IAgentToolPolicyService).isToolActive('Read')).toBe(true);
+  });
+
+  it('follows the default for a default-profile override that keeps the builtin tools', async () => {
+    createAgent();
+    const builtin = ctx.get(IBuiltinAgentProfileLoader).getDefault();
+    expect(builtin.tools).toContain(TODO_LIST_TOOL_NAME);
+    registerProfile('user', 10, {
+      name: DEFAULT_AGENT_PROFILE_NAME,
+      override: true,
+      tools: [...(builtin.tools ?? [])],
+      systemPrompt: () => 'system md prompt',
+    });
+
+    expect(await bindAndCheck()).toBe(false);
+  });
+
+  it('follows the default for profiles contributed at builtin priority', async () => {
+    createAgent();
+    registerProfile('feature:example', 0, {
+      name: 'feature-worker',
+      tools: ['Read', TODO_LIST_TOOL_NAME],
+      systemPrompt: () => 'worker',
+    });
+
+    expect(await bindAndCheck('feature-worker')).toBe(false);
+  });
+
+  it('counts TodoList named in the [tools] enabled allowlist as an opt-in', async () => {
+    createAgent({ tools: { enabled: ['Read', TODO_LIST_TOOL_NAME] } });
+
+    expect(await bindAndCheck()).toBe(true);
+    expect(ctx.get(IAgentToolPolicyService).isToolActive('Bash')).toBe(false);
+  });
+
+  it('keeps TodoList off when [tools] disabled lists it', async () => {
+    createAgent({ todo: { enabled: true }, tools: { disabled: [TODO_LIST_TOOL_NAME] } });
+
+    expect(await bindAndCheck()).toBe(false);
+  });
+
+  it('keeps TodoList for a session bound while it was enabled', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent(
+      { persistence, initialConfig: { todo: { enabled: true } } },
+      hostEnvironmentServices(homeDir),
+    );
+    await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    await ctx.get(IWireService).flush();
+    await ctx.dispose();
+
+    ctx = createTestAgent({ persistence, autoConfigure: false }, hostEnvironmentServices(homeDir));
+    await ctx.restorePersisted();
+
+    expect(ctx.get(IAgentToolPolicyService).isToolActive(TODO_LIST_TOOL_NAME)).toBe(true);
+    expect(ctx.get(IAgentProfileService).getSystemPrompt()).toContain(TODO_LIST_GUIDANCE);
   });
 });

@@ -435,6 +435,23 @@ disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 Like the `tools` / `disallowedTools` fields of an agent file, this section shapes the tools shown to the model and is enforced again before execution. [Permission rules](#permission) remain a separate control for operations that require approval.
 :::
 
+## `todo`
+
+`todo` controls the [`TodoList` tool](../reference/tools.md) and the task progress display it drives. It defaults to off. Changes apply to sessions created afterwards; existing sessions keep the state they were created with.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | `false` | Offer `TodoList` to agents that do not list it themselves |
+
+`enabled` can be overridden by the `KIMI_CODE_TODO` environment variable, which takes higher priority than `config.toml`.
+
+```toml
+[todo]
+enabled = true
+```
+
+`enabled` only sets the default: an agent whose agent-file `tools` list names `TodoList`, or a global [`[tools] enabled`](#tools) list that names it, still gets the tool even with `enabled = false`. To turn it off in every case, add it to `[tools] disabled`.
+
 ## `read`
 
 `read` controls the character limits for the [`Read` tool](../reference/tools.md). The limit includes file content, line numbers, and the status block; it does not impose a separate line-count or UTF-8 byte limit.

@@ -5,12 +5,14 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IEventBus } from '#/app/event/eventBus';
 import type { SwarmModeTransitionEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { Error2, ErrorCodes } from '#/errors';
+import { TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { SwarmInjection } from './injection/swarmInjection';
@@ -27,6 +29,7 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentToolPolicyService toolPolicy: IAgentToolPolicyService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @IAgentStateService private readonly agentState: IAgentStateService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -35,7 +38,10 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
     this.agentState.contributeState(swarmKey);
     this._register(
       new SwarmInjection(
-        { getTrigger: () => this.agentState.get(swarmKey) },
+        {
+          getTrigger: () => this.agentState.get(swarmKey),
+          isTodoListActive: () => toolPolicy.isToolActive(TODO_LIST_TOOL_NAME),
+        },
         reminder,
         this.context,
       ),
