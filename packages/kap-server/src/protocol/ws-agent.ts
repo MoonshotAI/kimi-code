@@ -13,11 +13,9 @@ export const agentStateSchema = z.object({
   model: z.string().optional(),
   thinking: z.string().optional(),
   permission_mode: z.enum(['manual', 'yolo', 'auto']).optional(),
-  modes: z.object({
-    plan: z.object({}).optional(),
-    swarm: z.object({}).optional(),
-    tower: z.object({}).optional(),
-  }),
+  plan_mode: z.boolean(),
+  swarm_mode: z.boolean(),
+  tower_mode: z.boolean(),
 });
 export type AgentState = z.infer<typeof agentStateSchema>;
 
@@ -52,7 +50,7 @@ export type GoalState = z.infer<typeof goalStateSchema>;
 export const goalEventMessageSchema = z.object({
   type: z.literal('goal'),
   ...agentFrameFields,
-  goal: goalStateSchema.nullable(),
+  goal: goalStateSchema.optional(),
 });
 export type GoalEventMessage = z.infer<typeof goalEventMessageSchema>;
 

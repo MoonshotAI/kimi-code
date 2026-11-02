@@ -362,7 +362,7 @@ export const agentEventOperation = {
   kind: 'event',
   messageSchema: agentEventMessageSchema,
   description:
-    'Status, model, thinking effort, permission mode and active modes of one subscribed agent, sent when a connection starts receiving that agent and on every change; it replaces the client copy.',
+    'Status, model, thinking effort, permission mode and plan / swarm / tower mode switches of one subscribed agent, sent when a connection starts receiving that agent and on every change; it replaces the client copy.',
 } as const satisfies WsOperationDefinition;
 
 export const usageEventOperation = {
@@ -380,7 +380,7 @@ export const goalEventOperation = {
   kind: 'event',
   messageSchema: goalEventMessageSchema,
   description:
-    'Goal of the main agent, sent when a connection starts receiving it and on every change; goal is null when the session has none.',
+    'Goal of the main agent, sent when a connection starts receiving it and on every change; goal is omitted when the session has none.',
 } as const satisfies WsOperationDefinition;
 
 export const todoEventOperation = {

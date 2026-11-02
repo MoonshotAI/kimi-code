@@ -214,7 +214,7 @@ class AgentWatch implements IDisposable {
     return { type: 'usage', ...this.frameFields(), ...usage };
   }
 
-  private goalMessage(goal: GoalState | null): GoalEventMessage {
+  private goalMessage(goal: GoalState | undefined): GoalEventMessage {
     return { type: 'goal', ...this.frameFields(), goal };
   }
 
@@ -235,8 +235,8 @@ function agentKey(message: AgentEventMessage): string {
   return JSON.stringify({ ...message, event_created_at: undefined });
 }
 
-function goalKey(goal: GoalState | null): string {
-  return JSON.stringify(goal === null ? null : { ...goal, wall_clock_ms: undefined });
+function goalKey(goal: GoalState | undefined): string {
+  return goal === undefined ? '' : JSON.stringify({ ...goal, wall_clock_ms: undefined });
 }
 
 function todoKey(message: TodoEventMessage): string {

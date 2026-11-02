@@ -2432,9 +2432,9 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的值，客户端整份替换本地副本；和任务帧一样不回放。连接开始接收某个 agent 时（规则同 `task.list`），先收到当前的 `agent`、`usage`（该 agent 有模型上下文时）、`goal`（仅主 agent）与 `todo` 帧，之后每当某个值变化就再收到对应的帧；之后才加入会话的 agent 也会用这几种帧通告自己。四种帧都是 `{ type, session_id, agent_id, event_created_at, ... }`：
 
-- `agent`：`{ status: "idle" | "running", model?, thinking?, permission_mode?, modes: { plan?, swarm?, tower? } }`。`status` 跟随该 agent 的轮次；某一轮开始或结束对应的帧，排在同一次变化的 `transcript.ops` 批次之后。某个模式开启时，`modes` 里对应的键以空对象出现。
+- `agent`：`{ status: "idle" | "running", model?, thinking?, permission_mode?, plan_mode, swarm_mode, tower_mode }`。`status` 跟随该 agent 的轮次；某一轮开始或结束对应的帧，排在同一次变化的 `transcript.ops` 批次之后。三个模式字段都是布尔值。
 - `usage`：`{ context_tokens, max_context_tokens? }`。只有最新值有意义，因此上下文增长期间服务端每秒最多发送几次。
-- `goal`：`{ goal }`，会话没有目标时 `goal` 为 `null`，否则为 `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`。
+- `goal`：`{ goal? }`，会话没有目标时省略 `goal`，否则为 `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`。
 - `todo`：`{ items: [{ title, status: "pending" | "in_progress" | "done" }] }`，取自 agent 的待办存储，因此会跟随撤销回退，重启后也能恢复。
 
 ### 断线恢复

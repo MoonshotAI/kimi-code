@@ -27,11 +27,9 @@ export function readAgentState(handle: IAgentScopeHandle, running: boolean): Age
     model: text(model),
     thinking: model === '' ? undefined : text(profile?.getEffectiveThinkingLevel()),
     permission_mode: optionalService(handle, IAgentPermissionModeService)?.mode,
-    modes: {
-      plan: planActive(handle) ? {} : undefined,
-      swarm: optionalService(handle, IAgentSwarmService)?.isActive === true ? {} : undefined,
-      tower: optionalService(handle, IAgentTowerService)?.isActive === true ? {} : undefined,
-    },
+    plan_mode: planActive(handle),
+    swarm_mode: optionalService(handle, IAgentSwarmService)?.isActive === true,
+    tower_mode: optionalService(handle, IAgentTowerService)?.isActive === true,
   };
 }
 
@@ -45,9 +43,9 @@ export function readUsageState(handle: IAgentScopeHandle): UsageState | undefine
   };
 }
 
-export function readGoalState(handle: IAgentScopeHandle): GoalState | null {
-  const goal = optionalService(handle, IAgentGoalService)?.getGoal().goal ?? null;
-  if (goal === null) return null;
+export function readGoalState(handle: IAgentScopeHandle): GoalState | undefined {
+  const goal = optionalService(handle, IAgentGoalService)?.getGoal().goal ?? undefined;
+  if (goal === undefined) return undefined;
   return {
     objective: goal.objective,
     status: goal.status,

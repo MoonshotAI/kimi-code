@@ -1864,7 +1864,8 @@ describe('SessionEventBroadcaster', () => {
       await bc.subscribe('s1', view.target, { '*': 'turn' });
       await bc.subscribe('s1', offView.target, { '*': 'off' });
 
-      expect(stateFramesOf(view)).toEqual([
+      const frames = stateFramesOf(view);
+      expect(frames).toEqual([
         expect.objectContaining({
           type: 'agent',
           session_id: 's1',
@@ -1873,16 +1874,19 @@ describe('SessionEventBroadcaster', () => {
           model: 'k2',
           thinking: 'high',
           permission_mode: 'yolo',
-          modes: {},
+          plan_mode: false,
+          swarm_mode: false,
+          tower_mode: false,
         }),
         expect.objectContaining({ type: 'usage', agent_id: 'main', context_tokens: 0, max_context_tokens: 1000 }),
-        expect.objectContaining({ type: 'goal', agent_id: 'main', goal: null }),
+        expect.objectContaining({ type: 'goal', agent_id: 'main' }),
         expect.objectContaining({
           type: 'todo',
           agent_id: 'main',
           items: [{ title: 'write tests', status: 'in_progress' }],
         }),
       ]);
+      expect(JSON.parse(JSON.stringify(frames[2]))).not.toHaveProperty('goal');
       expect(stateFramesOf(offView)).toEqual([]);
     });
 
