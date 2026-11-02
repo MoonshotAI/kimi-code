@@ -17,26 +17,9 @@ import type { UIStreamEvent, StreamError, ExtensionConfig } from "shared/types";
 import "./styles/index.css";
 
 function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
-  const { processEvent, startNewConversation, sessionId } = useChatStore();
+  const { startNewConversation } = useChatStore();
   const { setExtensionConfig, extensionConfig } = useSettingsStore();
   const queryClient = useQueryClient();
-
-  useEffect(() => {
-    return bridge.on(Events.StreamEvent, (event: UIStreamEvent) => {
-      // 只有当前已有 session 时才过滤，确保 session_start 能正常处理
-      if (sessionId && "_sessionId" in event && event._sessionId && event._sessionId !== sessionId) {
-        console.log("Ignored stream event from another session:", event._sessionId);
-        return;
-      }
-      processEvent(event);
-      if (event.type === "error") {
-        const streamError = event as StreamError;
-        if (isPreflightError(streamError.code || "UNKNOWN")) {
-          toast.error(streamError.message);
-        }
-      }
-    });
-  }, [processEvent, sessionId]);
 
   useEffect(() => {
     const unsubs = [
@@ -84,6 +67,24 @@ export default function App() {
   const [skippedLogin, setSkippedLogin] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const { status, errorMessage, modelsCount, refresh } = useAppInit(skippedLogin);
+  const { processEvent, sessionId } = useChatStore();
+
+  useEffect(() => {
+    return bridge.on(Events.StreamEvent, (event: UIStreamEvent) => {
+      // 只有当前已有 session 时才过滤，确保 session_start 能正常处理
+      if (sessionId && "_sessionId" in event && event._sessionId && event._sessionId !== sessionId) {
+        console.log("Ignored stream event from another session:", event._sessionId);
+        return;
+      }
+      processEvent(event);
+      if (event.type === "error") {
+        const streamError = event as StreamError;
+        if (isPreflightError(streamError.code || "UNKNOWN")) {
+          toast.error(streamError.message);
+        }
+      }
+    });
+  }, [processEvent, sessionId]);
 
   const handleLoginSuccess = useCallback(() => {
     setShowLogin(false);

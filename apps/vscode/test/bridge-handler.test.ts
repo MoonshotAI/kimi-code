@@ -601,6 +601,21 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
     });
   });
 
+  it("rejects saving a model that disappeared from a nonempty catalog", async () => {
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "other/model",
+      models: { "other/model": { provider: "custom", model: "other" } },
+    });
+
+    const result = await bridge.handle(
+      { id: "rpc-1", method: Methods.SaveConfig, params: { model: "removed/model", thinking: true, effort: "high" } },
+      "view-1",
+    );
+
+    expect(result).toMatchObject({ error: expect.stringContaining("removed/model") });
+    expect(host.harness.setConfig).not.toHaveBeenCalled();
+  });
+
   it("persists the concrete effort when the model's levels are unknown", async () => {
     host.harness.getConfig.mockResolvedValue({ defaultModel: "other/model", models: {} });
 

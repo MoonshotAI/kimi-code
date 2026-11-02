@@ -1,4 +1,4 @@
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, render, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const appInitBridge = vi.hoisted(() => ({
@@ -15,14 +15,27 @@ vi.mock("@/services", () => ({
   Events: {
     ExtensionConfigChanged: "extensionConfigChanged",
     ModelCatalogChanged: "modelCatalogChanged",
+    StreamEvent: "streamEvent",
   },
 }));
 vi.mock("@/components/ui/sonner", () => ({
   toast: { error: vi.fn(), warning: vi.fn() },
+  Toaster: () => null,
 }));
+vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+}));
+vi.mock("../../webview-ui/src/components/Header", () => ({ Header: () => null }));
+vi.mock("../../webview-ui/src/components/ChatArea", () => ({ ChatArea: () => null }));
+vi.mock("../../webview-ui/src/components/inputarea/InputArea", () => ({ InputArea: () => null }));
+vi.mock("../../webview-ui/src/components/MCPServersModal", () => ({ MCPServersModal: () => null }));
+vi.mock("../../webview-ui/src/components/WorkDirModal", () => ({ WorkDirModal: () => null }));
+vi.mock("../../webview-ui/src/components/ConfigErrorScreen", () => ({ ConfigErrorScreen: () => null }));
+vi.mock("../../webview-ui/src/components/LoginScreen", () => ({ LoginScreen: () => null }));
 
 import { useAppInit } from "../../webview-ui/src/hooks/useAppInit";
 import { useSettingsStore } from "../../webview-ui/src/stores/settings.store";
+import App from "../../webview-ui/src/App";
 
 const MODEL_CATALOG_CHANGED = "modelCatalogChanged";
 const PLAIN_MODEL = {
@@ -259,6 +272,25 @@ describe("useAppInit model catalog events", () => {
       expect(result.current.status).toBe("not-logged-in");
     });
     expect(appInitBridge.checkWorkspace).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the stream listener mounted when the catalog becomes empty", async () => {
+    render(<App />);
+    await waitFor(() => {
+      expect(listeners.get("streamEvent")?.size).toBe(1);
+    });
+    appInitBridge.getModels.mockResolvedValue({
+      models: [],
+      defaultModel: null,
+      defaultThinking: false,
+    });
+
+    await emitModelCatalogChanged();
+
+    await waitFor(() => {
+      expect(appInitBridge.checkWorkspace).toHaveBeenCalledTimes(2);
+    });
+    expect(listeners.get("streamEvent")?.size).toBe(1);
   });
 
   it("keeps the current state and logs a failed model read", async () => {
