@@ -1934,16 +1934,17 @@ describe('WorkspaceFsService.grep', () => {
     expect(result.files_scanned).toBe(2);
   });
 
-  it('distinguishes partial matches from an empty timed-out inventory', async () => {
+  it('times out without scanning when the inventory consumes the deadline', async () => {
     const backend = fakeFs({ 'src/a.ts': 'hello primary\n', '/extra/b.ts': 'hello extra\n' });
     let clock = 1_000;
     vi.spyOn(Date, 'now').mockImplementation(() => clock);
     const roots: string[] = [];
+    const readText = vi.spyOn(backend, 'readText');
     backend.walk = async (path, _options, visit) => {
       roots.push(path);
-      clock += 30_000;
       await visit({ path: 'src', kind: 'directory' });
       await visit({ path: 'src/a.ts', kind: 'file' });
+      clock += 30_000;
       return { truncated: true };
     };
     const fs = makeRemoteWalkSession(backend);
@@ -1954,20 +1955,36 @@ describe('WorkspaceFsService.grep', () => {
       ],
     });
 
+    await expect(fs.grep({ ...WALK_GREP_REQUEST })).rejects.toMatchObject({
+      code: ErrorCodes.FS_GREP_TIMEOUT,
+      message: 'grep timed out after 30000ms',
+    });
+    expect(roots).toEqual([WORK_DIR]);
+    expect(readText.mock.calls.some(([path]) => path.endsWith('/src/a.ts'))).toBe(false);
+  });
+
+  it('returns partial matches when the deadline passes after scanning started', async () => {
+    const backend = fakeFs({ 'src/a.ts': 'hello first\n', 'src/b.ts': 'hello second\n' });
+    let clock = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const readText = backend.readText.bind(backend);
+    backend.readText = async (path, options) => {
+      const content = await readText(path, options);
+      if (path.endsWith('/src/a.ts')) clock += 30_000;
+      return content;
+    };
+    backend.walk = async (_path, _options, visit) => {
+      await visit({ path: 'src/a.ts', kind: 'file' });
+      await visit({ path: 'src/b.ts', kind: 'file' });
+      return { truncated: false };
+    };
+    const fs = makeRemoteWalkSession(backend);
+
     const result = await fs.grep({ ...WALK_GREP_REQUEST });
 
     expect(result.files.map((file) => file.path)).toEqual(['src/a.ts']);
     expect(result.files_scanned).toBe(1);
     expect(result.truncated).toBe(true);
-    expect(roots).toEqual([WORK_DIR]);
-    backend.walk = async () => {
-      clock += 30_000;
-      return { truncated: true };
-    };
-    await expect(fs.grep({ ...WALK_GREP_REQUEST })).rejects.toMatchObject({
-      code: ErrorCodes.FS_GREP_TIMEOUT,
-      message: 'grep timed out after 30000ms',
-    });
   });
 });
 

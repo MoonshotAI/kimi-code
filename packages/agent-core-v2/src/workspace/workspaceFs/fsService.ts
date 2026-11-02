@@ -1282,12 +1282,15 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       if (signal.aborted || Date.now() >= deadline) break;
     }
 
-    if ((signal.aborted || Date.now() >= deadline) && filesScanned === 0 && filePaths.length === 0) {
+    if (signal.aborted || Date.now() >= deadline) {
       throw new Error2(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${Date.now() - startedAt}ms`);
     }
 
     for (const file of filePaths) {
-      if ((signal.aborted || Date.now() >= deadline) && filesScanned > 0) {
+      if (signal.aborted || Date.now() >= deadline) {
+        if (totalMatches === 0 && filesScanned === 0) {
+          throw new Error2(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${Date.now() - startedAt}ms`);
+        }
         truncated = true;
         break;
       }
