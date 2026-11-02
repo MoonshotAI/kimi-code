@@ -1720,10 +1720,20 @@ describe('AgentLoopRequester media resolver wiring', () => {
             content: [{ type: 'text', text: 'calling tools' }],
             toolCalls: [
               { type: 'function', id: 'media', name: 'ReadMediaFile', arguments: '{}' },
+              { type: 'function', id: 'media2', name: 'ReadMediaFile', arguments: '{}' },
               { type: 'function', id: 'other', name: 'other', arguments: '{}' },
             ],
           },
-          { role: 'tool', toolCallId: 'media', content: [{ type: 'text', text: 'media result' }] },
+          {
+            role: 'tool',
+            toolCallId: 'media',
+            content: [
+              { type: 'text', text: '<image path="/tmp/pic.png">' },
+              { type: 'image_url', imageUrl: { url: 'kimi-file://media' } },
+              { type: 'text', text: '</image>' },
+            ],
+          },
+          { role: 'tool', toolCallId: 'media2', content: [{ type: 'text', text: 'media result' }] },
           { role: 'tool', toolCallId: 'other', content: [{ type: 'text', text: 'other result' }] },
           { role: 'user', content: [{ type: 'text', text: 'continue' }] },
         ],
@@ -1738,10 +1748,20 @@ describe('AgentLoopRequester media resolver wiring', () => {
         input.messages.flatMap((message) => message.role === 'assistant' ? message.toolCalls : []).map(
           (call) => call.name,
         ),
-      ).toEqual(imageIn ? ['ReadMediaFile', 'other'] : ['other']);
+      ).toEqual(imageIn ? ['ReadMediaFile', 'ReadMediaFile', 'other'] : ['other']);
       expect(
         input.messages.flatMap((message) => message.role === 'tool' ? [message.toolCallId] : []),
-      ).toEqual(imageIn ? ['media', 'other'] : ['other']);
+      ).toEqual(imageIn ? ['media', 'media2', 'other'] : ['other']);
+      const omissions = input.messages.flatMap((message) =>
+        message.role === 'user'
+          ? message.content.flatMap((part) =>
+              part.type === 'text' && part.text.includes('omitted:') ? [part.text] : [],
+            )
+          : [],
+      );
+      expect(omissions).toEqual(imageIn ? [] : [
+        '[image omitted: a ReadMediaFile tool result was hidden because the current model does not support image input; use a model with image input capability to view it]\n<image path="/tmp/pic.png"></image>',
+      ]);
     }
   });
 });
