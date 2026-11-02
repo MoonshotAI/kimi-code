@@ -18,6 +18,7 @@ import type {
 } from '#/agent/loop/requesterContract';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
 import {
   configServices,
@@ -58,6 +59,7 @@ describe('LLMRequester service migration coverage', () => {
   describe('wire observability records', () => {
     let ctx: TestAgentContext;
     let llmRequester: LoopRequester;
+    let shouldVerifyResume = true;
 
     const requestTools: readonly Tool[] = [
       {
@@ -85,6 +87,7 @@ describe('LLMRequester service migration coverage', () => {
 
     beforeEach(() => {
       vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
+      shouldVerifyResume = true;
       ctx = createTestAgent();
       llmRequester = ctx.get(IAgentLoopService).requester;
     });
@@ -92,7 +95,7 @@ describe('LLMRequester service migration coverage', () => {
     afterEach(async () => {
       vi.unstubAllEnvs();
       try {
-        await ctx.expectResumeMatches();
+        if (shouldVerifyResume) await ctx.expectResumeMatches();
       } finally {
         await ctx.dispose();
       }
@@ -253,6 +256,106 @@ describe('LLMRequester service migration coverage', () => {
       expect(requests).toHaveLength(2);
       expect((requests[0]?.args as Record<string, unknown> | undefined)?.['projection']).toBeUndefined();
       expect(requests[1]?.args).toMatchObject({ projection: 'strict' });
+    });
+
+    it('emits cache break with loop-assigned identifiers and per-agent baselines', async () => {
+      shouldVerifyResume = false;
+      await ctx.dispose();
+      const records: TelemetryRecord[] = [];
+      const cacheReads = [10000, 5000, 10000, 5000, 1000, 5000] as const;
+      let calls = 0;
+      ctx = createTestAgent(
+        llmGenerateServices(requesterFromGenerateFn(async () => {
+          const index = calls++;
+          return {
+            id: `response-${index + 1}`,
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: `response-${index + 1}` }],
+              toolCalls: [],
+            },
+            usage: {
+              inputOther: 100,
+              output: 50,
+              inputCacheRead: cacheReads[index]!,
+              inputCacheCreation: 0,
+            },
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+            requestId: `trace-${index + 1}`,
+          };
+        })),
+        telemetryServices(recordingTelemetry(records)),
+      );
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first main turn' }] });
+      await ctx.untilTurnEnd();
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second main turn' }] });
+      await ctx.untilTurnEnd();
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'third main turn' }] });
+      await ctx.untilTurnEnd();
+
+      const lifecycle = ctx.get(IAgentLifecycleService);
+      const childContext = await lifecycle.create({
+        agentId: 'agent-child',
+        binding: { profile: 'coder', model: 'mock-model' },
+      });
+      const childLoop = lifecycle
+        .handleOf(childContext.agentId)!
+        .accessor.get(IAgentLoopService);
+      const runChildTurn = async (text: string): Promise<void> => {
+        const { id } = childLoop.submit({
+          message: { role: 'user', content: [{ type: 'text', text }] },
+          meta: { origin: { kind: 'user' }, tracked: true },
+        });
+        expect((await childLoop.promptHandle(id)!.completion).state).toBe('completed');
+      };
+      await runChildTurn('child first turn');
+      await runChildTurn('child second turn');
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'fourth main turn' }] });
+      await ctx.untilTurnEnd();
+
+      const events = records.filter((record) => record.event === 'cache_break_detected');
+      expect(events).toHaveLength(3);
+      expect(events.map((record) => record.properties?.['agent_id'])).toEqual([
+        'main',
+        'agent-child',
+        'main',
+      ]);
+      expect(events[0]?.properties).toMatchObject({
+        agent_id: 'main',
+        turn_id: 1,
+        step_no: 1,
+        trace_id: 'trace-2',
+        prev_turn_id: 0,
+        prev_step_no: 1,
+        prev_trace_id: 'trace-1',
+        prev_input_cache_read: 10000,
+        curr_input_cache_read: 5000,
+      });
+      expect(events[1]?.properties).toMatchObject({
+        agent_id: 'agent-child',
+        turn_id: 4,
+        step_no: 1,
+        trace_id: 'trace-5',
+        prev_turn_id: 3,
+        prev_step_no: 1,
+        prev_trace_id: 'trace-4',
+        prev_input_cache_read: 5000,
+        curr_input_cache_read: 1000,
+      });
+      expect(events[2]?.properties).toMatchObject({
+        agent_id: 'main',
+        turn_id: 3,
+        step_no: 1,
+        trace_id: 'trace-6',
+        prev_turn_id: 2,
+        prev_step_no: 1,
+        prev_trace_id: 'trace-3',
+        prev_input_cache_read: 10000,
+        curr_input_cache_read: 5000,
+      });
     });
 
   });

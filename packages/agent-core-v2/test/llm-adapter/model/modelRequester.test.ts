@@ -269,7 +269,10 @@ describe('generateModel request execution', () => {
       'timing',
     ]);
     const usage = events.find((e) => e.type === 'usage');
-    expect(usage).toMatchObject({ usage: { inputOther: 10, output: 7 }, model: 'fake-model' });
+    expect(usage).toMatchObject({
+      usage: { inputOther: 10, output: 7 },
+      model: 'fake-model',
+    });
     const finish = events.find((e) => e.type === 'finish');
     expect(finish).toMatchObject({
       id: 'msg-42',

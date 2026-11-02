@@ -163,6 +163,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private machineTurnSuppressed = false;
   private readonly settleWaiters: Array<() => void> = [];
   private quiescenceDepth = 0;
+  private historySnapshotDepth = 0;
   private activeRequestTrace: LLMRequestTrace | undefined;
   private engine: MachineEngine | undefined;
 
@@ -824,6 +825,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (this.disposing) throw abortError('Agent loop disposed');
     if (
       this.quiescenceDepth > 0 ||
+      this.historySnapshotDepth > 0 ||
       this.active !== undefined ||
       this.hasPendingRequests() ||
       this.pendingMachineTurn !== undefined
@@ -833,6 +835,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.quiescenceDepth += 1;
     this.engine?.pause();
     return toDisposable(() => this.releaseQuiescence());
+  }
+
+  tryAcquireHistorySnapshot(): IDisposable | undefined {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    if (this.quiescenceDepth > 0 || this.historySnapshotDepth > 0) return undefined;
+    this.historySnapshotDepth += 1;
+    return toDisposable(() => {
+      this.historySnapshotDepth -= 1;
+    });
   }
 
   private releaseQuiescence(): void {

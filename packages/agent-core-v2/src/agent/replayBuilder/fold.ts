@@ -50,6 +50,9 @@ export const FOLD_RELEVANT_WIRE_TYPES: ReadonlySet<string> = new Set([
   'permission.set_mode',
   'permission.record_approval_result',
   'tools.update_store',
+  'turn.prompt',
+  'turn.steer',
+  'turn.cancel',
 ]);
 
 export const FOLD_CARRYOVER_WIRE_TYPES: ReadonlySet<string> = new Set([
@@ -60,6 +63,12 @@ export const FOLD_CARRYOVER_WIRE_TYPES: ReadonlySet<string> = new Set([
   'goal.account_usage',
   'goal.continuation',
   'forked',
+  'context.undo',
+  'context.clear',
+  'context.apply_compaction',
+  'turn.prompt',
+  'turn.steer',
+  'turn.cancel',
 ]);
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
@@ -70,12 +79,26 @@ const COMPACT_USER_MESSAGE_MAX_TOKENS = 20_000;
 const GOAL_FORK_CLEARED_REMINDER =
   'This fork does not have a current goal. Ignore earlier active-goal reminders from the source session. Handle requests normally unless the user starts a new goal.';
 
+const REPLAY_TURN_ID = '__replayTurnId';
+
 export function foldWireRecords(
   records: readonly WireRecord[],
   decodePersistent?: (record: WireRecord) => WireRecord,
+  matchingRecords?: readonly WireRecord[],
 ): WireReplayFold {
+  const turnIdByAppend = new Map<WireRecord, number>();
+  for (const match of matchWireTurnInputRecords(matchingRecords ?? records, true)) {
+    if (match.turnId !== undefined) {
+      turnIdByAppend.set((matchingRecords ?? records)[match.appendIndex]!, match.turnId);
+    }
+  }
   const fold = new WireReplayFoldState();
-  for (const record of migrateJournalRecords(records)) {
+  const annotated = records.map((record) =>
+    record.type === 'context.append_message'
+      ? { ...record, [REPLAY_TURN_ID]: turnIdByAppend.get(record) }
+      : record,
+  );
+  for (const record of migrateJournalRecords(annotated)) {
     fold.apply(decodePersistent === undefined ? record : decodePersistent(record));
   }
   fold.finish();
@@ -117,14 +140,20 @@ class WireReplayFoldState {
   private history: ContextMessage[] = [];
   private readonly openSteps = new Map<string, ContextMessage>();
   private readonly pendingToolResultIds = new Set<string>();
-  private deferredMessages: ContextMessage[] = [];
+  private deferredMessages: { readonly message: ContextMessage; readonly turnId?: number }[] = [];
   private goal: FoldGoalState | undefined;
+  private nextTurnId = 0;
+  private readonly cancelledTurnIds = new Set<number>();
 
   apply(record: WireRecord): void {
     const time = record.time ?? Date.now();
     switch (record.type) {
       case 'context.append_message':
-        this.appendMessage(record['message'] as ContextMessage, time);
+        this.appendMessage(
+          record['message'] as ContextMessage,
+          time,
+          readNumber(record, REPLAY_TURN_ID),
+        );
         return;
       case 'context.append_loop_event':
         this.appendLoopEvent(record['event'] as LoopRecordedEvent, time);
@@ -138,6 +167,23 @@ class WireReplayFoldState {
       case 'context.apply_compaction':
         this.applyCompaction(record);
         return;
+      case 'turn.prompt':
+        this.updateTurnId(record);
+        return;
+      case 'turn.steer':
+        return;
+      case 'turn.cancel': {
+        const turnId = record['turnId'];
+        if (
+          record['target'] !== undefined &&
+          typeof turnId === 'number' &&
+          turnId >= this.nextTurnId
+        ) {
+          this.cancelledTurnIds.add(turnId);
+          while (this.cancelledTurnIds.delete(this.nextTurnId)) this.nextTurnId += 1;
+        }
+        return;
+      }
       case 'full_compaction.begin':
         this.push(
           { type: 'compaction', instruction: readString(record, 'instruction') },
@@ -191,26 +237,41 @@ class WireReplayFoldState {
     this.replay.push({ ...payload, time });
   }
 
+  private updateTurnId(record: WireRecord): void {
+    const explicitTurnId = record['turnId'];
+    const turnId = typeof explicitTurnId === 'number' ? explicitTurnId : this.nextTurnId;
+    this.nextTurnId = Math.max(this.nextTurnId, turnId + 1);
+    while (this.cancelledTurnIds.delete(this.nextTurnId)) this.nextTurnId += 1;
+  }
+
   private pushHistory(messages: readonly ContextMessage[], time: number): void {
-    for (const message of messages) {
-      this.history.push(message);
+    for (const message of messages) this.pushHistoryEntry(message, time);
+  }
+
+  private pushHistoryEntry(message: ContextMessage, time: number, turnId?: number): void {
+    this.history.push(message);
+    if (message.role === 'user' && turnId !== undefined) {
+      this.push({ type: 'message', message, turnId }, time);
+    } else {
       this.push({ type: 'message', message }, time);
     }
   }
 
-  private appendMessage(message: ContextMessage, time: number): void {
+  private appendMessage(message: ContextMessage, time: number, turnId?: number): void {
     if (this.pendingToolResultIds.size > 0) {
-      this.deferredMessages.push(message);
+      this.deferredMessages.push({ message, turnId });
       return;
     }
-    this.pushHistory([message], time);
+    this.pushHistoryEntry(message, time, turnId);
   }
 
   private flushDeferredMessages(time: number): void {
     if (this.pendingToolResultIds.size > 0 || this.deferredMessages.length === 0) {
       return;
     }
-    this.pushHistory(this.deferredMessages, time);
+    for (const entry of this.deferredMessages) {
+      this.pushHistoryEntry(entry.message, time, entry.turnId);
+    }
     this.deferredMessages = [];
   }
 
@@ -522,6 +583,178 @@ function goalBudgetReport(state: FoldGoalState): GoalBudgetReport {
     wallClockBudgetReached,
     overBudget: tokenBudgetReached || turnBudgetReached || wallClockBudgetReached,
   };
+}
+
+export interface WireTurnInputMatch {
+  readonly appendIndex: number;
+  readonly inputIndex?: number;
+  readonly visibleTurnIndex: number;
+  readonly turnId?: number;
+}
+
+export function matchWireTurnInputRecords(
+  records: readonly WireRecord[],
+  allUserMessages = false,
+): WireTurnInputMatch[] {
+  const inputIndices: number[] = [];
+  const appends: {
+    readonly record: WireRecord;
+    readonly index: number;
+    readonly visibleTurnIndex: number;
+  }[] = [];
+  const turnIds = new Map<number, number>();
+  const cancelledTurnIds = new Set<number>();
+  let currentTurnId: number | undefined;
+  let nextTurnId = 0;
+  let visibleTurnIndex = 0;
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!;
+    if (
+      record.type === 'context.undo' ||
+      record.type === 'context.clear' ||
+      record.type === 'context.apply_compaction'
+    ) {
+      currentTurnId = undefined;
+    }
+    if (record.type === 'turn.cancel') {
+      const turnId = record['turnId'];
+      if (record['target'] !== undefined && typeof turnId === 'number' && turnId >= nextTurnId) {
+        cancelledTurnIds.add(turnId);
+        while (cancelledTurnIds.delete(nextTurnId)) nextTurnId += 1;
+      }
+      continue;
+    }
+    if (record.type === 'turn.prompt') {
+      const explicitTurnId = record['turnId'];
+      const turnId = typeof explicitTurnId === 'number' ? explicitTurnId : nextTurnId;
+      currentTurnId = turnId;
+      turnIds.set(index, turnId);
+      nextTurnId = Math.max(nextTurnId, turnId + 1);
+      while (cancelledTurnIds.delete(nextTurnId)) nextTurnId += 1;
+    } else if (record.type === 'turn.steer') {
+      const explicitTurnId = record['turnId'];
+      const turnId = typeof explicitTurnId === 'number' ? explicitTurnId : currentTurnId;
+      if (turnId !== undefined) turnIds.set(index, turnId);
+    }
+    const isInput = allUserMessages
+      ? record.type === 'turn.prompt' || record.type === 'turn.steer'
+      : isVisibleWireTurnInput(record);
+    if (isInput) inputIndices.push(index);
+    const isAppend = allUserMessages
+      ? record.type === 'context.append_message' &&
+        wireRecordObject(record['message'])?.['role'] === 'user'
+      : isVisibleWireTurnAppend(record);
+    if (!isAppend) continue;
+    appends.push({ record, index, visibleTurnIndex });
+    visibleTurnIndex += 1;
+  }
+  const unused = [...inputIndices];
+  const matches: WireTurnInputMatch[] = [];
+  for (const append of appends) {
+    const exact = unused.findIndex(
+      (index) =>
+        (records[index]!.type !== 'turn.prompt' || index < append.index) &&
+        wireTurnInputMatches(records[index]!, append.record, true, allUserMessages),
+    );
+    const matchAt = exact !== -1
+      ? exact
+      : unused.findIndex(
+          (index) =>
+            (records[index]!.type !== 'turn.prompt' || index < append.index) &&
+            wireTurnInputMatches(records[index]!, append.record, false, allUserMessages),
+        );
+    const inputIndex = matchAt === -1 ? undefined : unused.splice(matchAt, 1)[0];
+    matches.push({
+      appendIndex: append.index,
+      inputIndex,
+      visibleTurnIndex: append.visibleTurnIndex,
+      turnId: inputIndex === undefined ? undefined : turnIds.get(inputIndex),
+    });
+  }
+  return matches;
+}
+
+function isVisibleWireTurnInput(record: WireRecord): boolean {
+  if (record.type !== 'turn.prompt' && record.type !== 'turn.steer') return false;
+  const origin = wireRecordObject(record['origin']);
+  switch (origin?.['kind']) {
+    case 'user':
+      return true;
+    case 'skill_activation':
+    case 'plugin_command':
+      return origin?.['trigger'] === 'user-slash';
+    case 'shell_command':
+      return origin?.['phase'] === 'input';
+    default:
+      return false;
+  }
+}
+
+function isVisibleWireTurnAppend(record: WireRecord): boolean {
+  if (record.type !== 'context.append_message') return false;
+  const message = wireRecordObject(record['message']);
+  if (message === undefined || message['role'] !== 'user') return false;
+  const origin = wireRecordObject(message['origin']);
+  switch (origin?.['kind']) {
+    case undefined:
+    case 'user':
+      return true;
+    case 'skill_activation':
+    case 'plugin_command':
+      return origin?.['trigger'] === 'user-slash';
+    case 'shell_command':
+      return origin?.['phase'] === 'input';
+    default:
+      return false;
+  }
+}
+
+function wireTurnInputMatches(
+  inputRecord: WireRecord,
+  turnRecord: WireRecord,
+  compareContent: boolean,
+  anyOrigin: boolean,
+): boolean {
+  if (inputRecord.type !== 'turn.prompt' && inputRecord.type !== 'turn.steer') return false;
+  if (turnRecord.type !== 'context.append_message') return false;
+  const message = wireRecordObject(turnRecord['message']);
+  if (message === undefined || message['role'] !== 'user') return false;
+  if (!anyOrigin) {
+    const inputKind = wireRecordObject(inputRecord['origin'])?.['kind'];
+    if (typeof inputKind !== 'string') return false;
+    const messageKind = wireRecordObject(message['origin'])?.['kind'];
+    if (messageKind !== undefined && typeof messageKind !== 'string') return false;
+    if (
+      inputKind === 'user'
+        ? messageKind !== undefined && messageKind !== 'user'
+        : inputKind !== messageKind
+    ) {
+      return false;
+    }
+  }
+  const messageId = typeof message['id'] === 'string' ? message['id'] : undefined;
+  const steerMessageId =
+    inputRecord.type === 'turn.steer' && typeof inputRecord['messageId'] === 'string'
+      ? inputRecord['messageId']
+      : undefined;
+  if (steerMessageId !== undefined && messageId !== undefined) {
+    return steerMessageId === messageId;
+  }
+  const promptId =
+    inputRecord.type === 'turn.prompt' && typeof inputRecord['promptId'] === 'string'
+      ? inputRecord['promptId']
+      : undefined;
+  if (promptId !== undefined && messageId !== undefined) return promptId === messageId;
+  return (
+    !compareContent ||
+    JSON.stringify(inputRecord['input']) === JSON.stringify(message['content'])
+  );
+}
+
+function wireRecordObject(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function isRealUserInput(message: ContextMessage): boolean {
