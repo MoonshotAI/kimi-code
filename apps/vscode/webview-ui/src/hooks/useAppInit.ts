@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { bridge, Events } from "@/services";
-import { getSettingsSaveRevision, requiresManagedProviderLogin, useSettingsStore } from "@/stores";
+import { requiresManagedProviderLogin, useSettingsStore } from "@/stores";
 import type { ExtensionConfig } from "shared/types";
 
 export type AppStatus = "loading" | "no-workspace" | "runtime-error" | "not-logged-in" | "no-models" | "ready";
@@ -51,14 +51,14 @@ export interface AppInitState {
   refresh: () => void;
 }
 
-export function useAppInit(skippedLogin = false, showLogin = false): AppInitState {
+export function useAppInit(): AppInitState {
   const [state, setState] = useState<Omit<AppInitState, "refresh">>({
     status: "loading",
     errorMessage: null,
     modelsCount: 0,
   });
   const [initKey, setInitKey] = useState(0);
-  const { initModels, refreshModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
+  const { initModels, setModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
 
   const refresh = useCallback(() => {
     setState({ status: "loading", errorMessage: null, modelsCount: 0 });
@@ -73,41 +73,9 @@ export function useAppInit(skippedLogin = false, showLogin = false): AppInitStat
 
   useEffect(() => {
     let cancelled = false;
-    let latestRead = 0;
-    const preserveView = skippedLogin || showLogin;
     const unsubscribe = bridge.on(Events.ModelCatalogChanged, () => {
-      if (state.status !== "ready" && !preserveView) {
-        refresh();
-        return;
-      }
-      const read = ++latestRead;
-      const saveRevision = getSettingsSaveRevision();
-      void bridge.getModels().then((kimiConfig) => {
-        if (cancelled || read !== latestRead || saveRevision !== getSettingsSaveRevision()) return;
-        const modelsCount = kimiConfig.models?.length ?? 0;
-        if (modelsCount === 0) {
-          if (!preserveView) {
-            refresh();
-            return;
-          }
-          refreshModels(kimiConfig);
-          setState((current) => ({ ...current, modelsCount }));
-          return;
-        }
-        if (!preserveView && requiresManagedProviderLogin(
-          kimiConfig.models,
-          kimiConfig.defaultModel,
-          useSettingsStore.getState().isLoggedIn,
-        )) {
-          refresh();
-          return;
-        }
-        refreshModels(kimiConfig);
-        setState((current) => ({
-          ...current,
-          status: skippedLogin && current.status === "no-models" ? "ready" : current.status,
-          modelsCount,
-        }));
+      void bridge.getModels().then(({ models }) => {
+        if (!cancelled) setModels(models);
       }).catch((error: unknown) => {
         console.error("[AppInit] Failed to refresh models:", error);
       });
@@ -116,7 +84,7 @@ export function useAppInit(skippedLogin = false, showLogin = false): AppInitStat
       cancelled = true;
       unsubscribe();
     };
-  }, [refresh, refreshModels, state.status, skippedLogin, showLogin]);
+  }, [setModels]);
 
   useEffect(() => {
     let cancelled = false;

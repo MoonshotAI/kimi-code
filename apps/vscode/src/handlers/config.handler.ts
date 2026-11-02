@@ -42,9 +42,6 @@ const saveConfig: Handler<SessionConfig, { ok: boolean }> = async (params, ctx) 
   const effortChanged = params.effortChanged !== false;
   const config = await ctx.harness.getConfig({ reload: true });
   const model = config.models?.[params.model];
-  if (model === undefined && (Object.keys(config.models ?? {}).length > 0 || config.defaultModel === params.model)) {
-    throw new Error(`Model "${params.model}" is no longer available. Select another model.`);
-  }
   // Resolve with the provider type the way the TUI's effectiveModelForHost
   // does: without it the Anthropic fallback profile (e.g. `claude-latest`)
   // never matches, so the inferred default that gates persistence is missed.

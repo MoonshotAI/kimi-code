@@ -198,23 +198,19 @@ describe("Webview model metadata", () => {
 });
 
 describe("Webview model catalog refresh", () => {
-  it("keeps a valid non-default model and its thinking effort", () => {
+  it("shows new models without changing the current selection or defaults", () => {
     useSettingsStore.setState({
       currentModel: "reasoning",
       thinkingEffort: "low",
-      modelsLoaded: false,
+      defaultThinking: true,
+      defaultThinkingEffort: "low",
     });
     const models = [
       ...MODELS,
       { id: "new", name: "New", provider: "managed:kimi-code", capabilities: [] },
     ];
 
-    useSettingsStore.getState().refreshModels({
-      models,
-      defaultModel: "plain",
-      defaultThinking: true,
-      defaultThinkingEffort: "high",
-    });
+    useSettingsStore.getState().setModels(models);
 
     expect(useSettingsStore.getState()).toMatchObject({
       models,
@@ -222,182 +218,8 @@ describe("Webview model catalog refresh", () => {
       thinkingEffort: "low",
       defaultModel: "plain",
       defaultThinking: true,
-      defaultThinkingEffort: "high",
-      modelsLoaded: true,
+      defaultThinkingEffort: "low",
     });
-    expect(boundary.saveConfig).not.toHaveBeenCalled();
-  });
-
-  it("recomputes thinking when the current model drops the selected effort", () => {
-    useSettingsStore.setState({ currentModel: "reasoning", thinkingEffort: "low" });
-    const reasoning = MODELS.find((model) => model.id === "reasoning");
-    if (reasoning === undefined) throw new Error("Missing reasoning fixture");
-
-    useSettingsStore.getState().refreshModels({
-      models: [{ ...reasoning, support_efforts: ["high"], default_effort: "high" }],
-      defaultModel: "reasoning",
-      defaultThinking: true,
-    });
-
-    expect(useSettingsStore.getState()).toMatchObject({
-      currentModel: "reasoning",
-      thinkingEffort: "high",
-    });
-  });
-
-  it("falls back only to a valid default and recomputes thinking", () => {
-    useSettingsStore.setState({ currentModel: "reasoning", thinkingEffort: "low" });
-    const models = [MODELS[0], MODELS[2]];
-
-    useSettingsStore.getState().refreshModels({
-      models,
-      defaultModel: "always",
-      defaultThinking: false,
-    });
-
-    expect(useSettingsStore.getState()).toMatchObject({
-      models,
-      currentModel: "always",
-      thinkingEffort: "on",
-    });
-  });
-
-  it("clears the selection when both current and default models are invalid", () => {
-    useSettingsStore.setState({ currentModel: "reasoning", thinkingEffort: "high" });
-
-    useSettingsStore.getState().refreshModels({
-      models: [MODELS[0]],
-      defaultModel: "removed",
-      defaultThinking: true,
-    });
-
-    expect(useSettingsStore.getState()).toMatchObject({
-      currentModel: "",
-      thinkingEffort: "off",
-      modelsLoaded: true,
-    });
-  });
-
-  it("does not supersede an in-flight settings save", async () => {
-    let rejectSave!: (error: Error) => void;
-    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
-      rejectSave = reject;
-    }));
-    useSettingsStore.getState().updateModel("reasoning");
-
-    useSettingsStore.getState().refreshModels({
-      models: MODELS,
-      defaultModel: "plain",
-      defaultThinking: false,
-    });
-    rejectSave(new Error("save failed"));
-
-    await vi.waitFor(() => {
-      expect(useSettingsStore.getState().currentModel).toBe("plain");
-    });
-  });
-
-  it("keeps a valid fallback when a save fails after its rollback model was removed", async () => {
-    useSettingsStore.getState().initModels(MODELS, "always", false);
-    let rejectSave!: (error: Error) => void;
-    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
-      rejectSave = reject;
-    }));
-    useSettingsStore.getState().updateModel("reasoning");
-
-    useSettingsStore.getState().refreshModels({
-      models: [MODELS[0]],
-      defaultModel: "plain",
-      defaultThinking: false,
-    });
-    rejectSave(new Error("save failed"));
-
-    await vi.waitFor(() => {
-      expect(useSettingsStore.getState().currentModel).toBe("plain");
-    });
-    expect(useSettingsStore.getState().currentModel).toBe("plain");
-  });
-
-  it("validates a rollback against the refreshed catalog even when the new selection remains valid", async () => {
-    useSettingsStore.getState().initModels(MODELS, "always", false);
-    let rejectSave!: (error: Error) => void;
-    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
-      rejectSave = reject;
-    }));
-    useSettingsStore.getState().updateModel("reasoning");
-
-    useSettingsStore.getState().refreshModels({
-      models: [MODELS[0], MODELS[1]],
-      defaultModel: "plain",
-      defaultThinking: false,
-    });
-    rejectSave(new Error("save failed"));
-
-    await vi.waitFor(() => {
-      expect(useSettingsStore.getState().currentModel).toBe("plain");
-    });
-    expect(useSettingsStore.getState().currentModel).toBe("plain");
-  });
-
-  it("keeps refreshed default thinking values when a pending save fails", async () => {
-    useSettingsStore.getState().initModels(MODELS, "reasoning", false, "low");
-    let rejectSave!: (error: Error) => void;
-    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
-      rejectSave = reject;
-    }));
-    useSettingsStore.getState().updateModel("plain");
-
-    useSettingsStore.getState().refreshModels({
-      models: MODELS,
-      defaultModel: "reasoning",
-      defaultThinking: true,
-      defaultThinkingEffort: "high",
-    });
-    rejectSave(new Error("save failed"));
-
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(useSettingsStore.getState()).toMatchObject({
-      defaultThinking: true,
-      defaultThinkingEffort: "high",
-    });
-  });
-
-  it("rolls back an optimistic thinking change after an unrelated catalog refresh", async () => {
-    const switchModel = { id: "switch", name: "Switch", provider: "managed:kimi-code", capabilities: ["thinking"] };
-    useSettingsStore.getState().initModels([switchModel], "switch", false);
-    let rejectSave!: (error: Error) => void;
-    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
-      rejectSave = reject;
-    }));
-    useSettingsStore.getState().toggleThinking();
-
-    useSettingsStore.getState().refreshModels({
-      models: [switchModel],
-      defaultModel: "switch",
-      defaultThinking: false,
-    });
-    rejectSave(new Error("save failed"));
-
-    await vi.waitFor(() => {
-      expect(boundary.toastError).toHaveBeenCalled();
-    });
-    expect(useSettingsStore.getState()).toMatchObject({
-      currentModel: "switch",
-      thinkingEffort: "off",
-      defaultThinking: false,
-    });
-  });
-
-  it("uses the valid current model when retrying a cached model that was removed", () => {
-    useChatStore.setState({
-      pendingInput: { content: "hello", model: "removed" },
-      isStreaming: false,
-      messages: [],
-    });
-
-    useChatStore.getState().retryLastMessage();
-
-    expect(boundary.streamChat).toHaveBeenCalledWith("hello", "plain", "off", false, undefined);
   });
 });
 
