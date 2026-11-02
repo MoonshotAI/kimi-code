@@ -57,6 +57,12 @@ describe('fs group over a subprocess loopback', () => {
     expect(calls.mock.calls.map(([method]) => method)).toEqual(['fs/readFile']);
   });
 
+  it('preserves non-file metadata on zero-length whole reads', async () => {
+    const result = await fs.readWholeFile('/dev/null');
+    expect(result?.bytes).toHaveLength(0);
+    expect(result?.stat).toMatchObject({ isFile: false, isDirectory: false });
+  });
+
   it('edits a small file with one read and one write RPC', async () => {
     const path = join(workDir, 'edit.txt');
     await writeFile(path, 'before\nold value\n');
@@ -182,14 +188,17 @@ describe('fs protocol semantics', () => {
     maxResponseBytes: 8 * 1024 * 1024,
   };
 
-  it('falls back to bounded reads when a whole-file read is rejected', async () => {
+  it.each(['rejection', 'missing metadata'] as const)('falls back to bounded reads after whole-file %s', async (failure) => {
     const calls: Array<{ maxBytes?: number }> = [];
     const fs = new RemoteFileSystem({
       call: async (method, params) => {
         if (method !== 'fs/readFile') throw new Error(`unexpected method: ${method}`);
         const maxBytes = (params as { maxBytes?: number }).maxBytes;
         calls.push({ maxBytes });
-        if (maxBytes === undefined) throw new Error('whole read rejected');
+        if (maxBytes === undefined) {
+          if (failure === 'rejection') throw new Error('whole read rejected');
+          return { dataBase64: Buffer.from('legacy').toString('base64'), eof: true };
+        }
         return { dataBase64: Buffer.from('fallback').toString('base64'), eof: true };
       },
       notify: () => {},

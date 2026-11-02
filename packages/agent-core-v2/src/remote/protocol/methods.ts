@@ -56,6 +56,11 @@ export interface FsReadFileParams {
 export interface FsReadFileResult {
   readonly dataBase64: string;
   readonly eof: boolean;
+  readonly stat?: {
+    readonly isFile: boolean;
+    readonly isDirectory: boolean;
+    readonly size: number;
+  };
 }
 
 export type FsWriteMode = 'truncate' | 'append' | 'exclusive';

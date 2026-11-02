@@ -110,11 +110,9 @@ export class RemoteFileSystem implements IHostFileSystem {
   async readWholeFile(path: string) {
     try {
       const result = await this.readRange(path, 0);
+      if (result.stat === undefined) return undefined;
       const bytes = decodeBase64(result.dataBase64);
-      return {
-        bytes,
-        stat: { isFile: true, isDirectory: false, size: bytes.byteLength },
-      };
+      return { bytes, stat: result.stat };
     } catch {
       return undefined;
     }

@@ -108,7 +108,8 @@ export class FsHandler {
     const offset = optionalInteger(params, 'offset', 0, Number.MAX_SAFE_INTEGER) ?? 0;
     const maxBytes = optionalInteger(params, 'maxBytes', 1, FS_READ_FILE_MAX_BYTES);
     try {
-      const { size } = await this.fs.stat(path);
+      const { size, isFile, isDirectory } = await this.fs.stat(path);
+      const stat = { isFile, isDirectory, size };
       const length = maxBytes ?? size - offset;
       if (length > FS_READ_FILE_WHOLE_MAX_BYTES) {
         throw new RpcError(
@@ -117,10 +118,10 @@ export class FsHandler {
         );
       }
       if (offset >= size) {
-        return { dataBase64: '', eof: true };
+        return { dataBase64: '', eof: true, stat };
       }
       const data = await this.fs.readBytes(path, Math.min(length, size - offset), offset);
-      return { dataBase64: Buffer.from(data).toString('base64'), eof: offset + data.byteLength >= size };
+      return { dataBase64: Buffer.from(data).toString('base64'), eof: offset + data.byteLength >= size, stat };
     } catch (error) {
       if (error instanceof RpcError) throw error;
       throw fsDomainError(error, { path, op: 'read' });
