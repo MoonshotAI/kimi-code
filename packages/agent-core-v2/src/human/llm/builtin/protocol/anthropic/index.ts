@@ -83,6 +83,35 @@ function requestOptionsOf(request: Request, signal: AbortSignal) {
   return { signal, headers };
 }
 
+const UNSUPPORTED_ROOT_SCHEMA_KEYS = new Set(['oneOf', 'anyOf', 'allOf']);
+
+function requestParamsForClient(
+  client: Anthropic,
+  params: Request['params'],
+): Request['params'] {
+  if (
+    client.baseURL !== 'https://api.anthropic.com' &&
+    client.baseURL !== 'https://api.anthropic.com/'
+  ) return params;
+  if (params.tools === undefined) return params;
+  const tools = params.tools.filter((tool) => {
+    if (!('input_schema' in tool)) return true;
+    return !Object.entries(tool.input_schema).some(
+      ([key, value]) => value !== undefined && UNSUPPORTED_ROOT_SCHEMA_KEYS.has(key),
+    );
+  });
+  if (tools.length === params.tools.length) return params;
+  const choice = params.tool_choice;
+  const choiceUnavailable =
+    (choice?.type === 'any' && tools.length === 0) ||
+    (choice?.type === 'tool' && !tools.some((tool) => tool.name === choice.name));
+  return {
+    ...params,
+    tools: tools.length > 0 ? tools : undefined,
+    tool_choice: choiceUnavailable ? undefined : choice,
+  };
+}
+
 export const anthropicProtocol = defineProtocol<
   AnthropicOptions,
   NativeMessage,
@@ -97,7 +126,7 @@ export const anthropicProtocol = defineProtocol<
   capability: getAnthropicModelCapability,
   client: createClient,
   send: async (client: Anthropic, request: Request, signal) => {
-    const params = { ...request.params, stream: false as const };
+    const params = { ...requestParamsForClient(client, request.params), stream: false as const };
     const options = requestOptionsOf(request, signal);
     const { data, response } = request.useBetaApi
       ? await client.beta.messages.create(params, options).withResponse()
@@ -108,7 +137,7 @@ export const anthropicProtocol = defineProtocol<
     };
   },
   sendStream: async (client: Anthropic, request: Request, signal) => {
-    const params = { ...request.params, stream: true as const };
+    const params = { ...requestParamsForClient(client, request.params), stream: true as const };
     const options = requestOptionsOf(request, signal);
     const { data, response } = request.useBetaApi
       ? await client.beta.messages.create(params, options).withResponse()

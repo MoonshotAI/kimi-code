@@ -6,6 +6,7 @@ import type { Message } from '#/llm/message';
 import { fromCorePart, toCorePart } from '#/message';
 import type { LlmModel } from '#/llm-requester/model';
 import { createKimiAnthropicRequester } from '#/llm-requester/factories';
+import { anthropicProtocol, type AnthropicRequest } from '#/llm/builtin/protocol/anthropic/index';
 import { lowerMessage } from '#/llm/builtin/protocol/anthropic/lower';
 import type { LlmClientContext } from '#/llm-requester/requester';
 
@@ -96,5 +97,97 @@ describe('anthropic lowering of inline images', () => {
     );
     const messages = client.body()['messages'] as { content: unknown[] }[];
     expect(messages[0]?.content[0]).toMatchObject(HEIC_BLOCK);
+  });
+});
+
+
+describe('anthropic tool schema compatibility', () => {
+  it.each(['send', 'sendStream'] as const)('filters root combinators on official endpoint in %s', async (mode) => {
+    let sent: Record<string, unknown> | undefined;
+    const create = (params: Record<string, unknown>) => {
+      sent = params;
+      return { withResponse: async () => ({ data: { async *[Symbol.asyncIterator]() {} }, response: new Response(null) }) };
+    };
+    const client = {
+      baseURL: 'https://api.anthropic.com',
+      messages: { create },
+      beta: { messages: { create } },
+    } as never;
+    const tools = [
+      { name: 'bad-oneOf', input_schema: { type: 'object', oneOf: [] } },
+      { name: 'bad-anyOf', input_schema: { type: 'object', anyOf: [] } },
+      { name: 'bad-allOf', input_schema: { type: 'object', allOf: [] } },
+      { name: 'good', input_schema: { type: 'object', properties: {} } },
+      { name: 'undefined-key', input_schema: { type: 'object', oneOf: undefined } },
+    ] as AnthropicRequest['params']['tools'];
+    const request: AnthropicRequest = {
+      params: { model: 'claude-sonnet-4-5', max_tokens: 100, messages: [{ role: 'user', content: 'hi' }], tools },
+      betas: [],
+      useBetaApi: false,
+    };
+
+    await anthropicProtocol[mode](client, request, new AbortController().signal);
+
+    expect((sent?.['tools'] as { name: string }[]).map((tool) => tool.name)).toEqual(['good', 'undefined-key']);
+    expect(tools).toHaveLength(5);
+  });
+
+  it.each([
+    { type: 'any' },
+    { type: 'tool', name: 'bad' },
+  ] as const)('clears unavailable tool choice $type', async (tool_choice) => {
+    let sent: Record<string, unknown> | undefined;
+    const create = (params: Record<string, unknown>) => {
+      sent = params;
+      return { withResponse: async () => ({ data: {}, response: new Response(null) }) };
+    };
+    const client = {
+      baseURL: 'https://api.anthropic.com',
+      messages: { create },
+      beta: { messages: { create } },
+    } as never;
+    const request: AnthropicRequest = {
+      params: {
+        model: 'claude-sonnet-4-5',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [{ name: 'bad', input_schema: { type: 'object', oneOf: [] } }] as AnthropicRequest['params']['tools'],
+        tool_choice,
+      },
+      betas: [],
+      useBetaApi: false,
+    };
+
+    await anthropicProtocol.send(client, request, new AbortController().signal);
+
+    expect(sent?.['tools']).toBeUndefined();
+    expect(sent?.['tool_choice']).toBeUndefined();
+  });
+
+  it('keeps root combinators for custom Anthropic-compatible endpoints', async () => {
+    let sent: Record<string, unknown> | undefined;
+    const create = (params: Record<string, unknown>) => {
+      sent = params;
+      return { withResponse: async () => ({ data: {}, response: new Response(null) }) };
+    };
+    const client = {
+      baseURL: 'https://example.test/v1',
+      messages: { create },
+      beta: { messages: { create } },
+    } as never;
+    const request: AnthropicRequest = {
+      params: {
+        model: 'custom',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [{ name: 'bad', input_schema: { type: 'object', oneOf: [] } }] as AnthropicRequest['params']['tools'],
+      },
+      betas: [],
+      useBetaApi: false,
+    };
+
+    await anthropicProtocol.send(client, request, new AbortController().signal);
+
+    expect((sent?.['tools'] as { name: string }[]).map((tool) => tool.name)).toEqual(['bad']);
   });
 });
