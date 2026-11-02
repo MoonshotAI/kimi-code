@@ -62,6 +62,7 @@ export function useAppInit(): AppInitState {
   const { initModels, setModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
 
   const refresh = useCallback(() => {
+    catalogApplied.current = false;
     setState({ status: "loading", errorMessage: null, modelsCount: 0 });
     setInitKey((k) => k + 1);
   }, []);
