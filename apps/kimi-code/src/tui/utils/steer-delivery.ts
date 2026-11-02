@@ -34,7 +34,8 @@ export function isTurnSteerEvent(
 }
 
 // A shorter pending steer must not match inside a different message.
-// Only an exact text, or a segment split by the steer joiner, counts.
+// Skill activation text is prepended and ends at `</skill-loaded>`, so the
+// submitted user text is also a suffix immediately after `>`.
 function boundaryIndex(eventText: string, batchText: string): number {
   if (batchText.length === 0) return -1;
   if (eventText === batchText) return 0;
@@ -42,9 +43,10 @@ function boundaryIndex(eventText: string, batchText: string): number {
   while (from <= eventText.length) {
     const index = eventText.indexOf(batchText, from);
     if (index < 0) return -1;
-    const beforeOk = index === 0 || eventText.startsWith('\n\n', index - 2);
-    const after = index + batchText.length;
-    const afterOk = after === eventText.length || eventText.startsWith('\n\n', after);
+    const end = index + batchText.length;
+    const beforeOk =
+      index === 0 || eventText.startsWith('\n\n', index - 2) || eventText[index - 1] === '>';
+    const afterOk = end === eventText.length || eventText.startsWith('\n\n', end);
     if (beforeOk && afterOk) return index;
     from = index + 1;
   }

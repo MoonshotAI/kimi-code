@@ -101,4 +101,17 @@ describe('takeDeliveredSteerBatches', () => {
     expect(result.delivered).toEqual([first, second]);
     expect(result.pending).toEqual([]);
   });
+
+  it('clears a steer when skill activation text is prepended', () => {
+    const batch = { text: 'check src/app.ts', entries: ['check src/app.ts'] };
+    const eventText = [
+      'User activated the skill "review". Follow the loaded skill instructions.',
+      '<skill-loaded name="review">',
+      'Review the change.',
+      '</skill-loaded>',
+    ].join('\n') + 'check src/app.ts';
+    const result = takeDeliveredSteerBatches([batch], eventText);
+    expect(result.delivered).toEqual([batch]);
+    expect(result.pending).toEqual([]);
+  });
 });
