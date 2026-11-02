@@ -7,7 +7,7 @@ import type { EnvironmentPath, EnvironmentWorkspaceMapper } from './environment'
 import { EnvironmentError } from './environmentRegistry';
 
 export function normalizeRemoteCwd(cwd: string): string {
-  const path = /^[A-Za-z]:[\\/]/.test(cwd) || cwd.startsWith('\\\\') ? win32Path : posixPath;
+  const path = /^[A-Za-z]:[\\/]/.test(cwd) ? win32Path : posixPath;
   if (cwd.includes('\0') || !path.isAbsolute(cwd)) {
     throw new EnvironmentError('environment.invalid_cwd', 'remote cwd must be an absolute POSIX or Windows path; relative paths and ~ are not expanded');
   }

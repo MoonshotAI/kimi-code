@@ -420,7 +420,7 @@ export class ProcessManager {
       }
     }
     for (const entry of entries) {
-      this.killGroup(entry, 'SIGKILL');
+      if (process.platform !== 'win32') this.killGroup(entry, 'SIGKILL');
     }
     for (const group of [...orphanedGroups, ...this.exitedGroups.values()]) {
       this.killOrphanedGroup(group.pid, 'SIGKILL');
