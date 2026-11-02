@@ -302,14 +302,7 @@ export class SessionManager implements ISessionManager {
     const holdsWork = agents.list().some((agent) => {
       const accessor = agents.handleOf(agent.agentId)?.accessor;
       if (accessor === undefined) return false;
-      const queue = accessor.get(IAgentPromptQueueService);
-      const snapshot = queue.snapshot();
-      return (
-        accessor.get(IAgentCronService).list().length > 0 ||
-        queue.hasPendingItems() ||
-        snapshot.paused ||
-        snapshot.items.length > 0
-      );
+      return accessor.get(IAgentCronService).list().length > 0 || accessor.get(IAgentPromptQueueService).holdsWork();
     });
     if (holdsWork) return true;
     const activity = handle.accessor.get(ISessionActivityView).state();

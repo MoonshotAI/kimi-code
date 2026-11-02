@@ -3,7 +3,9 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
+import { PromptQueued } from '#/agent/prompt/promptEvents';
 import { WarningIssued } from '#/agent/profile/profileOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventService } from '#/app/event/event';
@@ -12,6 +14,7 @@ import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { Error2, ErrorCodes } from '#/errors';
+import { stripBundledSkillBlocks } from '#human/agent/origin';
 import type { UserEntry } from '#human/agent/turn';
 
 import {
@@ -75,6 +78,10 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     return this.launching || (!this.paused && this.entries.length > 0);
   }
 
+  holdsWork(): boolean {
+    return this.launching || this.paused || this.entries.length > 0;
+  }
+
   async submitInput(request: PromptQueueInputRequest): Promise<PromptQueueSubmitResult> {
     this.assertOpen();
     this.assertNewId(request.id);
@@ -91,6 +98,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     const steerNow = entry.delivery === 'steer' && !this.launching && !this.paused && this.loop.canSteerPrompt();
     if (!steerNow && !this.canStartNow()) {
       this.insert(entry);
+      this.publishQueued(entry);
       return { acceptedAs: entry.delivery };
     }
     return this.start(entry, false);
@@ -262,18 +270,17 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
         this.runGate.begin();
         await current.prepare();
         current = this.consume(current, { prepare: undefined });
-        this.assertOpen();
       }
+      const prepared = this.stillStarting(current, fromQueue);
+      if (prepared === undefined) return { acceptedAs: 'queue' };
+      current = prepared;
       if (current.onStart !== undefined) {
         await current.onStart();
         current = this.consume(current, { onStart: undefined });
-        this.assertOpen();
       }
-      if (fromQueue) {
-        const queued = this.entries.find((item): item is InputEntry => item.id === current.id);
-        if (queued === undefined || this.paused) return { acceptedAs: 'queue' };
-        current = queued;
-      }
+      const started = this.stillStarting(current, fromQueue);
+      if (started === undefined) return { acceptedAs: 'queue' };
+      current = started;
       if (current.delivery === 'steer' && this.loop.canSteerPrompt()) {
         const { id } = this.loop.submit(current.entry);
         this.remove(current);
@@ -281,7 +288,10 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
         return { acceptedAs: (await this.steerSubmitted(id)) ? 'steer' : 'queue', handle };
       }
       if (!this.loop.canLaunchPrompt()) {
-        if (!fromQueue) this.restoreAtHead(current);
+        if (!fromQueue) {
+          this.restoreAtHead(current);
+          this.publishQueued(current);
+        }
         return { acceptedAs: 'queue' };
       }
       const handle = this.launch(current.entry);
@@ -298,6 +308,14 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       if (!this.disposed) this.emitChange();
       this.schedulePump();
     }
+  }
+
+  private stillStarting(current: InputEntry, fromQueue: boolean): InputEntry | undefined {
+    this.assertOpen();
+    if (!fromQueue) return current;
+    const head = this.entries[0];
+    if (this.paused || head?.id !== current.id) return undefined;
+    return head as InputEntry;
   }
 
   private consume(current: InputEntry, done: Pick<QueueEntry, 'prepare'> | Pick<QueueEntry, 'onStart'>): InputEntry {
@@ -358,6 +376,20 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       this.logger.warn('queued compaction could not start', { error });
       this.warn('queued-compaction-failed', `The queued compaction did not start: ${reasonOf(error)}`);
     }
+  }
+
+  private publishQueued(entry: InputEntry): void {
+    const origin = entry.entry.meta?.origin as PromptOrigin | undefined;
+    if (origin?.kind !== 'user') return;
+    void this.dispatcher.dispatch(
+      new PromptQueued({
+        agentId: this.scopeContext.agentId,
+        promptId: entry.id,
+        content: stripBundledSkillBlocks({ content: entry.entry.message.content, origin }),
+        clientMetadata: origin.clientMetadata,
+        queueLength: this.entries.length,
+      }),
+    );
   }
 
   private warn(code: string, message: string): void {

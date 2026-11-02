@@ -377,7 +377,8 @@ describe('AgentPromptQueueService', () => {
       finishPrepare = resolve;
     }));
     const onDrop = vi.fn();
-    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', prepare, onDrop });
+    const onStart = vi.fn(async () => {});
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', prepare, onStart, onDrop });
     release();
     await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
 
@@ -386,8 +387,48 @@ describe('AgentPromptQueueService', () => {
     await vi.waitFor(() => expect(queue.hasPendingItems()).toBe(false));
     await loop.settled();
     expect(launched).toEqual(['first']);
+    expect(onStart).not.toHaveBeenCalled();
     expect(onDrop).toHaveBeenCalledOnce();
     expect(queue.snapshot().items).toEqual([]);
+  });
+
+  it('starts the new head first when another prompt moves ahead while settings are applied', async () => {
+    setup();
+    respond(3);
+    const release = await startHeldTurn();
+    let finishPrepare!: () => void;
+    const prepare = vi.fn(() => new Promise<void>((resolve) => {
+      finishPrepare = resolve;
+    }));
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', prepare });
+    await queue.submitInput({ id: 'p3', entry: entry('p3', 'third'), delivery: 'queue' });
+    release();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+
+    queue.move('p3', 'p2');
+    finishPrepare();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'third', 'second']));
+    await loop.settled();
+    expect(prepare).toHaveBeenCalledOnce();
+  });
+
+  it('announces an input held in the queue once to queued-prompt listeners', async () => {
+    setup();
+    respond(2);
+    const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
+    const queuedEvents = () => dispatch.mock.calls
+      .map(([event]) => event as { type: string; promptId?: string; queueLength?: number })
+      .filter((event) => event.type === 'prompt.queued');
+    const release = await startHeldTurn();
+    expect(queuedEvents()).toEqual([]);
+
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue' });
+    expect(queuedEvents()).toEqual([expect.objectContaining({ promptId: 'p2', queueLength: 1 })]);
+
+    release();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
+    await loop.settled();
+    expect(queuedEvents()).toHaveLength(1);
   });
 
   it('fails an idle prompt whose start bookkeeping fails', async () => {

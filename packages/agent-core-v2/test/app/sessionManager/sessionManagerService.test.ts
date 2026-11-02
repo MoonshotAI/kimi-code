@@ -596,8 +596,7 @@ describe('SessionManager closeIfIdle', () => {
           if (token === IAgentCronService) return { list: () => Array.from({ length: state.cronTasks }) };
           if (token === IAgentPromptQueueService) {
             return {
-              snapshot: () => ({ paused: state.queuePaused, items: Array.from({ length: state.queuedPrompts }) }),
-              hasPendingItems: () => false,
+              holdsWork: () => state.queuePaused || state.queuedPrompts > 0,
             };
           }
           return undefined;

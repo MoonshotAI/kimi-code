@@ -1094,9 +1094,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
           { details: { sessionId: id } },
         );
       }
-      const queue = agentHandle.accessor.get(IAgentPromptQueueService);
-      const snapshot = queue.snapshot();
-      if (!stale && (queue.hasPendingItems() || snapshot.paused || snapshot.items.length > 0)) {
+      if (!stale && agentHandle.accessor.get(IAgentPromptQueueService).holdsWork()) {
         throw new Error2(
           ErrorCodes.SESSION_BUSY,
           `Session "${id}" cannot be reloaded while its queue is paused or holds prompts`,

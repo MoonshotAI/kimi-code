@@ -60,6 +60,8 @@ export interface IAgentPromptQueueService {
 
   hasPendingItems(): boolean;
 
+  holdsWork(): boolean;
+
   submitInput(request: PromptQueueInputRequest): Promise<PromptQueueSubmitResult>;
 
   submitCompaction(request: PromptQueueCompactionRequest): PromptQueueSubmitResult;

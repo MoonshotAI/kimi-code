@@ -30,6 +30,7 @@ import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
+import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { _clearAgentToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
@@ -578,6 +579,10 @@ describe('SessionSubagentScopeCacheService', () => {
       _serviceBrand: undefined,
       compacting: null,
     } as unknown as IAgentFullCompactionService);
+    ix.stub(IAgentPromptQueueService, {
+      _serviceBrand: undefined,
+      holdsWork: () => false,
+    } as unknown as IAgentPromptQueueService);
     ix.fiberHost.addCollectionRecord(
       ScopeUnits(LifecycleScope.Agent),
       'test-reminder',
@@ -667,6 +672,24 @@ describe('SessionSubagentScopeCacheService', () => {
       stopAllOnExit: async () => [],
       suppressAllTerminalNotifications: async () => {},
     } as unknown as IAgentTaskService);
+    await svc.create({ agentId: 'agent-1' });
+    await svc.create({ agentId: 'agent-2' });
+
+    completed('agent-1');
+    completed('agent-2');
+    await settle();
+
+    expect(svc.handleOf('agent-1')).toBeDefined();
+    expect(svc.handleOf('agent-2')).toBeDefined();
+  });
+
+  it('defers eviction while the scope holds queued prompts', async () => {
+    cacheService('1');
+    const svc = ix.get(IAgentLifecycleService);
+    ix.stub(IAgentPromptQueueService, {
+      _serviceBrand: undefined,
+      holdsWork: () => true,
+    } as unknown as IAgentPromptQueueService);
     await svc.create({ agentId: 'agent-1' });
     await svc.create({ agentId: 'agent-2' });
 
@@ -975,6 +998,8 @@ describe('SessionSubagentScopeCacheService eviction guards', () => {
             ? ({ _serviceBrand: undefined, snapshot } as unknown as IAgentLoopService)
             : serviceId === IAgentTaskService
               ? ({ _serviceBrand: undefined, list: () => [] } as unknown as IAgentTaskService)
+              : serviceId === IAgentPromptQueueService
+                ? ({ _serviceBrand: undefined, holdsWork: () => false } as unknown as IAgentPromptQueueService)
               : serviceId === IEventDispatcher
                 ? ({ _serviceBrand: undefined, flush } as unknown as IEventDispatcher)
                 : undefined,
