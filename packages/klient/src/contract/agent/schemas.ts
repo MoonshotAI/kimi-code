@@ -122,7 +122,7 @@ export const setPermissionPayloadSchema = z.object({
 export const tokenUsageSchema = z.object({
   inputOther: z.number(),
   output: z.number(),
-  inputCacheRead: z.number(),
+  inputCacheRead: z.number().optional(),
   inputCacheCreation: z.number(),
 });
 

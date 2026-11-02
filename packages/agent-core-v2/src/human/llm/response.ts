@@ -19,7 +19,7 @@ export const NO_FINISH: FinishInfo = { finishReason: null, rawFinishReason: null
 export interface TokenUsage {
   inputOther: number;
   output: number;
-  inputCacheRead: number;
+  inputCacheRead?: number;
   inputCacheCreation: number;
   raw?: Record<string, unknown>;
 }

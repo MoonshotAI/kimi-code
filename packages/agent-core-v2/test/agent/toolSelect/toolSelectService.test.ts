@@ -284,6 +284,10 @@ class FakeLoopService implements IAgentLoopService {
     return toDisposable(() => {});
   }
 
+  tryAcquireHistorySnapshot(): IDisposable | undefined {
+    return toDisposable(() => {});
+  }
+
   buildAttachBundle(): never {
     throw new Error('unused in this suite');
   }
