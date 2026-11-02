@@ -431,7 +431,9 @@ export class McpOAuthService {
     try {
       provider.setRedirectUrl(new URL(callbackServer.redirectUri));
       await provider.ready;
-      await provider.invalidateStaleRegistration(callbackServer.redirectUri);
+      if (await provider.invalidateStaleRegistration(callbackServer.redirectUri)) {
+        this.providers.set(storeKey, provider);
+      }
       const requestScope = await this.resolveRequestScope(provider, serverUrl, signal);
       let tokensSaved = false;
       const unsubscribeTokensSaved = this.onEvent((event) => {

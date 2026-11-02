@@ -476,6 +476,33 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(installed.body.data.plugins).toEqual([]);
   });
 
+  it('omits raw plugin manifests and MCP secrets from detail responses', async () => {
+    const source = await makePluginDir('demo-plugin', '1.0.0', true);
+    const manifestPath = join(source, 'kimi.plugin.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      mcpServers: Record<string, unknown>;
+    };
+    manifest.mcpServers['demo'] = {
+      transport: 'stdio',
+      command: 'node',
+      env: { TOKEN: 'env-secret' },
+    };
+    manifest.mcpServers['remote'] = {
+      transport: 'http',
+      url: 'https://mcp.example.test',
+      headers: { Authorization: 'header-secret' },
+    };
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    await call('POST', '/api/v1/plugins', { source });
+
+    const info = await call<unknown>('GET', '/api/v1/plugins/demo-plugin');
+
+    expect(info.body.code).toBe(0);
+    expect(info.body.data).not.toHaveProperty('manifest');
+    expect(JSON.stringify(info.body.data)).not.toContain('env-secret');
+    expect(JSON.stringify(info.body.data)).not.toContain('header-secret');
+  });
+
   it('rejects invalid actions and ambiguous install input', async () => {
     expect((await call('POST', '/api/v1/plugins/demo-plugin')).body.code).toBe(40001);
     expect((await call('POST', '/api/v1/plugins/demo-plugin:explode')).body.code).toBe(40001);

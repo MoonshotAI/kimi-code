@@ -209,7 +209,7 @@ export function registerPluginsRoutes(
           id: req.params.tail,
           locale: req.query.locale,
         });
-        reply.send(okEnvelope(info, req.id));
+        reply.send(okEnvelope({ ...info, manifest: undefined }, req.id));
       } catch (error) {
         reply.send(mapPluginError(error, req.id));
       }

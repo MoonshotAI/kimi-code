@@ -63,7 +63,6 @@ export const pluginInfoSchema = pluginSummarySchema.extend({
   updatedAt: z.string().optional(),
   manifestKind: z.enum(['kimi-plugin-root', 'kimi-plugin-dir']).optional(),
   manifestPath: z.string().optional(),
-  manifest: z.unknown().optional(),
   skills: z.array(pluginSkillInfoSchema),
   mcpServers: z.array(pluginMcpServerInfoSchema),
   shadowedManifestPath: z.string().optional(),

@@ -868,6 +868,9 @@ describe('McpOAuthService interactive flow serialization', () => {
     await second.complete();
     expect(authServer.counts.exchange).toBe(1);
     expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(true);
+    await expect(
+      fixture.service.getProvider(SERVER_NAME, SERVER_URL).clientInformation(),
+    ).resolves.toMatchObject({ client_id: 'test-client-1' });
   }, 15000);
 
   it('skips a refresh that fires while an interactive flow owns the credential', async () => {
