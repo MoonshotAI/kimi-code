@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { bridge, Events } from "@/services";
 import { requiresManagedProviderLogin, useSettingsStore } from "@/stores";
 import type { ExtensionConfig } from "shared/types";
@@ -58,6 +58,7 @@ export function useAppInit(): AppInitState {
     modelsCount: 0,
   });
   const [initKey, setInitKey] = useState(0);
+  const catalogApplied = useRef(false);
   const { initModels, setModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
 
   const refresh = useCallback(() => {
@@ -77,7 +78,10 @@ export function useAppInit(): AppInitState {
     const unsubscribe = bridge.on(Events.ModelCatalogChanged, () => {
       const read = ++latestRead;
       void bridge.getModels().then(({ models }) => {
-        if (!cancelled && read === latestRead) setModels(models);
+        if (!cancelled && read === latestRead) {
+          catalogApplied.current = true;
+          setModels(models);
+        }
       }).catch((error: unknown) => {
         console.error("[AppInit] Failed to refresh models:", error);
       });
@@ -124,7 +128,12 @@ export function useAppInit(): AppInitState {
         console.log("[AppInit] Login status:", loginStatus, "kimiConfig:", kimiConfig);
 
         setIsLoggedIn(loginStatus.loggedIn);
-        initModels(kimiConfig.models, kimiConfig.defaultModel, kimiConfig.defaultThinking, kimiConfig.defaultThinkingEffort);
+        initModels(
+          catalogApplied.current ? useSettingsStore.getState().models : kimiConfig.models,
+          kimiConfig.defaultModel,
+          kimiConfig.defaultThinking,
+          kimiConfig.defaultThinkingEffort,
+        );
 
         const modelsCount = kimiConfig.models?.length ?? 0;
 
