@@ -169,6 +169,77 @@ describe("useAppInit model catalog events", () => {
     expect(appInitBridge.checkWorkspace).toHaveBeenCalledTimes(2);
   });
 
+  it("ignores an older catalog read that finishes out of order", async () => {
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+    let resolveOldModels!: (config: typeof INITIAL_CONFIG) => void;
+    appInitBridge.getModels
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveOldModels = resolve;
+      }))
+      .mockResolvedValueOnce({
+        models: [PLAIN_MODEL, NEW_MODEL],
+        defaultModel: "new",
+        defaultThinking: true,
+      });
+
+    await emitModelCatalogChanged();
+    await emitModelCatalogChanged();
+    await waitFor(() => {
+      expect(result.current.modelsCount).toBe(2);
+    });
+    await act(async () => {
+      resolveOldModels(INITIAL_CONFIG);
+    });
+
+    expect(result.current.modelsCount).toBe(2);
+    expect(useSettingsStore.getState().models).toEqual([PLAIN_MODEL, NEW_MODEL]);
+  });
+
+  it("refreshes in place when login was skipped", async () => {
+    appInitBridge.checkLoginStatus.mockResolvedValue({
+      loggedIn: false,
+      siteBase: "https://example.com",
+    });
+    const { result } = renderHook(() => useAppInit(true));
+    await waitFor(() => {
+      expect(result.current.status).toBe("not-logged-in");
+    });
+    appInitBridge.getModels.mockResolvedValue({
+      models: [PLAIN_MODEL, NEW_MODEL],
+      defaultModel: "plain",
+      defaultThinking: false,
+    });
+
+    await emitModelCatalogChanged();
+
+    await waitFor(() => {
+      expect(result.current.modelsCount).toBe(2);
+    });
+    expect(appInitBridge.checkWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("reruns the login gate when the refreshed default requires authentication", async () => {
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+    appInitBridge.checkLoginStatus.mockResolvedValue({
+      loggedIn: false,
+      siteBase: "https://example.com",
+    });
+    useSettingsStore.getState().setIsLoggedIn(false);
+
+    await emitModelCatalogChanged();
+
+    await waitFor(() => {
+      expect(result.current.status).toBe("not-logged-in");
+    });
+    expect(appInitBridge.checkWorkspace).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps the current state and logs a failed model read", async () => {
     const { result } = renderHook(() => useAppInit());
     await waitFor(() => {

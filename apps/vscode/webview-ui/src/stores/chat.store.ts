@@ -5,7 +5,7 @@ import { Content } from "@/lib/content";
 import { useApprovalStore } from "./approval.store";
 import { toast } from "@/components/ui/sonner";
 
-import { useSettingsStore } from "./settings.store";
+import { getModelById, useSettingsStore } from "./settings.store";
 import { processEvent } from "./event-handlers";
 import type { StatusUpdate, ContentPart, QuestionRequest, ToolResult } from "shared/legacy-sdk";
 import type { UIStreamEvent } from "shared/types";
@@ -143,7 +143,8 @@ function clearAllInlineErrors(draft: ChatState): void {
 
 function doSend(state: ChatState, content: string | ContentPart[], model: string) {
   const { sessionId, planMode } = state;
-  const { thinkingEffort } = useSettingsStore.getState();
+  const { thinkingEffort, models, currentModel } = useSettingsStore.getState();
+  const activeModel = getModelById(models, model) === undefined ? currentModel : model;
 
   clearHandshakeTimer();
   handshakeTimer = setTimeout(() => {
@@ -160,7 +161,7 @@ function doSend(state: ChatState, content: string | ContentPart[], model: string
   }, HANDSHAKE_TIMEOUT_MS);
 
   void bridge
-    .streamChat(content, model, thinkingEffort, planMode, sessionId ?? undefined)
+    .streamChat(content, activeModel, thinkingEffort, planMode, sessionId ?? undefined)
     .catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       useChatStore.getState().processEvent({

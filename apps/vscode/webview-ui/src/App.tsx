@@ -81,9 +81,9 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
 }
 
 export default function App() {
-  const { status, errorMessage, modelsCount, refresh } = useAppInit();
   const [skippedLogin, setSkippedLogin] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
+  const { status, errorMessage, modelsCount, refresh } = useAppInit(skippedLogin);
 
   const handleLoginSuccess = useCallback(() => {
     setShowLogin(false);

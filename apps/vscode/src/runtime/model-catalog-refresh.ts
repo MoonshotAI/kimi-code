@@ -1,6 +1,7 @@
 import type { KimiHarness } from "@moonshot-ai/kimi-code-sdk";
 
 const DEFAULT_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const MAX_INTERVAL_MS = 2_147_483_647;
 const INTERVAL_ENV = "KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS";
 const REFRESH_ON_START_ENV = "KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START";
 
@@ -14,9 +15,12 @@ export interface ModelCatalogRefreshOptions {
 export function startModelCatalogRefresh(options: ModelCatalogRefreshOptions): () => void {
   const env = options.env ?? process.env;
   let disposed = false;
+  let refreshing = false;
   let timer: ReturnType<typeof setInterval> | undefined;
 
   const refresh = async (): Promise<void> => {
+    if (disposed || refreshing) return;
+    refreshing = true;
     try {
       const result = await options.harness.refreshProviderModels({ scope: "all" });
       if (result.failed.length > 0) {
@@ -27,6 +31,8 @@ export function startModelCatalogRefresh(options: ModelCatalogRefreshOptions): (
       }
     } catch (error) {
       options.log("Model catalog refresh failed", error);
+    } finally {
+      refreshing = false;
     }
   };
 
@@ -62,9 +68,9 @@ function resolveIntervalMs(env: NodeJS.ProcessEnv, configValue: number | undefin
   const raw = env[INTERVAL_ENV];
   if (raw !== undefined && raw.trim().length > 0) {
     const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= MAX_INTERVAL_MS) return parsed;
   }
-  return configValue ?? DEFAULT_REFRESH_INTERVAL_MS;
+  return Math.min(configValue ?? DEFAULT_REFRESH_INTERVAL_MS, MAX_INTERVAL_MS);
 }
 
 function resolveRefreshOnStart(env: NodeJS.ProcessEnv, configValue: boolean | undefined): boolean {

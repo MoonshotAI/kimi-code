@@ -413,6 +413,53 @@ describe("Model catalog refresh", () => {
     dispose();
   });
 
+  it("skips interval ticks while a refresh is in flight", async () => {
+    const sdk = createFakeHarness();
+    sdk.getConfig.mockResolvedValue({
+      providers: {},
+      modelCatalog: { refreshOnStart: false, refreshIntervalMs: 1000 },
+    });
+    let resolveRefresh!: (result: RefreshProviderModelsResponse) => void;
+    sdk.refreshProviderModels.mockReturnValue(new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    const dispose = startModelCatalogRefresh({
+      harness: sdk.harness,
+      onChanged: () => undefined,
+      log: () => undefined,
+      env: {},
+    });
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(1);
+    resolveRefresh(EMPTY_REFRESH_RESULT);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(2);
+    dispose();
+  });
+
+  it("falls back when an interval exceeds the Node timer limit", async () => {
+    const sdk = createFakeHarness();
+    sdk.getConfig.mockResolvedValue({
+      providers: {},
+      modelCatalog: { refreshOnStart: false, refreshIntervalMs: 1000 },
+    });
+    const dispose = startModelCatalogRefresh({
+      harness: sdk.harness,
+      onChanged: () => undefined,
+      log: () => undefined,
+      env: { KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS: "2147483648" },
+    });
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(sdk.refreshProviderModels).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sdk.refreshProviderModels).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
   it("does not start after disposal while config is pending", async () => {
     const sdk = createFakeHarness();
     let resolveConfig!: (config: { providers: Record<string, never> }) => void;

@@ -296,6 +296,39 @@ describe("Webview model catalog refresh", () => {
       expect(useSettingsStore.getState().currentModel).toBe("plain");
     });
   });
+
+  it("keeps a valid fallback when a save fails after its rollback model was removed", async () => {
+    useSettingsStore.getState().initModels(MODELS, "always", false);
+    let rejectSave!: (error: Error) => void;
+    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    useSettingsStore.getState().updateModel("reasoning");
+
+    useSettingsStore.getState().refreshModels({
+      models: [MODELS[0]],
+      defaultModel: "plain",
+      defaultThinking: false,
+    });
+    rejectSave(new Error("save failed"));
+
+    await vi.waitFor(() => {
+      expect(useSettingsStore.getState().currentModel).toBe("plain");
+    });
+    expect(useSettingsStore.getState().currentModel).toBe("plain");
+  });
+
+  it("uses the valid current model when retrying a cached model that was removed", () => {
+    useChatStore.setState({
+      pendingInput: { content: "hello", model: "removed" },
+      isStreaming: false,
+      messages: [],
+    });
+
+    useChatStore.getState().retryLastMessage();
+
+    expect(boundary.streamChat).toHaveBeenCalledWith("hello", "plain", "off", false, undefined);
+  });
 });
 
 describe("Webview MCP update bridge", () => {

@@ -51,7 +51,7 @@ export interface AppInitState {
   refresh: () => void;
 }
 
-export function useAppInit(): AppInitState {
+export function useAppInit(skippedLogin = false): AppInitState {
   const [state, setState] = useState<Omit<AppInitState, "refresh">>({
     status: "loading",
     errorMessage: null,
@@ -72,14 +72,26 @@ export function useAppInit(): AppInitState {
   }, [setExtensionConfig, refresh]);
 
   useEffect(() => {
-    return bridge.on(Events.ModelCatalogChanged, () => {
-      if (state.status !== "ready") {
+    let cancelled = false;
+    let latestRead = 0;
+    const unsubscribe = bridge.on(Events.ModelCatalogChanged, () => {
+      if (state.status !== "ready" && !skippedLogin) {
         refresh();
         return;
       }
+      const read = ++latestRead;
       void bridge.getModels().then((kimiConfig) => {
+        if (cancelled || read !== latestRead) return;
         const modelsCount = kimiConfig.models?.length ?? 0;
         if (modelsCount === 0) {
+          refresh();
+          return;
+        }
+        if (!skippedLogin && requiresManagedProviderLogin(
+          kimiConfig.models,
+          kimiConfig.defaultModel,
+          useSettingsStore.getState().isLoggedIn,
+        )) {
           refresh();
           return;
         }
@@ -89,7 +101,11 @@ export function useAppInit(): AppInitState {
         console.error("[AppInit] Failed to refresh models:", error);
       });
     });
-  }, [refresh, refreshModels, state.status]);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [refresh, refreshModels, state.status, skippedLogin]);
 
   useEffect(() => {
     let cancelled = false;
