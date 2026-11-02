@@ -432,4 +432,18 @@ describe('WorkspaceDirsService (registry source)', () => {
 
     expect(dirs.sessionInfo().primaryByWorkspace).toEqual({});
   });
+
+  it('keeps an initial local config failure on ready without an unhandled watcher rejection', async () => {
+    await mkdir(join(dirA, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(dirA, '.kimi-code', 'local.toml'),
+      '[workspace]\nadditional_dir = ["missing"]\n',
+      'utf8',
+    );
+    const dirs = createDirs(dirA, encodeWorkDirKey(dirA));
+
+    await expect(dirs.ready).rejects.toThrow(
+      `workspace.additional_dir must exist and be a directory: ${join(dirA, 'missing')}`,
+    );
+  });
 });

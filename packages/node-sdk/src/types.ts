@@ -6,7 +6,7 @@ import type {
 import type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
 import type { RemoteEnvironmentEntry } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 
 import type { ResumeSessionResult } from '#/replay';
 import type { PermissionMode } from '#/permission';
@@ -151,7 +151,7 @@ export type { KimiHostIdentity, OAuthRefreshOutcome };
 // hosts name them through `KimiHarnessOptions.uiCapabilities`, so the type is public here.
 export type { HostUiCapability };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
-export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
+export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/agent-core-v2';
 // Contributed commands are an agent-core-v2 seam; the type is re-exported
 // from the v2 engine (v1 sessions report an empty command set).
 export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
@@ -377,7 +377,7 @@ export interface ForkSessionInput {
   readonly title?: string;
   readonly metadata?: JsonObject;
   /**
-   * Zero-based index of the user-visible turn to retain through. Omit it to
+   * Persistent engine turnId to retain through; gaps are allowed. Omit it to
    * preserve the existing full-session fork behavior.
    */
   readonly turnIndex?: number;
@@ -467,7 +467,7 @@ export interface SessionTodoItem {
 export interface TokenUsage {
   readonly inputOther: number;
   readonly output: number;
-  readonly inputCacheRead: number;
+  readonly inputCacheRead?: number;
   readonly inputCacheCreation: number;
 }
 

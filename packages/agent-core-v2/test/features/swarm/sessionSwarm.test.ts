@@ -41,6 +41,9 @@ import {
 } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
+import { IAgentTaskService, type RegisterAgentTaskOptions } from '#/agent/task/task';
+import type { AgentTask, AgentTaskSettlement } from '#/agent/task/types';
+import type { SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
 import {
   AgentRunBatch,
   resolveSwarmMaxConcurrency,
@@ -1466,6 +1469,251 @@ describe('SessionSwarmService metadata compatibility', () => {
     }
   });
 
+  it('registers each member as a foreground task of the caller that follows suspension and completion', async () => {
+    vi.useFakeTimers();
+    try {
+      agents['agent-rl'] = { labels: { parentAgentId: 'main' } };
+      agents['agent-peer'] = { labels: { parentAgentId: 'main' } };
+      handles.set('agent-rl', agentHandle('agent-rl', lifecycle, eventBus));
+      handles.set('agent-peer', agentHandle('agent-peer', lifecycle, eventBus));
+      const registered: Array<{
+        readonly task: AgentTask;
+        readonly detached: boolean | undefined;
+        readonly detachable: boolean | undefined;
+        settlement?: AgentTaskSettlement;
+        readonly refreshed: Array<SubagentTaskInfo>;
+      }> = [];
+      const infoOf = (task: AgentTask): SubagentTaskInfo =>
+        task.toInfo({ taskId: 't', description: task.description, status: 'running', startedAt: 0, endedAt: null }) as SubagentTaskInfo;
+      const callerTasks = {
+        registerTask: (task: AgentTask, options?: RegisterAgentTaskOptions) => {
+          const entry: (typeof registered)[number] = {
+            task,
+            detached: options?.detached,
+            detachable: options?.detachable,
+            refreshed: [],
+          };
+          registered.push(entry);
+          void task.start({
+            signal: new AbortController().signal,
+            appendOutput: () => {},
+            settle: async (settlement) => {
+              entry.settlement = settlement;
+              return true;
+            },
+          });
+          return `task-${registered.length - 1}`;
+        },
+        refresh: (taskId: string) => {
+          const entry = registered[Number(taskId.slice('task-'.length))]!;
+          entry.refreshed.push(infoOf(entry.task));
+        },
+      } as unknown as IAgentTaskService;
+      handles.set(
+        'main',
+        agentHandle('main', lifecycle, eventBus, {}, new Map<unknown, unknown>([[IAgentTaskService, callerTasks]])),
+      );
+      const rateLimited = createControlledPromise<{ summary: string }>();
+      const peer = createControlledPromise<{ summary: string }>();
+      let rlRuns = 0;
+      runAgent.mockImplementation((agent, _request, options) => {
+        options?.onReady?.();
+        const agentId = (agent as AgentContext).agentId;
+        if (agentId === 'agent-rl') {
+          rlRuns += 1;
+          return {
+            agentId,
+            turn: {} as never,
+            completion: rlRuns === 1 ? rateLimited : Promise.resolve({ summary: 'recovered summary' }),
+          };
+        }
+        return { agentId, turn: {} as never, completion: peer };
+      });
+      const service = ix.get(ISessionSwarmService);
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-rl'), resumeSessionTask('agent-peer')],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      rateLimited.reject(new APIProviderRateLimitError('Rate limited'));
+      await vi.advanceTimersByTimeAsync(0);
+      peer.resolve({ summary: 'peer summary' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await running;
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(registered.map((entry) => [entry.detached, entry.detachable])).toEqual([
+        [false, false],
+        [false, false],
+      ]);
+      const [rl, peerTask] = registered;
+      expect(rl!.refreshed.map((info) => info.stateReason)).toContain(
+        'Provider rate limit; subagent requeued for retry.',
+      );
+      expect(rl!.refreshed.at(-1)?.stateReason).toBeUndefined();
+      expect(rl!.settlement).toEqual({ status: 'completed' });
+      expect(infoOf(rl!.task)).toMatchObject({
+        kind: 'agent',
+        agentId: 'agent-rl',
+        parentToolCallId: 'call_swarm',
+        swarmIndex: 1,
+        model: 'kimi-test',
+        thinkingEffort: 'medium',
+        resultSummary: 'recovered summary',
+      });
+      expect(peerTask!.settlement).toEqual({ status: 'completed' });
+      expect(infoOf(peerTask!.task)).toMatchObject({ agentId: 'agent-peer', resultSummary: 'peer summary' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stopping one member task cancels only that member', async () => {
+    agents['agent-stop'] = { labels: { parentAgentId: 'main' } };
+    agents['agent-keep'] = { labels: { parentAgentId: 'main' } };
+    handles.set('agent-stop', agentHandle('agent-stop', lifecycle, eventBus));
+    handles.set('agent-keep', agentHandle('agent-keep', lifecycle, eventBus));
+    const members: Array<{ readonly stop: AbortController; settlement?: AgentTaskSettlement }> = [];
+    const callerTasks = {
+      registerTask: (task: AgentTask) => {
+        const member: (typeof members)[number] = { stop: new AbortController() };
+        members.push(member);
+        void task.start({
+          signal: member.stop.signal,
+          appendOutput: () => {},
+          settle: async (settlement) => {
+            member.settlement = settlement;
+            return true;
+          },
+        });
+        return `task-${members.length - 1}`;
+      },
+      refresh: () => {},
+    } as unknown as IAgentTaskService;
+    handles.set(
+      'main',
+      agentHandle('main', lifecycle, eventBus, {}, new Map<unknown, unknown>([[IAgentTaskService, callerTasks]])),
+    );
+    const kept = createControlledPromise<{ summary: string }>();
+    runAgent.mockImplementation((agent, _request, options) => {
+      options?.onReady?.();
+      const agentId = (agent as AgentContext).agentId;
+      if (agentId === 'agent-keep') return { agentId, turn: {} as never, completion: kept };
+      return {
+        agentId,
+        turn: {} as never,
+        completion: new Promise((_resolve, reject) => {
+          options?.signal.addEventListener('abort', () => {
+            reject(options.signal.reason);
+          }, { once: true });
+        }),
+      };
+    });
+
+    const running = ix.get(ISessionSwarmService).run({
+      callerAgentId: 'main',
+      tasks: [resumeSessionTask('agent-stop'), resumeSessionTask('agent-keep')],
+    });
+    await vi.waitFor(() => {
+      expect(runAgent).toHaveBeenCalledTimes(2);
+    });
+    members[0]!.stop.abort(userCancellationReason());
+    kept.resolve({ summary: 'kept summary' });
+    const results = await running;
+
+    expect(results.map((result) => [result.agentId, result.status])).toEqual([
+      ['agent-stop', 'aborted'],
+      ['agent-keep', 'completed'],
+    ]);
+    expect(members.map((member) => member.settlement?.status)).toEqual(['killed', 'completed']);
+  });
+
+  it('settles a stopped member that is still queued without waiting for a free slot', async () => {
+    vi.stubEnv('KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY', '1');
+    try {
+      agents['agent-run'] = { labels: { parentAgentId: 'main' } };
+      agents['agent-queued'] = { labels: { parentAgentId: 'main' } };
+      handles.set('agent-run', agentHandle('agent-run', lifecycle, eventBus));
+      handles.set('agent-queued', agentHandle('agent-queued', lifecycle, eventBus));
+      const members: Array<{ readonly stop: AbortController; settlement?: AgentTaskSettlement }> = [];
+      const callerTasks = {
+        registerTask: (task: AgentTask) => {
+          const member: (typeof members)[number] = { stop: new AbortController() };
+          members.push(member);
+          void task.start({
+            signal: member.stop.signal,
+            appendOutput: () => {},
+            settle: async (settlement) => {
+              member.settlement = settlement;
+              return true;
+            },
+          });
+          return `task-${members.length - 1}`;
+        },
+        refresh: () => {},
+      } as unknown as IAgentTaskService;
+      handles.set(
+        'main',
+        agentHandle('main', lifecycle, eventBus, {}, new Map<unknown, unknown>([[IAgentTaskService, callerTasks]])),
+      );
+      const running = createControlledPromise<{ summary: string }>();
+      runAgent.mockImplementation((agent, _request, options) => {
+        options?.onReady?.();
+        return { agentId: (agent as AgentContext).agentId, turn: {} as never, completion: running };
+      });
+
+      const swarm = ix.get(ISessionSwarmService).run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-run'), resumeSessionTask('agent-queued')],
+      });
+      await vi.waitFor(() => {
+        expect(runAgent).toHaveBeenCalledTimes(1);
+      });
+      members[1]!.stop.abort(userCancellationReason());
+      await vi.waitFor(() => {
+        expect(members[1]!.settlement?.status).toBe('killed');
+      });
+      expect(runAgent).toHaveBeenCalledTimes(1);
+
+      running.resolve({ summary: 'done' });
+      const results = await swarm;
+      expect(results.map((result) => [result.status, result.state, result.error])).toEqual([
+        ['completed', undefined, undefined],
+        ['aborted', 'not_started', 'The user stopped this subagent.'],
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('rejects an invalid concurrency setting before registering any member task', async () => {
+    vi.stubEnv('KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY', 'many');
+    try {
+      const registerTask = vi.fn(() => 'task-0');
+      handles.set(
+        'main',
+        agentHandle(
+          'main',
+          lifecycle,
+          eventBus,
+          {},
+          new Map<unknown, unknown>([[IAgentTaskService, { registerTask, refresh: () => {} }]]),
+        ),
+      );
+
+      expect(() =>
+        ix.get(ISessionSwarmService).run({
+          callerAgentId: 'main',
+          tasks: [resumeSessionTask('agent-one')],
+        }),
+      ).toThrow(/KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY/);
+      expect(registerTask).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('emits subagent.cancelled for a rate-limit-suspended child when the batch is cancelled', async () => {
     vi.useFakeTimers();
     try {
@@ -2394,6 +2642,7 @@ function createMockAgentRunBatchRunner(
       }));
       return new AgentRunBatch(launcher, activeTasks as readonly QueuedAgentRunTask<T>[], {
         maxConcurrency: options.maxConcurrency,
+        signal: runOptions?.signal,
       }).run();
     },
     attempts,

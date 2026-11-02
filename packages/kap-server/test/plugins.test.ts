@@ -1009,7 +1009,7 @@ describe('server-v2 /api/v1 plugins', () => {
       expectedVersion: '1.9.0',
       expectedSha256: artifactDigest(),
     });
-    expect(result.body.code).toBe(40933);
+    expect(result.body.code).toBe(40934);
     expect(result.body.msg).toContain('refresh the catalog');
     expect(artifactAuthorizations).toEqual([]);
   });
@@ -1022,7 +1022,7 @@ describe('server-v2 /api/v1 plugins', () => {
       expectedVersion: '2.0.0',
       expectedSha256: artifactDigest(),
     });
-    expect(changed.body.code).toBe(40933);
+    expect(changed.body.code).toBe(40934);
     expect(changed.body.msg).toContain('refresh the catalog');
     expect(artifactAuthorizations).toEqual([]);
 

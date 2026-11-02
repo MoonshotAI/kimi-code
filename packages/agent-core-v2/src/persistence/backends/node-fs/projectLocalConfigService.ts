@@ -153,7 +153,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
       if (isPathMissing(error)) {
         throw new Error2(
           ErrorCodes.CONFIG_INVALID,
-          'workspace.additional_dir must exist and be a directory',
+          `workspace.additional_dir must exist and be a directory: ${filePath}`,
         );
       }
       throw toStorageIoError(error, { path: filePath, op: 'stat' });
@@ -162,7 +162,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     if (!stat.isDirectory) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
-        'workspace.additional_dir must exist and be a directory',
+        `workspace.additional_dir must exist and be a directory: ${filePath}`,
       );
     }
   }
@@ -200,10 +200,7 @@ function normalizeAdditionalDirInput(additionalDir: string): string {
   }
   const trimmed = additionalDir.trim();
   if (trimmed.length === 0) {
-    throw new Error2(
-      ErrorCodes.CONFIG_INVALID,
-      'workspace.additional_dir must exist and be a directory',
-    );
+    throw new Error2(ErrorCodes.CONFIG_INVALID, 'workspace.additional_dir must not be empty');
   }
   return normalize(trimmed);
 }
