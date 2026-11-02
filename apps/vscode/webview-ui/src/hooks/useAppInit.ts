@@ -51,7 +51,7 @@ export interface AppInitState {
   refresh: () => void;
 }
 
-export function useAppInit(skippedLogin = false): AppInitState {
+export function useAppInit(skippedLogin = false, showLogin = false): AppInitState {
   const [state, setState] = useState<Omit<AppInitState, "refresh">>({
     status: "loading",
     errorMessage: null,
@@ -74,8 +74,9 @@ export function useAppInit(skippedLogin = false): AppInitState {
   useEffect(() => {
     let cancelled = false;
     let latestRead = 0;
+    const preserveView = skippedLogin || showLogin;
     const unsubscribe = bridge.on(Events.ModelCatalogChanged, () => {
-      if (state.status !== "ready" && !skippedLogin) {
+      if (state.status !== "ready" && !preserveView) {
         refresh();
         return;
       }
@@ -84,10 +85,15 @@ export function useAppInit(skippedLogin = false): AppInitState {
         if (cancelled || read !== latestRead) return;
         const modelsCount = kimiConfig.models?.length ?? 0;
         if (modelsCount === 0) {
-          refresh();
+          if (!preserveView) {
+            refresh();
+            return;
+          }
+          refreshModels(kimiConfig);
+          setState((current) => ({ ...current, modelsCount }));
           return;
         }
-        if (!skippedLogin && requiresManagedProviderLogin(
+        if (!preserveView && requiresManagedProviderLogin(
           kimiConfig.models,
           kimiConfig.defaultModel,
           useSettingsStore.getState().isLoggedIn,
@@ -109,7 +115,7 @@ export function useAppInit(skippedLogin = false): AppInitState {
       cancelled = true;
       unsubscribe();
     };
-  }, [refresh, refreshModels, state.status, skippedLogin]);
+  }, [refresh, refreshModels, state.status, skippedLogin, showLogin]);
 
   useEffect(() => {
     let cancelled = false;

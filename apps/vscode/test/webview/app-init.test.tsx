@@ -234,6 +234,30 @@ describe("useAppInit model catalog events", () => {
     expect(appInitBridge.checkWorkspace).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps an active login flow mounted during catalog refreshes", async () => {
+    appInitBridge.checkLoginStatus.mockResolvedValue({
+      loggedIn: false,
+      siteBase: "https://example.com",
+    });
+    const { result } = renderHook(() => useAppInit(false, true));
+    await waitFor(() => {
+      expect(result.current.status).toBe("not-logged-in");
+    });
+    appInitBridge.getModels.mockResolvedValue({
+      models: [PLAIN_MODEL, NEW_MODEL],
+      defaultModel: "plain",
+      defaultThinking: false,
+    });
+
+    await emitModelCatalogChanged();
+
+    await waitFor(() => {
+      expect(result.current.modelsCount).toBe(2);
+    });
+    expect(appInitBridge.checkWorkspace).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe("not-logged-in");
+  });
+
   it("promotes a skipped empty-model view when models arrive", async () => {
     appInitBridge.getModels.mockResolvedValue({
       models: [],

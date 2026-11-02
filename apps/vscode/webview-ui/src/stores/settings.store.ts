@@ -10,6 +10,7 @@ import type {
 } from "shared/legacy-sdk";
 
 let settingsSaveRevision = 0;
+let catalogRevision = 0;
 const MANAGED_KIMI_CODE_PROVIDER = "managed:kimi-code";
 
 function saveConfigWithRollback(
@@ -18,11 +19,17 @@ function saveConfigWithRollback(
   set: (state: Partial<SettingsState>) => void,
 ): void {
   const revision = ++settingsSaveRevision;
+  const saveCatalogRevision = catalogRevision;
   void bridge.saveConfig(config).catch((error: unknown) => {
     // A later selection supersedes this request; rolling an older request back
     // would overwrite the user's latest choice.
     if (revision !== settingsSaveRevision) return;
-    set(rollback);
+    const rollbackToApply = { ...rollback };
+    if (saveCatalogRevision !== catalogRevision) {
+      delete rollbackToApply.defaultThinking;
+      delete rollbackToApply.defaultThinkingEffort;
+    }
+    set(rollbackToApply);
     const state = useSettingsStore.getState();
     state.refreshModels({
       models: state.models,
@@ -354,13 +361,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   refreshModels: (config) => {
-    const { currentModel, thinkingEffort, defaultThinking, defaultThinkingEffort } = get();
+    const { currentModel, thinkingEffort } = get();
     const current = getModelById(config.models, currentModel);
     const nextModel = current ?? getModelById(config.models, config.defaultModel ?? "");
     const preserveThinking = current !== undefined && isThinkingEffortSupported(current, thinkingEffort);
-    const defaultsChanged = defaultThinking !== config.defaultThinking
-      || defaultThinkingEffort !== config.defaultThinkingEffort;
-    if (!preserveThinking || defaultsChanged) settingsSaveRevision += 1;
+    catalogRevision += 1;
+    if (!preserveThinking) settingsSaveRevision += 1;
 
     set({
       models: config.models,

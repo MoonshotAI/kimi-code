@@ -66,7 +66,7 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
 export default function App() {
   const [skippedLogin, setSkippedLogin] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
-  const { status, errorMessage, modelsCount, refresh } = useAppInit(skippedLogin);
+  const { status, errorMessage, modelsCount, refresh } = useAppInit(skippedLogin, showLogin);
   const { processEvent, sessionId } = useChatStore();
 
   useEffect(() => {

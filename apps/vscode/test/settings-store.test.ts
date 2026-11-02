@@ -362,6 +362,32 @@ describe("Webview model catalog refresh", () => {
     });
   });
 
+  it("rolls back an optimistic thinking change after an unrelated catalog refresh", async () => {
+    const switchModel = { id: "switch", name: "Switch", provider: "managed:kimi-code", capabilities: ["thinking"] };
+    useSettingsStore.getState().initModels([switchModel], "switch", false);
+    let rejectSave!: (error: Error) => void;
+    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    useSettingsStore.getState().toggleThinking();
+
+    useSettingsStore.getState().refreshModels({
+      models: [switchModel],
+      defaultModel: "switch",
+      defaultThinking: false,
+    });
+    rejectSave(new Error("save failed"));
+
+    await vi.waitFor(() => {
+      expect(boundary.toastError).toHaveBeenCalled();
+    });
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "switch",
+      thinkingEffort: "off",
+      defaultThinking: false,
+    });
+  });
+
   it("uses the valid current model when retrying a cached model that was removed", () => {
     useChatStore.setState({
       pendingInput: { content: "hello", model: "removed" },
