@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import { ToolListChangedNotificationSchema, type JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
@@ -105,6 +105,13 @@ export class StdioMcpClient implements MCPClient {
 
   stderrSnapshot(): string {
     return this.stderrBuffer.snapshot();
+  }
+
+  onToolsChanged(listener: () => void): void {
+    this.client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+      if (this.closed || !this.ready) return;
+      listener();
+    });
   }
 
   async listTools(): Promise<MCPToolDefinition[]> {

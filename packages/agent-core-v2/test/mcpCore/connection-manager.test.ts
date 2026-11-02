@@ -76,6 +76,7 @@ import {
   slowStdioFixture,
   slowToolStdioFixture,
   startAnonymousDiscoveryHttpMcpServer,
+  startInProcessHttpMcpServer,
   stderrThenExitFixture,
   stdioFixture,
 } from './stubs';

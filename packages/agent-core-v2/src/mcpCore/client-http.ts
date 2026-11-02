@@ -3,6 +3,7 @@ import type { McpServerHttpConfig } from './config-schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import {
   buildRequestOptions,
@@ -95,6 +96,13 @@ export class HttpMcpClient implements MCPClient {
       this.pendingSessionEvidence = undefined;
       listener(pending);
     }
+  }
+
+  onToolsChanged(listener: () => void): void {
+    this.client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+      if (this.closed || !this.ready) return;
+      listener();
+    });
   }
 
   async listTools(): Promise<MCPToolDefinition[]> {

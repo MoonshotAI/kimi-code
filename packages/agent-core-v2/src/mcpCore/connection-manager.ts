@@ -143,6 +143,13 @@ type McpEntryEvent =
       readonly error: unknown;
       readonly client?: RuntimeMcpClient;
     }
+  | {
+      readonly type: 'toolsChanged';
+      readonly client: RuntimeMcpClient;
+      readonly tools: readonly Tool[];
+      readonly rawTools: readonly MCPToolDefinition[];
+      readonly enabledNames: ReadonlySet<string>;
+    }
   | { readonly type: 'probeSucceeded'; readonly attemptId: number; readonly client: RuntimeMcpClient }
   | {
       readonly type: 'probeFailed';
@@ -533,13 +540,14 @@ export class McpConnectionManager implements McpConnectionView {
         break;
       }
       case 'connected': {
+        if (plan.tools !== undefined) entry.tools = plan.tools;
+        if (plan.rawTools !== undefined) entry.rawTools = plan.rawTools;
+        if (plan.enabledNames !== undefined) entry.enabledNames = plan.enabledNames;
         if (plan.client !== undefined) {
-          entry.tools = plan.tools;
-          entry.rawTools = plan.rawTools;
-          entry.enabledNames = plan.enabledNames;
           entry.connectedAt = this.oauthService?.now() ?? Date.now();
           entry.failureStreak = 0;
           this.attachSessionEvidence(entry, plan.client, entry.attemptId);
+          this.attachToolsChanged(entry, plan.client, entry.attemptId);
         }
         break;
       }
@@ -622,6 +630,15 @@ export class McpConnectionManager implements McpConnectionView {
         if (target === 'needsAuth') return { target, error: needsAuthHint(entry.name) };
         return { target, error: formatStartupError(event.error, event.client) };
       }
+      case 'toolsChanged':
+        if (from !== 'connected' || entry.client !== event.client) return undefined;
+        return {
+          target: 'connected',
+          tools: event.tools,
+          rawTools: event.rawTools,
+          enabledNames: event.enabledNames,
+          forceEmit: true,
+        };
       case 'probeSucceeded':
         if (from !== 'probing') return undefined;
         if (!this.isCurrent(entry, event.attemptId)) return undefined;
@@ -739,6 +756,38 @@ export class McpConnectionManager implements McpConnectionView {
       if (!this.isCurrent(entry, attemptId)) return;
       if (entry.client !== client) return;
       this.transition(entry, { type: 'sessionEvidence', evidence });
+    });
+  }
+
+  private attachToolsChanged(
+    entry: InternalEntry,
+    client: RuntimeMcpClient,
+    attemptId: number,
+  ): void {
+    client.onToolsChanged(() => {
+      if (!this.isCurrent(entry, attemptId)) return;
+      if (entry.client !== client) return;
+      void this.enqueueOperation(entry.name, async () => {
+        if (!this.isCurrent(entry, attemptId)) return;
+        if (entry.client !== client) return;
+        try {
+          const discovered = await this.discoverTools(client, entry.config);
+          if (!this.isCurrent(entry, attemptId)) return;
+          if (entry.client !== client) return;
+          this.transition(entry, {
+            type: 'toolsChanged',
+            client,
+            tools: discovered.tools,
+            rawTools: discovered.rawTools,
+            enabledNames: computeEnabledNames(entry.config, discovered.tools),
+          });
+        } catch (error) {
+          this.log.warn('mcp tool refresh failed', {
+            server: entry.name,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
     });
   }
 
@@ -863,6 +912,13 @@ export class McpConnectionManager implements McpConnectionView {
     config: McpServerConfig,
   ): Promise<{ tools: Tool[]; rawTools: MCPToolDefinition[] }> {
     await client.connect();
+    return this.discoverTools(client, config);
+  }
+
+  private async discoverTools(
+    client: RuntimeMcpClient,
+    config: McpServerConfig,
+  ): Promise<{ tools: Tool[]; rawTools: MCPToolDefinition[] }> {
     let mcpTools: MCPToolDefinition[];
     try {
       mcpTools = await client.listTools();
