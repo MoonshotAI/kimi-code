@@ -836,25 +836,36 @@ describe('Remote Control tunnel', () => {
   it('reconnects the tunnel pair after the relay drops it', async () => {
     const scenario = await startTunnelScenario();
 
-    scenario.httpConnections[0]!.terminate();
-    await waitFor(() => scenario.registrations.length === 2 && scenario.httpConnections.length === 2, 4000);
-    expect(scenario.httpCapabilities).toEqual([
-      'request_chunk,response_chunk,abort',
-      'request_chunk,response_chunk,abort',
-    ]);
-    const reconnectResponsePromise = nextJsonMessage(scenario.httpConnections[1]!);
-    scenario.httpConnections[1]!.send(tunnelRequestFrame('request-20', probeRawRequest(), true));
-    const reconnectResponse = frameBody(await reconnectResponsePromise).toString();
-    expect(reconnectResponse).toContain('HTTP/1.1 200 OK');
+    try {
+      scenario.httpConnections[0]!.terminate();
+      await waitFor(() => scenario.registrations.length === 2 && scenario.httpConnections.length === 2, 4000);
+      expect(scenario.httpCapabilities).toEqual([
+        'request_chunk,response_chunk,abort',
+        'request_chunk,response_chunk,abort',
+      ]);
+      const reconnectResponsePromise = nextJsonMessage(scenario.httpConnections[1]!);
+      scenario.httpConnections[1]!.send(tunnelRequestFrame('request-20', probeRawRequest(), true));
+      const reconnectResponse = frameBody(await reconnectResponsePromise).toString();
+      expect(reconnectResponse).toContain('HTTP/1.1 200 OK');
 
-    await scenario.handle.close();
-    await waitFor(() =>
-      scenario.managementMessages.some(
-        (value) =>
-          (value as { type?: string; payload?: { reason?: string } }).type === 'disconnect' &&
-          (value as { payload?: { reason?: string } }).payload?.reason === 'local_server_stopped',
-      ),
-    );
+      await scenario.handle.close();
+      await waitFor(() =>
+        scenario.managementMessages.some(
+          (value) =>
+            (value as { type?: string; payload?: { reason?: string } }).type === 'disconnect' &&
+            (value as { payload?: { reason?: string } }).payload?.reason === 'local_server_stopped',
+        ),
+      );
+    } catch (error) {
+      const socketStates = scenario.httpConnections.map((socket) => socket.readyState).join(',');
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}\n` +
+          `registrations=${String(scenario.registrations.length)} ` +
+          `httpConnections=${String(scenario.httpConnections.length)} socketStates=[${socketStates}]\n` +
+          `client logs:\n${scenario.logs}`,
+        { cause: error },
+      );
+    }
   });
 
   it('reconnects when the relay goes silent without closing the sockets', async () => {
@@ -1858,6 +1869,7 @@ interface TunnelScenario {
   streamMessages: string[];
   uploadBodyBytes: Map<string, number>;
   hangRequests: IncomingMessage[];
+  readonly logs: string;
   assets: {
     js: string;
     png: Buffer;
@@ -2038,6 +2050,7 @@ async function startTunnelScenario(
 
   let handle: RemoteControlHandle | undefined;
   cleanups.push(async () => handle?.close());
+  let logs = '';
   handle = await startRemoteControl({
     homeDir,
     localOrigin: `http://127.0.0.1:${localPort}`,
@@ -2045,12 +2058,15 @@ async function startTunnelScenario(
     clientVersion: CLIENT_VERSION,
     urlSource: 'kimi_code_cli',
     relayOrigin: `http://127.0.0.1:${relayPort}/coding-relay`,
-    stderr: { write: () => true },
+    stderr: { write: (text) => ((logs += String(text)), true) },
     httpTunnelLimits: options.limits,
   });
 
   return {
     handle,
+    get logs() {
+      return logs;
+    },
     registrations,
     httpCapabilities,
     managementConnections,
@@ -2207,9 +2223,15 @@ function rawDataText(data: RawData): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
-function nextJsonMessage(socket: WebSocket): Promise<Record<string, unknown>> {
-  return new Promise((resolve) => {
-    socket.once('message', (data) => resolve(JSON.parse(rawDataText(data)) as Record<string, unknown>));
+function nextJsonMessage(socket: WebSocket, timeoutMs = 10_000): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`timed out waiting for JSON message after ${String(timeoutMs)}ms`));
+    }, timeoutMs);
+    socket.once('message', (data) => {
+      clearTimeout(timer);
+      resolve(JSON.parse(rawDataText(data)) as Record<string, unknown>);
+    });
   });
 }
 
