@@ -108,6 +108,9 @@ export function registerPluginsRoutes(
       const marketplaceIsDefault = await core.accessor.get(IPluginMarketplaceService).isDefaultMarketplace();
       const installed = await core.accessor.get(IPluginService).listPlugins();
       const byId = new Map(installed.map((p) => [p.id, p]));
+      const byCatalogId = new Map(
+        installed.filter((p) => p.catalogId !== undefined).map((p) => [p.catalogId, p]),
+      );
       const capabilities = core.accessor.get(ICapabilityService).describeCapabilities();
       const entries: PluginMarketplaceEntryWire[] = [];
       for (const entry of marketplace.plugins) {
@@ -126,10 +129,14 @@ export function registerPluginsRoutes(
         );
         if (capabilityId !== undefined && capability === undefined) continue;
 
+        const byIdRecord = byId.get(entry.id);
         const record =
-          capability?.id === 'kimi-webbridge'
-            ? (byId.get(entry.id) ?? byId.get('kimi-webbridge'))
-            : byId.get(entry.id);
+          capability !== undefined
+            ? capability.id === 'kimi-webbridge'
+              ? (byIdRecord ?? byId.get('kimi-webbridge'))
+              : byIdRecord
+            : (byCatalogId.get(entry.id) ??
+              (byIdRecord?.origin === 'unknown' ? byIdRecord : undefined));
         const installedInfo =
           record === undefined
             ? undefined

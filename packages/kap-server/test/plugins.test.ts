@@ -604,8 +604,13 @@ describe('server-v2 /api/v1 plugins', () => {
     });
     expect(before.body.data.entries.find((entry) => entry.id === 'kimi-browser-extension')?.capabilityId).toBeUndefined();
 
-    const source = await makePluginDir('demo-plugin', '1.0.0');
-    await call('POST', '/api/v1/plugins', { source });
+    await useDemoArtifact('demo-plugin', '1.0.0');
+    await call('POST', '/api/v1/plugins', {
+      marketplaceId: 'demo-plugin',
+      expectedVersion: '1.0.0',
+      expectedSha256: artifactDigest(),
+    });
+    catalog.plugins[0]!['version'] = '2.0.0';
     const after = await call<{
       entries: Array<{
         id: string;
@@ -618,6 +623,41 @@ describe('server-v2 /api/v1 plugins', () => {
       updateAvailable: true,
     });
     await call('POST', '/api/v1/plugins/demo-plugin:remove');
+  });
+
+  it('does not associate same-ID custom installs but keeps legacy unknown matching', async () => {
+    const source = await makePluginDir('demo-plugin', '1.0.0');
+    await call('POST', '/api/v1/plugins', { source });
+    const response = await call<{
+      entries: Array<{
+        id: string;
+        installed?: { version?: string; enabled: boolean };
+        updateAvailable?: boolean;
+      }>;
+    }>('GET', '/api/v1/plugins/marketplace');
+    const customEntry = response.body.data.entries.find((entry) => entry.id === 'demo-plugin');
+    expect(customEntry).not.toHaveProperty('installed');
+    expect(customEntry).not.toHaveProperty('updateAvailable');
+
+    const installedPath = join(home!, 'plugins', 'installed.json');
+    const installedFile = JSON.parse(await readFile(installedPath, 'utf8')) as {
+      plugins: Array<Record<string, unknown>>;
+    };
+    installedFile.plugins[0]!['origin'] = 'unknown';
+    await writeFile(installedPath, JSON.stringify(installedFile));
+    await server!.core.accessor.get(IPluginService).reloadPlugins();
+
+    const legacy = await call<{
+      entries: Array<{
+        id: string;
+        installed?: { version?: string; enabled: boolean };
+        updateAvailable?: boolean;
+      }>;
+    }>('GET', '/api/v1/plugins/marketplace');
+    expect(legacy.body.data.entries.find((entry) => entry.id === 'demo-plugin')).toMatchObject({
+      installed: { version: '1.0.0', enabled: true },
+      updateAvailable: true,
+    });
   });
 
   it('rejects invalid new-protocol catalogs', async () => {
