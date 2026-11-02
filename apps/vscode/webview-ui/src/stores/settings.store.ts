@@ -354,11 +354,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   refreshModels: (config) => {
-    const { currentModel, thinkingEffort } = get();
+    const { currentModel, thinkingEffort, defaultThinking, defaultThinkingEffort } = get();
     const current = getModelById(config.models, currentModel);
     const nextModel = current ?? getModelById(config.models, config.defaultModel ?? "");
     const preserveThinking = current !== undefined && isThinkingEffortSupported(current, thinkingEffort);
-    if (!preserveThinking) settingsSaveRevision += 1;
+    const defaultsChanged = defaultThinking !== config.defaultThinking
+      || defaultThinkingEffort !== config.defaultThinkingEffort;
+    if (!preserveThinking || defaultsChanged) settingsSaveRevision += 1;
 
     set({
       models: config.models,

@@ -339,6 +339,29 @@ describe("Webview model catalog refresh", () => {
     expect(useSettingsStore.getState().currentModel).toBe("plain");
   });
 
+  it("keeps refreshed default thinking values when a pending save fails", async () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", false, "low");
+    let rejectSave!: (error: Error) => void;
+    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    useSettingsStore.getState().updateModel("plain");
+
+    useSettingsStore.getState().refreshModels({
+      models: MODELS,
+      defaultModel: "reasoning",
+      defaultThinking: true,
+      defaultThinkingEffort: "high",
+    });
+    rejectSave(new Error("save failed"));
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useSettingsStore.getState()).toMatchObject({
+      defaultThinking: true,
+      defaultThinkingEffort: "high",
+    });
+  });
+
   it("uses the valid current model when retrying a cached model that was removed", () => {
     useChatStore.setState({
       pendingInput: { content: "hello", model: "removed" },
