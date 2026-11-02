@@ -28,6 +28,7 @@ import {
   type ServicesConfig,
   type SubagentConfig,
   type ThinkingConfig,
+  type TodoConfig,
   validateConfig,
 } from './schema';
 
@@ -275,6 +276,8 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
       result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'image' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'todo' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'experimental' && isPlainObject(value)) {
       result[targetKey] = cloneRecord(value);
     } else if (targetKey === 'environments' && isPlainObject(value)) {
@@ -461,6 +464,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
   setSection(out, 'secondary_model', config.secondaryModel, secondaryModelToToml);
   setSection(out, 'mcp', config.mcp, mcpToToml);
   setSection(out, 'image', config.image, imageToToml);
+  setSection(out, 'todo', config.todo, todoToToml);
   setSection(out, 'experimental', config.experimental, experimentalToToml);
   setSection(out, 'permission', config.permission, permissionToToml);
   setHooks(out, config.hooks);
@@ -680,6 +684,14 @@ function mcpToToml(mcp: McpConfig, rawMcp: unknown): Record<string, unknown> {
 function imageToToml(image: ImageConfig, rawImage: unknown): Record<string, unknown> {
   const out = cloneRecord(rawImage);
   for (const [key, value] of Object.entries(image)) {
+    setDefined(out, camelToSnake(key), value);
+  }
+  return out;
+}
+
+function todoToToml(todo: TodoConfig, rawTodo: unknown): Record<string, unknown> {
+  const out = cloneRecord(rawTodo);
+  for (const [key, value] of Object.entries(todo)) {
     setDefined(out, camelToSnake(key), value);
   }
   return out;

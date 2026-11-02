@@ -95,6 +95,17 @@ env = { SANDBOX_TOKEN = "x" }
     });
   });
 
+  it('keeps the [todo] section through parseConfigString and configToTomlData', () => {
+    const config = parseConfigString(`
+[todo]
+enabled = true
+`);
+    expect(config.todo).toEqual({ enabled: true });
+    expect(configToTomlData(config)['todo']).toEqual({ enabled: true });
+
+    expect(configToTomlData(parseConfigString('default_model = "a"\n'))).not.toHaveProperty('todo');
+  });
+
   it('preserves underscored environment ids and camel-cases entry fields', () => {
     const text = `
 [environments]

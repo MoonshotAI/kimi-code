@@ -43,6 +43,7 @@ const KIMI_CONFIG_DOMAINS = [
   'mcp',
   'image',
   'modelCatalog',
+  'todo',
   'experimental',
   'environments',
   'telemetry',
