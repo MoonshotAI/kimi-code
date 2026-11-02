@@ -67,6 +67,7 @@ interface ReadTailEntry extends ReadLineEntry {
 
 interface ReadRequest {
   readonly args: ReadInput;
+  readonly environmentId?: string;
   readonly maxChars: number;
   readonly tokenLimit: number;
   readonly maxCharsLimit: number;
@@ -256,7 +257,10 @@ export class ReadTool implements IReadTool {
     if (args.column_offset !== undefined && (args.line_offset ?? 1) < 0) {
       return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
     }
-    if (isDaemonFileUrl(args.path)) return this.attachmentExecution(args);
+    if (isDaemonFileUrl(args.path)) {
+      if (!primary) return { isError: true, output: '`kimi-file://` attachments are read from session storage, not from an environment. Omit the `environment` argument.' };
+      return this.attachmentExecution(args);
+    }
     if (primary) {
       const planTarget = await this.planService?.resolveFile(args.path, 'read');
       if (planTarget !== undefined) return this.localArtifactExecution(args, planTarget, true);
@@ -297,7 +301,12 @@ export class ReadTool implements IReadTool {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
             }
             const eventLog = this.resultTruncation.isWireJournalPath(path);
-            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog);
+            const result = await this.execution(
+              environmentFileSource(lease.environment.fs!, path),
+              args,
+              eventLog,
+              primary ? undefined : context?.environment?.target.environmentId,
+            );
             return { ...result, spillExempt: true };
           } finally {
             lease.dispose();
@@ -360,6 +369,7 @@ export class ReadTool implements IReadTool {
     source: FileReadSource,
     args: ReadInput,
     eventLog: boolean,
+    environmentId?: string,
   ): Promise<ExecutableToolResult> {
     try {
       let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
@@ -437,6 +447,7 @@ export class ReadTool implements IReadTool {
       const limits = this.limits();
       const request: ReadRequest = {
         args,
+        environmentId,
         maxChars: Math.min(args.max_chars ?? limits.defaultMaxChars, limits.maxChars),
         tokenLimit: Math.ceil(limits.maxChars / 4),
         maxCharsLimit: limits.maxChars,
@@ -540,7 +551,7 @@ export class ReadTool implements IReadTool {
   }
 
   private finishPage(page: ReadPage): ExecutableToolResult {
-    const { args, maxChars, tokenLimit, maxCharsLimit, eventLog, detectedEncoding, lossyDecoding } = page.request;
+    const { args, environmentId, maxChars, tokenLimit, maxCharsLimit, eventLog, detectedEncoding, lossyDecoding } = page.request;
     let first = 0;
     let end = page.renderedLines.length;
     let contentChars = page.renderedLines.reduce((sum, line) => sum + line.length + 1, -1);
@@ -582,6 +593,7 @@ export class ReadTool implements IReadTool {
         const nextEnd = page.fromTail && count > 0 ? startLine - 1 : page.rangeEnd;
         const next = {
           path: args.path,
+          environment: environmentId,
           line_offset: nextStart,
           column_offset: fragmentEnd !== undefined ? firstColumn + fragmentEnd : undefined,
           n_lines: page.fromTail || args.n_lines !== undefined ? nextEnd - nextStart + 1 : undefined,

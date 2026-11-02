@@ -147,7 +147,7 @@ function replacementReadyEnvironment(): Environment {
 }
 
 async function* linesOf(content: string): AsyncGenerator<string> {
-  yield `${content}\n`;
+  yield* (content.endsWith('\n') ? content : `${content}\n`).split(/(?<=\n)/).filter((line) => line.length > 0);
 }
 
 function textFs(content: string): IHostFileSystem {
@@ -381,7 +381,7 @@ describe('tool environment routing', () => {
   function routedHarness() {
     const registry = new EnvironmentRegistry();
     const spawns: { readonly environmentId: string; readonly cwd: string | undefined }[] = [];
-    for (const [environmentId, content] of [['local', 'local content'], ['gpu', 'gpu content']] as const) {
+    for (const [environmentId, content] of [['local', `local content\n${'local tail\n'.repeat(60)}`], ['gpu', `gpu content\n${'gpu tail\n'.repeat(60)}`]] as const) {
       registry.register(Object.assign(
         new FakeEnvironment(
           { environmentId, generation: `${environmentId}-one` },
@@ -449,6 +449,54 @@ describe('tool environment routing', () => {
     const named = await read({ environmentId: 'local', primary: true });
     expect(named).toMatchObject({ display: { path: '/workspace/notes.txt' } });
     expect(outputText(await finish(named))).toContain('local content');
+  });
+
+  it('keeps the routed environment in Next Read arguments', async () => {
+    const { service } = routedHarness();
+    const read = (environment?: EnvironmentTarget) =>
+      new ReadTool(
+        service,
+        skillCatalog,
+        stubToolResultTruncationService(),
+        stubConfigService(),
+        profile,
+        toolPolicy,
+        toolRegistry,
+      ).resolveExecution({ path: 'notes.txt', max_chars: 600 }, { environment: environment === undefined ? undefined : service.handle(environment) });
+
+    const routed = await finish(await read({ environmentId: 'gpu', primary: false }));
+    expect(outputText(routed)).toContain('gpu content');
+    expect(routed.note).toContain('Next Read: {"path":"notes.txt","environment":"gpu","line_offset":2');
+
+    const primary = await finish(await read({ environmentId: 'local', primary: true }));
+    expect(primary.note).toContain('Next Read: {"path":"notes.txt","line_offset":2');
+  });
+
+  it('rejects attachment references routed to another environment', async () => {
+    const { service } = routedHarness();
+    const gpu = service.handle({ environmentId: 'gpu', primary: false });
+    const expected = {
+      isError: true,
+      output: expect.stringContaining('Omit the `environment` argument'),
+    };
+
+    await expect(
+      new ReadTool(
+        service,
+        skillCatalog,
+        stubToolResultTruncationService(),
+        stubConfigService(),
+        profile,
+        toolPolicy,
+        toolRegistry,
+      ).resolveExecution({ path: 'kimi-file://attachment' }, { environment: gpu }),
+    ).resolves.toMatchObject(expected);
+    await expect(
+      new ReadMediaFileTool(service, WORKSPACE, attachmentStore, noopTelemetryService).resolveExecution(
+        { path: 'kimi-file://attachment' },
+        { environment: gpu },
+      ),
+    ).resolves.toMatchObject(expected);
   });
 
   it('runs Bash on the requested environment in its working directory', async () => {

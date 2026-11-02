@@ -172,6 +172,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       return { isError: true, output: 'File path cannot be empty.' };
     }
     if (isDaemonFileUrl(args.path)) {
+      if (!primary) return { isError: true, output: '`kimi-file://` attachments are read from session storage, not from an environment. Omit the `environment` argument.' };
       return this.attachmentExecution(args);
     }
     const resolutionLease = await acquireOrWhenReady(environment, ['fs']);
