@@ -242,6 +242,20 @@ function hasStartableWork(context: AgentMachineContext): boolean {
   return context.notifications.length > 0 || (context.queue.length > 0 && !context.held);
 }
 
+function headWaitsForNotifications(context: AgentMachineContext): boolean {
+  return context.queue[0]?.meta?.compaction !== undefined && context.notifications.length > 0;
+}
+
+function canGateHead(context: AgentMachineContext): boolean {
+  return (
+    context.promptGate !== undefined &&
+    context.queue.length > 0 &&
+    !context.held &&
+    !context.paused &&
+    !headWaitsForNotifications(context)
+  );
+}
+
 function movedQueue(queue: readonly UserEntry[], id: string, beforeId: string | undefined): UserEntry[] | undefined {
   const moved = queue.find((item) => item.meta?.promptId === id);
   if (moved === undefined) return undefined;
@@ -365,7 +379,7 @@ export function createAgentMachine({
         self._parent?.send(event);
       },
       commitPendingToHistory: enqueueActions(({ context, enqueue }) => {
-        const { appended, patch } = pendingCommit(context, !context.held);
+        const { appended, patch } = pendingCommit(context, !context.held && !headWaitsForNotifications(context));
         enqueue.sendTo('store', { type: 'store.append' as const, event: appended });
         enqueue.assign(patch);
       }),
@@ -655,11 +669,7 @@ export function createAgentMachine({
           ready: {
             always: [
               {
-                guard: ({ context }) =>
-                  context.promptGate !== undefined &&
-                  context.queue.length > 0 &&
-                  !context.held &&
-                  !context.paused,
+                guard: ({ context }) => canGateHead(context),
                 target: 'gating',
               },
               {
@@ -676,11 +686,7 @@ export function createAgentMachine({
           waiting: {
             always: [
               {
-                guard: ({ context }) =>
-                  context.promptGate !== undefined &&
-                  context.queue.length > 0 &&
-                  !context.held &&
-                  !context.paused,
+                guard: ({ context }) => canGateHead(context),
                 target: 'gating',
               },
               {

@@ -1137,6 +1137,62 @@ describe('Agent loop', () => {
     hook.dispose();
   });
 
+  it('answers prompts steered at the end of a turn before running a queued compaction', async () => {
+    let steered = false;
+    const stepHook = loop.hooks.onWillBeginStep.register('test-late-steer', async (_step, next) => {
+      if (!steered) {
+        steered = true;
+        await loop.steer([submitTracked(loop, 'late steer')]);
+      }
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    ctx.mockNextResponse({ type: 'text', text: 'late answer' });
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    submitTracked(loop, 'first');
+    loop.submit({
+      message: { role: 'user', content: [] },
+      meta: { promptId: 'compact-1', compaction: {} },
+    });
+
+    await expect(loop.promptHandle('compact-1')!.completion).resolves.toMatchObject({ state: 'completed' });
+    const requests = ctx.llmCalls.map((call) => JSON.stringify(call));
+    expect(requests).toHaveLength(3);
+    expect(requests[1]).toContain('late steer');
+    expect(requests[2]).toContain('late answer');
+    await vi.waitFor(() => {
+      expect(loop.snapshot()).toMatchObject({ state: 'idle', queue: [] });
+    });
+    stepHook.dispose();
+  });
+
+  it('does not stall a queued compaction behind a turn kept open for late input', async () => {
+    let nudged = false;
+    const stepHook = loop.hooks.onDidFinishStep.register('test-late-input', async (_step, next) => {
+      if (!nudged) {
+        nudged = true;
+        loop.notify({ message: { role: 'user', content: [{ type: 'text', text: 'late input' }] } });
+      }
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    ctx.mockNextResponse({ type: 'text', text: 'late answer' });
+    const first = submitTracked(loop, 'first');
+    loop.submit({
+      message: { role: 'user', content: [] },
+      meta: { promptId: 'compact-1', compaction: {} },
+    });
+
+    await expect(loop.promptHandle('compact-1')!.completion).resolves.toMatchObject({ state: 'completed' });
+    await expect(loop.promptHandle(first)!.completion).resolves.toMatchObject({ state: 'completed' });
+    expect(ctx.llmCalls).toHaveLength(3);
+    await vi.waitFor(() => {
+      expect(loop.snapshot()).toMatchObject({ state: 'idle', queue: [] });
+    });
+    stepHook.dispose();
+  });
+
   it('can abort an admission while quiescence holds it', async () => {
     const lease = loop.tryAcquireQuiescence();
     expect(lease).toBeDefined();

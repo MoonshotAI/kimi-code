@@ -450,12 +450,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
     }
     engine.steer(promptIds);
+    this.logger.info('queued prompts steered into the active turn', { promptIds, turnId: active.id });
     this.onDidChangeQueueEmitter.fire();
   }
 
   pauseQueue(): void {
     if (this.queuePausedByUser) return;
     this.queuePausedByUser = true;
+    this.logger.info('prompt queue paused', { queued: this.engine?.snapshot().queue.length ?? 0 });
     this.applyQueueHold();
     this.onDidChangeQueueEmitter.fire();
   }
@@ -463,6 +465,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   resumeQueue(): void {
     if (!this.queuePausedByUser) return;
     this.queuePausedByUser = false;
+    this.logger.info('prompt queue resumed', { queued: this.engine?.snapshot().queue.length ?? 0 });
     this.applyQueueHold();
     this.onDidChangeQueueEmitter.fire();
   }
@@ -479,6 +482,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     if (beforePromptId === promptId) return;
     this.machineEngine().move(promptId, beforePromptId);
+    this.logger.info('queued prompt moved', { promptId, beforePromptId });
     this.onDidChangeQueueEmitter.fire();
   }
 
@@ -759,12 +763,19 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.gatingCompaction = controller;
     this.onDidChangeQueueEmitter.fire();
     try {
-      await this.active?.result;
+      const settling = this.active;
+      if (settling !== undefined) {
+        this.logger.info('queued compaction waiting for the previous turn to settle', { promptId: id, turnId: settling.id });
+        await settling.afterChain;
+      }
+      this.logger.info('queued compaction started', { promptId: id, aborted: controller.signal.aborted });
       await this.hooks.onRunQueuedCompaction.run({
         instruction: compaction.instruction,
         signal: controller.signal,
       });
+      this.logger.info('queued compaction finished', { promptId: id, aborted: controller.signal.aborted });
     } catch (error) {
+      this.logger.warn('queued compaction failed', { promptId: id, error: toErrorMessage(error) });
       onUnexpectedError(error);
     } finally {
       this.gatingPromptId = undefined;
@@ -918,10 +929,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       return this.cancelActiveTurn(undefined, cancellation);
     }
     if (waiter.id === this.gatingPromptId) {
+      this.logger.info('starting queue entry withdrawn', {
+        promptId: waiter.id,
+        compaction: this.gatingCompaction !== undefined,
+      });
       if (this.gatingCompaction !== undefined) this.gatingCompaction.abort(cancellation);
       else this.cancelOnLaunch.set(waiter.id, cancellation);
       return true;
     }
+    this.logger.info('queued entry withdrawn', { promptId: waiter.id });
     const tracked = this.promptProjection(waiter.id)?.tracked === true;
     this.engine?.cancelQueueItem(waiter.id);
     this.settleWaiterCancelled(waiter);
