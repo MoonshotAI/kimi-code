@@ -7,7 +7,7 @@ import {
 
 import type { SlashCommandHost } from '../commands/dispatch';
 import { defaultThinkingEffortFor, modelDisplayName } from '../components/dialogs/model-selector';
-import type { AppState } from '../types';
+import type { AppState, ModelSwitchPersistence } from '../types';
 import { formatErrorMessage } from './event-payload';
 import { thinkingEffortFromConfig, thinkingEffortToConfig } from './thinking-config';
 
@@ -64,18 +64,14 @@ export function lazyModelSelection(
   return patch;
 }
 
-/**
- * How a model switch is saved: `session` keeps it to this session, `model`
- * saves the model as the default (and the effort only when it changed), and
- * `model-and-effort` saves both.
- */
-export type ModelSwitchPersistence = 'session' | 'model' | 'model-and-effort';
+export type { ModelSwitchPersistence } from '../types';
 
 export async function performModelSwitch(
   host: SlashCommandHost,
   alias: string,
   effort: ThinkingEffort,
   persist: ModelSwitchPersistence,
+  options?: { readonly appliesNextTurn?: boolean },
 ): Promise<boolean> {
   let session = host.session;
   if (session === undefined) {
@@ -86,7 +82,8 @@ export async function performModelSwitch(
     session = host.session;
   }
   const appliesNextTurn =
-    host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting;
+    options?.appliesNextTurn ??
+    (host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting);
   const prevModel = host.state.appState.model;
   const prevEffort = host.state.appState.thinkingEffort;
   const modelChanged = alias !== prevModel;

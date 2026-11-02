@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -81,7 +82,7 @@ import {
   runModelSelector,
   type FeedbackPromptResult,
 } from '#/tui/commands/prompts';
-import type { QueuedMessage, TranscriptEntry } from '#/tui/types';
+import { isPromptQueuedMessage, type QueuedMessage, type TranscriptEntry } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import {
   extractMediaAttachments,
@@ -180,6 +181,9 @@ interface MessageDriver {
   appendTranscriptEntry(entry: TranscriptEntry): void;
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
+  drainQueueIfIdle(): void;
+  enqueueModelSwitch: KimiTUI['enqueueModelSwitch'];
+  completedCompactionSerial: number;
   recallLastQueued(): QueuedMessage | undefined;
   recallStashedMedia(extraction: ExtractionResult | undefined): void;
   clearQueuedMessages(): void;
@@ -282,7 +286,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     setPermission: vi.fn(async () => {}),
     setPlanMode: vi.fn(async () => {}),
     setSwarmMode: vi.fn(async () => {}),
-    onEvent: vi.fn(() => vi.fn()),
+    onEvent: vi.fn((_listener: (event: Event) => void) => vi.fn()),
     listMcpServers: vi.fn(async () => []),
     listSkills: vi.fn(async () => []),
     getResumeState: vi.fn(() => ({
@@ -342,6 +346,19 @@ function makeSession(overrides: Record<string, unknown> = {}) {
       diagnostics: [],
     })),
     ...overrides,
+  };
+}
+
+function sessionEventEmitter(session: ReturnType<typeof makeSession>): (event: Event) => void {
+  const listeners = new Set<(event: Event) => void>();
+  session.onEvent.mockImplementation((listener: (event: Event) => void) => {
+    listeners.add(listener);
+    return vi.fn(() => {
+      listeners.delete(listener);
+    });
+  });
+  return (event) => {
+    for (const listener of [...listeners]) listener(event);
   };
 }
 
@@ -3720,12 +3737,13 @@ command = "vim"
     expect(session.prompt).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toHaveLength(1);
     const queued = driver.state.queuedMessages[0];
-    const parts = queued?.parts as Array<{ type: string; text?: string; videoUrl?: { url: string } }>;
+    assert.ok(queued !== undefined && isPromptQueuedMessage(queued));
+    const parts = queued.parts as Array<{ type: string; text?: string; videoUrl?: { url: string } }>;
     expect(parts?.[0]).toEqual({ type: 'text', text: 'describe ' });
     expect(parts?.[1]).toEqual({ type: 'video_url', videoUrl: { url: 'kimi-file://file-v1' } });
-    expect(queued?.videoAttachmentIds).toEqual([attachment.id]);
+    expect(queued.videoAttachmentIds).toEqual([attachment.id]);
 
-    driver.sendQueuedMessage(session, queued!);
+    driver.sendQueuedMessage(session, queued);
     expect(vi.mocked(session.prompt).mock.calls[0]?.[0]).toEqual(parts);
   });
 
@@ -5270,6 +5288,270 @@ command = "vim"
     expect(driver.state.queuedMessages).toEqual([]);
   });
 
+  it('compacts and switches before sending the next queued prompt', async () => {
+    const session = makeSession();
+    const emitSessionEvent = sessionEventEmitter(session);
+    const { driver } = await makeDriver(session);
+    const calls: string[] = [];
+    session.compact.mockImplementation(async () => {
+      calls.push('compact');
+    });
+    const originalSetModel = session.setModel.getMockImplementation();
+    const originalSetThinking = session.setThinking.getMockImplementation();
+    assert.ok(originalSetModel !== undefined && originalSetThinking !== undefined);
+    let resolveSetModel!: () => void;
+    const setModelGate = new Promise<void>((resolve) => {
+      resolveSetModel = resolve;
+    });
+    session.setModel.mockImplementation(async (alias: string) => {
+      calls.push(`setModel:${alias}`);
+      await setModelGate;
+      await originalSetModel(alias);
+    });
+    session.setThinking.mockImplementation(async (effort: string) => {
+      calls.push(`setThinking:${effort}`);
+      await originalSetThinking(effort);
+    });
+    session.prompt.mockImplementation(async (input: unknown) => {
+      calls.push(`prompt:${String(input)}`);
+    });
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.enqueueModelSwitch('model-b', 'low', 'session');
+    driver.handleUserInput('after switch');
+
+    expect(driver.state.queuedMessages).toEqual([
+      {
+        text: '/model model-b',
+        mode: 'model-switch',
+        alias: 'model-b',
+        thinking: 'low',
+        persist: 'session',
+        queuedAfterCompactionSerial: 0,
+      },
+      expect.objectContaining({ text: 'after switch' }),
+    ]);
+
+    const sendQueued = (item: QueuedMessage) => { driver.sendQueuedMessage(session, item); };
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      sendQueued,
+    );
+    await vi.waitFor(() => {
+      expect(session.compact).toHaveBeenCalledWith({});
+    });
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'compaction.started', agentId: 'main', sessionId: 'ses-1', trigger: 'manual' } as Event,
+      sendQueued,
+    );
+    const completed = {
+      type: 'compaction.completed',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      result: { summary: 's', compactedCount: 1, tokensBefore: 10, tokensAfter: 5 },
+    } as Event;
+    driver.sessionEventHandler.handleEvent(completed, sendQueued);
+    emitSessionEvent(completed);
+    await vi.waitFor(() => {
+      expect(session.setModel).toHaveBeenCalledWith('model-b');
+    });
+
+    driver.handleUserInput('typed during switch');
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual([
+      'after switch',
+      'typed during switch',
+    ]);
+
+    resolveSetModel();
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('after switch', { promptId: undefined });
+    });
+    expect(calls).toEqual([
+      'compact',
+      'setModel:model-b',
+      'setThinking:low',
+      'prompt:after switch',
+    ]);
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual(['typed during switch']);
+    expect(stripSgr(renderTranscript(driver))).toContain(
+      'Switched to model-b with thinking low for this session only.',
+    );
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Takes effect from the next turn.');
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event,
+      sendQueued,
+    );
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('typed during switch', { promptId: undefined });
+    });
+  });
+
+  it('skips a queued model-switch compaction after another compaction completes', async () => {
+    const { driver, session } = await makeDriver();
+    const sendQueued = (item: QueuedMessage) => { driver.sendQueuedMessage(session, item); };
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.enqueueModelSwitch('model-b', 'low', 'session');
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'compaction.started', agentId: 'main', sessionId: 'ses-1', trigger: 'manual' } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.completed',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        result: { summary: 's', compactedCount: 1, tokensBefore: 10, tokensAfter: 5 },
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      sendQueued,
+    );
+
+    await vi.waitFor(() => {
+      expect(session.setModel).toHaveBeenCalledWith('model-b');
+    });
+    expect(session.compact).not.toHaveBeenCalled();
+    expect(stripSgr(renderTranscript(driver))).toContain(
+      'Skipped compaction — context was already compacted. Switching model.',
+    );
+  });
+
+  it('does not switch on a child agent compaction while a queued model switch is waiting', async () => {
+    const session = makeSession();
+    const emitSessionEvent = sessionEventEmitter(session);
+    const { driver } = await makeDriver(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.enqueueModelSwitch('model-b', 'low', 'session');
+    const sendQueued = (item: QueuedMessage) => { driver.sendQueuedMessage(session, item); };
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      sendQueued,
+    );
+    await vi.waitFor(() => {
+      expect(session.compact).toHaveBeenCalledWith({});
+    });
+    expect(session.setModel).not.toHaveBeenCalled();
+
+    const childCompleted = {
+      type: 'compaction.completed',
+      agentId: 'child-1',
+      sessionId: 'ses-1',
+      result: { summary: 'child', compactedCount: 1, tokensBefore: 10, tokensAfter: 5 },
+    } as Event;
+    driver.sessionEventHandler.handleEvent(childCompleted, sendQueued);
+    emitSessionEvent(childCompleted);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(session.setModel).not.toHaveBeenCalled();
+
+    const completed = {
+      type: 'compaction.completed',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      result: { summary: 's', compactedCount: 1, tokensBefore: 10, tokensAfter: 5 },
+    } as Event;
+    driver.sessionEventHandler.handleEvent(completed, sendQueued);
+    emitSessionEvent(completed);
+    await vi.waitFor(() => {
+      expect(session.setModel).toHaveBeenCalledWith('model-b');
+    });
+  });
+
+  it('continues with the next queued prompt when model-switch compaction fails', async () => {
+    const session = makeSession({
+      compact: vi.fn(async () => {
+        throw new Error('compaction rejected');
+      }),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.enqueueModelSwitch('model-b', 'low', 'session');
+    driver.handleUserInput('after failed compaction');
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      (item) => { driver.sendQueuedMessage(session, item); },
+    );
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('after failed compaction', { promptId: undefined });
+    });
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessageDispatchPending).toBe(false);
+    expect(stripSgr(renderTranscript(driver))).toContain(
+      'Failed to compact: compaction rejected. Model unchanged.',
+    );
+  });
+
+  it('keeps the model and continues the queue when compaction cannot start', async () => {
+    const session = makeSession({
+      compact: vi.fn(async () => {
+        throw new KimiError(
+          ErrorCodes.COMPACTION_UNABLE,
+          'Cannot compact while a turn is active or another context change is running.',
+        );
+      }),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.enqueueModelSwitch('model-b', 'low', 'session');
+    driver.handleUserInput('after unable compaction');
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      (item) => { driver.sendQueuedMessage(session, item); },
+    );
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('after unable compaction', { promptId: undefined });
+    });
+    expect(session.setModel).not.toHaveBeenCalled();
+    const transcript = stripSgr(renderTranscript(driver)).replaceAll(/\s+/g, ' ');
+    expect(transcript).toContain(
+      "Couldn't compact while the agent is still running — model unchanged. Pause the goal or switch with Continue as-is.",
+    );
+    expect(transcript).not.toContain('Failed to compact:');
+  });
+
+  it('steers only messages ahead of a queued model switch on Ctrl-S', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.handleUserInput('msg1');
+    driver.enqueueModelSwitch('model-b', 'low', 'session');
+    driver.handleUserInput('msg2');
+
+    driver.state.editor.onCtrlS?.();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(session.steer).toHaveBeenCalledWith('msg1');
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual([
+      '/model model-b',
+      'msg2',
+    ]);
+  });
+
+  it('recalls a queued model switch into the editor on up arrow', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.enqueueModelSwitch('model-b', 'low', 'session');
+
+    expect(driver.state.editor.onUpArrowEmpty?.()).toBe(true);
+
+    expect(driver.state.editor.getText()).toBe('/model model-b');
+    expect(driver.state.queuedMessages).toEqual([]);
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(session.compact).not.toHaveBeenCalled();
+  });
+
   it('rejects a second /compact while one is already queued', async () => {
     const { driver, session, harness } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
@@ -6729,12 +7011,13 @@ capabilities = ["image_in", "video_in"]
 
     expect(session.prompt).not.toHaveBeenCalled();
     const queued = driver.state.queuedMessages[0];
-    expect(queued?.parts).toEqual([
+    assert.ok(queued !== undefined && isPromptQueuedMessage(queued));
+    expect(queued.parts).toEqual([
       { type: 'text', text: 'describe ' },
       { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
     ]);
 
-    driver.sendQueuedMessage(session, queued!);
+    driver.sendQueuedMessage(session, queued);
 
     expect(session.prompt).toHaveBeenCalledWith(
       [
@@ -6862,7 +7145,8 @@ capabilities = ["image_in", "video_in"]
     expect(attachment.fileId).toBe('file-recall');
 
     driver.handleUserInput(recalled!.text);
-    const requeued = driver.state.queuedMessages[0]!;
+    const requeued = driver.state.queuedMessages[0];
+    assert.ok(requeued !== undefined && isPromptQueuedMessage(requeued));
     expect(requeued.parts).toContainEqual({
       type: 'image_url',
       imageUrl: { url: 'kimi-file://file-recall' },
@@ -6894,9 +7178,10 @@ capabilities = ["image_in", "video_in"]
 
     driver.handleUserInput(recalled!.text);
     const queued = driver.state.queuedMessages[0];
-    const parts = queued?.parts as Array<{ type: string; videoUrl?: { url: string } }>;
+    assert.ok(queued !== undefined && isPromptQueuedMessage(queued));
+    const parts = queued.parts as Array<{ type: string; videoUrl?: { url: string } }>;
     expect(parts?.[1]).toEqual({ type: 'video_url', videoUrl: { url: 'kimi-file://file-v1' } });
-    expect(queued?.videoAttachmentIds).toEqual([attachment.id]);
+    expect(queued.videoAttachmentIds).toEqual([attachment.id]);
   });
 
   it('steers consecutive image-only messages without a whitespace-only separator part', async () => {

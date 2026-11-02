@@ -305,22 +305,59 @@ export interface InlineSkillActivation {
   readonly args?: string;
 }
 
-export interface QueuedMessage {
+export type ModelSwitchPersistence = 'session' | 'model' | 'model-and-effort';
+
+interface QueuedEntryBase {
   readonly text: string;
+}
+
+export interface QueuedPromptMessage extends QueuedEntryBase {
+  readonly mode?: 'prompt';
   readonly agentId?: string;
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
   readonly videoAttachmentIds?: readonly number[];
   readonly mediaSnapshots?: readonly MediaAttachment[];
-  readonly mode?: 'prompt' | 'bash' | 'compact';
   /** Skills to activate together with this queued message's prompt. */
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
-  readonly compactInstruction?: string;
-  readonly compactRetries?: number;
   /** Resent after the user chose Retry on a session-in-use prompt. */
   readonly occupiedRetry?: boolean;
+}
+
+export interface QueuedBashCommand extends QueuedEntryBase {
+  readonly mode: 'bash';
+  readonly agentId?: string;
+}
+
+export interface QueuedCompactCommand extends QueuedEntryBase {
+  readonly mode: 'compact';
+  readonly agentId?: string;
+  readonly compactInstruction?: string;
+  readonly compactRetries?: number;
   /** Auto-compaction serial at enqueue time; a mismatch at dequeue skips the fire. */
   readonly queuedAfterAutoSerial?: number;
+}
+
+export interface QueuedModelSwitch extends QueuedEntryBase {
+  readonly mode: 'model-switch';
+  readonly alias: string;
+  readonly thinking: ThinkingEffort;
+  readonly persist: ModelSwitchPersistence;
+  readonly queuedAfterCompactionSerial: number;
+}
+
+export type QueuedMessage =
+  | QueuedPromptMessage
+  | QueuedBashCommand
+  | QueuedCompactCommand
+  | QueuedModelSwitch;
+
+export function isPromptQueuedMessage(message: QueuedMessage): message is QueuedPromptMessage {
+  return message.mode === undefined || message.mode === 'prompt';
+}
+
+export function isQueuedCompactionBarrier(message: QueuedMessage): boolean {
+  return message.mode === 'compact' || message.mode === 'model-switch';
 }
 
 /**
