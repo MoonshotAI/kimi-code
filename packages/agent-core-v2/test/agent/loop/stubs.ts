@@ -106,6 +106,7 @@ function stubAttachEngine(): MachineEngine {
   return {
     submit: () => {},
     steer: () => {},
+    interrupt: () => {},
     notify: () => {},
     remind: () => {},
     cancelQueueItem: () => {},
@@ -163,6 +164,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
       return { id };
     },
     steer: async () => {},
+    interrupt: async () => {},
     remind(note: LoopNotify = {}): LoopNotifyHandle {
       return this.notify(note);
     },

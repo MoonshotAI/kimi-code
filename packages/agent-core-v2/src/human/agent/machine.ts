@@ -86,6 +86,7 @@ export type AgentEvent =
   | { type: 'input.notify'; entry: UserEntry }
   | { type: 'input.remind'; entry: SystemEntry | UserEntry }
   | { type: 'input.steer'; id: string | readonly string[] }
+  | { type: 'input.interrupt' }
   | { type: 'input.cancel'; id: string }
   | { type: 'input.abort'; reason?: unknown }
   | { type: 'input.pause' }
@@ -411,6 +412,7 @@ export function createAgentMachine({
         type: 'turn.abort' as const,
         reason: context.abortReason,
       })),
+      interruptTurn: sendTo('turn', { type: 'turn.interrupt' as const }),
       abortTurnTools: enqueueActions(({ context, enqueue }) => {
         for (const entry of Object.values(context.turnTools)) {
           entry.scope.abort(context.abortReason);
@@ -897,6 +899,9 @@ export function createAgentMachine({
             on: {
               'turn.spawn_tools': {
                 actions: 'spawnTurnTools',
+              },
+              'input.interrupt': {
+                actions: 'interruptTurn',
               },
               'input.abort': {
                 target: 'aborting',

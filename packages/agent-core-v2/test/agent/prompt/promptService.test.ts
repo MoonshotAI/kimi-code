@@ -7,7 +7,7 @@ import { IFileService } from '#/app/file/fileService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
-import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnStarted, TurnStepCompleted } from '#/agent/loop/turnEvents';
 import { TurnSteer } from '#/agent/loop/turnOps';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -19,7 +19,8 @@ import {
   PromptSteered,
   PromptSubmitted,
 } from '#/agent/prompt/promptEvents';
-import type { ContentPart } from '#human/llm/message';
+import { extractText, type ContentPart, type Message } from '#human/llm/message';
+import type { LlmRequester } from '#human/llm-requester/requester';
 
 import {
   appService,
@@ -246,6 +247,58 @@ describe('prompt queue', () => {
 
     hold.release();
     await loop.settled();
+  });
+
+  it('interrupts the active model request and inserts an accepted steer in the same turn', async () => {
+    const requests: (readonly Message[])[] = [];
+    let firstSignal: AbortSignal | undefined;
+    let call = 0;
+    const generate: LlmRequester = {
+      generate: (_config, content, { onEvent, signal }) => {
+        requests.push([...content.messages]);
+        call += 1;
+        if (call === 1) {
+          firstSignal = signal;
+          onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'partial' } });
+          return new Promise<void>((resolve) => {
+            signal.addEventListener('abort', () => resolve(), { once: true });
+          });
+        }
+        onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
+        onEvent?.({
+          type: 'llm.streaming.finish',
+          finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+        });
+        onEvent?.({ type: 'llm.done' });
+        return Promise.resolve();
+      },
+    };
+    setup({ generate });
+    const started: TurnStarted[] = [];
+    const steered: TurnSteer[] = [];
+    const completed: TurnStepCompleted[] = [];
+    ctx.get(IEventBus).subscribe(TurnStarted, (event) => started.push(event));
+    ctx.get(IEventBus).subscribe(TurnSteer, (event) => steered.push(event));
+    ctx.get(IEventBus).subscribe(TurnStepCompleted, (event) => completed.push(event));
+
+    await enqueue(loop, { id: 'active', message: message('active') });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    const pending = await enqueue(loop, { id: 'steer', message: message('steer') });
+    await loop.steer([pending.id]);
+    await loop.interrupt([pending.id]);
+    await loop.settled();
+
+    expect(firstSignal?.aborted).toBe(true);
+    expect(requests).toHaveLength(2);
+    expect(
+      requests[1]
+        ?.filter((entry) => entry.role !== 'system')
+        .map((entry) => `${entry.role}:${extractText(entry, '\n')}`),
+    ).toEqual(['user:active', 'assistant:partial', 'user:steer']);
+    expect(started.map((event) => event.turnId)).toEqual([0]);
+    expect(completed.map((event) => event.finishReason)).toEqual(['interrupted', 'end_turn']);
+    expect(steered.map((event) => [event.turnId, event.promptIds])).toEqual([[0, [pending.id]]]);
+    await expect(loop.interrupt([pending.id])).rejects.toMatchObject({ code: 'prompt.not_found' });
   });
 
   it('reserves a messageId on prompt.steered and publishes turn.steer at materialize', async () => {

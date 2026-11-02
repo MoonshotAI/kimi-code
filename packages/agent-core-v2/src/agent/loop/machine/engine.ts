@@ -71,6 +71,7 @@ export type MachineEngineEvent =
       readonly model?: string;
       readonly timing?: ModelRequestTiming;
       readonly requestId?: string;
+      readonly interrupted?: boolean;
     }
   | { readonly type: 'stepFailed'; readonly step: number; readonly error: LlmErrorMessage; readonly rawError?: unknown }
   | { readonly type: 'delta'; readonly delta: MachineEngineDelta }
@@ -176,6 +177,7 @@ export interface MachineEngineSnapshot {
 export interface MachineEngine {
   submit(entry: UserEntry): void;
   steer(id: string | readonly string[]): void;
+  interrupt(): void;
   notify(entry: UserEntry): void;
   remind(entry: SystemEntry | UserEntry): void;
   cancelQueueItem(id: string): void;
@@ -440,6 +442,7 @@ export function attachMachineEngine(
         model: finish?.model ?? meta?.model?.model,
         timing: finish?.timing,
         requestId: finish?.requestId,
+        interrupted: meta?.source === 'steered',
       });
     }),
     ref.on('llm.failed.syntax', (event) => {
@@ -511,6 +514,9 @@ export function attachMachineEngine(
     steer: (id) => {
       tools.sync();
       ref.send({ type: 'input.steer', id });
+    },
+    interrupt: () => {
+      ref.send({ type: 'input.interrupt' });
     },
     notify: (entry) => {
       tools.sync();

@@ -239,6 +239,10 @@ class FakeLoopService implements IAgentLoopService {
     throw new Error('unused in this suite');
   }
 
+  interrupt(): never {
+    throw new Error('unused in this suite');
+  }
+
   cancel(): never {
     throw new Error('unused in this suite');
   }

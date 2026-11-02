@@ -179,6 +179,7 @@ export type TurnEvent =
   | { type: 'turn.notify'; messages: HistoryMessage[] }
   | { type: 'turn.pause' }
   | { type: 'turn.continue' }
+  | { type: 'turn.interrupt' }
   | { type: 'turn.abort'; reason?: unknown }
   | {
       type: 'turn.failure.evaluated';
@@ -329,6 +330,18 @@ function emptyErrorOf(context: TurnMachineContext): LlmErrorMessage<'empty_respo
   );
 }
 
+function steeredAttemptEntry(context: TurnMachineContext): AssistantEntry {
+  const partial = context.accumulator.finish({ source: 'steered' });
+  return {
+    message: salvageInterruptedMessage(partial.message) ?? {
+      role: 'assistant',
+      content: [],
+      toolCalls: [],
+    },
+    meta: partial.meta,
+  };
+}
+
 export interface TurnBeforeStepContext {
   messages: readonly HistoryMessage[];
   request: LlmRequestConfig;
@@ -392,6 +405,14 @@ export function createTurnMachine(
             salvaged === null
               ? context.produced
               : [...context.produced, { message: salvaged, meta: partial.meta }],
+        };
+      }),
+      salvageSteered: assign(({ context }) => {
+        const entry = steeredAttemptEntry(context);
+        return {
+          produced: entry.message.content.length === 0
+            ? context.produced
+            : [...context.produced, entry],
         };
       }),
       collectAborted: assign(({ context }) =>
@@ -674,6 +695,22 @@ export function createTurnMachine(
               ],
             },
           ],
+          'turn.interrupt': {
+            target: 'draining',
+            actions: [
+              ({ context }) => {
+                context.llmScope.abort();
+              },
+              'salvageSteered',
+              {
+                type: 'sendToParent',
+                params: ({ context }) => ({
+                  type: 'llm.done' as const,
+                  entry: steeredAttemptEntry(context),
+                }),
+              },
+            ],
+          },
           'turn.abort': {
             target: 'aborted',
             actions: [
@@ -691,6 +728,9 @@ export function createTurnMachine(
           retryDelay: 'thinking',
         },
         on: {
+          'turn.interrupt': {
+            target: 'draining',
+          },
           'turn.abort': {
             target: 'aborted',
             actions: assign({ outcome: 'aborted' as const }),
