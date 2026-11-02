@@ -23,9 +23,11 @@ import {
   IAgentConversationUndoService,
   IAgentCronService,
   IAgentLifecycleService,
+  IAgentEnvironmentBindingService,
   IEventBus,
   IEventDispatcher,
   IEventService,
+  IEnvironmentService,
   ISessionManager,
   ISessionMetadata,
   ISessionTitleService,
@@ -42,9 +44,11 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
+import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentTranscriptSnapshot } from '@moonshot-ai/transcript';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import { EnvironmentSetBinding } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBindingOps';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 
@@ -2024,6 +2028,99 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(cron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
       { id: task.id, prompt: 'restart me' },
     ]);
+  });
+
+  it('migrates a legacy ACP binding to local and keeps file tools working across restarts', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const sessionId = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, sessionId);
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    await main.accessor.get(IEventDispatcher).dispatch(new EnvironmentSetBinding({
+      agentId: MAIN_AGENT_ID,
+      environmentId: `acp:${sessionId}`,
+      cwd,
+    }));
+    const filePath = join(cwd, 'legacy-acp.txt');
+    await writeFile(filePath, 'legacy ACP read');
+
+    await (server as RunningServer).close();
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const resumed = await resumeSessionById((server as RunningServer).core.accessor, sessionId);
+    const resumedMain = resumed!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const execution = await resumedMain.accessor.get(IReadTool).resolveExecution({ path: filePath });
+    expect(execution.isError, JSON.stringify(execution)).not.toBe(true);
+    if (execution.isError) return;
+    const read = await execution.execute({
+      turnId: 1,
+      toolCallId: 'read-legacy-acp',
+      signal: new AbortController().signal,
+    });
+    expect(read.isError).not.toBe(true);
+    expect(read.output).toContain('legacy ACP read');
+    expect(resumedMain.accessor.get(IAgentEnvironmentBindingService).current).toEqual({
+      environmentId: 'local',
+      cwd,
+    });
+
+    await (server as RunningServer).close();
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    const resumedAgain = await resumeSessionById((server as RunningServer).core.accessor, sessionId);
+    const binding = resumedAgain!.accessor
+      .get(IAgentLifecycleService)
+      .handleOf(MAIN_AGENT_ID)!
+      .accessor.get(IAgentEnvironmentBindingService).current;
+    expect(binding).toEqual({ environmentId: 'local', cwd });
+  });
+
+  it('keeps a legacy ACP binding when its environment is still registered', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const sessionId = created.body.data.id;
+    const environmentId = `acp:${sessionId}`;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, sessionId);
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    await main.accessor.get(IEventDispatcher).dispatch(new EnvironmentSetBinding({
+      agentId: MAIN_AGENT_ID,
+      environmentId,
+      cwd,
+    }));
+    await closeSessionById((server as RunningServer).core.accessor, sessionId);
+    const environment = new FakeEnvironment(
+      { environmentId, generation: 'legacy-acp-generation' },
+      { capabilities: [] },
+    );
+    const registration = (server as RunningServer).core.accessor.get(IEnvironmentService).register(environment);
+    try {
+      const resumed = await resumeSessionById((server as RunningServer).core.accessor, sessionId);
+      const binding = resumed!.accessor
+        .get(IAgentLifecycleService)
+        .handleOf(MAIN_AGENT_ID)!
+        .accessor.get(IAgentEnvironmentBindingService).current;
+      expect(binding).toEqual({ environmentId, cwd });
+    } finally {
+      await registration.remove();
+      await closeSessionById((server as RunningServer).core.accessor, sessionId);
+    }
   });
 
   it('returns 40401 when listing children of a missing parent', async () => {
