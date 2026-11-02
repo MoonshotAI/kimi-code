@@ -129,6 +129,26 @@ async function collect(stream: AsyncIterable<ModelRequestEvent>): Promise<ModelR
 const INPUT = { systemPrompt: 'sys', tools: [], messages: [] };
 
 describe('generateModel request execution', () => {
+  it('forwards an omitted-tool notice through the model adapter', async () => {
+    const notice = {
+      source: 'anthropic.tool_schema',
+      code: 'incompatible_tools_omitted',
+      message: 'Tool alpha was omitted',
+      data: { toolNames: ['alpha'] },
+    };
+    const requester = new FakeLlmRequester();
+    requester.handler = (_index, emit) => {
+      emit({ type: 'llm.notice', notice });
+      textStream(emit);
+    };
+
+    const events = await collect(
+      modelEventRequester(modelWith(createStaticCredentialProvider()), requester).request(INPUT),
+    );
+
+    expect(events).toContainEqual({ type: 'notice', notice });
+  });
+
   it('maps ModelRequestParams onto LlmRequestConfig, content and control', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => textStream(emit);

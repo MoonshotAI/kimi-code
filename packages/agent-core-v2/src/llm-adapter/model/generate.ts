@@ -1,7 +1,7 @@
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
 import type { LlmRequest, LlmRequestModel, LlmProtocolBinding, LlmEndpoint, LlmSampling } from '#human/llm/request';
 import { contentsOf, type LlmRequester } from '#human/llm/requester';
-import type { LlmOutcome, LlmRunEvent } from '#human/llm/response';
+import type { LlmNotice, LlmOutcome, LlmRunEvent } from '#human/llm/response';
 import type { LlmRecovery, LlmRecoveryLedger } from '#human/llm/policy/recovery';
 import type { LlmResolver } from '#human/llm/policy/resolver';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
@@ -43,6 +43,7 @@ export interface ModelRequestTiming {
 }
 
 export type ModelRequestEvent =
+  | { readonly type: 'notice'; readonly notice: LlmNotice }
   | { readonly type: 'part'; readonly part: StreamedMessagePart }
   | {
       readonly type: 'usage';
@@ -151,6 +152,10 @@ async function runModel(
           ),
         onEvent: (event) => {
           switch (event.type) {
+            case 'llm.notice': {
+              events.push({ type: 'notice', notice: event.notice });
+              return;
+            }
             case 'llm.streaming.headers': {
               params?.onRequestId?.(contentsOf(initial).protocol!.base!.requestId?.(event.headers));
               return;

@@ -572,6 +572,32 @@ describe('AgentLoopRequester cache break telemetry', () => {
 });
 
 describe('AgentLoopRequester Anthropic effort diagnostics', () => {
+  it('publishes omitted-tool notices as agent warnings', async () => {
+    const requester = createRequester({ value: 0 }, null);
+    const originalRequest = requester.request.bind(requester);
+    requester.request = async function* (input, signal, options) {
+      yield {
+        type: 'notice',
+        notice: {
+          source: 'anthropic.tool_schema',
+          code: 'incompatible_tools_omitted',
+          message: 'Tool alpha was omitted',
+          data: { toolNames: ['alpha'] },
+        },
+      };
+      yield* originalRequest(input, signal, options);
+    };
+    const { service, events } = createService(requester);
+
+    await service.request();
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'warning',
+      code: 'incompatible_tools_omitted',
+      message: 'Tool alpha was omitted',
+    }));
+  });
+
   it('warns and sends when the effort is not listed by the model', async () => {
     const calls = { value: 0 };
     const requester = createRequester(calls, null);

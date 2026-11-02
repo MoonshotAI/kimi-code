@@ -470,6 +470,9 @@ async function runLegacyRequester(
       signal: control.signal,
       onEvent: (event) => {
         switch (event.type) {
+          case 'llm.notice':
+            control.onEvent?.(event);
+            return;
           case 'llm.sent':
             if (requestSentAt !== undefined) requestStartedAt = Date.now();
             requestSentAt = Date.now();
@@ -617,6 +620,9 @@ export function aRequesterFromModelEvents(requester: ModelEventRequester): LlmRe
       let sawPart = false;
       for await (const event of requester.request(input, control.signal, params)) {
         switch (event.type) {
+          case 'notice':
+            control.onEvent?.({ type: 'llm.notice', notice: event.notice });
+            break;
           case 'part':
             sawPart = true;
             control.onEvent?.({ type: 'llm.streaming.part', part: event.part });
