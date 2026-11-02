@@ -132,6 +132,39 @@ describe('anthropic tool schema compatibility', () => {
     expect(tools).toHaveLength(5);
   });
 
+  it('keeps cache control on the final surviving tool after filtering', async () => {
+    let sent: Record<string, unknown> | undefined;
+    const create = (params: Record<string, unknown>) => {
+      sent = params;
+      return { withResponse: async () => ({ data: {}, response: new Response(null) }) };
+    };
+    const client = {
+      baseURL: 'https://api.anthropic.com:443',
+      messages: { create },
+      beta: { messages: { create } },
+    } as never;
+    const request: AnthropicRequest = {
+      params: {
+        model: 'claude-sonnet-4-5',
+        max_tokens: 100,
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [
+          { name: 'good', input_schema: { type: 'object' } },
+          { name: 'bad', input_schema: { type: 'object', oneOf: [] }, cache_control: { type: 'ephemeral' } },
+        ] as AnthropicRequest['params']['tools'],
+      },
+      betas: [],
+      useBetaApi: false,
+    };
+
+    await anthropicProtocol.send(client, request, new AbortController().signal);
+
+    expect(sent?.['tools']).toEqual([
+      { name: 'good', input_schema: { type: 'object' }, cache_control: { type: 'ephemeral' } },
+    ]);
+    expect(request.params.tools?.[0]).not.toHaveProperty('cache_control');
+  });
+
   it.each([
     { type: 'any' },
     { type: 'tool', name: 'bad' },

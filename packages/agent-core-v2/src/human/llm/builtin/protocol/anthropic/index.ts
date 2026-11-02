@@ -89,18 +89,26 @@ function requestParamsForClient(
   client: Anthropic,
   params: Request['params'],
 ): Request['params'] {
-  if (
-    client.baseURL !== 'https://api.anthropic.com' &&
-    client.baseURL !== 'https://api.anthropic.com/'
-  ) return params;
+  let officialEndpoint = false;
+  try {
+    officialEndpoint = new URL(client.baseURL).href === 'https://api.anthropic.com/';
+  } catch {
+    return params;
+  }
+  if (!officialEndpoint) return params;
   if (params.tools === undefined) return params;
-  const tools = params.tools.filter((tool) => {
+  let tools = params.tools.filter((tool) => {
     if (!('input_schema' in tool)) return true;
     return !Object.entries(tool.input_schema).some(
       ([key, value]) => value !== undefined && UNSUPPORTED_ROOT_SCHEMA_KEYS.has(key),
     );
   });
   if (tools.length === params.tools.length) return params;
+  const cacheControl = params.tools.at(-1)?.cache_control;
+  const lastTool = tools.at(-1);
+  if (cacheControl !== undefined && lastTool !== undefined && lastTool.cache_control === undefined) {
+    tools = [...tools.slice(0, -1), { ...lastTool, cache_control: cacheControl }];
+  }
   const choice = params.tool_choice;
   const choiceUnavailable =
     (choice?.type === 'any' && tools.length === 0) ||
