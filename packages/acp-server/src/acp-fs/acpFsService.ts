@@ -82,10 +82,18 @@ export class AcpHostFileSystem implements IHostFileSystem {
     }
     // ACP `fs.readTextFile` returns already-decoded UTF-8 text, so the
     // `encoding`/`errors` decode options are a no-op here.
-    const { content } = await this.connection
-      .get()
-      .readTextFile({ sessionId: this.ctx.sessionId, path });
-    return content;
+    try {
+      const { content } = await this.connection
+        .get()
+        .readTextFile({ sessionId: this.ctx.sessionId, path });
+      return content;
+    } catch (error) {
+      if (!isResourceNotFound(error) && !isHostFsNotFound(error)) throw error;
+      throw new HostFsError(OsFsErrors.codes.OS_FS_NOT_FOUND, `read failed: path does not exist: ${path}`, {
+        details: { path, op: 'read' },
+        cause: error,
+      });
+    }
   }
 
   /**
@@ -130,7 +138,7 @@ export class AcpHostFileSystem implements IHostFileSystem {
     try {
       existing = await this.readText(path);
     } catch (error) {
-      if (!isResourceNotFound(error)) throw error;
+      if (!isResourceNotFound(error) && !isHostFsNotFound(error)) throw error;
     }
     await this.writeText(path, existing + data);
   }
