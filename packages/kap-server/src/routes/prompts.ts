@@ -589,7 +589,7 @@ const promptActions: ActionTable<'abort' | 'steer', PromptActionExtra> = {
 
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, session_id, req, reply, id } = ctx;
-  if (isQueued(resolved.queue, id)) resolved.queue.cancel(id);
+  if (resolved.queue.has(id)) resolved.queue.cancel(id);
   else resolved.prompt.cancel({ promptId: id });
   requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
   reply.send(okEnvelope({ aborted: true }, req.id));
@@ -602,10 +602,6 @@ async function steerPromptAction(ctx: PromptActionCtx): Promise<void> {
 }
 
 type ResolvedPrompt = Awaited<ReturnType<typeof resolvePrompt>>;
-
-function isQueued(queue: IAgentPromptQueueService, id: string): boolean {
-  return queue.snapshot().items.some((item) => item.id === id);
-}
 
 async function steerPrompts(resolved: ResolvedPrompt, promptIds: readonly string[]): Promise<void> {
   const queued = new Map(resolved.queue.snapshot().items.map((item) => [item.id, item]));

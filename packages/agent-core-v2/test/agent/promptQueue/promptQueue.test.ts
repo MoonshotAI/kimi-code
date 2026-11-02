@@ -343,7 +343,33 @@ describe('AgentPromptQueueService', () => {
     await loop.settled();
   });
 
-  it('holds a queued prompt at the head when the queue is paused while its settings are applied', async () => {
+  it('starts a prompt whose settings are being applied when the queue is paused and holds the rest', async () => {
+    setup();
+    respond(3);
+    const release = await startHeldTurn();
+    let finishPrepare!: () => void;
+    const prepare = vi.fn(() => new Promise<void>((resolve) => {
+      finishPrepare = resolve;
+    }));
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', prepare });
+    await queue.submitInput({ id: 'p3', entry: entry('p3', 'third'), delivery: 'queue' });
+    release();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    expect(ids(queue.snapshot())).toEqual(['p3:queue']);
+
+    queue.pause();
+    finishPrepare();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
+    await loop.settled();
+    expect(ids(queue.snapshot())).toEqual(['p3:queue']);
+    expect(queue.snapshot().paused).toBe(true);
+
+    queue.resume();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second', 'third']));
+    await loop.settled();
+  });
+
+  it('stops the turn of a prompt withdrawn while its settings are applied', async () => {
     setup();
     respond(2);
     const release = await startHeldTurn();
@@ -351,48 +377,25 @@ describe('AgentPromptQueueService', () => {
     const prepare = vi.fn(() => new Promise<void>((resolve) => {
       finishPrepare = resolve;
     }));
-    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', prepare });
-    release();
-    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
-    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
-
-    queue.pause();
-    finishPrepare();
-    await vi.waitFor(() => expect(queue.hasPendingItems()).toBe(false));
-    expect(launched).toEqual(['first']);
-    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
-
-    queue.resume();
-    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
-    await loop.settled();
-    expect(prepare).toHaveBeenCalledOnce();
-  });
-
-  it('withdraws a queued prompt that is cancelled while its settings are applied', async () => {
-    setup();
-    respond(1);
-    const release = await startHeldTurn();
-    let finishPrepare!: () => void;
-    const prepare = vi.fn(() => new Promise<void>((resolve) => {
-      finishPrepare = resolve;
-    }));
-    const onDrop = vi.fn();
     const onStart = vi.fn(async () => {});
+    const onDrop = vi.fn();
     await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', prepare, onStart, onDrop });
     release();
     await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    const cancel = vi.spyOn(loop, 'cancel');
 
+    expect(queue.has('p2')).toBe(true);
     queue.cancel('p2');
     finishPrepare();
-    await vi.waitFor(() => expect(queue.hasPendingItems()).toBe(false));
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith({ promptId: 'p2' }));
     await loop.settled();
-    expect(launched).toEqual(['first']);
-    expect(onStart).not.toHaveBeenCalled();
-    expect(onDrop).toHaveBeenCalledOnce();
+    expect(onStart).toHaveBeenCalledOnce();
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(queue.has('p2')).toBe(false);
     expect(queue.snapshot().items).toEqual([]);
   });
 
-  it('starts the new head first when another prompt moves ahead while settings are applied', async () => {
+  it('keeps a starting prompt out of reordering', async () => {
     setup();
     respond(3);
     const release = await startHeldTurn();
@@ -405,9 +408,10 @@ describe('AgentPromptQueueService', () => {
     release();
     await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
 
-    queue.move('p3', 'p2');
+    expect(() => queue.move('p3', 'p2')).toThrow();
+    expect(() => queue.move('p2')).toThrow();
     finishPrepare();
-    await vi.waitFor(() => expect(launched).toEqual(['first', 'third', 'second']));
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second', 'third']));
     await loop.settled();
     expect(prepare).toHaveBeenCalledOnce();
   });

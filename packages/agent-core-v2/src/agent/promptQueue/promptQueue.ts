@@ -74,6 +74,8 @@ export interface IAgentPromptQueueService {
 
   move(id: string, beforeId?: string): void;
 
+  has(id: string): boolean;
+
   cancel(id: string): void;
 
 }

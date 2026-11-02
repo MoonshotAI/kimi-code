@@ -43,6 +43,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   private entries: QueueEntry[] = [];
   private paused = false;
   private launching = false;
+  private starting: { readonly id: string; withdrawn: boolean } | undefined;
   private pumpScheduled = false;
   private disposed = false;
 
@@ -168,8 +169,16 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     this.schedulePump();
   }
 
+  has(id: string): boolean {
+    return this.starting?.id === id || this.entries.some((item) => item.id === id);
+  }
+
   cancel(id: string): void {
     this.assertOpen();
+    if (this.starting?.id === id) {
+      this.starting.withdrawn = true;
+      return;
+    }
     const entry = this.find(id);
     this.entries = this.entries.filter((item) => item !== entry);
     this.emitChange();
@@ -263,71 +272,59 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
 
   private async start(entry: InputEntry, fromQueue: boolean): Promise<PromptQueueSubmitResult> {
     this.launching = true;
+    const starting = { id: entry.id, withdrawn: false };
+    this.starting = starting;
+    if (fromQueue) this.take(entry);
     let current = entry;
     try {
       if (current.prepare !== undefined) {
         this.runGate.begin();
         await current.prepare();
-        current = this.consume(current, { prepare: undefined });
+        current = { ...current, prepare: undefined };
+        this.assertOpen();
       }
-      const prepared = this.stillStarting(current, fromQueue);
-      if (prepared === undefined) return { acceptedAs: 'queue' };
-      current = prepared;
       if (current.onStart !== undefined) {
         this.runGate.begin();
         await current.onStart();
-        current = this.consume(current, { onStart: undefined });
+        current = { ...current, onStart: undefined };
+        this.assertOpen();
       }
-      const started = this.stillStarting(current, fromQueue);
-      if (started === undefined) return { acceptedAs: 'queue' };
-      current = started;
       if (current.delivery === 'steer' && this.loop.canSteerPrompt()) {
         const { id } = this.loop.submit(current.entry, { announcedAsQueued: fromQueue });
-        this.remove(current);
         const handle = this.loop.promptHandle(id);
+        if (starting.withdrawn) {
+          this.loop.cancel({ promptId: id });
+          return { acceptedAs: 'queue', handle };
+        }
         return { acceptedAs: (await this.steerSubmitted(id)) ? 'steer' : 'queue', handle };
       }
       if (!this.loop.canLaunchPrompt()) {
-        if (!fromQueue) {
-          this.restoreAtHead(current);
-          this.publishQueued(current);
+        if (starting.withdrawn) {
+          current.onDrop?.();
+          return { acceptedAs: 'queue' };
         }
+        this.restoreAtHead(current);
+        if (!fromQueue) this.publishQueued(current);
         return { acceptedAs: 'queue' };
       }
       const handle = this.launch(current.entry);
-      this.remove(current);
+      if (starting.withdrawn) this.loop.cancel({ promptId: current.id });
       return { acceptedAs: 'turn', handle };
     } catch (error) {
       if (!fromQueue) throw error;
-      if (!this.disposed && this.entries.some((item) => item.id === current.id)) {
+      if (this.disposed || starting.withdrawn) {
+        current.onDrop?.();
+      } else {
+        this.restoreAtHead(current);
         this.pauseAfterFailedStart(current, error);
       }
       return { acceptedAs: 'queue' };
     } finally {
+      this.starting = undefined;
       this.launching = false;
       if (!this.disposed) this.emitChange();
       this.schedulePump();
     }
-  }
-
-  private stillStarting(current: InputEntry, fromQueue: boolean): InputEntry | undefined {
-    this.assertOpen();
-    if (!fromQueue) return current;
-    const head = this.entries[0];
-    if (this.paused || head?.id !== current.id) return undefined;
-    return head as InputEntry;
-  }
-
-  private consume(current: InputEntry, done: Pick<QueueEntry, 'prepare'> | Pick<QueueEntry, 'onStart'>): InputEntry {
-    const index = this.entries.findIndex((item) => item.id === current.id);
-    if (index === -1) return { ...current, ...done };
-    const updated = { ...(this.entries[index] as InputEntry), ...done };
-    this.entries = this.entries.map((item, i) => (i === index ? updated : item));
-    return updated;
-  }
-
-  private remove(entry: QueueEntry): void {
-    this.entries = this.entries.filter((item) => item.id !== entry.id);
   }
 
   private pauseAfterFailedStart(entry: QueueEntry, error: unknown): void {

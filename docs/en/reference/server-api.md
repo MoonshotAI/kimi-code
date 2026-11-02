@@ -1085,7 +1085,7 @@ A prompt is one unit of user input: submitting one starts a turn on the session'
 
 #### Prompt queue
 
-Each agent has a prompt queue on the server. A prompt starts a turn right away only when the agent is idle and its queue is empty and not paused; otherwise it waits in the queue and starts a turn when it reaches the head and the agent is idle. Steers sit at the head of the queue, ahead of queued prompts and compactions. The queue is pushed over the WebSocket as [`queue` frames](#events); pause, resume and reorder it with the queue routes below. While the queue is paused, nothing leaves it and every new prompt or compaction joins it. If a queued prompt cannot start, the queue pauses with a warning and keeps the prompt at its head. The queue lives in server memory, so queued prompts are lost when the server restarts.
+Each agent has a prompt queue on the server. A prompt starts a turn right away only when the agent is idle and its queue is empty and not paused; otherwise it waits in the queue and starts a turn when it reaches the head and the agent is idle. Steers sit at the head of the queue, ahead of queued prompts and compactions. The queue is pushed over the WebSocket as [`queue` frames](#events); pause, resume and reorder it with the queue routes below. While the queue is paused, nothing leaves it and every new prompt or compaction joins it. Once the head starts (its settings are applied and its title and skill records are written), it has left the queue: pausing no longer holds it, it cannot be reordered, and aborting it stops its turn as soon as the turn begins. If a queued prompt cannot start, the queue pauses with a warning and keeps the prompt at its head. The queue lives in server memory, so queued prompts are lost when the server restarts.
 
 | Method and path | Description |
 | --- | --- |
@@ -1173,7 +1173,7 @@ On success, `data` is `{ steered: true, prompt_ids }`.
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort`
 
-Aborts a running prompt, or removes a prompt or compaction that still waits in the [prompt queue](#prompt-queue). This endpoint and `:steer` below dispatch through one route, `POST /api/v1/sessions/{session_id}/prompts/{tail}`: the tail is parsed as `{prompt_id}:{action}`, and a missing or unknown action fails `40001` (`unsupported action: ...`).
+Aborts a running prompt, or removes a prompt or compaction that still waits in the [prompt queue](#prompt-queue). A queued prompt that is already starting is aborted once its turn begins. This endpoint and `:steer` below dispatch through one route, `POST /api/v1/sessions/{session_id}/prompts/{tail}`: the tail is parsed as `{prompt_id}:{action}`, and a missing or unknown action fails `40001` (`unsupported action: ...`).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
