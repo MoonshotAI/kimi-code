@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { InstallPluginInput, IPluginService } from '#/app/plugin/plugin';
 import type { IPluginMarketplaceService } from '#/app/plugin/marketplaceService';
+import type { ResolvedMarketplacePluginInstallOptions } from '#/app/plugin/pluginService';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import type { CapabilityEntryContext } from '#/app/capability/entries/context';
 import {
@@ -110,10 +111,12 @@ function fakePlugins(
 ): {
   service: IPluginService;
   installs: InstallPluginInput[];
+  resolvedInstalls: Array<ResolvedMarketplacePluginInstallOptions['resolved']>;
   enabledCalls: Array<{ id: string; enabled: boolean }>;
   mcpEnabledCalls: Array<{ id: string; server: string; enabled: boolean }>;
 } {
   const installs: InstallPluginInput[] = [];
+  const resolvedInstalls: Array<ResolvedMarketplacePluginInstallOptions['resolved']> = [];
   const enabledCalls: Array<{ id: string; enabled: boolean }> = [];
   const mcpEnabledCalls: Array<{ id: string; server: string; enabled: boolean }> = [];
   const service = {
@@ -149,15 +152,22 @@ function fakePlugins(
         ],
       } as never);
     },
-    installPlugin: async (input: InstallPluginInput) => {
+    installPlugin: async (
+      input: InstallPluginInput,
+      options?: ResolvedMarketplacePluginInstallOptions,
+    ) => {
       installs.push(input);
+      if (options?.resolved !== undefined) resolvedInstalls.push(options.resolved);
       await onInstall?.();
-      const id = 'marketplaceId' in input
+      const id = options?.resolved.expectedPluginId ?? ('marketplaceId' in input
         ? input.marketplaceId
-        : input.source.includes('kimi-cu-win') ? 'kimi-cu-win' : 'kimi-cu';
-      const version = 'marketplaceId' in input ? input.expectedVersion : undefined;
-      const origin = 'marketplaceId' in input ? 'marketplace' : 'custom';
-      const catalogId = 'marketplaceId' in input ? id : undefined;
+        : input.source.includes('kimi-cu-win') ? 'kimi-cu-win' : 'kimi-cu');
+      const version = options?.resolved.version ??
+        ('marketplaceId' in input ? input.expectedVersion : undefined);
+      const origin = options?.resolved.origin ??
+        ('marketplaceId' in input ? 'marketplace' : 'custom');
+      const catalogId = options?.resolved.catalogId ??
+        ('marketplaceId' in input ? id : undefined);
       const existing = installed.find((p) => p.id === id);
       if (existing === undefined) {
         installed.push({ id, enabled: true, state: 'ok', version, origin, catalogId });
@@ -194,7 +204,7 @@ function fakePlugins(
       return Promise.resolve();
     },
   } as unknown as IPluginService;
-  return { service, installs, enabledCalls, mcpEnabledCalls };
+  return { service, installs, resolvedInstalls, enabledCalls, mcpEnabledCalls };
 }
 
 describe('parsePermissionStatus', () => {
@@ -883,8 +893,15 @@ describe('kimi-cu entry', () => {
 
     await entry.install(() => {});
 
-    expect(plugins.installs).toEqual([
-      { source: expect.stringContaining('kimi-computer-use/latest/kimi-cu-plugin.zip') },
+    expect(plugins.installs).toEqual([{ marketplaceId: 'kimi-cu' }]);
+    expect(plugins.resolvedInstalls).toMatchObject([{
+      source: expect.stringContaining('kimi-computer-use/latest/kimi-cu-plugin.zip'),
+      origin: 'marketplace',
+      catalogId: 'kimi-cu',
+      expectedPluginId: 'kimi-cu',
+    }]);
+    await expect(plugins.service.listPlugins()).resolves.toMatchObject([
+      { origin: 'marketplace', catalogId: 'kimi-cu' },
     ]);
   });
 
@@ -910,8 +927,15 @@ describe('kimi-cu entry', () => {
 
     await entry.install(() => {});
 
-    expect(plugins.installs).toEqual([
-      { source: expect.stringContaining('kimi-computer-use/latest/kimi-cu-plugin.zip') },
+    expect(plugins.installs).toEqual([{ marketplaceId: 'kimi-cu' }]);
+    expect(plugins.resolvedInstalls).toMatchObject([{
+      source: expect.stringContaining('kimi-computer-use/latest/kimi-cu-plugin.zip'),
+      origin: 'marketplace',
+      catalogId: 'kimi-cu',
+      expectedPluginId: 'kimi-cu',
+    }]);
+    await expect(plugins.service.listPlugins()).resolves.toMatchObject([
+      { origin: 'marketplace', catalogId: 'kimi-cu' },
     ]);
   });
 

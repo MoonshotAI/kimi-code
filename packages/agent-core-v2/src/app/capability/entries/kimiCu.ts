@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { kimiCdnContentUrl } from '@moonshot-ai/kimi-code-oauth';
 
+import { installResolvedMarketplacePlugin } from '../../plugin/pluginService';
 import { downloadToFile, runCommand } from '../host';
 import type {
   CapabilityDetectResult,
@@ -190,7 +191,17 @@ async function installPluginLayer(
     throw new Error(`Marketplace plugin "${config.id}" has no version in the current catalog`);
   }
   const summary = marketplace === undefined
-    ? await ctx.plugins.installPlugin({ source: config.zipUrl })
+    ? await installResolvedMarketplacePlugin(
+        ctx.plugins,
+        { marketplaceId: config.id },
+        {
+          source: config.zipUrl,
+          catalogId: config.id,
+          origin: 'marketplace',
+          expectedPluginId: config.id,
+          fetchImpl: fetch,
+        },
+      )
     : await ctx.plugins.installPlugin({
         marketplaceId: config.id,
         expectedVersion: entry!.version,
