@@ -28,6 +28,7 @@ import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifi
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAtomicDocumentStore, type IAtomicDocumentStore as AtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -299,8 +300,9 @@ describe('AgentProfileService.bind', () => {
       thinkingEffort: 'on',
       systemPrompt: expect.stringContaining('Kimi Code CLI'),
       activeToolNames: expect.arrayContaining(['Read', 'Write', 'Bash']),
-      disallowedTools: [TODO_LIST_TOOL_NAME],
+      disallowedTools: [],
     });
+    expect(records[0]?.['activeToolNames']).not.toContain(TODO_LIST_TOOL_NAME);
   });
 
   it('restores the subagent allowlist from the binding record without catalog resolution', async () => {
@@ -1545,7 +1547,8 @@ describe('AgentProfileService TodoList opt-in', () => {
     createAgent();
 
     expect(await bindAndCheck()).toBe(false);
-    expect(ctx.get(IAgentProfileService).data().disallowedTools).toContain(TODO_LIST_TOOL_NAME);
+    expect(ctx.get(IAgentProfileService).data().activeToolNames).not.toContain(TODO_LIST_TOOL_NAME);
+    expect(ctx.get(IAgentProfileService).data().disallowedTools).not.toContain(TODO_LIST_TOOL_NAME);
     expect(ctx.get(IAgentProfileService).getSystemPrompt()).not.toContain(TODO_LIST_GUIDANCE);
     const config = ctx.get(IConfigService);
     expect(config.get<TodoConfig | undefined>(TODO_SECTION)?.enabled).toBeUndefined();
@@ -1569,10 +1572,25 @@ describe('AgentProfileService TodoList opt-in', () => {
     createAgent({ todo: { enabled: true } });
 
     expect(await bindAndCheck()).toBe(true);
-    expect(ctx.get(IAgentProfileService).data().disallowedTools).not.toContain(
-      TODO_LIST_TOOL_NAME,
-    );
+    expect(ctx.get(IAgentProfileService).data().activeToolNames).toContain(TODO_LIST_TOOL_NAME);
     expect(ctx.get(IAgentProfileService).getSystemPrompt()).toContain(TODO_LIST_GUIDANCE);
+  });
+
+  it('keeps a host-registered TodoList user tool active in a default session', async () => {
+    createAgent();
+    expect(await bindAndCheck()).toBe(false);
+
+    ctx.get(IAgentUserToolService).register({
+      name: TODO_LIST_TOOL_NAME,
+      description: 'Host-provided todo list.',
+      parameters: { type: 'object', properties: {} },
+    });
+
+    expect(ctx.get(IAgentToolPolicyService).isToolActive(TODO_LIST_TOOL_NAME, 'user')).toBe(true);
+    expect(ctx.get(IAgentToolRegistryService).listReferences()).toContainEqual({
+      name: TODO_LIST_TOOL_NAME,
+      source: 'user',
+    });
   });
 
   it('lets the environment variable override [todo] enabled', async () => {

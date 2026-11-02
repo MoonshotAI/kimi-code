@@ -965,8 +965,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         inspection?.profile === profile &&
         inspection.priority === AGENT_PROFILE_SOURCE_PRIORITY.builtin,
     });
+    if (optedIn) return profile;
+    if (profile.tools !== undefined) {
+      if (!profile.tools.includes(TODO_LIST_TOOL_NAME)) return profile;
+      return { ...profile, tools: profile.tools.filter((name) => name !== TODO_LIST_TOOL_NAME) };
+    }
     const disallowedTools = profile.disallowedTools ?? [];
-    if (optedIn || disallowedTools.includes(TODO_LIST_TOOL_NAME)) return profile;
+    if (disallowedTools.includes(TODO_LIST_TOOL_NAME)) return profile;
     return { ...profile, disallowedTools: [...disallowedTools, TODO_LIST_TOOL_NAME] };
   }
 
