@@ -240,8 +240,10 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
       protocol: {
         ...protocol,
         base: Object.assign({}, protocolBase, {
-          decodeError: (error: unknown) =>
-            route.classifyError?.(error) ?? protocolBase.decodeError(error),
+          decodeError: (error: unknown, source?: 'stream') =>
+            source === 'stream'
+              ? protocolBase.decodeError(error, source)
+              : (route.classifyError?.(error) ?? protocolBase.decodeError(error, source)),
         }),
         options,
         stream: params?.stream ?? true,

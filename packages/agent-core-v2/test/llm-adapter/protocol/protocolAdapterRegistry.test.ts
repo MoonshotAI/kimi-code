@@ -1,3 +1,4 @@
+import { APIError as RawOpenAISDKAPIError } from 'openai/error';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { isUnknownCapability } from '#/llm-adapter/contract/capability';
@@ -182,6 +183,28 @@ describe('request gateway routes', () => {
     expect(contentsOf(resolved).model?.spec?.provider).toBe('openai');
     expect(supportsLlmUpload(resolved, 'video')).toBe(false);
     expect(supportsLlmUpload(resolved, 'image')).toBe(false);
+  });
+
+  it('keeps stream business codes out of the real HTTP status at the registry boundary', () => {
+    const resolved = registry.request(modelWith({ protocol: 'openai', providerType: 'kimi' }));
+    const decodeError = contentsOf(resolved).protocol?.base?.decodeError;
+    const rawError = new RawOpenAISDKAPIError(
+      429,
+      { message: 'backend stream quota', type: 'exceeded_current_quota_error' },
+      'SDK-composed fallback',
+      new Headers(),
+    );
+
+    expect(decodeError?.(rawError, 'stream')).toMatchObject({
+      kind: 'quota_exhausted',
+      message: 'backend stream quota',
+      statusCode: undefined,
+    });
+    expect(decodeError?.(rawError)).toMatchObject({
+      kind: 'quota_exhausted',
+      message: 'backend stream quota',
+      statusCode: 429,
+    });
   });
 
   it('reports the wire protocol regardless of beta or vertex provider options', () => {
