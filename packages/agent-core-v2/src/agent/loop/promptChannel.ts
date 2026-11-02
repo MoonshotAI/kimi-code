@@ -62,6 +62,7 @@ export class AgentPromptChannel implements IAgentPromptChannel {
       { steerIfActive: true },
     );
     if (status.state === 'running' && status.activePromptId === undefined) return undefined;
+    if (this.loop.snapshot().queue.some((entry) => entry.meta?.promptId === id)) return undefined;
     return launchResult(this.loop, id);
   }
 

@@ -905,18 +905,25 @@ describe('server-v2 /api/v1 prompts', () => {
     handlers[3]!({ type: 'prompt.aborted', promptId: 'msg_4' });
     expect(aborted).toHaveBeenCalledWith(true);
 
+    const steeredAborted = vi.fn();
+    const steeredAbortedTracker = watchPromptSettlements(events as never);
+    steeredAbortedTracker.settle('msg_7', steeredAborted);
+    handlers[4]!({ type: 'prompt.steered', promptIds: ['msg_7'], activePromptId: 'msg_running' });
+    handlers[4]!({ type: 'prompt.aborted', promptId: 'msg_running' });
+    expect(steeredAborted).toHaveBeenCalledWith(false);
+
     const abortedRunning = vi.fn();
     const abortedRunningTracker = watchPromptSettlements(events as never);
     abortedRunningTracker.settle('msg_6', abortedRunning);
-    handlers[4]!({ type: 'prompt.started', promptId: 'msg_6' });
-    handlers[4]!({ type: 'prompt.aborted', promptId: 'msg_6' });
+    handlers[5]!({ type: 'prompt.started', promptId: 'msg_6' });
+    handlers[5]!({ type: 'prompt.aborted', promptId: 'msg_6' });
     expect(abortedRunning).toHaveBeenCalledWith(false);
 
     const rejected = vi.fn();
     const rejectedTracker = watchPromptSettlements(events as never);
     rejectedTracker.settle('msg_5', rejected);
     rejectedTracker.dispose();
-    handlers[5]!({ type: 'prompt.completed', promptId: 'msg_5' });
+    handlers[6]!({ type: 'prompt.completed', promptId: 'msg_5' });
     expect(rejected).not.toHaveBeenCalled();
   });
 

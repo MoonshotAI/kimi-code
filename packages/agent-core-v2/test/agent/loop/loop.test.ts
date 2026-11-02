@@ -15,6 +15,7 @@ import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
+import { IAgentPromptChannel } from '#/agent/loop/promptChannel';
 import { createActor } from '#human/xstate2';
 import { createAgentMachine } from '#human/agent/machine';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
@@ -35,6 +36,7 @@ import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
@@ -1193,6 +1195,94 @@ describe('Agent loop', () => {
       expect(loop.snapshot()).toMatchObject({ state: 'idle', queue: [] });
     });
     stepHook.dispose();
+  });
+
+  it('keeps the queue paused when the session went stale while it was paused', () => {
+    loop.pauseQueue();
+    const begin = vi.spyOn(ctx.get(ISessionRunGate), 'begin').mockImplementationOnce(() => {
+      throw new Error('session is stale');
+    });
+    expect(() => loop.resumeQueue()).toThrow('session is stale');
+    expect(loop.snapshot().queuePaused).toBe(true);
+    loop.resumeQueue();
+    expect(loop.snapshot().queuePaused).toBe(false);
+    begin.mockRestore();
+  });
+
+  it('refuses to steer prompts that start Plan mode or a goal, or prompts queued behind them', async () => {
+    const started = deferred();
+    const release = deferred();
+    let hold = true;
+    const hook = loop.hooks.onWillBeginStep.register('test-hold-step', async (_step, next) => {
+      if (hold) {
+        hold = false;
+        started.resolve();
+        await release.promise;
+      }
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    ctx.mockNextResponse({ type: 'text', text: 'ahead answer' });
+    const first = submitTracked(loop, 'first');
+    await started.promise;
+    const ahead = submitTracked(loop, 'ahead');
+    const planned = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'plan it' }] },
+      meta: { origin: { kind: 'user' }, tracked: true, launch: { planMode: true } },
+    }).id;
+    const behind = submitTracked(loop, 'behind');
+
+    await expect(loop.steer([planned])).rejects.toMatchObject({ code: 'request.invalid' });
+    await expect(loop.steer([behind])).rejects.toMatchObject({ code: 'request.invalid' });
+    await loop.steer([ahead]);
+    expect(loop.snapshot().queue.map((item) => item.meta?.promptId)).toEqual([planned, behind]);
+
+    loop.cancel({ promptId: planned });
+    loop.cancel({ promptId: behind });
+    release.resolve();
+    await expect(loop.promptHandle(first)!.completion).resolves.toMatchObject({ state: 'completed' });
+    hook.dispose();
+  });
+
+  it('keeps a withdrawal when the start gate then blocks the prompt', async () => {
+    const gate = deferred();
+    let gated = false;
+    const hook = loop.hooks.onBeforeSubmitPrompt.register('test-blocking-gate', async (hookCtx, next) => {
+      if (!gated) {
+        gated = true;
+        await gate.promise;
+        hookCtx.block = true;
+        return;
+      }
+      await next();
+    });
+    const queueLengths: number[] = [];
+    const watch = loop.onDidChangeQueue(() => {
+      queueLengths.push(loop.snapshot().queue.length);
+    });
+    const withdrawn = submitTracked(loop, 'withdrawn');
+    await vi.waitFor(() => {
+      expect(gated).toBe(true);
+    });
+    expect(loop.cancel({ promptId: withdrawn }, userCancellationReason())).toBe(true);
+    gate.resolve();
+
+    await expect(loop.promptHandle(withdrawn)!.completion).resolves.toMatchObject({ state: 'cancelled' });
+    expect(userTexts(ctx)).not.toContain('withdrawn');
+    await vi.waitFor(() => {
+      expect(queueLengths.at(-1)).toBe(0);
+    });
+    watch.dispose();
+    hook.dispose();
+  });
+
+  it('answers steer and skill activation requests on a paused idle queue instead of waiting', async () => {
+    loop.pauseQueue();
+    await expect(ctx.get(IAgentPromptChannel).submitSteer({ input: [{ type: 'text', text: 'held steer' }] })).resolves.toBeUndefined();
+    await expect(ctx.rpc.activateSkill({ name: 'any-skill' })).rejects.toMatchObject({ code: 'turn.agent_busy' });
+    expect(ctx.llmCalls).toHaveLength(0);
+    for (const item of loop.snapshot().queue) loop.cancel({ promptId: item.meta!.promptId! });
+    loop.resumeQueue();
   });
 
   it('can abort an admission while quiescence holds it', async () => {

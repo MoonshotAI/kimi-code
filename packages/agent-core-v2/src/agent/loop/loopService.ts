@@ -410,6 +410,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.active !== undefined &&
       this.active.prompt.tracked &&
       this.engine !== undefined &&
+      this.gatingPromptId === undefined &&
       steerableQueueIds(this.engine.snapshot().queue).has(id)
     ) {
       this.machineEngine().steer(id);
@@ -424,7 +425,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_ids must not be empty');
     }
     const active = this.active;
-    if (active === undefined || !active.prompt.tracked) {
+    if (active === undefined || !active.prompt.tracked || this.gatingPromptId !== undefined) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
     }
     const engine = this.machineEngine();
@@ -439,7 +440,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (![...ids].every((id) => steerable.has(id))) {
       throw new Error2(
         ErrorCodes.REQUEST_INVALID,
-        'a queued compaction cannot be steered, and prompts queued behind it cannot be steered past it',
+        'queued compactions and prompts that start Plan mode or a goal cannot be steered, nor can prompts queued behind them',
       );
     }
     for (const id of ids) {
@@ -448,7 +449,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     if (
       this.active !== active ||
-      (this.gatingPromptId !== undefined && ids.has(this.gatingPromptId)) ||
+      this.gatingPromptId !== undefined ||
       ![...ids].every((id) => steerableQueueIds(engine.snapshot().queue).has(id))
     ) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
@@ -468,6 +469,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   resumeQueue(): void {
     if (!this.queuePausedByUser) return;
+    this.runGate.begin();
     this.queuePausedByUser = false;
     this.logger.info('prompt queue resumed', { queued: this.engine?.snapshot().queue.length ?? 0 });
     this.applyQueueHold();
@@ -743,6 +745,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.gatingPromptId = queueItemId;
     this.onDidChangeQueueEmitter.fire();
     try {
+      if (ctx.launch !== undefined) await this.active?.afterChain;
       await this.hooks.onBeforeSubmitPrompt.run(ctx);
       if (ctx.block) return { block: true };
       await this.materializeDaemonRefs(promptMessage);
@@ -793,8 +796,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     entry: UserEntry | undefined,
     state: 'blocked' | 'failed',
   ): void {
+    queueMicrotask(() => this.onDidChangeQueueEmitter.fire());
     const waiter = queueItemId === undefined ? undefined : this.promptWaiters.get(queueItemId);
     if (waiter === undefined) return;
+    if (this.cancelOnLaunch.has(waiter.id)) {
+      this.cancelOnLaunch.delete(waiter.id);
+      this.settleWaiterCancelled(waiter);
+      if (entry?.meta?.tracked === true) this.publishPromptAborted(waiter.id);
+      this.terminalStates.set(waiter.id, 'cancelled');
+      this.promptWaiters.delete(waiter.id);
+      return;
+    }
     if (entry?.meta?.compaction !== undefined) {
       waiter.launched.resolve(undefined);
       waiter.completion.resolve({ promptId: waiter.id, result: undefined, state: 'completed' });
@@ -2420,8 +2432,8 @@ type MachineGateDecision =
   | { readonly type: 'fail' };
 
 function steerableQueueIds(queue: readonly UserEntry[]): Set<string | undefined> {
-  const firstCompaction = queue.findIndex((item) => item.meta?.compaction !== undefined);
-  const ahead = firstCompaction === -1 ? queue : queue.slice(0, firstCompaction);
+  const barrier = queue.findIndex((item) => item.meta?.compaction !== undefined || item.meta?.launch !== undefined);
+  const ahead = barrier === -1 ? queue : queue.slice(0, barrier);
   return new Set(ahead.map((item) => item.meta?.promptId));
 }
 

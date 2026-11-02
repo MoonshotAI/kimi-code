@@ -55,6 +55,10 @@ export class AgentSkillService implements IAgentSkillService {
   ) {}
 
   async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
+    const status = this.loop.snapshot();
+    if (status.queuePaused && status.state !== 'running') {
+      throw new Error2(ErrorCodes.TURN_AGENT_BUSY, 'Cannot activate a skill while the prompt queue is paused');
+    }
     const catalog = this.catalog;
     await catalog.ready;
     const skill = catalog.catalog.getSkill(input.name);

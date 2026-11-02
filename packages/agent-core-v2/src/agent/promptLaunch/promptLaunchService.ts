@@ -47,8 +47,9 @@ export class AgentPromptLaunchService extends Disposable implements IAgentPrompt
 
   private async apply(launch: PromptLaunch): Promise<void> {
     if (launch.goalObjective !== undefined && this.goal !== undefined) {
+      const planActive = (await this.plan.status()) !== null;
       await this.goal.createGoal({ objective: launch.goalObjective });
-      if ((await this.plan.status()) !== null) this.plan.exit();
+      if (planActive) this.plan.exit();
       return;
     }
     if (launch.planMode === true) {

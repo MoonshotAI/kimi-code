@@ -28,6 +28,7 @@ describe('AgentPromptLaunchService', () => {
   let towerExit: ReturnType<typeof vi.fn>;
   let createGoal: ReturnType<typeof vi.fn>;
   let dispatch: ReturnType<typeof vi.fn>;
+  let planStatus: () => Promise<unknown>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -45,6 +46,7 @@ describe('AgentPromptLaunchService', () => {
     });
     createGoal = vi.fn(async () => ({}));
     dispatch = vi.fn(async () => undefined);
+    planStatus = async () => (planActive ? { id: 'plan_1' } : null);
   });
   afterEach(() => disposables.dispose());
 
@@ -53,7 +55,7 @@ describe('AgentPromptLaunchService', () => {
     ix.stub(IAgentLoopService, { hooks: { onBeforeSubmitPrompt: gate } } as unknown as IAgentLoopService);
     ix.stub(IAgentScopeContext, stubAgentScopeContext('prompt-launch-test', agentId));
     ix.stub(IAgentPlanService, {
-      status: async () => (planActive ? { id: 'plan_1' } : null),
+      status: () => planStatus(),
       enter: planEnter,
       exit: planExit,
     } as unknown as IAgentPlanService);
@@ -99,6 +101,17 @@ describe('AgentPromptLaunchService', () => {
     expect(createGoal).toHaveBeenCalledWith({ objective: 'Ship it' });
     expect(planExit).toHaveBeenCalledTimes(1);
     expect(planEnter).not.toHaveBeenCalled();
+  });
+
+  it('creates no goal when the Plan state cannot be read', async () => {
+    setup();
+    planStatus = async () => {
+      throw new Error('plan file unavailable');
+    };
+    const ctx = await start({ goalObjective: 'Ship it' });
+    expect(ctx.block).toBe(false);
+    expect(createGoal).not.toHaveBeenCalled();
+    expect(dispatch.mock.calls[0]![0]).toMatchObject({ code: 'prompt-launch-failed' });
   });
 
   it('ignores blocked prompts and prompts without a launch', async () => {

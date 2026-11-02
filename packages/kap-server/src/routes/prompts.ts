@@ -546,7 +546,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id, agent_id } = req.params;
-        (await resolveQueue(core, session_id, agent_id)).prompt.resumeQueue();
+        await reloadOnStale(core.accessor, session_id, async () => {
+          (await resolveQueue(core, session_id, agent_id)).prompt.resumeQueue();
+        });
         reply.send(okEnvelope({ paused: false }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -812,6 +814,7 @@ export function watchPromptSettlements(events: IEventBus): {
         readonly activePromptId?: unknown;
       };
       if (Array.isArray(steered.promptIds) && typeof steered.activePromptId === 'string') {
+        startedIds.add(steered.activePromptId);
         for (const childId of steered.promptIds) {
           if (typeof childId === 'string') parentOf.set(childId, steered.activePromptId);
         }

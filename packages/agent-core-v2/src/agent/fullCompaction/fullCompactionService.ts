@@ -373,12 +373,12 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private async runQueued(ctx: QueuedCompactionContext): Promise<void> {
+    while (this._compacting !== null && !ctx.signal.aborted) {
+      await this._compacting.promise.catch(() => undefined);
+    }
     if (ctx.signal.aborted) return;
     let task: ActiveCompaction;
     try {
-      if (this._compacting !== null) {
-        throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'Another compaction is already running.');
-      }
       this.runGate.begin();
       const history = this.context.get();
       if (history.length === 0) {
