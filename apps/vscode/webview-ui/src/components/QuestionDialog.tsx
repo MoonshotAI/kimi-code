@@ -6,12 +6,14 @@ import {
   canAdvanceQuestion,
   createQuestionFlow,
   moveQuestion,
+  removeCustomAnswer,
   toggleQuestionOption,
 } from "./question-flow";
 
 export function QuestionDialog() {
   const { pendingQuestion, respondQuestion } = useChatStore();
-  const [customInput, setCustomInput] = useState("");
+  const [customDrafts, setCustomDrafts] = useState<Record<number, string>>({});
+  const [selectedIndex, setSelectedIndex] = useState(1);
   const [showCustom, setShowCustom] = useState(false);
   const [flow, setFlow] = useState(() => createQuestionFlow([]));
   const [submitting, setSubmitting] = useState(false);
@@ -20,11 +22,13 @@ export function QuestionDialog() {
   const questions = pendingQuestion?.questions ?? [];
   const question = questions[flow.questionIndex];
   const isMultiSelect = question?.multi_select === true;
+  const customInput = customDrafts[flow.questionIndex] ?? "";
 
   useEffect(() => {
     if (pendingQuestion) {
       setShowCustom(false);
-      setCustomInput("");
+      setCustomDrafts({});
+      setSelectedIndex(1);
       setFlow(createQuestionFlow(pendingQuestion.questions));
       setSubmitting(false);
       submittingRef.current = false;
@@ -33,24 +37,29 @@ export function QuestionDialog() {
 
   if (!pendingQuestion || !question) return null;
 
+  const updateCustomInput = (value: string) => {
+    setCustomDrafts((current) => ({ ...current, [flow.questionIndex]: value }));
+  };
+
   const handleSelect = (optionLabel: string) => {
     setFlow((current) => toggleQuestionOption(current, question, optionLabel));
   };
 
   const handleCustomSubmit = () => {
     const normalizedInput = customInput.trim();
-    if (!normalizedInput && !flow.customAnswers[question.question]) return;
+    if (!normalizedInput) return;
     setFlow((current) => answerQuestionWithCustom(current, question, normalizedInput));
+    updateCustomInput("");
     setShowCustom(false);
   };
 
   const openCustom = () => {
-    setCustomInput(flow.customAnswers[question.question] ?? "");
+    updateCustomInput(isMultiSelect ? customInput : (flow.customAnswers[question.question]?.[0] ?? customInput));
     setShowCustom(true);
   };
 
   const submitAnswers = async () => {
-    if (submittingRef.current) return;
+    if (submittingRef.current || !canAdvanceQuestion(flow, question)) return;
     submittingRef.current = true;
     setSubmitting(true);
     try {
@@ -64,7 +73,7 @@ export function QuestionDialog() {
   const move = (offset: number) => {
     setFlow((current) => moveQuestion(current, offset, questions.length));
     setShowCustom(false);
-    setCustomInput("");
+    setSelectedIndex(1);
   };
 
   const options = question.options || [];
@@ -90,14 +99,18 @@ export function QuestionDialog() {
                 onClick={() => {
                   handleSelect(option.label);
                 }}
+                onMouseEnter={() => setSelectedIndex(idx + 1)}
+                disabled={submitting}
                 className={cn(
                   "w-full text-left px-2 py-1 rounded-md text-xs transition-colors border cursor-pointer",
                   isChecked
                     ? "bg-blue-500/15 border-blue-500"
-                    : "bg-background border-border hover:bg-muted/50",
+                    : selectedIndex === idx + 1
+                      ? "bg-blue-500 text-white border-blue-500"
+                      : "bg-background border-border hover:bg-muted/50",
                 )}
               >
-                <span className="mr-2 text-muted-foreground">{isMultiSelect && isChecked ? "✓" : idx + 1}</span>
+                <span className="mr-2 text-muted-foreground">{isChecked ? "✓" : idx + 1}</span>
                 <span className="font-medium">{option.label}</span>
                 {option.description && (
                   <span className="ml-2 text-muted-foreground">- {option.description}</span>
@@ -105,18 +118,32 @@ export function QuestionDialog() {
               </button>
             );
           })}
+          {(flow.customAnswers[question.question] ?? []).map((value) => isMultiSelect && (
+            <button
+              key={value}
+              type="button"
+              disabled={submitting}
+              onClick={() => setFlow((current) => removeCustomAnswer(current, question, value))}
+              className="w-full text-left px-2 py-1 rounded-md text-xs border border-blue-500 bg-blue-500/15 disabled:opacity-50"
+            >
+              <span className="mr-2 text-muted-foreground">✓</span>
+              <span className="font-medium">{value}</span>
+            </button>
+          ))}
           {showCustom ? (
             <div className="flex gap-1.5">
               <input
                 autoFocus
                 value={customInput}
                 onChange={(e) => {
-                  setCustomInput(e.target.value);
+                  updateCustomInput(e.target.value);
                 }}
                 onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing) return;
                   if (e.key === "Enter") handleCustomSubmit();
                   if (e.key === "Escape") setShowCustom(false);
                 }}
+                disabled={submitting}
                 placeholder="Enter your response…"
                 className="flex-1 px-2 py-1 rounded-md text-xs border border-border bg-background outline-none focus:border-blue-500"
               />
@@ -124,7 +151,7 @@ export function QuestionDialog() {
                 onClick={() => {
                   handleCustomSubmit();
                 }}
-                disabled={!customInput.trim() && !flow.customAnswers[question.question]}
+                disabled={submitting || !customInput.trim()}
                 className="px-2 py-1 rounded-md text-xs bg-blue-500 text-white disabled:opacity-50 cursor-pointer"
               >
                 Send
@@ -135,18 +162,22 @@ export function QuestionDialog() {
               onClick={() => {
                 openCustom();
               }}
+              onMouseEnter={() => setSelectedIndex(customIndex)}
+              disabled={submitting}
               className={cn(
                 "w-full text-left px-2 py-1 rounded-md text-xs transition-colors border cursor-pointer",
-                flow.customAnswers[question.question]
+                flow.customAnswers[question.question]?.length
                   ? "bg-blue-500/15 border-blue-500"
                   : "bg-background border-border hover:bg-muted/50",
               )}
             >
               <span className="mr-2 text-muted-foreground">
-                {isMultiSelect && flow.customAnswers[question.question] ? "✓" : customIndex}
+                {isMultiSelect && flow.customAnswers[question.question]?.length ? "✓" : customIndex}
               </span>
               <span className="font-medium">
-                {flow.customAnswers[question.question] ?? "Custom response..."}
+                {isMultiSelect || !flow.customAnswers[question.question]?.length
+                  ? "Custom response..."
+                  : `Custom response: ${flow.customAnswers[question.question][0]}`}
               </span>
             </button>
           )}
@@ -154,7 +185,7 @@ export function QuestionDialog() {
         <div className="flex items-center justify-between gap-2 pt-1">
           <button
             type="button"
-            disabled={flow.questionIndex === 0}
+            disabled={flow.questionIndex === 0 || submitting}
             onClick={() => {
               move(-1);
             }}
@@ -165,7 +196,7 @@ export function QuestionDialog() {
           {flow.questionIndex + 1 < questions.length ? (
             <button
               type="button"
-              disabled={!canAdvanceQuestion(flow, question)}
+              disabled={!canAdvanceQuestion(flow, question) || submitting}
               onClick={() => {
                 move(1);
               }}

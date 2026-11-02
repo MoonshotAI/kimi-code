@@ -1,13 +1,14 @@
 export interface QuestionLike {
   question: string;
   multi_select?: boolean;
+  options?: readonly { label: string }[];
 }
 
 export interface QuestionFlow {
   questionIndex: number;
   answers: Record<string, string>;
   selections: Record<string, string[]>;
-  customAnswers: Record<string, string>;
+  customAnswers: Record<string, string[]>;
 }
 
 const ANSWER_SEPARATOR = ", ";
@@ -34,11 +35,36 @@ export function answerQuestionWithCustom(
   answer: string,
 ): QuestionFlow {
   const normalizedAnswer = answer.trim();
-  const customAnswers = normalizedAnswer
-    ? { ...flow.customAnswers, [question.question]: normalizedAnswer }
+  const matchesOption = question.multi_select && question.options?.some((option) => option.label === normalizedAnswer);
+  const currentCustom = flow.customAnswers[question.question] ?? [];
+  const nextCustom = !normalizedAnswer
+    ? []
+    : matchesOption
+      ? currentCustom
+      : question.multi_select
+        ? [...new Set([...currentCustom, normalizedAnswer])]
+        : [normalizedAnswer];
+  const customAnswers = nextCustom.length > 0
+    ? { ...flow.customAnswers, [question.question]: nextCustom }
     : withoutKey(flow.customAnswers, question.question);
-  const selections = question.multi_select ? flow.selections : withoutKey(flow.selections, question.question);
+  const selections = matchesOption
+    ? { ...flow.selections, [question.question]: [
+        ...new Set([...(flow.selections[question.question] ?? []), normalizedAnswer]),
+      ] }
+    : question.multi_select ? flow.selections : withoutKey(flow.selections, question.question);
   return withAnswer({ ...flow, selections, customAnswers }, question);
+}
+
+export function removeCustomAnswer(
+  flow: QuestionFlow,
+  question: QuestionLike,
+  answer: string,
+): QuestionFlow {
+  const remaining = (flow.customAnswers[question.question] ?? []).filter((value) => value !== answer);
+  const customAnswers = remaining.length > 0
+    ? { ...flow.customAnswers, [question.question]: remaining }
+    : withoutKey(flow.customAnswers, question.question);
+  return withAnswer({ ...flow, customAnswers }, question);
 }
 
 export function toggleQuestionOption(
@@ -84,7 +110,7 @@ function withSelections(
 function withAnswer(flow: QuestionFlow, question: QuestionLike): QuestionFlow {
   const values = [
     ...(flow.selections[question.question] ?? []),
-    ...(flow.customAnswers[question.question] ? [flow.customAnswers[question.question]] : []),
+    ...(flow.customAnswers[question.question] ?? []),
   ];
   const answers = { ...flow.answers };
   if (values.length === 0) delete answers[question.question];

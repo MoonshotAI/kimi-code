@@ -55,7 +55,7 @@ describe("question flow", () => {
     flow = answerQuestionWithCustom(flow, languageQuestion, "Rust");
 
     expect(flow.answers).toEqual({ "Languages?": "Go, Rust" });
-    expect(flow.customAnswers["Languages?"]).toBe("Rust");
+    expect(flow.customAnswers["Languages?"]).toEqual(["Rust"]);
     expect(flow.selections["Languages?"]).toEqual(["Go"]);
   });
 

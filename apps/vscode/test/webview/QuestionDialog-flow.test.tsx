@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QuestionDialog } from "../webview-ui/src/components/QuestionDialog";
+import { QuestionDialog } from "@/components/QuestionDialog";
 
 const store = vi.hoisted(() => ({
   pendingQuestion: {
@@ -86,6 +86,7 @@ describe("QuestionDialog", () => {
     });
     await click(button(container, "Send"));
     expect(store.respondQuestion).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Custom response: Neovim");
 
     await click(button(container, "Back"));
     expect(container.textContent).toContain("Rust");
@@ -117,16 +118,7 @@ describe("QuestionDialog", () => {
     await click(button(container, "Send"));
 
     await click(button(container, "Rust"));
-    const reopenedInput = container.querySelector("input");
-    if (!reopenedInput) throw new Error("reopened custom response input not found");
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      setter?.call(reopenedInput, "");
-      reopenedInput.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    const save = button(container, "Send");
-    expect(save.disabled).toBe(false);
-    await click(save);
+    expect(container.textContent).not.toContain("Rust");
 
     await click(button(container, "Next"));
     await click(button(container, "VS Code"));
