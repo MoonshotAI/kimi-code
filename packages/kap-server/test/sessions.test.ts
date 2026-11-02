@@ -51,6 +51,8 @@ import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
+import { ensureMainAgent } from '../src/transport/mainAgent';
+import { readAgentState, readUsageState } from '../src/transport/ws/v1/agentState';
 
 interface Envelope<T> {
   code: number;
@@ -839,47 +841,35 @@ describe('server-v2 /api/v1/sessions', () => {
     createChild.mockRestore();
   });
 
-  it('returns best-effort status for a live session', async () => {
+  it('no longer serves GET /status', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    const { body } = await getJson<{
-      busy: boolean;
-      thinking_level: string;
-      plan_mode: boolean;
-      context_tokens: number;
-    }>(`/api/v1/sessions/${created.body.data.id}/status`);
-    expect(body.code).toBe(0);
-    expect(body.data.busy).toBe(false);
-    expect(typeof body.data.thinking_level).toBe('string');
-    expect(typeof body.data.plan_mode).toBe('boolean');
-    expect(body.data.context_tokens).toBe(0);
+    const res = await getJson<unknown>(`/api/v1/sessions/${created.body.data.id}/status`);
+    expect(res.status).toBe(404);
   });
 
-  it('reflects plan/swarm/permission agent_config in GET /status', async () => {
+  async function mainAgentOf(id: string) {
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id)!;
+    return ensureMainAgent(session);
+  }
+
+  it('applies plan/swarm/permission agent_config to the main agent state', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
 
-    const before = await getJson<{
-      plan_mode: boolean;
-      swarm_mode: boolean;
-      permission: string;
-    }>(`/api/v1/sessions/${id}/status`);
-    expect(before.body.data.plan_mode).toBe(false);
-    expect(before.body.data.swarm_mode).toBe(false);
+    const before = readAgentState(await mainAgentOf(id), false);
+    expect(before.plan_mode).toBe(false);
+    expect(before.swarm_mode).toBe(false);
 
     await postJson(`/api/v1/sessions/${id}/profile`, {
       agent_config: { plan_mode: true, swarm_mode: true, permission_mode: 'yolo' },
     });
 
-    const after = await getJson<{
-      plan_mode: boolean;
-      swarm_mode: boolean;
-      permission: string;
-    }>(`/api/v1/sessions/${id}/status`);
-    expect(after.body.data.plan_mode).toBe(true);
-    expect(after.body.data.swarm_mode).toBe(true);
-    expect(after.body.data.permission).toBe('yolo');
+    const after = readAgentState(await mainAgentOf(id), false);
+    expect(after.plan_mode).toBe(true);
+    expect(after.swarm_mode).toBe(true);
+    expect(after.permission_mode).toBe('yolo');
   });
 
   it('rejects tower_mode agent_config when the tower feature is unavailable', async () => {
@@ -887,10 +877,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
 
-    const before = await getJson<{
-      tower_mode?: boolean;
-    }>(`/api/v1/sessions/${id}/status`);
-    expect(before.body.data.tower_mode).toBe(false);
+    expect(readAgentState(await mainAgentOf(id), false).tower_mode).toBe(false);
 
     const on = await postJson(`/api/v1/sessions/${id}/profile`, {
       agent_config: { tower_mode: true },
@@ -898,19 +885,13 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(on.body.code).toBe(50001);
     expect(on.body.msg).toContain('the tower experiment is disabled');
     expect(on.body.msg).toContain('KIMI_CODE_EXPERIMENTAL_TOWER=1');
-    const after = await getJson<{
-      tower_mode?: boolean;
-    }>(`/api/v1/sessions/${id}/status`);
-    expect(after.body.data.tower_mode).toBe(false);
+    expect(readAgentState(await mainAgentOf(id), false).tower_mode).toBe(false);
 
     const off = await postJson(`/api/v1/sessions/${id}/profile`, {
       agent_config: { tower_mode: false },
     });
     expect(off.body.code).toBe(0);
-    const settled = await getJson<{
-      tower_mode?: boolean;
-    }>(`/api/v1/sessions/${id}/status`);
-    expect(settled.body.data.tower_mode).toBe(false);
+    expect(readAgentState(await mainAgentOf(id), false).tower_mode).toBe(false);
   });
 
   it('returns the current goal via GET /goal', async () => {
@@ -2559,17 +2540,10 @@ describe('server-v2 /api/v1/sessions status context window', () => {
   it('reports the default model context window before any model is bound', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    const { body } = await getJson<{
-      status: string;
-      model?: string;
-      context_tokens: number;
-      max_context_tokens: number;
-      context_usage: number;
-    }>(`/api/v1/sessions/${created.body.data.id}/status`);
-    expect(body.code).toBe(0);
-    expect(body.data.max_context_tokens).toBe(131072);
-    expect(body.data.context_tokens).toBe(0);
-    expect(body.data.context_usage).toBe(0);
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
+    const usage = readUsageState(await ensureMainAgent(session));
+    expect(usage?.max_context_tokens).toBe(131072);
+    expect(usage?.context_tokens).toBe(0);
   });
 });
 

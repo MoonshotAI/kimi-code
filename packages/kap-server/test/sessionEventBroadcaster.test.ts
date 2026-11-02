@@ -1973,6 +1973,41 @@ describe('SessionEventBroadcaster', () => {
       ]);
     });
 
+    it.each([
+      {
+        name: 'falls back to the default model limit when no model is bound',
+        model: '',
+        capabilities: { max_context_tokens: 0 },
+        expected: 800,
+      },
+      {
+        name: 'prefers the input cap over the context window',
+        model: 'k2',
+        capabilities: { max_input_tokens: 600, max_context_tokens: 1000 },
+        expected: 600,
+      },
+    ])('$name in the usage frame', async ({ model, capabilities, expected }) => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      withAgentState(main);
+      main.set(IAgentProfileService, {
+        getModel: () => model,
+        getEffectiveThinkingLevel: () => 'high',
+        getModelCapabilities: () => capabilities,
+      });
+      main.set(IModelService, { getDefaultModel: () => 'k3' });
+      main.set(IModelCatalog, { get: () => ({ capabilities: { max_input_tokens: 800 } }) });
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, { '*': 'turn' });
+
+      expect(stateFramesOf(view).find((frame) => frame.type === 'usage')).toMatchObject({
+        max_context_tokens: expected,
+      });
+    });
+
     it('coalesces context usage changes into the latest value', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
