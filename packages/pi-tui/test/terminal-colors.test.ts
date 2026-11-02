@@ -167,6 +167,7 @@ describe("TUI terminal status responses", () => {
 		try {
 			terminal.sendInput("\x1b[6;18;8t");
 			terminal.sendInput("\x1b[?1;2;4c");
+			terminal.sendInput("\x1b[>0;136;0c");
 			terminal.sendInput("\x1bP>|XTerm(390)\x1b\\");
 			terminal.sendInput("\x1b_Gi=1;OK\x1b\\");
 
