@@ -205,7 +205,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         if (event.turnId === this.wakeTurnId) {
           this.wakeTurnId = undefined;
           if (!this.wakeAbortedForUserPrompt) this.wakeTurnBatch = undefined;
-          return;
         }
         this.rearmAbortedWake();
       }),

@@ -3630,6 +3630,31 @@ describe('AgentTowerService', () => {
       expect(wakeText(rearmed[0]!)).toContain('messageId=msg-paused');
     });
 
+    it('re-arms an interrupted wake when it ends after the held input was withdrawn', async () => {
+      let pendingInputs = false;
+      const queueChanges = stubPromptQueue(() => pendingInputs);
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      publishInbox({ from: 'w1', to: 'tower', subject: 'need review', messageId: 'msg-withdrawn' });
+      await flushWake();
+      expect(drainWakeMessages()).toHaveLength(1);
+
+      const wakeTurn = startWakeTurn();
+      pendingInputs = true;
+      queueChanges.fire({ paused: false, items: [] });
+      await flushWake();
+      expect(loop.cancels).toHaveLength(1);
+
+      pendingInputs = false;
+      queueChanges.fire({ paused: false, items: [] });
+      publishAsMain(ix, new TurnEnded({ agentId: 'main', turnId: wakeTurn.id, reason: 'cancelled' }));
+      await flushWake();
+      const rearmed = drainWakeMessages();
+      expect(rearmed).toHaveLength(1);
+      expect(wakeText(rearmed[0]!)).toContain('messageId=msg-withdrawn');
+    });
+
     it('waits for queued user input before re-arming an interrupted wake', async () => {
       let pendingInputs = true;
       stubPromptQueue(() => pendingInputs);
