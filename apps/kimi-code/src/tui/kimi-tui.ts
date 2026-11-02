@@ -2613,7 +2613,7 @@ export class KimiTUI {
   acknowledgeSteerDelivery(input: unknown): void {
     const { texts, hasMedia } = steerEventParts(input);
     let pending = this.pendingSteerDeliveries;
-    const delivered: typeof pending = [];
+    const delivered: SteerDeliveryBatch<TranscriptEntry>[] = [];
     const candidates = steerMatchTexts(texts);
     for (const text of candidates) {
       const step = takeDeliveredSteerBatches(pending, text);
@@ -2721,7 +2721,7 @@ export class KimiTUI {
         item.imageAttachmentIds !== undefined && item.imageAttachmentIds.length > 0
           ? item.imageAttachmentIds
           : undefined,
-      steerPending: true,
+      steerPending: startsNewTurn ? undefined : true,
     }));
     for (const entry of steeredEntries) this.appendTranscriptEntry(entry);
     const mediaAttachmentIds = input.flatMap((item) => [
@@ -2742,7 +2742,7 @@ export class KimiTUI {
     if (currentTurnId !== undefined && prepared === undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
     const dispatch = (items: readonly SteerInputItem[]) => {
       const payload = combineSteerInput(items);
-      this.notePendingSteer(steeredEntries, payload);
+      if (!startsNewTurn) this.notePendingSteer(steeredEntries, payload);
       return prepared === undefined
         ? session.steer(payload)
         : session.promptWithSkills(payload, prepared.skills, { steerIfActive: true });

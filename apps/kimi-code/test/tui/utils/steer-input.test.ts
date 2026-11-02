@@ -108,7 +108,7 @@ describe('takeDeliveredSteerBatches', () => {
     const first = { text: 'hello ', entries: ['hello '] };
     const second = { text: 'world', entries: ['world'] };
     expect(takeDeliveredSteerBatches([combined], 'hello world').delivered).toEqual([combined]);
-    let pending = [first, second];
+    let pending: Array<{ readonly text: string; readonly entries: readonly string[] }> = [first, second];
     const delivered = [];
     for (const text of ['hello ', 'world']) {
       const step = takeDeliveredSteerBatches(pending, text);

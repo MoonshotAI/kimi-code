@@ -71,7 +71,7 @@ import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
-import { isTurnSteerEvent } from '../utils/steer-delivery';
+import { isTurnSteerEvent, isUserSteerOrigin } from '../utils/steer-delivery';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
@@ -291,7 +291,7 @@ export class SessionEventHandler {
     }
     const rawEvent: object = event;
     if (isTurnSteerEvent(rawEvent)) {
-      this.host.acknowledgeSteerDelivery?.(rawEvent.input);
+      if (isUserSteerOrigin(rawEvent)) this.host.acknowledgeSteerDelivery?.(rawEvent.input);
       return;
     }
 

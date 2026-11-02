@@ -47,8 +47,14 @@ export function steerMatchTexts(texts: readonly string[]): readonly string[] {
 
 export function isTurnSteerEvent(
   event: object,
-): event is { readonly type: 'turn.steer'; readonly input?: unknown } {
+): event is { readonly type: 'turn.steer'; readonly input?: unknown; readonly origin?: unknown } {
   return 'type' in event && event.type === 'turn.steer';
+}
+
+export function isUserSteerOrigin(event: { readonly origin?: unknown }): boolean {
+  if (event.origin === undefined) return true;
+  if (event.origin === null || typeof event.origin !== 'object') return false;
+  return 'kind' in event.origin && event.origin.kind === 'user';
 }
 
 // A shorter pending steer must not match inside a different message.
