@@ -17,7 +17,6 @@ import {
 import {
   TranscriptGroupComponent,
   type TranscriptGroupInteraction,
-  type TranscriptGroupTail,
 } from '#/tui/components/messages/transcript-group';
 import { TranscriptMoreComponent } from '#/tui/components/messages/transcript-more';
 import {
@@ -48,6 +47,7 @@ import {
 export interface TranscriptGroupingHost {
   withScrollAnchor(toggle: () => void): void;
   withBottomAnchor(toggle: () => void, removedLines: number): void;
+  viewportRows(): number | undefined;
   track(event: string, properties: Record<string, string | number | boolean>): void;
 }
 
@@ -198,9 +198,14 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   }
 
   toggleGroup(anchor: Component, fromBottom?: { readonly removedLines: number }): void {
+    const group = expandMore(this.ensureProjection().projections).find(
+      (projection) => projection.kind === 'group' && projection.anchor === anchor,
+    );
     const expanded = !(this.expandedGroups.get(anchor) ?? false);
+    const only = group?.kind === 'group' && group.members.length === 1 ? group.members[0].display : undefined;
     const toggle = (): void => {
       this.expandedGroups.set(anchor, expanded);
+      if (isExpandable(only)) only.setExpanded(expanded);
     };
     if (fromBottom !== undefined && this.host !== undefined) {
       this.host.withBottomAnchor(toggle, fromBottom.removedLines);
@@ -221,8 +226,19 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     this.renderRequest?.();
   }
 
-  toggleMember(item: LogicalTranscriptItem): TuiMouseEventResult | undefined {
-    return this.toggleExpandable(item.display, item.sourceIndex, true);
+  toggleRow(item: LogicalTranscriptItem): boolean {
+    const display = item.display;
+    if (!isExpandable(display)) return false;
+    this.withScrollAnchor(() => {
+      display.setExpanded(!isExpandedComponent(display));
+    });
+    this.renderRequest?.();
+    return true;
+  }
+
+  viewportRows(): number | undefined {
+    const rows = this.host?.viewportRows();
+    return rows !== undefined && rows > 0 ? rows : undefined;
   }
 
   toggleToolOutputExpansion(): boolean {
@@ -360,7 +376,6 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
         active,
         expanded,
         summary,
-        tail: active ? this.tailFor(projection) : undefined,
       };
       const group = this.groups.get(projection.anchor) ?? new TranscriptGroupComponent(model, this);
       group.setModel(model);
@@ -398,21 +413,6 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     return this.turnActive && projections.at(-1) === projection;
   }
 
-  private tailFor(projection: GroupProjection): readonly TranscriptGroupTail[] {
-    const running = projection.members.filter((member) => member.current);
-    const shown = running.length > 0 ? running : projection.members.slice(-1);
-    return shown.flatMap(({ family, label, status }) => {
-      if (family !== 'tool') return [];
-      const [first = ''] = label.subject?.split('\n') ?? [];
-      const subject = label.subject === undefined ? '' : ` ${first}${first === label.subject ? '' : '…'}`;
-      return [{
-        text: `${label.verb}${subject}`,
-        startedAtMs: status.kind === 'running' ? status.startedAtMs : 0,
-        running: status.kind === 'running',
-      }];
-    });
-  }
-
   private hasExpandedContentAnywhere(projections: readonly TranscriptProjection[]): boolean {
     return expandMore(projections).some((projection) =>
       (projection.kind === 'group' && this.expandedGroups.get(projection.anchor) === true) ||
@@ -434,23 +434,13 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     const component = cache.viewChildren[index];
     const sourceIndex = cache.viewSourceIndices[index];
     if (component === undefined || sourceIndex === undefined) return undefined;
-    return this.toggleExpandable(component, sourceIndex, false);
-  }
-
-  private toggleExpandable(
-    component: Component,
-    sourceIndex: number,
-    useScrollAnchor: boolean,
-  ): TuiMouseEventResult | undefined {
     if (!isExpandable(component) || !hasHiddenContent(component)) return undefined;
     if (!isExpandedComponent(component) && sourceIndex < this.firstExpandableSourceIndex()) return undefined;
-    const toggle = (): void => {
-      const expanded = !isExpandedComponent(component);
-      component.setExpanded(expanded);
-      this.setMemberOpened(component, expanded);
-    };
-    if (useScrollAnchor) this.withScrollAnchor(toggle);
-    else toggle();
+    const expanded = !isExpandedComponent(component);
+    component.setExpanded(expanded);
+    if (expanded) this.openedMembers.add(component);
+    else this.openedMembers.delete(component);
+    this.projectionCache = undefined;
     this.renderRequest?.();
     return { handled: true };
   }
@@ -458,12 +448,6 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   private initializeChild(child: Component, sourceIndex: number): void {
     if (!isExpandable(child)) return;
     child.setExpanded(this.globalExpanded && sourceIndex >= this.firstExpandableSourceIndex());
-  }
-
-  private setMemberOpened(component: Component, opened: boolean): void {
-    if (opened) this.openedMembers.add(component);
-    else this.openedMembers.delete(component);
-    this.projectionCache = undefined;
   }
 
   private withScrollAnchor(toggle: () => void): void {

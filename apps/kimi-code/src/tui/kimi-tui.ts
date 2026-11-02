@@ -542,6 +542,7 @@ export class KimiTUI {
         }
         this.state.transcriptView.withBottomAnchor(toggle, removedLines);
       },
+      viewportRows: () => this.state.transcriptView?.viewportRows,
       track: (event, properties) => {
         this.track(event, properties);
       },

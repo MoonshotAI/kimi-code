@@ -193,12 +193,13 @@ export function summarizeGroup(
     const first = fragments[0];
     if (first !== undefined) fragments[0] = first.charAt(0).toUpperCase() + first.slice(1);
   }
+  const landedEdits = edits.filter((event) => event.outcome.failed === 0 && event.outcome.interrupted === 0);
   const outcomes = events.flatMap((event) => 'outcome' in event ? [event.outcome] : []);
   const outcome = combineOutcomes(outcomes);
   return {
     fragments,
-    added: edits.reduce((total, event) => total + event.added, 0),
-    removed: edits.reduce((total, event) => total + event.removed, 0),
+    added: landedEdits.reduce((total, event) => total + event.added, 0),
+    removed: landedEdits.reduce((total, event) => total + event.removed, 0),
     failed: outcome.failed,
     interrupted: outcome.interrupted,
     allFailed: outcome.calls > 0 && outcome.failed === outcome.calls,

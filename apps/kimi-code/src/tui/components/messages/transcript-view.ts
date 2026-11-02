@@ -54,6 +54,10 @@ export class TranscriptView extends VStack {
     this.addChild(this.scrollView, { basis: 0, grow: 1, shrink: 1, minSize: 0 });
   }
 
+  get viewportRows(): number {
+    return this.scrollView.viewportHeight;
+  }
+
   withAnchoredScroll(toggle: () => void): void {
     const scrollTop = this.scrollView.scrollTop;
     toggle();

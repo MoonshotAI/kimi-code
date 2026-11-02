@@ -10,7 +10,7 @@ import { TranscriptGroupComponent } from '#/tui/components/messages/transcript-g
 import { TranscriptMoreComponent } from '#/tui/components/messages/transcript-more';
 import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import type { TranscriptPresentationOptions } from '#/tui/config';
-import { currentTheme, lightColors } from '#/tui/theme';
+import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import { mixColors } from '#/tui/theme/color-mix';
 import type { ToolCallBlockData, ToolResultBlockData, TranscriptEntry } from '#/tui/types';
 import { markTranscriptComponent } from '#/tui/utils/transcript-component-metadata';
@@ -69,7 +69,67 @@ function plain(lines: readonly string[]): string {
 }
 
 function tailLines(lines: readonly string[]): string[] {
-  return plain(lines).split('\n').filter((line) => /^ {2}[└├] /.test(line));
+  return plain(lines).split('\n').filter((line) => /^[└├] /.test(line));
+}
+
+interface GroupView {
+  readonly title: string;
+  readonly expanded: boolean;
+  readonly tail: readonly string[];
+  readonly body: readonly string[];
+  readonly rows: readonly string[];
+  readonly showLess: boolean;
+}
+
+function groupView(rendered: readonly string[]): GroupView {
+  const lines = plain(rendered).split('\n').map((line) => line.trimEnd());
+  const gap = lines.indexOf('', 1);
+  const body = gap > 0 ? lines.slice(gap + 1) : [];
+  return {
+    title: lines[1] ?? '',
+    expanded: gap > 0,
+    tail: gap > 0 ? [] : lines.slice(2),
+    body,
+    rows: body.filter((line) => /^[├└] /.test(line) && line !== '└ Show less'),
+    showLess: body.at(-1) === '└ Show less',
+  };
+}
+
+function groupViews(container: TranscriptContainer, width = 80): GroupView[] {
+  container.render(width);
+  return (container.getRenderedLayout()?.children ?? [])
+    .map((entry) => entry.component)
+    .filter((component) => component instanceof TranscriptGroupComponent)
+    .map((group) => groupView(group.render(width)));
+}
+
+function onlyGroup(container: TranscriptContainer, width = 80): GroupView {
+  const [group, ...rest] = groupViews(container, width);
+  if (group === undefined || rest.length > 0) throw new Error('expected exactly one group');
+  return group;
+}
+
+function lineOf(container: TranscriptContainer, text: string): number {
+  const index = plain(container.render(80)).split('\n').findIndex((line) => line.includes(text));
+  if (index < 0) throw new Error(`no line contains ${text}`);
+  return index;
+}
+
+function host(viewportRows?: number) {
+  return {
+    withScrollAnchor: vi.fn((toggle: () => void) => {
+      toggle();
+    }),
+    withBottomAnchor: vi.fn((toggle: () => void, _removedLines: number) => {
+      toggle();
+    }),
+    viewportRows: () => viewportRows,
+    track: vi.fn(),
+  };
+}
+
+function lines(count: number): string {
+  return Array.from({ length: count }, (_, index) => `line ${index + 1}`).join('\n');
 }
 
 function click(container: TranscriptContainer, y: number, x = 0): void {
@@ -105,7 +165,7 @@ afterEach(() => {
 });
 
 describe('TranscriptGroupComponent', () => {
-  it('renders collapsed and expanded summaries without rendering hidden members', () => {
+  it('renders collapsed and expanded groups without rendering member cards', () => {
     const { container } = makeContainer();
     const thinking = thought();
     const read = tool('Read', { path: '/work/a.ts' });
@@ -113,16 +173,21 @@ describe('TranscriptGroupComponent', () => {
     container.addChild(thinking);
     container.addChild(read);
 
-    const collapsed = container.render(80);
-    expect(plain(collapsed)).toContain('› Thought for 3s, read 1 file');
-    expect(memberRender).not.toHaveBeenCalled();
+    expect(onlyGroup(container)).toMatchObject({
+      title: '● Thought for 3s, read 1 file',
+      expanded: false,
+      tail: [],
+    });
 
     container.toggleGroup(thinking);
-    const expanded = plain(container.render(80));
-    expect(expanded).toContain('⌄ Thought for 3s, read 1 file');
-    expect(expanded).toContain('│ ');
-    expect(expanded).toContain('Used Read');
-    expect(memberRender).toHaveBeenCalled();
+    expect(onlyGroup(container)).toMatchObject({
+      title: '● Thought for 3s, read 1 file',
+      expanded: true,
+      rows: ['├ Thought for 3s', '└ Read a.ts'],
+      showLess: false,
+    });
+    expect(plain(container.render(80))).not.toContain('Used Read');
+    expect(memberRender).not.toHaveBeenCalled();
   });
 
   it('keeps regular thinking previews unchanged by grouping preferences', () => {
@@ -143,11 +208,11 @@ describe('TranscriptGroupComponent', () => {
     const { container } = makeContainer(options({ groupThinking: false }));
     const thinking = thought();
     container.addChild(thinking);
-    container.addChild(tool('Read'));
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
 
     const text = plain(container.render(80));
     expect(text).toContain('reasoning');
-    expect(text).toContain('› Read 1 file');
+    expect(onlyGroup(container).title).toBe('● Read a.ts');
     expect(text).not.toContain('Used Read');
   });
 
@@ -162,38 +227,329 @@ describe('TranscriptGroupComponent', () => {
     expect(second).toBe(first);
   });
 
-  it('re-renders a member when its card expands and preserves Ctrl+O expansion', () => {
+  it('draws one row per member with the stats each row keeps', () => {
+    chalk.level = 3;
+    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const thinking = thought();
+    container.addChild(thinking);
+    container.addChild(tool('Grep', { pattern: 'needle' }, {
+      tool_call_id: 'grep-stat',
+      output: 'src/a.ts\nsrc/b.ts',
+      is_error: false,
+    }));
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(tool('Edit', { path: '/work/a.ts', old_string: 'one', new_string: 'two\nthree' }));
+    container.addChild(tool('Write', { path: '/work/b.ts', content: 'a\nb\nc\n' }));
+    container.addChild(tool('Bash', { command: 'pnpm test' }, {
+      tool_call_id: 'bash-stat',
+      output: lines(40),
+      is_error: false,
+    }));
+    container.toggleGroup(thinking);
+
+    const group = onlyGroup(container);
+    expect(group.title).toBe('● Thought for 3s, read 1 file, searched 1 pattern, ran 1 command, edited … +5 -1');
+    expect(group.rows).toEqual([
+      '├ Thought for 3s',
+      '├ Search "needle" · 2 files',
+      '├ Read a.ts',
+      '├ Edit a.ts · +2 -1',
+      '├ Write b.ts · +3',
+      '└ Bash pnpm test',
+    ]);
+    const raw = container.render(80).join('\n');
+    expect(raw).toContain(`${currentTheme.boldFg('textDim', 'Read')} ${currentTheme.dim('a.ts')}`);
+    expect(raw).toContain(`${currentTheme.boldFg('textDim', 'Thought')} ${currentTheme.dim('for 3s')}`);
+    expect(raw).toContain(`${currentTheme.dim(' ·')} ${currentTheme.fg('diffAdded', '+2')} ${currentTheme.fg('diffRemoved', '-1')}`);
+    expect(raw).toContain(`${currentTheme.dim(' ·')} ${currentTheme.fg('diffAdded', '+3')}`);
+  });
+
+  it('marks failed and interrupted rows instead of showing their stats', () => {
+    chalk.level = 3;
     const { container } = makeContainer();
-    const output = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n');
+    const thinking = thought();
+    container.addChild(thinking);
+    container.addChild(tool('Read', { path: '/work/missing.ts' }, {
+      tool_call_id: 'read-failed',
+      output: 'File not found',
+      is_error: true,
+    }));
+    container.addChild(tool('Grep', { pattern: 'needle' }, {
+      tool_call_id: 'grep-interrupted',
+      output: 'Interrupted by user',
+      is_error: true,
+    }));
+    container.toggleGroup(thinking);
+
+    expect(onlyGroup(container).rows).toEqual([
+      '├ Thought for 3s',
+      '├ Read missing.ts · failed',
+      '└ Search "needle" · interrupted',
+    ]);
+    const raw = container.render(80).join('\n');
+    expect(raw).toContain(`${currentTheme.boldFg('error', 'Read')} ${currentTheme.dim('missing.ts')}${currentTheme.dim(' · failed')}`);
+    expect(raw).toContain(`${currentTheme.boldFg('textDim', 'Search')} `);
+  });
+
+  it('counts seconds on a running row and swaps in the stat when it finishes', () => {
+    chalk.level = 3;
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const { container } = makeContainer();
+    const read = tool('Read', { path: '/work/a.ts' });
+    const grep = runningTool('Grep', { pattern: 'needle' });
+    container.addChild(read);
+    container.addChild(grep);
+    container.toggleGroup(read);
+
+    expect(onlyGroup(container).rows).toEqual(['├ Read a.ts', '└ Search "needle"']);
+
+    vi.advanceTimersByTime(2_000);
+    expect(onlyGroup(container).rows).toEqual(['├ Read a.ts', '└ Search "needle" · 2s']);
+    expect(container.render(80).join('\n')).toContain(chalk.hex(currentTheme.faintForeground())(' · 2s'));
+
+    grep.setResult({ tool_call_id: grep.toolCallView.id, output: 'src/a.ts', is_error: false }, { known: true, ms: 2_000 });
+    expect(onlyGroup(container).rows).toEqual(['├ Read a.ts', '└ Search "needle" · 1 file']);
+    container.clear();
+  });
+
+  it('opens a row in place, drops the repeated command, and closes it from the detail', () => {
+    const { container } = makeContainer();
     const first = tool('Bash', { command: 'cat a.txt' }, {
       tool_call_id: 'bash-a',
-      output,
+      output: lines(40),
       is_error: false,
     });
-    const second = tool('Bash', { command: 'cat b.txt' }, {
-      tool_call_id: 'bash-b',
-      output,
-      is_error: false,
-    });
+    const second = tool('Bash', { command: 'cat b.txt' });
     container.addChild(first);
     container.addChild(second);
     container.toggleGroup(first);
-    const collapsedLines = plain(container.render(100)).split('\n');
-    const firstHeader = collapsedLines.findIndex((line) => line.includes('Ran a command') && line.includes('cat a.txt'));
-    expect(firstHeader).toBeGreaterThanOrEqual(0);
 
-    click(container, firstHeader);
+    click(container, lineOf(container, 'Bash cat a.txt'));
 
     expect(first.isExpanded()).toBe(true);
-    const expandedLines = plain(container.render(100)).split('\n');
-    expect(expandedLines.length).toBeGreaterThan(collapsedLines.length);
-    expect(expandedLines.some((line) => line.trimEnd().endsWith('line 1'))).toBe(true);
+    const group = onlyGroup(container);
+    expect(group.title).toBe('● Ran 2 commands');
+    expect(group.rows).toEqual(['├ Bash cat a.txt', '└ Bash cat b.txt']);
+    expect(group.body[1]).toBe('│   line 1');
+    expect(group.body).toContain('│   line 40');
+    expect(group.body.some((line) => line.includes('$ cat a.txt'))).toBe(false);
 
-    first.setExpanded(false);
-    container.toggleToolOutputExpansion();
+    click(container, lineOf(container, 'line 7'));
+    expect(first.isExpanded()).toBe(false);
+    expect(onlyGroup(container).body).toEqual(['├ Bash cat a.txt', '└ Bash cat b.txt']);
+  });
+
+  it('wraps the whole command of an opened Bash row under its first word', () => {
+    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const heredoc = tool('Bash', { command: "cat <<'EOF' > a.txt\nhello\nEOF" }, {
+      tool_call_id: 'bash-heredoc',
+      output: 'written',
+      is_error: false,
+    });
+    container.addChild(heredoc);
+    container.addChild(tool('Bash', { command: 'ls' }));
+    container.toggleGroup(heredoc);
+
+    expect(onlyGroup(container).rows[0]).toBe("├ Bash cat <<'EOF' > a.txt…");
+    click(container, lineOf(container, 'Bash cat'));
+
+    expect(onlyGroup(container).body.slice(0, 4)).toEqual([
+      "├ Bash cat <<'EOF' > a.txt",
+      '│      hello',
+      '│      EOF',
+      '│   written',
+    ]);
+  });
+
+  it('drops the Edit diff header and the search samples from opened rows', () => {
+    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const grep = tool('Grep', { pattern: 'needle' }, {
+      tool_call_id: 'grep-open',
+      output: 'src/a.ts\nsrc/b.ts',
+      is_error: false,
+    });
+    const edit = tool('Edit', { path: '/work/a.ts', old_string: 'one', new_string: 'two' }, {
+      tool_call_id: 'edit-open',
+      output: 'Replaced 1 occurrence in /work/a.ts',
+      is_error: false,
+    });
+    container.addChild(grep);
+    container.addChild(edit);
+    container.toggleGroup(grep);
+    click(container, lineOf(container, 'Search "needle"'));
+    click(container, lineOf(container, 'Edit a.ts'));
+
+    const body = onlyGroup(container).body;
+    expect(body).toContain('│     src/a.ts');
+    expect(body).toContain('│     src/b.ts');
+    expect(body.some((line) => line.includes('src/a.ts, src/b.ts'))).toBe(false);
+    expect(body.some((line) => line.includes('1 - one'))).toBe(true);
+    expect(body.some((line) => line.includes('/work/a.ts'))).toBe(false);
+
+    edit.setExpanded(false);
+    grep.setExpanded(false);
+    const card = plain(edit.render(80));
+    expect(card).toContain('/work/a.ts');
+  });
+
+  it('shows Show less only when the expanded group is taller than the viewport', () => {
+    const { container } = makeContainer();
+    const thinking = thought();
+    container.addChild(thinking);
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.toggleGroup(thinking);
+
+    expect(onlyGroup(container).showLess).toBe(false);
+    container.setHost(host(40));
+    expect(onlyGroup(container).showLess).toBe(false);
+
+    container.setHost(host(4));
+    const group = onlyGroup(container);
+    expect(group.showLess).toBe(true);
+    expect(group.rows).toEqual(['├ Thought for 3s', '├ Read a.ts']);
+  });
+
+  it('titles a finished one-item group with the item and opens its detail from the title', () => {
+    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const bash = runningTool('Bash', { command: 'ls -la' });
+    container.addChild(bash);
+    container.setTurnActive(true);
+
+    expect(onlyGroup(container)).toMatchObject({ title: '● Running 1 command', tail: ['└ $ ls -la'] });
+
+    click(container, 2);
+    expect(onlyGroup(container)).toMatchObject({ title: '● Running 1 command', expanded: true, rows: [] });
+    expect(onlyGroup(container).body[0]).toBe('  Bash ls -la');
+    expect(bash.isExpanded()).toBe(true);
+    click(container, 1);
+    expect(bash.isExpanded()).toBe(false);
+
+    bash.setResult({ tool_call_id: bash.toolCallView.id, output: lines(3), is_error: false }, { known: true, ms: 1_000 });
+    expect(onlyGroup(container)).toMatchObject({ title: '● $ ls -la', expanded: false, tail: [] });
+
+    click(container, 1);
+    expect(onlyGroup(container)).toMatchObject({
+      title: '● $ ls -la',
+      expanded: true,
+      body: ['  line 1', '  line 2', '  line 3'],
+    });
+    click(container, lineOf(container, 'line 2'));
+    expect(onlyGroup(container)).toMatchObject({ title: '● $ ls -la', expanded: false });
+    expect(bash.isExpanded()).toBe(false);
+    container.clear();
+  });
+
+  it('wraps an expanded one-item title and shows a thought in full', () => {
+    const { container } = makeContainer(options({ groupTools: 'off' }));
+    const thinking = new ThinkingComponent('one\ntwo\nthree\nfour\nfive\nsix', true, 'finalized');
+    thinking.finalize({ known: true, ms: 2_000 });
+    container.addChild(thinking);
+
+    expect(onlyGroup(container).title).toBe('● Thought for 2s');
+    click(container, 1);
+    expect(onlyGroup(container)).toMatchObject({
+      title: '● Thought for 2s',
+      body: ['  one', '  two', '  three', '  four', '  five', '  six'],
+    });
+  });
+
+  it('wraps a long expanded one-item title with continuation lines at column 3', () => {
+    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const command = 'pnpm --filter @moonshot-ai/kimi-code exec vitest run test/tui/components/messages --reporter verbose';
+    const bash = tool('Bash', { command }, { tool_call_id: 'long-bash', output: 'ok', is_error: false });
+    container.addChild(bash);
+    container.setTurnActive(false);
+
+    const collapsed = groupViews(container, 40);
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0]?.title).toMatch(/^● \$ /);
+    expect(collapsed[0]?.title).not.toContain('--reporter verbose');
+    expect(collapsed[0]?.expanded).toBe(false);
+
+    container.toggleGroup(bash);
+    const lines = plain(container.render(40)).split('\n').map((line) => line.trimEnd());
+    const start = lines.findIndex((line) => line.startsWith('● $ '));
+    const gap = lines.indexOf('', start);
+    const title = lines.slice(start, gap);
+    expect(title.length).toBeGreaterThan(1);
+    for (const line of title.slice(1)) expect(line).toMatch(/^ {2}\S/);
+    expect(title.join(' ').replaceAll(/\s+/g, ' ')).toContain('--reporter verbose');
+    expect(lines.slice(gap + 1).join('\n')).toContain('ok');
+  });
+
+  it('redraws from its own timer while a command runs in an expanded group of an idle turn', () => {
+    chalk.level = 3;
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const { container, requestRender } = makeContainer();
+    const read = tool('Read', { path: '/work/a.ts' });
+    const bash = runningTool('Bash', { command: 'sleep 30' });
+    container.addChild(read);
+    container.addChild(bash);
+    container.setTurnActive(false);
+    container.toggleGroup(read);
+    container.render(80);
+    requestRender.mockClear();
+
+    vi.advanceTimersByTime(2_500);
+
+    expect(requestRender).toHaveBeenCalled();
+    expect(container.render(80).join('\n')).toContain(chalk.hex(currentTheme.faintForeground())(' · 2s'));
+
+    bash.setResult({ tool_call_id: bash.toolCallView.id, output: 'done', is_error: false }, { known: true, ms: 3_000 });
+    container.render(80);
+    vi.advanceTimersByTime(5_000);
+    requestRender.mockClear();
+    vi.advanceTimersByTime(5_000);
+    expect(requestRender).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    container.clear();
+  });
+
+  it('keeps a one-item group open with its row open when a second member joins', () => {
+    const { container } = makeContainer();
+    const first = tool('Bash', { command: 'cat a.txt' }, {
+      tool_call_id: 'joined-a',
+      output: lines(2),
+      is_error: false,
+    });
+    container.addChild(first);
+    click(container, 1);
     expect(first.isExpanded()).toBe(true);
-    expect(second.isExpanded()).toBe(true);
-    expect(plain(container.render(100)).split('\n').length).toBeGreaterThan(collapsedLines.length);
+
+    container.addChild(tool('Bash', { command: 'cat b.txt' }));
+
+    expect(onlyGroup(container)).toMatchObject({
+      title: '● Ran 2 commands',
+      expanded: true,
+      body: ['├ Bash cat a.txt', '│   line 1', '│   line 2', '└ Bash cat b.txt'],
+    });
+  });
+
+  it('leaves failed and interrupted edits out of the title diff total', () => {
+    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const ok = tool('Edit', { path: '/work/ok.ts', old_string: 'a', new_string: 'b' });
+    container.addChild(ok);
+    container.addChild(tool('Edit', { path: '/work/bad.ts', old_string: 'a', new_string: 'b\nc' }, {
+      tool_call_id: 'edit-failed',
+      output: 'no match',
+      is_error: true,
+    }));
+    container.addChild(tool('Edit', { path: '/work/stop.ts', old_string: 'a', new_string: 'b\nc\nd' }, {
+      tool_call_id: 'edit-interrupted',
+      output: 'Interrupted by user',
+      is_error: true,
+    }));
+    container.toggleGroup(ok);
+
+    const view = onlyGroup(container);
+    expect(view.title).toBe('● Edited 3 files +1 -1 · 1 failed · 1 interrupted');
+    expect(view.rows).toEqual([
+      '├ Edit ok.ts · +1 -1',
+      '├ Edit bad.ts · failed',
+      '└ Edit stop.ts · interrupted',
+    ]);
   });
 
   it('keeps diff and failure tails at 70 columns', () => {
@@ -233,7 +589,7 @@ describe('TranscriptGroupComponent', () => {
     container.addChild(runningTool('Grep'));
 
     const initial = container.render(80);
-    expect(plain(initial)).toContain('› Thought for 3s');
+    expect(plain(initial)).toContain('● Thought for 3s');
     expect(plain(initial)).not.toContain('⠋');
     requestRender.mockClear();
     vi.advanceTimersByTime(100);
@@ -264,7 +620,7 @@ describe('TranscriptGroupComponent', () => {
       vi.advanceTimersByTime(50);
       container.render(100);
     }
-    const dimMarker = chalk.hex(currentTheme.color('textDim'))('›');
+    const dimMarker = chalk.hex(currentTheme.color('textDim'))('●');
     expect(container.render(100)[1]?.startsWith(dimMarker)).toBe(true);
 
     for (let frame = 0; frame < 7; frame++) {
@@ -275,7 +631,7 @@ describe('TranscriptGroupComponent', () => {
     container.clear();
   });
 
-  it('renders running and recent tails with one mixed color and elapsed seconds', () => {
+  it('renders running and recent tails from column one with elapsed seconds', () => {
     chalk.level = 3;
     vi.useFakeTimers();
     vi.setSystemTime(100_000);
@@ -288,14 +644,13 @@ describe('TranscriptGroupComponent', () => {
     container.setTurnActive(true);
 
     const initial = container.render(100);
-    const text = plain(initial);
-    expect(text).toContain('├ Read a.ts');
-    expect(text).toContain('└ $ sleep 5');
+    expect(onlyGroup(container, 100).tail).toEqual(['├ Read a.ts', '└ $ sleep 5']);
     const tailColor = mixColors(currentTheme.color('textDim'), '#1E1E1E', 0.35);
-    expect(initial.join('\n')).toContain(chalk.hex(tailColor)('  └ $ sleep 5'));
+    expect(initial.join('\n')).toContain(chalk.hex(tailColor)('└ $ sleep 5'));
 
     vi.advanceTimersByTime(2_000);
-    expect(plain(container.render(100))).toContain('└ $ sleep 5 · 2s');
+    expect(onlyGroup(container, 100).tail).toEqual(['├ Read a.ts · 2s', '└ $ sleep 5 · 2s']);
+    expect(onlyGroup(container, 14).tail).toEqual(['├ Read a… · 2s', '└ $ slee… · 2s']);
 
     for (const component of [read, bash]) {
       component.setResult({
@@ -304,17 +659,13 @@ describe('TranscriptGroupComponent', () => {
         is_error: false,
       }, { known: true, ms: 2_500 });
     }
-    const recent = plain(container.render(100));
-    expect(recent).not.toContain('├ Read a.ts');
-    expect(recent).toContain('└ $ sleep 5');
-    expect(recent).not.toContain('$ sleep 5 · 2s');
+    expect(onlyGroup(container, 100).tail).toEqual(['└ $ sleep 5']);
 
-    container.toggleGroup(read);
+    click(container, 2);
     const expanded = container.render(100);
-    expect(plain(expanded)).toContain('└ Show less');
-    expect(plain(expanded)).not.toContain('└ $ sleep 5');
+    expect(onlyGroup(container, 100)).toMatchObject({ expanded: true, tail: [], rows: ['├ Read a.ts', '└ Bash sleep 5'] });
     const guideColor = mixColors(currentTheme.color('textDim'), '#1E1E1E', 0.60);
-    expect(expanded.join('\n')).toContain(chalk.hex(guideColor)('│ '));
+    expect(expanded.join('\n')).toContain(chalk.hex(guideColor)('├ '));
     expect(expanded.join('\n')).toContain(chalk.hex(guideColor)('└ '));
 
     container.toggleGroup(read);
@@ -328,6 +679,7 @@ describe('TranscriptGroupComponent', () => {
     const previousPalette = currentTheme.palette;
     currentTheme.setTerminalBackground('#FFFFFF');
     const { container: group } = makeContainer();
+    group.setHost(host(2));
     const read = runningTool('Read', { path: '/work/a.ts' });
     group.addChild(read);
     group.setTurnActive(true);
@@ -349,12 +701,34 @@ describe('TranscriptGroupComponent', () => {
       expect(dense.render(100).join('\n')).toContain(chalk.hex(tailColor('#FAFBFC'))('Show less'));
 
       group.toggleGroup(read);
-      expect(group.render(100).join('\n')).toContain(chalk.hex(tailColor('#FAFBFC'))('  └ Read a.ts'));
+      expect(group.render(100).join('\n')).toContain(chalk.hex(tailColor('#FAFBFC'))('└ Read a.ts'));
       click(dense, 1);
       expect(dense.render(100).join('\n')).toContain(currentTheme.fg('textMuted', '… 2 more'));
     } finally {
       currentTheme.setPalette(previousPalette);
       group.clear();
+    }
+  });
+
+  it('recolors an opened row detail when the theme changes', () => {
+    chalk.level = 3;
+    const previousPalette = currentTheme.palette;
+    const { container } = makeContainer();
+    container.addChild(thought());
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.toggleToolOutputExpansion();
+    const lightDim = chalk.hex(lightColors.textDim)('reasoning').split('reasoning')[0] ?? '';
+
+    try {
+      currentTheme.setPalette(darkColors);
+      container.invalidate();
+      expect(container.render(80).find((line) => line.includes('reasoning'))).not.toContain(lightDim);
+
+      currentTheme.setPalette(lightColors);
+      container.invalidate();
+      expect(container.render(80).find((line) => line.includes('reasoning'))).toContain(lightDim);
+    } finally {
+      currentTheme.setPalette(previousPalette);
     }
   });
 
@@ -379,7 +753,7 @@ describe('TranscriptGroupComponent', () => {
     vi.advanceTimersByTime(100);
     const active = container.render(100);
     expect(active[1]).not.toBe(streaming[1]);
-    expect(tailLines(active)).toEqual(['  └ Read a.ts']);
+    expect(tailLines(active)).toEqual(['└ Read a.ts']);
     container.clear();
   });
 
@@ -391,17 +765,17 @@ describe('TranscriptGroupComponent', () => {
     container.setTurnActive(true);
 
     const streaming = container.render(100);
-    expect(plain(streaming)).toContain('› Read 1 file');
+    expect(onlyGroup(container, 100).title).toBe('● Read a.ts');
     expect(plain(streaming)).toContain('reasoning');
     expect(tailLines(streaming)).toEqual([]);
 
     thinking.finalize({ known: true, ms: 1000 });
     const merged = container.render(100);
-    expect(plain(merged)).toContain('› Thought for 1s, read 1 file');
+    expect(onlyGroup(container, 100).title).toBe('● Thought for 1s, read 1 file');
     expect(tailLines(merged)).toEqual([]);
 
     container.addChild(runningTool('Grep', { pattern: 'needle' }));
-    expect(tailLines(container.render(100))).toEqual(['  └ Search "needle"']);
+    expect(tailLines(container.render(100))).toEqual(['└ Search "needle"']);
     container.clear();
   });
 
@@ -411,7 +785,7 @@ describe('TranscriptGroupComponent', () => {
     container.addChild(thought());
     container.setTurnActive(true);
 
-    expect(tailLines(container.render(100))).toEqual(['  └ $ sleep 5']);
+    expect(tailLines(container.render(100))).toEqual(['└ $ sleep 5']);
     container.clear();
   });
 
@@ -456,113 +830,87 @@ describe('TranscriptGroupComponent', () => {
     container.addChild(runningTool(name, args));
     container.setTurnActive(true);
 
-    const tail = plain(container.render(100)).split('\n').find((line) => line.startsWith('  └ '));
-    expect(tail).toBe(`  └ ${expected}`);
+    expect(onlyGroup(container, 100).tail).toEqual([`└ ${expected}`]);
     container.clear();
   });
 
   it('keeps a clicked streaming thought outside after it finishes and restores it on collapse', () => {
     const { container } = makeContainer();
     const thinking = new ThinkingComponent('one\ntwo\nthree\nfour\nfive', true, 'live');
-    container.addChild(tool('Read'));
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
     container.addChild(thinking);
 
-    expect(plain(container.render(80))).toContain('Read 1 file');
+    expect(onlyGroup(container).title).toBe('● Read a.ts');
     click(container, plain(container.render(80)).split('\n').length - 1);
     expect(thinking.isExpanded()).toBe(true);
 
     thinking.finalize({ known: true, ms: 3000 });
     const finished = plain(container.render(80));
-    expect(finished).toContain('Read 1 file');
+    expect(onlyGroup(container).title).toBe('● Read a.ts');
     expect(finished).not.toContain('Thought for 3s');
     expect(finished).toContain('one');
 
     click(container, plain(container.render(80)).split('\n').length - 1);
     expect(thinking.isExpanded()).toBe(false);
-    expect(plain(container.render(80))).toContain('Thought for 3s, read 1 file');
+    expect(onlyGroup(container).title).toBe('● Thought for 3s, read 1 file');
   });
 
-  it('keeps a clicked member outside the summary and restores it when collapsed', () => {
+  it('opens every row in recent groups with Ctrl+O and closes them again', () => {
     const { container } = makeContainer();
-    const output = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n');
-    const first = tool('Bash', { command: 'cat a.txt' }, {
-      tool_call_id: 'manual-a',
-      output,
-      is_error: false,
-    });
+    const first = tool('Read', { path: '/work/a.ts' });
+    const second = tool('Read', { path: '/work/b.ts' });
     container.addChild(first);
-    container.addChild(tool('Bash', { command: 'cat b.txt' }));
-    container.toggleGroup(first);
-
-    const expanded = plain(container.render(100)).split('\n');
-    click(container, expanded.findIndex((line) => line.includes('cat a.txt')));
-    expect(first.isExpanded()).toBe(true);
-    expect(plain(container.render(100))).toContain('Ran 1 command');
-
-    const external = plain(container.render(100)).split('\n');
-    click(container, external.findLastIndex((line) => line.includes('cat a.txt')));
-    expect(first.isExpanded()).toBe(false);
-    expect(plain(container.render(100))).toContain('Ran 2 commands');
-  });
-
-  it('does not treat Ctrl+O expansion as opening individual members', () => {
-    const { container } = makeContainer();
-    container.addChild(tool('Read', { path: '/work/a.ts' }));
-    container.addChild(tool('Read', { path: '/work/b.ts' }));
+    container.addChild(second);
 
     container.toggleToolOutputExpansion();
 
-    const text = plain(container.render(80));
-    expect(text).toContain('Read 2 files');
-    expect(text.match(/│ .*Used Read/g)).toHaveLength(2);
+    const group = onlyGroup(container);
+    expect(group.title).toBe('● Read 2 files');
+    expect(group.rows).toEqual(['├ Read a.ts', '└ Read b.ts']);
+    expect(group.body.filter((line) => line.endsWith('first'))).toHaveLength(2);
+
+    container.toggleToolOutputExpansion();
+    expect(onlyGroup(container)).toMatchObject({ title: '● Read 2 files', expanded: false });
+    expect(first.isExpanded() || second.isExpanded()).toBe(false);
   });
 
-  it('returns members collapsed by Ctrl+O to their groups', () => {
+  it('closes rows opened by a click when Ctrl+O collapses everything', () => {
     const { container } = makeContainer();
-    const output = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n');
     const opened = tool('Bash', { command: 'cat a.txt' }, {
       tool_call_id: 'opened-by-user',
-      output,
+      output: lines(40),
       is_error: false,
     });
     container.addChild(opened);
     container.addChild(tool('Bash', { command: 'cat b.txt' }));
     container.toggleGroup(opened);
-    const expanded = plain(container.render(100)).split('\n');
-    click(container, expanded.findIndex((line) => line.includes('cat a.txt')));
-    expect(plain(container.render(100))).toContain('Ran 1 command');
+    click(container, lineOf(container, 'Bash cat a.txt'));
+    expect(opened.isExpanded()).toBe(true);
 
     container.toggleToolOutputExpansion();
     container.toggleToolOutputExpansion();
 
-    const collapsed = plain(container.render(100));
     expect(opened.isExpanded()).toBe(false);
-    expect(collapsed).toContain('› Ran 2 commands');
-    expect(collapsed).not.toContain('cat a.txt');
+    expect(onlyGroup(container)).toMatchObject({ title: '● Ran 2 commands', expanded: false, tail: [] });
   });
 
-  it('collapses the group an opened only member returns to after Ctrl+O collapses everything', () => {
+  it('collapses a one-item group and its member after Ctrl+O collapses everything', () => {
     const { container } = makeContainer();
-    const output = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n');
     const opened = tool('Bash', { command: 'cat only.txt' }, {
       tool_call_id: 'only-member',
-      output,
+      output: lines(40),
       is_error: false,
     });
     container.addChild(opened);
     container.toggleGroup(opened);
-    const expanded = plain(container.render(80)).split('\n');
-    click(container, expanded.findIndex((line) => line.includes('cat only.txt')));
     expect(opened.isExpanded()).toBe(true);
-    expect(plain(container.render(80))).not.toContain('Ran 1 command');
+    expect(onlyGroup(container)).toMatchObject({ title: '● $ cat only.txt', expanded: true });
 
     container.toggleToolOutputExpansion();
     container.toggleToolOutputExpansion();
 
-    const collapsed = plain(container.render(80));
     expect(opened.isExpanded()).toBe(false);
-    expect(collapsed).toContain('› Ran 1 command');
-    expect(collapsed).not.toContain('Show less');
+    expect(onlyGroup(container)).toMatchObject({ title: '● $ cat only.txt', expanded: false, showLess: false });
     expect(container.toolOutputExpandHint()).toBe('expand');
   });
 
@@ -608,9 +956,8 @@ describe('TranscriptContainer streaming updates', () => {
     read.updateToolCall(call);
     container.setTurnActive(false);
 
-    const text = plain(container.render(100));
-    expect(text).toContain('Read 1 file');
-    expect(text).not.toContain('Reading');
+    expect(onlyGroup(container, 100).title).toBe('● Read a.ts');
+    expect(plain(container.render(100))).not.toContain('Reading');
   });
 
   it('updates the Bash tail while arguments are still streaming', () => {
@@ -723,15 +1070,18 @@ describe('TranscriptContainer dense truncation', () => {
 
     expect(container.toolOutputExpandHint()).toBe('expand');
     expect(container.toggleToolOutputExpansion()).toBe(true);
-    expect(plain(container.render(100))).toContain('⌄ Read 1 file');
+    expect(groupViews(container, 100).map((group) => [group.title, group.expanded])).toEqual([['● Read b.ts', true]]);
     expect(components.every((component) => component.isExpanded())).toBe(true);
     expect(container.toolOutputExpandHint()).toBe('collapse');
 
     click(container, 1);
-    expect(plain(container.render(100)).match(/⌄ Read 1 file/g)).toHaveLength(2);
+    expect(groupViews(container, 100).map((group) => [group.title, group.expanded])).toEqual([
+      ['● Read a.ts', true],
+      ['● Read b.ts', true],
+    ]);
 
     expect(container.toggleToolOutputExpansion()).toBe(false);
-    expect(plain(container.render(100))).not.toContain('⌄');
+    expect(groupViews(container, 100).some((group) => group.expanded)).toBe(false);
     expect(components.every((component) => !component.isExpanded())).toBe(true);
   });
 
@@ -767,21 +1117,18 @@ describe('TranscriptContainer interaction', () => {
     const thinking = thought();
     container.addChild(thinking);
     container.addChild(tool('Read'));
-    const track = vi.fn();
-    const withScrollAnchor = vi.fn((toggle: () => void) => {
-      toggle();
-    });
-    container.setHost({ withScrollAnchor, withBottomAnchor: vi.fn(), track });
+    const grouping = host();
+    container.setHost(grouping);
 
     click(container, 1, 60);
 
-    expect(withScrollAnchor).toHaveBeenCalledOnce();
-    expect(track).toHaveBeenCalledWith('transcript_group_toggle', { expanded: true });
-    expect(plain(container.render(80))).toContain('⌄ Thought for 3s');
+    expect(grouping.withScrollAnchor).toHaveBeenCalledOnce();
+    expect(grouping.track).toHaveBeenCalledWith('transcript_group_toggle', { expanded: true });
+    expect(onlyGroup(container)).toMatchObject({ title: '● Thought for 3s, read 1 file', expanded: true });
 
     click(container, 1, 0);
-    expect(track).toHaveBeenCalledWith('transcript_group_toggle', { expanded: false });
-    expect(plain(container.render(80))).toContain('› Thought for 3s');
+    expect(grouping.track).toHaveBeenCalledWith('transcript_group_toggle', { expanded: false });
+    expect(onlyGroup(container).expanded).toBe(false);
   });
 
   it('collapses from Show less with bottom anchoring', () => {
@@ -789,67 +1136,38 @@ describe('TranscriptContainer interaction', () => {
     const thinking = thought();
     container.addChild(thinking);
     container.addChild(tool('Read'));
-    const withScrollAnchor = vi.fn((toggle: () => void) => {
-      toggle();
-    });
-    const withBottomAnchor = vi.fn((toggle: () => void, _removedLines: number) => {
-      toggle();
-    });
-    container.setHost({ withScrollAnchor, withBottomAnchor, track: vi.fn() });
+    const grouping = host(3);
+    container.setHost(grouping);
     container.toggleGroup(thinking);
     const expanded = container.render(80);
     const showLess = plain(expanded).split('\n').findIndex((line) => line.includes('Show less'));
-    withScrollAnchor.mockClear();
+    grouping.withScrollAnchor.mockClear();
 
     click(container, showLess);
 
-    expect(withBottomAnchor).toHaveBeenCalledOnce();
-    expect(withBottomAnchor.mock.calls[0]?.[1]).toBe(expanded.length - 2);
-    expect(withScrollAnchor).not.toHaveBeenCalled();
-    expect(plain(container.render(80))).toContain('› Thought for 3s');
+    expect(grouping.withBottomAnchor).toHaveBeenCalledOnce();
+    expect(grouping.withBottomAnchor.mock.calls[0]?.[1]).toBe(expanded.length - 2);
+    expect(grouping.withScrollAnchor).not.toHaveBeenCalled();
+    expect(onlyGroup(container).expanded).toBe(false);
   });
 
-  it('lets summary clicks expand old groups but keeps member expansion within three turns', () => {
+  it('opens rows of old groups on click while Ctrl+O stays within three turns', () => {
     const { container } = makeContainer();
     const oldThinking = thought();
-    const oldRead = tool('Read');
+    const oldRead = tool('Read', { path: '/work/old.ts' });
     container.addChild(oldThinking);
     container.addChild(oldRead);
     for (const text of ['one', 'two', 'three', 'four']) container.addChild(user(text));
 
     click(container, 1);
-    expect(plain(container.render(80))).toContain('⌄ Thought for 3s');
-    click(container, 4);
+    expect(onlyGroup(container).expanded).toBe(true);
+    click(container, lineOf(container, 'Read old.ts'));
+    expect(oldRead.isExpanded()).toBe(true);
+
+    click(container, lineOf(container, 'Read old.ts'));
     expect(oldRead.isExpanded()).toBe(false);
-
-    const recentThinking = thought();
-    const recentRead = tool('Read');
-    container.addChild(recentThinking);
-    container.addChild(recentRead);
-    const lines = plain(container.render(80)).split('\n');
-    const recentSummary = lines.findLastIndex((line) => line.includes('Thought for 3s'));
-    expect(recentSummary).toBeGreaterThanOrEqual(0);
-    click(container, recentSummary);
-    click(container, recentSummary + 4);
-    expect(recentRead.isExpanded()).toBe(true);
-  });
-
-  it('gives a member component first chance to handle its mouse event', () => {
-    const { container } = makeContainer();
-    const thinking = thought();
-    const read = tool('Read');
-    container.addChild(thinking);
-    container.addChild(read);
-    container.toggleGroup(thinking);
-    const memberMouse = vi.spyOn(read, 'handleMouse').mockReturnValue({
-      handled: true,
-      target: { component: read, originX: 0, originY: 0, width: 80, height: 1 },
-    });
-
-    click(container, 4);
-
-    expect(memberMouse).toHaveBeenCalledOnce();
-    expect(read.isExpanded()).toBe(false);
+    container.toggleToolOutputExpansion();
+    expect(oldRead.isExpanded()).toBe(false);
   });
 
   it('expands only recent groups with Ctrl+O and applies global state to new groups', () => {
@@ -863,20 +1181,19 @@ describe('TranscriptContainer interaction', () => {
     container.addChild(tool('Grep'));
 
     expect(container.toggleToolOutputExpansion()).toBe(true);
-    let text = plain(container.render(100));
-    expect(text).toContain('› Thought for 3s, read 1 file');
-    expect(text).toContain('⌄ Thought for 3s, searched 1 pattern');
+    expect(groupViews(container, 100).map((group) => [group.title, group.expanded])).toEqual([
+      ['● Thought for 3s, read 1 file', false],
+      ['● Thought for 3s, searched 1 pattern', true],
+    ]);
 
     container.addChild(user('next turn'));
     const newThinking = thought();
     container.addChild(newThinking);
     container.addChild(tool('Glob'));
-    text = plain(container.render(100));
-    expect(text.match(/⌄/g)).toHaveLength(2);
+    expect(groupViews(container, 100).filter((group) => group.expanded)).toHaveLength(2);
 
     expect(container.toggleToolOutputExpansion()).toBe(false);
-    text = plain(container.render(100));
-    expect(text).not.toContain('⌄');
+    expect(groupViews(container, 100).some((group) => group.expanded)).toBe(false);
   });
 
   it('re-derives after configuration changes while preserving group expansion', () => {
@@ -886,12 +1203,16 @@ describe('TranscriptContainer interaction', () => {
     container.addChild(tool('Read'));
     container.addChild(tool('Grep'));
     container.toggleGroup(thinking);
-    expect(plain(container.render(80))).toContain('⌄ Thought for 3s');
+    expect(onlyGroup(container).expanded).toBe(true);
 
     container.setPresentationOptions(options({ groupTools: 'off' }));
 
+    expect(onlyGroup(container)).toMatchObject({
+      title: '● Thought for 3s',
+      expanded: true,
+      body: ['  reasoning'],
+    });
     const text = plain(container.render(80));
-    expect(text).toContain('⌄ Thought');
     expect(text).toContain('Used Read');
     expect(text).toContain('Used Grep');
   });
