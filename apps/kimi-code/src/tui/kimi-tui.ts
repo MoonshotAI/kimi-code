@@ -2311,7 +2311,8 @@ export class KimiTUI {
       const request = this.trackPendingEntries(
         [entry],
         this.dispatchPreparedInput(session, sdkInput, (parts) => {
-          if (goalSteerIntoRunningTurn) this.notePendingSteer([entry], parts);
+          if (this.turnCanAcceptSteer()) this.notePendingSteer([entry], parts);
+          else this.releaseSteerEntries([entry]);
           return session.steer(parts);
         }),
       );
@@ -2610,6 +2611,11 @@ export class KimiTUI {
     this.drainOneQueuedMessage();
   }
 
+  private turnCanAcceptSteer(): boolean {
+    const phase = this.state.appState.streamingPhase;
+    return phase !== 'idle' && phase !== 'shell' && !this.state.appState.isCompacting;
+  }
+
   acknowledgeSteerDelivery(input: unknown): void {
     const { texts, hasMedia } = steerEventParts(input);
     let pending = this.pendingSteerDeliveries;
@@ -2742,7 +2748,8 @@ export class KimiTUI {
     if (currentTurnId !== undefined && prepared === undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
     const dispatch = (items: readonly SteerInputItem[]) => {
       const payload = combineSteerInput(items);
-      if (!startsNewTurn) this.notePendingSteer(steeredEntries, payload);
+      if (this.turnCanAcceptSteer()) this.notePendingSteer(steeredEntries, payload);
+      else this.releaseSteerEntries(steeredEntries);
       return prepared === undefined
         ? session.steer(payload)
         : session.promptWithSkills(payload, prepared.skills, { steerIfActive: true });
