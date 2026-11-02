@@ -224,7 +224,7 @@ describe('fromShellPath cygpath resolution', () => {
 describe('remote unresolved path rejection', () => {
   const env: ShellPathBridgeEnv = { ...WINDOWS_ENV, pathResolution: 'reject-unresolved' };
 
-  it.each(['/', '/tmp/x', '/usr/bin/node', '/home/user/file'])('rejects %s without local cygpath calls', (input) => {
+  it.each(['/', '/tmp/x', '/usr/bin/node', '/home/user/file', '/dev/null', '/proc/self/status', '/sys/kernel'])('rejects %s without local cygpath calls', (input) => {
     const { deps, execFileSync } = stubDeps({ existingPaths: [USR_BIN_CYGPATH] });
     const bridge = createShellPathBridge(env, deps);
 

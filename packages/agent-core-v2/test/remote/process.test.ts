@@ -596,4 +596,25 @@ describe('finished process-group ownership', () => {
       vi.useRealTimers();
     }
   });
+
+  it('does not schedule a grace kill for a Windows executor', async () => {
+    vi.useFakeTimers();
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const manager = new ProcessManager(() => {}, new HostProcessService());
+    const internals = manager as unknown as {
+      beginTermination(entry: unknown): Promise<void>;
+    };
+    const entry = { child: { kill: vi.fn(async () => {}) }, killTimer: undefined };
+    try {
+      await internals.beginTermination(entry);
+      expect(entry.child.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(entry.killTimer).toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      manager.dispose();
+      Object.defineProperty(process, 'platform', { value: platform });
+      vi.useRealTimers();
+    }
+  });
 });

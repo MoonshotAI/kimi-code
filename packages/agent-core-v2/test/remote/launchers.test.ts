@@ -86,6 +86,12 @@ describe('ssh remote command quoting', () => {
     );
   });
 
+  it.each(['if', 'time', 'exec', 'echo'])('keeps POSIX quoting for reserved or builtin name %s', (remoteBin) => {
+    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin }).args.at(-1)).toBe(
+      `'${remoteBin}' 'exec-server' '--listen' 'stdio'`,
+    );
+  });
+
   it('keeps tilde prefixes expandable while quoting the remainder', () => {
     expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '~/bin/kimi' }).args.at(-1)).toBe(
       `"$HOME"'/bin/kimi' 'exec-server' '--listen' 'stdio'`,

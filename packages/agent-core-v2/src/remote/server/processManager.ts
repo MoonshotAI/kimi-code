@@ -353,6 +353,7 @@ export class ProcessManager {
 
   private async beginTermination(entry: ManagedProcess): Promise<void> {
     await entry.child?.kill('SIGTERM');
+    if (process.platform === 'win32') return;
     entry.killTimer = setTimeout(() => {
       this.killGroup(entry, 'SIGKILL');
     }, PROCESS_TERMINATION_GRACE_MS);

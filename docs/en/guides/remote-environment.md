@@ -67,7 +67,7 @@ For the full field reference, see [`environments`](../configuration/config-files
 
 Windows targets use Git Bash for the `Bash` tool, matching local Windows sessions. Install [Git for Windows](https://gitforwindows.org/) and the Windows `kimi` binary on the target. Native PowerShell tool commands and Windows Docker containers are not supported.
 
-For SSH, put the binary on the target account's `PATH` and verify that `ssh windows-dev kimi --version` succeeds without a prompt. Set `remoteBin` to the bare name `kimi` or `kimi.exe`, not an absolute Windows path, so the same invocation works with cmd, PowerShell, or Git Bash as the SSH default shell. Use a native drive or UNC path for `defaultCwd`, not a Git Bash path such as `/c/work/project`. Tool arguments can use lexical drive forms such as `/c/work/file.txt`, but other MSYS paths such as `/tmp` and `/usr` are rejected because their mounts cannot be confirmed on the target; the controller never runs its local `cygpath` to guess them.
+For SSH, put the binary on the target account's `PATH` and verify that `ssh windows-dev kimi --version` succeeds without a prompt. Set `remoteBin` to the bare name `kimi` or `kimi.exe`, not an absolute Windows path, so the same invocation works with cmd, PowerShell, or Git Bash as the SSH default shell. Use a native drive or UNC path for `defaultCwd`, not a Git Bash path such as `/c/work/project`. Tool arguments can use lexical drive forms such as `/c/work/file.txt`, but other MSYS paths such as `/tmp`, `/usr`, `/dev`, and `/proc` are rejected because their mounts cannot be confirmed on the target; the controller never runs its local `cygpath` to guess them.
 
 ```toml
 [environments.windows-dev]

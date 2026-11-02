@@ -79,9 +79,10 @@ export function shQuote(value: string): string {
 }
 
 const TILDE_PREFIX = /^~[a-zA-Z0-9._-]*/;
+const CROSS_SHELL_REMOTE_BINS: ReadonlySet<string> = new Set(['kimi', 'kimi.exe']);
 
 function execServerShellCommand(remoteBin: string): string {
-  if (/^[A-Za-z0-9_.-]+$/.test(remoteBin)) {
+  if (CROSS_SHELL_REMOTE_BINS.has(remoteBin)) {
     return [remoteBin, ...EXEC_SERVER_ARGV].join(' ');
   }
   const tilde = TILDE_PREFIX.exec(remoteBin);

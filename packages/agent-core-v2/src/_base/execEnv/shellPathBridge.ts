@@ -99,7 +99,7 @@ export function createShellPathBridge(
       const lexical = translateShellDrivePath(normalized);
       if (lexical !== normalized) return lexical;
       if (normalized === '/' && env.pathResolution !== 'reject-unresolved') return normalized;
-      if (VIRTUAL_FS_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return normalized;
+      if (env.pathResolution !== 'reject-unresolved' && VIRTUAL_FS_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return normalized;
       const firstSegment = normalized.slice(1).split('/')[0]!;
       const prefix = resolveRootSegment(firstSegment);
       if (prefix === null) {

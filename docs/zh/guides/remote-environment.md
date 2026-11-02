@@ -67,7 +67,7 @@ defaultCwd = "/home/me/kimi-code"
 
 Windows 目标通过 Git Bash 执行 `Bash` 工具，与本机 Windows 会话一致。在目标机器上安装 [Git for Windows](https://gitforwindows.org/) 和 Windows 版 `kimi` 二进制文件。不支持原生 PowerShell 工具命令和 Windows Docker 容器。
 
-使用 SSH 时，把二进制文件放到目标账户的 `PATH` 中，并确认 `ssh windows-dev kimi --version` 可以无提示成功执行。`remoteBin` 应设为裸名称 `kimi` 或 `kimi.exe`，不要设为 Windows 绝对路径，这样无论 SSH 默认 Shell 是 cmd、PowerShell 还是 Git Bash，都能使用同一条调用命令。`defaultCwd` 使用原生驱动器或 UNC 路径，不要使用 `/c/work/project` 这类 Git Bash 路径。工具参数可以使用 `/c/work/file.txt` 这类驱动器路径形式，但 `/tmp`、`/usr` 等其他 MSYS 路径会由于无法在目标上确认挂载映射而被拒绝；控制端不会运行本机 `cygpath` 进行猜测。
+使用 SSH 时，把二进制文件放到目标账户的 `PATH` 中，并确认 `ssh windows-dev kimi --version` 可以无提示成功执行。`remoteBin` 应设为裸名称 `kimi` 或 `kimi.exe`，不要设为 Windows 绝对路径，这样无论 SSH 默认 Shell 是 cmd、PowerShell 还是 Git Bash，都能使用同一条调用命令。`defaultCwd` 使用原生驱动器或 UNC 路径，不要使用 `/c/work/project` 这类 Git Bash 路径。工具参数可以使用 `/c/work/file.txt` 这类驱动器路径形式，但 `/tmp`、`/usr`、`/dev`、`/proc` 等其他 MSYS 路径会由于无法在目标上确认挂载映射而被拒绝；控制端不会运行本机 `cygpath` 进行猜测。
 
 ```toml
 [environments.windows-dev]
