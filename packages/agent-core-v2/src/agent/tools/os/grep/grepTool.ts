@@ -44,6 +44,7 @@ import { type GrepInput, GrepInputSchema, IGrepTool } from './grep';
 
 const RG_MAX_COLUMNS = 500;
 const DEFAULT_HEAD_LIMIT = 250;
+const MTIME_STAT_CONCURRENCY = 32;
 
 const VCS_DIRECTORIES_TO_EXCLUDE = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'] as const;
 const SENSITIVE_KEY_BASENAMES = ['id_rsa', 'id_ed25519', 'id_ecdsa'] as const;
@@ -221,10 +222,22 @@ export class GrepTool implements IGrepTool {
 
     const filteredSensitive = new Set<string>();
     const keptLines = filterSensitiveLines(rawLines, mode, filteredSensitive, pathClass);
+    let orderedLines: ParsedGrepLine[];
+    try {
+      orderedLines =
+        mode === 'files_with_matches' && !timedOut
+          ? await this.sortFilesWithMatchesByMtime(fs, keptLines, signal)
+          : keptLines;
+    } catch (error) {
+      if (error instanceof GrepAbortedError) {
+        return { isError: true, output: 'Grep aborted' };
+      }
+      throw error;
+    }
 
     const offset = args.offset ?? 0;
     const headLimit = args.head_limit ?? DEFAULT_HEAD_LIMIT;
-    const afterOffset = offset > 0 ? keptLines.slice(offset) : keptLines;
+    const afterOffset = offset > 0 ? orderedLines.slice(offset) : orderedLines;
     const limitActive = headLimit > 0;
     const limited = limitActive ? afterOffset.slice(0, headLimit) : afterOffset;
     const paginationTruncated = limitActive && afterOffset.length > headLimit;
@@ -239,8 +252,8 @@ export class GrepTool implements IGrepTool {
         `Filtered ${String(filteredSensitive.size)} sensitive file(s): ${displayedFilteredPaths.join(', ')}`,
       );
     }
-    if (mode === 'count_matches' && keptLines.length > 0) {
-      headerLines.push(formatCountSummary(keptLines, filteredSensitive.size > 0));
+    if (mode === 'count_matches' && orderedLines.length > 0) {
+      headerLines.push(formatCountSummary(orderedLines, filteredSensitive.size > 0));
     }
     if (paginationTruncated) {
       const total = afterOffset.length + offset;
@@ -278,7 +291,7 @@ export class GrepTool implements IGrepTool {
     );
     const contentBody = displayedLines.join('\n');
     const visibleBody =
-      keptLines.length === 0 && filteredSensitive.size > 0
+      orderedLines.length === 0 && filteredSensitive.size > 0
         ? 'No non-sensitive matches found'
         : contentBody;
     const emptyResultMessage =
@@ -316,6 +329,32 @@ export class GrepTool implements IGrepTool {
     };
   }
 
+  private async sortFilesWithMatchesByMtime(
+    fs: IHostFileSystem,
+    lines: readonly ParsedGrepLine[],
+    signal: AbortSignal,
+  ): Promise<ParsedGrepLine[]> {
+    const entries = await mapWithConcurrency(
+      lines,
+      MTIME_STAT_CONCURRENCY,
+      signal,
+      async (line, index) => {
+        const path =
+          line.kind === 'record' ? line.filePath : line.kind === 'legacy' ? line.text : undefined;
+        let mtime = 0;
+        if (path !== undefined) {
+          try {
+            const mtimeMs = (await fs.stat(path)).mtimeMs ?? 0;
+            mtime = Math.trunc(mtimeMs / 1000);
+          } catch {
+          }
+        }
+        return { line, mtime, index };
+      },
+    );
+    entries.sort((a, b) => b.mtime - a.mtime || a.index - b.index);
+    return entries.map((entry) => entry.line);
+  }
 }
 
 registerAgentToolService(IGrepTool, GrepTool, {
@@ -348,6 +387,41 @@ type ParsedGrepLine =
       readonly text: string;
     };
 
+class GrepAbortedError extends Error {
+  constructor() {
+    super('Grep aborted');
+    this.name = 'GrepAbortedError';
+  }
+}
+
+async function mapWithConcurrency<T, U>(
+  items: readonly T[],
+  concurrency: number,
+  signal: AbortSignal,
+  mapper: (item: T, index: number) => Promise<U>,
+): Promise<U[]> {
+  if (signal.aborted) throw new GrepAbortedError();
+  if (items.length === 0) return [];
+
+  const results: U[] = [];
+  results.length = items.length;
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        if (signal.aborted) return;
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= items.length) return;
+        results[index] = await mapper(items[index] as T, index);
+      }
+    }),
+  );
+  if (signal.aborted) throw new GrepAbortedError();
+  return results;
+}
+
 function buildRgArgs(
   rgPath: string,
   args: GrepInput,
@@ -366,7 +440,7 @@ function buildRgArgs(
     cmd.push('--glob', `!${dir}`);
   }
 
-  if (mode === 'files_with_matches') cmd.push('-l', '--sortr=modified');
+  if (mode === 'files_with_matches') cmd.push('-l');
   else if (mode === 'count_matches') {
     cmd.push('--count-matches', '--with-filename');
   }
