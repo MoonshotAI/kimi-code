@@ -60,14 +60,15 @@ function modelCapabilities(): ModelCapability {
   };
 }
 
-function registryBackedService(registry: EnvironmentRegistry): IAgentEnvironmentService {
+function registryBackedService(registry: EnvironmentRegistry, environmentId = BINDING.environmentId): IAgentEnvironmentService {
+  const binding = { environmentId };
   return {
     _serviceBrand: undefined,
     onDidChange: (listener) => registry.onDidChange(() => listener()),
     targets: () => [{ environmentId: 'local', primary: true }],
     isAvailable: (required: readonly EnvironmentCapability[] = []) => {
       try {
-        const environment = registry.inspect(BINDING);
+        const environment = registry.inspect(binding);
         return (
           environmentIsReady(environment) &&
           required.every((capability) => environment.capabilities.has(capability))
@@ -76,33 +77,37 @@ function registryBackedService(registry: EnvironmentRegistry): IAgentEnvironment
         return false;
       }
     },
-    inspect: () => registry.inspect(BINDING),
-    acquire: (required = []) => registry.acquire(BINDING, required),
+    inspect: () => registry.inspect(binding),
+    acquire: (required = []) => registry.acquire(binding, required),
     acquireWhenReady: async (required = []) => {
-      const environment = registry.inspect(BINDING);
+      const environment = registry.inspect(binding);
       if (!environmentIsReady(environment) && typeof environment.connect === 'function') {
         await environment.connect();
       }
-      return registry.acquireWhenReady(BINDING, required);
+      return registry.acquireWhenReady(binding, required);
     },
     workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
   };
 }
 
-function connectSwappingHarness(readyFs: IHostFileSystem) {
+function connectSwappingHarness(
+  readyFs: IHostFileSystem,
+  host?: Partial<NonNullable<Environment['host']>>,
+  environmentId = BINDING.environmentId,
+) {
   const registry = new EnvironmentRegistry();
   const calls: string[] = [];
   let registration: EnvironmentRegistrationHandle;
   const ready = Object.assign(
     new FakeEnvironment(
-      { ...BINDING, generation: 'remote-ready' },
-      { status: 'ready', capabilities: ['fs', 'process'] },
+      { environmentId, generation: `${environmentId}-ready` },
+      { status: 'ready', capabilities: ['fs', 'process'], host },
     ),
     { fs: readyFs, process: {} },
   );
   const pending = Object.assign(
     new FakeEnvironment(
-      { ...BINDING, generation: 'remote-pending' },
+      { environmentId, generation: `${environmentId}-pending` },
       { status: 'pending', capabilities: [] },
     ),
     {
@@ -110,12 +115,19 @@ function connectSwappingHarness(readyFs: IHostFileSystem) {
       connect: async () => {
         calls.push('connect');
         await registration.remove();
-        registry.register(ready);
+        registration = registry.register(ready);
       },
     },
   );
   registration = registry.register(pending);
-  return { registration, service: registryBackedService(registry), calls };
+  return {
+    registry,
+    get registration() {
+      return registration;
+    },
+    service: registryBackedService(registry, environmentId),
+    calls,
+  };
 }
 
 function readyHarness(fs: IHostFileSystem) {
@@ -185,8 +197,30 @@ const editService = {
   edit: async () => ({ ok: true as const, count: 1 }),
 } as unknown as IFileEditService;
 
+function bashTool(service: IAgentEnvironmentService): BashTool {
+  return new BashTool(
+    service,
+    makeSessionContext({
+      sessionId: 'ses',
+      workspaceId: 'ws',
+      sessionDir: '/tmp/ses',
+      sessionScope: 'ses',
+      cwd: '/workspace',
+    }),
+    {} as never,
+    toolPolicy,
+    stubConfigService(),
+  );
+}
+
 function toolCases(): readonly ToolCase[] {
   return [
+    {
+      name: 'Bash',
+      fs: createFakeHostFs(),
+      resolve: (service) => bashTool(service).resolveExecution({ command: 'echo hi' }),
+      expectOutcome: () => {},
+    },
     {
       name: 'Read',
       fs: textFs('visible content'),
@@ -318,37 +352,8 @@ describe('tool environment generation guard', () => {
 });
 
 describe('tilde resolution against the reconnected host', () => {
-  function pendingThenReadyHarness(host: Partial<NonNullable<Environment['host']>>) {
-    const registry = new EnvironmentRegistry();
-    const calls: string[] = [];
-    const ready = Object.assign(
-      new FakeEnvironment(
-        { ...BINDING, generation: 'remote-ready' },
-        { status: 'ready', capabilities: ['fs', 'process'], host },
-      ),
-      { fs: createFakeHostFs(), process: {} },
-    );
-    let registration: EnvironmentRegistrationHandle;
-    const pending = Object.assign(
-      new FakeEnvironment(
-        { ...BINDING, generation: 'remote-pending' },
-        { status: 'pending', capabilities: [] },
-      ),
-      {
-        host: undefined,
-        connect: async () => {
-          calls.push('connect');
-          await registration.remove();
-          registry.register(ready);
-        },
-      },
-    );
-    registration = registry.register(pending);
-    return { registry, service: registryBackedService(registry), calls };
-  }
-
   it('resolves ~ against the reconnected host home instead of /', async () => {
-    const { service, calls } = pendingThenReadyHarness({ homeDir: '/home/me' });
+    const { service, calls } = connectSwappingHarness(createFakeHostFs(), { homeDir: '/home/me' });
     const tool = new GlobTool(service, noopTelemetryService);
     const execution = await tool.resolveExecution({ pattern: '**/*.ts', path: '~/projects' });
     expect(calls).toEqual(['connect']);
@@ -376,44 +381,6 @@ describe('tilde resolution against the reconnected host', () => {
     await expect(tool.resolveExecution({ pattern: '**/*.ts', path: '~/projects' })).rejects.toThrow(
       'connection refused',
     );
-  });
-});
-
-describe('Bash environment generation guard', () => {
-  function bashTool(service: IAgentEnvironmentService): BashTool {
-    return new BashTool(
-      service,
-      makeSessionContext({
-        sessionId: 'ses',
-        workspaceId: 'ws',
-        sessionDir: '/tmp/ses',
-        sessionScope: 'ses',
-        cwd: '/workspace',
-      }),
-      {} as never,
-      toolPolicy,
-      stubConfigService(),
-    );
-  }
-
-  it('rejects execution when the generation changes after a ready resolve', async () => {
-    const harness = readyHarness(createFakeHostFs());
-    const resolved = await bashTool(harness.service).resolveExecution({ command: 'echo hi' });
-
-    await harness.registration.remove();
-    harness.registry.register(replacementReadyEnvironment());
-
-    const result = await finish(resolved);
-    expect(result.isError).toBe(true);
-    expect(result.output).toBe(ENVIRONMENT_CHANGED_OUTPUT);
-  });
-
-  it('does not treat a pending resolve reconnect as an environment change', async () => {
-    const harness = connectSwappingHarness(createFakeHostFs());
-    const result = await finish(bashTool(harness.service).resolveExecution({ command: 'echo hi' }));
-
-    expect(harness.calls).toEqual(['connect']);
-    expect(outputText(result)).not.toContain(ENVIRONMENT_CHANGED_OUTPUT);
   });
 });
 
@@ -489,21 +456,10 @@ describe('tool environment routing', () => {
 
   it('runs Bash on the requested environment in its working directory', async () => {
     const { service, spawns } = routedHarness();
-    const bash = new BashTool(
-      service,
-      makeSessionContext({
-        sessionId: 'ses',
-        workspaceId: 'ws',
-        sessionDir: '/tmp/ses',
-        sessionScope: 'ses',
-        cwd: '/workspace',
-      }),
-      {} as never,
-      toolPolicy,
-      stubConfigService(),
+    const resolved = await bashTool(service).resolveExecution(
+      { command: 'pwd' },
+      { environment: { environmentId: 'gpu', primary: false } },
     );
-
-    const resolved = await bash.resolveExecution({ command: 'pwd' }, { environment: { environmentId: 'gpu', primary: false } });
     expect(resolved).toMatchObject({ display: { kind: 'command', cwd: '/gpu' } });
     const result = await finish(resolved);
 
@@ -512,82 +468,31 @@ describe('tool environment routing', () => {
   });
 
   it('connects an unready secondary environment before the approval preview', async () => {
-    const registry = new EnvironmentRegistry();
-    const calls: string[] = [];
-    let registration: EnvironmentRegistrationHandle;
-    const ready = Object.assign(
-      new FakeEnvironment(
-        { environmentId: 'gpu', generation: 'gpu-one' },
-        { status: 'ready', capabilities: ['process'], host: { cwd: '/srv/app' } },
-      ),
-      { process: {} },
-    );
-    const pending = Object.assign(
-      new FakeEnvironment(
-        { environmentId: 'gpu', generation: 'gpu-pending' },
-        { status: 'pending', capabilities: [] },
-      ),
-      {
-        host: undefined,
-        connect: async () => {
-          calls.push('connect');
-          await registration.remove();
-          registry.register(ready);
-        },
-      },
-    );
-    registration = registry.register(pending);
-    const binding = (environmentId?: string): EnvironmentBinding => ({ environmentId: environmentId ?? 'local' });
+    const harness = connectSwappingHarness(createFakeHostFs(), { cwd: '/srv/app' }, 'gpu');
+    const { registry, calls } = harness;
     const service: IAgentEnvironmentService = {
-      _serviceBrand: undefined,
-      onDidChange: () => ({ dispose: () => {} }),
+      ...harness.service,
       targets: () => [
         { environmentId: 'local', primary: true },
         { environmentId: 'gpu', primary: false },
       ],
-      isAvailable: (required = [], environmentId) => {
-        try {
-          const environment = registry.inspect(binding(environmentId));
-          return environmentIsReady(environment) && required.every((capability) => environment.capabilities.has(capability));
-        } catch {
-          return false;
-        }
-      },
-      inspect: (environmentId) => registry.inspect(binding(environmentId)),
-      acquire: (required = [], environmentId) => registry.acquire(binding(environmentId), required),
-      acquireWhenReady: async (required = [], environmentId) => {
-        const environment = registry.inspect(binding(environmentId));
-        if (!environmentIsReady(environment) && typeof environment.connect === 'function') await environment.connect();
-        return registry.acquireWhenReady(binding(environmentId), required);
-      },
       workspaceRoots: (environmentId) => {
-        const workDir = environmentId === 'gpu' ? registry.inspect(binding(environmentId)).host?.cwd : '/workspace';
+        const workDir = environmentId === 'gpu' ? registry.inspect({ environmentId: 'gpu' }).host?.cwd : '/workspace';
         if (workDir === undefined) {
           throw new EnvironmentError('environment.unavailable', 'environment gpu has no working directory until it connects');
         }
         return { workDir, additionalDirs: [] };
       },
     };
-    const bash = new BashTool(
-      service,
-      makeSessionContext({
-        sessionId: 'ses',
-        workspaceId: 'ws',
-        sessionDir: '/tmp/ses',
-        sessionScope: 'ses',
-        cwd: '/workspace',
-      }),
-      {} as never,
-      toolPolicy,
-      stubConfigService(),
+
+    const resolved = await bashTool(service).resolveExecution(
+      { command: 'pwd' },
+      { environment: { environmentId: 'gpu', primary: false } },
     );
-
-    const resolved = await bash.resolveExecution({ command: 'pwd' }, { environment: { environmentId: 'gpu', primary: false } });
-
     expect(calls).toEqual(['connect']);
     expect(resolved).toMatchObject({ display: { kind: 'command', cwd: '/srv/app' } });
 
-    await registration.remove();
+    await harness.registration.remove();
     registry.register(Object.assign(
       new FakeEnvironment(
         { environmentId: 'gpu', generation: 'gpu-two' },

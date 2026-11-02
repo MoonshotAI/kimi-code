@@ -1624,12 +1624,13 @@ describe('AgentToolExecutorService environment routing', () => {
     ];
   });
 
-  it('adds the environment argument to environment-scoped tools only', () => {
-    registry.register(new RoutedTool('scoped', textSchema), { environmentScoped: true });
+  it('exposes a stable environment argument only while secondary targets exist', async () => {
+    const tool = new RoutedTool('scoped', textSchema);
+    registry.register(tool, { environmentScoped: true });
     registry.register(new RoutedTool('plain', textSchema));
+    const parameters = (name = 'scoped') => registry.list().find((info) => info.name === name)?.parameters;
 
-    const parameters = Object.fromEntries(registry.list().map((info) => [info.name, info.parameters]));
-    expect(parameters['scoped']).toEqual({
+    expect(parameters()).toEqual({
       ...textSchema,
       properties: {
         text: { type: 'string' },
@@ -1639,19 +1640,19 @@ describe('AgentToolExecutorService environment routing', () => {
         },
       },
     });
-    expect(parameters['plain']).toBe(textSchema);
-  });
-
-  it('keeps environment schemas stable as the available environment ids change', () => {
-    registry.register(new RoutedTool('scoped', textSchema), { environmentScoped: true });
-    const parameters = () => registry.list().find((info) => info.name === 'scoped')?.parameters;
+    expect(parameters('plain')).toBe(textSchema);
     const initial = parameters();
-
     environmentTargets = [...environmentTargets, { environmentId: 'staging', primary: false, cwd: '/staging' }];
     expect(parameters()).toEqual(initial);
 
     environmentTargets = environmentTargets.filter((target) => target.environmentId === 'local');
     expect(parameters()).toBe(textSchema);
+    const results = await execute([toolCall('call_single', 'scoped', { text: 'a', environment: 'local' })]);
+    expect(results[0]).toMatchObject({
+      isError: true,
+      output: expect.stringContaining('Invalid args for tool "scoped"'),
+    });
+    expect(tool.resolutions).toEqual([]);
   });
 
   it('routes a call to the named environment, hands the tool its own arguments, and stamps the display', async () => {
@@ -1702,21 +1703,6 @@ describe('AgentToolExecutorService environment routing', () => {
       }),
     ]);
     expect(tool.resolutions).toEqual([]);
-  });
-
-  it('keeps rejecting the environment argument while only the primary environment is available', async () => {
-    environmentTargets = [{ environmentId: 'local', primary: true }];
-    const tool = new RoutedTool('scoped', textSchema);
-    registry.register(tool, { environmentScoped: true });
-
-    const results = await execute([toolCall('call_single', 'scoped', { text: 'a', environment: 'local' })]);
-
-    expect(results[0]).toMatchObject({
-      isError: true,
-      output: expect.stringContaining('Invalid args for tool "scoped"'),
-    });
-    expect(tool.resolutions).toEqual([]);
-    expect(registry.list().find((info) => info.name === 'scoped')?.parameters).toBe(textSchema);
   });
 
   it('routes Read through the registry to a lazily connected exec-server', async () => {

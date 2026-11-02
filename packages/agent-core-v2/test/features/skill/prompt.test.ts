@@ -57,14 +57,11 @@ describe('routedSkillEnvironment', () => {
     { environmentId: 'local', primary: false, cwd: '/workspace' },
   ];
 
-  it('names the environment that owns a skill outside the primary environment', () => {
+  it('names only skills owned outside the primary environment', () => {
     expect(routedSkillEnvironment(stubSkill('notes', { source: 'user' }), remotePrimary)).toBe('local');
     expect(
       routedSkillEnvironment(stubSkill('deploy@local', { source: 'project', environmentId: 'local' }), remotePrimary),
     ).toBe('local');
-  });
-
-  it('omits the environment for primary project skills, builtin skills, and single-environment sessions', () => {
     expect(routedSkillEnvironment(stubSkill('deploy', { source: 'project' }), remotePrimary)).toBeUndefined();
     expect(routedSkillEnvironment(stubSkill('mcp-config', { source: 'builtin' }), remotePrimary)).toBeUndefined();
     expect(routedSkillEnvironment(stubSkill('notes', { source: 'user' }), remotePrimary.slice(0, 1))).toBeUndefined();
