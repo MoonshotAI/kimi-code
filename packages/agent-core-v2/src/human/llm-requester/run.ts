@@ -98,7 +98,7 @@ function abortErrorOf(reason: unknown): LlmErrorMessage<'abort'> {
   ) {
     return reason as LlmErrorMessage<'abort'>;
   }
-  return { kind: 'abort', message: 'The operation was aborted.' };
+  return { kind: 'abort', message: 'The operation was aborted.', retryable: false };
 }
 
 function decodeRemoteError(

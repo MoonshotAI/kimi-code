@@ -385,10 +385,10 @@ function isOpenAIInsufficientQuotaError(error: RawOpenAISDKAPIError): boolean {
 
 export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMessage {
   if (error instanceof RawOpenAISDKConnectionTimeoutError) {
-    return { kind: 'timeout', message: error.message };
+    return { kind: 'timeout', message: error.message, retryable: true };
   }
   if (error instanceof RawOpenAISDKConnectionError) {
-    return { kind: 'connection', message: error.message };
+    return { kind: 'connection', message: error.message, retryable: true };
   }
   if (error instanceof RawOpenAISDKAPIError) {
     const body = error.error as
@@ -406,20 +406,20 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
       headers: headersToRecord(error.headers),
     };
     if (isOpenAIInsufficientQuotaError(error)) {
-      return { kind: 'quota_exhausted', message, statusCode, ...statusInfo };
+      return { kind: 'quota_exhausted', message, statusCode, retryable: false, ...statusInfo };
     }
     if (isOpenAIOverloadedErrorCode(code) || isOpenAIOverloadedErrorCode(type)) {
-      return { kind: 'overloaded', message, statusCode, ...statusInfo };
+      return { kind: 'overloaded', message, statusCode, retryable: true, ...statusInfo };
     }
     if (isContextOverflowErrorCode(code) || isContextOverflowErrorCode(type)) {
-      return { kind: 'context_overflow', message, statusCode, ...statusInfo };
+      return { kind: 'context_overflow', message, statusCode, retryable: false, ...statusInfo };
     }
     if (statusCode !== undefined) {
       return toLlmStatusErrorMessage({ statusCode, message, ...statusInfo });
     }
     if (error.error !== undefined) {
       if (isOpenAIRateLimitErrorCode(code) || isOpenAIRateLimitErrorCode(type)) {
-        return { kind: 'rate_limit', message, ...statusInfo };
+        return { kind: 'rate_limit', message, retryable: true, ...statusInfo };
       }
       return toLlmStreamErrorMessage({ businessCode: error.status, message, ...statusInfo });
     }
@@ -435,12 +435,12 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
     return toLlmTransportErrorMessage(error.message);
   }
   if (error instanceof RawOpenAISDKError) {
-    return { kind: 'provider', message: `Error: ${error.message}` };
+    return { kind: 'provider', message: `Error: ${error.message}`, retryable: true };
   }
   if (error instanceof Error) {
     return toLlmTransportErrorMessage(error.message);
   }
-  return { kind: 'unknown', message: String(error) };
+  return { kind: 'unknown', message: String(error), retryable: false };
 }
 
 export function convertOpenAIError(

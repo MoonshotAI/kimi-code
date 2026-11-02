@@ -228,10 +228,10 @@ export function createDecoder(sink: DecodeSink): Decoder<RawChunk> {
 
 export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMessage {
   if (error instanceof RawAnthropicSDKConnectionTimeoutError) {
-    return { kind: 'timeout', message: error.message };
+    return { kind: 'timeout', message: error.message, retryable: true };
   }
   if (error instanceof RawAnthropicSDKConnectionError) {
-    return { kind: 'connection', message: error.message };
+    return { kind: 'connection', message: error.message, retryable: true };
   }
   if (error instanceof RawAnthropicSDKAPIError) {
     const body = error.error as
@@ -247,20 +247,20 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
       headers: headersToRecord(error.headers),
     };
     if (type === 'insufficient_quota' || type === 'exceeded_current_quota_error') {
-      return { kind: 'quota_exhausted', message, statusCode, ...statusInfo };
+      return { kind: 'quota_exhausted', message, statusCode, retryable: false, ...statusInfo };
     }
     if (type === 'overloaded_error' || type === 'engine_overloaded_error') {
-      return { kind: 'overloaded', message, statusCode, ...statusInfo };
+      return { kind: 'overloaded', message, statusCode, retryable: true, ...statusInfo };
     }
     if (
       type === 'rate_limit_error' ||
       type === 'rate_limit_reached_error' ||
       type === 'rate_limit_exceeded'
     ) {
-      return { kind: 'rate_limit', message, statusCode, ...statusInfo };
+      return { kind: 'rate_limit', message, statusCode, retryable: true, ...statusInfo };
     }
     if (type === 'context_length_exceeded') {
-      return { kind: 'context_overflow', message, statusCode, ...statusInfo };
+      return { kind: 'context_overflow', message, statusCode, retryable: false, ...statusInfo };
     }
     if (statusCode !== undefined) {
       return toLlmStatusErrorMessage({ statusCode, message, ...statusInfo });
@@ -275,5 +275,5 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
   if (error instanceof Error) {
     return toLlmTransportErrorMessage(error.message);
   }
-  return { kind: 'unknown', message: String(error) };
+  return { kind: 'unknown', message: String(error), retryable: false };
 }

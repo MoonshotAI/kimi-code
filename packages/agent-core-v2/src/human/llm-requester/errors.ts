@@ -62,7 +62,7 @@ export interface LlmStatusErrorInfo {
   readonly requestId: string | null;
   readonly retryAfterMs: number | null;
   readonly headers: Record<string, string> | null;
-  readonly retryable?: boolean;
+  readonly retryable: boolean;
 }
 
 export type LlmErrorMessage<T extends LlmErrorKind = LlmErrorKind> =
@@ -76,8 +76,9 @@ export type LlmErrorMessage<T extends LlmErrorKind = LlmErrorKind> =
             readonly message: string;
             readonly finishReason: FinishReason | null;
             readonly rawFinishReason: string | null;
+            readonly retryable: boolean;
           }
-        : { readonly kind: T; readonly message: string };
+        : { readonly kind: T; readonly message: string; readonly retryable: boolean };
 
 export type LlmRemoteErrorMessage = LlmErrorMessage<LlmRemoteErrorKind>;
 
@@ -112,9 +113,13 @@ function abortErrorMessage(error: unknown): string {
 
 export function toLlmErrorMessage(error: unknown): LlmRemoteErrorMessage {
   if (isAbortError(error)) {
-    return { kind: 'abort', message: abortErrorMessage(error) };
+    return { kind: 'abort', message: abortErrorMessage(error), retryable: false };
   }
-  return { kind: 'unknown', message: error instanceof Error ? error.message : String(error) };
+  return {
+    kind: 'unknown',
+    message: error instanceof Error ? error.message : String(error),
+    retryable: false,
+  };
 }
 
 const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
@@ -122,12 +127,12 @@ const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
 
 export function toLlmTransportErrorMessage(message: string): LlmRemoteErrorMessage {
   if (TIMEOUT_RE.test(message)) {
-    return { kind: 'timeout', message };
+    return { kind: 'timeout', message, retryable: true };
   }
   if (NETWORK_RE.test(message)) {
-    return { kind: 'connection', message };
+    return { kind: 'connection', message, retryable: true };
   }
-  return { kind: 'provider', message: `Error: ${message}` };
+  return { kind: 'provider', message: `Error: ${message}`, retryable: true };
 }
 
 const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
@@ -217,22 +222,18 @@ export interface LlmStatusErrorInput {
   readonly retryable?: boolean;
 }
 
+const RETRYABLE_HTTP_STATUS_CODES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
+
 export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteErrorMessage {
-  const statusInfo: LlmStatusErrorInfo =
-    input.statusCode === undefined
-      ? {
-          requestId: input.requestId ?? null,
-          retryAfterMs: input.retryAfterMs ?? null,
-          headers: input.headers ?? null,
-        }
-      : {
-          statusCode: input.statusCode,
-          requestId: input.requestId ?? null,
-          retryAfterMs: input.retryAfterMs ?? null,
-          headers: input.headers ?? null,
-        };
-  const info =
-    input.retryable === undefined ? statusInfo : { ...statusInfo, retryable: input.retryable };
+  const info: LlmStatusErrorInfo = {
+    statusCode: input.statusCode,
+    requestId: input.requestId ?? null,
+    retryAfterMs: input.retryAfterMs ?? null,
+    headers: input.headers ?? null,
+    retryable:
+      input.retryable ??
+      (input.statusCode !== undefined && RETRYABLE_HTTP_STATUS_CODES.has(input.statusCode)),
+  };
   if (input.statusCode === 429) {
     return { kind: 'rate_limit', message: input.message, ...info };
   }

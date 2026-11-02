@@ -45,11 +45,12 @@ describe('convertOpenAIError', () => {
     expect(convertOpenAIError(new DOMException('x', 'AbortError'))).toEqual({
       kind: 'abort',
       message: 'x',
+      retryable: false,
     });
   });
 
   it('lets the hook win and hands it the raw error', () => {
-    const custom = { kind: 'provider', message: 'custom' } as const;
+    const custom = { kind: 'provider', message: 'custom', retryable: true } as const;
     const raw = new RawOpenAISDKAPIError(500, {}, 'server error', new Headers());
     let hookArg: unknown;
     const result = convertOpenAIError(raw, (error) => {
@@ -63,10 +64,10 @@ describe('convertOpenAIError', () => {
   it('maps connection errors to their kinds', () => {
     expect(
       convertOpenAIError(new RawOpenAISDKConnectionTimeoutError({ message: 'request timed out' })),
-    ).toEqual({ kind: 'timeout', message: 'request timed out' });
+    ).toEqual({ kind: 'timeout', message: 'request timed out', retryable: true });
     expect(
       convertOpenAIError(new RawOpenAISDKConnectionError({ message: 'connection refused' })),
-    ).toEqual({ kind: 'connection', message: 'connection refused' });
+    ).toEqual({ kind: 'connection', message: 'connection refused', retryable: true });
   });
 
   it('maps 429 to rate_limit with retry-after and the backend message', () => {
@@ -81,6 +82,7 @@ describe('convertOpenAIError', () => {
       message: 'too many requests',
       statusCode: 429,
       retryAfterMs: 3000,
+      retryable: true,
     });
   });
 
@@ -95,6 +97,7 @@ describe('convertOpenAIError', () => {
       kind: 'quota_exhausted',
       message: 'backend quota message',
       statusCode: 429,
+      retryable: false,
     });
   });
 
@@ -109,6 +112,7 @@ describe('convertOpenAIError', () => {
       kind: 'context_overflow',
       message: '',
       statusCode: 400,
+      retryable: false,
     });
   });
 
@@ -119,7 +123,11 @@ describe('convertOpenAIError', () => {
       undefined,
       new Headers(),
     );
-    expect(convertOpenAIError(raw)).toMatchObject({ kind: 'context_overflow', statusCode: 400 });
+    expect(convertOpenAIError(raw)).toMatchObject({
+      kind: 'context_overflow',
+      statusCode: 400,
+      retryable: false,
+    });
   });
 
   it('maps remaining status errors without inventing messages', () => {
@@ -133,6 +141,7 @@ describe('convertOpenAIError', () => {
       kind: 'request_too_large',
       message: 'request entity too large',
       statusCode: 413,
+      retryable: false,
     });
     const overloaded = new RawOpenAISDKAPIError(
       529,
@@ -144,19 +153,26 @@ describe('convertOpenAIError', () => {
       kind: 'overloaded',
       message: 'overloaded',
       statusCode: 529,
+      retryable: true,
     });
     const generic = new RawOpenAISDKAPIError(500, {}, 'SDK-composed fallback', new Headers());
     expect(convertOpenAIError(generic)).toMatchObject({
       kind: 'status',
       message: '',
       statusCode: 500,
+      retryable: true,
     });
   });
 
   it('preserves the backend message without cleanup or appended hints', () => {
     const message = '<title>reasoning_effort is unsupported</title>';
     const raw = new RawOpenAISDKAPIError(400, { message }, 'SDK-composed fallback', new Headers());
-    expect(convertOpenAIError(raw)).toMatchObject({ kind: 'status', message, statusCode: 400 });
+    expect(convertOpenAIError(raw)).toMatchObject({
+      kind: 'status',
+      message,
+      statusCode: 400,
+      retryable: false,
+    });
   });
 
   it('uses numeric stream business codes only for classification', () => {
@@ -186,7 +202,11 @@ describe('convertOpenAIError', () => {
       ),
       'stream',
     );
-    expect(tooLarge).toMatchObject({ kind: 'request_too_large', message: 'request too large' });
+    expect(tooLarge).toMatchObject({
+      kind: 'request_too_large',
+      message: 'request too large',
+      retryable: false,
+    });
     expect(tooLarge).not.toHaveProperty('statusCode');
     expect(isRetryableError(tooLarge)).toBe(false);
   });
@@ -204,7 +224,11 @@ describe('convertOpenAIError', () => {
     ];
     for (const message of structural) {
       const raw = new RawOpenAISDKAPIError(400, { message }, undefined, new Headers());
-      expect(convertOpenAIError(raw)).toMatchObject({ kind: 'request_structure', statusCode: 400 });
+      expect(convertOpenAIError(raw)).toMatchObject({
+        kind: 'request_structure',
+        statusCode: 400,
+        retryable: false,
+      });
     }
     const unprocessable = new RawOpenAISDKAPIError(
       422,
@@ -215,6 +239,7 @@ describe('convertOpenAIError', () => {
     expect(convertOpenAIError(unprocessable)).toMatchObject({
       kind: 'request_structure',
       statusCode: 422,
+      retryable: false,
     });
     const unrelated = new RawOpenAISDKAPIError(
       400,
@@ -222,7 +247,11 @@ describe('convertOpenAIError', () => {
       undefined,
       new Headers(),
     );
-    expect(convertOpenAIError(unrelated)).toMatchObject({ kind: 'status', statusCode: 400 });
+    expect(convertOpenAIError(unrelated)).toMatchObject({
+      kind: 'status',
+      statusCode: 400,
+      retryable: false,
+    });
   });
 
   it('maps 400 image-format rejections to image_format', () => {
@@ -234,7 +263,11 @@ describe('convertOpenAIError', () => {
     ];
     for (const message of imageFormat) {
       const raw = new RawOpenAISDKAPIError(400, { message }, undefined, new Headers());
-      expect(convertOpenAIError(raw)).toMatchObject({ kind: 'image_format', statusCode: 400 });
+      expect(convertOpenAIError(raw)).toMatchObject({
+        kind: 'image_format',
+        statusCode: 400,
+        retryable: false,
+      });
     }
     const notFormat = [
       'too many images in request',
@@ -243,7 +276,11 @@ describe('convertOpenAIError', () => {
     ];
     for (const message of notFormat) {
       const raw = new RawOpenAISDKAPIError(400, { message }, undefined, new Headers());
-      expect(convertOpenAIError(raw)).toMatchObject({ kind: 'status', statusCode: 400 });
+      expect(convertOpenAIError(raw)).toMatchObject({
+        kind: 'status',
+        statusCode: 400,
+        retryable: false,
+      });
     }
     const wrongStatus = new RawOpenAISDKAPIError(
       422,
@@ -251,7 +288,11 @@ describe('convertOpenAIError', () => {
       undefined,
       new Headers(),
     );
-    expect(convertOpenAIError(wrongStatus)).toMatchObject({ kind: 'status', statusCode: 422 });
+    expect(convertOpenAIError(wrongStatus)).toMatchObject({
+      kind: 'status',
+      statusCode: 422,
+      retryable: false,
+    });
   });
 
   it('classifies a bare APIError by message', () => {
@@ -264,6 +305,7 @@ describe('convertOpenAIError', () => {
     expect(convertOpenAIError(raw)).toEqual({
       kind: 'connection',
       message: 'network connection failed',
+      retryable: true,
     });
   });
 
@@ -271,6 +313,7 @@ describe('convertOpenAIError', () => {
     expect(convertOpenAIError(new RawOpenAISDKError('boom'))).toEqual({
       kind: 'provider',
       message: 'Error: boom',
+      retryable: true,
     });
   });
 
@@ -278,15 +321,40 @@ describe('convertOpenAIError', () => {
     expect(convertOpenAIError(new Error('deadline exceeded timeout'))).toEqual({
       kind: 'timeout',
       message: 'deadline exceeded timeout',
+      retryable: true,
     });
     expect(convertOpenAIError(new Error('plain'))).toEqual({
       kind: 'provider',
       message: 'Error: plain',
+      retryable: true,
     });
   });
 
   it('wraps non-error values as unknown', () => {
-    expect(convertOpenAIError('nope')).toEqual({ kind: 'unknown', message: 'nope' });
+    expect(convertOpenAIError('nope')).toEqual({
+      kind: 'unknown',
+      message: 'nope',
+      retryable: false,
+    });
+  });
+});
+
+describe('retry policy', () => {
+  it.each([
+    [400, true],
+    [503, false],
+  ])('uses retryable instead of HTTP status %i', (statusCode, retryable) => {
+    const error: LlmRemoteErrorMessage = {
+      kind: 'status',
+      message: 'backend failure',
+      statusCode,
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+      retryable,
+    };
+
+    expect(isRetryableError(error)).toBe(retryable);
   });
 });
 
@@ -907,6 +975,7 @@ describe('OpenAI Responses stream errors', () => {
     expect(streamError({ type: 'response.failed', response: { status: 'failed' } })).toEqual({
       kind: 'provider',
       message: '',
+      retryable: true,
     });
   });
 });

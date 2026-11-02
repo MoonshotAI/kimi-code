@@ -188,6 +188,30 @@ describe('classifyApiError', () => {
 });
 
 describe('model error HTTP status source', () => {
+  it('uses normalized retryability instead of HTTP status when deciding whether to retry', () => {
+    const retryableClientError = new APIStatusError(
+      400,
+      'retry this',
+      null,
+      null,
+      undefined,
+      undefined,
+      true,
+    );
+    const deterministicServerError = new APIStatusError(
+      503,
+      'do not retry this',
+      null,
+      null,
+      undefined,
+      undefined,
+      false,
+    );
+
+    expect(isRetryableGenerateError(retryableClientError)).toBe(true);
+    expect(isRetryableGenerateError(deterministicServerError)).toBe(false);
+  });
+
   it('keeps rate-limit semantics without synthesizing HTTP 429', () => {
     const error = errorFromLlmMessage(
       {
@@ -196,6 +220,7 @@ describe('model error HTTP status source', () => {
         requestId: 'req-stream',
         retryAfterMs: null,
         headers: { 'x-trace-id': 'trace-stream' },
+        retryable: true,
       },
       { requestId: 'req-stream' },
     );
@@ -208,6 +233,7 @@ describe('model error HTTP status source', () => {
       requestId: 'req-stream',
       traceId: 'trace-stream',
       diagnostics: { requestId: 'req-stream' },
+      retryable: true,
     });
     expect(isRetryableGenerateError(error)).toBe(true);
     expect(llmMessageFromError(error)).toMatchObject({
@@ -215,6 +241,7 @@ describe('model error HTTP status source', () => {
       message: 'backend stream rate limit',
       statusCode: undefined,
       headers: { 'x-trace-id': 'trace-stream' },
+      retryable: true,
     });
   });
 
@@ -225,10 +252,11 @@ describe('model error HTTP status source', () => {
       requestId: null,
       retryAfterMs: null,
       headers: null,
+      retryable: false,
     });
 
     expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
-    expect(error).toMatchObject({ statusCode: undefined });
+    expect(error).toMatchObject({ statusCode: undefined, retryable: false });
     expect(isRetryableGenerateError(error)).toBe(false);
   });
 
@@ -247,6 +275,7 @@ describe('model error HTTP status source', () => {
       requestId: null,
       retryAfterMs: null,
       headers: null,
+      retryable: false,
     });
 
     expect(transient).toBeInstanceOf(APIStatusError);
@@ -267,16 +296,19 @@ describe('model error HTTP status source', () => {
       requestId: 'req-http',
       retryAfterMs: null,
       headers: { 'x-trace-id': 'trace-http' },
+      retryable: true,
     });
 
     expect(error).toMatchObject({
       message: 'backend HTTP 503',
       statusCode: 503,
       traceId: 'trace-http',
+      retryable: true,
     });
     expect(isRetryableGenerateError(error)).toBe(true);
     expect(llmMessageFromError(error)).toMatchObject({
       headers: { 'x-trace-id': 'trace-http' },
+      retryable: true,
     });
   });
 

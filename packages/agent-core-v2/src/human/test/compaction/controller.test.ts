@@ -82,6 +82,7 @@ function createOverflowRequester(): LlmRequester {
           requestId: null,
           retryAfterMs: null,
           headers: null,
+          retryable: false,
         },
       });
       return Promise.resolve();

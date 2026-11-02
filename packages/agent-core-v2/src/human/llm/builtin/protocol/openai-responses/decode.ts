@@ -173,16 +173,16 @@ function errorFromOpenAIResponsesEvent(
     headers: null,
   };
   if (isContextOverflowErrorCode(code)) {
-    return { kind: 'context_overflow', message, ...statusInfo };
+    return { kind: 'context_overflow', message, retryable: false, ...statusInfo };
   }
   if (isOpenAIInsufficientQuotaCode(code)) {
-    return { kind: 'quota_exhausted', message, ...statusInfo };
+    return { kind: 'quota_exhausted', message, retryable: false, ...statusInfo };
   }
   if (isOpenAIRateLimitErrorCode(code)) {
-    return { kind: 'rate_limit', message, ...statusInfo };
+    return { kind: 'rate_limit', message, retryable: true, ...statusInfo };
   }
   if (isOpenAIOverloadedErrorCode(code)) {
-    return { kind: 'overloaded', message, ...statusInfo };
+    return { kind: 'overloaded', message, retryable: true, ...statusInfo };
   }
   return toLlmStreamErrorMessage({ message, ...statusInfo });
 }
@@ -285,7 +285,7 @@ function failedResponseError(response: RawObject): LlmRemoteErrorMessage {
   if (error !== undefined) {
     return errorFromOpenAIResponsesEvent(error.code, error.message);
   }
-  return { kind: 'provider', message: '' };
+  return { kind: 'provider', message: '', retryable: true };
 }
 
 function replayOutputItem(value: RawObject, outputIndex: number): RawChunk[] {

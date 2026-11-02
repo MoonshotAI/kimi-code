@@ -179,6 +179,7 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
         requestId: null,
         retryAfterMs,
         headers: null,
+        retryable: true,
       };
     }
     if (code === 529 || status === 'OVERLOADED') {
@@ -189,6 +190,7 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
         requestId: null,
         retryAfterMs,
         headers: null,
+        retryable: true,
       };
     }
     if (source === 'stream') {
@@ -203,10 +205,10 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
   if (error instanceof Error) {
     const msg = error.message;
     if (TIMEOUT_RE.test(msg)) {
-      return { kind: 'timeout', message: msg };
+      return { kind: 'timeout', message: msg, retryable: true };
     }
     if (NETWORK_RE.test(msg) || (error instanceof TypeError && msg.includes('fetch'))) {
-      return { kind: 'connection', message: msg };
+      return { kind: 'connection', message: msg, retryable: true };
     }
     const code = (error as { code?: number }).code;
     if (typeof code === 'number') {
@@ -215,9 +217,9 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
       }
       return toLlmStatusErrorMessage({ statusCode: code, message: msg });
     }
-    return { kind: 'provider', message: `GoogleGenAI error: ${msg}` };
+    return { kind: 'provider', message: `GoogleGenAI error: ${msg}`, retryable: true };
   }
-  return { kind: 'unknown', message: `GoogleGenAI error: ${String(error)}` };
+  return { kind: 'unknown', message: `GoogleGenAI error: ${String(error)}`, retryable: false };
 }
 
 function parseGoogleGenAIErrorBody(message: string): GoogleGenAIErrorBody | undefined {

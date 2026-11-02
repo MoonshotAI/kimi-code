@@ -63,6 +63,7 @@ function createEmptyResponseError(
     message: `${detail}${formatFinishReasonHint(finish)} Provider: ${model.provider}, model: ${model.name}`,
     finishReason: finish.finishReason,
     rawFinishReason: finish.rawFinishReason,
+    retryable: finish.finishReason !== 'filtered',
   };
 }
 
@@ -268,7 +269,7 @@ export async function settleLlmRequest(
     reason:
       failure?.error.kind === 'abort'
         ? failure.error
-        : ({ kind: 'abort', message: 'The operation was aborted.' } satisfies LlmErrorMessage<'abort'>),
+        : ({ kind: 'abort', message: 'The operation was aborted.', retryable: false } satisfies LlmErrorMessage<'abort'>),
     ...extras(),
   });
 

@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Show backend model error messages verbatim without SDK fallbacks, cleanup, or configuration hints; keep only real HTTP statuses and stop inferring quota exhaustion from message wording.
+Show backend model error messages verbatim, stop inferring quota and retry decisions from messages or HTTP statuses, and require explicit retryability for decoded model errors.

@@ -62,7 +62,7 @@ export interface LlmStatusErrorInfo {
   readonly requestId: string | null;
   readonly retryAfterMs: number | null;
   readonly headers: Record<string, string> | null;
-  readonly retryable?: boolean;
+  readonly retryable: boolean;
 }
 
 export type LlmErrorMessage<T extends LlmErrorKind = LlmErrorKind> =
@@ -76,8 +76,9 @@ export type LlmErrorMessage<T extends LlmErrorKind = LlmErrorKind> =
             readonly message: string;
             readonly finishReason: FinishReason | null;
             readonly rawFinishReason: string | null;
+            readonly retryable: boolean;
           }
-        : { readonly kind: T; readonly message: string };
+        : { readonly kind: T; readonly message: string; readonly retryable: boolean };
 
 export type LlmRemoteErrorMessage = LlmErrorMessage<LlmRemoteErrorKind>;
 

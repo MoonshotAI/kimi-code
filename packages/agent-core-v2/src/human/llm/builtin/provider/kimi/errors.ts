@@ -51,5 +51,6 @@ export function classifyKimiQuotaError(error: unknown): LlmRemoteErrorMessage | 
     requestId,
     retryAfterMs: parseRetryAfterMs(headers),
     headers: headersToRecord(headers),
+    retryable: false,
   };
 }

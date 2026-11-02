@@ -199,11 +199,13 @@ describe('request gateway routes', () => {
       kind: 'quota_exhausted',
       message: 'backend stream quota',
       statusCode: undefined,
+      retryable: false,
     });
     expect(decodeError?.(rawError)).toMatchObject({
       kind: 'quota_exhausted',
       message: 'backend stream quota',
       statusCode: 429,
+      retryable: false,
     });
   });
 

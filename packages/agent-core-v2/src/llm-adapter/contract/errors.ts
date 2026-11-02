@@ -62,44 +62,49 @@ function codeForStatusError(statusCode: number | undefined): ProviderErrorCode {
   return PROVIDER_API_ERROR_CODE;
 }
 
+const RETRYABLE_HTTP_STATUS_CODES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
+
 export class ChatProviderError extends Error2 {
   readonly diagnostics: LlmErrorDiagnostics | undefined;
+  readonly retryable: boolean;
 
   constructor(
     message: string,
     code: ProviderErrorCode = PROVIDER_API_ERROR_CODE,
     options?: Error2Options,
     diagnostics?: LlmErrorDiagnostics,
+    retryable = true,
   ) {
     super(code, message, { ...options, name: 'ChatProviderError' });
     this.diagnostics = diagnostics;
+    this.retryable = retryable;
   }
 }
 
 export class APIConnectionError extends ChatProviderError {
   constructor(message: string, diagnostics?: LlmErrorDiagnostics) {
-    super(message, PROVIDER_CONNECTION_ERROR_CODE, undefined, diagnostics);
+    super(message, PROVIDER_CONNECTION_ERROR_CODE, undefined, diagnostics, true);
     this.name = 'APIConnectionError';
   }
 }
 
 export class VideoUploadUnsupportedError extends ChatProviderError {
   constructor(message: string) {
-    super(message);
+    super(message, PROVIDER_API_ERROR_CODE, undefined, undefined, false);
     this.name = 'VideoUploadUnsupportedError';
   }
 }
 
 export class ImageUploadUnsupportedError extends ChatProviderError {
   constructor(message: string) {
-    super(message);
+    super(message, PROVIDER_API_ERROR_CODE, undefined, undefined, false);
     this.name = 'ImageUploadUnsupportedError';
   }
 }
 
 export class APITimeoutError extends ChatProviderError {
   constructor(message: string, diagnostics?: LlmErrorDiagnostics) {
-    super(message, PROVIDER_CONNECTION_ERROR_CODE, undefined, diagnostics);
+    super(message, PROVIDER_CONNECTION_ERROR_CODE, undefined, diagnostics, true);
     this.name = 'APITimeoutError';
   }
 }
@@ -109,7 +114,7 @@ export class APIStatusError extends ChatProviderError {
   readonly requestId: string | null;
   readonly retryAfterMs: number | null;
   readonly traceId: string | null;
-  readonly retryable?: boolean;
+  override readonly retryable: boolean;
 
   constructor(
     statusCode: number | undefined,
@@ -118,7 +123,7 @@ export class APIStatusError extends ChatProviderError {
     retryAfterMs?: number | null,
     diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     codeOrTraceId?: string | null,
-    retryable?: boolean,
+    retryable = statusCode !== undefined && RETRYABLE_HTTP_STATUS_CODES.has(statusCode),
     traceId?: string | null,
   ) {
     const diagnostics =
@@ -148,6 +153,7 @@ export class APIStatusError extends ChatProviderError {
         },
       },
       diagnostics,
+      retryable,
     );
     this.name = 'APIStatusError';
     this.statusCode = statusCode;
@@ -174,7 +180,7 @@ export class APIContextOverflowError extends APIStatusError {
       retryAfterMs,
       diagnosticsOrTraceId,
       CONTEXT_OVERFLOW_ERROR_CODE,
-      undefined,
+      false,
       traceId,
     );
     this.name = 'APIContextOverflowError';
@@ -190,7 +196,7 @@ export class APIRequestTooLargeError extends APIStatusError {
     diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs, diagnosticsOrTraceId, traceId);
+    super(statusCode, message, requestId, retryAfterMs, diagnosticsOrTraceId, traceId, false);
     this.name = 'APIRequestTooLargeError';
   }
 }
@@ -211,7 +217,7 @@ export class APIProviderRateLimitError extends APIStatusError {
       retryAfterMs,
       diagnosticsOrTraceId,
       PROVIDER_RATE_LIMIT_ERROR_CODE,
-      undefined,
+      true,
       traceId,
     );
     this.name = 'APIProviderRateLimitError';
@@ -234,7 +240,7 @@ export class APIProviderQuotaExhaustedError extends APIStatusError {
       retryAfterMs,
       diagnosticsOrTraceId,
       PROVIDER_API_ERROR_CODE,
-      undefined,
+      false,
       traceId,
     );
     this.name = 'APIProviderQuotaExhaustedError';
@@ -257,7 +263,7 @@ export class APIProviderOverloadedError extends APIStatusError {
       retryAfterMs,
       diagnosticsOrTraceId,
       PROVIDER_OVERLOADED_ERROR_CODE,
-      undefined,
+      true,
       traceId,
     );
     this.name = 'APIProviderOverloadedError';
@@ -283,6 +289,7 @@ export class APIEmptyResponseError extends ChatProviderError {
       finishReason === 'filtered' ? PROVIDER_FILTERED_ERROR_CODE : PROVIDER_API_ERROR_CODE,
       { details: { finishReason, rawFinishReason, diagnostics: options.diagnostics } },
       options.diagnostics,
+      finishReason !== 'filtered',
     );
     this.name = 'APIEmptyResponseError';
     this.finishReason = finishReason;
@@ -319,28 +326,8 @@ export function isImageFormatError(error: unknown): boolean {
 }
 
 export function isRetryableGenerateError(error: unknown): boolean {
-  if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
-    return true;
-  }
-  if (error instanceof APIEmptyResponseError) {
-    return error.finishReason !== 'filtered';
-  }
-  if (error instanceof APIProviderOverloadedError) {
-    return true;
-  }
-  if (error instanceof APIProviderRateLimitError) {
-    return true;
-  }
-  if (error instanceof APIStatusError) {
-    if (error instanceof APIProviderQuotaExhaustedError) {
-      return false;
-    }
-    if (error.statusCode === undefined) {
-      return error.retryable ?? false;
-    }
-    return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
-  }
-  return error instanceof ChatProviderError && !isImageFormatError(error);
+  if (isAbortError(error)) return false;
+  return error instanceof ChatProviderError && error.retryable;
 }
 
 const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
@@ -624,9 +611,22 @@ export function errorFromLlmMessage(
         diagnostics,
       });
     case 'syntax':
-    case 'provider':
     case 'unknown':
-      return new ChatProviderError(error.message, PROVIDER_API_ERROR_CODE, undefined, diagnostics);
+      return new ChatProviderError(
+        error.message,
+        PROVIDER_API_ERROR_CODE,
+        undefined,
+        diagnostics,
+        false,
+      );
+    case 'provider':
+      return new ChatProviderError(
+        error.message,
+        PROVIDER_API_ERROR_CODE,
+        undefined,
+        diagnostics,
+        error.retryable,
+      );
   }
 }
 
@@ -643,6 +643,7 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
       requestId: error.requestId,
       retryAfterMs: error.retryAfterMs,
       headers: traceHeadersOf(error),
+      retryable: error.retryable,
     };
   }
   if (error instanceof APIProviderQuotaExhaustedError) {
@@ -653,6 +654,7 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
       requestId: error.requestId,
       retryAfterMs: error.retryAfterMs,
       headers: traceHeadersOf(error),
+      retryable: error.retryable,
     };
   }
   if (error instanceof APIContextOverflowError) {
@@ -663,6 +665,7 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
       requestId: error.requestId,
       retryAfterMs: error.retryAfterMs,
       headers: traceHeadersOf(error),
+      retryable: error.retryable,
     };
   }
   if (error instanceof APIRequestTooLargeError) {
@@ -673,6 +676,7 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
       requestId: error.requestId,
       retryAfterMs: error.retryAfterMs,
       headers: traceHeadersOf(error),
+      retryable: error.retryable,
     };
   }
   if (error instanceof APIProviderOverloadedError) {
@@ -683,13 +687,14 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
       requestId: error.requestId,
       retryAfterMs: error.retryAfterMs,
       headers: traceHeadersOf(error),
+      retryable: error.retryable,
     };
   }
   if (error instanceof APIConnectionError) {
-    return { kind: 'connection', message: error.message };
+    return { kind: 'connection', message: error.message, retryable: error.retryable };
   }
   if (error instanceof APITimeoutError) {
-    return { kind: 'timeout', message: error.message };
+    return { kind: 'timeout', message: error.message, retryable: error.retryable };
   }
   if (error instanceof APIEmptyResponseError) {
     return {
@@ -697,6 +702,7 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
       message: error.message,
       finishReason: error.finishReason,
       rawFinishReason: error.rawFinishReason,
+      retryable: error.retryable,
     };
   }
   if (error instanceof APIStatusError) {
@@ -711,7 +717,7 @@ export function llmMessageFromError(error: unknown): LlmRemoteErrorMessage | und
     };
   }
   if (error instanceof ChatProviderError) {
-    return { kind: 'provider', message: error.message };
+    return { kind: 'provider', message: error.message, retryable: error.retryable };
   }
   return undefined;
 }
