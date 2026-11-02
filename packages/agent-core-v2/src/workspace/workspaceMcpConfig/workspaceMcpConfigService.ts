@@ -36,6 +36,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   private fileServers = new Map<string, McpServerConfig>();
   private pluginServers = new Map<string, McpServerConfig>();
   private current: Readonly<Record<string, McpServerConfig>> = {};
+  private untrustedOAuthServers: Readonly<Record<string, McpServerConfig>> | undefined;
   private initializationComplete = false;
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private readonly changeEmitter = this._register(new AsyncEmitter<McpServersChangeEvent>());
@@ -145,16 +146,40 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       if (!this.initializationComplete) {
         await this.initialize(true, true);
       } else {
+        const trusted = this.trust.isTrusted();
+        if (!trusted && this.untrustedOAuthServers === undefined) {
+          this.untrustedOAuthServers = Object.fromEntries(this.fileServers);
+        }
         const fresh = await loadMcpServers({
           fs: this.fs,
           cwd: this.workspace.cwd,
           homeDir: this.bootstrap.homeDir,
-          includeProject: this.trust.isTrusted(),
+          includeProject: trusted,
         });
+        if (trusted) await this.reconcileUntrustedOAuthServers(fresh);
         this.fileServers = new Map(Object.entries(fresh));
       }
       await this.publishIfChanged(true);
     });
+  }
+
+  private async reconcileUntrustedOAuthServers(
+    fresh: Readonly<Record<string, McpServerConfig>>,
+  ): Promise<void> {
+    const previousServers = this.untrustedOAuthServers;
+    this.untrustedOAuthServers = undefined;
+    if (previousServers === undefined) return;
+    for (const [name, previous] of Object.entries(previousServers)) {
+      if (!('url' in previous)) continue;
+      const next = fresh[name];
+      const identityChanged =
+        next === undefined ||
+        !('url' in next) ||
+        mcpOAuthStoreKey(name, previous.url) !== mcpOAuthStoreKey(name, next.url);
+      if (!identityChanged) continue;
+      await this.cancelAuthorization(name, previous);
+      await this.invalidateAuthorization(name, previous);
+    }
   }
 
   private merged(): Record<string, McpServerConfig> {

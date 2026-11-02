@@ -445,6 +445,48 @@ describe('WorkspaceMcpConfigService', () => {
     expect(invalidate).not.toHaveBeenCalled();
   });
 
+  it('revokes OAuth credentials for project servers removed while untrusted after re-trust', async () => {
+    const url = 'https://mcp.example.test/mcp';
+    await writeProjectConfig({ alpha: { transport: 'http', url, auth: 'oauth' } });
+    const service = createService();
+    await service.ready;
+    trusted = false;
+    trustFlips.fire({ trusted: false });
+    await vi.waitFor(() => expect(service.servers()).toEqual({}));
+    expect(invalidate).not.toHaveBeenCalled();
+
+    await writeProjectConfig({});
+    await storeWrites.fireAsync({}, new AbortController().signal);
+    trusted = true;
+    trustFlips.fire({ trusted: true });
+
+    await vi.waitFor(() => {
+      expect(invalidate).toHaveBeenCalledWith(service, 'alpha', url);
+    });
+  });
+
+  it('revokes the previous OAuth identity for URL changes made while untrusted after re-trust', async () => {
+    const previousUrl = 'https://mcp.example.test/mcp-a';
+    const nextUrl = 'https://mcp.example.test/mcp-b';
+    await writeProjectConfig({ alpha: { transport: 'http', url: previousUrl, auth: 'oauth' } });
+    const service = createService();
+    await service.ready;
+    trusted = false;
+    trustFlips.fire({ trusted: false });
+    await vi.waitFor(() => expect(service.servers()).toEqual({}));
+    expect(invalidate).not.toHaveBeenCalled();
+
+    await writeProjectConfig({ alpha: { transport: 'http', url: nextUrl, auth: 'oauth' } });
+    await storeWrites.fireAsync({}, new AbortController().signal);
+    trusted = true;
+    trustFlips.fire({ trusted: true });
+
+    await vi.waitFor(() => {
+      expect(invalidate).toHaveBeenCalledWith(service, 'alpha', previousUrl);
+    });
+    expect(invalidate).not.toHaveBeenCalledWith(service, 'alpha', nextUrl);
+  });
+
   it('cancels the previous remote authorization when a plugin server is disabled', async () => {
     const url = 'https://mcp.example.test/mcp';
     const config: McpServerConfig = { transport: 'http', url, auth: 'oauth' };
