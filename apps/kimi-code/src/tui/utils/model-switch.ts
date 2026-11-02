@@ -85,11 +85,8 @@ export async function performModelSwitch(
     await host.waitForSessionAssembly();
     session = host.session;
   }
-  if (host.state.appState.streamingPhase !== 'idle') {
-    host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
-    return false;
-  }
-
+  const appliesNextTurn =
+    host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting;
   const prevModel = host.state.appState.model;
   const prevEffort = host.state.appState.thinkingEffort;
   const modelChanged = alias !== prevModel;
@@ -172,6 +169,9 @@ export async function performModelSwitch(
     status = `Saved ${displayName} with thinking ${effectiveEffort} as default.`;
   } else {
     status = `Already using ${displayName} with thinking ${effectiveEffort}.`;
+  }
+  if (appliesNextTurn && (effectiveModelChanged || effectiveEffortChanged)) {
+    status += ' Takes effect from the next turn.';
   }
   host.showStatus(status, 'success');
   return true;

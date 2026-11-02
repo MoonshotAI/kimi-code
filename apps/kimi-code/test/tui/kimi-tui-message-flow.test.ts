@@ -1847,7 +1847,7 @@ describe('KimiTUI message flow', () => {
     thinking: { enabled: true },
   });
 
-  it('blocks an effort switch once the waited-out first prompt starts a turn (v2 engine)', async () => {
+  it('applies an effort switch for the next turn once the waited-out first prompt starts (v2 engine)', async () => {
     const lazySession = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
@@ -1873,9 +1873,12 @@ describe('KimiTUI message flow', () => {
     resolveCreate(lazySession);
     await vi.waitFor(() => {
       expect(lazySession.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
-      expect(stripSgr(renderTranscript(driver))).toContain('Cannot switch models while streaming');
+      expect(lazySession.setThinking).toHaveBeenCalledWith('low');
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Thinking set to low. Takes effect from the next turn.',
+      );
     });
-    expect(lazySession.setThinking).not.toHaveBeenCalled();
+    expect(lazySession.prompt).toHaveBeenCalledTimes(1);
   });
 
   it('applies an effort switch after waiting out an in-flight lazy creation (v2 engine)', async () => {
