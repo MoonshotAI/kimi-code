@@ -221,11 +221,10 @@ export class GrepTool implements IGrepTool {
 
     const filteredSensitive = new Set<string>();
     const keptLines = filterSensitiveLines(rawLines, mode, filteredSensitive, pathClass);
-    const orderedLines = keptLines;
 
     const offset = args.offset ?? 0;
     const headLimit = args.head_limit ?? DEFAULT_HEAD_LIMIT;
-    const afterOffset = offset > 0 ? orderedLines.slice(offset) : orderedLines;
+    const afterOffset = offset > 0 ? keptLines.slice(offset) : keptLines;
     const limitActive = headLimit > 0;
     const limited = limitActive ? afterOffset.slice(0, headLimit) : afterOffset;
     const paginationTruncated = limitActive && afterOffset.length > headLimit;
@@ -240,8 +239,8 @@ export class GrepTool implements IGrepTool {
         `Filtered ${String(filteredSensitive.size)} sensitive file(s): ${displayedFilteredPaths.join(', ')}`,
       );
     }
-    if (mode === 'count_matches' && orderedLines.length > 0) {
-      headerLines.push(formatCountSummary(orderedLines, filteredSensitive.size > 0));
+    if (mode === 'count_matches' && keptLines.length > 0) {
+      headerLines.push(formatCountSummary(keptLines, filteredSensitive.size > 0));
     }
     if (paginationTruncated) {
       const total = afterOffset.length + offset;
@@ -279,7 +278,7 @@ export class GrepTool implements IGrepTool {
     );
     const contentBody = displayedLines.join('\n');
     const visibleBody =
-      orderedLines.length === 0 && filteredSensitive.size > 0
+      keptLines.length === 0 && filteredSensitive.size > 0
         ? 'No non-sensitive matches found'
         : contentBody;
     const emptyResultMessage =
