@@ -97,8 +97,7 @@ const PROBE_MAX_DEPTH = 6;
 const PROBE_MAX_ENTRIES = 500;
 const GREP_TIMEOUT_MS = 30_000;
 const SUGGEST_TIMEOUT_MS = 10_000;
-const SUGGEST_WALK_ABORTED = new Error('suggest walk aborted');
-const WALK_MAX_DEPTH = 64;
+const WALK_DEFAULT_IGNORE = ['.git'];
 
 interface SuggestRoot {
   readonly dir: string;
@@ -114,7 +113,10 @@ const MACOS_NOISE = new Set(['.DS_Store', '.AppleDouble', '.LSOverride']);
 export class WorkspaceFsService implements IWorkspaceFsService {
   declare readonly _serviceBrand: undefined;
 
-  private readonly gitignoreCache = new Map<string, Ignore>();
+  private readonly gitignoreCache = new Map<string, {
+    readonly matcher: Ignore;
+    readonly walkRules: readonly string[];
+  }>();
   private rgResolution: RgResolution | null | undefined = undefined;
   private realRootsCache:
     | { readonly key: string; readonly roots: readonly { dir: string; real: string }[] }
@@ -693,9 +695,10 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const candidates: FsSearchHit[] = [];
     const queryLower = req.query.toLowerCase();
     const seenPaths = new Set<string>();
+    let inventoryTruncated = false;
     for (const root of roots) {
-      const matcher = req.follow_gitignore ? await this.matcherFor(root.dir) : undefined;
-      await this.walk(root.dir, '', matcher, async (relPath, name, kind) => {
+      const ignoreRules = req.follow_gitignore ? await this.walkIgnoreFor(root.dir) : WALK_DEFAULT_IGNORE;
+      inventoryTruncated = await this.walk(root.dir, ignoreRules, async (relPath, name, kind) => {
         const pathKey = `${root.real}/${relPath}`;
         if (seenPaths.has(pathKey)) return;
         seenPaths.add(pathKey);
@@ -715,7 +718,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           score,
           match_positions: computeMatchPositions(path, queryLower),
         });
-      });
+      }) || inventoryTruncated;
     }
 
     candidates.sort((a, b) => {
@@ -725,7 +728,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
     const effectiveCap = Math.min(req.limit, SEARCH_HARD_CAP);
     const truncated = candidates.length > effectiveCap;
-    return { items: candidates.slice(0, effectiveCap), truncated };
+    return { items: candidates.slice(0, effectiveCap), truncated: truncated || inventoryTruncated };
   }
 
   async suggest(req: FsSuggestRequest): Promise<FsSuggestResponse> {
@@ -751,6 +754,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     };
     const cap = req.limit;
 
+    const deadline = Date.now() + SUGGEST_TIMEOUT_MS;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SUGGEST_TIMEOUT_MS);
     timer.unref?.();
@@ -767,11 +771,11 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         } catch (error) {
           if (controller.signal.aborted) throw error;
           this.telemetry.track2('fs_suggest_node_fallback', { reason: 'rg_error' });
-          return await this.suggestWithNode(query, cap, controller.signal, roots);
+          return await this.suggestWithNode(query, cap, controller.signal, roots, deadline);
         }
       }
       this.telemetry.track2('fs_suggest_node_fallback', { reason: 'rg_missing' });
-      return await this.suggestWithNode(query, cap, controller.signal, roots);
+      return await this.suggestWithNode(query, cap, controller.signal, roots, deadline);
     } finally {
       clearTimeout(timer);
     }
@@ -1026,29 +1030,28 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     cap: number,
     signal: AbortSignal,
     roots: readonly SuggestRoot[],
+    deadline: number,
   ): Promise<FsSuggestResponse> {
     const multi = roots.length > 1;
     const top = new SuggestTopHeap(cap);
     const seenPaths = new Set<string>();
     let matched = 0;
-    try {
-      for (const root of roots) {
-        const matcher = query.followGitignore ? await this.matcherFor(root.dir) : undefined;
-        await this.walk(root.dir, '', matcher, async (relPath, _name, kind) => {
-          if (signal.aborted) throw SUGGEST_WALK_ABORTED;
-          if (multi) {
-            const pathKey = `${root.real}/${relPath}`;
-            if (seenPaths.has(pathKey)) return;
-            seenPaths.add(pathKey);
-          }
-          const candidate = evaluateSuggestCandidate(relPath, kind, query);
-          if (candidate === null) return;
-          matched += 1;
-          top.push(this.displayCandidate(root, candidate));
-        });
-      }
-    } catch (error) {
-      if (error !== SUGGEST_WALK_ABORTED) throw error;
+    let inventoryTruncated = false;
+    for (const root of roots) {
+      const ignoreRules = query.followGitignore ? await this.walkIgnoreFor(root.dir) : WALK_DEFAULT_IGNORE;
+      inventoryTruncated = await this.walk(root.dir, ignoreRules, async (relPath, _name, kind) => {
+        if (signal.aborted || Date.now() >= deadline) return false;
+        if (multi) {
+          const pathKey = `${root.real}/${relPath}`;
+          if (seenPaths.has(pathKey)) return;
+          seenPaths.add(pathKey);
+        }
+        const candidate = evaluateSuggestCandidate(relPath, kind, query);
+        if (candidate === null) return;
+        matched += 1;
+        top.push(this.displayCandidate(root, candidate));
+      }, { deadlineMs: deadline }) || inventoryTruncated;
+      if (signal.aborted || Date.now() >= deadline) break;
     }
     const items = top.drain().map((candidate) => ({
       path: candidate.path,
@@ -1057,7 +1060,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       score: candidate.score,
       match_positions: [...candidate.positions],
     }));
-    return { items, truncated: matched > cap || signal.aborted };
+    return { items, truncated: matched > cap || signal.aborted || inventoryTruncated };
   }
 
   async grep(req: FsGrepRequest): Promise<FsGrepResponse> {
@@ -1262,9 +1265,10 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const filePaths: { path: string; absolute: string }[] = [];
     const seenPaths = new Set<string>();
     const roots = await this.suggestRoots();
+    const deadline = startedAt + GREP_TIMEOUT_MS;
     for (const root of roots) {
-      const matcher = req.follow_gitignore ? await this.matcherFor(root.dir) : undefined;
-      await this.walk(root.dir, '', matcher, async (rel, _name, kind) => {
+      const ignoreRules = req.follow_gitignore ? await this.walkIgnoreFor(root.dir) : WALK_DEFAULT_IGNORE;
+      truncated = await this.walk(root.dir, ignoreRules, async (rel, _name, kind) => {
         if (kind !== 'file') return;
         if (req.include_globs && !matchesAnyGlob(rel, req.include_globs)) return;
         if (req.exclude_globs && matchesAnyGlob(rel, req.exclude_globs)) return;
@@ -1275,11 +1279,16 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           path: this.suggestDisplayPath(root, rel),
           absolute: this.path.join(root.dir, rel),
         });
-      });
+      }, { deadlineMs: deadline }) || truncated;
+      if (signal.aborted || Date.now() >= deadline) break;
+    }
+
+    if (signal.aborted || Date.now() >= deadline) {
+      throw new Error2(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${Date.now() - startedAt}ms`);
     }
 
     for (const file of filePaths) {
-      if (signal.aborted) {
+      if (signal.aborted || Date.now() >= deadline) {
         if (totalMatches === 0 && filesScanned === 0) {
           throw new Error2(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${Date.now() - startedAt}ms`);
         }
@@ -1331,58 +1340,53 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private async walk(
     baseAbs: string,
-    rootRel: string,
-    matcher: Ignore | undefined,
+    ignoreRules: readonly string[] | undefined,
     visit: (
       relPath: string,
       name: string,
       kind: 'file' | 'directory' | 'symlink',
-    ) => Promise<void>,
-    depth = 0,
-  ): Promise<void> {
-    if (depth > WALK_MAX_DEPTH) return;
-    let entries: readonly HostDirEntry[];
+    ) => Promise<void | false>,
+    options: { deadlineMs?: number } = {},
+  ): Promise<boolean> {
     try {
-      entries = await this.hostFs.readdir(rootRel === '' ? baseAbs : this.path.join(baseAbs, rootRel));
+      const { truncated } = await this.hostFs.walk(
+        baseAbs,
+        { ignore: ignoreRules, deadlineMs: options.deadlineMs },
+        (entry) => visit(entry.path, entry.path.slice(entry.path.lastIndexOf('/') + 1), entry.kind),
+      );
+      return truncated;
     } catch (error) {
-      if (error instanceof Error2 && error.code === ErrorCodes.OS_FS_DIRECTORY_TOO_LARGE) {
-        throw mapFsError(error, rootRel);
-      }
-      return;
-    }
-    for (const entry of entries) {
-      const { name } = entry;
-      if (name === '.git') continue;
-      const childRel = rootRel === '' ? name : `${rootRel}/${name}`;
-      const isDir = entry.isDirectory && entry.isSymbolicLink !== true;
-      if (matcher) {
-        const probe = isDir ? `${childRel}/` : childRel;
-        if (matcher.ignores(probe)) continue;
-      }
-      const kind: 'file' | 'directory' | 'symlink' = entry.isSymbolicLink
-        ? 'symlink'
-        : isDir
-          ? 'directory'
-          : 'file';
-      await visit(childRel, name, kind);
-      if (isDir) {
-        await this.walk(baseAbs, childRel, matcher, visit, depth + 1);
-      }
+      if (error instanceof Error2 && error.code === ErrorCodes.OS_FS_DIRECTORY_TOO_LARGE) throw mapFsError(error, baseAbs);
+      throw error;
     }
   }
 
   private async matcherFor(rootDir: string): Promise<Ignore | undefined> {
+    return (await this.ignoreFor(rootDir)).matcher;
+  }
+
+  private async walkIgnoreFor(rootDir: string): Promise<readonly string[]> {
+    return (await this.ignoreFor(rootDir)).walkRules;
+  }
+
+  private async ignoreFor(rootDir: string): Promise<{
+    readonly matcher: Ignore;
+    readonly walkRules: readonly string[];
+  }> {
     const cached = this.gitignoreCache.get(rootDir);
     if (cached !== undefined) return cached;
     const ig = ignore();
     ig.add('.git/');
+    let contents = '';
     try {
-      const contents = await this.hostFs.readText(this.path.join(rootDir, '.gitignore'));
+      contents = await this.hostFs.readText(this.path.join(rootDir, '.gitignore'));
       ig.add(contents);
     } catch {
     }
-    this.gitignoreCache.set(rootDir, ig);
-    return ig;
+    const rules = [...contents.split(/\r?\n/), '.git'];
+    const result = { matcher: ig, walkRules: rules };
+    this.gitignoreCache.set(rootDir, result);
+    return result;
   }
 
   private async resolveRg(): Promise<RgResolution | null> {
