@@ -5,7 +5,7 @@ import {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
-} from '@moonshot-ai/kosong';
+} from '@moonshot-ai/agent-core-v2';
 
 export const ErrorCodes = {
   CONFIG_INVALID: 'config.invalid',
@@ -76,6 +76,8 @@ export const ErrorCodes = {
   REQUEST_INVALID: 'request.invalid',
   REQUEST_WORK_DIR_REQUIRED: 'request.work_dir_required',
   REQUEST_PROMPT_INPUT_EMPTY: 'request.prompt_input_empty',
+
+  FS_PATH_NOT_FOUND: 'fs.path_not_found',
 
   SHELL_GIT_BASH_NOT_FOUND: 'shell.git_bash_not_found',
 
@@ -149,10 +151,10 @@ export const KIMI_ERROR_INFO = {
     action: 'The session state.json is corrupted; remove the session or repair the file.',
   },
   'session.fork_active_turn': {
-    title: 'Cannot fork session during active turn',
+    title: 'Session history operation in progress',
     retryable: true,
     public: true,
-    action: 'Wait for the active turn to complete before forking.',
+    action: 'Wait for the other session history operation to finish, then retry.',
   },
   'session.occupied': {
     title: 'Session is in use by another client',
@@ -444,6 +446,12 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Provide workDir in the request payload.',
+  },
+  'fs.path_not_found': {
+    title: 'Path not found',
+    retryable: false,
+    public: true,
+    action: 'Check the path exists and is a directory.',
   },
   'request.prompt_input_empty': {
     title: 'Prompt input is empty',

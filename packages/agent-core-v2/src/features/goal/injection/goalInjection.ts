@@ -1,14 +1,30 @@
+import { Service } from '#/_base/di/service';
+import { renderPrompt } from '#/_base/utils/render-prompt';
+import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { GoalSnapshot } from '#/features/goal/types';
-import { Service } from "#/_base/di/service";
-import { renderPrompt } from "#/_base/utils/render-prompt";
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
+import type { ContextInjectionContext, ContextInjectionResult } from '#/features/reminder/types';
+
 import GOAL_ACTIVE_REMINDER from './goal-active-reminder.md?raw';
+import GOAL_ACTIVE_SPARSE_REMINDER from './goal-active-sparse-reminder.md?raw';
 import GOAL_BLOCKED_REMINDER from './goal-blocked-reminder.md?raw';
 import GOAL_PAUSED_REMINDER from './goal-paused-reminder.md?raw';
 
 export interface GoalInjectionOptions {
   readonly getGoal: () => GoalSnapshot | null;
   readonly isWaitForEnabled?: () => boolean;
+}
+
+interface GoalReminderDisclosure {
+  readonly status: GoalSnapshot['status'];
+  readonly goalId: string;
+  readonly objective: string;
+  readonly completionCriterion?: string;
+  readonly active: boolean;
+  readonly budgetBand: 'within' | 'nearing';
+  readonly waitForEnabled: boolean;
 }
 
 export const GOAL_WAIT_FOR_GUIDANCE =
@@ -18,23 +34,63 @@ export class GoalInjection extends Service {
   constructor(
     private readonly options: GoalInjectionOptions,
     injector: IAgentReminderService,
+    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
   ) {
     super();
     this._register(
-      injector.register('goal', ({ isNewTurn }) => (isNewTurn ? this.reminder() : undefined)),
+      injector.register<GoalReminderDisclosure>('goal', (injection) => this.reminder(injection)),
     );
   }
 
-  private reminder(): string | undefined {
+  private reminder(
+    injection: ContextInjectionContext<GoalReminderDisclosure>,
+  ): ContextInjectionResult<GoalReminderDisclosure> | undefined {
+    if (!injection.isNewTurn) return undefined;
     const goal = this.options.getGoal();
     if (goal === null) return undefined;
-    if (goal.status === 'active') {
-      return buildGoalReminder(goal, this.options.isWaitForEnabled?.() === true);
-    }
-    if (goal.status === 'blocked') return buildBlockedNote(goal);
-    if (goal.status === 'paused') return buildPausedNote(goal);
-    return undefined;
+    const waitForEnabled = this.options.isWaitForEnabled?.() === true;
+    const disclosure = goalDisclosure(goal, waitForEnabled);
+    const full =
+      goal.status !== 'active' || needsFullGoalReminder(injection, disclosure, this.context.get());
+    return {
+      content: buildGoalReminder(goal, waitForEnabled, full),
+      disclosure,
+    };
   }
+}
+
+function goalDisclosure(goal: GoalSnapshot, waitForEnabled: boolean): GoalReminderDisclosure {
+  return {
+    status: goal.status,
+    goalId: goal.goalId,
+    objective: goal.objective,
+    completionCriterion: goal.completionCriterion,
+    active: goal.status === 'active',
+    budgetBand: isNearingBudget(goal) ? 'nearing' : 'within',
+    waitForEnabled,
+  };
+}
+
+function needsFullGoalReminder(
+  injection: ContextInjectionContext<GoalReminderDisclosure>,
+  goal: GoalReminderDisclosure,
+  history: readonly ContextMessage[],
+): boolean {
+  const previous = injection.lastDisclosure;
+  if (
+    injection.injectedPositions.length === 0 ||
+    previous === undefined ||
+    previous.active !== true ||
+    previous.goalId !== goal.goalId ||
+    previous.status !== goal.status ||
+    previous.objective !== goal.objective ||
+    previous.completionCriterion !== goal.completionCriterion ||
+    previous.budgetBand !== goal.budgetBand ||
+    previous.waitForEnabled !== goal.waitForEnabled
+  ) {
+    return true;
+  }
+  return history.slice(injection.lastInjectedAt ?? 0).some(isCompactionSummaryMessage);
 }
 
 const BUDGET_GUIDANCE_NEARING =
@@ -42,25 +98,23 @@ const BUDGET_GUIDANCE_NEARING =
 const BUDGET_GUIDANCE_WITHIN =
   'Budget guidance: you are within budget. Make steady, focused progress toward the objective.';
 
-function buildBlockedNote(goal: GoalSnapshot): string {
-  return renderPrompt(GOAL_BLOCKED_REMINDER, {
-    reason_suffix: reasonSuffix(goal),
-    objective: escapeUntrustedText(goal.objective),
-    completion_criterion_block: completionCriterionBlock(goal),
-  });
-}
-
-function buildPausedNote(goal: GoalSnapshot): string {
-  return renderPrompt(GOAL_PAUSED_REMINDER, {
-    reason_suffix: reasonSuffix(goal),
-    objective: escapeUntrustedText(goal.objective),
-    completion_criterion_block: completionCriterionBlock(goal),
-  });
-}
-
-function buildGoalReminder(goal: GoalSnapshot, waitForEnabled: boolean): string {
+function buildGoalReminder(goal: GoalSnapshot, waitForEnabled: boolean, full: boolean): string {
+  if (goal.status === 'blocked') {
+    return renderPrompt(GOAL_BLOCKED_REMINDER, {
+      reason_suffix: reasonSuffix(goal),
+      objective: escapeUntrustedText(goal.objective),
+      completion_criterion_block: completionCriterionBlock(goal),
+    });
+  }
+  if (goal.status === 'paused') {
+    return renderPrompt(GOAL_PAUSED_REMINDER, {
+      reason_suffix: reasonSuffix(goal),
+      objective: escapeUntrustedText(goal.objective),
+      completion_criterion_block: completionCriterionBlock(goal),
+    });
+  }
   const budgets = formatBudgets(goal);
-  return renderPrompt(GOAL_ACTIVE_REMINDER, {
+  return renderPrompt(full ? GOAL_ACTIVE_REMINDER : GOAL_ACTIVE_SPARSE_REMINDER, {
     objective: escapeUntrustedText(goal.objective),
     completion_criterion_block: completionCriterionBlock(goal),
     status: goal.status,
@@ -120,10 +174,7 @@ function maxBudgetFraction(goal: GoalSnapshot): number {
 }
 
 function escapeUntrustedText(text: string): string {
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
+  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 function formatElapsed(ms: number): string {

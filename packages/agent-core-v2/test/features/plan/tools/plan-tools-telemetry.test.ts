@@ -39,6 +39,7 @@ function planService({
     cancel: vi.fn(),
     clear: vi.fn(async () => {}),
     exit: exit ?? vi.fn(),
+    resolveFile: async () => undefined,
     recordRevision: vi.fn(async () => {}),
     status: vi.fn(async () => status),
   };

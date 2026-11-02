@@ -112,8 +112,10 @@ timeout = 5
 | [`task`](#task) | `table` | — | 后台任务与 Tower Agent 运行参数；`background` 为 legacy 配置节名称 |
 | [`tools`](#tools) | `table` | — | 全局工具开关 |
 | [`image`](#image) | `table` | — | 图片压缩参数 |
+| [`workspace`](#workspace-trust) | `table` | — | 工作区设置，包括信任机制 |
 | [`services`](#services) | `table` | — | 内置外部服务配置 |
 | [`permission`](#permission) | `table` | — | 初始权限规则 |
+| [`environments`](#environments) | `table` | — | 远程环境声明 |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | 生命周期 hook |
 | [`identity`](#identity) | `table` | — | 自定义 Agent 身份 |
 
@@ -439,15 +441,15 @@ disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `default_max_chars` | `integer` | `100000` | 工具调用未指定 `max_chars` 时的字符额度 |
-| `max_chars` | `integer` | `500000` | 单次工具调用可申请的最大字符额度 |
+| `max_chars` | `integer` | `100000` | 单次工具调用可申请的最大字符额度 |
 
 ```toml
 [read]
 default_max_chars = 100000
-max_chars = 500000
+max_chars = 100000
 ```
 
-两个值都必须是正整数。调用中的 `max_chars` 覆盖默认值，但不会超过配置的最大值；结果会说明实际生效的额度。如果配置的默认值超过最大值，默认读取也会按最大值执行。如果希望较大的文档默认就能一次返回，无需 Agent 主动申请更大额度，可以提高 `default_max_chars`。
+两个值都必须是正整数。调用中的 `max_chars` 覆盖默认值，但不会超过配置的最大值；结果会说明实际生效的额度。如果配置的默认值超过最大值，默认读取也会按最大值执行。单次调用还会在估算 token 数达到 `max_chars` 的四分之一时停止（每个非 ASCII 字符计 1 个 token，每 4 个 ASCII 字符计 1 个），因此中文等非 ASCII 字符较多的文本每次返回的字符更少。如果希望单次调用返回超过 100000 个字符或约 25000 个 token，需要提高 `max_chars`；如果还希望较大的文档默认就能一次返回，无需 Agent 主动申请更大额度，再同时提高 `default_max_chars`。
 
 ## `image`
 
@@ -462,14 +464,15 @@ max_chars = 500000
 
 ## `database`
 
-`database` 控制会话索引和全局搜索背后的嵌入式存储引擎。两个字段默认值都是 `true`，设为 `false` 时回退到旧有行为。
+`database` 控制会话索引和全局搜索背后的嵌入式存储引擎。会话索引默认开启；全局全文搜索索引默认关闭，开启后才会在后台扫描历史会话并提供 `POST /api/v1/search`。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `base` | `boolean` | `true` | 会话索引使用基于 minidb 的读模型；`false` 回退为直接读取会话元数据 |
-| `search` | `boolean` | `true` | 在独立 worker 线程中运行全局搜索索引；`false` 在服务器进程内运行 |
+| `global_search` | `boolean` | `false` | 是否构建全局全文搜索索引并提供 `POST /api/v1/search`；关闭时不扫描会话、不启动搜索 worker，搜索接口返回索引不可用 |
+| `search` | `boolean` | `true` | 全局搜索开启时，在独立 worker 线程中运行索引；`false` 在服务器进程内运行 |
 
-`base` 可被环境变量 `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` 覆盖，`search` 可被 `KIMI_CODE_SEARCH_WORKER` 覆盖，优先级均高于配置文件。
+`base` 可被环境变量 `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` 覆盖，`global_search` 可被 `KIMI_CODE_GLOBAL_SEARCH` 覆盖，`search` 可被 `KIMI_CODE_SEARCH_WORKER` 覆盖，优先级均高于配置文件。
 
 ## `watch`
 
@@ -480,6 +483,25 @@ max_chars = 500000
 | `enabled` | `boolean` | `true` | 是否挂文件系统 watch；`false` 关闭进程内全部 `watch()` |
 
 `enabled` 可被环境变量 `KIMI_CODE_WATCH` 覆盖，优先级高于配置文件。
+
+## `workspace trust`
+
+`workspace` 用于集中存放用户级 `config.toml` 中的工作区设置。其 `require_trust` 字段控制首次打开尚未受信任的工作区时是否要求信任确认；默认要求确认。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `require_trust` | `boolean` | `true` | 首次打开未受信任的工作区时要求信任确认；`false` 将所有工作区视为受信任并跳过启动信任提示 |
+
+```toml
+[workspace]
+require_trust = false
+```
+
+::: warning 注意
+关闭首次打开的信任确认后，项目级 MCP server 和其他受信任机制控制的项目配置都会不经确认直接加载。仅应在所有工作区均已可信时使用该配置。它不会改变权限模式、工具审批或危险命令保护。
+:::
+
+配置变更在 `/reload` 后生效；已经运行的 TUI 不会补弹启动信任提示。`KIMI_CODE_TRUST_WORKSPACE=1` 仍是独立的进程级信任覆盖，假值不会在 `require_trust` 为 `false` 时恢复首次打开的信任确认。已有信任记录会保留，恢复该要求后继续使用。
 
 <!--
 ## `experimental`
@@ -550,6 +572,73 @@ pattern = "Bash"
 ::: tip
 MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-code/mcp.json` 中，不在 `config.toml` 里。交互式配置入口是 `/mcp-config`，详见 [Model Context Protocol](../customization/mcp.md)。
 :::
+
+## `environments`
+
+`environments` 声明远程环境——SSH 主机、Docker 兼容容器或自定义启动命令——会话绑定后，Agent 的工具即在目标环境中执行。功能介绍、边界与限制见 [远程环境](../guides/remote-environment.md)。
+
+每个条目以环境 id 为键：不超过 64 个字符，首尾不能有空白，`local` 和 `default` 是保留字。同一条目内 `type` 与 `command` 互斥。
+
+远端工作目录必须是 POSIX 绝对路径，相对路径和 `~` 不会展开。
+
+可选的顶层 `default` 指定创建会话时未显式给出绑定时使用的环境。它必须指向一个已配置的条目，且该条目必须设置 `defaultCwd`——绑定由环境和工作目录成对构成，缺了工作目录的默认绑定会悬空。未设置 `default` 时，这些会话从 `local` 开始。TUI 的 `/new` 不用这个 default，而是保留当前环境。详见 [远程环境](../guides/remote-environment.md)。
+
+### SSH 条目
+
+| 字段 | 类型 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `type` | `string` | 是 | `"ssh"` |
+| `host` | `string` | 是 | SSH 主机；经系统 `ssh` 启动，`~/.ssh/config`（用户、端口、密钥、`ProxyJump`、`ControlMaster`）照常生效 |
+| `remoteBin` | `string` | 否 | 目标上的执行器路径，默认 `~/.kimi-code/bin/kimi` |
+| `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值，不在本机校验 |
+
+### Docker 条目
+
+| 字段 | 类型 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `type` | `string` | 是 | `"docker"` |
+| `container` | `string` | 是 | 运行中的容器名或 id，经 `docker exec` 接入 |
+| `context` | `string` | 否 | Docker context（例如 `orbstack`） |
+| `remoteBin` | `string` | 否 | 容器内的执行器路径，默认为容器用户 home 下的 `~/.kimi-code/bin/kimi`；启动命令经 `docker exec … sh -c` 执行，`~` 前缀由容器内的 shell 展开 |
+| `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
+
+### command 条目
+
+通用启动器形式，用于内置启动器未覆盖的环境（OrbStack 机器、`kubectl exec`、Apple Container、受管沙箱等）。`command` 与 `args` 描述如何进入目标：启动器必须在目标上执行跟在它后面的参数，`ssh host`、`kubectl exec -i pod --`、`docker exec -i container` 都是这样。Kimi Code 会在 `args` 末尾追加 `<remoteBin> exec-server`；`args` 已经调用 `exec-server` 时不追加。
+
+| 字段 | 类型 | 是否必填 | 说明 |
+| --- | --- | --- | --- |
+| `command` | `string` | 是 | 启动器可执行文件：按 `PATH` 解析的名称，或绝对路径。解析结果落在工作目录内会被拒绝，项目无法用同名二进制冒名顶替启动器 |
+| `args` | `array<string>` | 否 | 进入目标的启动器参数。某个参数已经调用 `exec-server` 时（例如 `--command "~/.kimi-code/bin/kimi exec-server"`），不再追加，按原样执行 |
+| `env` | `table<string, string>` | 否 | 本机启动器进程的环境变量，不会传播到目标环境执行的命令中 |
+| `remoteBin` | `string` | 否 | 目标上的执行器路径，追加在 `args` 之后，默认 `~/.kimi-code/bin/kimi`。应为不含空格和 shell 特殊字符的路径。只有经目标上的 shell 执行参数的启动器（如 ssh）会展开 `~`；`kubectl exec`、`docker exec` 这类原样传递参数的启动器需要绝对路径 |
+| `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
+
+```toml
+[environments]
+default = "dev-box"
+
+[environments.dev-box]
+type = "ssh"
+host = "dev-box"
+defaultCwd = "/home/me/projects"
+
+[environments.dev-container]
+type = "docker"
+container = "myapp-dev"
+
+[environments.sandbox]
+command = "sandbox"
+args = ["ssh", "i-1234567890", "--"]
+env = { SANDBOX_TOKEN = "..." }
+defaultCwd = "/home/me/kimi-code"
+
+[environments.k8s]
+command = "kubectl"
+args = ["exec", "-i", "dev-pod", "--"]
+remoteBin = "/root/.kimi-code/bin/kimi"
+defaultCwd = "/workspace"
+```
 
 ## `tui.toml`
 
@@ -623,6 +712,8 @@ additional_dir = ["/absolute/path/to/shared"]
 ```
 
 目录以绝对路径存储，与具体机器相关。因此建议把 `.kimi-code/local.toml` 加入项目的 `.gitignore`，避免被提交。
+
+除了 `local.toml`，项目 `.kimi-code/` 目录还可以放 `mcp.json`（项目级 MCP server），受工作区信任门控：在启动提示中选择信任该文件夹后才生效。详见 [Model Context Protocol](../customization/mcp.md)。
 
 ## 下一步
 

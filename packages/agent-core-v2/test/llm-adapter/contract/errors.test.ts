@@ -189,13 +189,16 @@ describe('classifyApiError', () => {
 
 describe('model error HTTP status source', () => {
   it('keeps rate-limit semantics without synthesizing HTTP 429', () => {
-    const error = errorFromLlmMessage({
-      kind: 'rate_limit',
-      message: 'backend stream rate limit',
-      requestId: 'req-stream',
-      retryAfterMs: null,
-      headers: { 'x-trace-id': 'trace-stream' },
-    });
+    const error = errorFromLlmMessage(
+      {
+        kind: 'rate_limit',
+        message: 'backend stream rate limit',
+        requestId: 'req-stream',
+        retryAfterMs: null,
+        headers: { 'x-trace-id': 'trace-stream' },
+      },
+      { requestId: 'req-stream' },
+    );
 
     expect(error).toBeInstanceOf(APIProviderRateLimitError);
     expect(error).toMatchObject({
@@ -203,12 +206,15 @@ describe('model error HTTP status source', () => {
       message: 'backend stream rate limit',
       statusCode: undefined,
       requestId: 'req-stream',
+      traceId: 'trace-stream',
+      diagnostics: { requestId: 'req-stream' },
     });
     expect(isRetryableGenerateError(error)).toBe(true);
     expect(llmMessageFromError(error)).toMatchObject({
       kind: 'rate_limit',
       message: 'backend stream rate limit',
       statusCode: undefined,
+      headers: { 'x-trace-id': 'trace-stream' },
     });
   });
 

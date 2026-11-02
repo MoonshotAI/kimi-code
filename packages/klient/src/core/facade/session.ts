@@ -105,7 +105,11 @@ export interface SessionFacade {
   restore(opts?: SessionRestoreOptions): Promise<boolean>;
   /** Permanently delete the session and its persisted data; throws when missing. */
   delete(): Promise<void>;
-  fork(input?: { title?: string; metadata?: Record<string, unknown> }): Promise<SessionMeta>;
+  fork(input?: {
+    title?: string;
+    metadata?: Record<string, unknown>;
+    turnIndex?: number;
+  }): Promise<SessionMeta>;
   createChild(input?: { title?: string; metadata?: Record<string, unknown> }): Promise<SessionMeta>;
   readonly approvals: SessionApprovalsFacade;
   readonly questions: SessionQuestionsFacade;
@@ -121,10 +125,15 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
     call(scope, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
   const spawn = async (
     method: 'fork' | 'createChild',
-    input: { title?: string; metadata?: Record<string, unknown> } = {},
+    input: { title?: string; metadata?: Record<string, unknown>; turnIndex?: number } = {},
   ): Promise<SessionMeta> => {
     return call({}, 'sessionManager', method, [
-      { sourceSessionId: sessionId, title: input.title, metadata: input.metadata },
+      {
+        sourceSessionId: sessionId,
+        title: input.title,
+        metadata: input.metadata,
+        turnIndex: input.turnIndex,
+      },
     ]) as Promise<SessionMeta>;
   };
 

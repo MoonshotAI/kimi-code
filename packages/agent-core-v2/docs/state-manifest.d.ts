@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 74 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 73 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -55,7 +55,8 @@
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     changeNotifier.snapshot                         src/agent/changeNotifier/changeNotifierOps.ts
 //     contextMemory                                   src/agent/contextMemory/contextOps.ts
-//     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
+//     contextProjector.lastRepairSignature            src/agent/loop/projector.ts
+//     environmentBinding                              src/agent/environmentBinding/environmentBindingOps.ts
 //     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
 //     fileHistory                                     src/features/fileHistory/fileHistoryOps.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
@@ -66,14 +67,14 @@
 //     fullCompaction.observedMaxContextTokensByModel  src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.wireRanges                       src/agent/fullCompaction/compactionOps.ts
 //     interruptionReminder                            src/agent/interruptionReminder/interruptionReminderOps.ts
-//     llm.requestTrace                                src/agent/llmRequester/llmRequestOps.ts
-//     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.lastConfigLogSignature             src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.lastTurnRequest                    src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.mediaRecovery                      src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.turnConfigs                        src/agent/llmRequester/llmRequesterService.ts
+//     llm.requestTrace                                src/agent/loop/llmRequestOps.ts
+//     llmRequester.emittedThinkingEffortWarnings      src/agent/loop/requester.ts
+//     llmRequester.lastConfigLogSignature             src/agent/loop/requester.ts
+//     llmRequester.lastMeasuredRequest                src/agent/loop/requester.ts
+//     llmRequester.mediaRecovery                      src/agent/loop/requester.ts
+//     llmRequester.turnConfigs                        src/agent/loop/requester.ts
 //     loop.disposing                                  src/agent/loop/loopService.ts
-//     loop.lastRequestTraceId                         src/agent/loop/loopService.ts
+//     loop.lastRequestId                              src/agent/loop/loopService.ts
 //     mcp.discovery                                   src/agent/mcp/mcpDiscoveryOps.ts
 //     mcp.discoveryWritesReady                        src/agent/mcp/mcpService.ts
 //     mcp.failures                                    src/agent/mcp/mcpFailureOps.ts
@@ -95,8 +96,6 @@
 //     profile.emittedPluginBudgetWarnings             src/agent/profile/profileService.ts
 //     profile.emittedThinkingEffortWarnings           src/agent/profile/profileService.ts
 //     profile.emittedToolPatternWarnings              src/agent/profile/profileService.ts
-//     runtime.binding                                 src/agent/runtimeBinding/runtimeBindingService.ts
-//     runtimeBinding                                  src/agent/runtimeBinding/runtimeBindingOps.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
 //     swarm                                           src/features/swarm/swarmOps.ts
 //     task                                            src/agent/task/taskOps.ts
@@ -118,7 +117,7 @@
 //     toolDedupe.turnRepeatCount                      src/agent/toolDedupe/toolDedupeService.ts
 //     toolExecutor.dupTypeTurnId                      src/agent/toolExecutor/toolExecutorService.ts
 //     toolExecutor.toolCallDupTypes                   src/agent/toolExecutor/toolExecutorService.ts
-//     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
+//     toolSelect                                      src/agent/toolSelect/toolSelectOps.ts
 //     tower                                           src/features/tower/towerOps.ts
 //     tower.owner                                     src/features/tower/towerOps.ts
 //     turn                                            src/agent/loop/turnOps.ts
@@ -692,6 +691,8 @@ export interface SessionStateSnapshot {
     readonly archived: boolean;
     readonly archivedAt?: number;
     readonly cwd?: string;
+    readonly environmentId?: string;
+    readonly environmentCwd?: string;
     readonly forkedFrom?: string;
     readonly agents?: Readonly<Record<string, /* AgentMeta — packages/agent-core-v2/src/session/sessionMetadata/sessionMetadata.ts */ {
       readonly homedir?: string;
@@ -947,7 +948,7 @@ export interface AgentStateSnapshot {
     readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
       inputOther: number;
       output: number;
-      inputCacheRead: number;
+      inputCacheRead?: number;
       inputCacheCreation: number;
       raw?: Record<string, unknown>;
     };
@@ -1160,7 +1161,7 @@ export interface AgentStateSnapshot {
     readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
       inputOther: number;
       output: number;
-      inputCacheRead: number;
+      inputCacheRead?: number;
       inputCacheCreation: number;
       raw?: Record<string, unknown>;
     };
@@ -1382,7 +1383,7 @@ export interface AgentStateSnapshot {
     readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
       inputOther: number;
       output: number;
-      inputCacheRead: number;
+      inputCacheRead?: number;
       inputCacheCreation: number;
       raw?: Record<string, unknown>;
     };
@@ -1596,7 +1597,7 @@ export interface AgentStateSnapshot {
     readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
       inputOther: number;
       output: number;
-      inputCacheRead: number;
+      inputCacheRead?: number;
       inputCacheCreation: number;
       raw?: Record<string, unknown>;
     };
@@ -1606,8 +1607,12 @@ export interface AgentStateSnapshot {
     };
     readonly durationMs?: number;
   }))[];
-  // src/agent/contextProjector/contextProjectorService.ts
-  'contextProjector.lastRepairSignature': string | null;
+  // src/agent/environmentBinding/environmentBindingOps.ts
+  // replayable · durable — folds: EnvironmentSetBinding
+  'environmentBinding': /* EnvironmentBinding — packages/agent-core-v2/src/environment/environment.ts */ {
+    readonly environmentId: string;
+    readonly cwd?: string;
+  } | undefined;
   // src/agent/fullCompaction/compactionOps.ts
   // replayable · durable — folds: FullCompactionBegin, FullCompactionCancel, FullCompactionComplete
   'fullCompaction': /* CompactionState — packages/agent-core-v2/src/agent/fullCompaction/compactionOps.ts */ {
@@ -1627,37 +1632,48 @@ export interface AgentStateSnapshot {
   // src/agent/interruptionReminder/interruptionReminderOps.ts
   // replayable · durable — folds: InterruptionReminderRecorded
   'interruptionReminder': null;
-  // src/agent/llmRequester/llmRequestOps.ts
+  // src/agent/loop/llmRequestOps.ts
   // replayable · durable — folds: LlmToolsSnapshot, LlmRequest
-  'llm.requestTrace': /* LlmRequestTraceState — packages/agent-core-v2/src/agent/llmRequester/llmRequestOps.ts */ {
+  'llm.requestTrace': /* LlmRequestTraceState — packages/agent-core-v2/src/agent/loop/llmRequestOps.ts */ {
     readonly seenToolsHashes: readonly string[];
   };
-  // src/agent/llmRequester/llmRequesterService.ts
+  // src/agent/loop/loopService.ts
+  'loop.disposing': boolean;
+  'loop.lastRequestId': string | undefined;
+  // src/agent/loop/projector.ts
+  'contextProjector.lastRepairSignature': string | null;
+  // src/agent/loop/requester.ts
   'llmRequester.emittedThinkingEffortWarnings': Set<string>;
   'llmRequester.lastConfigLogSignature': string | undefined;
-  'llmRequester.lastTurnRequest': /* AgentLLMTurnRequestSnapshot — packages/agent-core-v2/src/agent/llmRequester/llmRequester.ts */ {
+  'llmRequester.lastMeasuredRequest': /* MeasuredRequest — packages/agent-core-v2/src/agent/loop/requester.ts */ {
     readonly modelAlias: string;
     readonly contextRevision: number;
-    readonly toolsHash: string;
-    readonly systemPromptHash: string;
-    readonly messageCount: number;
-    readonly historyHash: string;
-    readonly inputTokens?: number;
+    readonly inputTokens: number;
     readonly startedAt: number;
     readonly finishedAt: number;
+    readonly thinkingEffort: /* ThinkingEffort — packages/agent-core-v2/src/human/llm-requester/thinking.ts */ 'off' | 'on' | (string & {});
+    readonly requestKind?: string;
+    readonly turnId?: number;
+    readonly step?: number;
+    readonly traceId?: string;
+    readonly usage: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
+      inputOther: number;
+      output: number;
+      inputCacheRead?: number;
+      inputCacheCreation: number;
+      raw?: Record<string, unknown>;
+    };
+    readonly systemPromptHash: string;
+    readonly toolsHash: string;
+    readonly messageCount: number;
+    readonly historyHash: string;
   } | undefined;
-  'llmRequester.mediaRecovery': /* MediaRecovery — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
+  'llmRequester.mediaRecovery': /* MediaRecovery — packages/agent-core-v2/src/agent/loop/requester.ts */ {
     readonly modelAlias: string;
     readonly contextRevision: number;
-    readonly media: /* MediaProjection — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-      readonly degradeCount: number;
-    } | {
-      readonly strip: /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-        readonly "__@mediaStripSnapshotBrand": undefined;
-      };
-    };
+    readonly ledger: unknown;
   } | undefined;
-  'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
+  'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/loop/requester.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {
       readonly modelAlias: string;
       readonly modelCapabilities: /* ModelCapability — packages/agent-core-v2/src/llm-adapter/contract/capability.ts */ {
@@ -1677,11 +1693,16 @@ export interface AgentStateSnapshot {
       readonly compactionTriggerRatio: number | undefined;
       readonly compactionMaxAttempts: number | undefined;
     };
-    readonly params: /* ModelRequestParams — packages/agent-core-v2/src/llm-adapter/model/model-requester.ts */ {
+    readonly params: /* ModelRequestParams — packages/agent-core-v2/src/llm-adapter/model/generate.ts */ {
       readonly cacheKey?: string;
-      readonly sampling?: /* SamplingOptions — packages/agent-core-v2/src/llm-adapter/model/model-requester.ts */ {
+      readonly sampling?: /* LlmSampling — packages/agent-core-v2/src/human/llm/request.ts */ {
         readonly temperature?: number;
         readonly topP?: number;
+        readonly topK?: number;
+        readonly stop?: readonly string[];
+        readonly seed?: number;
+        readonly presencePenalty?: number;
+        readonly frequencyPenalty?: number;
       };
       readonly thinkingEffort?: 'off' | 'on' | (string & {});
       readonly thinkingKeep?: string;
@@ -1689,13 +1710,10 @@ export interface AgentStateSnapshot {
       readonly usedContextTokens?: number;
       readonly maxContextTokens?: number;
       readonly stream?: boolean;
-      readonly onTraceId?: (traceId: string | null) => void;
+      readonly onRequestId?: (requestId: string | undefined) => void;
     };
     readonly systemPrompt: string;
   }>;
-  // src/agent/loop/loopService.ts
-  'loop.disposing': boolean;
-  'loop.lastRequestTraceId': string | undefined;
   // src/agent/loop/turnOps.ts
   // replayable · durable — folds: ContextAppendLoopEvent, TurnPrompt, TurnSteer, ContextUndo, ContextApplyCompaction, ContextClear, TurnCancel, TurnEnded
   'turn': /* TurnModelState — packages/agent-core-v2/src/agent/loop/turnOps.ts */ {
@@ -1815,17 +1833,6 @@ export interface AgentStateSnapshot {
   'profile.emittedPluginBudgetWarnings': Set<string>;
   'profile.emittedThinkingEffortWarnings': Set<string>;
   'profile.emittedToolPatternWarnings': Set<string>;
-  // src/agent/runtimeBinding/runtimeBindingOps.ts
-  // replayable · durable — folds: RuntimeSetBinding
-  'runtimeBinding': /* RuntimeBinding — packages/agent-core-v2/src/runtime/runtime.ts */ {
-    readonly workspaceId: string;
-    readonly runtimeId: string;
-  } | undefined;
-  // src/agent/runtimeBinding/runtimeBindingService.ts
-  'runtime.binding': /* RuntimeBinding — packages/agent-core-v2/src/runtime/runtime.ts */ {
-    readonly workspaceId: string;
-    readonly runtimeId: string;
-  };
   // src/agent/shellCommand/shellCommandService.ts
   'shellCommand.tasks': Map<string, string>;
   // src/agent/task/taskOps.ts
@@ -1852,6 +1859,9 @@ export interface AgentStateSnapshot {
     readonly model?: string;
     readonly thinkingEffort?: string;
     readonly stopCode?: string;
+    readonly swarmIndex?: number;
+    readonly stateReason?: string;
+    readonly resultSummary?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1904,6 +1914,9 @@ export interface AgentStateSnapshot {
     readonly model?: string;
     readonly thinkingEffort?: string;
     readonly stopCode?: string;
+    readonly swarmIndex?: number;
+    readonly stateReason?: string;
+    readonly resultSummary?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1952,8 +1965,44 @@ export interface AgentStateSnapshot {
   // src/agent/toolExecutor/toolExecutorService.ts
   'toolExecutor.dupTypeTurnId': number | undefined;
   'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
-  // src/agent/toolSelect/toolSelectService.ts
-  'toolSelect.pendingLoaded': Set<string>;
+  // src/agent/toolSelect/toolSelectOps.ts
+  // replayable · durable — folds: ToolSelectInitialized, ToolSelectToolsChanged
+  'toolSelect': /* ToolSelectModelState — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+    readonly initial: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly parameters: Record<string, unknown>;
+      readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+      readonly disclosure?: 'deferred' | 'inline';
+      readonly origin: 'initial' | 'runtime';
+    }[] | undefined;
+    readonly current: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly parameters: Record<string, unknown>;
+      readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+      readonly disclosure?: 'deferred' | 'inline';
+      readonly origin: 'initial' | 'runtime';
+    }[];
+    readonly changes: readonly /* ToolSelectChange — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+      readonly added: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+        readonly name: string;
+        readonly description: string;
+        readonly parameters: Record<string, unknown>;
+        readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+        readonly disclosure?: 'deferred' | 'inline';
+        readonly origin: 'initial' | 'runtime';
+      }[];
+      readonly removed: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+        readonly name: string;
+        readonly description: string;
+        readonly parameters: Record<string, unknown>;
+        readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+        readonly disclosure?: 'deferred' | 'inline';
+        readonly origin: 'initial' | 'runtime';
+      }[];
+    }[];
+  };
   // src/agent/userTool/userToolOps.ts
   // replayable · durable — folds: ToolsRegisterUserTool, ToolsUnregisterUserTool
   'userTool': /* UserToolModelState — packages/agent-core-v2/src/agent/userTool/userToolOps.ts */ Map<string, /* UserToolRegistration — packages/agent-core-v2/src/agent/userTool/userTool.ts */ {
@@ -1977,6 +2026,7 @@ export interface AgentStateSnapshot {
         readonly size?: number;
         readonly oversize?: boolean;
         readonly mtimeMs?: number;
+        readonly environmentId?: string;
       }>>;
     }[];
     readonly tracked: readonly string[];

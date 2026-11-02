@@ -69,6 +69,7 @@ interface WorkspaceRouteHost {
 }
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
+const duplicateDirDetailsSchema = z.array(z.object({ path: z.string(), directory: z.string() }));
 
 export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): void {
   const listRoute = defineRoute(
@@ -95,6 +96,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
       success: { data: createWorkspaceResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.WORKSPACE_DUPLICATE_DIR]: { detailsSchema: duplicateDirDetailsSchema },
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
       },
       description: 'Register a workspace (fresh id per call; retry-safe via idempotency_key)',
@@ -158,6 +160,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
       success: { data: updateWorkspaceResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.WORKSPACE_DUPLICATE_DIR]: { detailsSchema: duplicateDirDetailsSchema },
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
       },
@@ -299,7 +302,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
       errors: {
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
       },
-      description: 'Revoke workspace trust (project-level MCP config unloads)',
+      description: 'Revoke persisted workspace trust (project-level MCP config unloads unless process or config overrides apply)',
       tags: ['workspaces'],
     },
     async (req, reply) => {
@@ -446,20 +449,10 @@ async function normalizeAdditionalDirsInput(
       };
     }
     if (workspaceRootKey(dir) === rootKey) {
-      return {
-        envelope: buildValidationEnvelope(
-          [{ path: `additional_dirs.${index}`, message: 'path duplicates the workspace root' }],
-          requestId,
-        ),
-      };
+      return { envelope: buildDuplicateDirEnvelope(index, dir, requestId) };
     }
     if (dirs.some((kept) => workspaceRootKey(kept) === workspaceRootKey(dir))) {
-      return {
-        envelope: buildValidationEnvelope(
-          [{ path: `additional_dirs.${index}`, message: 'duplicate path' }],
-          requestId,
-        ),
-      };
+      return { envelope: buildDuplicateDirEnvelope(index, dir, requestId) };
     }
     dirs.push(dir);
   }
@@ -496,6 +489,17 @@ export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<Works
     last_opened_at: new Date(ws.lastOpenedAt).toISOString(),
     session_count: sessionCount,
   };
+}
+
+function buildDuplicateDirEnvelope(index: number, dir: string, requestId: string) {
+  const directory = resolve(dir);
+  return errEnvelope(
+    ErrorCode.WORKSPACE_DUPLICATE_DIR,
+    `Duplicate source folder: ${directory}`,
+    requestId,
+    undefined,
+    [{ path: `additional_dirs.${index}`, directory }],
+  );
 }
 
 function buildValidationEnvelope(

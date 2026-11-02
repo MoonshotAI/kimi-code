@@ -3,7 +3,7 @@
  * klient in-memory transport and a local mock model endpoint.
  *
  * Every case runs the REAL pipeline: klient facade → engine session/loop →
- * llmRequester → ModelRequesterImpl → composed ChatProvider.generate → the
+ * llmRequester → core requester → composed ChatProvider.generate → the
  * provider's message-conversion layer → HTTP against a local `node:http`
  * server. The mock server captures request bodies (so fallbacks can be
  * asserted on their wire shape) and replies with scripted SSE streams or
@@ -482,7 +482,9 @@ async function promptAndWait(ctx: CaseContext, input: readonly ContentPart[]): P
 
 /** Chat-completions messages array of the n-th captured request. */
 function openAiMessages(callIndex: number): Record<string, unknown>[] {
-  const body = requests[callIndex]?.json as { messages?: Record<string, unknown>[] } | undefined;
+  const body = requests.filter((request) => request.url === '/v1/chat/completions')[callIndex]?.json as
+    | { messages?: Record<string, unknown>[] }
+    | undefined;
   expect(body?.messages, `request #${callIndex} should carry a messages array`).toBeDefined();
   return body!.messages!.filter((message) => !isDateReminderMessage(message));
 }
@@ -944,7 +946,10 @@ describe('video blocks', () => {
 
   it('kimi (composed): cancelling ReadMediaFile aborts the in-flight video upload', async () => {
     const ctx = await newCase(M_KIMI, 'kimi-video-upload-cancel');
-    await writeFile(join(ctx.workDir, 'clip.mp4'), Buffer.from(MP4_FTYP_HEX, 'hex'));
+    await writeFile(
+      join(ctx.workDir, 'clip.mp4'),
+      Buffer.concat([Buffer.from(MP4_FTYP_HEX, 'hex'), Buffer.from([0])]),
+    );
 
     resetMock((req) => {
       if (req.url === '/v1/files') return { kind: 'hang' };
@@ -964,7 +969,7 @@ describe('video blocks', () => {
     expect(ctx.payloads('turn.ended')[0]?.['reason']).toBe('cancelled');
   }, 15_000);
 
-  it('openai: no uploadVideo capability — the tool result is an error text, no files call', async () => {
+  it('openai: no uploadVideo capability — the tool result is a path placeholder, no files call', async () => {
     const ctx = await newCase(M_OPENAI_VISION, 'openai-video-upload');
     await writeFile(join(ctx.workDir, 'clip.mp4'), Buffer.from(MP4_FTYP_HEX, 'hex'));
 
@@ -981,9 +986,8 @@ describe('video blocks', () => {
     expect(chatCalls).toHaveLength(2);
     const secondBody = chatCalls[1]?.json as { messages: Record<string, unknown>[] };
     const toolMessage = secondBody.messages.find((message) => message['role'] === 'tool');
-    // ModelRequesterImpl.uploadVideo throws for providers without the hook;
-    // ReadMediaFile converts that into an error tool result (engine fallback).
-    expect(String(toolMessage?.['content'])).toContain('does not support video upload');
+    expect(String(toolMessage?.['content'])).toContain('<video path=');
+    expect(String(toolMessage?.['content'])).toContain('.mp4');
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 
@@ -1069,15 +1073,30 @@ describe('tool exchange structure', () => {
     ): Promise<Record<string, unknown>[]> => {
       const ctx = await newCase(model, label);
       await writeFile(join(ctx.workDir, 'pixel.png'), Buffer.from(PNG_1X1_BASE64, 'base64'));
-      resetMock(
-        queueScript(
-          {
-            kind: 'sse',
-            lines: openAiToolCallSse('call_media_1', 'ReadMediaFile', '{"path":"pixel.png"}'),
-          },
-          OK_OPENAI,
-        ),
+      const replies = queueScript(
+        {
+          kind: 'sse',
+          lines: openAiToolCallSse('call_media_1', 'ReadMediaFile', '{"path":"pixel.png"}'),
+        },
+        OK_OPENAI,
       );
+      resetMock((req) => {
+        if (req.url === '/v1/files') {
+          return {
+            kind: 'json',
+            status: 200,
+            body: {
+              id: 'file-mock-media',
+              object: 'file',
+              bytes: 32,
+              created_at: 1,
+              filename: 'pixel.png',
+              purpose: 'image',
+            },
+          };
+        }
+        return replies(req, 0);
+      });
       await promptAndWait(ctx, [{ type: 'text', text: 'look at pixel.png' }]);
       expect(ctx.payloads('prompt.completed')[0]?.['reason'], label).toBe('completed');
       return openAiMessages(1);

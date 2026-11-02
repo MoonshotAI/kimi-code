@@ -46,11 +46,13 @@ export class WorkspaceInstructionsService
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ILogService private readonly log: ILogService,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
+    private readonly personalFs?: IHostFileSystem,
+    private readonly watchEnabled = true,
   ) {
     super();
     this.states.contributeState(workspaceInstructionsCurrentKey);
     this.ready = this.reload();
-    void this.watchCandidateFiles();
+    if (this.watchEnabled) void this.watchCandidateFiles();
   }
 
   private get current(): WorkspaceInstructionsSnapshot {
@@ -71,6 +73,7 @@ export class WorkspaceInstructionsService
         { fs: this.fs, homeDir: this.env.homeDir },
         this.bootstrap.homeDir,
         [this.workspace.cwd],
+        this.personalFs,
       );
       const next: WorkspaceInstructionsSnapshot = {
         agentsMd: result.content,

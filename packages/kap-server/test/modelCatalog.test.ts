@@ -306,15 +306,6 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       get: () => {
         throw new Error('unused');
       },
-      getRequester: () => {
-        throw new Error('unused');
-      },
-      generate: () => {
-        throw new Error('unused');
-      },
-      ping: async () => {
-        throw new Error('unused');
-      },
       findByName: () => [],
       listModels: async () => [],
       listProviders: async () => [],

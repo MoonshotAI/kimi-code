@@ -397,13 +397,11 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(40410);
   });
 
-  it('rejects create when metadata.cwd does not exist (40409)', async () => {
+  it('rejects a session for a missing metadata.cwd for a local binding', async () => {
     const missing = join(home as string, 'never-created');
-    const { body } = await postJson<null>('/api/v1/sessions', { metadata: { cwd: missing } });
-    expect(body.code).toBe(40409);
+    const created = await postJson<null>('/api/v1/sessions', { metadata: { cwd: missing } });
+    expect(created.body.code).toBe(40409);
 
-    const workspaces = await getJson<{ items: { root: string }[] }>('/api/v1/workspaces');
-    expect(workspaces.body.data.items.some((w) => w.root === missing)).toBe(false);
     const sessions = await getJson<PageWire>('/api/v1/sessions');
     expect(sessions.body.data.items.some((s) => s.metadata.cwd === missing)).toBe(false);
   });
@@ -1111,7 +1109,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   }, 30_000);
 
-  it('archives a cold session after a failed resume when the workspace root is gone', async () => {
+  it('resumes a session whose workspace root is gone (root validity deferred to binding) and still archives it', async () => {
     const cwd = join(home as string, 'gone-ws');
     await mkdir(cwd);
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -1122,9 +1120,8 @@ describe('server-v2 /api/v1/sessions', () => {
       .delete(encodeWorkDirKey(cwd));
     await rm(cwd, { recursive: true, force: true });
 
-    await expect(
-      resumeSessionById((server as RunningServer).core.accessor, id),
-    ).rejects.toThrow(/does not exist/);
+    const resumed = await resumeSessionById((server as RunningServer).core.accessor, id);
+    expect(resumed?.id).toBe(id);
 
     const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
     expect(archived.body.code).toBe(0);
@@ -1552,6 +1549,10 @@ describe('server-v2 /api/v1/sessions', () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
+    const invalid = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
+      turn_index: -1,
+    });
+    expect(invalid.body.code).toBe(40001);
     const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
     expect(forked.body.code).toBe(0);
 
@@ -1567,10 +1568,19 @@ describe('server-v2 /api/v1/sessions', () => {
     const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
     expect(session).toBeDefined();
     await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
-    const cron = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    main.accessor.get(IAgentContextMemoryService).append({
+      role: 'user',
+      content: [{ type: 'text', text: 'selected through REST' }],
+      origin: { kind: 'user' },
+    });
+    await main.accessor.get(IWireService).flush();
+    const cron = main.accessor.get(IAgentCronService);
     const task = cron.addTask({ cron: '0 9 * * *', prompt: 'fork me', recurring: true });
 
-    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
+      turn_index: 0,
+    });
     expect(forked.body.code).toBe(0);
     const forkedId = forked.body.data.id;
 
@@ -1578,7 +1588,12 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const resumed = await resumeSessionById((server as RunningServer).core.accessor, forkedId);
     expect(resumed).toBeDefined();
-    const forkedCron = resumed!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentCronService);
+    const forkedMain = resumed!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    expect(forkedMain.accessor.get(IAgentContextMemoryService).get()[0]).toMatchObject({
+      role: 'user',
+      content: [{ type: 'text', text: 'selected through REST' }],
+    });
+    const forkedCron = forkedMain.accessor.get(IAgentCronService);
     expect(forkedCron.list()).toEqual([]);
     expect(cron.list().map((t) => ({ id: t.id, prompt: t.prompt }))).toEqual([
       { id: task.id, prompt: 'fork me' },
@@ -1768,7 +1783,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const sourceAgents = session.accessor.get(IAgentLifecycleService);
     await sourceAgents.create({ agentId: MAIN_AGENT_ID });
     let reader = sourceAgents.handleOf(MAIN_AGENT_ID)!.accessor.get(IReadTool);
-    let args: ReadInput | undefined = { path: reference, max_chars: 500 };
+    let args: ReadInput | undefined = { path: reference, max_chars: 1000 };
     const firstExecution = await reader.resolveExecution(args);
     if (firstExecution.isError === true) throw new Error(JSON.stringify(firstExecution.output));
     const first = await firstExecution.execute({ turnId: 1, toolCallId: 'read-first', signal: new AbortController().signal });

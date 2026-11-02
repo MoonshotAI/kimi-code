@@ -112,8 +112,10 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`task`](#task) | `table` | — | Background task and Tower agent runtime parameters; `background` is the legacy section name |
 | [`tools`](#tools) | `table` | — | Global tool switch |
 | [`image`](#image) | `table` | — | Image compression parameters |
+| [`workspace`](#workspace-trust) | `table` | — | Workspace settings, including the trust gate |
 | [`services`](#services) | `table` | — | Built-in external service configuration |
 | [`permission`](#permission) | `table` | — | Initial permission rules |
+| [`environments`](#environments) | `table` | — | Remote environment declarations |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | Lifecycle hooks |
 | [`identity`](#identity) | `table` | — | Custom agent identity |
 
@@ -173,7 +175,7 @@ max_context_size = 1047576
 
 ### Model overrides
 
-Use `[models."<alias>".overrides]` for user overrides that must survive provider-model refreshes. Runtime consumers read the effective value: the override when present, otherwise the top-level field.
+Use `[models."<alias>".overrides]` for user overrides that must survive provider-model refreshes. Environment consumers read the effective value: the override when present, otherwise the top-level field.
 
 ```toml
 [models."kimi-code/kimi-for-coding"]
@@ -440,15 +442,15 @@ Like the `tools` / `disallowedTools` fields of an agent file, this section shape
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `default_max_chars` | `integer` | `100000` | Character budget when the tool call omits `max_chars` |
-| `max_chars` | `integer` | `500000` | Maximum character budget a tool call may request |
+| `max_chars` | `integer` | `100000` | Maximum character budget a tool call may request |
 
 ```toml
 [read]
 default_max_chars = 100000
-max_chars = 500000
+max_chars = 100000
 ```
 
-Both values must be positive integers. A call's `max_chars` overrides the default, but is capped at the configured maximum; the result reports the effective budget. If the configured default exceeds the maximum, the maximum also limits default reads. Raise `default_max_chars` when you want larger documents to be returned in one call without the agent requesting a larger budget.
+Both values must be positive integers. A call's `max_chars` overrides the default, but is capped at the configured maximum; the result reports the effective budget. If the configured default exceeds the maximum, the maximum also limits default reads. Each call also stops at about `max_chars` / 4 estimated tokens, counting one token per non-ASCII character and per four ASCII characters, so text with many non-ASCII characters, such as Chinese, returns fewer characters per call. Raise `max_chars` to let a call return more than 100000 characters or about 25000 tokens, and raise `default_max_chars` as well when you want larger documents to be returned in one call without the agent requesting a larger budget.
 
 ## `image`
 
@@ -463,14 +465,15 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 ## `database`
 
-`database` controls the embedded storage engines behind session indexing and global search. Both keys default to `true` and act as kill switches that fall back to the legacy behavior when set to `false`.
+`database` controls the embedded storage engines behind session indexing and global search. Session indexing is on by default; the global full-text search index is off by default and, once enabled, scans past sessions in the background and serves `POST /api/v1/search`.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `base` | `boolean` | `true` | Use the minidb-backed read model for session indexing; `false` falls back to reading session metadata directly |
-| `search` | `boolean` | `true` | Run the global search index in a dedicated worker thread; `false` runs it in the server process |
+| `global_search` | `boolean` | `false` | Build the global full-text search index and serve `POST /api/v1/search`; when off, no sessions are scanned, no search worker starts, and the search endpoint reports the index as unavailable |
+| `search` | `boolean` | `true` | With global search enabled, run the index in a dedicated worker thread; `false` runs it in the server process |
 
-`base` can be overridden by the `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` environment variable and `search` by `KIMI_CODE_SEARCH_WORKER`; both take higher priority than `config.toml`.
+`base` can be overridden by the `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` environment variable, `global_search` by `KIMI_CODE_GLOBAL_SEARCH`, and `search` by `KIMI_CODE_SEARCH_WORKER`; all take higher priority than `config.toml`.
 
 ## `watch`
 
@@ -481,6 +484,25 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 | `enabled` | `boolean` | `true` | Attach filesystem watchers; `false` disables every `watch()` for the process |
 
 `enabled` can be overridden by the `KIMI_CODE_WATCH` environment variable, which takes higher priority than `config.toml`.
+
+## `workspace trust`
+
+`workspace` groups workspace-related settings in the user-level `config.toml`. Its `require_trust` field controls whether Kimi Code asks for trust confirmation when an untrusted workspace is opened for the first time; confirmation is required by default.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `require_trust` | `boolean` | `true` | Require trust confirmation when first opening an untrusted workspace; `false` treats every workspace as trusted and skips the startup trust prompt |
+
+```toml
+[workspace]
+require_trust = false
+```
+
+::: warning Note
+Disabling the trust requirement loads project-level MCP servers and other trust-gated project configuration without confirmation. Use this setting only when every workspace is already trusted. It does not change permission modes, tool approvals, or dangerous-command guards.
+:::
+
+Changes take effect on `/reload`; a running TUI does not show a startup trust prompt retroactively. `KIMI_CODE_TRUST_WORKSPACE=1` remains an independent per-process trust override, and a falsy value does not restore the first-open requirement when `require_trust` is `false`. Existing trust records are preserved and used again if the requirement is re-enabled.
 
 <!--
 ## `experimental`
@@ -551,6 +573,73 @@ pattern = "Bash"
 ::: tip
 MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project-local `.kimi-code/mcp.json`, not in `config.toml`. The interactive configuration entry point is `/mcp-config`; see [Model Context Protocol](../customization/mcp.md).
 :::
+
+## `environments`
+
+`environments` declares remote environments — SSH hosts, Docker-compatible containers, or custom launcher commands — that sessions can bind to so the agent's tools execute in the target environment. See [Remote environments](../guides/remote-environment.md) for the feature walkthrough, boundaries, and limitations.
+
+Each entry is keyed by its environment id: at most 64 characters, no leading or trailing whitespace, and `local` and `default` are reserved words. Within one entry, `type` and `command` are mutually exclusive.
+
+Remote working directories must be absolute POSIX paths; relative paths and `~` are not expanded.
+
+The optional top-level `default` names the environment a session binds to when creation does not specify one. It must reference a configured entry, and that entry must set `defaultCwd` — a binding pairs an environment with a working directory, so a default without one would dangle. Without a `default`, those sessions start on the `local` environment. A TUI `/new` does not use this default: it keeps the current environment. See [Remote environments](../guides/remote-environment.md).
+
+### SSH entries
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `type` | `string` | Yes | `"ssh"` |
+| `host` | `string` | Yes | SSH host; spawned through the system `ssh`, so `~/.ssh/config` (user, port, key, `ProxyJump`, `ControlMaster`) applies |
+| `remoteBin` | `string` | No | Executor path on the target; defaults to `~/.kimi-code/bin/kimi` |
+| `defaultCwd` | `string` | No | Working-directory prefill when binding a session; not validated locally |
+
+### Docker entries
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `type` | `string` | Yes | `"docker"` |
+| `container` | `string` | Yes | Running container name or id; attached with `docker exec` |
+| `context` | `string` | No | Docker context (for example `orbstack`) |
+| `remoteBin` | `string` | No | Executor path inside the container; defaults to `~/.kimi-code/bin/kimi` under the container user's home. The launcher runs through `docker exec … sh -c`, so a leading `~` is expanded by the container's shell |
+| `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
+
+### Command entries
+
+The generic launcher form, for any environment the built-in launchers do not cover (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes). The command and `args` describe how to reach the target: the launcher must run the arguments that follow it on the target, as `ssh host`, `kubectl exec -i pod --` and `docker exec -i container` do. Kimi Code appends `<remoteBin> exec-server` to `args`, unless `args` already invokes `exec-server`.
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `command` | `string` | Yes | Launcher executable: a name resolved against `PATH`, or an absolute path. A resolution landing inside the working directory is refused, so a project cannot shadow the launcher with a same-named binary |
+| `args` | `array<string>` | No | Launcher arguments that reach the target. When an argument already invokes `exec-server` (for example `--command "~/.kimi-code/bin/kimi exec-server"`), nothing is appended and the arguments run as written |
+| `env` | `table<string, string>` | No | Environment for the launcher process on your machine; never propagated into commands running on the target |
+| `remoteBin` | `string` | No | Executor path on the target, appended after `args`; defaults to `~/.kimi-code/bin/kimi`. Use a plain path without spaces or shell metacharacters. `~` only expands when the launcher runs the arguments through a shell on the target, as ssh does; launchers that pass arguments straight through, such as `kubectl exec` and `docker exec`, need an absolute path |
+| `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
+
+```toml
+[environments]
+default = "dev-box"
+
+[environments.dev-box]
+type = "ssh"
+host = "dev-box"
+defaultCwd = "/home/me/projects"
+
+[environments.dev-container]
+type = "docker"
+container = "myapp-dev"
+
+[environments.sandbox]
+command = "sandbox"
+args = ["ssh", "i-1234567890", "--"]
+env = { SANDBOX_TOKEN = "..." }
+defaultCwd = "/home/me/kimi-code"
+
+[environments.k8s]
+command = "kubectl"
+args = ["exec", "-i", "dev-pod", "--"]
+remoteBin = "/root/.kimi-code/bin/kimi"
+defaultCwd = "/workspace"
+```
 
 ## `tui.toml`
 
@@ -624,6 +713,8 @@ additional_dir = ["/absolute/path/to/shared"]
 ```
 
 Because directories are stored as absolute paths, which are specific to your machine, we recommend adding `.kimi-code/local.toml` to your project's `.gitignore` so it is not committed.
+
+Besides `local.toml`, the project `.kimi-code/` directory can also hold `mcp.json` (project MCP servers), which is gated by workspace trust: it only takes effect after you trust the folder in the startup prompt. See [Model Context Protocol](../customization/mcp.md).
 
 ## Next steps
 

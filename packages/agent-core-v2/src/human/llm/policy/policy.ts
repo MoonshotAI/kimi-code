@@ -1,13 +1,7 @@
 import type { ToolDescription } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequest } from '#/llm/request';
-import type {
-  LlmErrorMessage,
-  LlmOutcome,
-  LlmRemoteErrorMessage,
-  LlmRunEvent,
-  LlmRunStarted,
-} from '#/llm/response';
+import type { LlmOutcome, LlmRunEvent, LlmRunStarted } from '#/llm/response';
 import { sha256Hex } from '#/utils/hash';
 
 import {
@@ -39,6 +33,7 @@ export interface LlmPolicy {
 export interface LlmRunControl {
   readonly signal: AbortSignal;
   readonly recoveries?: LlmRecoveryLedger;
+  readonly onAttempt?: (request: LlmRequest) => void;
   readonly onEvent?: (event: LlmRunEvent) => void;
 }
 
@@ -62,10 +57,6 @@ function delay(ms: number, signal: AbortSignal): Promise<boolean> {
     }
     signal.addEventListener('abort', onAbort, { once: true });
   });
-}
-
-function asRemote(error: LlmErrorMessage): LlmRemoteErrorMessage | undefined {
-  return error.kind === 'syntax' ? undefined : error;
 }
 
 function abortedOf(result: Extract<LlmOutcome, { type: 'failed' }>): LlmOutcome {
@@ -118,68 +109,102 @@ export function llmStartedEvent(request: LlmRequest): LlmRunStarted {
 export async function runLlmRequest(
   request: LlmRequest,
   control: LlmRunControl,
+  settle: typeof settleLlmRequest = settleLlmRequest,
 ): Promise<LlmOutcome> {
-  control.onEvent?.(llmStartedEvent(request));
   let outcome: LlmOutcome;
   try {
-    outcome = await runAttempts(request, control);
+    outcome = await runAttempts(request, control, settle);
   } catch (error) {
-    outcome =
-      control.signal.aborted || isAbortError(error)
-        ? { type: 'aborted', message: null, usage: undefined }
-        : { type: 'failed', error: toLlmErrorMessage(error), rawError: error };
+    if (control.signal.aborted || isAbortError(error)) {
+      outcome = { type: 'aborted', message: null, usage: undefined };
+    } else {
+      const llmError = toLlmErrorMessage(error);
+      outcome = {
+        type: 'failed',
+        error: llmError,
+        rawError: error,
+        diagnostics: request.protocol.base.diagnoseError?.({ error: llmError, rawError: error }),
+      };
+    }
   }
   control.onEvent?.({ type: 'llm.ended', outcome });
   return outcome;
 }
 
-async function runAttempts(request: LlmRequest, control: LlmRunControl): Promise<LlmOutcome> {
+async function runAttempts(
+  request: LlmRequest,
+  control: LlmRunControl,
+  settle: typeof settleLlmRequest,
+): Promise<LlmOutcome> {
   const { signal, onEvent } = control;
   const policy = request.policy ?? {};
   const ledger = control.recoveries ?? createRecoveryLedger();
   let attempt = 1;
+  let started = false;
+  const pendingNotices: LlmRunEvent[] = [];
   const maxAttempts = resolveMaxAttempts(policy.retry);
+  const start = (resolvedRequest: LlmRequest): void => {
+    if (started) return;
+    started = true;
+    onEvent?.(llmStartedEvent(resolvedRequest));
+    for (const event of pendingNotices) onEvent?.(event);
+    pendingNotices.length = 0;
+  };
 
   while (!signal.aborted) {
     const recoveredRequest = ledger.apply(request);
     let resolvedRequest = recoveredRequest;
-    for (const resolver of listOf(policy.resolvers)) {
-      resolvedRequest = await resolver.resolve(resolvedRequest, {
-        signal,
-        report: (notice) =>
-          onEvent?.({ type: 'llm.notice', notice: { ...notice, source: resolver.id } }),
-      });
-      if (signal.aborted) {
-        return { type: 'aborted', message: null, usage: undefined };
+    let recoveryRequest = recoveredRequest;
+    try {
+      for (const resolver of listOf(policy.resolvers)) {
+        resolvedRequest = await resolver.resolve(resolvedRequest, {
+          signal,
+          appliedRecoveries: ledger.applied,
+          report: (notice) => {
+            const event: LlmRunEvent = {
+              type: 'llm.notice',
+              notice: { ...notice, source: resolver.id },
+            };
+            if (started) onEvent?.(event);
+            else pendingNotices.push(event);
+          },
+        });
+        if (resolver.recoveryRequest === 'resolved') recoveryRequest = resolvedRequest;
+        if (signal.aborted) {
+          start(recoveredRequest);
+          return { type: 'aborted', message: null, usage: undefined };
+        }
       }
+    } catch (error) {
+      start(recoveredRequest);
+      throw error;
     }
 
-    const result = await settleLlmRequest(resolvedRequest, { signal, onEvent });
+    start(resolvedRequest);
+    control.onAttempt?.(resolvedRequest);
+    const result = await settle(resolvedRequest, { signal, onEvent });
     if (result.type === 'done' || result.type === 'aborted') {
       return result;
     }
 
-    const remote = asRemote(result.error);
-    if (remote !== undefined) {
-      const proposal = proposeFirst(listOf(policy.recoveries), {
-        error: remote,
-        request: recoveredRequest,
-        appliedRecoveries: ledger.applied,
-        endpoint: recoveredRequest.endpoint,
+    const proposal = proposeFirst(listOf(policy.recoveries), {
+      error: result.error,
+      request: recoveryRequest,
+      appliedRecoveries: ledger.applied,
+      endpoint: recoveryRequest.endpoint,
+    });
+    if (proposal !== undefined) {
+      proposal.beforeNextAttempt?.();
+      ledger.record(proposal);
+      attempt = 1;
+      onEvent?.({
+        type: 'llm.retrying',
+        reason: 'recovery',
+        strategy: proposal.strategy,
+        action: proposal.action,
+        error: result.error,
       });
-      if (proposal !== undefined) {
-        proposal.beforeNextAttempt?.();
-        ledger.record(proposal);
-        attempt = 1;
-        onEvent?.({
-          type: 'llm.retrying',
-          reason: 'recovery',
-          strategy: proposal.strategy,
-          action: proposal.action,
-          error: result.error,
-        });
-        continue;
-      }
+      continue;
     }
 
     if (shouldRetry(policy.retry, attempt, result.error, listOf(policy.retryables))) {

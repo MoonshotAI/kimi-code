@@ -15,7 +15,7 @@ export interface AgentTelemetryContext {
 
 export interface TurnTelemetryContext {
   readonly turn_id?: number;
-  readonly trace_id?: string;
+  readonly request_id?: string;
   readonly thinking_effort?: string;
 }
 

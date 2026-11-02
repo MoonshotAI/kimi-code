@@ -140,6 +140,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const hasPending = () => pending.length > 0;
   const stub: StubLoop = {
     _serviceBrand: undefined, hooks, launches, cancels, startTurn,
+    requester: {} as IAgentLoopService['requester'],
     queue: { hasPendingRequests: hasPending },
     settleActive(result = { type: 'completed', steps: 0, truncated: false }) { releaseActiveResult?.(result); },
     submit(input: UserEntry, options?: LoopSubmitOptions) {
@@ -162,6 +163,9 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
       return { id };
     },
     steer: async () => {},
+    remind(note: LoopNotify = {}): LoopNotifyHandle {
+      return this.notify(note);
+    },
     notify(note: LoopNotify = {}): LoopNotifyHandle {
       const entry: PendingEntry = {
         kind: note.bypassMaxSteps === true ? 'handoff' : note.message !== undefined ? 'message' : 'continuation',
@@ -197,6 +201,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     promptHandle: (id) => handles.get(id),
     cancel(target, reason) { cancels.push({ turnId: target?.turnId, reason }); if (target?.promptId !== undefined) return true; if (active === undefined || (target?.turnId !== undefined && active.id !== target.turnId)) return false; active.cancel(reason); return true; },
     tryAcquireQuiescence: () => toDisposable(() => {}),
+    tryAcquireHistorySnapshot: () => toDisposable(() => {}),
     buildAttachBundle: () => stubAttachBundle(),
     attachEngine: () => stubAttachEngine(),
     resetMachineEngine: () => Promise.resolve(),

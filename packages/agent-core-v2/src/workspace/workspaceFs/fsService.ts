@@ -4,6 +4,13 @@ import {
   type FsEntry,
   type FsGitStatusRequest,
   type FsGitStatusResponse,
+  type FsGitStatusBatchRequest,
+  type FsGitStatusBatchResponse,
+  type FsBatchError,
+  type FsPullRequest,
+  type FsPullRequestRequest,
+  type FsPullRequestBatchRequest,
+  type FsPullRequestBatchResponse,
   type FsGrepFileHit,
   type FsGrepMatch,
   type FsGrepRequest,
@@ -28,11 +35,16 @@ import {
 } from './fs';
 
 const FsWireErrorCode = {
+  VALIDATION_FAILED: 40001,
   FS_PATH_NOT_FOUND: 40409,
+  ENVIRONMENT_NOT_FOUND: 40420,
+  SESSION_BUSY: 40901,
   FS_IS_DIRECTORY: 40906,
   FS_IS_BINARY: 40907,
+  ENVIRONMENT_UNAVAILABLE: 40926,
   FS_TOO_LARGE: 41302,
   FS_TOO_MANY_RESULTS: 41303,
+  FS_PATH_ESCAPES_SESSION: 41304,
   INTERNAL_ERROR: 50001,
 } as const;
 import ignore, { type Ignore } from 'ignore';
@@ -45,11 +57,15 @@ import {
   guessLanguageId,
   guessMime,
 } from '#/_base/utils/fileMeta';
-import { ErrorCodes, Error2, isError2, unwrapErrorCause } from '#/errors';
+import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
+import { EnvironmentError } from '#/environment/environmentRegistry';
+import { HandshakeError } from '#/remote/client/connection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
-import type { RuntimePath } from '#/runtime/runtime';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
+import { type EnvironmentPath } from '#/environment/environment';
+import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
@@ -75,6 +91,7 @@ import {
 } from './internal/fsSearch';
 
 const SEARCH_HARD_CAP = 500;
+const LIST_LSTAT_CONCURRENCY = 16;
 const LIST_TOTAL_ENTRY_BUDGET = 10_000;
 const PROBE_MAX_DEPTH = 6;
 const PROBE_MAX_ENTRIES = 500;
@@ -104,19 +121,19 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     | undefined = undefined;
   private readonly workDir: string;
   private readonly workspaceId: string;
-  private readonly path: RuntimePath;
+  private readonly path: EnvironmentPath;
 
   constructor(
-    @IWorkspaceContext workspace: IWorkspaceContext,
-    @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
+    @IWorkspaceContext workspace: Pick<IWorkspaceContext, 'workspaceId' | 'cwd'>,
+    @IWorkspaceDirs private readonly workspaceDirs: Pick<IWorkspaceDirs, 'additionalDirs'>,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
-    @IRuntimeResolver private readonly resolver: IRuntimeResolver,
+    @IEnvironmentService private readonly resolver: EnvironmentResolver,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWorkspaceGitService private readonly git: IWorkspaceGitService,
-    private readonly runtimeId = 'local',
+    private readonly environmentId = 'local',
   ) {
     this.workspaceId = workspace.workspaceId;
-    this.path = resolver.inspect({ workspaceId: workspace.workspaceId, runtimeId }).path;
+    this.path = resolver.inspect({ environmentId }).path ?? POSIX_ENVIRONMENT_PATH;
     this.workDir = this.path.resolve(workspace.cwd);
   }
 
@@ -196,13 +213,18 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       try {
         names = (await this.hostFs.readdir(absOf(entry.relPath))).map((e) => e.name);
       } catch (error) {
-        if (entry.relPath === (rel === '.' ? '' : rel)) {
+        if (entry.relPath === (rel === '.' ? '' : rel) ||
+          (error instanceof Error2 && error.code === ErrorCodes.OS_FS_DIRECTORY_TOO_LARGE)) {
           throw mapFsError(error, req.path);
         }
         continue;
       }
 
-      const visible: Child[] = [];
+      const candidates: {
+        readonly name: string;
+        readonly childRel: string;
+        readonly ancestorOfAllowed: boolean;
+      }[] = [];
       for (const name of names) {
         if (!req.show_hidden && isHidden(name)) continue;
         const childRel = entry.relPath === '' ? name : `${entry.relPath}/${name}`;
@@ -215,24 +237,31 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           }
         }
         if (req.exclude_globs && matchesAnyGlob(childRel, req.exclude_globs)) continue;
-        const st = await this.hostFs.lstat(absOf(childRel)).catch(() => undefined);
+        candidates.push({ name, childRel, ancestorOfAllowed });
+      }
+      const stats = await mapWithConcurrency(candidates, LIST_LSTAT_CONCURRENCY, (candidate) =>
+        this.hostFs.lstat(absOf(candidate.childRel)).catch(() => undefined),
+      );
+      const visible: Child[] = [];
+      for (const [index, candidate] of candidates.entries()) {
+        const st = stats[index];
         if (st === undefined) continue;
         let isDirectory = st.isDirectory;
         let realPath: string | undefined;
         if (st.isSymbolicLink === true) {
           const target = await this.symlinkDirectoryTarget(
-            childRel,
+            candidate.childRel,
             req.allow_external_symlinks === true,
             absOf,
           );
           isDirectory = target.isDirectory;
           realPath = target.realPath;
         }
-        if (ancestorOfAllowed && !isDirectory) continue;
+        if (candidate.ancestorOfAllowed && !isDirectory) continue;
         if (
-          ancestorOfAllowed &&
+          candidate.ancestorOfAllowed &&
           !(await this.hasAllowedDescendant(
-            childRel,
+            candidate.childRel,
             req.allow_ignored_globs!,
             req.exclude_globs,
             req.show_hidden,
@@ -241,7 +270,13 @@ export class WorkspaceFsService implements IWorkspaceFsService {
             absOf,
           ))
         ) continue;
-        visible.push({ name, relPath: childRel, stat: st, isDirectory, realPath });
+        visible.push({
+          name: candidate.name,
+          relPath: candidate.childRel,
+          stat: st,
+          isDirectory,
+          realPath,
+        });
       }
 
       sortChildren(visible, req.sort);
@@ -349,6 +384,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       } catch {
         return false;
       }
+      const candidates: string[] = [];
       for (const name of names) {
         if (budget.visited >= PROBE_MAX_ENTRIES) return true;
         budget.visited += 1;
@@ -356,7 +392,13 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         const childRel = `${rel}/${name}`;
         if (excludeGlobs !== undefined && matchesAnyGlob(childRel, excludeGlobs)) continue;
         if (matchesAnyGlob(childRel, globs)) return true;
-        const st = await this.hostFs.lstat(absOf(childRel)).catch(() => undefined);
+        candidates.push(childRel);
+      }
+      const stats = await mapWithConcurrency(candidates, LIST_LSTAT_CONCURRENCY, (childRel) =>
+        this.hostFs.lstat(absOf(childRel)).catch(() => undefined),
+      );
+      for (const [index, childRel] of candidates.entries()) {
+        const st = stats[index];
         const isDirectory =
           st?.isSymbolicLink === true
             ? (await this.symlinkDirectoryTarget(childRel, allowExternalSymlinks, absOf)).isDirectory
@@ -394,8 +436,23 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
 
     const sampleSize = Math.min(FS_BINARY_SAMPLE_BYTES, st.size);
-    const sample =
-      sampleSize === 0 ? new Uint8Array() : await this.hostFs.readBytes(abs, sampleSize);
+    const rawLength = Math.max(0, Math.min(req.length, st.size - req.offset));
+    const readSample = (): Promise<Uint8Array> =>
+      sampleSize === 0 ? Promise.resolve(new Uint8Array()) : this.hostFs.readBytes(abs, sampleSize);
+    const readWindow = (): Promise<Uint8Array> =>
+      rawLength === 0
+        ? Promise.resolve(new Uint8Array())
+        : this.hostFs.readBytes(abs, rawLength, req.offset);
+
+    let sample: Uint8Array;
+    let rawWindow: Uint8Array;
+    if (req.offset === 0 && rawLength >= sampleSize) {
+      rawWindow = await readWindow();
+      sample = rawWindow.subarray(0, sampleSize);
+    } else {
+      [sample, rawWindow] = await Promise.all([readSample(), readWindow()]);
+    }
+
     const classification = classifyTextSample(sample);
     const transcodeEncoding =
       !classification.isBinary && classification.encoding !== 'utf-8' && req.encoding !== 'base64'
@@ -428,8 +485,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     } else if (decodedBytes !== undefined) {
       bytes = decodedBytes.subarray(req.offset, req.offset + effectiveLength);
     } else {
-      const window = await this.hostFs.readBytes(abs, req.offset + effectiveLength);
-      bytes = window.subarray(req.offset, req.offset + effectiveLength);
+      bytes = rawWindow.subarray(0, effectiveLength);
     }
 
     const encoding: 'utf-8' | 'base64' =
@@ -531,13 +587,12 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     try {
       await this.hostFs.mkdir(abs, { recursive: req.recursive });
     } catch (error) {
-      const code = errnoCode(error);
-      if (code === 'EEXIST') {
+      if (errnoCode(error) === 'EEXIST') {
         throw new Error2(ErrorCodes.FS_ALREADY_EXISTS, `path already exists: ${req.path}`, {
           details: { path: req.path },
         });
       }
-      if (code === 'ENOENT' || code === 'ENOTDIR') {
+      if (isHostFsNotFound(error) || isHostFsNotDirectory(error)) {
         throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `parent not found: ${req.path}`, {
           details: { path: req.path },
         });
@@ -843,10 +898,10 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
 
     const lease = this.resolver.acquire(
-      { workspaceId: this.workspaceId, runtimeId: this.runtimeId },
+      { environmentId: this.environmentId },
       ['process'],
     );
-    const proc = await lease.runtime.process!.spawn(rgBinary, args, { cwd: this.workDir });
+    const proc = await lease.environment.process!.spawn(rgBinary, args, { cwd: this.workDir });
 
     const top = new SuggestTopHeap(cap);
     const seenDirs = new Set<string>();
@@ -1023,20 +1078,88 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   async gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse> {
+    const cwd = await this.resolveGitRoot(req.root);
     let filter: Set<string> | undefined;
     if (req.paths !== undefined && req.paths.length > 0) {
       filter = new Set();
       for (const p of req.paths) {
-        filter.add(this.toRel(await this.resolveWithin(p)));
+        const inputPath = req.root !== undefined && !this.path.isAbsolute(p) ? this.path.join(cwd, p) : p;
+        const abs = await this.resolveWithin(inputPath);
+        const rel = this.path.relative(cwd, abs).split(this.path.separator).join('/');
+        if (req.root !== undefined && (rel === '..' || rel.startsWith('../') || this.path.isAbsolute(rel))) {
+          throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${p}" escapes git root`, {
+            details: { cwd, path: p },
+          });
+        }
+        filter.add(rel);
       }
     }
 
-    return this.git.status(filter);
+    return this.git.statusAt(cwd, {
+      pathFilter: filter,
+      scopeToCwd: req.root !== undefined,
+      includePullRequest: req.include_pull_request !== false,
+    });
+  }
+
+  gitStatusBatch(req: FsGitStatusBatchRequest): Promise<FsGitStatusBatchResponse> {
+    return this.batchGitValues(req.roots, (root) => this.gitStatus({ root, include_pull_request: req.include_pull_request }));
+  }
+
+  pullRequestBatch(req: FsPullRequestBatchRequest): Promise<FsPullRequestBatchResponse> {
+    return this.batchGitValues(req.roots, (root) => this.pullRequest({ root }));
+  }
+
+  async pullRequest(req: FsPullRequestRequest): Promise<FsPullRequest | null> {
+    const cwd = await this.resolveGitRoot(req.root);
+    return this.git.pullRequestAt(cwd);
+  }
+
+  private async batchGitValues<T>(
+    inputRoots: readonly string[],
+    read: (root: string) => Promise<T>,
+  ): Promise<{ results: Record<string, T>; errors: Record<string, FsBatchError> }> {
+    const roots = [...new Set(inputRoots)];
+    const results = Object.create(null) as Record<string, T>;
+    const errors = Object.create(null) as Record<string, FsBatchError>;
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < roots.length) {
+        const root = roots[cursor++]!;
+        try {
+          results[root] = await read(root);
+        } catch (error) {
+          errors[root] = toGitBatchError(error);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(2, roots.length) }, () => worker()));
+    return { results, errors };
   }
 
   async diff(req: FsDiffRequest): Promise<FsDiffResponse> {
-    const abs = await this.resolveWithin(req.path);
-    return this.git.diff(this.toRel(abs), abs);
+    const cwd = await this.resolveGitRoot(req.root);
+    const inputPath = req.root !== undefined && !this.path.isAbsolute(req.path) ? this.path.join(cwd, req.path) : req.path;
+    const abs = await this.resolveWithin(inputPath);
+    const rel = this.path.relative(cwd, abs).split(this.path.separator).join('/');
+    if (req.root !== undefined && (rel === '..' || rel.startsWith('../') || this.path.isAbsolute(rel))) {
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${req.path}" escapes git root`, {
+        details: { cwd, path: req.path },
+      });
+    }
+    return this.git.diffAt(cwd, rel, abs);
+  }
+
+  private async resolveGitRoot(root?: string): Promise<string> {
+    if (root === undefined) return this.workDir;
+    const cwd = root === '/' && this.isWithinWorkspace(root) ? this.path.resolve(root) : await this.resolveWithin(root);
+    const stat = await this.hostFs.stat(cwd).catch(() => undefined);
+    if (stat?.isDirectory !== true) {
+      throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, `git root is not a directory: ${root}`, {
+        details: { cwd, path: root },
+      });
+    }
+    return cwd;
   }
 
   private async grepWithRg(
@@ -1067,8 +1190,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const roots = await this.suggestRoots();
     args.push('.', ...roots.filter((root) => !root.primary).map((root) => root.dir));
 
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
-    const proc = await lease.runtime.process!.spawn(rgPath, args, { cwd: this.workDir });
+    const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
+    const proc = await lease.environment.process!.spawn(rgPath, args, { cwd: this.workDir });
 
     const primary = roots.find((root) => root.primary);
     const acc = new RgJsonAccumulator(req, (path) => {
@@ -1221,7 +1344,10 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     let entries: readonly HostDirEntry[];
     try {
       entries = await this.hostFs.readdir(rootRel === '' ? baseAbs : this.path.join(baseAbs, rootRel));
-    } catch {
+    } catch (error) {
+      if (error instanceof Error2 && error.code === ErrorCodes.OS_FS_DIRECTORY_TOO_LARGE) {
+        throw mapFsError(error, rootRel);
+      }
       return;
     }
     for (const entry of entries) {
@@ -1261,12 +1387,15 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
   private async resolveRg(): Promise<RgResolution | null> {
     if (this.rgResolution !== undefined) return this.rgResolution;
-    const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
+    const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
     const probe: RgProbe = {
-      exec: (args) => runCommand(lease.runtime.process!, args, { cwd: this.workDir }),
+      exec: (args) => runCommand(lease.environment.process!, args, { cwd: this.workDir }),
     };
     try {
-      this.rgResolution = await ensureRgPath(probe);
+      this.rgResolution = await ensureRgPath(probe, {
+        allowCachedFallback: true,
+        environment: lease.environment,
+      });
     } catch {
       this.rgResolution = null;
     } finally {
@@ -1499,6 +1628,24 @@ function isPrematureCloseError(error: unknown): boolean {
   );
 }
 
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await fn(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 function sortChildren(
   children: { name: string; isDirectory: boolean }[],
   sort: FsListRequest['sort'],
@@ -1557,16 +1704,10 @@ function errnoCode(err: unknown): string | undefined {
 }
 
 function isMissingPathError(err: unknown): boolean {
-  if (isError2(err)) {
-    return (
-      err.code === ErrorCodes.OS_FS_NOT_FOUND || err.code === ErrorCodes.OS_FS_NOT_DIRECTORY
-    );
-  }
-  const code = errnoCode(err);
-  return code === 'ENOENT' || code === 'ENOTDIR';
+  return isHostFsNotFound(err) || isHostFsNotDirectory(err);
 }
 
-function isInsideOrEqual(path: RuntimePath, child: string, parent: string): boolean {
+function isInsideOrEqual(path: EnvironmentPath, child: string, parent: string): boolean {
   const rel = path.relative(parent, child);
   if (rel === '') return true;
   if (rel.startsWith('..')) return false;
@@ -1575,13 +1716,41 @@ function isInsideOrEqual(path: RuntimePath, child: string, parent: string): bool
 }
 
 function mapFsError(err: unknown, inputPath: string): Error {
-  const code = errnoCode(err);
-  if (code === 'ENOENT' || code === 'ENOTDIR') {
+  if (err instanceof Error2 && err.code === ErrorCodes.OS_FS_DIRECTORY_TOO_LARGE) {
+    return new Error2(ErrorCodes.FS_TOO_MANY_RESULTS, err.message, { details: err.details, cause: err });
+  }
+  if (isHostFsNotFound(err) || isHostFsNotDirectory(err)) {
     return new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `path not found: ${inputPath}`, {
       details: { path: inputPath },
     });
   }
   return err instanceof Error ? err : new Error(String(err));
+}
+
+function toGitBatchError(err: unknown): FsBatchError {
+  if (err instanceof EnvironmentError) {
+    switch (err.code) {
+      case 'environment.not_found':
+        return { code: FsWireErrorCode.ENVIRONMENT_NOT_FOUND, msg: err.message };
+      case 'environment.invalid_cwd':
+        return { code: FsWireErrorCode.VALIDATION_FAILED, msg: err.message };
+      case 'environment.conflict':
+        return { code: FsWireErrorCode.SESSION_BUSY, msg: err.message };
+      case 'environment.unavailable':
+      case 'environment.capability_unavailable':
+        return { code: FsWireErrorCode.ENVIRONMENT_UNAVAILABLE, msg: err.message };
+    }
+  }
+  if (err instanceof HandshakeError) {
+    return { code: FsWireErrorCode.ENVIRONMENT_UNAVAILABLE, msg: err.message };
+  }
+  if (err instanceof Error2) {
+    if (err.code === ErrorCodes.FS_GIT_UNAVAILABLE) return { code: 40908, msg: err.message };
+    if (err.code === ErrorCodes.FS_PATH_ESCAPES) {
+      return { code: FsWireErrorCode.FS_PATH_ESCAPES_SESSION, msg: err.message };
+    }
+  }
+  return toWireError(err);
 }
 
 function toWireError(err: unknown): { code: number; msg: string } {
@@ -1604,4 +1773,3 @@ function toWireError(err: unknown): { code: number; msg: string } {
     msg: err instanceof Error ? err.message : 'internal error',
   };
 }
-

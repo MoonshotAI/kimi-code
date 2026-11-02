@@ -49,6 +49,14 @@ export const sessionWorkChangedEventSchema = z.object({
   last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
 });
 
+export const environmentStatusSchema = z.enum([
+  'pending',
+  'connecting',
+  'ready',
+  'disconnected',
+  'disposed',
+]);
+
 export const configChangedEventSchema = z.object({
   type: z.literal('event.config.changed'),
   changedFields: z.array(z.string().min(1)),

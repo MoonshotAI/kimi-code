@@ -1,16 +1,23 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
   buildCanaryRecord,
   compareCanaryVersions,
+  computeCanaryBaseVersion,
   computeCanaryVersion,
   findNewerCanaryVersion,
   isCompleteCanaryRelease,
   listSuccessfulMainCiShas,
+  PACKAGE_NAME,
   parseCanaryVersion,
   readCanaryRelease,
+  readNpmCanaryVersion,
   requiredCanaryReleaseAssets,
+  resolveCanaryBaseVersion,
   selectCanaryCommit,
 } from './canary-release.mjs';
 
@@ -24,6 +31,79 @@ await test('canary versions combine the package base, UTC publish time, and shor
   assert.throws(() => computeCanaryVersion({ ...input, baseVersion: '2.4.0-beta.0' }), /plain x\.y\.z/);
   assert.throws(() => computeCanaryVersion({ ...input, publishedAt: 'not-a-date' }), /publishedAt/);
   assert.throws(() => computeCanaryVersion({ ...input, sha: '0123456' }), /full commit sha/);
+});
+
+await test('canary base uses the CLI newVersion from the release plan', () => {
+  for (const [type, newVersion] of [['patch', '2.4.1'], ['minor', '2.5.0'], ['major', '3.0.0']]) {
+    const releasePlan = { releases: [{ name: PACKAGE_NAME, type, newVersion, changesets: ['cli-change'] }] };
+    assert.equal(computeCanaryBaseVersion({ releasePlan, packageVersion: '2.4.0' }), newVersion);
+  }
+  const dependencyPlan = { releases: [{ name: PACKAGE_NAME, type: 'patch', newVersion: '2.4.1', changesets: [] }] };
+  assert.equal(computeCanaryBaseVersion({ releasePlan: dependencyPlan, packageVersion: '2.4.0' }), '2.4.1');
+});
+
+await test('canary base increments patch only when the release plan has no CLI release', () => {
+  for (const releases of [
+    [],
+    [{ name: '@example/other', type: 'major', newVersion: '2.0.0', changesets: ['other-change'] }],
+  ]) {
+    assert.equal(computeCanaryBaseVersion({ releasePlan: { releases }, packageVersion: '2.4.0' }), '2.4.1');
+  }
+});
+
+await test('canary base rejects malformed release plans and non-plain versions', () => {
+  for (const releasePlan of [
+    {},
+    { releases: [{}] },
+    { releases: [{ name: PACKAGE_NAME, newVersion: '2.5.0-next.0' }] },
+  ]) {
+    assert.throws(() => computeCanaryBaseVersion({ releasePlan, packageVersion: '2.4.0' }));
+  }
+});
+
+await test('changeset status provides the canary base from its output file', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'canary-base-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const outputFile = join(dir, 'release-plan.json');
+  let invocation;
+  const baseVersion = resolveCanaryBaseVersion({
+    outputFile,
+    packageVersion: '2.4.0',
+    execute(command, args, options) {
+      invocation = { command, args, options };
+      writeFileSync(outputFile, JSON.stringify({
+        releases: [{ name: PACKAGE_NAME, newVersion: '2.4.1', changesets: [] }],
+      }));
+    },
+  });
+  assert.equal(baseVersion, '2.4.1');
+  assert.deepEqual(invocation, {
+    command: 'pnpm',
+    args: ['changeset', 'status', '--output', outputFile],
+    options: { stdio: 'inherit' },
+  });
+});
+
+await test('changeset status failures do not fall back', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'canary-base-test-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  assert.throws(() => resolveCanaryBaseVersion({
+    outputFile: join(dir, 'failed.json'),
+    packageVersion: '2.4.0',
+    execute() { throw new Error('status failed'); },
+  }), /status failed/);
+  assert.throws(() => resolveCanaryBaseVersion({
+    outputFile: join(dir, 'missing.json'),
+    packageVersion: '2.4.0',
+    execute() {},
+  }), /ENOENT/);
+  const damagedFile = join(dir, 'damaged.json');
+  writeFileSync(damagedFile, '{');
+  assert.throws(() => resolveCanaryBaseVersion({
+    outputFile: damagedFile,
+    packageVersion: '2.4.0',
+    execute() {},
+  }), SyntaxError);
 });
 
 await test('canary version parsing accepts only a plain base, a 14-digit time, and a 7-hex commit', () => {
@@ -148,4 +228,20 @@ await test('an older canary run is stale after a newer run publishes', () => {
   const newer = '2.3.3-canary.20261029012345-0000000';
   assert.equal(findNewerCanaryVersion(CANARY, [older, newer]), newer);
   assert.equal(findNewerCanaryVersion(CANARY, [older, CANARY]), null);
+});
+
+await test('npm canary lookup stays enabled for stale-publish protection', () => {
+  let invocation;
+  const version = readNpmCanaryVersion((command, args, options) => {
+    invocation = { command, args, options };
+    return `${CANARY}\n`;
+  });
+  assert.equal(version, CANARY);
+  assert.deepEqual(invocation, {
+    command: 'npm',
+    args: ['view', PACKAGE_NAME, 'dist-tags.canary'],
+    options: { encoding: 'utf8' },
+  });
+  assert.equal(readNpmCanaryVersion(() => ''), '');
+  assert.throws(() => readNpmCanaryVersion(() => '2.4.0'), /npm canary tag is malformed/);
 });

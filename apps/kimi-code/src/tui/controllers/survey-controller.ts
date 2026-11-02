@@ -136,8 +136,8 @@ export class SurveyController {
     this.rating.observe({ kind: 'turn-started', origin });
   }
 
-  notifyTurnEnded(traceId?: string): void {
-    this.rating.observe({ kind: 'turn-ended', traceId });
+  notifyTurnEnded(requestId?: string): void {
+    this.rating.observe({ kind: 'turn-ended', requestId });
     this.clearIdleTimer();
     this.idleTimer = this.setT(() => {
       this.idleTimer = undefined;
@@ -335,7 +335,7 @@ export class SurveyController {
       sessionId: appState.sessionId ?? '',
       currentModel: appState.model,
       model: modelRoute(appState),
-      cumulativeTokens: appState.cumulativeTokens ?? 0,
+      cumulativeTokens: appState.cumulativeTokens,
       contextTokens: appState.contextTokens,
       permissionMode: appState.permissionMode,
       thinkingEffort: appState.thinkingEffort,

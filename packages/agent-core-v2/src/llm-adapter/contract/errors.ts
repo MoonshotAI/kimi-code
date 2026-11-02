@@ -13,6 +13,7 @@ import {
   type LlmRemoteErrorMessage,
 } from '#human/llm-requester/errors';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
+import type { LlmErrorDiagnostics } from '#human/llm/response';
 
 export {
   isAbortError,
@@ -47,18 +48,22 @@ function codeForStatusError(statusCode: number | undefined): ProviderErrorCode {
 }
 
 export class ChatProviderError extends Error2 {
+  readonly diagnostics: LlmErrorDiagnostics | undefined;
+
   constructor(
     message: string,
     code: ProviderErrorCode = PROVIDER_API_ERROR_CODE,
     options?: Error2Options,
+    diagnostics?: LlmErrorDiagnostics,
   ) {
     super(code, message, { ...options, name: 'ChatProviderError' });
+    this.diagnostics = diagnostics;
   }
 }
 
 export class APIConnectionError extends ChatProviderError {
-  constructor(message: string) {
-    super(message, PROVIDER_CONNECTION_ERROR_CODE);
+  constructor(message: string, diagnostics?: LlmErrorDiagnostics) {
+    super(message, PROVIDER_CONNECTION_ERROR_CODE, undefined, diagnostics);
     this.name = 'APIConnectionError';
   }
 }
@@ -78,8 +83,8 @@ export class ImageUploadUnsupportedError extends ChatProviderError {
 }
 
 export class APITimeoutError extends ChatProviderError {
-  constructor(message: string) {
-    super(message, PROVIDER_CONNECTION_ERROR_CODE);
+  constructor(message: string, diagnostics?: LlmErrorDiagnostics) {
+    super(message, PROVIDER_CONNECTION_ERROR_CODE, undefined, diagnostics);
     this.name = 'APITimeoutError';
   }
 }
@@ -96,18 +101,37 @@ export class APIStatusError extends ChatProviderError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     traceId?: string | null,
     code: ProviderErrorCode = codeForStatusError(statusCode),
     retryable?: boolean,
   ) {
-    super(message, code, {
-      details: { statusCode, requestId: requestId ?? null, traceId: traceId ?? null },
-    });
+    const diagnostics =
+      diagnosticsOrTraceId !== null && typeof diagnosticsOrTraceId === 'object'
+        ? diagnosticsOrTraceId
+        : undefined;
+    const resolvedTraceId =
+      diagnosticsOrTraceId !== null && typeof diagnosticsOrTraceId === 'object'
+        ? traceId
+        : diagnosticsOrTraceId;
+    super(
+      message,
+      code,
+      {
+        details: {
+          statusCode,
+          requestId: requestId ?? null,
+          traceId: resolvedTraceId ?? null,
+          diagnostics,
+        },
+      },
+      diagnostics,
+    );
     this.name = 'APIStatusError';
     this.statusCode = statusCode;
     this.requestId = requestId ?? null;
     this.retryAfterMs = retryAfterMs ?? null;
-    this.traceId = traceId ?? null;
+    this.traceId = resolvedTraceId ?? null;
     this.retryable = retryable;
   }
 }
@@ -118,9 +142,18 @@ export class APIContextOverflowError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs, traceId, CONTEXT_OVERFLOW_ERROR_CODE);
+    super(
+      statusCode,
+      message,
+      requestId,
+      retryAfterMs,
+      diagnosticsOrTraceId,
+      traceId,
+      CONTEXT_OVERFLOW_ERROR_CODE,
+    );
     this.name = 'APIContextOverflowError';
   }
 }
@@ -131,9 +164,10 @@ export class APIRequestTooLargeError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs, traceId);
+    super(statusCode, message, requestId, retryAfterMs, diagnosticsOrTraceId, traceId);
     this.name = 'APIRequestTooLargeError';
   }
 }
@@ -143,14 +177,16 @@ export class APIProviderRateLimitError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
-    traceId?: string | null,
+    diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     options?: { readonly statusCode?: number },
+    traceId?: string | null,
   ) {
     super(
       options === undefined ? 429 : options.statusCode,
       message,
       requestId,
       retryAfterMs,
+      diagnosticsOrTraceId,
       traceId,
       PROVIDER_RATE_LIMIT_ERROR_CODE,
     );
@@ -163,14 +199,16 @@ export class APIProviderQuotaExhaustedError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
-    traceId?: string | null,
+    diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     options?: { readonly statusCode?: number },
+    traceId?: string | null,
   ) {
     super(
       options === undefined ? 429 : options.statusCode,
       message,
       requestId,
       retryAfterMs,
+      diagnosticsOrTraceId,
       traceId,
       PROVIDER_API_ERROR_CODE,
     );
@@ -184,9 +222,18 @@ export class APIProviderOverloadedError extends APIStatusError {
     message: string,
     requestId?: string | null,
     retryAfterMs?: number | null,
+    diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs, traceId, PROVIDER_OVERLOADED_ERROR_CODE);
+    super(
+      statusCode,
+      message,
+      requestId,
+      retryAfterMs,
+      diagnosticsOrTraceId,
+      traceId,
+      PROVIDER_OVERLOADED_ERROR_CODE,
+    );
     this.name = 'APIProviderOverloadedError';
   }
 }
@@ -200,6 +247,7 @@ export class APIEmptyResponseError extends ChatProviderError {
     options: {
       readonly finishReason?: FinishReason | null;
       readonly rawFinishReason?: string | null;
+      readonly diagnostics?: LlmErrorDiagnostics;
     } = {},
   ) {
     const finishReason = options.finishReason ?? null;
@@ -207,7 +255,8 @@ export class APIEmptyResponseError extends ChatProviderError {
     super(
       message,
       finishReason === 'filtered' ? PROVIDER_FILTERED_ERROR_CODE : PROVIDER_API_ERROR_CODE,
-      { details: { finishReason, rawFinishReason } },
+      { details: { finishReason, rawFinishReason, diagnostics: options.diagnostics } },
+      options.diagnostics,
     );
     this.name = 'APIEmptyResponseError';
     this.finishReason = finishReason;
@@ -300,26 +349,26 @@ export function normalizeAPIStatusError(
   message: string,
   requestId?: string | null,
   retryAfterMs?: number | null,
-  traceId?: string | null,
+  diagnostics?: LlmErrorDiagnostics,
 ): APIStatusError {
   if (statusCode === 429) {
-    return new APIProviderRateLimitError(message, requestId, retryAfterMs, traceId);
+    return new APIProviderRateLimitError(message, requestId, retryAfterMs, diagnostics);
   }
   if (isContextOverflowStatusError(statusCode, message)) {
-    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs, traceId);
+    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs, diagnostics);
   }
   if (isRequestTooLargeStatusError(statusCode, message)) {
-    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs, traceId);
+    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs, diagnostics);
   }
   if (isProviderOverloadStatusError(statusCode, message)) {
-    return new APIProviderOverloadedError(statusCode, message, requestId, retryAfterMs, traceId);
+    return new APIProviderOverloadedError(statusCode, message, requestId, retryAfterMs, diagnostics);
   }
   return new APIStatusError(
     statusCode,
     appendThinkingEffortConfigHint(statusCode, message),
     requestId,
     retryAfterMs,
-    traceId,
+    diagnostics,
   );
 }
 
@@ -448,29 +497,59 @@ export function isUnauthorizedLlmError(error: unknown): boolean {
   return isLlmErrorMessage(error) && llmStatusErrorMessage(error)?.statusCode === 401;
 }
 
-export function errorFromLlmMessage(error: LlmErrorMessage): Error {
+export function errorDiagnostics(error: unknown): LlmErrorDiagnostics | undefined {
+  if (error instanceof ChatProviderError) return error.diagnostics;
+  if (error instanceof Error2) {
+    return error.details?.['diagnostics'] as LlmErrorDiagnostics | undefined;
+  }
+  return undefined;
+}
+
+export function withErrorDiagnostics<T extends Error>(
+  error: T,
+  diagnostics: LlmErrorDiagnostics | undefined,
+): T {
+  if (diagnostics === undefined) return error;
+  if (error instanceof ChatProviderError) {
+    (error as { diagnostics: LlmErrorDiagnostics | undefined }).diagnostics = diagnostics;
+  }
+  if (error instanceof Error2) {
+    (error as { details?: Record<string, unknown> }).details = {
+      ...error.details,
+      diagnostics,
+    };
+  }
+  return error;
+}
+
+export function errorFromLlmMessage(
+  error: LlmErrorMessage,
+  diagnostics?: LlmErrorDiagnostics,
+): Error {
   switch (error.kind) {
     case 'abort':
       return createAbortError();
     case 'connection':
-      return new APIConnectionError(error.message);
+      return new APIConnectionError(error.message, diagnostics);
     case 'timeout':
-      return new APITimeoutError(error.message);
+      return new APITimeoutError(error.message, diagnostics);
     case 'rate_limit':
       return new APIProviderRateLimitError(
         error.message,
         error.requestId,
         error.retryAfterMs,
-        traceIdFromHeadersRecord(error.headers),
+        diagnostics,
         { statusCode: error.statusCode },
+        traceIdFromHeadersRecord(error.headers),
       );
     case 'quota_exhausted':
       return new APIProviderQuotaExhaustedError(
         error.message,
         error.requestId,
         error.retryAfterMs,
-        traceIdFromHeadersRecord(error.headers),
+        diagnostics,
         { statusCode: error.statusCode },
+        traceIdFromHeadersRecord(error.headers),
       );
     case 'overloaded':
       return new APIProviderOverloadedError(
@@ -478,6 +557,7 @@ export function errorFromLlmMessage(error: LlmErrorMessage): Error {
         error.message,
         error.requestId,
         error.retryAfterMs,
+        diagnostics,
         traceIdFromHeadersRecord(error.headers),
       );
     case 'context_overflow':
@@ -486,6 +566,7 @@ export function errorFromLlmMessage(error: LlmErrorMessage): Error {
         error.message,
         error.requestId,
         error.retryAfterMs,
+        diagnostics,
         traceIdFromHeadersRecord(error.headers),
       );
     case 'request_too_large':
@@ -494,6 +575,7 @@ export function errorFromLlmMessage(error: LlmErrorMessage): Error {
         error.message,
         error.requestId,
         error.retryAfterMs,
+        diagnostics,
         traceIdFromHeadersRecord(error.headers),
       );
     case 'request_structure':
@@ -504,6 +586,7 @@ export function errorFromLlmMessage(error: LlmErrorMessage): Error {
         error.message,
         error.requestId,
         error.retryAfterMs,
+        diagnostics,
         traceIdFromHeadersRecord(error.headers),
         undefined,
         error.retryable,
@@ -512,11 +595,12 @@ export function errorFromLlmMessage(error: LlmErrorMessage): Error {
       return new APIEmptyResponseError(error.message, {
         finishReason: error.finishReason,
         rawFinishReason: error.rawFinishReason,
+        diagnostics,
       });
     case 'syntax':
     case 'provider':
     case 'unknown':
-      return new ChatProviderError(error.message);
+      return new ChatProviderError(error.message, PROVIDER_API_ERROR_CODE, undefined, diagnostics);
   }
 }
 

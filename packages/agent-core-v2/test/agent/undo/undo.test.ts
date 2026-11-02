@@ -829,7 +829,7 @@ describe('AgentConversationUndoService', () => {
       paused: false,
       hasPendingRequests: true,
       turn: undefined,
-      activeTraceId: undefined,
+      activeRequestId: undefined,
     });
 
     try {

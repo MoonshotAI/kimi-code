@@ -16,7 +16,7 @@ import {
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import type { Message } from '#human/llm/message';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import { grandTotal, type TokenUsage } from '#human/llm-requester/usage';
 import { AgentModel, defineAgentModel, type AgentModelContext } from '#/state/agentModel';
 
 import type { TokenCountingRebaseInput } from './sessionTokenCounting';
@@ -100,12 +100,13 @@ export class TokenCountingAgentModel extends AgentModel<TokenCountingState> {
     usage: TokenUsage,
   ): Promise<void> {
     const context = this.context();
-    if (!matchesContext(input, context)) return Promise.resolve();
+    const tokens = tokenUsageTotal(usage);
+    if (!matchesContext(input, context) || tokens === undefined) return Promise.resolve();
     return this.emit(
       new TokenCountingMeasured({
         agentId: this.agent.agentId,
         length: context.length,
-        tokens: tokenUsageTotal(usage),
+        tokens,
       }),
     );
   }
@@ -196,8 +197,8 @@ function matchesContext(input: readonly Message[], context: readonly ContextMess
   return true;
 }
 
-function tokenUsageTotal(usage: TokenUsage): number {
-  return usage.inputCacheRead + usage.inputCacheCreation + usage.inputOther + usage.output;
+function tokenUsageTotal(usage: TokenUsage): number | undefined {
+  return grandTotal(usage);
 }
 
 function normalizeSliceIndex(index: number, length: number): number {

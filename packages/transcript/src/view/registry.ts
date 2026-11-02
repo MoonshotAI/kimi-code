@@ -1,10 +1,8 @@
 import type { ToolCallFrame } from '../model/frame';
-import type { TranscriptTask } from '../model/task';
 import type { TurnOrigin } from '../model/turn';
 
 export interface ToolViewContext {
   readonly frame: ToolCallFrame;
-  readonly task?: TranscriptTask;
 }
 
 export interface InputViewContext {

@@ -24,17 +24,14 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { LocalRuntime } from '#/runtime/localRuntime';
+import { LocalEnvironment } from '#/environment/localEnvironment';
 import type {
-  Runtime,
-  RuntimeBinding,
-  RuntimeCapability,
-  RuntimeLease,
-} from '#/runtime/runtime';
+  Environment,
+  EnvironmentBinding,
+  EnvironmentCapability,
+  EnvironmentLease,
+} from '#/environment/environment';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
-import { inputTotal } from '#human/llm-requester/usage';
-import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -56,11 +53,8 @@ import { FORK_CONTEXT_NOTICE } from '#/session/subagent/spawn';
 import { SUBAGENT_BACKGROUND_TASK_NOTICE } from '#/agent/task/taskService';
 import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
-import {
-  IRuntimeResolver,
-  IWorkspaceInstanceManager,
-  type WorkspaceInstanceChange,
-} from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IWorkspaceInstanceManager, type WorkspaceInstanceChange } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 
 import {
   appService,
@@ -134,24 +128,29 @@ class ScopedAppendLogStore implements IAppendLogStore {
   }
 }
 
-class TestRuntimeResolver implements IRuntimeResolver {
+class TestEnvironmentResolver implements EnvironmentResolver {
+  readonly onDidChange = () => ({ dispose: () => {} });
   declare readonly _serviceBrand: undefined;
-  private readonly runtime: LocalRuntime;
+  private readonly environment: LocalEnvironment;
 
   constructor(
     @IHostEnvironment environment: IHostEnvironment,
     @IHostFileSystem fs: IHostFileSystem,
     @IHostProcessService processes: IHostProcessService,
   ) {
-    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes);
+    this.environment = new LocalEnvironment(environment, fs, processes);
   }
 
-  inspect(_binding: RuntimeBinding): Runtime {
-    return this.runtime;
+  inspect(_binding: EnvironmentBinding): Environment {
+    return this.environment;
   }
 
-  acquire(_binding: RuntimeBinding, _required?: readonly RuntimeCapability[]): RuntimeLease {
-    return { runtime: this.runtime, track: (resource) => resource, dispose: () => {} };
+  acquire(_binding: EnvironmentBinding, _required?: readonly EnvironmentCapability[]): EnvironmentLease {
+    return { environment: this.environment, track: (resource) => resource, dispose: () => {} };
+  }
+
+  acquireWhenReady(_binding: EnvironmentBinding, _required?: readonly EnvironmentCapability[]): Promise<EnvironmentLease> {
+    return Promise.resolve({ environment: this.environment, track: (resource) => resource, dispose: () => {} });
   }
 }
 
@@ -218,7 +217,7 @@ describe('subagent task reminders and fork request parity', () => {
       appService(IFlagService, stubFlag((id) => id === SUBAGENT_FORK_FLAG_ID)),
       telemetryServices(recordingTelemetry(telemetry)),
       sessionServices((reg) => {
-        reg.defineDescriptor(IRuntimeResolver, new SyncDescriptor(TestRuntimeResolver));
+        reg.defineDescriptor(IEnvironmentService, new SyncDescriptor(TestEnvironmentResolver));
         reg.definePartialInstance(IWorkspaceInstanceManager, {
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,
           get: () => undefined,
@@ -227,10 +226,6 @@ describe('subagent task reminders and fork request parity', () => {
     );
 
     const agentLifecycle = ctx.get(IAgentLifecycleService);
-    const parentInputTokens: number[] = [];
-    ctx.get(ISessionUsageService).onDidRecord((e) => {
-      if (e.agent.agentId === 'parent') parentInputTokens.push(inputTotal(e.usage));
-    });
     const parentContext = await agentLifecycle.create({ agentId: 'parent' });
     const parent = agentLifecycle.handleOf(parentContext.agentId)!;
     const profile = parent.accessor.get(IAgentProfileService);
@@ -325,11 +320,11 @@ describe('subagent task reminders and fork request parity', () => {
     expect(probes).toHaveLength(1);
     expect(probes[0]?.properties).toMatchObject({
       agent_id: childId,
-      tools_match: true,
-      system_prompt_match: true,
-      parent_input_tokens: parentInputTokens[0],
+      source: 'fork',
     });
-    expect(probes[0]?.properties?.['parent_request_gap_ms']).toBeGreaterThanOrEqual(0);
+    expect(probes[0]?.properties?.['tools_match']).toBeUndefined();
+    expect(probes[0]?.properties?.['system_prompt_match']).toBeUndefined();
+    expect(probes[0]?.properties?.['parent_input_tokens']).toBeUndefined();
   });
 
   function createMainForkCtx(
@@ -349,7 +344,7 @@ describe('subagent task reminders and fork request parity', () => {
       }),
       telemetryServices(recordingTelemetry(telemetry)),
       sessionServices((reg) => {
-        reg.defineDescriptor(IRuntimeResolver, new SyncDescriptor(TestRuntimeResolver));
+        reg.defineDescriptor(IEnvironmentService, new SyncDescriptor(TestEnvironmentResolver));
         reg.definePartialInstance(IWorkspaceInstanceManager, {
           onDidChange: Event.None as Event<WorkspaceInstanceChange>,
           get: () => undefined,
@@ -358,12 +353,6 @@ describe('subagent task reminders and fork request parity', () => {
           _serviceBrand: undefined,
           ready: Promise.resolve(),
           enabled: true,
-        });
-      }),
-      agentServices((reg) => {
-        reg.defineInstance(IAgentRuntimeBindingSeed, {
-          _serviceBrand: undefined,
-          binding: { workspaceId: 'test-workspace', runtimeId: 'local' },
         });
       }),
     );
@@ -659,7 +648,7 @@ describe('subagent task reminders and fork request parity', () => {
     expect(ctx.llmCalls).toHaveLength(2);
   });
 
-  it('drops the parent comparison from the btw cache probe once main compacts', async () => {
+  it('keeps btw cache probes usage-driven when main compacts', async () => {
     const telemetry: TelemetryRecord[] = [];
     createMainForkCtx(stubFlag(true), telemetry);
     await ctx.get(IAgentProfileService).bind({ profile: 'agent', model: 'mock-model' });
@@ -683,15 +672,13 @@ describe('subagent task reminders and fork request parity', () => {
       .filter((record) => record.event === 'prompt_cache_probe')
       .map((record) => record.properties ?? {});
     expect(probes.map((probe) => probe['agent_id'])).toEqual([beforeCompaction, afterCompaction]);
-    expect(probes[0]).toMatchObject({
-      tools_match: true,
-      system_prompt_match: true,
-      parent_input_tokens: expect.any(Number),
-    });
-    expect(probes[1]?.['tools_match']).toBeUndefined();
-    expect(probes[1]?.['system_prompt_match']).toBeUndefined();
-    expect(probes[1]?.['parent_input_tokens']).toBeUndefined();
-    expect(probes[1]?.['parent_request_gap_ms']).toBeUndefined();
+    for (const probe of probes) {
+      expect(probe).toMatchObject({ source: 'fork' });
+      expect(probe['tools_match']).toBeUndefined();
+      expect(probe['system_prompt_match']).toBeUndefined();
+      expect(probe['parent_input_tokens']).toBeUndefined();
+      expect(probe['parent_request_gap_ms']).toBeUndefined();
+    }
   });
 
   it('hands a stopped background subagent its run text back through TaskStop without extra requests', async () => {
