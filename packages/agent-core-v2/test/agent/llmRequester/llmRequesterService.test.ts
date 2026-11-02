@@ -341,6 +341,236 @@ describe('AgentLoopRequester measured anchors', () => {
   });
 });
 
+function cacheUsage(inputCacheRead: number): TokenUsage {
+  return { inputOther: 100, output: 50, inputCacheRead, inputCacheCreation: 0 };
+}
+
+function createCacheRequester(
+  usages: readonly (TokenUsage | 'unreported' | undefined)[],
+): ModelEventRequester {
+  const requester = createRequester({ value: 0 }, null);
+  const base = requester.request.bind(requester);
+  let index = 0;
+  requester.request = async function* (input, signal, options) {
+    const current = index++;
+    const usage = usages[current];
+    if (usage === 'unreported') {
+      yield {
+        type: 'usage',
+        usage: { ...cacheUsage(0), inputCacheRead: undefined },
+        model: 'wire-model',
+      };
+    } else if (usage !== undefined) {
+      yield { type: 'usage', usage, model: 'wire-model' };
+    }
+    for await (const event of base(input, signal, options)) {
+      yield event.type === 'finish' ? { ...event, requestId: `trace-${current + 1}` } : event;
+    }
+  };
+  return { ...requester, model: { ...requester.model, protocol: 'openai' } };
+}
+
+function cacheBreaks(records: readonly TelemetryRecord[]): TelemetryRecord[] {
+  return records.filter((record) => record.event === 'cache_break_detected');
+}
+
+async function requestCacheTurn(
+  service: AgentLoopRequester,
+  turnId: number,
+  systemPrompt?: string,
+): Promise<void> {
+  await service.request({ source: { type: 'turn', turnId, step: turnId }, systemPrompt });
+}
+
+async function requestCacheOperation(service: AgentLoopRequester, requestKind: string): Promise<void> {
+  await service.request({ source: { type: 'operation', requestKind } });
+}
+
+describe('AgentLoopRequester cache break telemetry', () => {
+  it('reports request identifiers, both usages and changed request parts', async () => {
+    const { service, telemetryRecords } = createService(
+      createCacheRequester([cacheUsage(10000), cacheUsage(7000)]),
+    );
+
+    await requestCacheTurn(service, 1);
+    expect(cacheBreaks(telemetryRecords)).toHaveLength(0);
+    await requestCacheTurn(service, 2);
+
+    const events = cacheBreaks(telemetryRecords);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.properties).toMatchObject({
+      request_kind: 'turn',
+      turn_id: 2,
+      step_no: 2,
+      trace_id: 'trace-2',
+      prev_request_kind: 'turn',
+      prev_turn_id: 1,
+      prev_step_no: 1,
+      prev_trace_id: 'trace-1',
+      prev_model: 'm',
+      curr_model: 'm',
+      prev_effort: 'off',
+      curr_effort: 'off',
+      prev_input_cache_read: 10000,
+      curr_input_cache_read: 7000,
+      prev_input_other: 100,
+      curr_input_other: 100,
+      prev_output: 50,
+      curr_output: 50,
+      prev_input_cache_creation: 0,
+      curr_input_cache_creation: 0,
+      prev_total_tokens: 10150,
+      cache_reuse_ratio: 7000 / 10150,
+      cache_read_drop_ratio: 0.3,
+      tools_match: true,
+      system_prompt_match: true,
+      history_prefix_match: true,
+    });
+    expect(events[0]?.properties?.['gap_ms']).toEqual(expect.any(Number));
+    expect(events[0]?.properties?.['interval_ms']).toEqual(expect.any(Number));
+
+    const contextMessages: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'first' }] },
+    ];
+    const changed = createService(
+      createCacheRequester([cacheUsage(10000), cacheUsage(1000)]),
+      { contextMessages },
+    );
+    await requestCacheTurn(changed.service, 1, 'system-a');
+    contextMessages[0] = { role: 'user', content: [{ type: 'text', text: 'rewritten' }] };
+    await requestCacheTurn(changed.service, 2, 'system-b');
+
+    expect(cacheBreaks(changed.telemetryRecords)[0]?.properties).toMatchObject({
+      tools_match: true,
+      system_prompt_match: false,
+      history_prefix_match: false,
+    });
+
+    const operation = createService(
+      createCacheRequester([cacheUsage(10000), cacheUsage(7000), cacheUsage(1000)]),
+    );
+    await requestCacheTurn(operation.service, 1);
+    await requestCacheOperation(operation.service, 'full_compaction');
+    await requestCacheTurn(operation.service, 2);
+
+    const operationEvents = cacheBreaks(operation.telemetryRecords);
+    expect(operationEvents).toHaveLength(2);
+    expect(operationEvents[0]?.properties).toMatchObject({
+      request_kind: 'full_compaction',
+      prev_request_kind: 'turn',
+      trace_id: 'trace-2',
+    });
+    expect(operationEvents[0]?.properties?.['turn_id']).toBeUndefined();
+    expect(operationEvents[1]?.properties).toMatchObject({
+      request_kind: 'turn',
+      prev_request_kind: 'full_compaction',
+      turn_id: 2,
+      trace_id: 'trace-3',
+      prev_trace_id: 'trace-2',
+    });
+    expect(operationEvents[1]?.properties?.['prev_turn_id']).toBeUndefined();
+  });
+
+  it('applies ratio and token gates to cache reads and reusable history', async () => {
+    const a = createService(createCacheRequester([cacheUsage(100000), cacheUsage(96000)]));
+    await requestCacheTurn(a.service, 1);
+    await requestCacheTurn(a.service, 2);
+    expect(cacheBreaks(a.telemetryRecords)).toHaveLength(0);
+
+    const b = createService(createCacheRequester([cacheUsage(4000), cacheUsage(2500)]));
+    await requestCacheTurn(b.service, 1);
+    await requestCacheTurn(b.service, 2);
+    expect(cacheBreaks(b.telemetryRecords)).toHaveLength(0);
+
+    const coverage = createService(
+      createCacheRequester([
+        { ...cacheUsage(10000), inputOther: 5000, output: 2000 },
+        cacheUsage(9600),
+      ]),
+    );
+    await requestCacheTurn(coverage.service, 1);
+    await requestCacheTurn(coverage.service, 2);
+    expect(cacheBreaks(coverage.telemetryRecords)).toHaveLength(1);
+    expect(cacheBreaks(coverage.telemetryRecords)[0]?.properties).toMatchObject({
+      prev_total_tokens: 17000,
+      cache_reuse_ratio: 9600 / 17000,
+      cache_read_drop_ratio: 0.04,
+    });
+  });
+
+  it('skips unmeasured usage and distinguishes unreported cache reads from explicit zeroes', async () => {
+    const { service, telemetryRecords } = createService(
+      createCacheRequester([cacheUsage(10000), undefined, emptyUsage(), 'unreported', cacheUsage(5000)]),
+    );
+
+    for (let turnId = 1; turnId <= 5; turnId++) await requestCacheTurn(service, turnId);
+
+    const events = cacheBreaks(telemetryRecords);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.properties).toMatchObject({
+      prev_turn_id: 1,
+      prev_input_cache_read: 10000,
+      turn_id: 5,
+      curr_input_cache_read: 5000,
+    });
+
+    const never = createService(createCacheRequester(['unreported', 'unreported']));
+    await requestCacheTurn(never.service, 1);
+    await requestCacheTurn(never.service, 2);
+    expect(cacheBreaks(never.telemetryRecords)).toHaveLength(0);
+
+    const zero = createService(
+      createCacheRequester([
+        { ...cacheUsage(0), inputOther: 5000, output: 1000 },
+        cacheUsage(1000),
+      ]),
+    );
+    await requestCacheTurn(zero.service, 1);
+    await requestCacheTurn(zero.service, 2);
+    const zeroEvent = cacheBreaks(zero.telemetryRecords)[0]?.properties;
+    expect(zeroEvent).toMatchObject({
+      prev_input_cache_read: 0,
+      prev_total_tokens: 6000,
+      cache_reuse_ratio: 1000 / 6000,
+    });
+    expect(zeroEvent?.['cache_read_drop_ratio']).toBeUndefined();
+  });
+
+  it('resets after a context revision change and records model changes', async () => {
+    let revision = 0;
+    const reset = createService(
+      createCacheRequester([cacheUsage(10000), cacheUsage(5000), cacheUsage(1000)]),
+      { prefixRevision: () => revision },
+    );
+    await requestCacheTurn(reset.service, 1);
+    revision = 1;
+    await requestCacheTurn(reset.service, 2);
+    expect(cacheBreaks(reset.telemetryRecords)).toHaveLength(0);
+    await requestCacheTurn(reset.service, 3);
+
+    expect(cacheBreaks(reset.telemetryRecords)[0]?.properties).toMatchObject({
+      prev_turn_id: 2,
+      prev_input_cache_read: 5000,
+      turn_id: 3,
+      curr_input_cache_read: 1000,
+    });
+
+    let model = 'm';
+    const changed = createService(
+      createCacheRequester([cacheUsage(10000), cacheUsage(100)]),
+      { modelAlias: () => model },
+    );
+    await requestCacheTurn(changed.service, 1);
+    model = 'other-model';
+    await requestCacheTurn(changed.service, 2);
+
+    expect(cacheBreaks(changed.telemetryRecords)[0]?.properties).toMatchObject({
+      prev_model: 'm',
+      curr_model: 'other-model',
+    });
+  });
+});
+
 describe('AgentLoopRequester Anthropic effort diagnostics', () => {
   it('warns and sends when the effort is not listed by the model', async () => {
     const calls = { value: 0 };

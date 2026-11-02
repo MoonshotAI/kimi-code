@@ -25,7 +25,7 @@ import {
 import { type ThinkingEffort } from '#human/llm-requester/thinking';
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import { type Message, type ToolDescription as Tool } from '#human/llm/message';
-import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
+import { emptyUsage, grandTotal, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import {
@@ -42,7 +42,7 @@ import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/m
 import { resolveThinkingKeep, type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { IProtocolAdapterRegistry, type Protocol } from '#/llm-adapter/protocol/protocol';
-import type { ApiErrorEvent } from '#/app/telemetry/events';
+import type { ApiErrorEvent, CacheBreakDetectedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -89,6 +89,31 @@ const noopOnPart: AgentLLMRequestPartHandler = () => {};
 
 export const KIMI_CODE_INFINITE_RETRY_ENV = 'KIMI_CODE_INFINITE_RETRY';
 
+const CACHE_BREAK_MIN_DROP_TOKENS = 2000;
+const CACHE_BREAK_DROP_RATIO = 0.95;
+
+interface RecordedRequestSnapshot {
+  readonly toolsHash: string;
+  readonly systemPromptHash: string;
+  readonly messageCount: number;
+  readonly historyHash: string;
+  readonly messages: readonly Message[];
+}
+
+interface MeasuredRequest extends Omit<RecordedRequestSnapshot, 'messages'> {
+  readonly modelAlias: string;
+  readonly contextRevision: number;
+  readonly inputTokens: number;
+  readonly startedAt: number;
+  readonly finishedAt: number;
+  readonly thinkingEffort: ThinkingEffort;
+  readonly requestKind?: string;
+  readonly turnId?: number;
+  readonly step?: number;
+  readonly traceId?: string;
+  readonly usage: TokenUsage;
+}
+
 interface ResolvedLLMRequest {
   readonly request: InitializedLlmRequester;
   readonly model: Model;
@@ -132,6 +157,10 @@ export const llmRequesterTurnConfigsKey = defineState<Map<number, TurnRequestCon
   'llmRequester.turnConfigs',
   () => new Map(),
 );
+export const llmRequesterLastMeasuredRequestKey = defineState<MeasuredRequest | undefined>(
+  'llmRequester.lastMeasuredRequest',
+  () => undefined as MeasuredRequest | undefined,
+);
 interface MediaRecovery {
   readonly modelAlias: string;
   readonly contextRevision: number;
@@ -171,6 +200,7 @@ export class AgentLoopRequester implements LoopRequester {
     this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(llmRequesterLastConfigLogSignatureKey);
     this.states.contributeState(llmRequesterTurnConfigsKey);
+    this.states.contributeState(llmRequesterLastMeasuredRequestKey);
     this.states.contributeState(llmRequesterMediaRecoveryKey);
     this.states.contributeState(llmRequesterEmittedThinkingEffortWarningsKey);
   }
@@ -327,6 +357,7 @@ export class AgentLoopRequester implements LoopRequester {
     onRequestId: (requestId: string | undefined) => void,
     onAttemptRetry: (() => void) | undefined,
   ): Promise<AgentLLMRequestFinish> {
+    const startedAt = Date.now();
     let cacheProbeReported = false;
     const mediaPolicy = this.mediaPolicyFactory?.(request.model, request.request);
     const recoveredMedia = this.recoveredMedia(request);
@@ -346,6 +377,7 @@ export class AgentLoopRequester implements LoopRequester {
       let usage: TokenUsage | undefined;
       let timing: ModelRequestTiming | undefined;
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
+      let recorded!: RecordedRequestSnapshot;
       const setRequestId = (requestId: string | null | undefined): void => {
         const normalized = requestId ?? undefined;
         onRequestId(normalized);
@@ -429,7 +461,7 @@ export class AgentLoopRequester implements LoopRequester {
               fields,
             };
             this.logRequest(logInput);
-            this.recordRequest(logInput);
+            recorded = this.recordRequest(logInput);
           },
           onRecovery: (recovery) => {
             if (recovery.strategy === 'structure') {
@@ -508,6 +540,28 @@ export class AgentLoopRequester implements LoopRequester {
           ...cacheProbeUsage(usage),
         });
       }
+      const inputTokens = usage === undefined ? undefined : inputTotal(usage);
+      if (usage !== undefined && inputTokens !== undefined && inputTokens + usage.output > 0) {
+        const measured: MeasuredRequest = {
+          modelAlias: request.modelAlias,
+          contextRevision: request.contextRevision,
+          toolsHash: recorded.toolsHash,
+          systemPromptHash: recorded.systemPromptHash,
+          messageCount: recorded.messageCount,
+          historyHash: recorded.historyHash,
+          inputTokens,
+          startedAt,
+          finishedAt: Date.now(),
+          thinkingEffort: request.thinkingEffort,
+          requestKind: requestKindForTelemetry(request.source),
+          turnId: request.source?.turnId,
+          step: request.source?.type === 'turn' ? request.source.step : undefined,
+          traceId: finish.requestId,
+          usage,
+        };
+        this.trackCacheBreak(measured, recorded.messages);
+        this.states.set(llmRequesterLastMeasuredRequestKey, measured);
+      }
       void this.usage.record(
         this.scopeContext.agentContext,
         request.modelAlias,
@@ -560,6 +614,53 @@ export class AgentLoopRequester implements LoopRequester {
         await sleepForRetry(delayMs, signal);
       }
     }
+  }
+
+  private trackCacheBreak(curr: MeasuredRequest, messages: readonly Message[]): void {
+    const prev = this.states.get(llmRequesterLastMeasuredRequestKey);
+    if (prev === undefined || prev.contextRevision !== curr.contextRevision) return;
+    const prevRead = prev.usage.inputCacheRead;
+    const currRead = curr.usage.inputCacheRead;
+    const prevTotal = grandTotal(prev.usage);
+    if (prevRead === undefined || currRead === undefined || prevTotal === undefined) return;
+    const readDrop = prevRead - currRead;
+    const reusableDrop = prevTotal - currRead;
+    const readBreak =
+      currRead < prevRead * CACHE_BREAK_DROP_RATIO && readDrop > CACHE_BREAK_MIN_DROP_TOKENS;
+    const reuseBreak =
+      currRead < prevTotal * CACHE_BREAK_DROP_RATIO && reusableDrop > CACHE_BREAK_MIN_DROP_TOKENS;
+    if (!readBreak && !reuseBreak) return;
+    const properties: CacheBreakDetectedEvent = {
+      request_kind: curr.requestKind,
+      turn_id: curr.turnId,
+      step_no: curr.step,
+      trace_id: curr.traceId,
+      prev_request_kind: prev.requestKind,
+      prev_turn_id: prev.turnId,
+      prev_step_no: prev.step,
+      prev_trace_id: prev.traceId,
+      prev_model: prev.modelAlias,
+      curr_model: curr.modelAlias,
+      prev_effort: prev.thinkingEffort,
+      curr_effort: curr.thinkingEffort,
+      prev_input_cache_read: prevRead,
+      curr_input_cache_read: currRead,
+      prev_input_other: prev.usage.inputOther,
+      curr_input_other: curr.usage.inputOther,
+      prev_output: prev.usage.output,
+      curr_output: curr.usage.output,
+      prev_input_cache_creation: prev.usage.inputCacheCreation,
+      curr_input_cache_creation: curr.usage.inputCacheCreation,
+      prev_total_tokens: prevTotal,
+      cache_reuse_ratio: currRead / prevTotal,
+      cache_read_drop_ratio: prevRead === 0 ? undefined : readDrop / prevRead,
+      tools_match: prev.toolsHash === curr.toolsHash,
+      system_prompt_match: prev.systemPromptHash === curr.systemPromptHash,
+      history_prefix_match: historyPrefixMatches(prev, messages),
+      gap_ms: curr.startedAt - prev.finishedAt,
+      interval_ms: curr.finishedAt - prev.finishedAt,
+    };
+    this.telemetry.track2('cache_break_detected', properties);
   }
 
   private get infiniteRetryEnabled(): boolean {
@@ -717,7 +818,7 @@ export class AgentLoopRequester implements LoopRequester {
     this.log.info('llm request', requestFields);
   }
 
-  private recordRequest(input: LLMRequestLogInput): void {
+  private recordRequest(input: LLMRequestLogInput): RecordedRequestSnapshot {
     const fields = input.fields ?? {};
     const wireTools = providerVisibleTools(input.tools);
     const tools = toolSignature(wireTools);
@@ -763,6 +864,13 @@ export class AgentLoopRequester implements LoopRequester {
       droppedCount: numberField(fields, 'droppedCount'),
     };
     void this.dispatcher.dispatch(new LlmRequest(payload));
+    return {
+      toolsHash,
+      systemPromptHash,
+      messageCount: input.messages.length,
+      historyHash: fingerprint(JSON.stringify(input.messages)),
+      messages: input.messages,
+    };
   }
 
   private logResponse(
@@ -882,6 +990,16 @@ function projectionField(fields: AgentLLMRequestLogFields): LlmRequestProjection
 
 function fingerprint(content: string): string {
   return createHash('sha256').update(content).digest('hex');
+}
+
+function historyPrefixMatches(
+  baseline: MeasuredRequest,
+  messages: readonly Message[],
+): boolean {
+  return (
+    baseline.messageCount <= messages.length &&
+    fingerprint(JSON.stringify(messages.slice(0, baseline.messageCount))) === baseline.historyHash
+  );
 }
 
 function apiStatusCode(error: unknown): number | undefined {

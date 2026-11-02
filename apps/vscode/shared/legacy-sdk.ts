@@ -73,7 +73,7 @@ export interface TurnBegin {
 export interface TokenUsage {
   input_other: number;
   output: number;
-  input_cache_read: number;
+  input_cache_read?: number;
   input_cache_creation: number;
 }
 
