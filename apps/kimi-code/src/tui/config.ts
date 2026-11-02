@@ -124,7 +124,7 @@ export const TuiConfigFileSchema = z.object({
       group: z
         .object({
           tools: z.string().optional(),
-          thinking: z.boolean().optional(),
+          group_thinking: z.boolean().optional(),
         })
         .optional(),
     })
@@ -329,7 +329,7 @@ export function normalizeTuiConfig(
     if (parsed.success) groupTools = parsed.data;
     else warn(`[tui.toml] ignoring unknown transcript.group.tools value: ${groupToolsValue}`);
   }
-  const groupThinking = config.transcript?.group?.thinking ?? DEFAULT_TRANSCRIPT_CONFIG.groupThinking;
+  const groupThinking = config.transcript?.group?.group_thinking ?? DEFAULT_TRANSCRIPT_CONFIG.groupThinking;
   const tuiModeValue = config.tui_mode;
   let tuiMode: TuiMode = 'regular';
   if (tuiModeValue !== undefined) {
@@ -403,9 +403,9 @@ export function renderTuiConfig(config: TuiConfig): string {
       ? `# [transcript.group]
 # Fullscreen transcript grouping preferences.
 # tools = "auto" # "auto" | "explore" | "off"
-# thinking = true # true | false
+# group_thinking = true # true | false
 `
-      : `[transcript.group]\ntools = "${transcript.groupTools}" # "auto" | "explore" | "off"\nthinking = ${String(transcript.groupThinking)} # true | false\n`;
+      : `[transcript.group]\ntools = "${transcript.groupTools}" # "auto" | "explore" | "off"\ngroup_thinking = ${String(transcript.groupThinking)} # true | false\n`;
   const statusSection =
     statusLines.length > 0
       ? `[status_line]\n${statusLines.join('\n')}\n`

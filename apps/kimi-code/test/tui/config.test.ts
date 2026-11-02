@@ -315,7 +315,7 @@ describe('TUI config transcript', () => {
     expect(text).toContain('# [transcript.group]');
     expect(text).toContain('# Fullscreen transcript grouping preferences.');
     expect(text).toContain('# tools = "auto"');
-    expect(text).toContain('# thinking = true');
+    expect(text).toContain('# group_thinking = true');
     expect(text).not.toContain('max_visible');
     expect(text).not.toContain('\n[transcript.group]\n');
   });
@@ -331,7 +331,7 @@ describe('TUI config transcript', () => {
     const previous = parseTuiConfig(`
 [transcript.group]
 tools = "explore"
-thinking = false
+group_thinking = false
 max_visible = 4
 `);
     expect(previous.transcript).toEqual({ groupTools: 'explore', groupThinking: false });
@@ -345,7 +345,7 @@ max_visible = 4
     const text = readFileSync(filePath, 'utf-8');
     expect(text).toContain('[transcript.group]');
     expect(text).toContain('tools = "explore"');
-    expect(text).toContain('thinking = false');
+    expect(text).toContain('group_thinking = false');
     expect(text).not.toContain('max_visible');
   });
 
