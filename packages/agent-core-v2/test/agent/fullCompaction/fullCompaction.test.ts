@@ -452,7 +452,17 @@ describe('FullCompaction', () => {
     expect(loop.snapshot().queue[1]?.meta?.compaction).toEqual({ instruction: 'Keep the plan' });
     expect(compaction.compacting).toBeNull();
     expect(() => compaction.request({ id: 'compact-2' })).toThrow('already running or queued');
-    await expect(loop.steer(['compact-1'])).rejects.toMatchObject({ code: 'prompt.not_found' });
+    await expect(loop.steer(['compact-1'])).rejects.toMatchObject({ code: 'request.invalid' });
+    await expect(loop.steer([after])).rejects.toMatchObject({ code: 'request.invalid' });
+    const late = loop.submit(
+      {
+        message: { role: 'user', content: [{ type: 'text', text: 'Steered after compaction' }] },
+        meta: { origin: { kind: 'user' }, tracked: true },
+      },
+      { steerIfActive: true },
+    ).id;
+    expect(loop.snapshot().queue.map((entry) => entry.meta?.promptId)).toEqual([before, 'compact-1', after, late]);
+    expect(loop.cancel({ promptId: late })).toBe(true);
 
     const order: string[] = [];
     void loop.promptHandle(before)!.launched.then(() => order.push('before started'));

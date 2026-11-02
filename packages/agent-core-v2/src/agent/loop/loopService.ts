@@ -409,7 +409,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       options?.steerIfActive === true &&
       this.active !== undefined &&
       this.active.prompt.tracked &&
-      this.engine !== undefined
+      this.engine !== undefined &&
+      steerableQueueIds(this.engine.snapshot().queue).has(id)
     ) {
       this.machineEngine().steer(id);
     }
@@ -428,15 +429,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     const engine = this.machineEngine();
     const ids = new Set(promptIds);
-    const queuedIds = new Set(
-      engine
-        .snapshot()
-        .queue.filter((item) => item.meta?.compaction === undefined)
-        .map((item) => item.meta?.promptId),
-    );
+    const queue = engine.snapshot().queue;
+    const queuedIds = new Set(queue.map((item) => item.meta?.promptId));
     if (this.gatingPromptId !== undefined) queuedIds.delete(this.gatingPromptId);
     if (ids.size !== promptIds.length || ![...ids].every((id) => queuedIds.has(id))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
+    }
+    const steerable = steerableQueueIds(queue);
+    if (![...ids].every((id) => steerable.has(id))) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        'a queued compaction cannot be steered, and prompts queued behind it cannot be steered past it',
+      );
     }
     for (const id of ids) {
       const entry = engine.snapshot().queue.find((item) => item.meta?.promptId === id);
@@ -445,7 +449,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (
       this.active !== active ||
       (this.gatingPromptId !== undefined && ids.has(this.gatingPromptId)) ||
-      ![...ids].every((id) => new Set(engine.snapshot().queue.map((item) => item.meta?.promptId)).has(id))
+      ![...ids].every((id) => steerableQueueIds(engine.snapshot().queue).has(id))
     ) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
     }
@@ -2414,6 +2418,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 type MachineGateDecision =
   | { readonly type: 'proceed'; readonly signal: AbortSignal; readonly step: number }
   | { readonly type: 'fail' };
+
+function steerableQueueIds(queue: readonly UserEntry[]): Set<string | undefined> {
+  const firstCompaction = queue.findIndex((item) => item.meta?.compaction !== undefined);
+  const ahead = firstCompaction === -1 ? queue : queue.slice(0, firstCompaction);
+  return new Set(ahead.map((item) => item.meta?.promptId));
+}
 
 function normalizeFinishReason(reason: FinishReason): string {
   if (reason === 'tool_calls') return 'tool_use';

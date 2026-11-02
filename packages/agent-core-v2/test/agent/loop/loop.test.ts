@@ -1138,11 +1138,12 @@ describe('Agent loop', () => {
   });
 
   it('answers prompts steered at the end of a turn before running a queued compaction', async () => {
-    let steered = false;
+    let late: string | undefined;
     const stepHook = loop.hooks.onWillBeginStep.register('test-late-steer', async (_step, next) => {
-      if (!steered) {
-        steered = true;
-        await loop.steer([submitTracked(loop, 'late steer')]);
+      if (late !== undefined) {
+        const id = late;
+        late = undefined;
+        await loop.steer([id]);
       }
       await next();
     });
@@ -1150,6 +1151,7 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'late answer' });
     ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
     submitTracked(loop, 'first');
+    late = submitTracked(loop, 'late steer');
     loop.submit({
       message: { role: 'user', content: [] },
       meta: { promptId: 'compact-1', compaction: {} },

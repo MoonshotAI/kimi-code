@@ -1085,7 +1085,7 @@ A prompt is one unit of user input: submitting one enqueues it on the session's 
 
 #### Prompt queue
 
-A prompt submitted while the agent is busy waits in the agent's queue and starts, in order, once the agent is idle. The main agent's queue is also visible and controllable: it is pushed over the WebSocket as [`queue` frames](#events), and the queue routes below pause, resume and reorder it. While the queue is paused, queued prompts do not start and new prompts join the queue; steering still moves a queued prompt into the running turn, and a compaction requested while the agent is idle and the queue is empty still starts right away. Otherwise a compaction joins the queue like a prompt: it keeps its position, can be reordered or withdrawn, and runs when it reaches the head. A queued prompt starts by passing the prompt hooks; from then on it has left the queue: pausing no longer holds it, it cannot be reordered or steered, and aborting it stops its turn as soon as the turn begins. Other agents have no queue controls. The queue lives in server memory, so queued prompts are lost when the server restarts.
+A prompt submitted while the agent is busy waits in the agent's queue and starts, in order, once the agent is idle. The main agent's queue is also visible and controllable: it is pushed over the WebSocket as [`queue` frames](#events), and the queue routes below pause, resume and reorder it. While the queue is paused, queued prompts do not start and new prompts join the queue; steering still moves a queued prompt into the running turn, and a compaction requested while the agent is idle and the queue is empty still starts right away. Otherwise a compaction joins the queue like a prompt: it keeps its position, can be reordered or withdrawn, and runs when it reaches the head. Prompts queued behind a compaction cannot be steered past it, and a prompt submitted while one is queued waits behind it even when it asks to steer. A queued prompt starts by passing the prompt hooks; from then on it has left the queue: pausing no longer holds it, it cannot be reordered or steered, and aborting it stops its turn as soon as the turn begins. Other agents have no queue controls. The queue lives in server memory, so queued prompts are lost when the server restarts.
 
 | Method and path | Description |
 | --- | --- |
@@ -1167,7 +1167,7 @@ Steers queued prompts into the active turn, so the running turn consumes them im
 
 On success, `data` is `{ steered: true, prompt_ids }`.
 
-- `40001`: validation failure
+- `40001`: validation failure, including a queued compaction or a prompt queued behind one
 - `40401`: session not found
 - `40402`: a listed prompt id is not in the queue
 
@@ -1197,6 +1197,7 @@ Steers one queued prompt into the active turn — the single-prompt form of `POS
 
 On success, `data` is `{ steered: true, prompt_ids: [prompt_id] }`.
 
+- `40001`: the prompt is queued behind a compaction, or is a queued compaction
 - `40401`: session not found
 - `40402`: no queued prompt with that id
 
