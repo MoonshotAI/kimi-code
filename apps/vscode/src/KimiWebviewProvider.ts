@@ -66,6 +66,7 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
       retainContextWhenHidden: true,
       localResourceRoots: [this.extensionUri],
     });
+    panel.iconPath = vscode.Uri.joinPath(this.extensionUri, "resources", "kimi-icon.svg");
 
     this.setupWebview(webviewId, panel.webview);
 
