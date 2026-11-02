@@ -76,7 +76,6 @@ export * from '#/app/bootstrap/bootstrapService';
 export * from '#/os/interface/hostClock';
 export * from '#/os/interface/hostEnvironment';
 export * from '#/os/interface/hostFileSystem';
-export * from '#/os/interface/hostFsErrors';
 export * from '#/os/interface/hostProcess';
 export * from '#/os/backends/node-local/hostClockService';
 export * from '#/os/backends/node-local/hostEnvironmentService';
