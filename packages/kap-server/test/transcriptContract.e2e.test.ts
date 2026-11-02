@@ -529,6 +529,67 @@ describe('transcript contract e2e', () => {
     }
   });
 
+  it('steers only up to a queued /compact and runs the rest in order without stalling', async () => {
+    let firstServed = false;
+    await boot([
+      {
+        match: () => {
+          if (firstServed) return false;
+          firstServed = true;
+          return true;
+        },
+        respond: () => sseText('first done'),
+        delayMs: 3000,
+      },
+      { match: (body) => body.includes('keep the plan'), respond: () => sseText('Compacted summary.') },
+      { match: () => true, respond: () => sseText('done') },
+    ]);
+    const sid = await createSession(server!, base);
+    await submitPrompt(server!, base, sid, 'first prompt');
+    await until('first prompt reaches model', () => llm!.hits.length > 0);
+    const channel = await subscribeTranscript(server!, sid);
+    try {
+      const a = await submitPrompt(server!, base, sid, 'prompt A');
+      const compact = await rest<{ prompt_id: string; accepted_as: string }>(server!, base, `/api/v1/sessions/${sid}:compact`, {
+        method: 'POST',
+        body: { instruction: 'keep the plan' },
+      });
+      const b = await submitPrompt(server!, base, sid, 'prompt B');
+      const c = await submitPrompt(server!, base, sid, 'prompt C');
+      expect(compact.accepted_as).toBe('queue');
+      const queueFrames = () => channel.frames.filter((f) => f.type === 'queue' && f.agent_id === 'main');
+      const lastQueue = () => (queueFrames().at(-1)?.inputs ?? []).map((input: any) => input.prompt_id);
+      await until('queue frame lists all four entries', () => lastQueue().length === 4);
+      expect(lastQueue()).toEqual([a.prompt_id, compact.prompt_id, b.prompt_id, c.prompt_id]);
+
+      expect(await rest(server!, base, `/api/v1/sessions/${sid}/prompts/${a.prompt_id}:steer`, { method: 'POST', body: {} })).toEqual({
+        steered: true,
+        prompt_ids: [a.prompt_id],
+      });
+      expect(await restCode(server!, base, `/api/v1/sessions/${sid}/prompts/${b.prompt_id}:steer`)).toBe(40001);
+      expect(await restCode(server!, base, `/api/v1/sessions/${sid}/prompts/${compact.prompt_id}:steer`)).toBe(40001);
+      expect(await restCode(server!, base, `/api/v1/sessions/${sid}/prompts:steer`, { prompt_ids: [c.prompt_id] })).toBe(40001);
+      await until('queue frame drops the steered prompt', () => lastQueue().length === 3);
+      expect(lastQueue()).toEqual([compact.prompt_id, b.prompt_id, c.prompt_id]);
+
+      await until('queue drained', () => queueFrames().at(-1)?.inputs.length === 0, 45000);
+      await idle(server!, base, sid);
+      const position = (marker: string) => llm!.hits.findIndex((hit, index) => index > 0 && hit.includes(marker));
+      expect(llm!.hits).toHaveLength(5);
+      expect(position('prompt A')).toBe(1);
+      expect(position('keep the plan')).toBe(2);
+      expect(llm!.hits[3]).toContain('prompt B');
+      expect(llm!.hits[3]).not.toContain('prompt C');
+      expect(llm!.hits[4]).toContain('prompt C');
+      const tx = await getTranscript(server!, base, sid);
+      const statusOf = (id: string) => tx.prompts.find((prompt) => prompt.promptId === id)?.status;
+      expect([a, b, c].map((prompt) => statusOf(prompt.prompt_id))).toEqual(['completed', 'completed', 'completed']);
+      expect(tx.prompts.some((prompt) => prompt.promptId === compact.prompt_id)).toBe(false);
+    } finally {
+      channel.close();
+    }
+  });
+
   it('undo rebuilds a steered turn consistently over REST and WebSocket', async () => {
     await boot([
       { match: (body) => body.includes('steered request'), respond: () => sseText('answer after steer') },
