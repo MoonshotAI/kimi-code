@@ -195,6 +195,7 @@ import type { ExtractionResult } from './utils/image-placeholder';
 import { installInputLatencyProbe } from './utils/input-latency';
 import {
   steerEventParts,
+  steerMatchTexts,
   steerPayloadText,
   takeDeliveredSteerBatches,
   type SteerDeliveryBatch,
@@ -2228,6 +2229,10 @@ export class KimiTUI {
         ? options.imageAttachmentIds
         : undefined;
     const goalActive = this.state.appState.goal?.status === 'active';
+    const goalSteerIntoRunningTurn =
+      goalActive &&
+      this.state.appState.streamingPhase !== 'idle' &&
+      this.state.appState.streamingPhase !== 'shell';
     const entry: TranscriptEntry = {
       id: nextTranscriptId(),
       kind: 'user',
@@ -2235,7 +2240,7 @@ export class KimiTUI {
       renderMode: 'plain',
       content: input,
       imageAttachmentIds,
-      steerPending: goalActive ? true : undefined,
+      steerPending: goalSteerIntoRunningTurn ? true : undefined,
     };
     this.appendTranscriptEntry(entry);
     // A goal-active steer is buffered into the running goal turn — no new
@@ -2306,7 +2311,7 @@ export class KimiTUI {
       const request = this.trackPendingEntries(
         [entry],
         this.dispatchPreparedInput(session, sdkInput, (parts) => {
-          this.notePendingSteer([entry], parts);
+          if (goalSteerIntoRunningTurn) this.notePendingSteer([entry], parts);
           return session.steer(parts);
         }),
       );
@@ -2609,9 +2614,10 @@ export class KimiTUI {
     const { texts, hasMedia } = steerEventParts(input);
     let pending = this.pendingSteerDeliveries;
     const delivered: typeof pending = [];
-    for (const text of texts) {
+    const candidates = steerMatchTexts(texts);
+    for (const text of candidates) {
       const step = takeDeliveredSteerBatches(pending, text);
-      delivered.push(...step.delivered.map((batch) => ({ ...batch, mediaOnly: false })));
+      delivered.push(...step.delivered);
       pending = pending.filter((batch) => !step.delivered.includes(batch));
     }
     if (texts.length === 0 && hasMedia) {

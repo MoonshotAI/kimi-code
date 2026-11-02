@@ -289,8 +289,9 @@ export class SessionEventHandler {
     if ('turnId' in event && event.turnId !== undefined) {
       this.host.streamingUI.setTurnId(String(event.turnId));
     }
-    if (isTurnSteerEvent(event)) {
-      this.host.acknowledgeSteerDelivery?.(event.input);
+    const rawEvent: object = event;
+    if (isTurnSteerEvent(rawEvent)) {
+      this.host.acknowledgeSteerDelivery?.(rawEvent.input);
       return;
     }
 

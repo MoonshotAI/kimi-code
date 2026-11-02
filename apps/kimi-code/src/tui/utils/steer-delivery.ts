@@ -40,6 +40,11 @@ function hasSource(part: object): boolean {
   return 'source' in part.meta && part.meta.source !== undefined;
 }
 
+export function steerMatchTexts(texts: readonly string[]): readonly string[] {
+  if (texts.length <= 1) return texts;
+  return [texts.join(''), ...texts];
+}
+
 export function isTurnSteerEvent(
   event: object,
 ): event is { readonly type: 'turn.steer'; readonly input?: unknown } {

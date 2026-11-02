@@ -4978,7 +4978,7 @@ command = "vim"
           turnId: 1,
           input: [{ type: 'text', text: 'keep this input' }],
           origin: { kind: 'user' },
-        } as Event,
+        } as unknown as Event,
         () => {},
       );
       const restored = renderTranscript(driver);
@@ -5025,7 +5025,7 @@ command = "vim"
           turnId: 2,
           input: [{ type: 'text', text: 'same' }],
           origin: { kind: 'user' },
-        } as Event,
+        } as unknown as Event,
         () => {},
       );
 

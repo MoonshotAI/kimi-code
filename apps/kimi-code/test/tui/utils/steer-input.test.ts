@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { PromptPart } from '@moonshot-ai/kimi-code-sdk';
 
 import type { SteerInputItem } from '#/tui/types';
-import { steerEventParts, takeDeliveredSteerBatches } from '#/tui/utils/steer-delivery';
+import { steerEventParts, steerMatchTexts, takeDeliveredSteerBatches } from '#/tui/utils/steer-delivery';
 import { combineSteerInput } from '#/tui/utils/steer-input';
 
 describe('combineSteerInput', () => {
@@ -100,6 +100,23 @@ describe('takeDeliveredSteerBatches', () => {
     const result = takeDeliveredSteerBatches([first, second], 'one\n\ntwo');
     expect(result.delivered).toEqual([first, second]);
     expect(result.pending).toEqual([]);
+  });
+
+  it('matches split text parts as one payload and as separate submissions', () => {
+    expect(steerMatchTexts(['hello ', 'world'])).toEqual(['hello world', 'hello ', 'world']);
+    const combined = { text: 'hello world', entries: ['hello world'] };
+    const first = { text: 'hello ', entries: ['hello '] };
+    const second = { text: 'world', entries: ['world'] };
+    expect(takeDeliveredSteerBatches([combined], 'hello world').delivered).toEqual([combined]);
+    let pending = [first, second];
+    const delivered = [];
+    for (const text of ['hello ', 'world']) {
+      const step = takeDeliveredSteerBatches(pending, text);
+      delivered.push(...step.delivered);
+      pending = step.pending;
+    }
+    expect(delivered).toEqual([first, second]);
+    expect(pending).toEqual([]);
   });
 
   it('drops skill and hook text that carries a source marker', () => {
