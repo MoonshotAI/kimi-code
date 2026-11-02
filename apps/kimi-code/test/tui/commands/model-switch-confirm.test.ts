@@ -200,6 +200,7 @@ function makeSwitchHost(provider = 'custom') {
   } as unknown as Session;
   const mountEditorReplacement = vi.fn();
   const restoreEditor = vi.fn();
+  const turnContext: { turnId: string | undefined; step: number } = { turnId: undefined, step: 0 };
   const host = {
     state: {
       appState,
@@ -208,7 +209,10 @@ function makeSwitchHost(provider = 'custom') {
       queuedMessageDispatchPending: false,
     },
     session,
-    streamingUI: { hasActiveTurn: vi.fn(() => false) },
+    streamingUI: {
+      hasActiveTurn: vi.fn(() => turnContext.turnId !== undefined),
+      getTurnContext: vi.fn(() => turnContext),
+    },
     resetLivePane: vi.fn(),
     drainQueueIfIdle: vi.fn(),
     enqueueModelSwitch: vi.fn(),
@@ -226,7 +230,7 @@ function makeSwitchHost(provider = 'custom') {
   const emit = (event: TestEvent): void => {
     for (const listener of [...listeners]) listener(event);
   };
-  return { host, session, appState, mountEditorReplacement, restoreEditor, emit };
+  return { host, session, appState, mountEditorReplacement, restoreEditor, emit, turnContext };
 }
 
 function mountedDialog(mountEditorReplacement: ReturnType<typeof vi.fn>): MountedDialog {
@@ -539,9 +543,11 @@ describe('confirmThenPerformModelSwitch', () => {
     });
   });
 
-  it('switches directly while busy when no cloud rule matches', async () => {
-    const { host, session, appState, mountEditorReplacement } = makeSwitchHost();
+  it('switches directly once the turn has sent a request when no cloud rule matches', async () => {
+    const { host, session, appState, mountEditorReplacement, turnContext } = makeSwitchHost();
     appState.streamingPhase = 'waiting';
+    turnContext.turnId = '4';
+    turnContext.step = 1;
 
     confirmThenPerformModelSwitch(host, 'new-alias', 'high', 'session');
 
@@ -553,6 +559,70 @@ describe('confirmThenPerformModelSwitch', () => {
       );
     });
     expect(mountEditorReplacement).not.toHaveBeenCalled();
+  });
+
+  it('does not promise a next-turn switch after submit and before the first request', async () => {
+    const { host, session, appState, turnContext } = makeSwitchHost();
+    appState.streamingPhase = 'waiting';
+    turnContext.step = 3;
+
+    confirmThenPerformModelSwitch(host, 'new-alias', 'high', 'session');
+
+    await vi.waitFor(() => {
+      expect(session.setModel).toHaveBeenCalledWith('new-alias');
+      expect(host.showStatus).toHaveBeenCalledWith(
+        'Switched to New with thinking high for this session only.',
+        'success',
+      );
+    });
+  });
+
+  it('does not promise a next-turn switch after the turn starts and before its first step', async () => {
+    const { host, session, appState, turnContext } = makeSwitchHost();
+    appState.streamingPhase = 'waiting';
+    turnContext.turnId = '7';
+    turnContext.step = 0;
+
+    confirmThenPerformModelSwitch(host, 'new-alias', 'high', 'session');
+
+    await vi.waitFor(() => {
+      expect(session.setModel).toHaveBeenCalledWith('new-alias');
+      expect(host.showStatus).toHaveBeenCalledWith(
+        'Switched to New with thinking high for this session only.',
+        'success',
+      );
+    });
+  });
+
+  it('promises a next-turn switch while a shell command is running', async () => {
+    const { host, session, appState } = makeSwitchHost();
+    appState.streamingPhase = 'shell';
+
+    confirmThenPerformModelSwitch(host, 'new-alias', 'high', 'session');
+
+    await vi.waitFor(() => {
+      expect(session.setModel).toHaveBeenCalledWith('new-alias');
+      expect(host.showStatus).toHaveBeenCalledWith(
+        'Switched to New with thinking high for this session only. Takes effect from the next turn.',
+        'success',
+      );
+    });
+  });
+
+  it('keeps an idle switch notice unchanged when replay left a started step', async () => {
+    const { host, session, turnContext } = makeSwitchHost();
+    turnContext.turnId = 'replay:2';
+    turnContext.step = 2;
+
+    confirmThenPerformModelSwitch(host, 'new-alias', 'high', 'session');
+
+    await vi.waitFor(() => {
+      expect(session.setModel).toHaveBeenCalledWith('new-alias');
+      expect(host.showStatus).toHaveBeenCalledWith(
+        'Switched to New with thinking high for this session only.',
+        'success',
+      );
+    });
   });
 
   it('keeps the already-using notice unchanged while busy', async () => {

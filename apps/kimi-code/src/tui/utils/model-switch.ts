@@ -81,9 +81,16 @@ export async function performModelSwitch(
     await host.waitForSessionAssembly();
     session = host.session;
   }
+  const phase = host.state.appState.streamingPhase;
+  const { turnId, step } = host.streamingUI.getTurnContext();
+  // The engine freezes the model on the turn's first request, which the TUI
+  // sees as turn.step.started with step >= 1. beginSessionRequest clears the
+  // turn id but not the step, and turn.started resets the step to 0. Replay
+  // can leave both set while idle.
+  const currentTurnSentRequest = phase !== 'idle' && turnId !== undefined && step > 0;
   const appliesNextTurn =
     options?.appliesNextTurn ??
-    (host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting);
+    (host.state.appState.isCompacting || phase === 'shell' || currentTurnSentRequest);
   const prevModel = host.state.appState.model;
   const prevEffort = host.state.appState.thinkingEffort;
   const modelChanged = alias !== prevModel;

@@ -1864,7 +1864,7 @@ describe('KimiTUI message flow', () => {
     thinking: { enabled: true },
   });
 
-  it('applies an effort switch for the next turn once the waited-out first prompt starts (v2 engine)', async () => {
+  it('applies an effort switch without a next-turn notice while the waited-out first prompt has not sent a request (v2 engine)', async () => {
     const lazySession = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
@@ -1891,11 +1891,70 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       expect(lazySession.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
       expect(lazySession.setThinking).toHaveBeenCalledWith('low');
-      expect(stripSgr(renderTranscript(driver))).toContain(
-        'Thinking set to low. Takes effect from the next turn.',
-      );
+      expect(stripSgr(renderTranscript(driver))).toContain('Thinking set to low.');
+      expect(stripSgr(renderTranscript(driver))).not.toContain('Takes effect from the next turn.');
     });
     expect(lazySession.prompt).toHaveBeenCalledTimes(1);
+  });
+
+  it('promises a next-turn effort switch only after the submitted turn sends a request', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => thinkingModelsConfig()),
+      setConfig: vi.fn(async () => ({ providers: {} })),
+    });
+    driver.state.appState.model = 'k2';
+    driver.state.appState.thinkingEffort = 'high';
+    driver.state.appState.availableModels = {
+      k2: {
+        provider: 'custom',
+        model: 'kimi-k2',
+        displayName: 'K2',
+        maxContextSize: 100,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'high',
+      },
+    };
+    const sendQueued = () => {};
+    driver.streamingUI.setStep(3);
+    driver.handleUserInput('hello');
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.streamingUI.getTurnContext()).toEqual({ turnId: undefined, step: 3 });
+
+    driver.handleUserInput('/effort low');
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Thinking set to low.');
+    });
+    expect(session.setThinking).toHaveBeenCalledWith('low');
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Takes effect from the next turn.');
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.started', agentId: 'main', turnId: 2 } as Event,
+      sendQueued,
+    );
+    expect(driver.streamingUI.getTurnContext()).toEqual({ turnId: '2', step: 0 });
+
+    driver.handleUserInput('/effort high');
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Thinking set to high.');
+    });
+    expect(session.setThinking).toHaveBeenCalledWith('high');
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Takes effect from the next turn.');
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.step.started', agentId: 'main', turnId: 2, step: 1 } as Event,
+      sendQueued,
+    );
+    expect(driver.streamingUI.getTurnContext()).toEqual({ turnId: '2', step: 1 });
+
+    driver.handleUserInput('/effort max');
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain(
+        'Thinking set to max. Takes effect from the next turn.',
+      );
+    });
+    expect(session.setThinking).toHaveBeenCalledWith('max');
   });
 
   it('applies an effort switch after waiting out an in-flight lazy creation (v2 engine)', async () => {
