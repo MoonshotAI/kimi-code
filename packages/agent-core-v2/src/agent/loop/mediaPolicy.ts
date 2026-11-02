@@ -11,23 +11,17 @@ import { mediaUrlOf } from '#human/llm/protocol/kit/media';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
-import { buildMediaPathTag, matchMediaPathTags, mediaKindOfPart } from '#/agent/media/mediaRef';
+import { buildMediaPathTag, matchMediaPathTags, mediaKindOfPart, type MediaPathTag } from '#/agent/media/mediaRef';
 import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
 
-function omittedReadMediaResult(message: ToolMessage): SystemMessage {
+function mediaTagOf(message: ToolMessage): MediaPathTag | undefined {
   const text = message.content
     .flatMap((part) => (part.type === 'text' ? [part.text] : []))
     .join('\n');
-  const tag = matchMediaPathTags(text).find((entry) => entry.kind === 'image' || entry.kind === 'video');
-  if (tag === undefined) {
-    return {
-      role: 'system',
-      content: [{
-        type: 'text',
-        text: '[media omitted: a ReadMediaFile tool result was hidden because the current model does not support image or video input]',
-      }],
-    };
-  }
+  return matchMediaPathTags(text).find((entry) => entry.kind === 'image' || entry.kind === 'video');
+}
+
+function omittedReadMediaResult(tag: MediaPathTag): SystemMessage {
   const hint =
     `[${tag.kind} omitted: a ReadMediaFile tool result was hidden because the current model does not support ${tag.kind} input; ` +
     `use a model with ${tag.kind} input capability to view it]`;
@@ -38,22 +32,29 @@ function omittedReadMediaResult(message: ToolMessage): SystemMessage {
 }
 
 function hideReadMediaFile(messages: readonly Message[]): readonly Message[] {
-  const hiddenCallIds = new Set<string>();
+  const readMediaCallIds = new Set<string>();
   for (const message of messages) {
     if (message.role !== 'assistant') continue;
     for (const call of message.toolCalls) {
-      if (call.name === READ_MEDIA_FILE_TOOL_NAME) hiddenCallIds.add(call.id);
+      if (call.name === READ_MEDIA_FILE_TOOL_NAME) readMediaCallIds.add(call.id);
     }
   }
-  if (hiddenCallIds.size === 0) return messages;
+  if (readMediaCallIds.size === 0) return messages;
+  const mediaTags = new Map<string, MediaPathTag>();
+  for (const message of messages) {
+    if (message.role !== 'tool' || !readMediaCallIds.has(message.toolCallId)) continue;
+    const tag = mediaTagOf(message);
+    if (tag !== undefined) mediaTags.set(message.toolCallId, tag);
+  }
   const out: Message[] = [];
   for (const message of messages) {
     if (message.role === 'tool') {
-      if (message.toolCallId === undefined || !hiddenCallIds.has(message.toolCallId)) {
+      if (!readMediaCallIds.has(message.toolCallId)) {
         out.push(message);
-      } else {
-        out.push(omittedReadMediaResult(message));
+        continue;
       }
+      const tag = mediaTags.get(message.toolCallId);
+      if (tag !== undefined) out.push(omittedReadMediaResult(tag));
       continue;
     }
     if (message.role !== 'assistant') {

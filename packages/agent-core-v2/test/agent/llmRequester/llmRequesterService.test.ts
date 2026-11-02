@@ -1531,7 +1531,6 @@ describe('AgentLoopRequester media resolver wiring', () => {
       );
       expect(omissions).toEqual(imageIn ? [] : [
         '[image omitted: a ReadMediaFile tool result was hidden because the current model does not support image input; use a model with image input capability to view it]\n<image path="/tmp/pic.png"></image>',
-        '[media omitted: a ReadMediaFile tool result was hidden because the current model does not support image or video input]',
       ]);
     }
   });
