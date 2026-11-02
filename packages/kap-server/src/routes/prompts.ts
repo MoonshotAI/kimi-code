@@ -373,7 +373,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               throw error;
             }
             enqueued = true;
-            settlement.settle(result.prompt_id, () => preparedMedia?.discard());
+            settlement.settle(result.prompt_id, (dropped) =>
+              dropped ? preparedMedia?.discardStaged() : preparedMedia?.discard(),
+            );
             reply.send(
               okEnvelope(
                 {
@@ -412,7 +414,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           }
           const staging = preparedMedia;
           void Promise.race([handle.launched, handle.completion]).then(
-            () => staging?.discard(),
+            () => (handle.state === 'cancelled' || handle.state === 'failed' ? staging?.discardStaged() : staging?.discard()),
             () => staging?.discard(),
           );
           reply.send(okEnvelope(projectPromptHandle(handle), req.id));
@@ -694,6 +696,9 @@ export function projectQueueState(loop: IAgentLoopService): QueueStateWire {
           ? undefined
           : skills.map((skill) => ({ name: skill.skillName, args: skill.skillArgs })),
       client_metadata: projected.metadata,
+      plan_mode: item.meta.launch?.planMode,
+      goal_objective: item.meta.launch?.goalObjective,
+      starting: projected.prompt_id === snapshot.startingPromptId ? true : undefined,
       created_at: projected.created_at,
     });
   }
@@ -785,14 +790,22 @@ export function reservePromptId(sessionId: string, promptId?: string): PromptIdR
   };
 }
 
+type SettlementDiscard = (dropped: boolean) => void | Promise<void>;
+
 export function watchPromptSettlements(events: IEventBus): {
-  settle(promptId: string, discard: () => void | Promise<void>): void;
+  settle(promptId: string, discard: SettlementDiscard): void;
   dispose(): void;
 } {
-  const settledIds = new Set<string>();
+  const startedIds = new Set<string>();
+  const settledIds = new Map<string, boolean>();
   const parentOf = new Map<string, string>();
-  let armed: { id: string; discard: () => void | Promise<void> } | undefined;
+  let armed: { id: string; discard: SettlementDiscard } | undefined;
   const subscription = events.subscribe((event) => {
+    if (event.type === 'prompt.started') {
+      const id = (event as { readonly promptId?: unknown }).promptId;
+      if (typeof id === 'string') startedIds.add(id);
+      return;
+    }
     if (event.type === 'prompt.steered') {
       const steered = event as {
         readonly promptIds?: unknown;
@@ -811,19 +824,21 @@ export function watchPromptSettlements(events: IEventBus): {
     if (event.type !== 'prompt.completed' && event.type !== 'prompt.aborted') return;
     const id = (event as { readonly promptId?: unknown }).promptId;
     if (typeof id !== 'string') return;
-    settledIds.add(id);
+    const dropped = event.type === 'prompt.aborted' && !startedIds.has(id);
+    settledIds.set(id, dropped);
     if (armed !== undefined && armed.id === id) {
       const { discard } = armed;
       armed = undefined;
       subscription.dispose();
-      void discard();
+      void discard(dropped);
     }
   });
   return {
-    settle(promptId: string, discard: () => void | Promise<void>): void {
-      if (settledIds.has(promptId) || settledIds.has(parentOf.get(promptId) ?? '')) {
+    settle(promptId: string, discard: SettlementDiscard): void {
+      const settledId = settledIds.has(promptId) ? promptId : parentOf.get(promptId);
+      if (settledId !== undefined && settledIds.has(settledId)) {
         subscription.dispose();
-        void discard();
+        void discard(settledId === promptId && settledIds.get(settledId) === true);
         return;
       }
       armed = { id: promptId, discard };

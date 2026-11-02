@@ -880,6 +880,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(discard).not.toHaveBeenCalled();
     handlers[0]!({ type: 'prompt.completed', promptId: 'msg_1' });
     expect(discard).toHaveBeenCalledTimes(1);
+    expect(discard).toHaveBeenCalledWith(false);
 
     const blockedDiscard = vi.fn();
     const blockedTracker = watchPromptSettlements(events as never);
@@ -896,18 +897,26 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(steered).not.toHaveBeenCalled();
     handlers[2]!({ type: 'prompt.completed', promptId: 'msg_parent' });
     expect(steered).toHaveBeenCalledTimes(1);
+    expect(steered).toHaveBeenCalledWith(false);
 
     const aborted = vi.fn();
     const abortedTracker = watchPromptSettlements(events as never);
     abortedTracker.settle('msg_4', aborted);
     handlers[3]!({ type: 'prompt.aborted', promptId: 'msg_4' });
-    expect(aborted).toHaveBeenCalledTimes(1);
+    expect(aborted).toHaveBeenCalledWith(true);
+
+    const abortedRunning = vi.fn();
+    const abortedRunningTracker = watchPromptSettlements(events as never);
+    abortedRunningTracker.settle('msg_6', abortedRunning);
+    handlers[4]!({ type: 'prompt.started', promptId: 'msg_6' });
+    handlers[4]!({ type: 'prompt.aborted', promptId: 'msg_6' });
+    expect(abortedRunning).toHaveBeenCalledWith(false);
 
     const rejected = vi.fn();
     const rejectedTracker = watchPromptSettlements(events as never);
     rejectedTracker.settle('msg_5', rejected);
     rejectedTracker.dispose();
-    handlers[4]!({ type: 'prompt.completed', promptId: 'msg_5' });
+    handlers[5]!({ type: 'prompt.completed', promptId: 'msg_5' });
     expect(rejected).not.toHaveBeenCalled();
   });
 
@@ -1564,6 +1573,32 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(dirname(attachedPath).endsWith('/attachments')).toBe(true);
     expect((await realpath(attachedPath)).startsWith(await realpath(home as string))).toBe(true);
     expect(await readFile(attachedPath)).toEqual(scriptBytes);
+  });
+
+  it('removes the staged attachment copy of a queued prompt withdrawn before it starts', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const bytes = Buffer.from('queued attachment body');
+    const uploaded = await uploadFile(bytes, 'text/plain', 'notes.txt');
+    await call('POST', `/api/v1/sessions/${id}/agents/main/queue:pause`, {});
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'file', file_id: uploaded.id, name: 'notes.txt', media_type: 'text/plain', size: bytes.length }],
+    });
+    expect(submitted.body.data.status).toBe('queued');
+    const attachedPath = attachedPathFrom((submitted.body.data.content as Array<{ text?: string }>)[0]?.text ?? '');
+    expect(await readFile(attachedPath)).toEqual(bytes);
+
+    const aborted = await call<{ aborted: boolean }>(
+      'POST',
+      `/api/v1/sessions/${id}/prompts/${submitted.body.data.prompt_id}:abort`,
+      {},
+    );
+    expect(aborted.body.data).toEqual({ aborted: true });
+    await vi.waitFor(async () => {
+      await expect(readFile(attachedPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+    await call('POST', `/api/v1/sessions/${id}/agents/main/queue:resume`, {});
   });
 
   it('attaches a server-local file by path without copying it', async () => {
