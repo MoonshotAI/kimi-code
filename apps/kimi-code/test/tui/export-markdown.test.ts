@@ -288,7 +288,7 @@ describe('buildExportMarkdown', () => {
 
     expect(md).toContain('---');
     expect(md).toContain('session_id: ses_abc12345xyz');
-    expect(md).toContain('work_dir: /home/user/project');
+    expect(md).toContain('work_dir: "/home/user/project"');
     expect(md).toContain('message_count: 2');
     expect(md).toContain('token_count: 1234');
     expect(md).toContain('# Kimi Session Export');
@@ -315,6 +315,21 @@ describe('buildExportMarkdown', () => {
     expect(md).toContain('<details><summary>Thinking</summary>');
     expect(md).toContain('deep thought');
   });
+
+  it.each(['/tmp/Project #1', '/tmp/Project: Demo', '/tmp/Project\\\\name'])(
+    'quotes workspace paths so YAML frontmatter preserves %s',
+    (workDir) => {
+      const md = buildExportMarkdown({
+        sessionId: 'ses_test',
+        workDir,
+        history: [],
+        tokenCount: 0,
+        now,
+      });
+
+      expect(md).toContain(`work_dir: ${JSON.stringify(workDir)}`);
+    },
+  );
 
   it('renders an uploaded image daemon ref as [image] in the exported user message', () => {
     // An uploaded image persists as a self-contained `kimi-file://` part —
