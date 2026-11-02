@@ -42,7 +42,9 @@ import {
   isOfficialPluginSource,
 } from '../utils/plugin-source-label';
 import {
+  isTrustedKimiCodePluginMarketplace,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+  kimiCodePluginMarketplaceUrl,
   QUOTA_CONSUMING_PLUGIN_IDS,
 } from '#/constant/app';
 import {
@@ -314,8 +316,10 @@ function isDefaultMarketplaceCatalog(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   if (source !== undefined) return false;
-  if (env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] === undefined) return true;
-  return env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1';
+  if (env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] !== undefined) {
+    return env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1';
+  }
+  return isTrustedKimiCodePluginMarketplace(kimiCodePluginMarketplaceUrl());
 }
 
 async function loadMarketplaceCatalog(
@@ -749,9 +753,6 @@ async function installPluginFromMarketplace(
   entry: PluginMarketplaceEntry,
   marketplaceSource?: string,
 ): Promise<void> {
-  if (entry.version === undefined) {
-    throw new Error(`Marketplace plugin "${entry.id}" has no version in the current catalog`);
-  }
   const session = await resolvePluginApi(host);
   const beforeList = await session.listPlugins();
   const migrateFrom =
@@ -762,6 +763,7 @@ async function installPluginFromMarketplace(
   const summary = await session.installPlugin({
     marketplaceId: entry.id,
     expectedVersion: entry.version,
+    expectedSha256: entry.sha256sum,
     migrateFrom,
     marketplaceSource,
   });

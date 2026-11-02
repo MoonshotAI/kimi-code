@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { OAuthUnauthorizedError } from '@moonshot-ai/kimi-code-oauth';
+import { KIMI_REGION_PROFILES, OAuthUnauthorizedError } from '@moonshot-ai/kimi-code-oauth';
 import { gt, valid } from 'semver';
 
 export function isMissingMarketplaceTokenError(error: unknown): boolean {
@@ -65,6 +65,7 @@ export interface PluginMarketplaceEntry {
 
 export interface PluginMarketplace {
   readonly source: string;
+  readonly version?: string;
   readonly plugins: readonly PluginMarketplaceEntry[];
 }
 
@@ -89,6 +90,15 @@ export function pluginMarketplaceUrl(baseUrl: string): string {
   const normalized = baseUrl.trim().replace(/\/+$/, '');
   if (normalized.length === 0) throw new Error('Kimi Code base URL cannot be empty.');
   return `${normalized}/plugins/marketplace`;
+}
+
+const TRUSTED_PLUGIN_MARKETPLACE_URLS = new Set(
+  [...Object.values(KIMI_REGION_PROFILES).map((profile) => profile.baseUrl), 'https://coding.deva.msh.team/coding/v1']
+    .map(pluginMarketplaceUrl),
+);
+
+export function isTrustedPluginMarketplaceUrl(source: string): boolean {
+  return TRUSTED_PLUGIN_MARKETPLACE_URLS.has(source.trim().replace(/\/+$/, ''));
 }
 
 export function computeUpdateStatus(
@@ -154,6 +164,7 @@ export function parsePluginMarketplace(raw: string, location: MarketplaceLocatio
 
   return {
     source: location.resolved,
+    version: stringField(parsed, 'version'),
     plugins: rawPlugins.map((entry, index) => parseMarketplaceEntry(entry, index, location)),
   };
 }
@@ -181,30 +192,31 @@ function parseMarketplaceEntry(
     throw new TypeError(`Plugin marketplace entry ${index + 1} must be an object.`);
   }
   const id = requiredString(value, 'id', index);
-  const type = value['type'];
-  if (type !== undefined && type !== 'plugin') {
-    throw new Error(`Plugin marketplace entry ${id} "type" must be "plugin".`);
+  validateMarketplaceEntryType(value, id);
+  const source = stringField(value, 'source') ??
+    stringField(value, 'url') ??
+    stringField(value, 'downloadUrl');
+  if (source === undefined) {
+    throw new Error(`Plugin marketplace entry ${id} must define "source".`);
   }
-  const displayName = requiredString(value, 'displayName', index);
-  const version = requiredString(value, 'version', index);
-  const sha256sum = requiredString(value, 'sha256sum', index);
-  if (!/^[A-Fa-f0-9]{64}$/.test(sha256sum)) {
-    throw new Error(`Plugin marketplace entry ${id} "sha256sum" must be a SHA-256 hex digest.`);
-  }
-  const source = requiredString(value, 'source', index);
+  const resolvedSource = resolveEntrySource(source, location);
   const distribution = parseDistribution(value['distribution'], id);
+  const tier = distribution === undefined
+    ? parseMarketplaceTier(value, id)
+    : distribution.category === 'official' ? 'official' : 'curated';
   return {
     id,
-    displayName,
-    source: resolveEntrySource(source, location),
-    classification: distribution.category,
-    tier: distribution.category === 'official' ? 'official' : 'curated',
-    version,
-    description: stringField(value, 'description'),
-    homepage: stringField(value, 'homepage'),
+    displayName: stringField(value, 'displayName') ?? stringField(value, 'name') ?? id,
+    source: resolvedSource,
+    classification: distribution?.category ??
+      (tier === 'official' ? 'official' : tier === 'curated' ? 'third_party' : undefined),
+    tier,
+    version: stringField(value, 'version') ?? deriveVersionFromGithubSource(resolvedSource),
+    description: stringField(value, 'description') ?? stringField(value, 'shortDescription'),
+    homepage: stringField(value, 'homepage') ?? stringField(value, 'websiteURL'),
     keywords: stringArrayField(value, 'keywords'),
     iconUrl: stringField(value, 'iconUrl'),
-    sha256sum,
+    sha256sum: parseSha256sum(value, id),
     filename: stringField(value, 'filename'),
     cliDescription: stringField(value, 'cliDescription'),
     locale: parseLocale(value['locale'], id),
@@ -214,7 +226,43 @@ function parseMarketplaceEntry(
   };
 }
 
-function parseDistribution(value: unknown, id: string): PluginMarketplaceDistribution {
+function validateMarketplaceEntryType(value: Record<string, unknown>, id: string): void {
+  const raw = value['type'];
+  if (raw === undefined) return;
+  if (typeof raw !== 'string') {
+    throw new TypeError(`Plugin marketplace entry ${id} "type" must be a string.`);
+  }
+  const type = raw.trim();
+  if (type === 'plugin' || type === 'managed' || type === 'guide') return;
+  throw new Error(
+    `Plugin marketplace entry ${id} "type" must be "plugin". Legacy aliases "managed" and "guide" are also accepted.`,
+  );
+}
+
+function parseMarketplaceTier(
+  value: Record<string, unknown>,
+  id: string,
+): PluginMarketplaceTier | undefined {
+  const raw = value['tier'];
+  if (raw === undefined) return undefined;
+  if (typeof raw !== 'string') {
+    throw new TypeError(`Plugin marketplace entry ${id} "tier" must be a string.`);
+  }
+  const tier = raw.trim();
+  if (tier.length === 0) return undefined;
+  if ((PLUGIN_MARKETPLACE_TIERS as readonly string[]).includes(tier)) {
+    return tier as PluginMarketplaceTier;
+  }
+  throw new Error(
+    `Plugin marketplace entry ${id} "tier" must be one of: ${PLUGIN_MARKETPLACE_TIERS.join(', ')}.`,
+  );
+}
+
+function parseDistribution(
+  value: unknown,
+  id: string,
+): PluginMarketplaceDistribution | undefined {
+  if (value === undefined) return undefined;
   if (!isRecord(value)) {
     throw new TypeError(`Plugin marketplace entry ${id} must define "distribution".`);
   }
@@ -233,7 +281,11 @@ function parseDistribution(value: unknown, id: string): PluginMarketplaceDistrib
   };
 }
 
-function parsePlatforms(value: unknown, id: string): readonly PluginMarketplacePlatform[] {
+function parsePlatforms(
+  value: unknown,
+  id: string,
+): readonly PluginMarketplacePlatform[] | undefined {
+  if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.length === 0) {
     throw new TypeError(`Plugin marketplace entry ${id} "platforms" must be a non-empty array.`);
   }
@@ -247,6 +299,38 @@ function parsePlatforms(value: unknown, id: string): readonly PluginMarketplaceP
     );
   });
   return [...new Set(platforms)];
+}
+
+function parseSha256sum(value: Record<string, unknown>, id: string): string | undefined {
+  const sha256sum = stringField(value, 'sha256sum');
+  if (sha256sum !== undefined && !/^[A-Fa-f0-9]{64}$/.test(sha256sum)) {
+    throw new Error(`Plugin marketplace entry ${id} "sha256sum" must be a SHA-256 hex digest.`);
+  }
+  return sha256sum;
+}
+
+function deriveVersionFromGithubSource(source: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return undefined;
+  }
+  if (url.hostname !== 'github.com' && url.hostname !== 'www.github.com') {
+    return undefined;
+  }
+  const [, , kind, a, b] = url.pathname.split('/').filter(Boolean);
+  const ref =
+    kind === 'releases' && a === 'tag' ? b : kind === 'tree' || kind === 'commit' ? a : undefined;
+  if (ref === undefined) return undefined;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(ref);
+  } catch {
+    decoded = ref;
+  }
+  const candidate = decoded.replace(/^v/i, '');
+  return valid(candidate) !== null ? candidate : undefined;
 }
 
 function parseLocale(value: unknown, id: string): PluginMarketplaceLocale | undefined {

@@ -17,20 +17,23 @@ import { IProviderService } from '#/llm-adapter/provider/provider';
 
 import {
   isMissingMarketplaceTokenError,
+  isTrustedPluginMarketplaceUrl,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
   parsePluginMarketplace,
   pluginMarketplaceUrl,
   readPluginMarketplace,
   type PluginMarketplace,
+  type PluginMarketplaceEntry,
 } from './marketplace';
+import { resolveInstallSource } from './source';
 import type { PluginOrigin } from './types';
 
 const MARKETPLACE_FETCH_TIMEOUT_MS = 10_000;
 
 export interface MarketplacePluginInstall {
   readonly source: string;
-  readonly version: string;
-  readonly sha256sum: string;
+  readonly version?: string;
+  readonly sha256sum?: string;
   readonly catalogId: string;
   readonly origin: Extract<PluginOrigin, 'marketplace'>;
   readonly expectedPluginId: string;
@@ -40,9 +43,11 @@ export interface MarketplacePluginInstall {
 export interface IPluginMarketplaceService {
   readonly _serviceBrand: undefined;
   listMarketplace(): Promise<PluginMarketplace>;
+  isDefaultMarketplace(): Promise<boolean>;
   resolveInstall(
     marketplaceId: string,
     expectedVersion?: string,
+    expectedSha256?: string,
     marketplaceSource?: string,
   ): Promise<MarketplacePluginInstall>;
 }
@@ -70,9 +75,18 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
     return (await this.load()).marketplace;
   }
 
+  async isDefaultMarketplace(): Promise<boolean> {
+    const configured = this.bootstrap.getEnv(KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV);
+    if (configured !== undefined) {
+      return this.bootstrap.getEnv('KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER') === '1';
+    }
+    return isTrustedPluginMarketplaceUrl((await this.context()).source);
+  }
+
   async resolveInstall(
     marketplaceId: string,
     expectedVersion?: string,
+    expectedSha256?: string,
     marketplaceSource?: string,
   ): Promise<MarketplacePluginInstall> {
     if (marketplaceId === 'kimi-webbridge') {
@@ -91,45 +105,42 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
         { details: { marketplaceId } },
       );
     }
-    const version = entry.version;
-    if (version === undefined) {
+    if (expectedVersion !== undefined && entry.version !== expectedVersion) {
+      throw catalogChanged(marketplaceId, 'version', expectedVersion, entry.version);
+    }
+    if (expectedSha256 !== undefined && !/^[A-Fa-f0-9]{64}$/.test(expectedSha256)) {
+      throw new Error2(ErrorCodes.VALIDATION_FAILED, 'Invalid expected plugin archive SHA-256', {
+        details: { marketplaceId, expectedSha256 },
+      });
+    }
+    if (
+      expectedSha256 !== undefined &&
+      entry.sha256sum?.toLowerCase() !== expectedSha256.toLowerCase()
+    ) {
+      throw catalogChanged(marketplaceId, 'SHA-256', expectedSha256, entry.sha256sum);
+    }
+    const sourceKind = resolveInstallSource(entry.source).kind;
+    if (sourceKind === 'zip-url' && entry.sha256sum !== undefined && expectedSha256 === undefined) {
       throw new Error2(
         ErrorCodes.VALIDATION_FAILED,
-        `Marketplace plugin "${marketplaceId}" has no version`,
+        `Marketplace plugin "${marketplaceId}" installation requires the displayed SHA-256 digest`,
         { details: { marketplaceId } },
       );
     }
-    if (expectedVersion !== undefined && version !== expectedVersion) {
-      throw new Error2(
-        PluginErrors.codes.PLUGIN_CATALOG_CHANGED,
-        `Marketplace plugin "${marketplaceId}" changed from version ${expectedVersion} to ${version}; refresh the catalog and retry`,
-        {
-          details: {
-            marketplaceId,
-            expectedVersion,
-            actualVersion: version,
-          },
-        },
-      );
-    }
-    if (entry.platforms?.some((platform) => platform === this.bootstrap.platform) !== true) {
+    if (
+      entry.platforms !== undefined &&
+      !entry.platforms.some((platform) => platform === this.bootstrap.platform)
+    ) {
       throw new Error2(
         ErrorCodes.VALIDATION_FAILED,
         `Marketplace plugin "${marketplaceId}" does not support platform ${this.bootstrap.platform}`,
         { details: { marketplaceId, platform: this.bootstrap.platform } },
       );
     }
-    if (entry.sha256sum === undefined) {
-      throw new Error2(
-        ErrorCodes.VALIDATION_FAILED,
-        `Marketplace plugin "${marketplaceId}" has no SHA-256 digest`,
-        { details: { marketplaceId } },
-      );
-    }
     return {
       source: entry.source,
-      version,
-      sha256sum: entry.sha256sum,
+      version: entry.version,
+      sha256sum: sourceKind === 'zip-url' ? entry.sha256sum : undefined,
       catalogId: entry.id,
       origin: 'marketplace',
       expectedPluginId: entry.id,
@@ -149,7 +160,11 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
       workDir: this.bootstrap.cwd,
       fetchImpl: (input, init) => this.catalogFetch(input, init, context),
     });
-    return { marketplace: parsePluginMarketplace(read.raw, read.location), context };
+    const marketplace = parsePluginMarketplace(read.raw, read.location);
+    if (context.managed) {
+      for (const entry of marketplace.plugins) assertManagedMarketplaceEntry(entry);
+    }
+    return { marketplace, context };
   }
 
   private async context(): Promise<MarketplaceContext> {
@@ -187,7 +202,7 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
     init: Parameters<typeof fetch>[1],
     context: MarketplaceContext,
   ): Promise<Response> {
-    const headers = this.requestHeaders(init);
+    const headers = this.requestHeaders(init, input, context);
     if (context.managed) {
       let token: string | undefined;
       try {
@@ -207,7 +222,7 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
 
   private artifactFetch(context: MarketplaceContext): typeof fetch {
     return async (input, init) => {
-      const headers = this.requestHeaders(init);
+      const headers = this.requestHeaders(init, input, context);
       const response = await fetch(input, { ...init, headers });
       if (!context.managed || (response.status !== 401 && response.status !== 403)) {
         return response;
@@ -216,18 +231,68 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
       if (new URL(responseUrl).origin !== context.tokenOrigin) return response;
       await response.body?.cancel().catch(() => undefined);
       const token = await context.tokenProvider!.getAccessToken();
-      headers.set('Authorization', `Bearer ${token}`);
-      return fetch(responseUrl, { ...init, headers });
+      const retryHeaders = this.requestHeaders(init, responseUrl, context);
+      retryHeaders.set('Authorization', `Bearer ${token}`);
+      return fetch(responseUrl, { ...init, headers: retryHeaders });
     };
   }
 
-  private requestHeaders(init: RequestInit | undefined): Headers {
+  private requestHeaders(
+    init: RequestInit | undefined,
+    input: Parameters<typeof fetch>[0],
+    context: MarketplaceContext,
+  ): Headers {
     const headers = new Headers(init?.headers);
+    if (!context.managed || new URL(requestUrl(input)).origin !== context.tokenOrigin) {
+      return headers;
+    }
     for (const [key, value] of Object.entries(this.bootstrap.args.requestHeaders)) {
       if (!headers.has(key)) headers.set(key, value);
     }
     return headers;
   }
+}
+
+function assertManagedMarketplaceEntry(entry: PluginMarketplaceEntry): void {
+  if (entry.version === undefined) {
+    throw new Error2(ErrorCodes.VALIDATION_FAILED, `Marketplace plugin "${entry.id}" has no version`, {
+      details: { marketplaceId: entry.id },
+    });
+  }
+  if (entry.distribution === undefined) {
+    throw new Error2(
+      ErrorCodes.VALIDATION_FAILED,
+      `Marketplace plugin "${entry.id}" has no distribution`,
+      { details: { marketplaceId: entry.id } },
+    );
+  }
+  if (entry.platforms === undefined) {
+    throw new Error2(
+      ErrorCodes.VALIDATION_FAILED,
+      `Marketplace plugin "${entry.id}" has no platforms`,
+      { details: { marketplaceId: entry.id } },
+    );
+  }
+  if (resolveInstallSource(entry.source).kind !== 'zip-url' || entry.sha256sum === undefined) {
+    throw new Error2(
+      ErrorCodes.VALIDATION_FAILED,
+      `Marketplace plugin "${entry.id}" must provide an HTTP(S) ZIP source and SHA-256 digest`,
+      { details: { marketplaceId: entry.id } },
+    );
+  }
+}
+
+function catalogChanged(
+  marketplaceId: string,
+  field: 'version' | 'SHA-256',
+  expected: string,
+  actual: string | undefined,
+): Error2 {
+  return new Error2(
+    PluginErrors.codes.PLUGIN_CATALOG_CHANGED,
+    `Marketplace plugin "${marketplaceId}" changed ${field} from ${expected} to ${actual}; refresh the catalog and retry`,
+    { details: { marketplaceId, field, expected, actual } },
+  );
 }
 
 function requestUrl(input: Parameters<typeof fetch>[0]): string {

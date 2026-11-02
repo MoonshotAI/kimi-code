@@ -69,6 +69,7 @@ function fakeMarketplace(
   return {
     _serviceBrand: undefined,
     listMarketplace: () => Promise.reject(new Error('unexpected separate marketplace read')),
+    isDefaultMarketplace: () => Promise.resolve(true),
     resolveInstall: (marketplaceId, expectedVersion) => {
       const entry = entries.find((candidate) => candidate.id === marketplaceId);
       if (entry === undefined) {

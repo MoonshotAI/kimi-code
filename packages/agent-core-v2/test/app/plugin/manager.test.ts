@@ -322,6 +322,24 @@ describe('PluginManager', () => {
     }
   });
 
+  it('validates the expected plugin ID when an inspection archive is already cached', async () => {
+    const fixture = await makeZip('actual-id');
+    try {
+      const expectedSha256 = createHash('sha256').update(fixture.buffer).digest('hex');
+      const source = 'https://example.test/shared-archive.zip';
+      const fetchImpl = vi.fn(async () => new Response(fixture.buffer)) as unknown as typeof fetch;
+      const manager = new PluginManager({ kimiHomeDir: home });
+      await manager.inspect(source, { expectedSha256, expectedPluginId: 'actual-id', fetchImpl });
+
+      await expect(
+        manager.inspect(source, { expectedSha256, expectedPluginId: 'different-id', fetchImpl }),
+      ).rejects.toThrow('Plugin manifest ID mismatch');
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
   it('shares one in-flight archive download across concurrent previews and installation', async () => {
     const fixture = await makeZip('concurrent-cache', '1.0.0', 'concurrent-skill');
     try {

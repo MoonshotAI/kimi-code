@@ -23,7 +23,8 @@ export type InstallPluginInput =
   | { readonly source: string }
   | {
       readonly marketplaceId: string;
-      readonly expectedVersion: string;
+      readonly expectedVersion?: string;
+      readonly expectedSha256?: string;
       readonly marketplaceSource?: string;
       readonly migrateFrom?: string;
     };
@@ -50,7 +51,8 @@ export interface GetPluginInfoInput {
 
 export interface PreviewPluginInput {
   readonly marketplaceId: string;
-  readonly expectedVersion: string;
+  readonly expectedVersion?: string;
+  readonly expectedSha256?: string;
   readonly locale?: string;
 }
 

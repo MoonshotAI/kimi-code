@@ -1508,7 +1508,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 安装插件并返回其摘要。请求体有两种形式：
 
 - 自定义安装：`{ "source": "<本地绝对路径、http(s) ZIP URL 或 GitHub URL>" }`。GitHub URL 可通过 `/tree/<branch-or-sha>`、`/releases/tag/<tag>` 或 `/commit/<sha>` 锁定版本。
-- 市场安装：`{ "marketplaceId": "<目录条目 id>", "expectedVersion": "<用户看到的版本>" }`。daemon 从同一目录快照解析 `source`、`sha256sum` 和预期插件 ID，在解压前校验压缩包，并校验 manifest ID。
+- 市场安装：`{ "marketplaceId": "<目录条目 id>", "expectedVersion": "<用户看到的版本>", "expectedSha256": "<用户看到的 sha256sum>" }`。daemon 从同一目录快照解析 `source`、`sha256sum` 和预期插件 ID，在解压前校验压缩包，并校验 manifest ID。ZIP 条目声明了 `sha256sum` 时，必须传入与目录一致的 `expectedSha256`；无版本的自定义条目可省略 `expectedVersion`，本地目录和 GitHub 条目无需传 `expectedSha256`。
 
 成功时 `data` 为上文 `GET /api/v1/plugins` 说明的插件摘要。
 
@@ -1520,7 +1520,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 列出插件市场目录并合并实时安装状态。默认目录 URL 由当前 managed `baseURL` 派生为 `${baseURL}/plugins/marketplace`，不再注入内置能力条目。`platforms` 包含 daemon 所在平台或全部为 `cloud` 时保留条目；包含 `cloud` 但本机平台为其他平台的条目会被过滤。cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回，Computer Use 只返回当前平台对应的接线插件。
 
-成功时 `data` 为 `{ entries }`，每项包含 `id`、`tier`、`classification`、`displayName`、`description?`、`cliDescription?`、`homepage?`、`keywords?`、`version?`、`source`、`iconUrl?`、`sha256sum?`、`filename?`、`locale?`、`defaultLocale?`、`platforms?`、`distribution?`、`billing?`、`installed?`、`updateAvailable?` 和 `capabilityId?`。`defaultLocale` 声明顶层 `description` / `cliDescription` 的语言，`locale` 存放各语言的 `shortDescription`、`longDescription` 和 `cliDescription` 翻译。`distribution.category` 为 `official` 或 `third_party`；`platforms` 使用 `darwin` / `win32` / `linux` / `cloud`。市场安装传 `marketplaceId` 和 `expectedVersion`，不直接传 `source`；自定义安装传 `source`。capability 只由 daemon 标注：`kimi-browser-extension` 映射到 `kimi-webbridge` capability，`kimi-cu` / `kimi-cu-win` 映射到 `kimi-cu`。
+成功时 `data` 为 `{ entries }`，每项包含 `id`、`tier`、`classification`、`displayName`、`description?`、`cliDescription?`、`homepage?`、`keywords?`、`version?`、`source`、`iconUrl?`、`sha256sum?`、`filename?`、`locale?`、`defaultLocale?`、`platforms?`、`distribution?`、`billing?`、`installed?`、`updateAvailable?` 和 `capabilityId?`。`defaultLocale` 声明顶层 `description` / `cliDescription` 的语言，`locale` 存放各语言的 `shortDescription`、`longDescription` 和 `cliDescription` 翻译。`distribution.category` 为 `official` 或 `third_party`；`platforms` 使用 `darwin` / `win32` / `linux` / `cloud`。市场安装传 `marketplaceId`、可用时的 `expectedVersion`，以及带摘要 ZIP 的 `expectedSha256`，不直接传 `source`；自定义安装传 `source`。capability 只由 daemon 标注：`kimi-browser-extension` 映射到 `kimi-webbridge` capability，`kimi-cu` / `kimi-cu-win` 映射到 `kimi-cu`。
 
 - `50001`：市场不可达或返回了非法目录
 
@@ -1534,7 +1534,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/plugins/preview`
 
-只读检查市场条目的能力，不安装插件。请求体为 `{ "marketplaceId": "<目录条目 id>", "expectedVersion": "<用户看到的版本>", "locale": "<可选语言>" }`。daemon 将压缩包下载到临时目录，在解压前校验 SHA-256，校验 manifest ID，并发现其中的 Skill 与 MCP 服务。不会写入安装记录、安装运行时或保留解压后的插件。
+只读检查市场条目的能力，不安装插件。请求体为 `{ "marketplaceId": "<目录条目 id>", "expectedVersion": "<用户看到的版本>", "expectedSha256": "<用户看到的 sha256sum>", "locale": "<可选语言>" }`。`expectedSha256` 必须与当前目录一致。daemon 将压缩包下载到临时目录，在解压前校验 SHA-256，校验 manifest ID，并发现其中的 Skill 与 MCP 服务。不会写入安装记录、安装运行时或保留解压后的插件。
 
 成功时 `data` 为 `{ "skills": [{ "name": "<技能名称>", "description": "<可选描述>" }], "mcpServers": [{ "name": "<manifest 中的名称>", "runtimeName": "<运行时名称>", "enabled": true, "transport": "stdio" }] }`。两类条目还可包含 overrides 提供的 `displayName`、`description`，MCP 条目还可包含 `iconUrl`。`locale` 的选择规则与已安装详情相同。MCP 条目的字段结构与 `GET /api/v1/plugins/{plugin_id}` 相同，示例只列出常用字段。
 

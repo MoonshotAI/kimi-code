@@ -129,6 +129,8 @@ describe('server-v2 /api/v1 plugins', () => {
   let catalog = createCatalog();
   let artifact: { source: string; buffer: Buffer; requireAuth: boolean } | undefined;
   let artifactAuthorizations: Array<string | undefined> = [];
+  let artifactRequestHeaders: Headers[] = [];
+  let catalogRequestHeaders: Headers[] = [];
   const createdDirs: string[] = [];
 
   beforeAll(async () => {
@@ -153,6 +155,8 @@ describe('server-v2 /api/v1 plugins', () => {
     catalog = createCatalog();
     artifact = undefined;
     artifactAuthorizations = [];
+    artifactRequestHeaders = [];
+    catalogRequestHeaders = [];
     await rm(join(home!, 'plugins', 'cache', 'archives'), { recursive: true, force: true });
     const realFetch = globalThis.fetch;
     vi.stubGlobal(
@@ -160,10 +164,13 @@ describe('server-v2 /api/v1 plugins', () => {
       vi.fn(async (input: string | URL, init?: RequestInit) => {
         const url = String(input);
         if (url === CATALOG_URL || url === DEFAULT_CATALOG_URL || url === GLOBAL_CATALOG_URL) {
+          catalogRequestHeaders.push(new Headers(init?.headers));
           return new Response(JSON.stringify(catalog), { status: 200 });
         }
         if (artifact !== undefined && url === artifact.source) {
-          const authorization = new Headers(init?.headers).get('Authorization') ?? undefined;
+          const headers = new Headers(init?.headers);
+          artifactRequestHeaders.push(headers);
+          const authorization = headers.get('Authorization') ?? undefined;
           artifactAuthorizations.push(authorization);
           if (artifact.requireAuth && authorization !== 'Bearer managed-token') {
             return new Response(null, { status: 401 });
@@ -211,6 +218,11 @@ describe('server-v2 /api/v1 plugins', () => {
       body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
     } as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };
+  }
+
+  function artifactDigest(): string {
+    if (artifact === undefined) throw new Error('No artifact configured');
+    return createHash('sha256').update(artifact.buffer).digest('hex');
   }
 
   async function makePluginDir(id: string, version: string, withCapabilities = false): Promise<string> {
@@ -445,7 +457,7 @@ describe('server-v2 /api/v1 plugins', () => {
     await useDemoArtifact('demo-plugin', '2.0.0', true);
     const preview = await call<CapabilityDetails>('POST', '/api/v1/plugins/preview', {
       marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0',
+      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
       locale: 'en-US',
     });
     expect(preview.body.code).toBe(0);
@@ -803,6 +815,77 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(body.data.entries[1]?.source).toBe(join(fakeHome, 'plugins', 't.zip'));
   });
 
+  it('installs a minimal local-directory marketplace entry', async () => {
+    const source = await makePluginDir('local-plugin', '1.0.0');
+    catalog = { plugins: [{ id: 'local-plugin', source }] };
+
+    const installed = await call<{ id: string; origin: string; source: string }>(
+      'POST',
+      '/api/v1/plugins',
+      { marketplaceId: 'local-plugin' },
+    );
+
+    expect(installed.body.code).toBe(0);
+    expect(installed.body.data).toMatchObject({
+      id: 'local-plugin',
+      origin: 'marketplace',
+      source: 'local-path',
+    });
+    await call('POST', '/api/v1/plugins/local-plugin:remove');
+  });
+
+  it('installs a GitHub marketplace entry without requiring an archive digest', async () => {
+    const buffer = await makeZip('github-plugin', '1.0.0');
+    const sha = '1111111111111111111111111111111111111111';
+    catalog = {
+      plugins: [{ id: 'github-plugin', source: 'https://github.com/example/repo/tree/v1' }],
+    };
+    const currentFetch = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === CATALOG_URL) return new Response(JSON.stringify(catalog), { status: 200 });
+        if (url === 'https://github.com/example/repo/commits/v1.atom') {
+          return new Response(`<entry><id>tag:github.com,2008:Grit::Commit/${sha}</id></entry>`, {
+            status: 200,
+          });
+        }
+        if (url === `https://codeload.github.com/example/repo/zip/${sha}`) {
+          return new Response(buffer, { status: 200 });
+        }
+        return currentFetch(input as never, init);
+      }),
+    );
+
+    const installed = await call<{ id: string; origin: string; source: string }>(
+      'POST',
+      '/api/v1/plugins',
+      { marketplaceId: 'github-plugin' },
+    );
+
+    expect(installed.body.code).toBe(0);
+    expect(installed.body.data).toMatchObject({
+      id: 'github-plugin',
+      origin: 'marketplace',
+      source: 'github',
+    });
+    await call('POST', '/api/v1/plugins/github-plugin:remove');
+  });
+
+  it('requires the displayed digest when installing a digest-bearing ZIP', async () => {
+    await useDemoArtifact();
+
+    const result = await call('POST', '/api/v1/plugins', {
+      marketplaceId: 'demo-plugin',
+      expectedVersion: '2.0.0',
+    });
+
+    expect(result.body.code).toBe(40001);
+    expect(result.body.msg).toContain('displayed SHA-256');
+    expect(artifactAuthorizations).toEqual([]);
+  });
+
   it('installs a marketplace snapshot and converts origins across reinstalls', async () => {
     await useDemoArtifact();
     const installed = await call<{
@@ -813,7 +896,7 @@ describe('server-v2 /api/v1 plugins', () => {
       originalSource?: string;
     }>('POST', '/api/v1/plugins', {
       marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0',
+      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
     });
     expect(installed.body.code).toBe(0);
     expect(installed.body.data).toMatchObject({
@@ -824,6 +907,8 @@ describe('server-v2 /api/v1 plugins', () => {
       originalSource: 'https://cdn.example.test/demo.zip',
     });
     expect(artifactAuthorizations).toEqual([undefined]);
+    expect(catalogRequestHeaders[0]?.get('X-Msh-Device-Id')).toBeNull();
+    expect(artifactRequestHeaders[0]?.get('X-Msh-Device-Id')).toBeNull();
 
     const customSource = await makePluginDir('demo-plugin', '3.0.0');
     const customInstall = await call<{ origin: string; catalogId?: string; installedAt: string }>(
@@ -840,7 +925,7 @@ describe('server-v2 /api/v1 plugins', () => {
     const marketplaceAgain = await call<{ origin: string; installedAt: string }>(
       'POST',
       '/api/v1/plugins',
-      { marketplaceId: 'demo-plugin', expectedVersion: '2.0.0' },
+      { marketplaceId: 'demo-plugin', expectedVersion: '2.0.0', expectedSha256: artifactDigest() },
     );
     expect(marketplaceAgain.body.data).toMatchObject({
       origin: 'marketplace',
@@ -892,6 +977,7 @@ describe('server-v2 /api/v1 plugins', () => {
     const installedB = await plugins.installPlugin({
       marketplaceId: 'demo-plugin',
       expectedVersion: '2.0.0',
+      expectedSha256: createHash('sha256').update(bufferB).digest('hex'),
       marketplaceSource: catalogBUrl,
     });
 
@@ -906,6 +992,7 @@ describe('server-v2 /api/v1 plugins', () => {
     const installedA = await plugins.installPlugin({
       marketplaceId: 'demo-plugin',
       expectedVersion: '2.0.0',
+      expectedSha256: createHash('sha256').update(bufferA).digest('hex'),
     });
     expect(installedA.originalSource).toBe(artifactA);
     expect((await plugins.getPluginInfo({ id: 'demo-plugin' })).manifest?.description).toBe(
@@ -920,18 +1007,29 @@ describe('server-v2 /api/v1 plugins', () => {
     const result = await call('POST', '/api/v1/plugins', {
       marketplaceId: 'demo-plugin',
       expectedVersion: '1.9.0',
+      expectedSha256: artifactDigest(),
     });
     expect(result.body.code).toBe(40933);
     expect(result.body.msg).toContain('refresh the catalog');
     expect(artifactAuthorizations).toEqual([]);
   });
 
-  it('rejects SHA and manifest ID mismatches without installing', async () => {
+  it('rejects changed catalogs, SHA and manifest ID mismatches without installing', async () => {
     await useDemoArtifact();
     catalog.plugins[0]!['sha256sum'] = '0'.repeat(64);
+    const changed = await call('POST', '/api/v1/plugins', {
+      marketplaceId: 'demo-plugin',
+      expectedVersion: '2.0.0',
+      expectedSha256: artifactDigest(),
+    });
+    expect(changed.body.code).toBe(40933);
+    expect(changed.body.msg).toContain('refresh the catalog');
+    expect(artifactAuthorizations).toEqual([]);
+
     const sha = await call('POST', '/api/v1/plugins', {
       marketplaceId: 'demo-plugin',
       expectedVersion: '2.0.0',
+      expectedSha256: '0'.repeat(64),
     });
     expect(sha.body.code).toBe(40001);
     expect(sha.body.msg).toContain('SHA-256 mismatch');
@@ -939,12 +1037,62 @@ describe('server-v2 /api/v1 plugins', () => {
     await useDemoArtifact('actual-id');
     const manifest = await call('POST', '/api/v1/plugins', {
       marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0',
+      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
     });
     expect(manifest.body.code).toBe(40001);
     expect(manifest.body.msg).toContain('manifest ID mismatch');
     const list = await call<{ plugins: unknown[] }>('GET', '/api/v1/plugins');
     expect(list.body.data.plugins).toEqual([]);
+  });
+
+  it('does not mark capability rows from an untrusted managed origin', async () => {
+    await server?.close();
+    vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_URL', undefined);
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'http://marketplace.test/coding/v1');
+    vi.spyOn(KimiOAuthToolkit.prototype, 'tokenProvider').mockReturnValue({
+      getAccessToken: async () => 'managed-token',
+    });
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home!,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    custom = true;
+
+    const response = await call<{
+      entries: Array<{ id: string; capabilityId?: string }>;
+    }>('GET', '/api/v1/plugins/marketplace');
+
+    expect(response.body.code).toBe(0);
+    expect(response.body.data.entries.find((entry) => entry.id === 'kimi-browser-extension')?.capabilityId)
+      .toBeUndefined();
+  });
+
+  it('keeps strict metadata requirements for the managed catalog', async () => {
+    await server?.close();
+    catalog.plugins[0]!['version'] = undefined;
+    vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_URL', undefined);
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'http://marketplace.test/coding/v1');
+    vi.spyOn(KimiOAuthToolkit.prototype, 'tokenProvider').mockReturnValue({
+      getAccessToken: async () => 'managed-token',
+    });
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home!,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    custom = true;
+
+    const response = await call('GET', '/api/v1/plugins/marketplace');
+
+    expect(response.body.code).not.toBe(0);
+    expect(response.body.msg).toContain('has no version');
   });
 
   it('derives the default catalog and retries protected artifacts with managed OAuth', async () => {
@@ -977,14 +1125,19 @@ describe('server-v2 /api/v1 plugins', () => {
     const catalogAuthorization = new Headers(catalogInit?.headers).get('Authorization');
     expect(catalogAuthorization).toBe('Bearer managed-token');
     expect(catalogAuthorization).not.toBe(`Bearer ${bearerToken(server!)}`);
+    expect(catalogRequestHeaders[0]?.get('X-Msh-Device-Id')).toEqual(expect.any(String));
 
     const installed = await call<{ origin: string }>('POST', '/api/v1/plugins', {
       marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0',
+      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
     });
     expect(installed.body.code).toBe(0);
     expect(installed.body.data.origin).toBe('marketplace');
     expect(artifactAuthorizations).toEqual([undefined, 'Bearer managed-token']);
+    expect(artifactRequestHeaders.map((headers) => headers.get('X-Msh-Device-Id'))).toEqual([
+      expect.any(String),
+      expect.any(String),
+    ]);
     await call('POST', '/api/v1/plugins/demo-plugin:remove');
   });
 
@@ -1009,12 +1162,13 @@ describe('server-v2 /api/v1 plugins', () => {
 
     const installed = await call('POST', '/api/v1/plugins', {
       marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0',
+      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
     });
 
     expect(installed.body.code).toBe(40001);
     expect(installed.body.msg).toContain('HTTP 401');
     expect(artifactAuthorizations).toEqual([undefined]);
+    expect(artifactRequestHeaders[0]?.get('X-Msh-Device-Id')).toBeNull();
   });
 
   it('does not retry managed OAuth when a codegw artifact redirects to a third-party origin', async () => {
@@ -1053,7 +1207,7 @@ describe('server-v2 /api/v1 plugins', () => {
 
     const installed = await call('POST', '/api/v1/plugins', {
       marketplaceId: 'demo-plugin',
-      expectedVersion: '2.0.0',
+      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
     });
 
     expect(installed.body.code).toBe(40001);

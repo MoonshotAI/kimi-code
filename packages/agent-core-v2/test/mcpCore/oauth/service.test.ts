@@ -722,6 +722,55 @@ describe('McpOAuthService interactive flow serialization', () => {
     await next.cancel();
   }, 15000);
 
+  it('keeps a replacement authorization tracked when an older cancellation settles', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+    let releaseFirstClose!: () => void;
+    const firstCloseGate = new Promise<void>((resolve) => {
+      releaseFirstClose = resolve;
+    });
+    let markFirstCloseStarted!: () => void;
+    const firstCloseStarted = new Promise<void>((resolve) => {
+      markFirstCloseStarted = resolve;
+    });
+    const startCallbackServer = callbackServerModule.startCallbackServer;
+    let callbackCount = 0;
+    const startSpy = vi.spyOn(callbackServerModule, 'startCallbackServer').mockImplementation(async () => {
+      const server = await startCallbackServer();
+      callbackCount += 1;
+      if (callbackCount === 1) {
+        const close = server.close;
+        server.close = async () => {
+          markFirstCloseStarted();
+          await firstCloseGate;
+          await close();
+        };
+      }
+      return server;
+    });
+    cleanups.push(() => {
+      startSpy.mockRestore();
+    });
+
+    const first = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const firstCompletion = first.complete({ timeoutMs: 10_000 });
+    void firstCompletion.catch(() => undefined);
+    const cancellation = fixture.service.cancelAuthorization(SERVER_NAME, SERVER_URL);
+    await firstCloseStarted;
+    const replacement = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    releaseFirstClose();
+    await cancellation;
+
+    const joined = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    expect(joined.authorizationUrl.toString()).toBe(replacement.authorizationUrl.toString());
+    await joined.cancel();
+    await replacement.cancel();
+    await expect(firstCompletion).rejects.toThrow(/callback listener closed/);
+  }, 15000);
+
   it('closes the callback listener when stale registration cleanup fails', async () => {
     const memory = createMemoryMcpOAuthStore();
     const store: McpOAuthStore = {

@@ -77,14 +77,9 @@ const CAPABILITY_ROW_IDS: Readonly<Record<string, string>> = {
   'kimi-browser-extension': 'kimi-webbridge',
 };
 
-export interface PluginsRouteOptions {
-  readonly marketplaceIsDefault?: boolean;
-}
-
 export function registerPluginsRoutes(
   app: PluginsRouteHost,
   core: Scope,
-  opts: PluginsRouteOptions,
 ): void {
   const marketplaceRoute = defineRoute(
     {
@@ -110,6 +105,7 @@ export function registerPluginsRoutes(
         );
         return;
       }
+      const marketplaceIsDefault = await core.accessor.get(IPluginMarketplaceService).isDefaultMarketplace();
       const installed = await core.accessor.get(IPluginService).listPlugins();
       const byId = new Map(installed.map((p) => [p.id, p]));
       const capabilities = core.accessor.get(ICapabilityService).describeCapabilities();
@@ -121,7 +117,7 @@ export function registerPluginsRoutes(
         const cloudOnly = entry.platforms?.every((platform) => platform === 'cloud') === true;
         if (entry.platforms !== undefined && !supportsLocal && !cloudOnly) continue;
         const capabilityId =
-          opts.marketplaceIsDefault === true ? CAPABILITY_ROW_IDS[entry.id] : undefined;
+          marketplaceIsDefault ? CAPABILITY_ROW_IDS[entry.id] : undefined;
         const capability = capabilities.find(
           (descriptor) =>
             descriptor.supported &&

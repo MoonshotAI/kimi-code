@@ -261,17 +261,17 @@ describe('loadPluginMarketplace', () => {
     );
   });
 
-  it('rejects unknown marketplace entry types and legacy type aliases', async () => {
-    for (const type of ['integration', 'managed', 'guide']) {
+  it('rejects unknown marketplace entry types and accepts legacy type aliases', async () => {
+    const invalid = await writeCatalog([catalogEntry({ type: 'integration' })]);
+    await expect(loadPluginMarketplace({ workDir: '/tmp/work', source: invalid })).rejects.toThrow(
+      /"type" must be "plugin"/,
+    );
+    for (const type of ['managed', 'guide', 'plugin']) {
       const file = await writeCatalog([catalogEntry({ type })]);
-      await expect(loadPluginMarketplace({ workDir: '/tmp/work', source: file })).rejects.toThrow(
-        /"type" must be "plugin"/,
-      );
+      await expect(loadPluginMarketplace({ workDir: '/tmp/work', source: file })).resolves.toMatchObject({
+        plugins: [expect.objectContaining({ id: 'demo' })],
+      });
     }
-    const valid = await writeCatalog([catalogEntry({ type: 'plugin' })]);
-    await expect(loadPluginMarketplace({ workDir: '/tmp/work', source: valid })).resolves.toMatchObject({
-      plugins: [expect.objectContaining({ id: 'demo' })],
-    });
   });
 
   it('parses all codegw metadata without changing ordering or billing data', async () => {
@@ -391,7 +391,7 @@ describe('loadPluginMarketplace', () => {
     ).rejects.toThrow('fetch failed');
   });
 
-  it('rejects legacy field aliases instead of reading them', async () => {
+  it('reads legacy field aliases and derives versions from GitHub sources', async () => {
     const file = await writeCatalog([
       {
         id: 'legacy',
@@ -399,27 +399,41 @@ describe('loadPluginMarketplace', () => {
         url: './legacy.zip',
         tier: 'official',
         version: '1.0.0',
-        sha256sum: 'a'.repeat(64),
-        platforms: ['linux'],
-        distribution: { category: 'official' },
+      },
+      {
+        id: 'github',
+        downloadUrl: 'https://github.com/example/repo/releases/tag/v2.3.4',
       },
     ]);
 
-    await expect(loadPluginMarketplace({ workDir: '/tmp/work', source: file })).rejects.toThrow(
-      /must define "displayName"/,
-    );
+    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
+    expect(marketplace.plugins[0]).toMatchObject({
+      id: 'legacy',
+      displayName: 'Legacy',
+      source: join(file, '..', 'legacy.zip'),
+      classification: 'official',
+      tier: 'official',
+      version: '1.0.0',
+    });
+    expect(marketplace.plugins[1]).toMatchObject({ id: 'github', version: '2.3.4' });
   });
 
-  it('requires sha256sum and distribution for every entry', async () => {
-    const missingDigest = await writeCatalog([catalogEntry({ sha256sum: undefined })]);
-    await expect(
-      loadPluginMarketplace({ workDir: '/tmp/work', source: missingDigest }),
-    ).rejects.toThrow(/must define "sha256sum"/);
+  it('accepts minimal custom marketplace entries', async () => {
+    const file = await writeCatalog([{ id: 'minimal', source: './plugin' }]);
 
-    const missingDistribution = await writeCatalog([catalogEntry({ distribution: undefined })]);
-    await expect(
-      loadPluginMarketplace({ workDir: '/tmp/work', source: missingDistribution }),
-    ).rejects.toThrow(/must define "distribution"/);
+    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
+
+    expect(marketplace.plugins).toEqual([
+      expect.objectContaining({
+        id: 'minimal',
+        displayName: 'minimal',
+        source: join(file, '..', 'plugin'),
+        version: undefined,
+        sha256sum: undefined,
+        platforms: undefined,
+        distribution: undefined,
+      }),
+    ]);
   });
 
   it('rejects an invalid SHA-256 digest', async () => {

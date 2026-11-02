@@ -76,10 +76,13 @@ export const pluginInfoQuerySchema = z.object({
   locale: z.string().min(1).optional(),
 });
 
+const pluginArchiveSha256Schema = z.string().regex(/^[A-Fa-f0-9]{64}$/).optional();
+
 export const previewPluginRequestSchema = z
   .object({
     marketplaceId: z.string().min(1),
-    expectedVersion: z.string().min(1),
+    expectedVersion: z.string().min(1).optional(),
+    expectedSha256: pluginArchiveSha256Schema,
     locale: z.string().min(1).optional(),
   })
   .strict();
@@ -94,7 +97,8 @@ export const installPluginRequestSchema = z.union([
   z
     .object({
       marketplaceId: z.string().min(1),
-      expectedVersion: z.string().min(1),
+      expectedVersion: z.string().min(1).optional(),
+      expectedSha256: pluginArchiveSha256Schema,
     })
     .strict(),
 ]);

@@ -785,15 +785,23 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('Installing Superpowers…');
   });
 
-  it('uses cliDescription for third-party marketplace entries', () => {
+  it('separates cliDescription from third-party marketplace metadata', () => {
     const { panel } = makePanel({ initialTab: 'third-party' });
     panel.setMarketplace([{
       ...thirdPartyEntries[0]!,
       description: 'Curated long description',
       cliDescription: 'Curated CLI description',
+      version: '1.2.3',
+      keywords: ['workflow'],
     }], '/tmp/marketplace.json');
     const out = strip(renderRaw(panel));
-    expect(out).toContain('Curated CLI description');
+    const lines = out.split('\n');
+    const descriptionIndex = lines.findIndex((line) => line.includes('Curated CLI description'));
+    const metadataIndex = lines.findIndex((line) => line.includes('id superpowers'));
+    expect(descriptionIndex).toBeGreaterThanOrEqual(0);
+    expect(metadataIndex).toBe(descriptionIndex + 1);
+    expect(lines[descriptionIndex]).not.toContain('id superpowers');
+    expect(lines[metadataIndex]).toContain('id superpowers · v1.2.3 · Curated plugin · workflow');
     expect(out).not.toContain('Curated long description');
   });
 

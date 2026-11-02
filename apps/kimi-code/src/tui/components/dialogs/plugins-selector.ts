@@ -728,12 +728,17 @@ export class PluginsPanelComponent extends Container implements Focusable {
       prefix + labelStyle(entry.displayName) + '  ' + marketplaceStatusStyle(status, colors)(status);
     const descWidth = Math.max(1, width - 4);
     const out = [line];
-    const description =
-      this.activeTab.id === 'official'
-        ? officialMarketplaceEntryDescription(entry)
-        : marketplaceEntryDescription(entry);
+    const isOfficial = this.activeTab.id === 'official';
+    const description = isOfficial
+      ? officialMarketplaceEntryDescription(entry)
+      : marketplaceEntryDescription(entry);
     for (const descLine of wrapOverviewDescription(description, descWidth)) {
       out.push(mutedHintLine(`    ${descLine}`, colors));
+    }
+    if (!isOfficial) {
+      for (const metadataLine of wrapOverviewDescription(marketplaceEntryMetadata(entry), descWidth)) {
+        out.push(mutedHintLine(`    ${metadataLine}`, colors));
+      }
     }
     return out;
   }
@@ -793,16 +798,19 @@ function mcpItemServerName(item: PluginsOverviewItem): string | undefined {
 }
 
 function marketplaceEntryDescription(entry: PluginMarketplaceEntry): string {
-  const tier = marketplaceTierLabel(entry.tier);
-  const cliDescription = pluginMarketplaceCliDescription(entry);
-  const description = cliDescription ?? tier;
+  return pluginMarketplaceCliDescription(entry) ?? marketplaceTierLabel(entry.tier);
+}
+
+function marketplaceEntryMetadata(entry: PluginMarketplaceEntry): string {
   const version = entry.version !== undefined ? ` · v${entry.version}` : '';
+  const tier = pluginMarketplaceCliDescription(entry) !== undefined
+    ? ` · ${marketplaceTierLabel(entry.tier)}`
+    : '';
   const keywords =
     entry.keywords !== undefined && entry.keywords.length > 0
       ? ` · ${entry.keywords.join(', ')}`
       : '';
-  const tierSuffix = cliDescription !== undefined ? ` · ${tier}` : '';
-  return `${description} · id ${entry.id}${version}${tierSuffix}${keywords}`;
+  return `id ${entry.id}${version}${tier}${keywords}`;
 }
 
 function officialMarketplaceEntryDescription(entry: PluginMarketplaceEntry): string {
@@ -817,7 +825,7 @@ function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {
 
 function marketplaceEntryIsVisible(entry: PluginMarketplaceEntry): boolean {
   const platforms: readonly string[] | undefined = entry.platforms;
-  if (platforms === undefined) return false;
+  if (platforms === undefined) return true;
   const supportsLocal = platforms.includes(process.platform);
   const cloudOnly = platforms.every((platform) => platform === 'cloud');
   return supportsLocal || cloudOnly;

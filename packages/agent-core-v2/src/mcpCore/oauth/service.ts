@@ -360,7 +360,9 @@ export class McpOAuthService {
     try {
       flow = await started;
     } catch (error) {
-      this.activeAuthorizations.delete(storeKey);
+      if (this.activeAuthorizations.get(storeKey)?.serverRef === serverRef) {
+        this.activeAuthorizations.delete(storeKey);
+      }
       throw error;
     }
     return flow.attach();
@@ -459,7 +461,9 @@ export class McpOAuthService {
     const settle = async (): Promise<void> => {
       if (settled) return;
       settled = true;
-      this.activeAuthorizations.delete(storeKey);
+      if (this.activeAuthorizations.get(storeKey)?.serverRef === serverRef) {
+        this.activeAuthorizations.delete(storeKey);
+      }
       provider.resetFlow();
       await callbackServer.close().catch(() => undefined);
     };

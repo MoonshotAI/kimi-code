@@ -479,10 +479,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     debugEndpoints,
     enableShutdown,
     guiStore,
-    pluginMarketplaceIsDefault:
-      opts.pluginMarketplaceUrl === undefined &&
-      (process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] === undefined ||
-        process.env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1'),
     remoteControl: {
       service: remoteControlManager,
       devices: remoteControlDevices,

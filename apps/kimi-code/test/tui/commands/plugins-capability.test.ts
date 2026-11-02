@@ -162,6 +162,7 @@ describe('plugins command capability surface', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     resetCapabilitiesCache();
   });
 
@@ -175,7 +176,7 @@ describe('plugins command capability surface', () => {
     expect(capabilityIdForMarketplaceEntry('superpowers', true)).toBeUndefined();
   });
 
-  it('installs ordinary marketplace entries by id and expected version', async () => {
+  it('installs ordinary marketplace entries by id, expected version and digest', async () => {
     const { host, installCapability, installPlugin } = fakeHost({});
     await installMarketplaceEntryFromPanel(
       host,
@@ -184,6 +185,7 @@ describe('plugins command capability surface', () => {
         id: 'demo',
         displayName: 'Demo',
         version: '2.0.0',
+        sha256sum: 'a'.repeat(64),
         source: 'https://code.kimi.com/kimi-code/plugins/official/demo.zip',
       } as never,
       true,
@@ -192,14 +194,15 @@ describe('plugins command capability surface', () => {
     expect(installPlugin).toHaveBeenCalledWith({
       marketplaceId: 'demo',
       expectedVersion: '2.0.0',
+      expectedSha256: 'a'.repeat(64),
       migrateFrom: undefined,
       marketplaceSource: undefined,
     });
     expect(installCapability).not.toHaveBeenCalled();
   });
 
-  it('reports a marketplace entry with no version without installing', async () => {
-    const { host, installPlugin, statuses } = fakeHost({});
+  it('installs a custom marketplace entry without a version or digest', async () => {
+    const { host, installPlugin } = fakeHost({});
     await installMarketplaceEntryFromPanel(
       host,
       fakePanel().panel,
@@ -208,13 +211,16 @@ describe('plugins command capability surface', () => {
         displayName: 'Demo',
         source: 'https://code.kimi.com/kimi-code/plugins/official/demo.zip',
       } as never,
-      true,
+      false,
     );
 
-    expect(installPlugin).not.toHaveBeenCalled();
-    expect(statuses).toContain(
-      'Failed to install Demo: Marketplace plugin "demo" has no version in the current catalog',
-    );
+    expect(installPlugin).toHaveBeenCalledWith({
+      marketplaceId: 'demo',
+      expectedVersion: undefined,
+      expectedSha256: undefined,
+      migrateFrom: undefined,
+      marketplaceSource: undefined,
+    });
   });
 
   it('installs custom sources with a source input', async () => {
@@ -293,6 +299,7 @@ describe('plugins command capability surface', () => {
     expect(installPlugin).toHaveBeenCalledWith({
       marketplaceId: 'kimi-browser-extension',
       expectedVersion: '3.0.0',
+      expectedSha256: 'b'.repeat(64),
       migrateFrom: 'kimi-webbridge',
       marketplaceSource: '/tmp/alternate-marketplace.json',
     });
@@ -343,10 +350,13 @@ describe('plugins command capability surface', () => {
     expect(statuses.some((s) => s.includes('runtime binaries were left untouched'))).toBe(true);
   });
 
-  it('treats only the default catalog and dev server as capability-mapped', () => {
+  it('treats only trusted managed catalogs and the dev server as capability-mapped', () => {
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://api.kimi.com/coding/v1');
     expect(isDefaultMarketplaceCatalog(undefined, {})).toBe(true);
-    // The dev marketplace server started by scripts/dev.mjs serves this
-    // repo's own catalog — it counts as default, not as a user override.
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://coding.deva.msh.team/coding/v1');
+    expect(isDefaultMarketplaceCatalog(undefined, {})).toBe(true);
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://gateway.example.test/coding/v1');
+    expect(isDefaultMarketplaceCatalog(undefined, {})).toBe(false);
     expect(
       isDefaultMarketplaceCatalog(undefined, {
         KIMI_CODE_PLUGIN_MARKETPLACE_URL: 'http://127.0.0.1:60056/marketplace.json',

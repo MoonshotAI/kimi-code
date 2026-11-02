@@ -204,7 +204,8 @@ export const installPluginInputSchema = z.union([
   z
     .object({
       marketplaceId: z.string(),
-      expectedVersion: z.string(),
+      expectedVersion: z.string().optional(),
+      expectedSha256: z.string().optional(),
       marketplaceSource: z.string().optional(),
       migrateFrom: z.string().optional(),
     })

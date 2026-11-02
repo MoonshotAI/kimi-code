@@ -10716,6 +10716,7 @@ capabilities = ["image_in", "video_in"]
       expect(session.installPlugin).toHaveBeenCalledWith({
         marketplaceId: 'kimi-datasource',
         expectedVersion: '1.0.0',
+        expectedSha256: 'a'.repeat(64),
         migrateFrom: undefined,
         marketplaceSource: marketplacePath,
       });
@@ -10826,6 +10827,7 @@ capabilities = ["image_in", "video_in"]
       expect(session.installPlugin).toHaveBeenCalledWith({
         marketplaceId: 'superpowers',
         expectedVersion: '1.0.0',
+        expectedSha256: 'a'.repeat(64),
         migrateFrom: undefined,
         marketplaceSource: marketplacePath,
       });
@@ -10907,7 +10909,7 @@ capabilities = ["image_in", "video_in"]
   it('installs default marketplace entries through plain install', async () => {
     const originalFetch = globalThis.fetch;
     const originalBaseUrl = process.env['KIMI_CODE_BASE_URL'];
-    process.env['KIMI_CODE_BASE_URL'] = 'https://api.example.test/coding/v1';
+    process.env['KIMI_CODE_BASE_URL'] = 'https://api.kimi.com/coding/v1';
     const { KimiOAuthToolkit } = await import('@moonshot-ai/kimi-code-oauth');
     const tokenProvider = vi.spyOn(KimiOAuthToolkit.prototype, 'tokenProvider').mockReturnValue({
       getAccessToken: async () => 'managed-token',
@@ -10954,6 +10956,7 @@ capabilities = ["image_in", "video_in"]
         expect(session.installPlugin).toHaveBeenCalledWith({
           marketplaceId: 'kimi-datasource',
           expectedVersion: '1.0.0',
+          expectedSha256: 'a'.repeat(64),
           migrateFrom: undefined,
           marketplaceSource: undefined,
         });

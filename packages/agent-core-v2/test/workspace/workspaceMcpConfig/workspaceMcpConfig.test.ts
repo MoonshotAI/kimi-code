@@ -395,6 +395,22 @@ describe('WorkspaceMcpConfigService', () => {
     expect(invalidate).toHaveBeenCalledWith('alpha', url);
   });
 
+  it('preserves OAuth credentials when trust temporarily unloads a project server', async () => {
+    const url = 'https://mcp.example.test/mcp';
+    await writeProjectConfig({ alpha: { transport: 'http', url, auth: 'oauth' } });
+    const service = createService();
+    await service.ready;
+
+    trusted = false;
+    trustFlips.fire({ trusted: false });
+
+    await vi.waitFor(() => {
+      expect(service.servers()).toEqual({});
+    });
+    expect(cancelAuthorization).toHaveBeenCalledWith('alpha', url);
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
   it('cancels the previous remote authorization when a plugin server is disabled', async () => {
     const url = 'https://mcp.example.test/mcp';
     const config: McpServerConfig = { transport: 'http', url, auth: 'oauth' };

@@ -98,6 +98,7 @@ function fakeMarketplace(
           source: `https://marketplace.example.test/${entry.id}.zip`,
         })),
       }),
+    isDefaultMarketplace: () => Promise.resolve(true),
     resolveInstall: () => Promise.reject(new Error('unexpected marketplace resolution')),
   };
 }

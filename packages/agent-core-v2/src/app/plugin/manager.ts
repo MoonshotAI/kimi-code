@@ -572,7 +572,7 @@ export class PluginManager {
         { details: { source } },
       );
     }
-    const cacheKey = options.expectedSha256.toLowerCase();
+    const cacheKey = `${options.expectedSha256.toLowerCase()}:${options.expectedPluginId}`;
     const cached = this.inspections.get(cacheKey);
     if (cached !== undefined) {
       this.inspections.delete(cacheKey);

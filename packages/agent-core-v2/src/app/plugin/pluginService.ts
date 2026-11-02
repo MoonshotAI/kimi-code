@@ -11,7 +11,7 @@ import type { PluginToggleEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import type { SkillRoot } from '#/features/skill/catalog/types';
-import { BugIndicatingError, Error2, PluginErrors } from '#/errors';
+import { BugIndicatingError, Error2, ErrorCodes, PluginErrors } from '#/errors';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 
@@ -121,6 +121,7 @@ export class PluginService extends Service implements IPluginService {
                 (await this.marketplace.resolveInstall(
                   input.marketplaceId,
                   input.expectedVersion,
+                  input.expectedSha256,
                   input.marketplaceSource,
                 ));
               return this.manager.installAndReload(resolved.source, {
@@ -250,7 +251,15 @@ export class PluginService extends Service implements IPluginService {
       const resolved = await this.marketplace.resolveInstall(
         input.marketplaceId,
         input.expectedVersion,
+        input.expectedSha256,
       );
+      if (resolved.sha256sum === undefined) {
+        throw new Error2(
+          ErrorCodes.VALIDATION_FAILED,
+          `Marketplace plugin "${input.marketplaceId}" preview requires a SHA-256 digest`,
+          { details: { marketplaceId: input.marketplaceId } },
+        );
+      }
       return this.manager.inspect(resolved.source, {
         expectedSha256: resolved.sha256sum,
         expectedPluginId: resolved.expectedPluginId,

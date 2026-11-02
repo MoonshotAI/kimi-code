@@ -113,7 +113,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     return tail;
   }
 
-  private async initialize(publish = false): Promise<void> {
+  private async initialize(publish = false, preserveOAuthCredentials = false): Promise<void> {
     await this.config.ready;
     const trusted = await this.trust.get();
     const [fileServers, pluginServers] = await Promise.all([
@@ -129,7 +129,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     this.pluginServers = new Map(Object.entries(pluginServers));
     this.initializationComplete = true;
     if (publish) {
-      await this.publishIfChanged();
+      await this.publishIfChanged(preserveOAuthCredentials);
     } else {
       this.current = this.merged();
     }
@@ -139,7 +139,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     await this.ready;
     await this.mutate(async () => {
       if (!this.initializationComplete) {
-        await this.initialize(true);
+        await this.initialize(true, true);
       } else {
         const fresh = await loadMcpServers({
           fs: this.fs,
@@ -149,7 +149,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
         });
         this.fileServers = new Map(Object.entries(fresh));
       }
-      await this.publishIfChanged();
+      await this.publishIfChanged(true);
     });
   }
 
@@ -219,7 +219,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     });
   }
 
-  private async publishIfChanged(): Promise<void> {
+  private async publishIfChanged(preserveOAuthCredentials = false): Promise<void> {
     const next = this.merged();
     const upsert: Record<string, McpServerConfig> = Object.create(null);
     const remove: string[] = [];
@@ -234,7 +234,9 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     }
     for (const name of remove) {
       await this.cancelAuthorization(name, this.current[name]);
-      await this.invalidateAuthorization(name, this.current[name]);
+      if (!preserveOAuthCredentials) {
+        await this.invalidateAuthorization(name, this.current[name]);
+      }
     }
     for (const [name, config] of Object.entries(upsert)) {
       if (config.enabled === false) await this.cancelAuthorization(name, this.current[name]);

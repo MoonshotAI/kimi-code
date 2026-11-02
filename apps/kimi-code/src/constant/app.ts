@@ -120,7 +120,10 @@ export function kimiCodeCdnCanaryChannelUrl(): string {
 export function kimiCodeCdnBinariesBase(): string {
   return `${kimiCodeCdnBase()}/binaries`;
 }
-export { KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV } from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+export {
+  isTrustedPluginMarketplaceUrl as isTrustedKimiCodePluginMarketplace,
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
 export function kimiCodePluginMarketplaceUrl(): string {
   const auth = currentKimiManagedRuntimeAuth();
   const baseUrl = (auth.baseUrl ?? currentKimiProfile().baseUrl).trim().replace(/\/+$/, '');
