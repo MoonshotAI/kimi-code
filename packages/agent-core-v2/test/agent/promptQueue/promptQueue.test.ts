@@ -513,6 +513,20 @@ describe('AgentPromptQueueService', () => {
     expect(launched).toEqual([]);
   });
 
+  it('checks that the session is current before the start bookkeeping of a prompt without settings', async () => {
+    setup();
+    const onStart = vi.fn(async () => {});
+    vi.spyOn(ctx.get(ISessionRunGate), 'begin').mockImplementationOnce(() => {
+      throw new Error('session is stale');
+    });
+
+    await expect(
+      queue.submitInput({ id: 'p1', entry: entry('p1', 'hello'), delivery: 'queue', onStart }),
+    ).rejects.toThrow('session is stale');
+    expect(onStart).not.toHaveBeenCalled();
+    expect(launched).toEqual([]);
+  });
+
   it('queues an idle input at the head when other work starts while its settings are applied', async () => {
     setup();
     respond(2);

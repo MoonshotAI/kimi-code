@@ -274,6 +274,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       if (prepared === undefined) return { acceptedAs: 'queue' };
       current = prepared;
       if (current.onStart !== undefined) {
+        this.runGate.begin();
         await current.onStart();
         current = this.consume(current, { onStart: undefined });
       }
