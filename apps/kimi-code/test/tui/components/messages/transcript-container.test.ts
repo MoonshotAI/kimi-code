@@ -2,6 +2,7 @@ import { visibleWidth, type Component, type TuiMouseEvent } from '@moonshot-ai/p
 import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { SkillActivationComponent } from '#/tui/components/messages/skill-activation';
 import { StatusMessageComponent } from '#/tui/components/messages/status-message';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
@@ -935,6 +936,47 @@ describe('TranscriptGroupComponent', () => {
     const second = setModel.mock.calls[1]?.[0];
     expect(first).toBeDefined();
     expect(second?.summary).toBe(first?.summary);
+  });
+});
+
+describe('skill activation cards in grouped transcripts', () => {
+  function skillCalls(container: TranscriptContainer, card: Component): void {
+    container.addChild(tool('Skill', { skill: 'foo' }));
+    container.addChild(card);
+    container.addChild(tool('TodoList', { todos: [] }));
+    container.addChild(tool('Bash', { command: 'pnpm test' }));
+  }
+
+  it('hides model-triggered cards and keeps the group in one piece', () => {
+    for (const trigger of ['model-tool', 'nested-skill'] as const) {
+      const { container } = makeContainer(options({ groupTools: 'auto' }));
+      skillCalls(container, new SkillActivationComponent('foo', undefined, trigger));
+      container.toggleGroup(container.children[0] as Component);
+
+      expect(onlyGroup(container).rows).toHaveLength(3);
+      expect(plain(container.render(80))).not.toContain('Activated skill');
+    }
+  });
+
+  it('shows the card when tools are not grouped', () => {
+    const { container } = makeContainer(options({ groupTools: 'off' }));
+    skillCalls(container, new SkillActivationComponent('foo', undefined, 'model-tool'));
+
+    expect(plain(container.render(80))).toContain('Activated skill: foo');
+  });
+
+  it('shows a user-triggered card in a grouped transcript', () => {
+    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    skillCalls(container, new SkillActivationComponent('foo', undefined, 'user-slash'));
+
+    expect(plain(container.render(80))).toContain('Activated skill: foo');
+  });
+
+  it('shows the card in the regular transcript', () => {
+    const { container } = makeContainer(options({ fullscreen: false, groupTools: 'auto' }));
+    skillCalls(container, new SkillActivationComponent('foo', undefined, 'model-tool'));
+
+    expect(plain(container.render(80))).toContain('Activated skill: foo');
   });
 });
 

@@ -3,6 +3,7 @@ import type { Component } from '@moonshot-ai/pi-tui';
 import { AgentGroupComponent } from '#/tui/components/messages/agent-group';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
 import { AgentSwarmProgressComponent } from '#/tui/components/messages/agent-swarm-progress';
+import { SkillActivationComponent } from '#/tui/components/messages/skill-activation';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { ToolCallComponent, extractKeyArgumentDetail } from '#/tui/components/messages/tool-call';
@@ -248,6 +249,13 @@ export class TranscriptItemInspector {
     groupTools: TranscriptGroupTools,
   ): readonly TranscriptItem[] {
     if (component instanceof UserMessageComponent) return [boundary(component, sourceIndex, 'text')];
+    if (
+      groupTools !== 'off' &&
+      component instanceof SkillActivationComponent &&
+      (component.trigger === 'model-tool' || component.trigger === 'nested-skill')
+    ) {
+      return [transparent(component, sourceIndex)];
+    }
     if (
       !(component instanceof ThinkingComponent) &&
       !(component instanceof ToolCallComponent) &&
