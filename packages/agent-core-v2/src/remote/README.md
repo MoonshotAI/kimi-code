@@ -67,12 +67,16 @@ deviations per the design spec, plus one forced addition:
 - `fs/readDirectory` preserves the symlink marker on each entry. The client
   rejects a truncated listing with `os.fs.directory_too_large` rather than
   exposing an incomplete directory; the current limit is 50,000 entries.
-- `fs/walk` performs a bounded recursive listing in one call. It accepts the
-  root ignore rules needed to prune ignored directories before traversal and
-  reports entries, recoverable directory errors, and truncation. Clients fall
-  back to per-directory reads when the JSON-encoded ignore rules exceed 1MiB.
-  Walks default to a 55-second budget so they can return a truncated result
-  before the 60-second RPC deadline.
+- `fs/readFile` accepts `includeMetadata: true` and then returns the target's
+  metadata alongside the data, skipping the read for non-files, so a caller
+  can stat and sniff a file in one round trip.
+- `fs/walk` performs a recursive, depth-first listing in one call. It accepts
+  root ignore rules that prune ignored directories before traversal and
+  returns root-relative `/` paths with their kind. Unreadable directories are
+  skipped; a directory over the `fs/readDirectory` entry limit fails the call
+  with `os.fs.directory_too_large`. The response is capped at 8MiB and walks
+  default to a 55-second budget so they return a truncated result before the
+  60-second RPC deadline.
 - Added `fs/rename` (no codex counterpart).
 - `fs/remove` takes only `path` and always removes recursively and ignores a
   missing path, matching `IHostFileSystem.remove` (codex has `recursive`/`force`).

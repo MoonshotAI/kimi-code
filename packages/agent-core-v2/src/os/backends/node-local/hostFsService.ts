@@ -1,4 +1,5 @@
 import { createReadStream } from 'node:fs';
+import { join } from 'node:path';
 import {
   appendFile,
   lstat,
@@ -12,6 +13,8 @@ import {
   stat as nodeStat,
   writeFile,
 } from 'node:fs/promises';
+import ignore from 'ignore';
+
 import { decodeTextWithErrors, readUtf8Lines, type TextDecodeErrors } from '#/_base/execEnv/decodeText';
 
 import {
@@ -19,13 +22,45 @@ import {
   type HostFileHead,
   type HostFileStat,
   type HostWalkOptions,
-  type HostWalkResult,
+  type HostWalkVisitor,
   IHostFileSystem,
 } from '#/os/interface/hostFileSystem';
-import { toHostFsError } from '#/os/interface/hostFsErrors';
-import { walkHostDirectory } from '#/os/interface/hostFsWalk';
+import { HostFsError, OsFsErrors, toHostFsError } from '#/os/interface/hostFsErrors';
 
 const READ_CHUNK_SIZE = 64 * 1024;
+const WALK_MAX_DEPTH = 64;
+
+export async function walkDirectoryTree(
+  fs: Pick<IHostFileSystem, 'readdir'>,
+  root: string,
+  options: HostWalkOptions,
+  visit: HostWalkVisitor,
+): Promise<{ readonly truncated: boolean }> {
+  const matcher = options.ignore === undefined ? undefined : ignore().add(options.ignore);
+  const expired = (): boolean => options.deadlineMs !== undefined && Date.now() >= options.deadlineMs;
+  const walkDirectory = async (relDir: string, depth: number): Promise<boolean> => {
+    if (depth > WALK_MAX_DEPTH) return true;
+    if (expired()) return false;
+    let entries: readonly HostDirEntry[];
+    try {
+      entries = await fs.readdir(relDir === '' ? root : join(root, relDir));
+    } catch (error) {
+      if (error instanceof HostFsError && error.code === OsFsErrors.codes.OS_FS_DIRECTORY_TOO_LARGE) throw error;
+      return true;
+    }
+    for (const entry of entries) {
+      const path = relDir === '' ? entry.name : `${relDir}/${entry.name}`;
+      const isDir = entry.isDirectory && entry.isSymbolicLink !== true;
+      if (matcher?.ignores(isDir ? `${path}/` : path) === true) continue;
+      if (expired()) return false;
+      const kind = entry.isSymbolicLink === true ? 'symlink' : isDir ? 'directory' : 'file';
+      if (await visit({ path, kind }) === false) return false;
+      if (isDir && !await walkDirectory(path, depth + 1)) return false;
+    }
+    return true;
+  };
+  return { truncated: !await walkDirectory('', 0) };
+}
 
 function isUtf8Encoding(encoding: BufferEncoding): boolean {
   return encoding === 'utf-8' || encoding === 'utf8';
@@ -205,8 +240,8 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async walk(path: string, options: HostWalkOptions): Promise<HostWalkResult> {
-    return walkHostDirectory(this, path, options);
+  async walk(path: string, options: HostWalkOptions, visit: HostWalkVisitor): Promise<{ readonly truncated: boolean }> {
+    return walkDirectoryTree(this, path, options, visit);
   }
 
   async mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {

@@ -62,7 +62,7 @@ class DeclaredRemoteEnvironment implements Environment {
     stat: async (path) => this.connected().fs.stat(path),
     lstat: async (path) => this.connected().fs.lstat(path),
     readdir: async (path) => this.connected().fs.readdir(path),
-    walk: async (path, options) => this.connected().fs.walk(path, options),
+    walk: async (path, options, visit) => this.connected().fs.walk(path, options, visit),
     mkdir: async (path, options) => this.connected().fs.mkdir(path, options),
     remove: async (path) => this.connected().fs.remove(path),
     rename: async (from, to) => this.connected().fs.rename(from, to),

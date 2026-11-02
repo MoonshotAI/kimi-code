@@ -4,8 +4,8 @@ import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { walkHostDirectory } from '#/os/interface/hostFsWalk';
+import { HostFileSystem, walkDirectoryTree } from '#/os/backends/node-local/hostFsService';
+import type { HostDirEntry, HostWalkEntry, HostWalkVisitor } from '#/os/interface/hostFileSystem';
 
 let dir: string;
 let fs: HostFileSystem;
@@ -55,122 +55,69 @@ describe('HostFileSystem streamed writes', () => {
 });
 
 describe('HostFileSystem walk', () => {
-  const options = {
-    maxDepth: 64,
-    maxDirectories: 10_000,
-    maxEntries: 100_000,
-    maxResponseBytes: 8 * 1024 * 1024,
-  };
+  async function collect(
+    walk: (visit: HostWalkVisitor) => Promise<{ readonly truncated: boolean }>,
+    stopAfter = Infinity,
+  ) {
+    const entries: HostWalkEntry[] = [];
+    const { truncated } = await walk((entry) => {
+      if (entries.length >= stopAfter) return false;
+      entries.push(entry);
+    });
+    return { entries, truncated };
+  }
 
-  it('lists nested entries without following directory symlinks', async () => {
+  it('visits nested entries depth-first without following directory symlinks', async () => {
     await mkdir(join(dir, 'a/b'), { recursive: true });
     await writeFile(join(dir, 'a/b/file.ts'), '');
-    await writeFile(join(dir, 'root.ts'), '');
     await symlink(join(dir, 'a'), join(dir, 'link'));
 
-    const result = await fs.walk(dir, options);
+    const { entries, truncated } = await collect((visit) => fs.walk(dir, {}, visit));
 
-    const names = result.entries.map((entry) => entry.name.slice(dir.length + 1));
-    expect(names).toHaveLength(5);
-    expect(names).toEqual(expect.arrayContaining([
-      'a',
-      'root.ts',
-      'link',
-      'a/b',
-      'a/b/file.ts',
-    ]));
-    expect(result.entries.find((entry) => entry.name === join(dir, 'link'))?.isSymbolicLink).toBe(true);
-    expect(result.errors).toEqual([]);
-    expect(result.truncated).toBe(false);
-  });
-
-  it('reports missing roots as recoverable errors', async () => {
-    const result = await fs.walk(join(dir, 'missing'), options);
-
-    expect(result.entries).toEqual([]);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0]).toMatchObject({
-      path: join(dir, 'missing'),
-      error: { code: 'os.fs.not_found' },
-    });
-  });
-
-  it('bounds directories and entries without reporting an exact fit as truncated', async () => {
-    const tree = new Map<string, { name: string; isFile: boolean; isDirectory: boolean }[]>([
-      ['/root', [
-        { name: 'a', isFile: false, isDirectory: true },
-        { name: 'b', isFile: false, isDirectory: true },
-      ]],
-      ['/root/a', [{ name: 'one.ts', isFile: true, isDirectory: false }]],
-      ['/root/b', [{ name: 'two.ts', isFile: true, isDirectory: false }]],
+    expect(entries.toSorted((x, y) => x.path.localeCompare(y.path))).toEqual([
+      { path: 'a', kind: 'directory' },
+      { path: 'a/b', kind: 'directory' },
+      { path: 'a/b/file.ts', kind: 'file' },
+      { path: 'link', kind: 'symlink' },
     ]);
-    const backend = {
-      readdir: async (path: string) => tree.get(path) ?? [],
-    };
-
-    for (const [maxDirectories, maxEntries, truncated, names] of [
-      [3, 4, false, ['/root/a', '/root/b', '/root/a/one.ts', '/root/b/two.ts']],
-      [2, 4, true, ['/root/a', '/root/b']],
-      [3, 3, true, ['/root/a', '/root/b', '/root/a/one.ts']],
-    ] as const) {
-      const result = await walkHostDirectory(backend, '/root', { ...options, maxDirectories, maxEntries });
-      expect(result.truncated).toBe(truncated);
-      expect(result.entries.map((entry) => entry.name)).toEqual(names);
-    }
+    const paths = entries.map((entry) => entry.path);
+    expect(paths.indexOf('a/b/file.ts')).toBe(paths.indexOf('a/b') + 1);
+    expect(truncated).toBe(false);
   });
 
-  it('counts entry and error JSON in the response budget', async () => {
-    const backend = {
-      readdir: async () => [{ name: 'a', isFile: true, isDirectory: false }],
-    };
-    const initial = await walkHostDirectory(backend, '/root', options);
-    const tooSmall = await walkHostDirectory(backend, '/root', { ...options, maxResponseBytes: initial.responseBytes - 1 });
+  it('prunes ignored directories before reading them', async () => {
+    const tree = new Map<string, HostDirEntry[]>([
+      ['/root', [
+        { name: 'node_modules', isFile: false, isDirectory: true },
+        { name: 'src', isFile: false, isDirectory: true },
+      ]],
+      ['/root/src', [{ name: 'app.ts', isFile: true, isDirectory: false }]],
+    ]);
+    const readdir = vi.fn(async (path: string) => tree.get(path) ?? []);
 
-    expect(initial).toMatchObject({ truncated: false });
-    expect(tooSmall).toMatchObject({ entries: [], truncated: true });
+    const { entries } = await collect((visit) => walkDirectoryTree({ readdir }, '/root', { ignore: ['node_modules/'] }, visit));
 
-    const readWithError = async (maxResponseBytes: number) => walkHostDirectory(backend, '/root', {
-      ...options,
-      maxResponseBytes,
-    }, {}, async (path) => {
-      if (path === '/root') return [{ name: 'a', isFile: false, isDirectory: true }];
-      throw new Error('unreadable');
-    });
-    const withError = await readWithError(options.maxResponseBytes);
-    const beforeError = await readWithError(withError.responseBytes - 1);
-
-    expect(withError.errors).toHaveLength(1);
-    expect(beforeError).toMatchObject({ errors: [], truncated: true });
+    expect(entries.map((entry) => entry.path)).toEqual(['src', 'src/app.ts']);
+    expect(readdir.mock.calls.map(([path]) => path)).toEqual(['/root', '/root/src']);
   });
 
-  it('honors deadlines before and during the walk', async () => {
-    let clock = 1_000;
-    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
-    try {
-      let reads = 0;
-      const backend = {
-        readdir: async () => {
-          reads += 1;
-          return [];
-        },
-      };
-      const expired = await walkHostDirectory(backend, '/root', { ...options, deadlineMs: clock });
-      expect(expired).toMatchObject({ entries: [], truncated: true });
-      expect(reads).toBe(0);
+  it('skips unreadable directories', async () => {
+    const { entries, truncated } = await collect((visit) => fs.walk(join(dir, 'missing'), {}, visit));
 
-      const partial = await walkHostDirectory(backend, '/root', {
-        ...options,
-        deadlineMs: clock + 5,
-      }, {}, async (path) => {
-        if (path === '/root') return [{ name: 'a', isFile: false, isDirectory: true }];
-        clock += 5;
-        return [{ name: 'file.ts', isFile: true, isDirectory: false }];
-      });
-      expect(partial.entries.map((entry) => entry.name)).toEqual(['/root/a']);
-      expect(partial.truncated).toBe(true);
-    } finally {
-      now.mockRestore();
-    }
+    expect(entries).toEqual([]);
+    expect(truncated).toBe(false);
+  });
+
+  it('reports truncation when the visitor stops or the deadline passes', async () => {
+    const readdir = async (path: string): Promise<HostDirEntry[]> => path === '/root'
+      ? [{ name: 'a', isFile: false, isDirectory: true }, { name: 'b.ts', isFile: true, isDirectory: false }]
+      : [{ name: 'c.ts', isFile: true, isDirectory: false }];
+
+    const stopped = await collect((visit) => walkDirectoryTree({ readdir }, '/root', {}, visit), 1);
+    const expired = await collect((visit) => walkDirectoryTree({ readdir }, '/root', { deadlineMs: Date.now() }, visit));
+
+    expect(stopped).toEqual({ entries: [{ path: 'a', kind: 'directory' }], truncated: true });
+    expect(expired).toEqual({ entries: [], truncated: true });
   });
 });
 

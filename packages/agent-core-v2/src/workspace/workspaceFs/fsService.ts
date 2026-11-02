@@ -63,12 +63,6 @@ import { HandshakeError } from '#/remote/client/connection';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
-import {
-  HOST_WALK_MAX_DEPTH,
-  HOST_WALK_MAX_DIRECTORIES,
-  HOST_WALK_MAX_ENTRIES,
-  HOST_WALK_MAX_RESPONSE_BYTES,
-} from '#/os/interface/hostFsWalk';
 import { type EnvironmentPath } from '#/environment/environment';
 import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
@@ -1350,46 +1344,17 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     ) => Promise<void>,
     options: { deadlineMs?: number } = {},
   ): Promise<boolean> {
-    const result = await this.hostFs.walk(baseAbs, {
-      maxDepth: HOST_WALK_MAX_DEPTH,
-      maxDirectories: HOST_WALK_MAX_DIRECTORIES,
-      maxEntries: HOST_WALK_MAX_ENTRIES,
-      maxResponseBytes: HOST_WALK_MAX_RESPONSE_BYTES,
-      ignore: ignoreRules,
-      deadlineMs: options.deadlineMs,
-    });
-    for (const { path, error } of result.errors) {
-      if (error instanceof Error2 && error.code === ErrorCodes.OS_FS_DIRECTORY_TOO_LARGE) {
-        throw mapFsError(error, path);
-      }
+    try {
+      const { truncated } = await this.hostFs.walk(
+        baseAbs,
+        { ignore: ignoreRules, deadlineMs: options.deadlineMs },
+        (entry) => visit(entry.path, entry.path.slice(entry.path.lastIndexOf('/') + 1), entry.kind),
+      );
+      return truncated;
+    } catch (error) {
+      if (error instanceof Error2 && error.code === ErrorCodes.OS_FS_DIRECTORY_TOO_LARGE) throw mapFsError(error, baseAbs);
+      throw error;
     }
-    const byParent = new Map<string, { entry: HostDirEntry; relPath: string }[]>();
-    for (const entry of result.entries) {
-      const relPath = this.path.relative(baseAbs, entry.name).split(this.path.separator).join('/');
-      if (relPath === '' || relPath === '..' || relPath.startsWith('../')) continue;
-      const slash = relPath.lastIndexOf('/');
-      const parent = slash < 0 ? '' : relPath.slice(0, slash);
-      const name = slash < 0 ? relPath : relPath.slice(slash + 1);
-      const siblings = byParent.get(parent) ?? [];
-      siblings.push({ entry: { ...entry, name }, relPath });
-      byParent.set(parent, siblings);
-    }
-    const visitDirectory = async (parent: string): Promise<void> => {
-      for (const { entry, relPath } of byParent.get(parent) ?? []) {
-        const { name } = entry;
-        if (name === '.git') continue;
-        const isDir = entry.isDirectory && entry.isSymbolicLink !== true;
-        const kind: 'file' | 'directory' | 'symlink' = entry.isSymbolicLink
-          ? 'symlink'
-          : isDir
-            ? 'directory'
-            : 'file';
-        await visit(relPath, name, kind);
-        if (isDir) await visitDirectory(relPath);
-      }
-    };
-    await visitDirectory('');
-    return result.truncated;
   }
 
   private async matcherFor(rootDir: string): Promise<Ignore | undefined> {
@@ -1414,7 +1379,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       ig.add(contents);
     } catch {
     }
-    const rules = ['.git/', ...contents.split(/\r?\n/)];
+    const rules = [...contents.split(/\r?\n/), '.git/'];
     const result = { matcher: ig, walkRules: rules };
     this.gitignoreCache.set(rootDir, result);
     return result;

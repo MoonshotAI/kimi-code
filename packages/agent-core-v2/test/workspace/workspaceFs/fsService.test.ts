@@ -15,7 +15,7 @@ import { EnvironmentError } from '#/environment/environmentRegistry';
 import { HandshakeError } from '#/remote/client/connection';
 import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { HostFsError } from '#/os/interface/hostFsErrors';
-import { walkHostDirectory } from '#/os/interface/hostFsWalk';
+import { walkDirectoryTree } from '#/os/backends/node-local/hostFsService';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
@@ -231,7 +231,7 @@ function fakeFs(
       for (const s of symlinkSet) visit(s, 'symlink');
       return [...children.values()];
     },
-    walk: (path, options) => walkHostDirectory(fs, path, options),
+    walk: (path, options, visit) => walkDirectoryTree(fs, path, options, visit),
     mkdir: async (p, options) => {
       const recursive = options?.recursive ?? false;
       const exists = isDir(p) || fileMap.has(p);
@@ -1228,7 +1228,7 @@ describe('WorkspaceFsService.suggest', () => {
     let receivedIgnore: readonly string[] | undefined;
     backend.walk = async (_path, options) => {
       receivedIgnore = options.ignore;
-      return { entries: [], errors: [], truncated: true, responseBytes: 64 };
+      return { truncated: true };
     };
     const fs = makeRemoteWalkSession(backend);
 
@@ -1239,11 +1239,11 @@ describe('WorkspaceFsService.suggest', () => {
       follow_gitignore: true,
     });
 
-    expect(receivedIgnore).toEqual(['.git/', 'node_modules/', '']);
+    expect(receivedIgnore).toEqual(['node_modules/', '', '.git/']);
     expect(result).toEqual({ items: [], truncated: true });
   });
 
-  it('keeps matching and file enumeration order when using batched walks', async () => {
+  it('keeps file enumeration order and prunes .git through the backend walk', async () => {
     const backend = fakeFs({
       '.git/config': 'hello\n',
       'a/first.ts': 'hello\n',
@@ -1589,19 +1589,13 @@ describe('WorkspaceFsService.suggest', () => {
     vi.spyOn(Date, 'now').mockImplementation(() => clock);
     let deadline: number | undefined;
     const roots: string[] = [];
-    backend.walk = async (path, options) => {
+    backend.walk = async (path, options, visit) => {
       roots.push(path);
       deadline = options.deadlineMs;
       clock += 10_000;
-      return {
-        entries: [
-          { name: '/repo/src', isFile: false, isDirectory: true },
-          { name: '/repo/src/foo.ts', isFile: true, isDirectory: false },
-        ],
-        errors: [],
-        truncated: true,
-        responseBytes: 128,
-      };
+      await visit({ path: 'src', kind: 'directory' });
+      await visit({ path: 'src/foo.ts', kind: 'file' });
+      return { truncated: true };
     };
     const fs = makeRemoteWalkSession(backend);
     Object.defineProperty(fs, 'suggestRoots', {
@@ -1631,7 +1625,7 @@ describe('WorkspaceFsService.suggest', () => {
     let deadline: number | undefined;
     backend.walk = async (_path, options) => {
       deadline = options.deadlineMs;
-      return { entries: [], errors: [], truncated: false, responseBytes: 64 };
+      return { truncated: false };
     };
     const runner: IHostProcessService = {
       _serviceBrand: undefined,
@@ -1945,18 +1939,12 @@ describe('WorkspaceFsService.grep', () => {
     let clock = 1_000;
     vi.spyOn(Date, 'now').mockImplementation(() => clock);
     const roots: string[] = [];
-    backend.walk = async (path) => {
+    backend.walk = async (path, _options, visit) => {
       roots.push(path);
       clock += 30_000;
-      return {
-        entries: [
-          { name: '/repo/src', isFile: false, isDirectory: true },
-          { name: '/repo/src/a.ts', isFile: true, isDirectory: false },
-        ],
-        errors: [],
-        truncated: true,
-        responseBytes: 128,
-      };
+      await visit({ path: 'src', kind: 'directory' });
+      await visit({ path: 'src/a.ts', kind: 'file' });
+      return { truncated: true };
     };
     const fs = makeRemoteWalkSession(backend);
     Object.defineProperty(fs, 'suggestRoots', {
@@ -1974,7 +1962,7 @@ describe('WorkspaceFsService.grep', () => {
     expect(roots).toEqual([WORK_DIR]);
     backend.walk = async () => {
       clock += 30_000;
-      return { entries: [], errors: [], truncated: true, responseBytes: 64 };
+      return { truncated: true };
     };
     await expect(fs.grep({ ...WALK_GREP_REQUEST })).rejects.toMatchObject({
       code: ErrorCodes.FS_GREP_TIMEOUT,

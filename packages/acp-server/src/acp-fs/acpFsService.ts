@@ -22,7 +22,7 @@ import {
   type HostFileHead,
   type HostFileStat,
   type HostWalkOptions,
-  type HostWalkResult,
+  type HostWalkVisitor,
   IHostFileSystem,
   ISessionContext,
   LifecycleScope,
@@ -158,8 +158,8 @@ export class AcpHostFileSystem implements IHostFileSystem {
     return this.inner.readdir(path);
   }
 
-  walk(path: string, options: HostWalkOptions): Promise<HostWalkResult> {
-    return this.inner.walk(path, options);
+  walk(path: string, options: HostWalkOptions, visit: HostWalkVisitor): Promise<{ readonly truncated: boolean }> {
+    return this.inner.walk(path, options, visit);
   }
 
   mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {

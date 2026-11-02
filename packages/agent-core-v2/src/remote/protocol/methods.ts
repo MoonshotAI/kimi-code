@@ -113,35 +113,18 @@ export interface FsReadDirectoryResult {
 
 export interface FsWalkParams {
   readonly path: string;
-  readonly maxDepth: number;
-  readonly maxDirectories: number;
-  readonly maxEntries: number;
-  readonly maxResponseBytes: number;
   readonly ignore?: readonly string[];
   readonly timeoutMs?: number;
 }
 
 export interface FsWalkEntry {
-  readonly name: string;
-  readonly isFile: boolean;
-  readonly isDirectory: boolean;
-  readonly isSymbolicLink?: boolean;
-}
-
-export interface FsWalkError {
   readonly path: string;
-  readonly error: {
-    readonly code: number;
-    readonly message: string;
-    readonly data?: unknown;
-  };
+  readonly kind: 'file' | 'directory' | 'symlink';
 }
 
 export interface FsWalkResult {
   readonly entries: readonly FsWalkEntry[];
-  readonly errors: readonly FsWalkError[];
   readonly truncated: boolean;
-  readonly responseBytes: number;
 }
 
 export interface FsRemoveParams {
@@ -210,5 +193,9 @@ export const FS_READ_FILE_MAX_BYTES = 1024 * 1024;
 export const FS_READ_FILE_WHOLE_MAX_BYTES = 32 * 1024 * 1024;
 export const FS_WRITE_FILE_CHUNK_BYTES = 1024 * 1024;
 export const FS_READ_DIRECTORY_MAX_ENTRIES = 50_000;
+export const FS_WALK_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+export const FS_WALK_ENTRY_OVERHEAD_BYTES = 48;
+export const FS_WALK_DEFAULT_TIMEOUT_MS = 55_000;
+export const FS_WALK_MAX_TIMEOUT_MS = 60_000;
 export const MAX_IN_FLIGHT_CALLS = 256;
 export const MAX_PENDING_SEND_BYTES = 64 * 1024 * 1024;

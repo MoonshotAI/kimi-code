@@ -1,5 +1,3 @@
-import * as posixPath from 'node:path/posix';
-
 import {
   decodeTextWithErrors,
   readUtf8Lines,
@@ -11,14 +9,9 @@ import type {
   HostFileHead,
   HostFileStat,
   HostWalkOptions,
-  HostWalkResult,
+  HostWalkVisitor,
   IHostFileSystem,
 } from '#/os/interface/hostFileSystem';
-import {
-  HOST_WALK_DEFAULT_TIMEOUT_MS,
-  HOST_WALK_MAX_IGNORE_BYTES,
-  walkHostDirectory,
-} from '#/os/interface/hostFsWalk';
 import {
   HostFsError,
   OsFsErrors,
@@ -38,6 +31,7 @@ import {
   FS_READ_FILE_METHOD,
   FS_REMOVE_METHOD,
   FS_RENAME_METHOD,
+  FS_WALK_DEFAULT_TIMEOUT_MS,
   FS_WALK_METHOD,
   FS_WRITE_FILE_CHUNK_BYTES,
   FS_WRITE_FILE_METHOD,
@@ -50,11 +44,6 @@ import {
 import { rpcDomainError } from './rpcDomainError';
 
 const HOST_FS_CODES: ReadonlySet<string> = new Set(Object.values(OsFsErrors.codes));
-const REMOTE_WALK_PATH = {
-  join: (...paths: readonly string[]) => posixPath.join(...paths),
-  relative: (from: string, to: string) => posixPath.relative(from, to),
-  separator: posixPath.sep,
-};
 
 export function toRemoteFsError(error: unknown): Error {
   if (!(error instanceof RpcError)) {
@@ -261,44 +250,18 @@ export class RemoteFileSystem implements IHostFileSystem {
     }));
   }
 
-  async walk(path: string, options: HostWalkOptions): Promise<HostWalkResult> {
-    const remainingMs = options.deadlineMs === undefined ? undefined : options.deadlineMs - Date.now();
-    if (remainingMs !== undefined && remainingMs <= 0) {
-      return { entries: [], errors: [], truncated: true, responseBytes: 0 };
+  async walk(path: string, options: HostWalkOptions, visit: HostWalkVisitor): Promise<{ readonly truncated: boolean }> {
+    const remainingMs = options.deadlineMs === undefined ? FS_WALK_DEFAULT_TIMEOUT_MS : options.deadlineMs - Date.now();
+    if (remainingMs <= 0) return { truncated: true };
+    const result = await this.call<FsWalkResult>(FS_WALK_METHOD, {
+      path,
+      ignore: options.ignore,
+      timeoutMs: Math.min(remainingMs, FS_WALK_DEFAULT_TIMEOUT_MS),
+    });
+    for (const entry of result.entries) {
+      if (await visit(entry) === false) return { truncated: true };
     }
-    const timeoutMs = Math.max(1, Math.min(
-      remainingMs ?? HOST_WALK_DEFAULT_TIMEOUT_MS,
-      HOST_WALK_DEFAULT_TIMEOUT_MS,
-    ));
-    if (options.ignore !== undefined && Buffer.byteLength(JSON.stringify(options.ignore)) > HOST_WALK_MAX_IGNORE_BYTES) {
-      return this.walkFallback(path, options);
-    }
-    try {
-      const result = await this.connection.call(FS_WALK_METHOD, {
-        path,
-        maxDepth: options.maxDepth,
-        maxDirectories: options.maxDirectories,
-        maxEntries: options.maxEntries,
-        maxResponseBytes: options.maxResponseBytes,
-        ignore: options.ignore,
-        timeoutMs,
-      }) as FsWalkResult;
-      return {
-        entries: result.entries,
-        errors: result.errors.map(({ path: errorPath, error }) => ({
-          path: errorPath,
-          error: toRemoteFsError(RpcError.fromErrorBody(error)),
-        })),
-        truncated: result.truncated,
-        responseBytes: result.responseBytes,
-      };
-    } catch (error) {
-      throw toRemoteFsError(error);
-    }
-  }
-
-  private async walkFallback(path: string, options: HostWalkOptions): Promise<HostWalkResult> {
-    return walkHostDirectory(this, path, options, { path: REMOTE_WALK_PATH });
+    return { truncated: result.truncated };
   }
 
   async mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void> {

@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 
-import type { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { type HostFileSystem, walkDirectoryTree } from '#/os/backends/node-local/hostFsService';
 import type { HostFileStat } from '#/os/interface/hostFileSystem';
 import { HostFsError, OsFsErrors, toHostFsError } from '#/os/interface/hostFsErrors';
 
@@ -13,18 +13,13 @@ import {
   type FsGetMetadataResult,
   type FsReadDirectoryResult,
   type FsReadFileResult,
+  FS_WALK_DEFAULT_TIMEOUT_MS,
+  FS_WALK_ENTRY_OVERHEAD_BYTES,
+  FS_WALK_MAX_RESPONSE_BYTES,
+  FS_WALK_MAX_TIMEOUT_MS,
+  type FsWalkEntry,
   type FsWalkResult,
 } from '#/remote/protocol/methods';
-import {
-  HOST_WALK_DEFAULT_TIMEOUT_MS,
-  HOST_WALK_MAX_DEPTH,
-  HOST_WALK_MAX_DIRECTORIES,
-  HOST_WALK_MAX_ENTRIES,
-  HOST_WALK_MAX_IGNORE_BYTES,
-  HOST_WALK_MAX_RESPONSE_BYTES,
-  HOST_WALK_MAX_TIMEOUT_MS,
-  walkHostDirectory,
-} from '#/os/interface/hostFsWalk';
 
 type Params = Record<string, unknown>;
 
@@ -229,40 +224,31 @@ export class FsHandler {
   async walk(rawParams: unknown): Promise<FsWalkResult> {
     const params = requireParams(rawParams);
     const path = requireAbsolutePath(params, 'path');
-    const maxDepth = optionalInteger(params, 'maxDepth', 0, HOST_WALK_MAX_DEPTH) ?? HOST_WALK_MAX_DEPTH;
-    const maxDirectories = optionalInteger(params, 'maxDirectories', 1, HOST_WALK_MAX_DIRECTORIES) ?? HOST_WALK_MAX_DIRECTORIES;
-    const maxEntries = optionalInteger(params, 'maxEntries', 1, HOST_WALK_MAX_ENTRIES) ?? HOST_WALK_MAX_ENTRIES;
-    const maxResponseBytes = optionalInteger(params, 'maxResponseBytes', 1, HOST_WALK_MAX_RESPONSE_BYTES) ?? HOST_WALK_MAX_RESPONSE_BYTES;
     const ignore = optionalStringArray(params, 'ignore');
-    if (ignore !== undefined && Buffer.byteLength(JSON.stringify(ignore)) > HOST_WALK_MAX_IGNORE_BYTES) {
-      throw new RpcError(
-        RpcErrorCode.InvalidParams,
-        `ignore must not exceed ${HOST_WALK_MAX_IGNORE_BYTES} bytes when encoded as JSON`,
-      );
-    }
-    const timeoutMs = optionalInteger(params, 'timeoutMs', 1, HOST_WALK_MAX_TIMEOUT_MS) ?? HOST_WALK_DEFAULT_TIMEOUT_MS;
-    const result = await walkHostDirectory(this.fs, path, {
-      maxDepth,
-      maxDirectories,
-      maxEntries,
-      maxResponseBytes,
-      ignore,
-      deadlineMs: Date.now() + timeoutMs,
-    }, {
-      serializeError: (errorPath, error) => fsDomainError(error, {
-        path: errorPath,
-        op: 'readdir',
-      }).toErrorBody(),
-    });
-    return {
-      entries: result.entries,
-      errors: result.errors.map(({ path: errorPath, error }) => ({
-        path: errorPath,
-        error: fsDomainError(error, { path: errorPath, op: 'readdir' }).toErrorBody(),
-      })),
-      truncated: result.truncated,
-      responseBytes: result.responseBytes,
+    const timeoutMs = optionalInteger(params, 'timeoutMs', 1, FS_WALK_MAX_TIMEOUT_MS) ?? FS_WALK_DEFAULT_TIMEOUT_MS;
+    const entries: FsWalkEntry[] = [];
+    let responseBytes = 0;
+    const readdir = async (directory: string) => {
+      const children = await this.fs.readdir(directory);
+      if (children.length > FS_READ_DIRECTORY_MAX_ENTRIES) {
+        throw new HostFsError(
+          OsFsErrors.codes.OS_FS_DIRECTORY_TOO_LARGE,
+          `readdir ${directory} exceeds the ${FS_READ_DIRECTORY_MAX_ENTRIES}-entry limit`,
+          { details: { path: directory, op: 'readdir', limit: FS_READ_DIRECTORY_MAX_ENTRIES } },
+        );
+      }
+      return children;
     };
+    try {
+      const { truncated } = await walkDirectoryTree({ readdir }, path, { ignore, deadlineMs: Date.now() + timeoutMs }, (entry) => {
+        responseBytes += Buffer.byteLength(entry.path) + FS_WALK_ENTRY_OVERHEAD_BYTES;
+        if (responseBytes > FS_WALK_MAX_RESPONSE_BYTES) return false;
+        entries.push(entry);
+      });
+      return { entries, truncated };
+    } catch (error) {
+      throw fsDomainError(error, { path, op: 'readdir' });
+    }
   }
 
   async remove(rawParams: unknown): Promise<typeof EMPTY> {
