@@ -694,6 +694,36 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     expect(toKimiErrorPayload(new APIStatusError(502, message))).toMatchObject({
       message,
     });
+
+    const retryableClientError = new APIStatusError(
+      400,
+      'explicitly retryable',
+      null,
+      null,
+      undefined,
+      undefined,
+      true,
+    );
+    expect(toKimiErrorPayload(retryableClientError)).toMatchObject({
+      code: ErrorCodes.PROVIDER_API_ERROR,
+      message: 'explicitly retryable',
+      retryable: true,
+    });
+
+    const deterministicServerError = new APIStatusError(
+      503,
+      'explicitly deterministic',
+      null,
+      null,
+      undefined,
+      undefined,
+      false,
+    );
+    expect(toKimiErrorPayload(deterministicServerError)).toMatchObject({
+      code: ErrorCodes.PROVIDER_API_ERROR,
+      message: 'explicitly deterministic',
+      retryable: false,
+    });
   });
 
   it('restates engine MCP management Error2s as KimiError, undeclared codes as internal', async () => {

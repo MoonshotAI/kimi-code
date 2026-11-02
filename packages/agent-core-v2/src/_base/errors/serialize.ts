@@ -18,6 +18,7 @@ export interface CodedErrorShape {
   readonly message: string;
   readonly name?: string;
   readonly details?: Readonly<Record<string, unknown>>;
+  readonly retryable?: boolean;
 }
 
 const MAX_CAUSE_DEPTH = 8;
@@ -70,7 +71,7 @@ function toShallowErrorPayload(error: unknown): ErrorPayload {
       message: error.message,
       name: error.name,
       details: detailsForErrorPayload(error),
-      retryable: errorInfo(error.code).retryable,
+      retryable: error.retryable ?? errorInfo(error.code).retryable,
     };
   }
   if (error instanceof Error) {

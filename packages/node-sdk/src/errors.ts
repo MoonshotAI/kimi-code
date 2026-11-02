@@ -559,7 +559,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
         statusCode: error.statusCode,
         requestId: error.requestId,
       },
-      retryable: KIMI_ERROR_INFO[code].retryable,
+      retryable: error.retryable,
     };
   }
 
@@ -568,7 +568,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
       code: ErrorCodes.PROVIDER_CONNECTION_ERROR,
       message: error.message,
       name: error.name,
-      retryable: KIMI_ERROR_INFO[ErrorCodes.PROVIDER_CONNECTION_ERROR].retryable,
+      retryable: error.retryable,
     };
   }
 
@@ -585,7 +585,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
         finishReason: error.finishReason,
         rawFinishReason: error.rawFinishReason,
       },
-      retryable: KIMI_ERROR_INFO[code].retryable,
+      retryable: error.retryable,
     };
   }
 
@@ -594,7 +594,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
       code: ErrorCodes.PROVIDER_API_ERROR,
       message: error.message,
       name: error.name,
-      retryable: KIMI_ERROR_INFO[ErrorCodes.PROVIDER_API_ERROR].retryable,
+      retryable: error.retryable,
     };
   }
 

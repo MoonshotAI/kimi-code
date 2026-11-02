@@ -22,6 +22,18 @@ describe('toErrorPayload', () => {
     });
   });
 
+  it('prefers explicit model retryability over registry metadata', () => {
+    const retryable = Object.assign(new Error2('provider.api_error', 'retry'), {
+      retryable: true,
+    });
+    const deterministic = Object.assign(new Error2('provider.rate_limit', 'stop'), {
+      retryable: false,
+    });
+
+    expect(toErrorPayload(retryable).retryable).toBe(true);
+    expect(toErrorPayload(deterministic).retryable).toBe(false);
+  });
+
   it('keeps a status code only when it matches the direct model error status', () => {
     const modelError = Object.assign(
       new Error2('provider.api_error', 'model failure', {

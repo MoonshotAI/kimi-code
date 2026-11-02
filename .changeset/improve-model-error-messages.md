@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Show backend model error messages verbatim, stop inferring quota and retry decisions from messages or HTTP statuses, and require explicit retryability for decoded model errors.
+Show backend model error messages verbatim, stop inferring quota from message wording, and require decoded model errors to carry explicit retryability for retry policies.
