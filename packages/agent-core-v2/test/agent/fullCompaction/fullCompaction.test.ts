@@ -34,6 +34,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { renderCompactionInstruction } from '#/agent/fullCompaction/compactionInstruction';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
+import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import {
   IAgentFullCompactionService,
@@ -320,6 +321,74 @@ describe('FullCompaction', () => {
       }),
     });
     await ctx.expectResumeMatches();
+  });
+
+  it('uses measured tokens and estimates only the pending tool result for compaction before counts', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
+    });
+    ctx.appendUserMessage([{ type: 'text', text: 'run lookup' }]);
+    ctx.context.append({
+      role: 'assistant',
+      content: [],
+      toolCalls: [{ type: 'function', id: 'call_lookup', name: 'Lookup', arguments: '{}' }],
+    });
+    ctx.tokenCounting.measured(ctx.context.get(), [], {
+      inputOther: 99_999,
+      output: 1,
+      inputCacheRead: 0,
+      inputCacheCreation: 0,
+    });
+    const pendingToolResult = {
+      role: 'tool' as const,
+      content: [{ type: 'text' as const, text: 'pending tool result '.repeat(20) }],
+      toolCallId: 'call_lookup',
+    };
+    ctx.context.append(pendingToolResult);
+    const expected = 100_000 + estimateTokensForMessages([pendingToolResult]);
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    const completed = ctx.once('compaction.completed');
+    const service = ctx.get(IAgentFullCompactionService);
+
+    expect(service.begin({ source: 'manual' })).toBe(true);
+    const active = service.compacting!;
+    const activeTokenCount = active.tokenCount;
+    const result = await active.promise;
+    await completed;
+
+    expect(activeTokenCount).toBe(expected);
+    expect(result.tokensBefore).toBe(expected);
+  });
+
+  it('keeps full request estimates for compaction without a measured anchor', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: [],
+    });
+    ctx.appendTurnExchange('old user', 'old assistant');
+    const expected = ctx.tokenCounting.requestSize({
+      systemPrompt: ctx.get(IAgentProfileService).getSystemPrompt(),
+      tools: ctx.get(IAgentToolSelectService).defaultTools().filter((tool) => tool.deferred !== true),
+      messages: ctx.context.get(),
+    });
+    expect(ctx.tokenCounting.latestMeasured()).toBe(0);
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    const completed = ctx.once('compaction.completed');
+    const service = ctx.get(IAgentFullCompactionService);
+
+    expect(service.begin({ source: 'manual' })).toBe(true);
+    const active = service.compacting!;
+    const activeTokenCount = active.tokenCount;
+    const result = await active.promise;
+    await completed;
+
+    expect(activeTokenCount).toBe(expected);
+    expect(result.tokensBefore).toBe(expected);
   });
 
   it('holds the loop quiescence lease for the full manual compaction', async () => {
