@@ -249,11 +249,7 @@ export class TranscriptItemInspector {
     groupTools: TranscriptGroupTools,
   ): readonly TranscriptItem[] {
     if (component instanceof UserMessageComponent) return [boundary(component, sourceIndex, 'text')];
-    if (
-      groupTools !== 'off' &&
-      component instanceof SkillActivationComponent &&
-      (component.trigger === 'model-tool' || component.trigger === 'nested-skill')
-    ) {
+    if (groupTools !== 'off' && component instanceof SkillActivationComponent && component.loadedByModel) {
       return [transparent(component, sourceIndex)];
     }
     if (

@@ -18,6 +18,7 @@ import {
   TranscriptGroupComponent,
   type TranscriptGroupInteraction,
 } from '#/tui/components/messages/transcript-group';
+import { SkillActivationComponent } from '#/tui/components/messages/skill-activation';
 import { TranscriptMoreComponent } from '#/tui/components/messages/transcript-more';
 import {
   countedByExpandHint,
@@ -423,7 +424,9 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   private firstExpandableSourceIndex(): number {
     const boundaries: number[] = [];
     for (const [index, child] of this.sourceChildren.entries()) {
-      if (isTurnBoundaryComponent(child)) boundaries.push(index);
+      if (!isTurnBoundaryComponent(child)) continue;
+      if (child instanceof SkillActivationComponent && child.loadedByModel) continue;
+      boundaries.push(index);
     }
     return expandCutoffIndex(this.sourceChildren.length, boundaries, TRANSCRIPT_EXPAND_TURNS);
   }

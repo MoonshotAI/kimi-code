@@ -1092,6 +1092,73 @@ describe('skill activation cards in grouped transcripts', () => {
   });
 });
 
+describe('Ctrl+O turn counting with skill activation cards', () => {
+  function skillCard(trigger: 'user-slash' | 'model-tool' | 'nested-skill'): SkillActivationComponent {
+    const card = new SkillActivationComponent('foo', undefined, trigger);
+    const entry: TranscriptEntry = {
+      id: `entry-${++id}`,
+      kind: 'skill_activation',
+      turnId: undefined,
+      renderMode: 'plain',
+      content: 'Activated skill: foo',
+      skillTrigger: trigger,
+    };
+    markTranscriptComponent(card, entry);
+    return card;
+  }
+
+  function history(container: TranscriptContainer): void {
+    for (const text of ['one', 'two', 'three']) container.addChild(user(text));
+  }
+
+  it('expands a group spanning model skill cards in the latest turn', () => {
+    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    history(container);
+    container.addChild(user('latest'));
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    for (const name of ['a', 'b', 'c']) {
+      container.addChild(tool('Skill', { skill: name }));
+      container.addChild(skillCard('model-tool'));
+    }
+    container.addChild(tool('Read', { path: '/work/b.ts' }));
+
+    expect(container.toolOutputExpandHint()).toBe('expand');
+    expect(container.toggleToolOutputExpansion()).toBe(true);
+
+    expect(onlyGroup(container).expanded).toBe(true);
+    expect(container.toolOutputExpandHint()).toBe('collapse');
+  });
+
+  it('expands cards before model skill cards in the regular transcript', () => {
+    const { container } = makeContainer(options({ fullscreen: false, groupTools: 'off' }));
+    history(container);
+    container.addChild(user('latest'));
+    const read = tool('Read', { path: '/work/a.ts' });
+    container.addChild(read);
+    for (const trigger of ['model-tool', 'nested-skill', 'model-tool'] as const) {
+      container.addChild(skillCard(trigger));
+    }
+
+    container.toggleToolOutputExpansion();
+
+    expect(read.isExpanded()).toBe(true);
+  });
+
+  it('still counts a user-triggered skill card as the start of a turn', () => {
+    const { container } = makeContainer(options({ fullscreen: false, groupTools: 'off' }));
+    for (const text of ['one', 'two']) container.addChild(user(text));
+    const read = tool('Read', { path: '/work/a.ts' });
+    container.addChild(read);
+    container.addChild(skillCard('user-slash'));
+    container.addChild(skillCard('user-slash'));
+    container.addChild(skillCard('user-slash'));
+
+    container.toggleToolOutputExpansion();
+
+    expect(read.isExpanded()).toBe(false);
+  });
+});
+
 describe('TranscriptContainer streaming updates', () => {
   it('stops treating a truncated call as running', () => {
     const { container } = makeContainer();
