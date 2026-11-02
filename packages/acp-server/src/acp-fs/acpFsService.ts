@@ -15,7 +15,15 @@
  * connection.
  */
 
+import { dirname } from 'node:path';
+
 import { RequestError } from '@agentclientprotocol/sdk';
+import {
+  HostFsError,
+  isHostFsNotDirectory,
+  isHostFsNotFound,
+  OsFsErrors,
+} from '@moonshot-ai/agent-core-v2/os/interface/hostFsErrors';
 import {
   HostFileSystem,
   type HostDirEntry,
@@ -80,13 +88,32 @@ export class AcpHostFileSystem implements IHostFileSystem {
     return content;
   }
 
+  /**
+   * Client write failures carry no filesystem error code. When the local
+   * parent is missing or is not a directory, re-raise the failure as the
+   * matching host fs error so callers can create the parent and retry.
+   */
   async writeText(path: string, data: string): Promise<void> {
     if (!this.connection.fsWriteTextFile) {
       return this.inner.writeText(path, data);
     }
-    await this.connection
-      .get()
-      .writeTextFile({ sessionId: this.ctx.sessionId, path, content: data });
+    try {
+      await this.connection
+        .get()
+        .writeTextFile({ sessionId: this.ctx.sessionId, path, content: data });
+    } catch (error) {
+      const parent = dirname(path);
+      const parentStat = await this.inner.stat(parent).catch((statError: unknown) => {
+        throw isHostFsNotFound(statError) || isHostFsNotDirectory(statError) ? statError : error;
+      });
+      if (!parentStat.isDirectory) {
+        throw new HostFsError(OsFsErrors.codes.OS_FS_NOT_DIRECTORY, `write failed: parent is not a directory: ${parent}`, {
+          details: { path: parent, op: 'write' },
+          cause: error,
+        });
+      }
+      throw error;
+    }
   }
 
   /**
