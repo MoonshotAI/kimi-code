@@ -194,7 +194,7 @@ import {
 import type { ExtractionResult } from './utils/image-placeholder';
 import { installInputLatencyProbe } from './utils/input-latency';
 import {
-  steerEventText,
+  steerEventParts,
   steerPayloadText,
   takeDeliveredSteerBatches,
   type SteerDeliveryBatch,
@@ -358,7 +358,7 @@ export class KimiTUI {
   private readonly staging: StagingLeaseTracker;
   private readonly steeringQueuedMessages = new Set<QueuedMessage>();
   private readonly pendingPromptEntries = new Set<TranscriptEntry>();
-  private pendingSteerDeliveries: SteerDeliveryBatch<TranscriptEntry>[] = [];
+  private pendingSteerDeliveries: Array<SteerDeliveryBatch<TranscriptEntry> & { readonly mediaOnly: boolean }> = [];
   private readonly autoTitleAttempts = new Map<string, { attempts: number; done: boolean }>();
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
@@ -2157,6 +2157,7 @@ export class KimiTUI {
   }
 
   handleTurnEnded(event: TurnEndedEvent): void {
+    this.pendingSteerDeliveries = [];
     this.staging.handleTurnEnded(event);
     this.surveyController.notifyTurnEnded(event.requestId);
     this.programStatus.finishTurn(event);
@@ -2605,8 +2606,21 @@ export class KimiTUI {
   }
 
   acknowledgeSteerDelivery(input: unknown): void {
-    const eventText = steerEventText(input);
-    const { delivered, pending } = takeDeliveredSteerBatches(this.pendingSteerDeliveries, eventText);
+    const { texts, hasMedia } = steerEventParts(input);
+    let pending = this.pendingSteerDeliveries;
+    const delivered: typeof pending = [];
+    for (const text of texts) {
+      const step = takeDeliveredSteerBatches(pending, text);
+      delivered.push(...step.delivered.map((batch) => ({ ...batch, mediaOnly: false })));
+      pending = pending.filter((batch) => !step.delivered.includes(batch));
+    }
+    if (texts.length === 0 && hasMedia) {
+      const index = pending.findIndex((batch) => batch.mediaOnly);
+      if (index >= 0) {
+        delivered.push(pending[index]!);
+        pending = pending.filter((_, item) => item !== index);
+      }
+    }
     if (delivered.length === 0) return;
     this.pendingSteerDeliveries = pending;
     for (const batch of delivered) this.setSteerEntriesPending(batch.entries, false);
@@ -2621,6 +2635,7 @@ export class KimiTUI {
     this.pendingSteerDeliveries.push({
       entries,
       text: payloadText.length > 0 ? payloadText : displayText,
+      mediaOnly: payloadText.length === 0,
     });
   }
 
@@ -3282,6 +3297,7 @@ export class KimiTUI {
     previous?.setQuestionHandler(undefined);
     this.approvalController.cancelAll(reason);
     this.questionController.cancelAll(reason);
+    this.pendingSteerDeliveries = [];
     this.session = undefined;
     this.state.swarmModeEntry = undefined;
     this.harness.setTelemetryContext({ sessionId: null });

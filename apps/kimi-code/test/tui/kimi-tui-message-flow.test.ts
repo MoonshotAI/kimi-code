@@ -4990,6 +4990,54 @@ command = "vim"
     }
   });
 
+  it('does not let an unmatched steer steal a later confirmation of the same text', async () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const session = makeSession({
+        steer: vi.fn(async () => {}),
+      });
+      const { driver } = await makeDriver(session);
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+      driver.state.editor.setText('same');
+      driver.state.editor.onCtrlS?.();
+      await vi.waitFor(() => {
+        expect(session.steer).toHaveBeenCalledTimes(1);
+      });
+
+      driver.sessionEventHandler.handleEvent(
+        { type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 1, reason: 'completed' } as Event,
+        () => {},
+      );
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('2');
+      driver.state.editor.setText('same');
+      driver.state.editor.onCtrlS?.();
+      await vi.waitFor(() => {
+        expect(session.steer).toHaveBeenCalledTimes(2);
+      });
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.steer',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 2,
+          input: [{ type: 'text', text: 'same' }],
+          origin: { kind: 'user' },
+        } as Event,
+        () => {},
+      );
+
+      const pending = driver.state.transcriptEntries.filter((entry) => entry.content === 'same' && entry.steerPending === true);
+      const delivered = driver.state.transcriptEntries.filter((entry) => entry.content === 'same' && entry.steerPending !== true);
+      expect(pending).toHaveLength(1);
+      expect(delivered).toHaveLength(1);
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
+
   it('restores a failed Ctrl-S steer instead of leaving it faint', async () => {
     const previousLevel = chalk.level;
     chalk.level = 3;

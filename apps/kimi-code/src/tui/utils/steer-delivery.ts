@@ -14,17 +14,30 @@ export function steerPayloadText(
   return text;
 }
 
-export function steerEventText(input: unknown): string {
-  if (typeof input === 'string') return input;
-  if (!Array.isArray(input)) return '';
-  let text = '';
+export function steerEventParts(input: unknown): { readonly texts: readonly string[]; readonly hasMedia: boolean } {
+  if (typeof input === 'string') {
+    return { texts: input.length > 0 ? [input] : [], hasMedia: false };
+  }
+  if (!Array.isArray(input)) return { texts: [], hasMedia: false };
+  const texts: string[] = [];
+  let hasMedia = false;
   for (const part of input) {
     if (part === null || typeof part !== 'object') continue;
-    if (!('type' in part) || part.type !== 'text') continue;
-    if (!('text' in part) || typeof part.text !== 'string') continue;
-    text += part.text;
+    if (!('type' in part) || typeof part.type !== 'string') continue;
+    if (part.type !== 'text') {
+      hasMedia = true;
+      continue;
+    }
+    if (hasSource(part)) continue;
+    if (!('text' in part) || typeof part.text !== 'string' || part.text.length === 0) continue;
+    texts.push(part.text);
   }
-  return text;
+  return { texts, hasMedia };
+}
+
+function hasSource(part: object): boolean {
+  if (!('meta' in part) || part.meta === null || typeof part.meta !== 'object') return false;
+  return 'source' in part.meta && part.meta.source !== undefined;
 }
 
 export function isTurnSteerEvent(

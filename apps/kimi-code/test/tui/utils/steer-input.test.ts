@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { PromptPart } from '@moonshot-ai/kimi-code-sdk';
 
 import type { SteerInputItem } from '#/tui/types';
-import { takeDeliveredSteerBatches } from '#/tui/utils/steer-delivery';
+import { steerEventParts, takeDeliveredSteerBatches } from '#/tui/utils/steer-delivery';
 import { combineSteerInput } from '#/tui/utils/steer-input';
 
 describe('combineSteerInput', () => {
@@ -100,6 +100,15 @@ describe('takeDeliveredSteerBatches', () => {
     const result = takeDeliveredSteerBatches([first, second], 'one\n\ntwo');
     expect(result.delivered).toEqual([first, second]);
     expect(result.pending).toEqual([]);
+  });
+
+  it('drops skill and hook text that carries a source marker', () => {
+    expect(steerEventParts([
+      { type: 'text', text: 'skill instructions', meta: { source: 'skill activation' } },
+      { type: 'text', text: 'check src/app.ts' },
+      { type: 'text', text: 'hook note', meta: { source: 'user prompt submit hook' } },
+      { type: 'image_url' },
+    ])).toEqual({ texts: ['check src/app.ts'], hasMedia: true });
   });
 
   it('clears a steer when skill activation text is prepended', () => {
