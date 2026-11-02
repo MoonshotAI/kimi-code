@@ -50,6 +50,7 @@ export type SystemMeta = EntryMeta;
 
 export interface UserMeta extends EntryMeta {
   promptId?: string;
+  steerPromptIds?: readonly string[];
   origin?: PromptOrigin;
   tracked?: boolean;
   createdAt?: string;
@@ -179,7 +180,7 @@ export type TurnEvent =
   | { type: 'turn.notify'; messages: HistoryMessage[] }
   | { type: 'turn.pause' }
   | { type: 'turn.continue' }
-  | { type: 'turn.interrupt' }
+  | { type: 'turn.interrupt'; promptIds: readonly string[] }
   | { type: 'turn.abort'; reason?: unknown }
   | {
       type: 'turn.failure.evaluated';
@@ -272,6 +273,17 @@ function abortOutcomes(context: TurnMachineContext): Record<string, ToolOutput> 
 function maxStepsExceeded(context: TurnMachineContext): boolean {
   const maxSteps = context.input.maxSteps;
   return maxSteps !== undefined && maxSteps > 0 && context.steps >= maxSteps;
+}
+
+function steerAlreadyProduced(context: TurnMachineContext, promptIds: readonly string[]): boolean {
+  if (promptIds.length === 0) return false;
+  const ids = new Set(promptIds);
+  return context.produced.some((entry) => {
+    if (entry.message.role !== 'user') return false;
+    const meta = entry.meta as UserMeta | undefined;
+    if (meta?.promptId !== undefined && ids.has(meta.promptId)) return true;
+    return meta?.steerPromptIds?.some((id) => ids.has(id)) === true;
+  });
 }
 
 function baseMessages(context: TurnMachineContext): readonly Message[] {
@@ -696,6 +708,7 @@ export function createTurnMachine(
             },
           ],
           'turn.interrupt': {
+            guard: ({ context, event }) => !steerAlreadyProduced(context, event.promptIds),
             target: 'draining',
             actions: [
               ({ context }) => {
@@ -729,6 +742,7 @@ export function createTurnMachine(
         },
         on: {
           'turn.interrupt': {
+            guard: ({ context, event }) => !steerAlreadyProduced(context, event.promptIds),
             target: 'draining',
           },
           'turn.abort': {

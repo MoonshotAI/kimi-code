@@ -177,7 +177,7 @@ export interface MachineEngineSnapshot {
 export interface MachineEngine {
   submit(entry: UserEntry): void;
   steer(id: string | readonly string[]): void;
-  interrupt(): void;
+  interrupt(promptIds: readonly string[]): void;
   notify(entry: UserEntry): void;
   remind(entry: SystemEntry | UserEntry): void;
   cancelQueueItem(id: string): void;
@@ -515,8 +515,8 @@ export function attachMachineEngine(
       tools.sync();
       ref.send({ type: 'input.steer', id });
     },
-    interrupt: () => {
-      ref.send({ type: 'input.interrupt' });
+    interrupt: (promptIds) => {
+      ref.send({ type: 'input.interrupt', promptIds });
     },
     notify: (entry) => {
       tools.sync();

@@ -286,6 +286,7 @@ describe('prompt queue', () => {
     const pending = await enqueue(loop, { id: 'steer', message: message('steer') });
     await loop.steer([pending.id]);
     await loop.interrupt([pending.id]);
+    await loop.interrupt([pending.id]);
     await loop.settled();
 
     expect(firstSignal?.aborted).toBe(true);

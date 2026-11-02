@@ -448,7 +448,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         `Cannot interrupt while tool "${unsafe.name}" is running; wait for the current step to finish`,
       );
     }
-    this.machineEngine().interrupt();
+    this.machineEngine().interrupt(promptIds);
   }
 
   promptHandle(id: string): PromptHandle | undefined {
