@@ -68,6 +68,8 @@ import {
   IWorkspaceService,
   MAIN_AGENT_ID,
   OsProcessErrors,
+  APIProviderRateLimitError,
+  APIStatusError,
 } from '@moonshot-ai/agent-core-v2';
 
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
@@ -672,6 +674,27 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       await client.close();
     }
   }, 15_000);
+
+  it('preserves status-less rate limits and verbatim backend messages in SDK payloads', () => {
+    const rateLimit = new APIProviderRateLimitError(
+      'backend stream rate limit',
+      'req-stream',
+      null,
+      null,
+      { statusCode: undefined },
+    );
+    expect(toKimiErrorPayload(rateLimit)).toMatchObject({
+      code: ErrorCodes.PROVIDER_RATE_LIMIT,
+      message: 'backend stream rate limit',
+      details: { statusCode: undefined, requestId: 'req-stream' },
+      retryable: true,
+    });
+
+    const message = '<html><title>Backend title</title><body>Backend body</body></html>\r\n';
+    expect(toKimiErrorPayload(new APIStatusError(502, message))).toMatchObject({
+      message,
+    });
+  });
 
   it('restates engine MCP management Error2s as KimiError, undeclared codes as internal', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));

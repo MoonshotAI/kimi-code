@@ -2,6 +2,7 @@ import {
   APIConnectionError,
   APIEmptyResponseError,
   APIProviderQuotaExhaustedError,
+  APIProviderRateLimitError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
@@ -545,14 +546,14 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
     const code: KimiErrorCode =
       error instanceof APIProviderQuotaExhaustedError
         ? ErrorCodes.PROVIDER_API_ERROR
-        : error.statusCode === 429
+        : error instanceof APIProviderRateLimitError || error.statusCode === 429
           ? ErrorCodes.PROVIDER_RATE_LIMIT
           : error.statusCode === 401
             ? ErrorCodes.PROVIDER_AUTH_ERROR
             : ErrorCodes.PROVIDER_API_ERROR;
     return {
       code,
-      message: sanitizeStatusErrorMessage(error.message),
+      message: error.message,
       name: error.name,
       details: {
         statusCode: error.statusCode,
@@ -611,13 +612,6 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
     message: String(error),
     retryable: KIMI_ERROR_INFO[ErrorCodes.INTERNAL].retryable,
   };
-}
-
-function sanitizeStatusErrorMessage(message: string): string {
-  const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(message);
-  const extracted = titleMatch?.[1]?.trim();
-  const normalized = extracted !== undefined && extracted.length > 0 ? extracted : message;
-  return normalized.replaceAll('\r', '');
 }
 
 export function fromKimiErrorPayload(payload: KimiErrorPayload): KimiError {
