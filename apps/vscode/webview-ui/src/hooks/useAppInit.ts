@@ -73,9 +73,11 @@ export function useAppInit(): AppInitState {
 
   useEffect(() => {
     let cancelled = false;
+    let latestRead = 0;
     const unsubscribe = bridge.on(Events.ModelCatalogChanged, () => {
+      const read = ++latestRead;
       void bridge.getModels().then(({ models }) => {
-        if (!cancelled) setModels(models);
+        if (!cancelled && read === latestRead) setModels(models);
       }).catch((error: unknown) => {
         console.error("[AppInit] Failed to refresh models:", error);
       });
