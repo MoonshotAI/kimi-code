@@ -499,6 +499,43 @@ describe('tool environment routing', () => {
     ).resolves.toMatchObject(expected);
   });
 
+  it('refuses a routed Write whose declared working directory is missing', async () => {
+    const registry = new EnvironmentRegistry();
+    const written: string[] = [];
+    let workDirExists = false;
+    registry.register(Object.assign(
+      new FakeEnvironment({ environmentId: 'gpu', generation: 'gpu-one' }, { status: 'ready', capabilities: ['fs'] }),
+      {
+        fs: createFakeHostFs({
+          stat: async (path) => {
+            if (path === '/gpu' && !workDirExists) throw new Error('missing');
+            return { isFile: false, isDirectory: true, size: 0 };
+          },
+          writeText: async (path) => {
+            written.push(path);
+          },
+        }),
+      },
+    ));
+    const service = registryBackedService(registry, 'gpu');
+    const gpu: EnvironmentHandle = {
+      ...service,
+      target: { environmentId: 'gpu', primary: false, cwd: '/gpu' },
+      workspaceRoots: () => ({ workDir: '/gpu', additionalDirs: [] }),
+    };
+    const write = async () => new WriteTool(service).resolveExecution({ path: 'out.txt', content: 'hello' }, { environment: gpu });
+
+    await expect(write()).resolves.toMatchObject({
+      isError: true,
+      output: expect.stringContaining('Working directory /gpu does not exist on environment gpu'),
+    });
+    expect(written).toEqual([]);
+
+    workDirExists = true;
+    expect((await finish(await write())).output).toContain('Wrote 5 bytes');
+    expect(written).toEqual(['/gpu/out.txt']);
+  });
+
   it('runs Bash on the requested environment in its working directory', async () => {
     const { service, spawns } = routedHarness();
     const resolved = await bashTool(service).resolveExecution(

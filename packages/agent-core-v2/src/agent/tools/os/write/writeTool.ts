@@ -40,7 +40,8 @@ export class WriteTool implements IWriteTool {
 
   async resolveExecution(args: WriteInput, context?: ToolResolutionContext): Promise<ToolExecution> {
     const environment = context?.environment ?? this.environment;
-    const primary = context?.environment?.target.primary !== false;
+    const routed = context?.environment?.target;
+    const primary = routed?.primary !== false;
     const planTarget = primary ? await this.planService?.resolveFile(args.path) : undefined;
     if (planTarget !== undefined) {
       const path = planTarget.path;
@@ -64,6 +65,15 @@ export class WriteTool implements IWriteTool {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
       const roots = environment.workspaceRoots();
+      if (routed !== undefined && !routed.primary) {
+        const workDir = await inspected.fs!.stat(roots.workDir).catch(() => undefined);
+        if (workDir?.isDirectory !== true) {
+          return {
+            isError: true,
+            output: `Working directory ${roots.workDir} does not exist on environment ${routed.environmentId}. Check its defaultCwd before writing there.`,
+          };
+        }
+      }
       const view = new EnvironmentWorkspaceView(inspected, {
         workDir: roots.workDir,
         additionalDirs: [

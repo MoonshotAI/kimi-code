@@ -2567,6 +2567,14 @@ export class ToolCallComponent extends Container {
       this.buildStreamingPreview(this.toolCall.streamingArguments);
       return;
     }
+    // A call routed to a non-primary environment carries that environment's id
+    // in its display; name it so the card is not mistaken for a primary call.
+    const display = this.toolCall.display;
+    const environment =
+      display?.kind === 'command' || display?.kind === 'file_io' ? display.environment : undefined;
+    if (environment !== undefined && environment.length > 0) {
+      this.addChild(new Text(currentTheme.dim(`environment: ${environment}`), 2, 0));
+    }
     // Cap Edit's diff as soon as args finalize, not only when the result
     // lands — mirroring Write's writeShouldCap below. Otherwise the render
     // tick between finalized args (streamingArguments cleared by the
