@@ -29,7 +29,6 @@ let disposables: DisposableStore;
 let dispatcher: IEventDispatcher;
 let agentState: IAgentStateService;
 let log: IAppendLogStore;
-let eventBus: IEventBus;
 
 function buildHost(key: string): {
   dispatcher: IEventDispatcher;
@@ -57,7 +56,6 @@ beforeEach(() => {
   dispatcher = host.dispatcher;
   agentState = host.agentState;
   log = host.log;
-  eventBus = host.eventBus;
 });
 
 afterEach(() => disposables.dispose());
@@ -113,37 +111,6 @@ describe('task ops (wire-backed)', () => {
         type: 'task.started',
         agentId: 'test-agent',
         info: info('t2', 'running'),
-        time: expect.any(Number),
-      },
-    ]);
-  });
-
-  it('task.terminated persists the optional outputTail snapshot (record-only, never in the state or the bus)', async () => {
-    const published: Record<string, unknown>[] = [];
-    disposables.add(
-      eventBus.subscribe((e) => {
-        published.push(Object.assign({}, e) as unknown as Record<string, unknown>);
-      }),
-    );
-    await dispatcher.dispatch(
-      new TaskTerminated({ agentId: 'test-agent', info: info('t1', 'completed'), outputTail: 'last lines' }),
-    );
-
-    expect(await readRecords()).toEqual([
-      {
-        type: 'task.terminated',
-        agentId: 'test-agent',
-        info: info('t1', 'completed'),
-        outputTail: 'last lines',
-        time: expect.any(Number),
-      },
-    ]);
-    expect(agentState.get(taskKey).get('t1')).toEqual(info('t1', 'completed'));
-    expect(published).toEqual([
-      {
-        type: 'task.terminated',
-        agentId: 'test-agent',
-        info: info('t1', 'completed'),
         time: expect.any(Number),
       },
     ]);

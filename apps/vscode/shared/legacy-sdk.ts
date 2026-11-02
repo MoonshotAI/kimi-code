@@ -67,12 +67,13 @@ export interface ToolResult {
 
 export interface TurnBegin {
   user_input: string | ContentPart[];
+  turnIndex?: number;
 }
 
 export interface TokenUsage {
   input_other: number;
   output: number;
-  input_cache_read: number;
+  input_cache_read?: number;
   input_cache_creation: number;
 }
 

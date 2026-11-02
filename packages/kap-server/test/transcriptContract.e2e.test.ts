@@ -9,12 +9,14 @@ import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
   IAgentPlanService,
+  IAgentTaskService,
   IConfigService,
   closeSessionById,
   MAIN_AGENT_ID,
   getLiveSessionById,
   interactions,
   resumeSessionById,
+  type AgentTask,
   type ApprovalRequest,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -194,6 +196,7 @@ async function until(label: string, fn: () => Promise<boolean> | boolean, timeou
 interface TranscriptChannel {
   readonly frames: any[];
   readonly ops: any[];
+  readonly tasks: any[];
   reset(): any;
   close(): void;
 }
@@ -209,6 +212,7 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/ws`, [`kimi-code.bearer.${bearerToken(server)}`]);
   const frames: any[] = [];
   const ops: any[] = [];
+  const tasks: any[] = [];
   let resetFrame: any;
   ws.on('message', (data) => {
     let frame: any;
@@ -223,6 +227,7 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
       resetFrame = frame;
     }
     if (frame.type === 'transcript.ops' && payload?.agent_id === 'main') ops.push(...(payload.ops ?? []));
+    if (frame.type === 'task') tasks.push(frame);
   });
   await new Promise<void>((resolve, reject) => {
     ws.once('open', () => {
@@ -235,8 +240,52 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
   return {
     frames,
     ops,
+    tasks,
     reset: () => resetFrame?.payload,
     close: () => ws.close(),
+  };
+}
+
+interface FrameSocket {
+  send(frame: unknown): void;
+  next(match: (frame: any) => boolean): Promise<any>;
+  close(): Promise<void>;
+}
+
+async function openFrameSocket(server: RunningServer): Promise<FrameSocket> {
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/ws`, [`kimi-code.bearer.${bearerToken(server)}`]);
+  const frames: any[] = [];
+  ws.on('message', (data) => {
+    try {
+      frames.push(JSON.parse(rawToString(data)));
+    } catch {
+    }
+  });
+  const closed = new Promise<void>((resolve) => {
+    ws.once('close', () => resolve());
+  });
+  await new Promise<void>((resolve, reject) => {
+    ws.once('open', () => {
+      resolve();
+    });
+    ws.once('error', reject);
+  });
+  return {
+    send: (frame) => ws.send(JSON.stringify(frame)),
+    next: async (match) => {
+      let found: any;
+      await until('ws frame', () => {
+        const index = frames.findIndex(match);
+        if (index < 0) return false;
+        found = frames.splice(index, 1)[0];
+        return true;
+      }, 10000, 20);
+      return found;
+    },
+    close: async () => {
+      ws.close();
+      await closed;
+    },
   };
 }
 
@@ -519,7 +568,7 @@ describe('transcript contract e2e', () => {
     expect(String(toolFrame.output)).toContain(output);
   });
 
-  it('S4: a background subagent produces task entities and a task-origin notification turn', async () => {
+  it('S4: a background subagent streams task events and a task-origin notification turn', async () => {
     await boot([
       {
         match: (body) => body.includes('spawn-bg') && !body.includes('"role":"tool"'),
@@ -530,32 +579,27 @@ describe('transcript contract e2e', () => {
     ]);
     const sid = await createSession(server!, base);
     await submitPrompt(server!, base, sid, 'spawn-bg one background agent');
+    const channel = await subscribeTranscript(server!, sid);
 
-    await until('background task running', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return tx.tasks.some((t: any) => t.kind === 'subagent' && t.state === 'running');
+    await until('background task running', () =>
+      channel.tasks.some((t) => t.kind === 'subagent' && t.status === 'running'),
+    );
+    const task = channel.tasks.find((t) => t.kind === 'subagent');
+    expect(task).toMatchObject({
+      session_id: sid,
+      agent_id: MAIN_AGENT_ID,
+      status: 'running',
+      phase: 'working',
+      detached: true,
     });
-    const mid = await getTranscript(server!, base, sid);
-    const task = mid.tasks.find((t: any) => t.kind === 'subagent');
-    expect(task).toMatchObject({ state: 'running', detached: true });
-    expect(typeof task.agentId).toBe('string');
+    expect(typeof task.child_agent_id).toBe('string');
 
-    await until('task completed', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return tx.tasks.some((t: any) => t.taskId === task.taskId && t.state === 'completed');
-    }, 45000).catch(async (error) => {
-      const tx = await getTranscript(server!, base, sid);
-      const opsData = await rest<{ batches: { seq: number; ops: any[] }[] }>(
-        server!,
-        base,
-        `/api/v1/sessions/${encodeURIComponent(sid)}/transcript/ops?agent_id=main&since_seq=0`,
-      );
-      const taskOps = opsData.batches.flatMap((b) =>
-        b.ops
-          .filter((o: any) => o.op === 'task.upsert')
-          .map((o: any) => `${b.seq}:${o.task.taskId}:${o.task.state}`),
-      );
-      throw new Error(`${(error as Error).message}\ntasks: ${JSON.stringify(tx.tasks)}\ntaskOps: ${JSON.stringify(taskOps)}`, { cause: error });
+    await until(
+      'task completed',
+      () => channel.tasks.some((t) => t.task_id === task.task_id && t.outcome === 'completed'),
+      45000,
+    ).catch((error: unknown) => {
+      throw new Error(`${(error as Error).message}\ntasks: ${JSON.stringify(channel.tasks)}`, { cause: error });
     });
     await until('notification turn exists', async () => {
       const tx = await getTranscript(server!, base, sid);
@@ -566,8 +610,11 @@ describe('transcript contract e2e', () => {
     const taskTurn = end.items.find((i: any) => i.kind === 'turn' && i.origin?.kind === 'task');
     expect(taskTurn).toBeDefined();
     expect(JSON.stringify(taskTurn)).toContain('notification');
+    expect(end).not.toHaveProperty('tasks');
+    expect(channel.ops.some((op) => op.op === 'task.upsert')).toBe(false);
     await idleOrDump(server!, base, sid);
     expect((await getTranscript(server!, base, sid)).meta.activity).toBe('idle');
+    channel.close();
   });
 
   it('S5: late attach backfills liveness and the prompt queue from the live loop', async () => {
@@ -601,11 +648,10 @@ describe('transcript contract e2e', () => {
     const reset = channel.reset().snapshot;
 
     expect(reset.meta).toEqual(snapshot.meta);
+    expect(reset).not.toHaveProperty('tasks');
+    expect(snapshot).not.toHaveProperty('tasks');
     const byId = (xs: any[], key: string): Record<string, unknown> =>
       Object.fromEntries(xs.map((x) => [x[key], x]));
-    expect(Object.keys(byId(reset.tasks ?? [], 'taskId')).toSorted()).toEqual(
-      Object.keys(byId(snapshot.tasks, 'taskId')).toSorted(),
-    );
     expect(Object.keys(byId(reset.interactions ?? [], 'interactionId')).toSorted()).toEqual(
       Object.keys(byId(snapshot.interactions, 'interactionId')).toSorted(),
     );
@@ -616,6 +662,78 @@ describe('transcript contract e2e', () => {
       Object.keys(byId(snapshot.todos, 'todoId')).toSorted(),
     );
     channel.close();
+  });
+
+  it('S9: task.watch streams a running task output and resumes from since_offset', async () => {
+    const sid = await createSession(server!, base);
+    const agents = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(IAgentLifecycleService);
+    if (agents.handleOf(MAIN_AGENT_ID) === undefined) await agents.create({ agentId: MAIN_AGENT_ID });
+    let sink: Parameters<AgentTask['start']>[0] | undefined;
+    const taskId = agents.handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentTaskService).registerTask({
+      idPrefix: 'bash',
+      kind: 'process',
+      description: 'npm run dev',
+      start: (s) => {
+        sink = s;
+        s.appendOutput('  VITE ready\n');
+      },
+      toInfo: (base) => ({ ...base, kind: 'process', command: 'npm run dev', pid: 0, exitCode: null }),
+    });
+    const isOutput = (frame: any): boolean => frame.type === 'task.output';
+
+    const first = await openFrameSocket(server!);
+    first.send({ type: 'task.watch', request_id: 'r1', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: taskId });
+    expect(await first.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r1', code: 0 });
+    expect(await first.next(isOutput)).toMatchObject({
+      agent_id: MAIN_AGENT_ID,
+      task_id: taskId,
+      offset: 0,
+      text: '  VITE ready\n',
+    });
+    sink!.appendOutput('  ➜  Local: http://localhost:5173/\n');
+    expect(await first.next(isOutput)).toMatchObject({ offset: 13, text: '  ➜  Local: http://localhost:5173/\n' });
+    await first.close();
+
+    sink!.appendOutput('4:42:10 PM [vite] hmr update /src/App.vue\n');
+    const since = 13 + Buffer.byteLength('  ➜  Local: http://localhost:5173/\n', 'utf-8');
+    const second = await openFrameSocket(server!);
+    second.send({
+      type: 'task.watch',
+      request_id: 'r2',
+      session_id: sid,
+      agent_id: MAIN_AGENT_ID,
+      task_id: taskId,
+      since_offset: since,
+    });
+    expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r2', code: 0 });
+    expect(await second.next(isOutput)).toMatchObject({
+      offset: since,
+      text: '4:42:10 PM [vite] hmr update /src/App.vue\n',
+    });
+    second.send({ type: 'task.watch', request_id: 'r3', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: 'bash-00000000' });
+    expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r3', code: 40406 });
+
+    const child = await agents.create({ agentId: 'agent-s9-child' });
+    const childTaskId = agents.handleOf(child.agentId)!.accessor.get(IAgentTaskService).registerTask({
+      idPrefix: 'bash',
+      kind: 'process',
+      description: 'pnpm test --watch',
+      start: (s) => {
+        s.appendOutput(' RUN  v3.2.4\n');
+      },
+      toInfo: (base) => ({ ...base, kind: 'process', command: 'pnpm test --watch', pid: 0, exitCode: null }),
+    });
+    second.send({ type: 'task.watch', request_id: 'r4', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: childTaskId });
+    expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r4', code: 40406 });
+    second.send({ type: 'task.watch', request_id: 'r5', session_id: sid, agent_id: child.agentId, task_id: childTaskId });
+    expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r5', code: 0 });
+    expect(await second.next(isOutput)).toMatchObject({
+      agent_id: child.agentId,
+      task_id: childTaskId,
+      offset: 0,
+      text: ' RUN  v3.2.4\n',
+    });
+    await second.close();
   });
 
   it('S7: a foreground subagent resumes with its prior context after a server restart', async () => {
