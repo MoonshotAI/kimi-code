@@ -24,7 +24,7 @@ export const DEFAULT_ENVIRONMENT_HOST: HostEnvironmentInfo = {
   homeDir: '/',
 };
 
-export function createEnvironmentPath(pathClass: PathClass): EnvironmentPath {
+function createEnvironmentPath(pathClass: PathClass): EnvironmentPath {
   const path = pathClass === 'win32' ? win32Path : posixPath;
   return {
     separator: path.sep,
@@ -38,7 +38,7 @@ export function createEnvironmentPath(pathClass: PathClass): EnvironmentPath {
   };
 }
 
-export function createEnvironmentWorkspace(pathClass: PathClass): EnvironmentWorkspaceMapper {
+function createEnvironmentWorkspace(pathClass: PathClass): EnvironmentWorkspaceMapper {
   const path = pathClass === 'win32' ? win32Path : posixPath;
   return {
     mapRoots: (roots) => ({
@@ -48,5 +48,15 @@ export function createEnvironmentWorkspace(pathClass: PathClass): EnvironmentWor
   };
 }
 
-export const POSIX_ENVIRONMENT_PATH = createEnvironmentPath('posix');
-export const POSIX_ENVIRONMENT_WORKSPACE = createEnvironmentWorkspace('posix');
+export const ENVIRONMENT_PATHS: Readonly<Record<PathClass, EnvironmentPath>> = {
+  posix: createEnvironmentPath('posix'),
+  win32: createEnvironmentPath('win32'),
+};
+
+export const ENVIRONMENT_WORKSPACES: Readonly<Record<PathClass, EnvironmentWorkspaceMapper>> = {
+  posix: createEnvironmentWorkspace('posix'),
+  win32: createEnvironmentWorkspace('win32'),
+};
+
+export const POSIX_ENVIRONMENT_PATH = ENVIRONMENT_PATHS.posix;
+export const POSIX_ENVIRONMENT_WORKSPACE = ENVIRONMENT_WORKSPACES.posix;

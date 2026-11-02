@@ -5,7 +5,7 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import type { Environment, EnvironmentCapability, EnvironmentPath, EnvironmentStatus } from './environment';
-import { createEnvironmentPath, createEnvironmentWorkspace } from './environmentDefaults';
+import { ENVIRONMENT_PATHS, ENVIRONMENT_WORKSPACES } from './environmentDefaults';
 
 let nextGeneration = 1;
 
@@ -41,8 +41,8 @@ export class LocalEnvironment implements Environment {
       pathClass: environment.pathClass,
       homeDir: environment.homeDir,
     };
-    this.path = createEnvironmentPath(environment.pathClass);
-    this.workspace = createEnvironmentWorkspace(environment.pathClass);
+    this.path = ENVIRONMENT_PATHS[environment.pathClass];
+    this.workspace = ENVIRONMENT_WORKSPACES[environment.pathClass];
     this.shellPathBridge = environment.pathClass === 'win32' ? getShellPathBridge(environment) : undefined;
     this.fs = fs;
     this.process = process;

@@ -33,10 +33,11 @@ export function requireString(params: Params, name: string): string {
 
 export function requireAbsolutePath(params: Params, name: string): string {
   const value = requireString(params, name);
-  const valid = process.platform === 'win32'
-    ? /^[A-Za-z]:[\\/]/.test(value)
-    : isAbsolute(value);
-  if (!valid) {
+  if (process.platform === 'win32') {
+    if (!/^[A-Za-z]:[\\/]/.test(value)) {
+      throw new RpcError(RpcErrorCode.InvalidRequest, `${name} must be an absolute Windows drive path such as C:\\work`);
+    }
+  } else if (!isAbsolute(value)) {
     throw new RpcError(RpcErrorCode.InvalidRequest, `${name} must be an absolute path`);
   }
   return value;

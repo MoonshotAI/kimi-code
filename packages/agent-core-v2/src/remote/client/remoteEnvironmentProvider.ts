@@ -21,7 +21,7 @@ import type {
 } from '#/environment/environmentProvider';
 
 import { EnvironmentError, type EnvironmentRegistrationHandle } from '#/environment/environmentRegistry';
-import { createEnvironmentPath, createEnvironmentWorkspace } from '#/environment/environmentDefaults';
+import { ENVIRONMENT_PATHS, ENVIRONMENT_WORKSPACES } from '#/environment/environmentDefaults';
 import { REMOTE_SHELL_PATH_BRIDGE } from '#/_base/execEnv/shellPathBridge';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
@@ -114,11 +114,11 @@ class DeclaredRemoteEnvironment implements Environment {
   }
 
   get path(): Environment['path'] {
-    return this.session === undefined ? undefined : createEnvironmentPath(this.session.host.pathClass);
+    return this.session === undefined ? undefined : ENVIRONMENT_PATHS[this.session.host.pathClass];
   }
 
   get workspace(): Environment['workspace'] {
-    return this.session === undefined ? undefined : createEnvironmentWorkspace(this.session.host.pathClass);
+    return this.session === undefined ? undefined : ENVIRONMENT_WORKSPACES[this.session.host.pathClass];
   }
 
   get shellPathBridge(): Environment['shellPathBridge'] {

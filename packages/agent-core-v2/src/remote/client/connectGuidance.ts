@@ -1,7 +1,7 @@
 import { MIN_EXECUTOR_VERSION } from '#/remote/protocol/methods';
 
 import { HandshakeError } from './connection';
-import { launcherRemoteBin, type LauncherSpec } from './launchers';
+import { isBareRemoteBin, launcherRemoteBin, type LauncherSpec } from './launchers';
 
 export type HandshakeFailureClass = 'missing' | 'timeout' | 'incompatible' | 'other';
 
@@ -35,7 +35,7 @@ function expectedPathSuffix(launcher: LauncherSpec): string {
 
 function executorAction(launcher: LauncherSpec): string {
   const remoteBin = launcherRemoteBin(launcher);
-  if (remoteBin !== undefined && /^[A-Za-z0-9_.-]+$/.test(remoteBin)) {
+  if (remoteBin !== undefined && isBareRemoteBin(remoteBin)) {
     return `download the \`kimi\` binary for the target platform from the Kimi Code release CDN and install it as \`${remoteBin}\` on the target's PATH`;
   }
   const location =

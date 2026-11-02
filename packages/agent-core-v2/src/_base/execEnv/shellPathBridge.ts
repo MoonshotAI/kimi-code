@@ -135,11 +135,11 @@ function toMsysPath(nativePath: string): string {
 export const REMOTE_SHELL_PATH_BRIDGE: ShellPathBridge = {
   toShellPath: toMsysPath,
   fromShellPath(path) {
-    if (!path.startsWith('/') || path.startsWith('//')) return path;
+    if (!path.startsWith('/')) return path;
     const normalized = nodePath.posix.normalize(path);
     const lexical = translateShellDrivePath(normalized);
     if (lexical !== normalized) return lexical;
-    throw new Error(`Windows remote path ${normalized} cannot be resolved on the target; use an absolute drive or UNC path instead`);
+    throw new Error(`Windows remote path ${normalized} cannot be resolved on the target; use an absolute drive path such as C:\\work instead`);
   },
 };
 

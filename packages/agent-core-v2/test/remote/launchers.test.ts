@@ -84,9 +84,12 @@ describe('ssh remote command quoting', () => {
     expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: 'kimi.exe' }).args.at(-1)).toBe(
       'kimi.exe exec-server --listen stdio',
     );
+    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: 'kimi-dev' }).args.at(-1)).toBe(
+      'kimi-dev exec-server --listen stdio',
+    );
   });
 
-  it.each(['if', 'time', 'exec', 'echo'])('keeps POSIX quoting for reserved or builtin name %s', (remoteBin) => {
+  it.each(['if', 'time', 'done'])('keeps POSIX quoting for reserved word %s', (remoteBin) => {
     expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin }).args.at(-1)).toBe(
       `'${remoteBin}' 'exec-server' '--listen' 'stdio'`,
     );
