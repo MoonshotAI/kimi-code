@@ -489,12 +489,14 @@ export function isKimiErrorCode(code: unknown): code is KimiErrorCode {
 export interface KimiErrorOptions {
   readonly details?: Record<string, unknown>;
   readonly cause?: unknown;
+  readonly retryable?: boolean;
 }
 
 export class KimiError extends Error {
   readonly code: KimiErrorCode;
   readonly details?: Record<string, unknown>;
   override readonly cause?: unknown;
+  readonly retryable: boolean;
 
   constructor(code: KimiErrorCode, message: string, options: KimiErrorOptions = {}) {
     super(message);
@@ -502,6 +504,7 @@ export class KimiError extends Error {
     this.code = code;
     this.details = options.details;
     this.cause = options.cause;
+    this.retryable = options.retryable ?? KIMI_ERROR_INFO[code].retryable;
   }
 }
 
@@ -538,7 +541,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
       message: error.message,
       name: error.name,
       details: error.details,
-      retryable: KIMI_ERROR_INFO[error.code].retryable,
+      retryable: error.retryable,
     };
   }
 
@@ -617,5 +620,6 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
 export function fromKimiErrorPayload(payload: KimiErrorPayload): KimiError {
   return new KimiError(payload.code, payload.message, {
     details: payload.details,
+    retryable: payload.retryable,
   });
 }

@@ -25,6 +25,7 @@ import {
   buildDaemonFileUrl,
   createKimiHarness,
   ErrorCodes,
+  fromKimiErrorPayload,
   isDaemonFileUrl,
   isKimiError,
   KimiHarness,
@@ -724,6 +725,11 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       message: 'explicitly deterministic',
       retryable: false,
     });
+
+    for (const error of [retryableClientError, deterministicServerError]) {
+      const revived = fromKimiErrorPayload(toKimiErrorPayload(error));
+      expect(toKimiErrorPayload(revived).retryable).toBe(error.retryable);
+    }
   });
 
   it('restates engine MCP management Error2s as KimiError, undeclared codes as internal', async () => {

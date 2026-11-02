@@ -111,6 +111,7 @@ export function fromErrorPayload(payload: ErrorPayload): Error2 {
     details: payload.details,
     cause: payload.cause === undefined ? undefined : fromErrorPayload(payload.cause),
   });
+  Object.assign(error, { retryable: payload.retryable });
   const statusCode = payload.details?.['statusCode'];
   if (
     typeof statusCode === 'number' &&

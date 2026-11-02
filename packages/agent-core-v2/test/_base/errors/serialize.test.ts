@@ -119,6 +119,17 @@ describe('fromErrorPayload', () => {
     expect((revived.cause as Error2).code).toBe('provider.connection_error');
   });
 
+  it('preserves explicit retryability across repeated serialization', () => {
+    for (const retryable of [true, false]) {
+      const original = Object.assign(new Error2('provider.api_error', 'model failure'), {
+        retryable,
+      });
+      const revived = fromErrorPayload(toErrorPayload(original));
+
+      expect(toErrorPayload(revived).retryable).toBe(retryable);
+    }
+  });
+
   it('preserves a verified model HTTP status across repeated serialization', () => {
     const original = Object.assign(
       new Error2('provider.api_error', 'model failure', {
