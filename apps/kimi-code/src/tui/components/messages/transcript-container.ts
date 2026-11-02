@@ -32,6 +32,7 @@ import {
   type TranscriptItem,
 } from '#/tui/utils/transcript-items';
 import {
+  canFoldItem,
   projectTranscript,
   summarizeGroup,
   type GroupProjection,
@@ -366,9 +367,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
         ? cachedSummary.summary
         : summarizeGroup(projection.members);
       nextSummaries.set(projection.anchor, { members: projection.members, summary });
-      const active = this.isOpen(projection, visibleProjections) && !projection.external.some(
-        (item) => item.current && item.family === 'thinking',
-      );
+      const active = this.isOpen(projection, visibleProjections) && projection.external.length === 0;
       const model = {
         anchor: projection.anchor,
         sourceIndex: projection.sourceIndex,
@@ -439,10 +438,27 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     const expanded = !isExpandedComponent(component);
     component.setExpanded(expanded);
     if (expanded) this.openedMembers.add(component);
-    else this.openedMembers.delete(component);
+    else {
+      this.openedMembers.delete(component);
+      this.keepMergedGroupExpanded(component, expandMore(cache.projections));
+    }
     this.projectionCache = undefined;
     this.renderRequest?.();
     return { handled: true };
+  }
+
+  private keepMergedGroupExpanded(closed: Component, projections: readonly TranscriptProjection[]): void {
+    const at = projections.findIndex((projection) => projection.kind === 'single' && projection.item.display === closed);
+    const single = projections[at];
+    if (single?.kind !== 'single' || single.item.kind !== 'logical') return;
+    if (!canFoldItem(single.item, this.options)) return;
+    const before = projections[at - 1];
+    const after = projections[at + 1];
+    const wasExpanded = [before, after].some(
+      (projection) => projection?.kind === 'group' && this.expandedGroups.get(projection.anchor) === true,
+    );
+    if (!wasExpanded) return;
+    this.expandedGroups.set(before?.kind === 'group' ? before.anchor : single.item.source, true);
   }
 
   private initializeChild(child: Component, sourceIndex: number): void {

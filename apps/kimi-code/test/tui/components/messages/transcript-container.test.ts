@@ -856,6 +856,118 @@ describe('TranscriptGroupComponent', () => {
     expect(onlyGroup(container).title).toBe('● Thought for 3s, read 1 file');
   });
 
+  it('keeps an opened thought before tools that arrived after it', () => {
+    const { container } = makeContainer();
+    const thinking = new ThinkingComponent('one\ntwo\nthree\nfour\nfive', true, 'live');
+    container.addChild(thinking);
+    click(container, plain(container.render(80)).split('\n').length - 1);
+    thinking.finalize({ known: true, ms: 3000 });
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(tool('Bash', { command: 'ls' }));
+
+    expect(lineOf(container, 'one')).toBeLessThan(lineOf(container, 'Read 1 file'));
+  });
+
+  it('keeps an opened thought between the tools that ran before and after it', () => {
+    const { container } = makeContainer();
+    const thinking = new ThinkingComponent('one\ntwo\nthree\nfour\nfive', true, 'live');
+    container.addChild(thought());
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(thinking);
+    click(container, plain(container.render(80)).split('\n').length - 1);
+    thinking.finalize({ known: true, ms: 3000 });
+    container.addChild(tool('Bash', { command: 'ls' }));
+    container.addChild(thought());
+    container.addChild(tool('Read', { path: '/work/b.ts' }));
+
+    expect(groupViews(container).map((group) => group.title)).toEqual([
+      '● Thought for 3s, read 1 file',
+      '● Thought for 3s, read 1 file, ran 1 command',
+    ]);
+    expect(lineOf(container, 'read 1 file')).toBeLessThan(lineOf(container, 'one'));
+    expect(lineOf(container, 'one')).toBeLessThan(lineOf(container, 'ran 1 command'));
+
+    click(container, lineOf(container, 'one'));
+    expect(thinking.isExpanded()).toBe(false);
+    expect(onlyGroup(container).title).toBe('● Thought for 9s, read 2 files, ran 1 command');
+  });
+
+  it('keeps the group below an opened thought expanded when the thought closes', () => {
+    const { container } = makeContainer();
+    const thinking = new ThinkingComponent('one\ntwo\nthree\nfour\nfive', true, 'live');
+    container.addChild(thinking);
+    click(container, plain(container.render(80)).split('\n').length - 1);
+    thinking.finalize({ known: true, ms: 3000 });
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(tool('Bash', { command: 'ls' }));
+    click(container, lineOf(container, 'Read 1 file'));
+    expect(groupViews(container).map((group) => group.expanded)).toEqual([true]);
+
+    click(container, lineOf(container, 'one'));
+
+    expect(onlyGroup(container)).toMatchObject({
+      title: '● Thought for 3s, read 1 file, ran 1 command',
+      expanded: true,
+    });
+  });
+
+  it('keeps an expanded group on either side of an opened thought when it closes', () => {
+    for (const expandedSide of [0, 1]) {
+      const { container } = makeContainer();
+      const thinking = new ThinkingComponent('one\ntwo\nthree\nfour\nfive', true, 'live');
+      container.addChild(thought());
+      container.addChild(tool('Read', { path: '/work/a.ts' }));
+      container.addChild(thinking);
+      click(container, plain(container.render(80)).split('\n').length - 1);
+      thinking.finalize({ known: true, ms: 3000 });
+      container.addChild(tool('Bash', { command: 'ls' }));
+      container.addChild(thought());
+      container.addChild(tool('Read', { path: '/work/b.ts' }));
+      click(container, lineOf(container, expandedSide === 0 ? 'read 1 file' : 'ran 1 command'));
+
+      click(container, lineOf(container, 'one'));
+
+      expect(onlyGroup(container).expanded).toBe(true);
+    }
+  });
+
+  it('keeps a collapsed group collapsed when a card between groups closes', () => {
+    const { container } = makeContainer();
+    const card = tool('Bash', { command: 'pnpm test' }, { tool_call_id: 'bash-card', output: lines(40), is_error: false });
+    const rows = (): string[] => plain(container.render(80)).split('\n');
+    container.addChild(thought());
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(card);
+    container.addChild(thought());
+    container.addChild(tool('Read', { path: '/work/b.ts' }));
+    click(container, rows().findLastIndex((line) => line.includes('read 1 file')));
+    expect(groupViews(container).map((group) => group.expanded)).toEqual([false, true]);
+
+    click(container, rows().findIndex((line) => line.includes('pnpm test')));
+    expect(card.isExpanded()).toBe(true);
+    click(container, rows().findIndex((line) => line.includes('pnpm test')));
+
+    expect(card.isExpanded()).toBe(false);
+    expect(groupViews(container).map((group) => group.expanded)).toEqual([false, true]);
+  });
+
+  it('collapses the merged group with Ctrl+O even when a half was expanded', () => {
+    const { container } = makeContainer();
+    const thinking = new ThinkingComponent('one\ntwo\nthree\nfour\nfive', true, 'live');
+    container.addChild(thinking);
+    click(container, plain(container.render(80)).split('\n').length - 1);
+    thinking.finalize({ known: true, ms: 3000 });
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(tool('Bash', { command: 'ls' }));
+    click(container, lineOf(container, 'Read 1 file'));
+
+    container.toggleToolOutputExpansion();
+    container.toggleToolOutputExpansion();
+
+    expect(onlyGroup(container)).toMatchObject({ expanded: false });
+    expect(thinking.isExpanded()).toBe(false);
+  });
+
   it('opens every row in recent groups with Ctrl+O and closes them again', () => {
     const { container } = makeContainer();
     const first = tool('Read', { path: '/work/a.ts' });

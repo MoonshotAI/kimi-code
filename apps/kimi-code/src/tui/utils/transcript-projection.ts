@@ -49,9 +49,7 @@ export function projectTranscript(
   const flush = (): void => {
     const first = run[0];
     if (first === undefined) return;
-    const external = run.filter(
-      (item) => isOpened(item.display) || (item.current && item.family === 'thinking'),
-    );
+    const external = run.filter((item) => item.current && item.family === 'thinking');
     const externalSet = new Set(external);
     const members = run.filter((item) => !externalSet.has(item));
     const hasSummaryFragment = members.some(
@@ -74,7 +72,7 @@ export function projectTranscript(
 
   for (const item of items) {
     if (item.kind === 'transparent') continue;
-    if (item.kind === 'logical' && canFoldItem(item, options)) {
+    if (item.kind === 'logical' && canFoldItem(item, options) && !isOpened(item.display)) {
       run.push(item);
       continue;
     }

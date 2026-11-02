@@ -159,18 +159,17 @@ describe('transcript projection', () => {
     expect(summarizeGroup(finished.members).fragments).toContain('Thought for 3s');
   });
 
-  it('keeps a user-opened member outside without counting it, then restores it', () => {
+  it('splits the run around a user-opened member in source order, then restores it', () => {
     const read = tool('Read');
     const components = [thought(3000), read, tool('Grep')];
     const items = inspect(components);
     const opened = projectTranscript(items, options(), (component) => component === read);
-    const group = opened[0];
 
-    expect(group).toMatchObject({ kind: 'group' });
-    if (group?.kind !== 'group') return;
-    expect(group.external.map((item) => item.display)).toEqual([read]);
-    expect(group.members.map((item) => item.display)).not.toContain(read);
-    expect(summarizeGroup(group.members).fragments).toEqual(['Thought for 3s', 'searched 1 pattern']);
+    expect(opened.map((projection) => projection.kind)).toEqual(['group', 'single', 'group']);
+    expect(opened[1]).toMatchObject({ kind: 'single', item: { display: read } });
+    expect(opened.flatMap((projection) =>
+      projection.kind === 'group' ? [summarizeGroup(projection.members).fragments] : [],
+    )).toEqual([['Thought for 3s'], ['Searched 1 pattern']]);
 
     const restored = onlyGroup(components);
     expect(restored.external).toEqual([]);
