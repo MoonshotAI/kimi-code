@@ -96,7 +96,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
   const modelGroups = useMemo(() => groupModelsByProvider(availableModels), [availableModels]);
   const showProviderGroups = modelGroups.length > 1;
   const currentModelLabel = currentModelConfig === undefined
-    ? "No models available"
+    ? (availableModels.length > 0 ? "Select a model" : "No models available")
     : showProviderGroups
       ? `${currentModelConfig.name} · ${providerDisplayName(currentModelConfig.provider)}`
       : currentModelConfig.name;
@@ -399,7 +399,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
                             the tooltip and the dropdown) — a narrow sidebar
                             has no room for both. */}
                         <span className="flex min-w-0 items-center text-xs">
-                          <span className="truncate">{currentModelConfig?.name ?? "No models available"}</span>
+                          <span className="truncate">{currentModelConfig?.name ?? (availableModels.length > 0 ? "Select a model" : "No models available")}</span>
                           {currentModelConfig !== undefined && showProviderGroups && (
                             <span className="shrink-[3] truncate text-muted-foreground max-[520px]:hidden">
                               {" · "}{providerDisplayName(currentModelConfig.provider)}

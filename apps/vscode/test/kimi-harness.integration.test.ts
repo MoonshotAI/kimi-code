@@ -317,6 +317,7 @@ function streamChatContext(rig: RuntimeRig): HandlerContext {
   return {
     workDir: rig.workDir,
     webviewId: "view-1",
+    harness: rig.runtime.harness,
     broadcast: (event: string, data: unknown, webviewId?: string) => {
       rig.broadcasts.push({ event, data, webviewId });
     },

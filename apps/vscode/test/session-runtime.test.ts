@@ -262,6 +262,18 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     ]);
   });
 
+  it("broadcasts context resets to every subscribed view", () => {
+    const { runtime, broadcasts } = createRuntime();
+    runtime.subscribe("view-2");
+
+    runtime.emitContextCleared();
+
+    const resets = broadcasts.filter(
+      (record) => record.event === Events.StreamEvent && (record.data as { type?: string }).type === "context_cleared",
+    );
+    expect(resets.map((record) => record.webviewId)).toEqual(["view-1", "view-2"]);
+  });
+
   it("cancels a long-running host action and ignores its late completion", async () => {
     const { runtime, sdk, broadcasts } = createRuntime();
     const actionId = runtime.beginHostAction("/init");

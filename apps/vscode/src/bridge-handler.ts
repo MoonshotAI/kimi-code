@@ -2,15 +2,18 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 
 import {
+  Events,
   validateRpcMessage,
   type RpcMethod,
   type RpcResult,
 } from "../shared/bridge";
 import { VSCodeSettings } from "./config/vscode-settings";
 import { handlers, type BroadcastFn, type HandlerContext, type ReloadWebviewFn, type ShowLogsFn } from "./handlers";
+import { toWebviewConfig } from "./handlers/config.handler";
 import { BaselineManager, type BaselineSession } from "./managers/baseline.manager";
 import { FileManager } from "./managers/file.manager";
 import { KimiRuntime } from "./runtime/kimi-runtime";
+import { ModelCatalogRefreshScheduler } from "./runtime/model-catalog-refresh-scheduler";
 import type { SessionRuntime } from "./runtime/session-runtime";
 import { areSameFsPath } from "./utils/fs-path";
 import {
@@ -28,6 +31,7 @@ export class BridgeHandler {
 
   private readonly customWorkDirs = new Map<string, string>();
   private readonly fileManager: FileManager;
+  private readonly modelCatalogRefreshScheduler: ModelCatalogRefreshScheduler;
 
   constructor(
     private readonly broadcast: BroadcastFn,
@@ -54,6 +58,18 @@ export class BridgeHandler {
     }
     this.baselineManager = new BaselineManager(globalStoragePath, this.runtime.harness.homeDir);
     this.fileManager = new FileManager(this.baselineManager, broadcast);
+    this.modelCatalogRefreshScheduler = new ModelCatalogRefreshScheduler({
+      harness: this.runtime.harness,
+      onRefreshed: (config, result) => {
+        this.broadcast(Events.ModelCatalogChanged, {
+          config: toWebviewConfig(config),
+          retiredDefault: result.retired_default,
+        });
+      },
+      log: (message, error) => {
+        this.logRuntimeError(message, error);
+      },
+    });
   }
 
   async handle(value: unknown, webviewId: string): Promise<RpcResult> {
@@ -282,7 +298,12 @@ export class BridgeHandler {
       });
   }
 
+  startModelCatalogRefresh(): Promise<void> {
+    return this.modelCatalogRefreshScheduler.start();
+  }
+
   async dispose(): Promise<void> {
+    this.modelCatalogRefreshScheduler.dispose();
     this.fileManager.dispose();
     await this.runtime.dispose();
   }

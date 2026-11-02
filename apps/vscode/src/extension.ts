@@ -141,6 +141,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   ).catch((error) => {
     logError("Unable to check for legacy Kimi data", error);
   });
+  void provider.startModelCatalogRefresh().catch((error) => {
+    logError("Unable to start provider-model catalog auto-refresh", error);
+  });
   log("Kimi Code activated");
 }
 

@@ -37,7 +37,11 @@ export const Content = {
     return Content.hasImages(input) || Content.hasVideos(input);
   },
 
-  build(text: string, mediaUrls: string[]): ContentPart[] {
+  getMediaRequirements(input: string | ContentPart[]): { image: boolean; video: boolean } {
+    return { image: Content.hasImages(input), video: Content.hasVideos(input) };
+  },
+
+  build(text: string, mediaUrls: readonly string[]): ContentPart[] {
     const parts: ContentPart[] = [];
     if (text.trim()) {
       parts.push({ type: "text", text });

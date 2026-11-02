@@ -4,12 +4,18 @@ import { isKimiError } from "@moonshot-ai/kimi-code-sdk";
 import { Events, Methods } from "../../shared/bridge";
 import type { ApprovalResponse, ContentPart } from "../../shared/legacy-sdk";
 import { getUserMessage } from "../../shared/errors";
+import {
+  resolveSendModel,
+  resolveThinkingEffortForSend,
+  type MediaRequirements,
+} from "../../shared/model-resolution";
 import type { ErrorPhase } from "../../shared/types";
 import { VSCodeSettings } from "../config/vscode-settings";
 import { normalizeEffort } from "../runtime/kimi-runtime";
 import type { SessionRuntime } from "../runtime/session-runtime";
 import { isWorkspacePathContained, relativeWorkspacePath } from "../utils/workspace-path";
-import { parseHostSlashCommand, runHostSlashCommand } from "./slash-command";
+import { isModelFreeHostCommand, parseHostSlashCommand, runHostSlashCommand } from "./slash-command";
+import { toWebviewConfig } from "./config.handler";
 import type { Handler } from "./types";
 
 interface StreamChatParams {
@@ -19,6 +25,7 @@ interface StreamChatParams {
   thinking?: boolean;
   planMode?: boolean;
   sessionId?: string;
+  mediaRequirements?: MediaRequirements;
 }
 
 interface RespondApprovalParams {
@@ -71,6 +78,14 @@ function prependSystemContext(content: string | ContentPart[], context: string):
   return copy;
 }
 
+function sendMediaRequirements(params: StreamChatParams): MediaRequirements {
+  const parts = Array.isArray(params.content) ? params.content : [];
+  return {
+    image: params.mediaRequirements?.image === true || parts.some((part) => part.type === "image_url"),
+    video: params.mediaRequirements?.video === true || parts.some((part) => part.type === "video_url"),
+  };
+}
+
 const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, ctx) => {
   if (!ctx.workDir) {
     emitPreflightError(ctx, "NO_WORKSPACE", "Please open a folder to start.");
@@ -89,13 +104,46 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
     }
   }
 
+  const slash = parseHostSlashCommand(params.content);
+  if (slash !== undefined && isModelFreeHostCommand(slash)) {
+    // Commands that only edit existing session state must not be blocked by a
+    // stale model catalog. Prompt-producing commands still require a model.
+    const runtime = ctx.getSession();
+    if (runtime !== undefined) {
+      try {
+        return { done: await runHostSlashCommand(runtime, slash, ctx) };
+      } catch (error) {
+        emitCaughtError(ctx, error, "runtime", runtime.id);
+        return { done: false };
+      }
+    }
+  }
+
+  let model = params.model;
+  let effort = normalizeEffort(params.effort ?? (params.thinking === true ? "on" : "off"));
   let runtime: SessionRuntime;
   try {
-    runtime = await ctx.getOrCreateSession(
-      params.model,
-      params.effort ?? (params.thinking === true ? "on" : "off"),
-      params.sessionId,
-    );
+    // The host catalog may be newer than the queued Webview event. Resolve the
+    // alias and effort again immediately before touching the session.
+    const rawConfig = await ctx.harness.getConfig({ reload: true });
+    const config = toWebviewConfig(rawConfig);
+    const mediaRequirements = sendMediaRequirements(params);
+    const sendModel = resolveSendModel(config.models, model, rawConfig.defaultModel ?? null, mediaRequirements);
+    if (sendModel === undefined) {
+      const message = mediaRequirements.image || mediaRequirements.video
+        ? "The selected model does not support these attachments. Choose another model before sending."
+        : "The selected model is no longer available. Choose another model before sending.";
+      emitPreflightError(ctx, "model.not_configured", message);
+      return { done: false };
+    }
+    model = sendModel.id;
+    effort = normalizeEffort(resolveThinkingEffortForSend(
+      sendModel,
+      effort,
+      config.defaultThinking,
+      config.defaultThinkingEffort,
+    ));
+    runtime = await ctx.getOrCreateSession(model, effort, params.sessionId);
   } catch (error) {
     emitCaughtError(ctx, error, "preflight");
     return { done: false };
@@ -106,25 +154,23 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
     // (resumed sessions keep their own), so apply the model/effort that the
     // composer submitted with this prompt before the turn starts.
     const status = await runtime.session.getStatus();
-    let model = status.model;
-    if (params.model && model !== params.model) {
-      await runtime.session.setModel(params.model);
-      model = params.model;
+    let activeModel = status.model;
+    if (model && activeModel !== model) {
+      await runtime.session.setModel(model);
+      activeModel = model;
     }
-    const effort = normalizeEffort(params.effort ?? (params.thinking === true ? "on" : "off"));
     if (status.thinkingEffort !== effort) {
       await runtime.session.setThinking(effort);
     }
     if (params.planMode !== undefined && status.planMode !== params.planMode) {
       await runtime.session.setPlanMode(params.planMode);
     }
-    runtime.announceSessionStart(model);
+    runtime.announceSessionStart(activeModel);
   } catch (error) {
     emitCaughtError(ctx, error, "preflight", runtime.id);
     return { done: false };
   }
 
-  const slash = parseHostSlashCommand(params.content);
   if (slash !== undefined) {
     try {
       return { done: await runHostSlashCommand(runtime, slash, ctx) };
