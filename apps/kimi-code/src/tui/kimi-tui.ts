@@ -193,6 +193,12 @@ import {
 } from './utils/image-placeholder';
 import type { ExtractionResult } from './utils/image-placeholder';
 import { installInputLatencyProbe } from './utils/input-latency';
+import {
+  steerEventText,
+  steerPayloadText,
+  takeDeliveredSteerBatches,
+  type SteerDeliveryBatch,
+} from './utils/steer-delivery';
 import { combineSteerInput } from './utils/steer-input';
 import { startupTrace } from '#/utils/startup-trace';
 import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
@@ -352,6 +358,7 @@ export class KimiTUI {
   private readonly staging: StagingLeaseTracker;
   private readonly steeringQueuedMessages = new Set<QueuedMessage>();
   private readonly pendingPromptEntries = new Set<TranscriptEntry>();
+  private pendingSteerDeliveries: SteerDeliveryBatch<TranscriptEntry>[] = [];
   private readonly autoTitleAttempts = new Map<string, { attempts: number; done: boolean }>();
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
@@ -2219,6 +2226,7 @@ export class KimiTUI {
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
         ? options.imageAttachmentIds
         : undefined;
+    const goalActive = this.state.appState.goal?.status === 'active';
     const entry: TranscriptEntry = {
       id: nextTranscriptId(),
       kind: 'user',
@@ -2226,6 +2234,7 @@ export class KimiTUI {
       renderMode: 'plain',
       content: input,
       imageAttachmentIds,
+      steerPending: goalActive ? true : undefined,
     };
     this.appendTranscriptEntry(entry);
     // A goal-active steer is buffered into the running goal turn — no new
@@ -2252,7 +2261,6 @@ export class KimiTUI {
             session,
           )
         : input;
-    const goalActive = this.state.appState.goal?.status === 'active';
     // The lease normally arrives pre-created by sendNormalUserInput (carrying
     // its exact-binding submission id). Queued dispatches and steer batches
     // arrive with raw ids instead: a prompt submission carrying staged
@@ -2296,7 +2304,10 @@ export class KimiTUI {
       if (runningTurnId !== undefined) this.staging.bindToTurn(stagingLease, runningTurnId);
       const request = this.trackPendingEntries(
         [entry],
-        this.dispatchPreparedInput(session, sdkInput, (parts) => session.steer(parts)),
+        this.dispatchPreparedInput(session, sdkInput, (parts) => {
+          this.notePendingSteer([entry], parts);
+          return session.steer(parts);
+        }),
       );
       void request.then(
         () => {
@@ -2305,6 +2316,7 @@ export class KimiTUI {
         () => {},
       );
       this.staging.trackDispatch(stagingLease, request, (error) => {
+        this.releaseSteerEntries([entry]);
         const recovered = this.handlePromptConflict({
           session,
           error,
@@ -2592,6 +2604,48 @@ export class KimiTUI {
     this.drainOneQueuedMessage();
   }
 
+  acknowledgeSteerDelivery(input: unknown): void {
+    const eventText = steerEventText(input);
+    const { delivered, pending } = takeDeliveredSteerBatches(this.pendingSteerDeliveries, eventText);
+    if (delivered.length === 0) return;
+    this.pendingSteerDeliveries = pending;
+    for (const batch of delivered) this.setSteerEntriesPending(batch.entries, false);
+  }
+
+  private notePendingSteer(
+    entries: readonly TranscriptEntry[],
+    payload: string | readonly { readonly type: string; readonly text?: string }[],
+  ): void {
+    const payloadText = steerPayloadText(payload);
+    const displayText = entries.map((entry) => entry.content).join('\n\n');
+    this.pendingSteerDeliveries.push({
+      entries,
+      text: payloadText.length > 0 ? payloadText : displayText,
+    });
+  }
+
+  private releaseSteerEntries(entries: readonly TranscriptEntry[]): void {
+    const doomed = new Set(entries);
+    this.pendingSteerDeliveries = this.pendingSteerDeliveries.filter(
+      (batch) => !batch.entries.some((entry) => doomed.has(entry)),
+    );
+    this.setSteerEntriesPending(entries, false);
+  }
+
+  private setSteerEntriesPending(entries: readonly TranscriptEntry[], pending: boolean): void {
+    const targets = new Set(entries);
+    for (const entry of entries) {
+      if (pending) entry.steerPending = true;
+      else delete entry.steerPending;
+    }
+    for (const child of this.state.transcriptContainer.children) {
+      const entry = getTranscriptComponentEntry(child);
+      if (entry === undefined || !targets.has(entry)) continue;
+      if (child instanceof UserMessageComponent) child.setSteerPending(pending);
+    }
+    this.state.ui.requestRender();
+  }
+
   steerMessage(
     session: Session,
     input: readonly SteerInputItem[],
@@ -2646,6 +2700,7 @@ export class KimiTUI {
         item.imageAttachmentIds !== undefined && item.imageAttachmentIds.length > 0
           ? item.imageAttachmentIds
           : undefined,
+      steerPending: true,
     }));
     for (const entry of steeredEntries) this.appendTranscriptEntry(entry);
     const mediaAttachmentIds = input.flatMap((item) => [
@@ -2664,9 +2719,13 @@ export class KimiTUI {
     // the submission's own turn.started claims them; a merged steer simply
     // retires its media at session close instead.
     if (currentTurnId !== undefined && prepared === undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
-    const dispatch = (items: readonly SteerInputItem[]) => prepared === undefined
-      ? session.steer(combineSteerInput(items))
-      : session.promptWithSkills(combineSteerInput(items), prepared.skills, { steerIfActive: true });
+    const dispatch = (items: readonly SteerInputItem[]) => {
+      const payload = combineSteerInput(items);
+      this.notePendingSteer(steeredEntries, payload);
+      return prepared === undefined
+        ? session.steer(payload)
+        : session.promptWithSkills(payload, prepared.skills, { steerIfActive: true });
+    };
     const request = this.trackPendingEntries(
       steeredEntries,
       this.dispatchPreparedInput(
@@ -2684,6 +2743,7 @@ export class KimiTUI {
       );
     }
     this.staging.trackDispatch(stagingLease, request, (error) => {
+      this.releaseSteerEntries(steeredEntries);
       if (this.session !== session) {
         onSettled?.(false);
         return;
@@ -3618,7 +3678,13 @@ export class KimiTUI {
         for (const [command, skillName] of this.skillCommandMap) {
           if (entry.skillNames?.includes(skillName)) skillNames.add(command.replace(/^skill:/, ''));
         }
-        return new UserMessageComponent(entry.content, images, entry.bullet, [...skillNames]);
+        return new UserMessageComponent(
+          entry.content,
+          images,
+          entry.bullet,
+          [...skillNames],
+          entry.steerPending === true,
+        );
       }
       case 'skill_activation':
         return new SkillActivationComponent(

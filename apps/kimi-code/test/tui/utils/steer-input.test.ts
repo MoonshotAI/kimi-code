@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { PromptPart } from '@moonshot-ai/kimi-code-sdk';
 
 import type { SteerInputItem } from '#/tui/types';
+import { takeDeliveredSteerBatches } from '#/tui/utils/steer-delivery';
 import { combineSteerInput } from '#/tui/utils/steer-input';
 
 describe('combineSteerInput', () => {
@@ -74,5 +75,30 @@ describe('combineSteerInput', () => {
 
   it('joins text-only items with the historical separator', () => {
     expect(combineSteerInput([{ text: 'one' }, { text: 'two' }])).toBe('one\n\ntwo');
+  });
+});
+
+describe('takeDeliveredSteerBatches', () => {
+  it('clears only the batch whose text the event carries', () => {
+    const first = { text: 'keep this input', entries: ['keep this input'] };
+    const second = { text: 'later', entries: ['later'] };
+    const result = takeDeliveredSteerBatches([first, second], 'keep this input');
+    expect(result.delivered).toEqual([first]);
+    expect(result.pending).toEqual([second]);
+  });
+
+  it('does not treat a shorter steer as part of a different message', () => {
+    const short = { text: 'hi', entries: ['hi'] };
+    const result = takeDeliveredSteerBatches([short], 'this');
+    expect(result.delivered).toEqual([]);
+    expect(result.pending).toEqual([short]);
+  });
+
+  it('clears each joined segment of one merged event', () => {
+    const first = { text: 'one', entries: ['one'] };
+    const second = { text: 'two', entries: ['two'] };
+    const result = takeDeliveredSteerBatches([first, second], 'one\n\ntwo');
+    expect(result.delivered).toEqual([first, second]);
+    expect(result.pending).toEqual([]);
   });
 });

@@ -278,6 +278,8 @@ export interface TranscriptEntry {
   /** Entry renders a UserPromptSubmit hook result (sits inside its prompt's group window). */
   hookResult?: boolean;
   pluginCommandData?: PluginCommandTranscriptData;
+  /** Live steer not yet acknowledged by `turn.steer`. Absent after delivery, failure, or replay. */
+  steerPending?: true;
 }
 
 export type LivePaneMode =

@@ -22,6 +22,7 @@ import {
   type GoalSnapshot,
   type Session,
 } from '@moonshot-ai/kimi-code-sdk';
+import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
@@ -4948,6 +4949,72 @@ command = "vim"
     expect(driver.state.transcriptEntries).toContainEqual(expect.objectContaining({
       kind: 'user', content: 'keep this input',
     }));
+  });
+
+  it('fades a Ctrl-S steer until turn.steer, then restores the text', async () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      let resolveSteer!: () => void;
+      const session = makeSession({
+        steer: vi.fn(() => new Promise<void>((resolve) => {
+          resolveSteer = resolve;
+        })),
+      });
+      const { driver } = await makeDriver(session);
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+      driver.state.editor.setText('keep this input');
+
+      driver.state.editor.onCtrlS?.();
+
+      expect(renderTranscript(driver)).toContain('\u001B[2m');
+      expect(stripSgr(renderTranscript(driver))).toContain('keep this input');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.steer',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          input: [{ type: 'text', text: 'keep this input' }],
+          origin: { kind: 'user' },
+        } as Event,
+        () => {},
+      );
+      const restored = renderTranscript(driver);
+      expect(stripSgr(restored)).toContain('keep this input');
+      expect(restored).not.toContain('\u001B[2m');
+      resolveSteer();
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
+
+  it('restores a failed Ctrl-S steer instead of leaving it faint', async () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const session = makeSession({
+        steer: vi.fn(async () => {
+          throw new Error('Input unavailable');
+        }),
+      });
+      const { driver } = await makeDriver(session);
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+      driver.state.editor.setText('keep this input');
+
+      driver.state.editor.onCtrlS?.();
+
+      await vi.waitFor(() => {
+        expect(stripSgr(renderTranscript(driver))).toContain('Input unavailable');
+      });
+      const rendered = renderTranscript(driver);
+      expect(stripSgr(rendered)).toContain('keep this input');
+      expect(rendered).not.toContain('\u001B[2m');
+    } finally {
+      chalk.level = previousLevel;
+    }
   });
 
   it('serializes Ctrl-S inputs without blocking later submissions after a skill failure', async () => {

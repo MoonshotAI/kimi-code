@@ -71,6 +71,7 @@ import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
+import { isTurnSteerEvent } from '../utils/steer-delivery';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
@@ -126,6 +127,7 @@ export interface SessionEventHost {
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
   steerQueuedMessagesIntoRunningTurn(): void;
+  acknowledgeSteerDelivery?(input: unknown): void;
   lastCompactionTrigger: CompactionStartedEvent['trigger'] | undefined;
   autoCompactionSerial: number;
   handleTurnStarted?(event: TurnStartedEvent): void;
@@ -286,6 +288,10 @@ export class SessionEventHandler {
 
     if ('turnId' in event && event.turnId !== undefined) {
       this.host.streamingUI.setTurnId(String(event.turnId));
+    }
+    if (isTurnSteerEvent(event)) {
+      this.host.acknowledgeSteerDelivery?.(event.input);
+      return;
     }
 
     switch (event.type) {

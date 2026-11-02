@@ -44,6 +44,21 @@ describe('StickyUserMessageComponent', () => {
     expect(component.setJudgment(null)).toBe(false);
   });
 
+  it('fades the summary while the user message is still an unread steer', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const component = new StickyUserMessageComponent(() => {});
+      const message = new UserMessageComponent('keep this input', undefined, undefined, undefined, true);
+      component.setJudgment({ component: message, summary: 'keep this input', targetY: 2 });
+      expect(component.render(80)[0]).toContain('\u001B[2m');
+      message.setSteerPending(false);
+      expect(component.render(80)[0]).not.toContain('\u001B[2m');
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
+
   it('keeps the user message skill highlighting in a Fullscreen summary', () => {
     const summary = '/skill:review check src/app.ts';
     const user = new UserMessageComponent(summary, undefined, undefined, ['review']);
