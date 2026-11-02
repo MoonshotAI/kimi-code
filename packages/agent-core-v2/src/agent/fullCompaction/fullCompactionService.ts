@@ -138,6 +138,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private readonly strategy: CompactionStrategy;
   private _compacting: ActiveCompaction | null = null;
+  private deferSoftAutoCompaction = false;
 
   constructor(
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
@@ -186,7 +187,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     );
     this._register(
       this.loopService.hooks.onDidFinishStep.register('full-compaction', async (ctx, next) => {
-        if (!ctx.signal.aborted) await this.afterStep();
+        if (!ctx.signal.aborted) await this.afterStep(ctx.finishReason === 'tool_calls');
         await next();
       }),
     );
@@ -475,6 +476,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     this.compactionCountInTurn = 0;
     this.lastCompactedTokenCount = null;
     this.consecutiveOverflowCompactions = 0;
+    this.deferSoftAutoCompaction = false;
   }
 
   private async recoverFromContextOverflow(
@@ -508,14 +510,24 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private async beforeStep(signal: AbortSignal, turnId?: number): Promise<void> {
     this.activeTurnId = turnId;
+    const shouldBlock = this.strategy.shouldBlock(this.tokenCountWithPending());
+    if (this.deferSoftAutoCompaction && !shouldBlock && this._compacting === null) {
+      this.deferSoftAutoCompaction = false;
+      return;
+    }
+    this.deferSoftAutoCompaction = false;
     this.checkAutoCompaction();
-    if (this.strategy.shouldBlock(this.tokenCountWithPending())) {
+    if (this._compacting !== null || shouldBlock) {
       await this.block(signal, turnId);
     }
   }
 
-  private async afterStep(): Promise<void> {
+  private async afterStep(hasToolContinuation: boolean): Promise<void> {
     this.consecutiveOverflowCompactions = 0;
+    if (hasToolContinuation) {
+      this.deferSoftAutoCompaction = true;
+      return;
+    }
     if (this.strategy.checkAfterStep) {
       this.checkAutoCompaction(false);
     }
