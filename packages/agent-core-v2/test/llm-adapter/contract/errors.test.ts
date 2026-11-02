@@ -266,11 +266,37 @@ describe('model error HTTP status source', () => {
       statusCode: 503,
       requestId: 'req-http',
       retryAfterMs: null,
-      headers: null,
+      headers: { 'x-trace-id': 'trace-http' },
     });
 
-    expect(error).toMatchObject({ message: 'backend HTTP 503', statusCode: 503 });
+    expect(error).toMatchObject({
+      message: 'backend HTTP 503',
+      statusCode: 503,
+      traceId: 'trace-http',
+    });
     expect(isRetryableGenerateError(error)).toBe(true);
+    expect(llmMessageFromError(error)).toMatchObject({
+      headers: { 'x-trace-id': 'trace-http' },
+    });
+  });
+
+  it('preserves a provider error code in the sixth constructor argument', () => {
+    const error = new APIStatusError(
+      403,
+      'Forbidden',
+      null,
+      null,
+      { requestId: 'req-diagnostics' },
+      'provider.auth_error',
+    );
+
+    expect(error).toMatchObject({
+      code: 'provider.auth_error',
+      statusCode: 403,
+      traceId: null,
+      diagnostics: { requestId: 'req-diagnostics' },
+    });
+    expect(isRetryableGenerateError(error)).toBe(false);
   });
 
   it('does not apply message recovery patterns without a real HTTP status', () => {

@@ -40,6 +40,21 @@ export type ProviderErrorCode =
   | typeof PROVIDER_OVERLOADED_ERROR_CODE
   | typeof CONTEXT_OVERFLOW_ERROR_CODE;
 
+function isProviderErrorCode(value: string): value is ProviderErrorCode {
+  switch (value) {
+    case PROVIDER_API_ERROR_CODE:
+    case PROVIDER_FILTERED_ERROR_CODE:
+    case PROVIDER_RATE_LIMIT_ERROR_CODE:
+    case PROVIDER_AUTH_ERROR_CODE:
+    case PROVIDER_CONNECTION_ERROR_CODE:
+    case PROVIDER_OVERLOADED_ERROR_CODE:
+    case CONTEXT_OVERFLOW_ERROR_CODE:
+      return true;
+    default:
+      return false;
+  }
+}
+
 function codeForStatusError(statusCode: number | undefined): ProviderErrorCode {
   if (statusCode === 429) return PROVIDER_RATE_LIMIT_ERROR_CODE;
   if (statusCode === 401 || statusCode === 403) return PROVIDER_AUTH_ERROR_CODE;
@@ -102,18 +117,25 @@ export class APIStatusError extends ChatProviderError {
     requestId?: string | null,
     retryAfterMs?: number | null,
     diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
-    traceId?: string | null,
-    code: ProviderErrorCode = codeForStatusError(statusCode),
+    codeOrTraceId?: string | null,
     retryable?: boolean,
+    traceId?: string | null,
   ) {
     const diagnostics =
       diagnosticsOrTraceId !== null && typeof diagnosticsOrTraceId === 'object'
         ? diagnosticsOrTraceId
         : undefined;
-    const resolvedTraceId =
-      diagnosticsOrTraceId !== null && typeof diagnosticsOrTraceId === 'object'
-        ? traceId
-        : diagnosticsOrTraceId;
+    const legacyTraceId =
+      typeof diagnosticsOrTraceId === 'string' || diagnosticsOrTraceId === null
+        ? diagnosticsOrTraceId
+        : typeof codeOrTraceId === 'string' && !isProviderErrorCode(codeOrTraceId)
+          ? codeOrTraceId
+          : undefined;
+    const code =
+      typeof codeOrTraceId === 'string' && isProviderErrorCode(codeOrTraceId)
+        ? codeOrTraceId
+        : codeForStatusError(statusCode);
+    const resolvedTraceId = traceId === undefined ? legacyTraceId : traceId;
     super(
       message,
       code,
@@ -151,8 +173,9 @@ export class APIContextOverflowError extends APIStatusError {
       requestId,
       retryAfterMs,
       diagnosticsOrTraceId,
-      traceId,
       CONTEXT_OVERFLOW_ERROR_CODE,
+      undefined,
+      traceId,
     );
     this.name = 'APIContextOverflowError';
   }
@@ -187,8 +210,9 @@ export class APIProviderRateLimitError extends APIStatusError {
       requestId,
       retryAfterMs,
       diagnosticsOrTraceId,
-      traceId,
       PROVIDER_RATE_LIMIT_ERROR_CODE,
+      undefined,
+      traceId,
     );
     this.name = 'APIProviderRateLimitError';
   }
@@ -209,8 +233,9 @@ export class APIProviderQuotaExhaustedError extends APIStatusError {
       requestId,
       retryAfterMs,
       diagnosticsOrTraceId,
-      traceId,
       PROVIDER_API_ERROR_CODE,
+      undefined,
+      traceId,
     );
     this.name = 'APIProviderQuotaExhaustedError';
   }
@@ -231,8 +256,9 @@ export class APIProviderOverloadedError extends APIStatusError {
       requestId,
       retryAfterMs,
       diagnosticsOrTraceId,
-      traceId,
       PROVIDER_OVERLOADED_ERROR_CODE,
+      undefined,
+      traceId,
     );
     this.name = 'APIProviderOverloadedError';
   }
@@ -587,9 +613,9 @@ export function errorFromLlmMessage(
         error.requestId,
         error.retryAfterMs,
         diagnostics,
-        traceIdFromHeadersRecord(error.headers),
         undefined,
         error.retryable,
+        traceIdFromHeadersRecord(error.headers),
       );
     case 'empty_response':
       return new APIEmptyResponseError(error.message, {
