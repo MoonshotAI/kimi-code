@@ -49,6 +49,13 @@ export function eventSnapshot(
 ) {
   const normalized = events.map((event) => {
     let stableEvent = event;
+    if (event.type === '[wire]' && event.event === 'tool_select.initialized') {
+      const args = event.args as { readonly tools: readonly { readonly name: string }[] };
+      stableEvent = {
+        ...event,
+        args: { ...args, tools: args.tools.map((tool) => tool.name) },
+      };
+    }
     if (event.type === '[wire]' && event.event === 'llm.tools_snapshot') {
       const args = event.args as { readonly tools: readonly { readonly name: string }[] };
       stableEvent = {

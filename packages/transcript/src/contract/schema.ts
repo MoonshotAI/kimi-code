@@ -36,7 +36,7 @@ export const transcriptUsageSchema = z.object({
 export const stepUsageSchema = z.object({
   inputOther: z.number(),
   output: z.number(),
-  inputCacheRead: z.number(),
+  inputCacheRead: z.number().optional(),
   inputCacheCreation: z.number(),
 });
 

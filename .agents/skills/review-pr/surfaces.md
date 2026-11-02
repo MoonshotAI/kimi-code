@@ -13,7 +13,7 @@
 | desktop 与 web 用户 | 源码在 code-app 仓库，只消费 kap-server 的 `/api/v1` REST 与 `/api/v1/ws`。本仓 diff 看不到它们的用法，改契约时必须点名让作者去对方仓库核对 | `packages/kap-server/src/routes/`、`packages/kap-server/src/transport/ws/`、`docs/en/reference/server-api.md` |
 | VS Code 扩展用户 | 走 SDK 事件适配层，webview 有自己的渲染契约（#3250：v2 不再发 `display` 字段导致卡片空白） | `apps/vscode/` |
 | ACP 客户端用户 | Zed 等，`kimi acp`。stdio MCP 是 ACP 的默认传输，客户端会无条件发（#3167）；能力矩阵是公开承诺（#3081） | `packages/acp-server/`、`docs/en/reference/kimi-acp.md` |
-| SDK 调用方 | `@moonshot-ai/kimi-code-sdk` 的导出面；其中 `KimiForCodingProvider` 走 kosong 的 provider 实现，CLI 与服务端不用 kosong | `packages/node-sdk/src/index.ts`、`packages/node-sdk/package.json` 的 `exports`、`packages/kosong/src/providers/` |
+| SDK 调用方 | `@moonshot-ai/kimi-code-sdk` 的导出面；其中 `KimiForCodingProvider` 使用 node-sdk 本地 provider 契约，错误类来自 agent-core-v2 | `packages/node-sdk/src/index.ts`、`packages/node-sdk/package.json` 的 `exports`、`packages/node-sdk/src/model-provider.ts` |
 | 远程控制用户 | `kimi web --remote-control`，凭据槽位与 relay 按登录区域选择（#3969） | `packages/remote-control/` |
 
 ### provider 方言

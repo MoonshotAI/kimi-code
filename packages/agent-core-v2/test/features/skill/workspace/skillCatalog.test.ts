@@ -174,10 +174,11 @@ function workspaceContextStub(workDir: string): IWorkspaceContext {
 function workspaceDirsStub(
   sharedAdditionalDirs: readonly string[] = [],
   additionalDirs: readonly string[] = sharedAdditionalDirs,
+  ready: Promise<void> = Promise.resolve(),
 ): IWorkspaceDirs {
   return {
     _serviceBrand: undefined,
-    ready: Promise.resolve(),
+    ready,
     additionalDirs,
     sharedAdditionalDirs,
     primaryByWorkspace: {},
@@ -295,6 +296,25 @@ describe('WorkspaceSkillCatalogService', () => {
       'utf8',
     );
   }
+
+  it('keeps initial source failures observable for a late ready consumer', async () => {
+    const { host, workspace } = makeHost(
+      new FileSkillDiscovery(stubLog()),
+      workspaceContextStub('/work'),
+      [],
+      undefined,
+      undefined,
+      workspaceDirsStub([], [], Promise.reject(new Error('invalid workspace directories'))),
+    );
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await expect(catalog.ready).rejects.toThrow('invalid workspace directories');
+    } finally {
+      host.dispose();
+    }
+  });
 
   it('discovers all workspace directories with primary and earlier dirs winning collisions', async () => {
     const base = await mkdtemp(join(tmpdir(), 'skill-catalog-multi-root-'));

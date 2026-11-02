@@ -33,7 +33,10 @@ export function ContextTab({ sessionId, initialAgentId = 'main' }: ContextTabPro
   const cumulativeUsage: TokenUsage = {
     inputOther: sessionUsage.inputOther + turnUsage.inputOther,
     output: sessionUsage.output + turnUsage.output,
-    inputCacheRead: sessionUsage.inputCacheRead + turnUsage.inputCacheRead,
+    inputCacheRead:
+      sessionUsage.inputCacheRead === undefined || turnUsage.inputCacheRead === undefined
+        ? undefined
+        : sessionUsage.inputCacheRead + turnUsage.inputCacheRead,
     inputCacheCreation: sessionUsage.inputCacheCreation + turnUsage.inputCacheCreation,
   };
   // Live context-window fill (latest step.end usage), distinct from the
@@ -210,6 +213,9 @@ const SEG_COLORS = {
 } as const;
 
 function TokenBar({ usage, contextTokens }: { usage: TokenUsage; contextTokens: number }) {
+  if (usage.inputCacheRead === undefined) {
+    return <div className="px-3 py-1 font-mono text-[10px] text-fg-3">cache_read unknown</div>;
+  }
   const total =
     usage.inputOther + usage.output + usage.inputCacheRead + usage.inputCacheCreation;
   return (
