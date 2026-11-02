@@ -796,7 +796,7 @@ Starts a manual full compaction of the main agent's context, or queues it when t
 
 On success, `data` is `{ accepted_as, prompt_id }`: `accepted_as` is `compact` when the compaction started and `queue` when it joins the end of the main agent's [prompt queue](#prompt-queue); `prompt_id` identifies the queue entry. A queued compaction runs when it reaches the head of the queue; if it cannot start then, the session records a warning and the queue moves on.
 
-- `40910`: a compaction is already running or queued, or the history has nothing to compact
+- `40910`: a compaction is already running or queued, or it would start now and the history has nothing to compact
 
 #### `POST /api/v1/sessions/{session_id}:undo`
 

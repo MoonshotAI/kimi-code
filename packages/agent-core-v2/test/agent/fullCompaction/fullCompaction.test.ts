@@ -496,6 +496,29 @@ describe('FullCompaction', () => {
     expect(compaction.compacting).toBeNull();
   });
 
+  it('checks for an empty history only when the compaction would start now', () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    const loop = ctx.get(IAgentLoopService);
+    const compaction = ctx.get(IAgentFullCompactionService);
+
+    expect(() => compaction.request({ id: 'compact-0' })).toThrow('No messages to compact');
+    const lease = loop.tryAcquireQuiescence();
+    expect(lease).toBeDefined();
+    lease?.dispose();
+
+    loop.pauseQueue();
+    const waiting = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'First prompt' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    }).id;
+    expect(compaction.request({ id: 'compact-1' })).toBe('queue');
+    expect(loop.snapshot().queue.map((entry) => entry.meta?.promptId)).toEqual([waiting, 'compact-1']);
+  });
+
   it('compacts right away on an empty paused queue and waits behind paused prompts otherwise', async () => {
     const ctx = testAgent();
     ctx.configure({

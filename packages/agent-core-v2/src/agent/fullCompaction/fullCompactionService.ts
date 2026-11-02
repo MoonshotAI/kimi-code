@@ -350,12 +350,13 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'A compaction is already running or queued.');
     }
     this.runGate.begin();
-    const history = this.context.get();
-    if (history.length === 0) {
-      throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
-    }
     const quiescence = loop.state === 'idle' ? this.loopService.tryAcquireQuiescence() : undefined;
     if (quiescence !== undefined) {
+      const history = this.context.get();
+      if (history.length === 0) {
+        quiescence.dispose();
+        throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
+      }
       this.reserveCompactionSlot('manual');
       this.startCompaction({ source: 'manual', instruction: input.instruction }, this.requestTokens(history), quiescence);
       return 'compact';

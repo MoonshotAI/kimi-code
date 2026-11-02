@@ -796,7 +796,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 成功时，`data` 为 `{ accepted_as, prompt_id }`：压缩已开始时 `accepted_as` 为 `compact`，排到 main agent 的[提示词队列](#提示词队列)末尾时为 `queue`；`prompt_id` 标识这个队列条目。排队的压缩轮到队首时执行；那时无法开始的，会话会记录一条警告，队列继续往下处理。
 
-- `40910`：已有压缩正在进行或在排队，或历史中没有可压缩的内容
+- `40910`：已有压缩正在进行或在排队，或需要立即执行但历史中没有可压缩的内容
 
 #### `POST /api/v1/sessions/{session_id}:undo`
 
