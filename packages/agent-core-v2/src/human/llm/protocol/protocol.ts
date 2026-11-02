@@ -11,6 +11,7 @@ import type {
   LlmErrorDiagnostics,
   LlmErrorMessage,
   LlmRemoteErrorMessage,
+  LlmNotice,
   TokenUsage,
 } from '#/llm/response';
 
@@ -63,11 +64,13 @@ export interface Protocol<
     client: TClient,
     request: TRequest,
     signal: AbortSignal,
+    report?: (notice: LlmNotice) => void,
   ) => Promise<ProtocolReply<TResponse>>;
   readonly sendStream: (
     client: TClient,
     request: TRequest,
     signal: AbortSignal,
+    report?: (notice: LlmNotice) => void,
   ) => Promise<ProtocolReply<AsyncIterable<TChunk>>>;
   readonly decoder: (module: LlmModule<TOptions>, sink: DecodeSink) => Decoder<TChunk>;
   readonly replay: (response: TResponse) => Iterable<TChunk>;

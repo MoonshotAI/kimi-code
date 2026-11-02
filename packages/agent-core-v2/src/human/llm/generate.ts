@@ -3,7 +3,7 @@ import { isAbortError, toLlmErrorMessage, toLlmSyntaxErrorMessage } from '#/llm/
 import type { DecodeSink, LlmModule, ProtocolReply } from '#/llm/protocol/protocol';
 import { withProtocolCapabilities } from '#/llm/protocol/rules/model';
 import type { LlmRequest } from '#/llm/request';
-import type { LlmErrorMessage, LlmRemoteErrorMessage, LlmStreamEvent } from '#/llm/response';
+import type { LlmErrorMessage, LlmNotice, LlmRemoteErrorMessage, LlmStreamEvent } from '#/llm/response';
 
 export type LlmAttemptEvent =
   | LlmStreamEvent
@@ -90,9 +90,10 @@ export async function generate(request: LlmRequest, control: LlmAttemptControl):
         : clientFactory(endpoint);
     const sink = createEventSink(onEvent);
     onEvent?.({ type: 'attempt.sending' });
+    const report = (notice: LlmNotice): void => onEvent?.({ type: 'llm.notice', notice });
     const chunks = stream
-      ? receive(await base.sendStream(client, encodedRequest, signal), onEvent)
-      : base.replay(receive(await base.send(client, encodedRequest, signal), onEvent));
+      ? receive(await base.sendStream(client, encodedRequest, signal, report), onEvent)
+      : base.replay(receive(await base.send(client, encodedRequest, signal, report), onEvent));
     const decoder = base.decoder(module, sink);
     for await (const chunk of chunks) {
       decoder.push(chunk);

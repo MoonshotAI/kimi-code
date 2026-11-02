@@ -503,6 +503,26 @@ export class AgentLoopRequester implements LoopRequester {
         },
       )) {
         switch (event.type) {
+          case 'notice':
+            try {
+              this.log.warn(event.notice.message, {
+                source: event.notice.source,
+                code: event.notice.code,
+                ...request.logFields,
+              });
+            } catch {
+            }
+            try {
+              void this.dispatcher.dispatch(
+                new WarningIssued({
+                  agentId: this.scopeContext.agentId,
+                  code: event.notice.code,
+                  message: event.notice.message,
+                }),
+              );
+            } catch {
+            }
+            break;
           case 'part':
             await onPart(event.part);
             break;
