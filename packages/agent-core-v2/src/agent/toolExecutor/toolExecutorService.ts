@@ -5,7 +5,7 @@ import { AsyncEmitter, type Event } from '#/_base/event';
 import { defineState } from '#/state/state';
 import type { ContentPart, ToolCall } from '#human/llm/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import type { EnvironmentTarget } from '#/environment/environment';
+import type { EnvironmentHandle } from '#/environment/environment';
 
 import {
   compileToolArgsValidator,
@@ -398,11 +398,11 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       return settleError(call.args, output, 'resolution-failed');
     }
     if (
-      call.environment?.primary === false &&
+      call.environment?.target.primary === false &&
       execution.isError !== true &&
       (execution.display?.kind === 'command' || execution.display?.kind === 'file_io')
     ) {
-      execution = { ...execution, display: { ...execution.display, environment: call.environment.environmentId } };
+      execution = { ...execution, display: { ...execution.display, environment: call.environment.target.environmentId } };
     }
 
     const displayFields = toolCallDisplayFieldsFromExecution(execution);
@@ -701,7 +701,7 @@ interface RunnableToolCall {
   readonly tool: ExecutableTool;
   readonly args: unknown;
   readonly input: unknown;
-  readonly environment?: EnvironmentTarget;
+  readonly environment?: EnvironmentHandle;
 }
 
 interface RejectedToolCall {

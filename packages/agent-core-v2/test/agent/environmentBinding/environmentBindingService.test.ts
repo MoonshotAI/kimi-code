@@ -555,9 +555,6 @@ describe('AgentEnvironmentService multi-environment targets', () => {
     });
 
     expect(agentEnvironment.targets()).toEqual([{ environmentId: 'local', primary: true, cwd: undefined }]);
-    expect(() => agentEnvironment.acquire([], 'remote')).toThrowError(
-      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
-    );
   });
 
   it('routes declared environments to their own environment and default working directory', () => {
@@ -571,14 +568,12 @@ describe('AgentEnvironmentService multi-environment targets', () => {
       { environmentId: 'local', primary: true, cwd: undefined },
       { environmentId: 'remote', primary: false, cwd: '/srv/app/' },
     ]);
-    const lease = agentEnvironment.acquire(['process'], 'remote');
+    const remote = agentEnvironment.handle(agentEnvironment.targets()[1]!);
+    const lease = remote.acquire(['process']);
     expect(lease.environment.identity.environmentId).toBe('remote');
     lease.dispose();
-    expect(agentEnvironment.workspaceRoots('remote')).toEqual({ workDir: '/srv/app', additionalDirs: [] });
+    expect(remote.workspaceRoots()).toEqual({ workDir: '/srv/app', additionalDirs: [] });
     expect(agentEnvironment.workspaceRoots()).toEqual({ workDir: '/workspace', additionalDirs: ['/workspace-extra'] });
-    expect(() => agentEnvironment.acquire([], 'acp:other-session')).toThrowError(
-      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
-    );
   });
 
   it('offers local beside a declared remote primary and resolves it to the session directory', () => {
@@ -591,7 +586,7 @@ describe('AgentEnvironmentService multi-environment targets', () => {
       { environmentId: 'remote', primary: true, cwd: '/srv/app' },
       { environmentId: 'local', primary: false, cwd: '/workspace' },
     ]);
-    expect(agentEnvironment.workspaceRoots('local')).toEqual({ workDir: '/workspace', additionalDirs: [] });
+    expect(agentEnvironment.handle(agentEnvironment.targets()[1]!).workspaceRoots()).toEqual({ workDir: '/workspace', additionalDirs: [] });
   });
 
   it('keeps a session-private primary isolated from other environments', () => {
@@ -609,7 +604,9 @@ describe('AgentEnvironmentService multi-environment targets', () => {
       multiEnvironment: { declarations: [{ id: 'remote', defaultCwd: 'relative/dir' }] },
     });
 
-    expect(() => agentEnvironment.acquire([], 'remote')).toThrowError(
+    const remote = agentEnvironment.handle(agentEnvironment.targets()[1]!);
+    expect(remote.isAvailable()).toBe(false);
+    expect(() => remote.acquire()).toThrowError(
       expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.invalid_cwd' }),
     );
   });
@@ -617,7 +614,7 @@ describe('AgentEnvironmentService multi-environment targets', () => {
   it('falls back to the connected host directory when no default working directory is declared', () => {
     const { agentEnvironment } = setup({ multiEnvironment: { declarations: [{ id: 'remote' }] } });
 
-    expect(agentEnvironment.workspaceRoots('remote').workDir).toBe('/home/fake');
+    expect(agentEnvironment.handle(agentEnvironment.targets()[1]!).workspaceRoots().workDir).toBe('/home/fake');
   });
 });
 

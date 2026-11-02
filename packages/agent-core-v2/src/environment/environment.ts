@@ -67,6 +67,18 @@ export interface EnvironmentLease {
   dispose(): void;
 }
 
+export interface EnvironmentAccess {
+  inspect(): Environment;
+  isAvailable(required?: readonly EnvironmentCapability[]): boolean;
+  acquire(required?: readonly EnvironmentCapability[]): EnvironmentLease;
+  acquireWhenReady(required?: readonly EnvironmentCapability[]): Promise<EnvironmentLease>;
+  workspaceRoots(): EnvironmentWorkspaceRoots;
+}
+
+export interface EnvironmentHandle extends EnvironmentAccess {
+  readonly target: EnvironmentTarget;
+}
+
 export async function realpathExistingPrefix(
   fs: Pick<IHostFileSystem, 'realpath'>,
   path: EnvironmentPath,

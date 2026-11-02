@@ -70,6 +70,7 @@ describe('AgentFileHistoryService', () => {
   let gpuFiles: Map<string, Uint8Array>;
   let gpuReachable: boolean;
   let connectAttempts: number;
+  let extraTargets: EnvironmentTarget[];
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -95,6 +96,7 @@ describe('AgentFileHistoryService', () => {
     gpuFiles = new Map();
     gpuReachable = true;
     connectAttempts = 0;
+    extraTargets = [];
   });
 
   afterEach(() => {
@@ -108,10 +110,9 @@ describe('AgentFileHistoryService', () => {
       workspace: { mapRoots: (roots: unknown) => roots },
     };
     const gpu = { ...environment, fs: hostFs(false, gpuFiles) };
-    return {
-      targets: () => [LOCAL, GPU],
+    const accessIn = (environmentId?: string) => ({
       inspect: () => environment,
-      acquire: (_required: unknown, environmentId?: string) => {
+      acquire: () => {
         if (environmentId !== 'gpu') return { environment, dispose: () => {} };
         if (!gpuReachable) throw new EnvironmentError('environment.unavailable', 'environment gpu is disconnected');
         return { environment: gpu, dispose: () => {} };
@@ -120,10 +121,15 @@ describe('AgentFileHistoryService', () => {
         connectAttempts += 1;
         throw new Error('file history must not connect environments');
       },
-      workspaceRoots: (environmentId?: string) => ({
+      workspaceRoots: () => ({
         workDir: environmentId === 'gpu' ? '/srv/app' : WORK_DIR,
         additionalDirs: [],
       }),
+    });
+    return {
+      targets: () => [LOCAL, GPU, ...extraTargets],
+      handle: (target: EnvironmentTarget) => ({ ...accessIn(target.environmentId), target }),
+      ...accessIn(),
     } as unknown as IAgentEnvironmentService;
   }
 
@@ -217,7 +223,13 @@ describe('AgentFileHistoryService', () => {
       execute: async () => ({ output: '' }),
     };
     await executorEvents.fireWillExecute(
-      { turnId, toolCall, execution, args: {}, environment },
+      {
+        turnId,
+        toolCall,
+        execution,
+        args: {},
+        environment: environment === undefined ? undefined : stubEnvironment().handle(environment),
+      },
       new AbortController().signal,
     );
     await service.settled();
@@ -630,6 +642,7 @@ describe('AgentFileHistoryService', () => {
     const service = createService();
     setFile('/b:/x', 'first\n');
     setFile('/x', 'second\n');
+    extraTargets = [{ environmentId: 'a', primary: false }, { environmentId: 'a:/b', primary: false }];
 
     startTurn(1);
     await service.captureForActiveTurn('/b:/x', 'a');

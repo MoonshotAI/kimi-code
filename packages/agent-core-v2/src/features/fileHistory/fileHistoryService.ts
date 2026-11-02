@@ -24,7 +24,7 @@ import {
 } from '#/session/workspaceContext/workspacePaths';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import type { Environment, EnvironmentLease } from '#/environment/environment';
+import type { Environment, EnvironmentAccess, EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 
 import {
@@ -263,7 +263,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
   private onWillExecuteTool(event: WillExecuteToolEvent): void {
     const path = editTargetPath(event.execution.display);
     if (path === undefined) return;
-    event.waitUntil(this.enqueue(() => this.capture(path, event.turnId, event.environment?.environmentId)));
+    event.waitUntil(this.enqueue(() => this.capture(path, event.turnId, event.environment?.target.environmentId)));
   }
 
   private onSubagentWillExecuteTool(event: WillExecuteToolEvent): void {
@@ -272,7 +272,7 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     const main = this.agentLifecycle.handleOf(MAIN_AGENT_ID);
     if (main === undefined) return;
     event.waitUntil(
-      main.accessor.get(IAgentFileHistoryService).captureForActiveTurn(path, event.environment?.environmentId),
+      main.accessor.get(IAgentFileHistoryService).captureForActiveTurn(path, event.environment?.target.environmentId),
     );
   }
 
@@ -485,8 +485,10 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     let workDir: string;
     let lease: EnvironmentLease;
     try {
-      workDir = this.environment.workspaceRoots(environmentId).workDir;
-      lease = this.environment.acquire(['fs'], environmentId);
+      const environment = this.environmentFor(environmentId);
+      if (environment === undefined) return 'unreadable';
+      workDir = environment.workspaceRoots().workDir;
+      lease = environment.acquire(['fs']);
     } catch (error) {
       if (error instanceof EnvironmentError) return 'unreadable';
       throw error;
@@ -524,6 +526,12 @@ export class AgentFileHistoryService extends Service implements IAgentFileHistor
     } finally {
       lease.dispose();
     }
+  }
+
+  private environmentFor(environmentId: string | undefined): EnvironmentAccess | undefined {
+    if (environmentId === undefined) return this.environment;
+    const target = this.environment.targets().find((candidate) => candidate.environmentId === environmentId);
+    return target === undefined ? undefined : this.environment.handle(target);
   }
 
   private recordedEnvironmentId(environmentId: string | undefined): string | undefined {

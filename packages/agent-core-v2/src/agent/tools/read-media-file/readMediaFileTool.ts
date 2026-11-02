@@ -166,19 +166,19 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
   }
 
   async resolveExecution(args: ReadMediaFileInput, context?: ToolResolutionContext): Promise<ToolExecution> {
-    const environmentId = context?.environment?.environmentId;
-    const primary = context?.environment?.primary !== false;
+    const environment = context?.environment ?? this.environment;
+    const primary = context?.environment?.target.primary !== false;
     if (!args.path) {
       return { isError: true, output: 'File path cannot be empty.' };
     }
     if (isDaemonFileUrl(args.path)) {
       return this.attachmentExecution(args);
     }
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
+    const resolutionLease = await acquireOrWhenReady(environment, ['fs']);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
-      const roots = this.environment.workspaceRoots(environmentId);
+      const roots = environment.workspaceRoots();
       const view = new EnvironmentWorkspaceView(inspected, {
         workDir: roots.workDir,
         additionalDirs: primary ? this.workspace.additionalDirs : roots.additionalDirs,
@@ -202,7 +202,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
             homeDir: env.homeDir,
           }),
         execute: async ({ signal }) => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
+          const lease = await acquireOrWhenReady(environment, ['fs']);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

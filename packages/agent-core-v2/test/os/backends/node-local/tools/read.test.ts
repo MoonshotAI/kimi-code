@@ -231,6 +231,7 @@ function createRegistryBackedTool(environmentValue: FakeEnvironment) {
     _serviceBrand: undefined,
     onDidChange: (listener) => registry.onDidChange(() => listener()),
     targets: () => [{ environmentId: 'local', primary: true }],
+    handle(target) { return { ...this, target }; },
     isAvailable: (required = []) => {
       try {
         const lease = registry.acquire(binding, required);

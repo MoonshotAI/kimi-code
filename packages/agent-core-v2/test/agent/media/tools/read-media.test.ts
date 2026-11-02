@@ -926,6 +926,7 @@ describe('AgentMediaToolsRegistrar', () => {
       _serviceBrand: undefined,
       onDidChange: environmentChanges.event,
       targets: () => [{ environmentId: 'local', primary: true }],
+      handle(target) { return { ...this, target }; },
       isAvailable: (required = []) => environmentAvailable && baseEnvironment.isAvailable(required),
       inspect: () => {
         if (!environmentAvailable) throw new Error('environment unavailable');

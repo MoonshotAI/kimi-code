@@ -15,7 +15,7 @@ import type { ToolCall } from '#human/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
-import type { Environment, EnvironmentTarget } from '#/environment/environment';
+import type { Environment, EnvironmentHandle } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { stubAgentEnvironment } from '../../environment/stubs';
@@ -273,7 +273,7 @@ function didCtx(
     readonly result?: ExecutableToolResult;
     readonly preflightRejected?: boolean;
     readonly accesses?: ToolAccessesType;
-    readonly environment?: EnvironmentTarget;
+    readonly environment?: EnvironmentHandle;
   } = {},
 ): ToolDidExecuteContext {
   const toolCall: ToolCall = {
@@ -1563,7 +1563,7 @@ describe('agentsMdReminder environment degradation', () => {
       throw new Error('primary environment must not be read');
     };
 
-    await fire(h, didCtx('Read', { path: '/srv/app/AGENTS.md' }, { environment: { environmentId: 'gpu', primary: false } }));
+    await fire(h, didCtx('Read', { path: '/srv/app/AGENTS.md' }, { environment: environment.handle({ environmentId: 'gpu', primary: false }) }));
 
     expect(agentsMdMessages(h)).toHaveLength(0);
     expect(h.reminders).toHaveLength(0);
@@ -1574,11 +1574,9 @@ describe('agentsMdReminder environment degradation', () => {
     const subDir = join(workDir, 'packages', 'named');
     const subAgentsMd = await writeAgentsMd(subDir, 'package instructions');
     h.reminder.seedInjected([], workDir);
+    const environment = h.ix.get(IAgentEnvironmentService).handle({ environmentId: 'local', primary: true });
 
-    await fire(
-      h,
-      didCtx('Read', { path: join(subDir, 'index.ts') }, { environment: { environmentId: 'local', primary: true } }),
-    );
+    await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }, { environment }));
 
     expect(reminderText(h)).toContain(subAgentsMd);
   });

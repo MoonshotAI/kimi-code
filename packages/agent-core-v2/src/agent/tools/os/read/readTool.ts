@@ -251,8 +251,8 @@ export class ReadTool implements IReadTool {
   }
 
   async resolveExecution(args: ReadInput, context?: ToolResolutionContext): Promise<ToolExecution> {
-    const environmentId = context?.environment?.environmentId;
-    const primary = context?.environment?.primary !== false;
+    const environment = context?.environment ?? this.environment;
+    const primary = context?.environment?.target.primary !== false;
     if (args.column_offset !== undefined && (args.line_offset ?? 1) < 0) {
       return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
     }
@@ -263,11 +263,11 @@ export class ReadTool implements IReadTool {
       const artifactTarget = this.localOutputTarget(args.path);
       if (artifactTarget !== undefined) return this.localArtifactExecution(args, artifactTarget, false);
     }
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
+    const resolutionLease = await acquireOrWhenReady(environment, ['fs']);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
-      const roots = this.environment.workspaceRoots(environmentId);
+      const roots = environment.workspaceRoots();
       const view = new EnvironmentWorkspaceView(inspected, {
         workDir: roots.workDir,
         additionalDirs: [...(roots.additionalDirs ?? []), ...(primary ? this.skillCatalog.catalog.getSkillRoots() : [])],
@@ -291,7 +291,7 @@ export class ReadTool implements IReadTool {
             homeDir: env.homeDir,
           }),
         execute: async () => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
+          const lease = await acquireOrWhenReady(environment, ['fs']);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

@@ -270,6 +270,7 @@ function createHarness(options: {
         _serviceBrand: undefined,
         onDidChange: () => ({ dispose: () => {} }),
         targets: () => [{ environmentId: 'local', primary: true }],
+        handle(target) { return { ...this, target }; },
         isAvailable: () => true,
         inspect() {
           return this.acquire().environment;

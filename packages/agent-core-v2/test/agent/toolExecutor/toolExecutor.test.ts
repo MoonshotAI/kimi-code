@@ -115,6 +115,7 @@ beforeEach(() => {
       reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       reg.defineInstance(IAgentEnvironmentService, {
         targets: () => environmentTargets,
+        handle: (target: EnvironmentTarget) => ({ target }),
       } as unknown as IAgentEnvironmentService);
       reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryEvents));
       reg.defineInstance(IAgentToolResultTruncationService, {
@@ -1660,7 +1661,7 @@ describe('AgentToolExecutorService environment routing', () => {
     registry.register(tool, { environmentScoped: true });
     const observed: { readonly environment: EnvironmentTarget | undefined; readonly args: unknown }[] = [];
     executor.onBeforeExecuteTool((event) => {
-      observed.push({ environment: event.environment, args: event.args });
+      observed.push({ environment: event.environment?.target, args: event.args });
     });
 
     await execute([
@@ -1734,11 +1735,7 @@ describe('AgentToolExecutorService environment routing', () => {
     };
     try {
       await writeFile(join(remoteDir, 'notes.txt'), 'from remote exec-server\n');
-      ix.stub(IAgentEnvironmentService, {
-        targets: () => [
-          { environmentId: 'local', primary: true, cwd: '/workspace' },
-          { environmentId: 'gpu', primary: false, cwd: remoteDir },
-        ],
+      const access = {
         inspect: () => environment,
         isAvailable: () => false,
         acquireWhenReady: async () => {
@@ -1746,6 +1743,14 @@ describe('AgentToolExecutorService environment routing', () => {
           return { environment, dispose: () => {} };
         },
         workspaceRoots: () => ({ workDir: remoteDir, additionalDirs: [] }),
+      };
+      ix.stub(IAgentEnvironmentService, {
+        targets: () => [
+          { environmentId: 'local', primary: true, cwd: '/workspace' },
+          { environmentId: 'gpu', primary: false, cwd: remoteDir },
+        ],
+        handle: (target: EnvironmentTarget) => ({ ...access, target }),
+        ...access,
       } as unknown as IAgentEnvironmentService);
       registry.register(
         new ReadTool(
@@ -1788,7 +1793,7 @@ class RoutedTool implements ExecutableTool<Record<string, unknown>> {
   ) {}
 
   resolveExecution(args: Record<string, unknown>, context?: ToolResolutionContext): ToolExecution {
-    this.resolutions.push({ args, environment: context?.environment });
+    this.resolutions.push({ args, environment: context?.environment?.target });
     return {
       approvalRule: this.name,
       display: { kind: 'command', command: String(args['text']) },

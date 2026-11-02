@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { IFileEditService } from '#/app/edit/fileEdit';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
-import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentTarget } from '#/environment/environment';
+import type { Environment, EnvironmentAccess, EnvironmentBinding, EnvironmentCapability, EnvironmentHandle, EnvironmentTarget } from '#/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import {
   EnvironmentError,
@@ -58,6 +58,7 @@ function registryBackedService(registry: EnvironmentRegistry, environmentId = BI
     _serviceBrand: undefined,
     onDidChange: (listener) => registry.onDidChange(() => listener()),
     targets: () => [{ environmentId: 'local', primary: true }],
+    handle(target) { return { ...this, target }; },
     isAvailable: (required: readonly EnvironmentCapability[] = []) => {
       try {
         const environment = registry.inspect(binding);
@@ -398,6 +399,19 @@ describe('tool environment routing', () => {
       ));
     }
     const binding = (environmentId?: string): EnvironmentBinding => ({ environmentId: environmentId ?? 'local' });
+    const accessIn = (environmentId?: string): EnvironmentAccess => ({
+      isAvailable: (required = []) => {
+        const environment = registry.inspect(binding(environmentId));
+        return environmentIsReady(environment) && required.every((capability) => environment.capabilities.has(capability));
+      },
+      inspect: () => registry.inspect(binding(environmentId)),
+      acquire: (required = []) => registry.acquire(binding(environmentId), required),
+      acquireWhenReady: (required = []) => registry.acquireWhenReady(binding(environmentId), required),
+      workspaceRoots: () => ({
+        workDir: binding(environmentId).environmentId === 'local' ? '/workspace' : '/gpu',
+        additionalDirs: [],
+      }),
+    });
     const service: IAgentEnvironmentService = {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
@@ -405,17 +419,8 @@ describe('tool environment routing', () => {
         { environmentId: 'local', primary: true },
         { environmentId: 'gpu', primary: false, cwd: '/gpu' },
       ],
-      isAvailable: (required = [], environmentId) => {
-        const environment = registry.inspect(binding(environmentId));
-        return environmentIsReady(environment) && required.every((capability) => environment.capabilities.has(capability));
-      },
-      inspect: (environmentId) => registry.inspect(binding(environmentId)),
-      acquire: (required = [], environmentId) => registry.acquire(binding(environmentId), required),
-      acquireWhenReady: (required = [], environmentId) => registry.acquireWhenReady(binding(environmentId), required),
-      workspaceRoots: (environmentId) => ({
-        workDir: binding(environmentId).environmentId === 'local' ? '/workspace' : '/gpu',
-        additionalDirs: [],
-      }),
+      handle: (target) => ({ ...accessIn(target.environmentId), target }),
+      ...accessIn(),
     };
     return { service, spawns };
   }
@@ -431,7 +436,7 @@ describe('tool environment routing', () => {
         profile,
         toolPolicy,
         toolRegistry,
-      ).resolveExecution({ path: 'notes.txt' }, { environment });
+      ).resolveExecution({ path: 'notes.txt' }, { environment: environment === undefined ? undefined : service.handle(environment) });
 
     const routed = await read({ environmentId: 'gpu', primary: false });
     expect(routed).toMatchObject({ display: { kind: 'file_io', operation: 'read', path: '/gpu/notes.txt' } });
@@ -450,7 +455,7 @@ describe('tool environment routing', () => {
     const { service, spawns } = routedHarness();
     const resolved = await bashTool(service).resolveExecution(
       { command: 'pwd' },
-      { environment: { environmentId: 'gpu', primary: false } },
+      { environment: service.handle({ environmentId: 'gpu', primary: false }) },
     );
     expect(resolved).toMatchObject({ display: { kind: 'command', cwd: '/gpu' } });
     const result = await finish(resolved);
@@ -462,14 +467,11 @@ describe('tool environment routing', () => {
   it('connects an unready secondary environment before the approval preview', async () => {
     const harness = connectSwappingHarness(createFakeHostFs(), { cwd: '/srv/app' }, 'gpu');
     const { registry, calls } = harness;
-    const service: IAgentEnvironmentService = {
+    const gpu: EnvironmentHandle = {
       ...harness.service,
-      targets: () => [
-        { environmentId: 'local', primary: true },
-        { environmentId: 'gpu', primary: false },
-      ],
-      workspaceRoots: (environmentId) => {
-        const workDir = environmentId === 'gpu' ? registry.inspect({ environmentId: 'gpu' }).host?.cwd : '/workspace';
+      target: { environmentId: 'gpu', primary: false },
+      workspaceRoots: () => {
+        const workDir = registry.inspect({ environmentId: 'gpu' }).host?.cwd;
         if (workDir === undefined) {
           throw new EnvironmentError('environment.unavailable', 'environment gpu has no working directory until it connects');
         }
@@ -477,10 +479,7 @@ describe('tool environment routing', () => {
       },
     };
 
-    const resolved = await bashTool(service).resolveExecution(
-      { command: 'pwd' },
-      { environment: { environmentId: 'gpu', primary: false } },
-    );
+    const resolved = await bashTool(harness.service).resolveExecution({ command: 'pwd' }, { environment: gpu });
     expect(calls).toEqual(['connect']);
     expect(resolved).toMatchObject({ display: { kind: 'command', cwd: '/srv/app' } });
 

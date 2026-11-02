@@ -1372,6 +1372,7 @@ export class AgentTestContext {
               _serviceBrand: undefined,
               onDidChange: () => ({ dispose: () => {} }),
               targets: () => [{ environmentId: environment.identity.environmentId, primary: true }],
+              handle(target) { return { ...this, target }; },
               isAvailable: (required = []) => required.every((capability) => environment.capabilities.has(capability)),
               inspect: () => environment,
               acquire: (required = []): EnvironmentLease => {

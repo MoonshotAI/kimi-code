@@ -1,6 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import { type IDisposable } from '#/_base/di/lifecycle';
-import type { EnvironmentTarget } from '#/environment/environment';
+import type { EnvironmentHandle } from '#/environment/environment';
 import type {
   ExecutableTool,
   ToolDisclosure,
@@ -21,7 +21,7 @@ export interface ToolReference {
 
 export interface ToolEnvironmentRoute {
   readonly args: unknown;
-  readonly environment?: EnvironmentTarget;
+  readonly environment?: EnvironmentHandle;
   readonly error?: string;
 }
 

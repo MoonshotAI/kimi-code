@@ -81,13 +81,13 @@ export class GrepTool implements IGrepTool {
   }
 
   async resolveExecution(args: GrepInput, context?: ToolResolutionContext): Promise<ToolExecution> {
-    const environmentId = context?.environment?.environmentId;
-    const primary = context?.environment?.primary !== false;
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
+    const environment = context?.environment ?? this.environment;
+    const primary = context?.environment?.target.primary !== false;
+    const resolutionLease = await acquireOrWhenReady(environment, ['fs']);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
-      const roots = this.environment.workspaceRoots(environmentId);
+      const roots = environment.workspaceRoots();
       const view = new EnvironmentWorkspaceView(inspected, {
         workDir: roots.workDir,
         additionalDirs: [
@@ -115,7 +115,7 @@ export class GrepTool implements IGrepTool {
         approvalRule: literalRulePattern(this.name, args.pattern),
         matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
         execute: async ({ signal }) => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs', 'process'], environmentId);
+          const lease = await acquireOrWhenReady(environment, ['fs', 'process']);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

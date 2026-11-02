@@ -39,8 +39,8 @@ export class WriteTool implements IWriteTool {
   }
 
   async resolveExecution(args: WriteInput, context?: ToolResolutionContext): Promise<ToolExecution> {
-    const environmentId = context?.environment?.environmentId;
-    const primary = context?.environment?.primary !== false;
+    const environment = context?.environment ?? this.environment;
+    const primary = context?.environment?.target.primary !== false;
     const planTarget = primary ? await this.planService?.resolveFile(args.path) : undefined;
     if (planTarget !== undefined) {
       const path = planTarget.path;
@@ -59,11 +59,11 @@ export class WriteTool implements IWriteTool {
         },
       };
     }
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
+    const resolutionLease = await acquireOrWhenReady(environment, ['fs']);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
-      const roots = this.environment.workspaceRoots(environmentId);
+      const roots = environment.workspaceRoots();
       const view = new EnvironmentWorkspaceView(inspected, {
         workDir: roots.workDir,
         additionalDirs: [
@@ -90,7 +90,7 @@ export class WriteTool implements IWriteTool {
             homeDir: env.homeDir,
           }),
         execute: async () => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
+          const lease = await acquireOrWhenReady(environment, ['fs']);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

@@ -5,6 +5,7 @@ import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { acquireOrWhenReady, pinnedGeneration, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import type { EnvironmentAccess } from '#/environment/environment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
@@ -114,13 +115,13 @@ export class BashTool implements IBashTool {
   }
 
   async resolveExecution(args: BashInput, context?: ToolResolutionContext): Promise<ToolExecution> {
-    const environmentId = context?.environment?.environmentId;
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['process'], environmentId);
+    const environment = context?.environment ?? this.environment;
+    const resolutionLease = await acquireOrWhenReady(environment, ['process']);
     try {
       const expectedGeneration = pinnedGeneration(resolutionLease.environment);
       const view = new EnvironmentWorkspaceView(
         resolutionLease.environment,
-        this.environment.workspaceRoots(environmentId),
+        environment.workspaceRoots(),
       );
       const cwd = view.resolve(args.cwd ?? view.workDir);
       const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
@@ -138,7 +139,7 @@ export class BashTool implements IBashTool {
         approvalRule: literalRulePattern(this.name, args.command),
         matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
         execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
-          this.execution({ ...args, cwd }, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration, environmentId),
+          this.execution({ ...args, cwd }, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration, environment),
       };
     } finally {
       resolutionLease.dispose();
@@ -170,19 +171,19 @@ export class BashTool implements IBashTool {
     onUpdate?: (update: ToolUpdate) => void,
     onForegroundTaskStart?: (taskId: string) => void,
     expectedGeneration?: string,
-    environmentId?: string,
+    environment: EnvironmentAccess = this.environment,
   ): Promise<ExecutableToolResult> {
     const validationError = this.validateRunRequest(args, signal);
     if (validationError !== undefined) return validationError;
 
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
-    const lease = await acquireOrWhenReady(this.environment, ['process'], environmentId);
+    const lease = await acquireOrWhenReady(environment, ['process']);
     if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
       lease.dispose();
       return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
     }
-    const view = new EnvironmentWorkspaceView(lease.environment, this.environment.workspaceRoots(environmentId));
+    const view = new EnvironmentWorkspaceView(lease.environment, environment.workspaceRoots());
     const env = view.host;
     const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
     const effectiveCwd = view.resolve(args.cwd ?? view.workDir);

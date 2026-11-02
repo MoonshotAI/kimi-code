@@ -2,7 +2,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import type { EnvironmentTarget } from '#/environment/environment';
+import type { EnvironmentAccess, EnvironmentTarget } from '#/environment/environment';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { ISessionEnvironmentMounts, type EnvironmentMount } from '#/session/environmentMounts/environmentMounts';
 
@@ -45,9 +45,9 @@ export class AgentEnvironmentRosterService extends Disposable implements IAgentE
   ) {
     super();
     const mounted = new Map<string, { readonly cwd: string; readonly mount: Promise<EnvironmentMount> }>();
-    const connectedCwd = (environmentId: string): string | undefined => {
+    const connectedCwd = (handle: EnvironmentAccess): string | undefined => {
       try {
-        return environment.workspaceRoots(environmentId).workDir;
+        return handle.workspaceRoots().workDir;
       } catch {
         return undefined;
       }
@@ -61,8 +61,9 @@ export class AgentEnvironmentRosterService extends Disposable implements IAgentE
       const label = `\`${target.environmentId}\``;
       if (target.primary) return entry(target, [`- ${label} (primary): working directory ${environment.workspaceRoots().workDir}`]);
       let pending = mounted.get(target.environmentId);
-      if (pending === undefined && environment.isAvailable([], target.environmentId)) {
-        const cwd = connectedCwd(target.environmentId);
+      const handle = environment.handle(target);
+      if (pending === undefined && handle.isAvailable()) {
+        const cwd = connectedCwd(handle);
         if (cwd !== undefined) {
           pending = { cwd, mount: mounts.mount(target.environmentId, cwd) };
           mounted.set(target.environmentId, pending);
