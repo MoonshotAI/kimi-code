@@ -412,23 +412,45 @@ describe('AgentPromptQueueService', () => {
     expect(prepare).toHaveBeenCalledOnce();
   });
 
-  it('announces an input held in the queue once to queued-prompt listeners', async () => {
+  it('announces an input held in the queue once without a queued prompt record', async () => {
     setup();
     respond(2);
     const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
-    const queuedEvents = () => dispatch.mock.calls
+    const events = (type: string) => dispatch.mock.calls
       .map(([event]) => event as { type: string; promptId?: string; queueLength?: number })
-      .filter((event) => event.type === 'prompt.queued');
+      .filter((event) => event.type === type);
     const release = await startHeldTurn();
-    expect(queuedEvents()).toEqual([]);
 
     await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue' });
-    expect(queuedEvents()).toEqual([expect.objectContaining({ promptId: 'p2', queueLength: 1 })]);
+    expect(events('prompt_queue.held')).toEqual([expect.objectContaining({ promptId: 'p2', queueLength: 1 })]);
 
     release();
     await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
     await loop.settled();
-    expect(queuedEvents()).toHaveLength(1);
+    expect(events('prompt_queue.held')).toHaveLength(1);
+    expect(events('prompt.queued')).toEqual([]);
+  });
+
+  it('does not announce a held input again when it is steered into the running turn', async () => {
+    setup();
+    respond(2);
+    const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
+    const announcements = () => dispatch.mock.calls
+      .map(([event]) => (event as { type: string }).type)
+      .filter((type) => type === 'prompt_queue.held' || type === 'prompt.queued');
+    const hold = holdNextStep();
+    await queue.submitInput({ id: 'p1', entry: entry('p1', 'first'), delivery: 'queue' });
+    await hold.started;
+    queue.pause();
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue' });
+    expect(announcements()).toEqual(['prompt_queue.held']);
+
+    queue.steer('p2');
+    queue.resume();
+    await vi.waitFor(() => expect(queue.snapshot().items).toEqual([]));
+    hold.release();
+    await loop.settled();
+    expect(announcements()).toEqual(['prompt_queue.held']);
   });
 
   it('fails an idle prompt whose start bookkeeping fails', async () => {

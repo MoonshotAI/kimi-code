@@ -132,6 +132,7 @@ export interface Turn {
 export interface LoopSubmitOptions {
   readonly steerIfActive?: boolean;
   readonly onMaterialize?: () => void;
+  readonly announcedAsQueued?: boolean;
 }
 
 export interface LoopSubmitResult {

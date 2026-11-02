@@ -1,5 +1,6 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
-import { Event2 } from '#/app/event/event2';
+import type { PromptQueuedPayload } from '#/agent/prompt/promptEvents';
+import { AgentEvent2, Event2 } from '#/app/event/event2';
 
 import type { PromptQueueSnapshot } from './promptQueue';
 
@@ -15,3 +16,9 @@ export class PromptQueueChanged extends Event2<{ readonly payload: PromptQueueCh
 export interface PromptQueueChanged {
   readonly payload: PromptQueueChangedPayload;
 }
+
+export class PromptHeld extends AgentEvent2<PromptQueuedPayload> {
+  static override readonly type = 'prompt_queue.held';
+  static override readonly observable = true;
+}
+export interface PromptHeld extends PromptQueuedPayload {}

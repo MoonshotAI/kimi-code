@@ -2107,6 +2107,24 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(contextHasUserText(main!, 'side question')).toBe(false);
   });
 
+  it('ignores main-only modes on a prompt for another agent', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const lifecycle = getLiveSessionById(server!.core.accessor, id)!.accessor.get(IAgentLifecycleService);
+    const childContext = await lifecycle.fork(agentContextOf(lifecycle.handleOf('main')!));
+    const mainPlan = lifecycle.handleOf('main')!.accessor.get(IAgentPlanService);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'side question' }],
+      agent_id: childContext.agentId,
+      plan_mode: true,
+      goal_objective: 'not for a side chat',
+    });
+
+    expect(submitted.body.code).toBe(0);
+    expect(await mainPlan.status()).toBeNull();
+  });
+
   it('returns 40401 when agent_id names an unknown agent', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);

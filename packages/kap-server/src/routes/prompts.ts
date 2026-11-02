@@ -627,6 +627,9 @@ function submissionSettings(
   resolved: ResolvedPrompt,
   body: PromptSubmission,
 ): (() => Promise<void>) | undefined {
+  const mainAgent = resolved.agentId === MAIN_AGENT_ID;
+  const enterPlan = mainAgent && body.plan_mode === true;
+  const goalObjective = mainAgent ? body.goal_objective : undefined;
   const changesSettings =
     body.profile !== undefined ||
     body.model !== undefined ||
@@ -634,8 +637,8 @@ function submissionSettings(
     body.permission_mode !== undefined ||
     body.swarm_mode !== undefined ||
     body.disabled_tools !== undefined ||
-    body.plan_mode === true ||
-    body.goal_objective !== undefined;
+    enterPlan ||
+    goalObjective !== undefined;
   if (!changesSettings) return undefined;
   return async () => {
     let thinkingConsumed = false;
@@ -661,8 +664,8 @@ function submissionSettings(
         throw error;
       }
     }
-    if (body.plan_mode === true) await enterPlanMode(resolved.agent);
-    if (body.goal_objective !== undefined) await startGoal(resolved.agent, body.goal_objective);
+    if (enterPlan) await enterPlanMode(resolved.agent);
+    if (goalObjective !== undefined) await startGoal(resolved.agent, goalObjective);
   };
 }
 

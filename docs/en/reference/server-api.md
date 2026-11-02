@@ -1125,8 +1125,8 @@ Submits a user prompt to the session. Media references are validated first; the 
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
 | `disabled_tools` | body | array | Tool names to disable for the session |
 | `swarm_mode` | body | boolean | Enter or exit swarm mode |
-| `plan_mode` | body | boolean | `true` enters Plan mode and then leaves Tower mode; `false` is ignored |
-| `goal_objective` | body | string | Creates a goal with this objective, then leaves Plan mode |
+| `plan_mode` | body | boolean | `true` enters Plan mode and then leaves Tower mode; `false` is ignored, and so is any value for an agent other than the main agent |
+| `goal_objective` | body | string | Creates a goal with this objective, then leaves Plan mode; ignored for an agent other than the main agent |
 | `metadata` | body | object | Client metadata echoed back with the prompt |
 
 The schema also accepts `goal_control`, but the submit route does not apply it. Each `content` part is an object discriminated by `type`:

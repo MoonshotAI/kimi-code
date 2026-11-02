@@ -17,7 +17,8 @@ import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { type PromptSubmitContext } from '#/agent/loop/loop';
-import { PromptQueued } from '#/agent/prompt/promptEvents';
+import { PromptQueued, type PromptQueuedPayload } from '#/agent/prompt/promptEvents';
+import { PromptHeld } from '#/agent/promptQueue/promptQueueEvents';
 import { TaskNotified, TaskStarted } from '#/agent/task/taskOps';
 import {
   PermissionApprovalRequested,
@@ -222,19 +223,19 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         await next();
       }),
     );
-    this._register(
-      this.eventBus.subscribe(PromptQueued, (e) => {
-        this.fireAndForget(
-          'UserPromptQueued',
-          {
-            promptId: e.promptId,
-            prompt: e.content.map((part) => fromCorePart(part)),
-            queueLength: e.queueLength,
-          },
-          e.content,
-        );
-      }),
-    );
+    const firePromptQueued = (e: PromptQueuedPayload): void => {
+      this.fireAndForget(
+        'UserPromptQueued',
+        {
+          promptId: e.promptId,
+          prompt: e.content.map((part) => fromCorePart(part)),
+          queueLength: e.queueLength,
+        },
+        e.content,
+      );
+    };
+    this._register(this.eventBus.subscribe(PromptQueued, firePromptQueued));
+    this._register(this.eventBus.subscribe(PromptHeld, firePromptQueued));
   }
 
   private registerTurnHooks(): void {

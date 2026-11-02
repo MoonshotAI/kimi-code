@@ -5,7 +5,6 @@ import { ILogService } from '#/_base/log/log';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
-import { PromptQueued } from '#/agent/prompt/promptEvents';
 import { WarningIssued } from '#/agent/profile/profileOps';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventService } from '#/app/event/event';
@@ -25,7 +24,7 @@ import {
   type PromptQueueSubmitResult,
   type QueuedPromptItem,
 } from './promptQueue';
-import { PromptQueueChanged } from './promptQueueEvents';
+import { PromptHeld, PromptQueueChanged } from './promptQueueEvents';
 
 type QueueEntry = QueuedPromptItem & {
   readonly prepare?: () => Promise<void>;
@@ -282,7 +281,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       if (started === undefined) return { acceptedAs: 'queue' };
       current = started;
       if (current.delivery === 'steer' && this.loop.canSteerPrompt()) {
-        const { id } = this.loop.submit(current.entry);
+        const { id } = this.loop.submit(current.entry, { announcedAsQueued: fromQueue });
         this.remove(current);
         const handle = this.loop.promptHandle(id);
         return { acceptedAs: (await this.steerSubmitted(id)) ? 'steer' : 'queue', handle };
@@ -382,7 +381,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     const origin = entry.entry.meta?.origin as PromptOrigin | undefined;
     if (origin?.kind !== 'user') return;
     void this.dispatcher.dispatch(
-      new PromptQueued({
+      new PromptHeld({
         agentId: this.scopeContext.agentId,
         promptId: entry.id,
         content: stripBundledSkillBlocks({ content: entry.entry.message.content, origin }),

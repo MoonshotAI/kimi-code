@@ -361,7 +361,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         { promptId: id, origin, userMessageId, createdAt, message },
         queued ? 'queued' : 'running',
       );
-      if (queued) this.publishPromptQueued({ promptId: id, origin, message });
+      if (queued && options?.announcedAsQueued !== true) this.publishPromptQueued({ promptId: id, origin, message });
     }
     const entry: UserEntry = {
       message: { role: 'user', content: [...input.message.content] },
