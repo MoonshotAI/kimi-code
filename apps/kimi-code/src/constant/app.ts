@@ -129,6 +129,7 @@ export function kimiCodePluginMarketplaceUrl(): string {
   const baseUrl = (auth.baseUrl ?? currentKimiProfile().baseUrl).trim().replace(/\/+$/, '');
   return `${baseUrl}/plugins/marketplace`;
 }
+export const MARKETPLACE_VERSION_LOOKUP_TIMEOUT_MS = 5000;
 export const INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS = 10_000;
 // Official plugins whose usage bills against the user's plan quota. Installing
 // one of these shows a quota note after the install result.

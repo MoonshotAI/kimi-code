@@ -62,15 +62,25 @@ function fakeHostProcess(script?: Array<{ match: string; code: number; stdout?: 
 }
 
 function fakeMarketplace(
-  entries: readonly { id: string; version?: string }[] = [
-    { id: 'kimi-browser-extension', version: '1.11.3' },
+  entries: readonly { id: string; version?: string; sha256sum?: string }[] = [
+    { id: 'kimi-browser-extension', version: '1.11.3', sha256sum: '0'.repeat(64) },
   ],
 ): IPluginMarketplaceService {
   return {
     _serviceBrand: undefined,
-    listMarketplace: () => Promise.reject(new Error('unexpected separate marketplace read')),
+    listMarketplace: () =>
+      Promise.resolve({
+        source: 'https://marketplace.example.test/catalog',
+        plugins: entries.map((entry) => ({
+          id: entry.id,
+          displayName: entry.id,
+          version: entry.version,
+          sha256sum: entry.sha256sum,
+          source: `https://marketplace.example.test/${entry.id}.zip`,
+        })),
+      }),
     isDefaultMarketplace: () => Promise.resolve(true),
-    resolveInstall: (marketplaceId, expectedVersion) => {
+    resolveInstall: (marketplaceId, expectedVersion, expectedSha256) => {
       const entry = entries.find((candidate) => candidate.id === marketplaceId);
       if (entry === undefined) {
         return Promise.reject(
@@ -85,10 +95,13 @@ function fakeMarketplace(
       if (expectedVersion !== undefined && entry.version !== expectedVersion) {
         return Promise.reject(new Error('marketplace catalog changed'));
       }
+      if (entry.sha256sum !== undefined && entry.sha256sum !== expectedSha256) {
+        return Promise.reject(new Error('marketplace digest changed'));
+      }
       const resolved: MarketplacePluginInstall = {
         source: `https://marketplace.example.test/${marketplaceId}.zip`,
         version: entry.version,
-        sha256sum: '0'.repeat(64),
+        sha256sum: entry.sha256sum,
         catalogId: marketplaceId,
         origin: 'marketplace',
         expectedPluginId: marketplaceId,

@@ -419,6 +419,28 @@ describe('McpOAuthService credential bookkeeping', () => {
     ]);
   });
 
+  it('keeps shared credentials until the last configuration reference disappears', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const first = {};
+    const second = {};
+    await fixture.service
+      .getProvider(SERVER_NAME, SERVER_URL)
+      .saveTokens({ access_token: 'a', token_type: 'Bearer', expires_in: 3600 });
+    fixture.service.setConfigurationSource(first, [[SERVER_NAME, SERVER_URL]]);
+    fixture.service.setConfigurationSource(second, [[SERVER_NAME, SERVER_URL]]);
+
+    await fixture.service.invalidateFromConfiguration(first, SERVER_NAME, SERVER_URL);
+    expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(true);
+
+    fixture.service.setConfigurationSource(first, [[SERVER_NAME, SERVER_URL]]);
+    await Promise.all([
+      fixture.service.invalidateFromConfiguration(first, SERVER_NAME, SERVER_URL),
+      fixture.service.invalidateFromConfiguration(second, SERVER_NAME, SERVER_URL),
+    ]);
+    expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(false);
+  });
+
   it('treats tokens without expiry data as non-expiring', async () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.dispose());
@@ -722,7 +744,7 @@ describe('McpOAuthService interactive flow serialization', () => {
     await next.cancel();
   }, 15000);
 
-  it('keeps a replacement authorization tracked when an older cancellation settles', async () => {
+  it('keeps a replacement authorization tracked and completable when an older cancellation settles', async () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.dispose());
     const authServer = await startFakeAuthServer();
@@ -766,9 +788,13 @@ describe('McpOAuthService interactive flow serialization', () => {
 
     const joined = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
     expect(joined.authorizationUrl.toString()).toBe(replacement.authorizationUrl.toString());
+    const replacementCompletion = replacement.complete({ timeoutMs: 10_000 });
+    await deliverCallback(replacement);
+    await replacementCompletion;
     await joined.cancel();
     await replacement.cancel();
     await expect(firstCompletion).rejects.toThrow(/callback listener closed/);
+    expect(authServer.counts.exchange).toBe(1);
   }, 15000);
 
   it('closes the callback listener when stale registration cleanup fails', async () => {

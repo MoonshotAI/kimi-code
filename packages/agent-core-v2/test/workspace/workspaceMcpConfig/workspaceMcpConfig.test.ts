@@ -69,7 +69,7 @@ describe('WorkspaceMcpConfigService', () => {
   let sectionChanges: Emitter<ConfigSectionChangedEvent>;
   let changes: McpServersChange[];
   let cancelAuthorization: Mock<(serverName: string, serverUrl: string | URL) => Promise<void>>;
-  let invalidate: Mock<(serverName: string, serverUrl: string | URL) => Promise<void>>;
+  let invalidate: Mock<(source: object | undefined, serverName: string, serverUrl: string | URL) => Promise<void>>;
 
   beforeEach(() => {
     cwd = mkdtempSync(join(tmpdir(), 'kimi-workspace-mcp-config-cwd-'));
@@ -107,7 +107,17 @@ describe('WorkspaceMcpConfigService', () => {
         reg.definePartialInstance(IBootstrapService, { homeDir });
         reg.definePartialInstance(IWorkspaceContext, { cwd });
         reg.definePartialInstance(IPluginService, {
-          enabledMcpServers: async () => pluginServers,
+          enabledMcpServers: async () =>
+            Object.fromEntries(
+              Object.entries(pluginServers).filter(([, config]) => config.enabled !== false),
+            ),
+          mcpServerEntries: async () =>
+            Object.entries(pluginServers).map(([name, config]) => ({
+              name,
+              config,
+              pluginId: 'plugin',
+              serverName: name,
+            })),
           onDidReload: pluginReloads.event,
         });
         reg.defineInstance(ILogService, log);
@@ -130,7 +140,13 @@ describe('WorkspaceMcpConfigService', () => {
           onDidChange: trustFlips.event as IWorkspaceTrust['onDidChange'],
         });
         reg.definePartialInstance(IMcpConfigStore, { onDidWrite: storeWrites.event });
-        reg.definePartialInstance(IMcpOAuthService, { cancelAuthorization, invalidate });
+        reg.definePartialInstance(IMcpOAuthService, {
+          cancelAuthorization,
+          invalidate: (name, url) => invalidate(undefined, name, url),
+          invalidateFromConfiguration: invalidate,
+          setConfigurationSource: vi.fn(),
+          removeConfigurationSource: vi.fn(),
+        });
         reg.define(IWorkspaceMcpConfigService, WorkspaceMcpConfigService);
       },
     });
@@ -392,7 +408,25 @@ describe('WorkspaceMcpConfigService', () => {
     expect(cancelAuthorization).toHaveBeenCalledOnce();
     expect(cancelAuthorization).toHaveBeenCalledWith('alpha', url);
     expect(invalidate).toHaveBeenCalledOnce();
-    expect(invalidate).toHaveBeenCalledWith('alpha', url);
+    expect(invalidate).toHaveBeenCalledWith(service, 'alpha', url);
+  });
+
+  it('revokes the previous OAuth identity when a remote server URL changes', async () => {
+    const previousUrl = 'https://mcp.example.test/mcp-a';
+    const nextUrl = 'https://mcp.example.test/mcp-b';
+    pluginServers = { alpha: { transport: 'http', url: previousUrl, auth: 'oauth' } };
+    const service = createService();
+    await service.ready;
+
+    pluginServers = { alpha: { transport: 'http', url: nextUrl, auth: 'oauth' } };
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+
+    expect(cancelAuthorization).toHaveBeenCalledWith('alpha', previousUrl);
+    expect(invalidate).toHaveBeenCalledWith(service, 'alpha', previousUrl);
+    expect(invalidate).not.toHaveBeenCalledWith(service, 'alpha', nextUrl);
   });
 
   it('preserves OAuth credentials when trust temporarily unloads a project server', async () => {

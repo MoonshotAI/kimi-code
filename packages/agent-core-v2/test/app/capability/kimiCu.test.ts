@@ -81,7 +81,7 @@ interface FakePlugin {
 }
 
 function fakeMarketplace(
-  entries: readonly { id: string; version?: string }[] = [
+  entries: readonly { id: string; version?: string; sha256sum?: string }[] = [
     { id: 'kimi-cu', version: '0.5.4' },
     { id: 'kimi-cu-win', version: '0.2.14' },
   ],
@@ -95,6 +95,7 @@ function fakeMarketplace(
           id: entry.id,
           displayName: entry.id,
           version: entry.version,
+          sha256sum: entry.sha256sum,
           source: `https://marketplace.example.test/${entry.id}.zip`,
         })),
       }),
@@ -839,7 +840,9 @@ describe('kimi-cu entry', () => {
       makeCtx({
         applicationsDir,
         plugins: plugins.service,
-        marketplace: fakeMarketplace([{ id: 'kimi-cu', version: '9.8.7' }]),
+        marketplace: fakeMarketplace([
+          { id: 'kimi-cu', version: '9.8.7', sha256sum: 'a'.repeat(64) },
+        ]),
         hostProcess: host.service,
         fetchImpl: (() => Promise.reject(new Error('download should be skipped'))) as never,
       }),
@@ -848,7 +851,13 @@ describe('kimi-cu entry', () => {
 
     await entry.install((step) => reports.push(step));
 
-    expect(plugins.installs).toEqual([{ marketplaceId: 'kimi-cu', expectedVersion: '9.8.7' }]);
+    expect(plugins.installs).toEqual([
+      {
+        marketplaceId: 'kimi-cu',
+        expectedVersion: '9.8.7',
+        expectedSha256: 'a'.repeat(64),
+      },
+    ]);
     await expect(plugins.service.listPlugins()).resolves.toMatchObject([
       { id: 'kimi-cu', version: '9.8.7', origin: 'marketplace', catalogId: 'kimi-cu' },
     ]);

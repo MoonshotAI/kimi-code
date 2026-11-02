@@ -49,6 +49,7 @@ import {
 } from '#/constant/app';
 import {
   loadPluginMarketplace,
+  withMarketplaceLatestVersions,
   type PluginMarketplaceEntry,
 } from '#/utils/plugin-marketplace';
 import type { SlashCommandHost } from './dispatch';
@@ -333,6 +334,13 @@ async function loadMarketplaceCatalog(
       source,
     });
     panel.setMarketplace(catalog.plugins, catalog.source);
+    host.state.ui.requestRender();
+    try {
+      const enriched = await withMarketplaceLatestVersions(catalog);
+      panel.setMarketplace(enriched.plugins, enriched.source);
+    } catch (error) {
+      log.warn('marketplace version lookup failed', { error });
+    }
     host.state.ui.requestRender();
   } catch (error) {
     panel.setMarketplaceError(formatErrorMessage(error));

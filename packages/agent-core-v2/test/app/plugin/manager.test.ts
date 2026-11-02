@@ -930,6 +930,56 @@ describe('PluginManager', () => {
     }
   });
 
+  it('ignores unrelated plugin reload errors when validating the WebBridge migration', async () => {
+    const legacyRoot = await makeLegacyWebbridge();
+    const brokenRoot = await mkdtemp(join(tmpdir(), 'plugin-broken-'));
+    const fixture = await makeZip('kimi-browser-extension', '2.0.0', 'kimi-webbridge');
+    try {
+      const installedPath = join(home, 'plugins', 'installed.json');
+      const installed = JSON.parse(await readFile(installedPath, 'utf8')) as {
+        plugins: Array<Record<string, unknown>>;
+      };
+      installed.plugins.push({
+        id: 'broken-plugin',
+        root: brokenRoot,
+        source: 'local-path',
+        enabled: true,
+        installedAt: '2020-01-01T00:00:00.000Z',
+      });
+      await mkdir(join(brokenRoot, 'skills'), { recursive: true });
+      await writeFile(
+        join(brokenRoot, 'kimi.plugin.json'),
+        JSON.stringify({ name: 'broken-plugin', version: '1.0.0', skills: ['./skills'] }),
+        'utf8',
+      );
+      await writeFile(installedPath, JSON.stringify(installed), 'utf8');
+      let breakDiscovery = false;
+      const manager = new PluginManager({
+        kimiHomeDir: home,
+        discoverSkills: async (roots) => {
+          if (breakDiscovery && roots.some((root) => root.path.includes('plugin-broken-'))) {
+            throw new Error('unrelated discovery failed');
+          }
+          return discoverFileSkills(roots);
+        },
+      });
+      await manager.load();
+      breakDiscovery = true;
+
+      const result = await installWebbridge(manager, fixture);
+
+      expect(result.record.state).toBe('ok');
+      expect(result.summary.errors).toEqual([
+        expect.objectContaining({ id: 'broken-plugin' }),
+      ]);
+      expect(manager.get('kimi-browser-extension')?.state).toBe('ok');
+    } finally {
+      await rm(legacyRoot, { recursive: true, force: true });
+      await rm(brokenRoot, { recursive: true, force: true });
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
   it('restores the legacy record and managed copy when WebBridge reload materialization fails', async () => {
     const legacyRoot = await makeLegacyWebbridge();
     const fixture = await makeZip('kimi-browser-extension', '2.0.0', 'kimi-webbridge');

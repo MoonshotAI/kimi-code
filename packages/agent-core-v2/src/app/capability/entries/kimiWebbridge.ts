@@ -197,7 +197,16 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       throw new Error(`kimi-webbridge is not supported on ${ctx.platform}/${ctx.arch}`);
     }
 
-    const resolved = await ctx.marketplace.resolveInstall(PLUGIN_ID, undefined);
+    const marketplace = await ctx.marketplace.listMarketplace();
+    const entry = marketplace.plugins.find((candidate) => candidate.id === PLUGIN_ID);
+    if (entry === undefined) {
+      throw new Error(`Marketplace plugin "${PLUGIN_ID}" was not found in the current catalog`);
+    }
+    const resolved = await ctx.marketplace.resolveInstall(
+      PLUGIN_ID,
+      entry.version,
+      entry.sha256sum,
+    );
     const installed = await ctx.plugins.listPlugins();
     const migrateFrom = installed.some((plugin) => plugin.id === LEGACY_PLUGIN_ID)
       ? LEGACY_PLUGIN_ID

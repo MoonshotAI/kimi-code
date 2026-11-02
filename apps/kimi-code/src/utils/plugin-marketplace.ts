@@ -7,6 +7,7 @@ import {
   isMissingMarketplaceTokenError,
   parsePluginMarketplace,
   readPluginMarketplace,
+  withLatestVersions,
   type PluginMarketplace,
   type PluginMarketplaceEntry,
 } from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
@@ -14,6 +15,7 @@ import {
 import {
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
   kimiCodePluginMarketplaceUrl,
+  MARKETPLACE_VERSION_LOOKUP_TIMEOUT_MS,
 } from '#/constant/app';
 import { currentKimiManagedRuntimeAuth } from '#/utils/region';
 
@@ -33,6 +35,18 @@ export interface LoadPluginMarketplaceOptions {
   readonly source?: string;
   readonly fetchImpl?: typeof fetch;
   readonly getAccessToken?: () => Promise<string | undefined>;
+}
+
+export async function withMarketplaceLatestVersions(
+  marketplace: PluginMarketplace,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PluginMarketplace> {
+  const timedFetch: typeof fetch = (input, init) =>
+    fetchImpl(input, {
+      ...init,
+      signal: AbortSignal.timeout(MARKETPLACE_VERSION_LOOKUP_TIMEOUT_MS),
+    });
+  return withLatestVersions(marketplace, timedFetch);
 }
 
 export async function loadPluginMarketplace(

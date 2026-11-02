@@ -6,7 +6,12 @@ import { pathToFileURL } from 'node:url';
 import { OAuthUnauthorizedError } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { computeUpdateStatus, loadPluginMarketplace, pluginMarketplaceCliDescription } from '#/utils/plugin-marketplace';
+import {
+  computeUpdateStatus,
+  loadPluginMarketplace,
+  pluginMarketplaceCliDescription,
+  withMarketplaceLatestVersions,
+} from '#/utils/plugin-marketplace';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -416,6 +421,32 @@ describe('loadPluginMarketplace', () => {
       version: '1.0.0',
     });
     expect(marketplace.plugins[1]).toMatchObject({ id: 'github', version: '2.3.4' });
+  });
+
+  it('resolves latest versions for bare GitHub sources without replacing declared versions', async () => {
+    const file = await writeCatalog([
+      { id: 'github', source: 'https://github.com/example/repo' },
+      catalogEntry(),
+    ]);
+    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
+    const fetchImpl = vi.fn(async () =>
+      new Response(null, {
+        status: 302,
+        headers: { location: 'https://github.com/example/repo/releases/tag/v2.3.4' },
+      }),
+    ) as unknown as typeof fetch;
+
+    const enriched = await withMarketplaceLatestVersions(marketplace, fetchImpl);
+
+    expect(enriched.plugins.map((entry) => [entry.id, entry.version])).toEqual([
+      ['github', '2.3.4'],
+      ['demo', '1.0.0'],
+    ]);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://github.com/example/repo/releases/latest',
+      expect.objectContaining({ redirect: 'manual', signal: expect.any(AbortSignal) }),
+    );
   });
 
   it('accepts minimal custom marketplace entries', async () => {

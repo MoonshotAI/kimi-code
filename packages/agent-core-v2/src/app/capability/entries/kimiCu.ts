@@ -182,6 +182,7 @@ async function installPluginLayer(
   const summary = await ctx.plugins.installPlugin({
     marketplaceId: config.id,
     expectedVersion: entry.version,
+    expectedSha256: entry.sha256sum,
   });
   if (!summary.enabled) {
     await ctx.plugins.setPluginEnabled({ id: config.id, enabled: true });

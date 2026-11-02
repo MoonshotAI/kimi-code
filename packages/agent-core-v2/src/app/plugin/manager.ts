@@ -271,11 +271,12 @@ export class PluginManager {
             ? undefined
             : { pluginId: id, name: options.requiredSkill };
         const summary = await this.reload(requiredSkill);
-        if (options.requiredSkill !== undefined && summary.errors.length > 0) {
+        const targetErrors = summary.errors.filter((entry) => entry.id === id);
+        if (targetErrors.length > 0) {
           throw new Error2(
             ErrorCodes.PLUGIN_LOAD_FAILED,
-            `Plugin "${id}" failed to reload after installation: ${summary.errors.map((entry) => `${entry.id}: ${entry.message}`).join('; ')}`,
-            { details: { pluginId: id, errors: summary.errors } },
+            `Plugin "${id}" failed to reload after installation: ${targetErrors.map((entry) => `${entry.id}: ${entry.message}`).join('; ')}`,
+            { details: { pluginId: id, errors: targetErrors } },
           );
         }
         const installedRecord = this.records.get(id);

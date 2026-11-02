@@ -14,6 +14,7 @@ import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
+import { mcpOAuthStoreKey } from '#/mcpCore/oauth/store';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
@@ -54,6 +55,8 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     @IMcpOAuthService private readonly oauth: McpOAuthService,
   ) {
     super();
+    this.oauth.setConfigurationSource(this, []);
+    this._register({ dispose: () => this.oauth.removeConfigurationSource(this) });
     this.ready = this.initialize().catch((error: unknown) => {
       this.log.error('mcp config initial load failed', { error });
     });
@@ -132,6 +135,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       await this.publishIfChanged(preserveOAuthCredentials);
     } else {
       this.current = this.merged();
+      this.syncOAuthConfiguration();
     }
   }
 
@@ -213,13 +217,22 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   private async reloadPluginServers(): Promise<void> {
     await this.ready;
     await this.mutate(async () => {
-      const fresh = await this.plugins.enabledMcpServers();
+      const [fresh, entries] = await Promise.all([
+        this.plugins.enabledMcpServers(),
+        this.plugins.mcpServerEntries(),
+      ]);
+      const preserved = new Set(
+        entries.filter((entry) => entry.config.enabled === false).map((entry) => entry.name),
+      );
       this.pluginServers = new Map(Object.entries(fresh));
-      await this.publishIfChanged();
+      await this.publishIfChanged(false, preserved);
     });
   }
 
-  private async publishIfChanged(preserveOAuthCredentials = false): Promise<void> {
+  private async publishIfChanged(
+    preserveOAuthCredentials = false,
+    preservedOAuthServers?: ReadonlySet<string>,
+  ): Promise<void> {
     const next = this.merged();
     const upsert: Record<string, McpServerConfig> = Object.create(null);
     const remove: string[] = [];
@@ -234,16 +247,37 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     }
     for (const name of remove) {
       await this.cancelAuthorization(name, this.current[name]);
-      if (!preserveOAuthCredentials) {
+      if (!preserveOAuthCredentials && preservedOAuthServers?.has(name) !== true) {
         await this.invalidateAuthorization(name, this.current[name]);
       }
     }
     for (const [name, config] of Object.entries(upsert)) {
-      if (config.enabled === false) await this.cancelAuthorization(name, this.current[name]);
+      const previous = this.current[name];
+      const remoteIdentityChanged =
+        previous !== undefined &&
+        'url' in previous &&
+        (!('url' in config) ||
+          mcpOAuthStoreKey(name, previous.url) !== mcpOAuthStoreKey(name, config.url));
+      if (config.enabled === false || remoteIdentityChanged) {
+        await this.cancelAuthorization(name, previous);
+      }
+      if (remoteIdentityChanged && !preserveOAuthCredentials) {
+        await this.invalidateAuthorization(name, previous);
+      }
     }
     this.current = next;
+    this.syncOAuthConfiguration();
     if (Object.keys(upsert).length === 0 && remove.length === 0) return;
     await this.changeEmitter.fireAsync({ upsert, remove }, NO_ABORT);
+  }
+
+  private syncOAuthConfiguration(): void {
+    this.oauth.setConfigurationSource(
+      this,
+      Object.entries(this.current).flatMap(([name, config]) =>
+        'url' in config ? [[name, config.url] as const] : [],
+      ),
+    );
   }
 
   private async cancelAuthorization(
@@ -264,7 +298,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   ): Promise<void> {
     if (config === undefined || !('url' in config)) return;
     try {
-      await this.oauth.invalidate(name, config.url);
+      await this.oauth.invalidateFromConfiguration(this, name, config.url);
     } catch (error) {
       this.log.warn('mcp oauth credential cleanup failed', { name, error });
     }

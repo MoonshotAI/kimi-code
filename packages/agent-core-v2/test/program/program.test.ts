@@ -466,7 +466,11 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
         resolved: async () => ({ slug: 'kimi-code' }),
       },
       log: noopLogger,
-      oauth: { onEvent: () => () => {} },
+      oauth: {
+        onEvent: () => () => {},
+        setConfigurationSource: () => {},
+        removeConfigurationSource: () => {},
+      },
       configStore: { onDidWrite: () => ({ dispose: () => {} }) },
       plugins: {
         enabledMcpServers: async () => ({}),

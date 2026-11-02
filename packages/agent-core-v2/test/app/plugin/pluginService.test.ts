@@ -13,7 +13,9 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair, type ScopedTestHost } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import type { MarketplacePluginInstall } from '#/app/plugin/marketplaceService';
 import { IPluginService } from '#/app/plugin/plugin';
 import {
@@ -33,7 +35,9 @@ import {
 import { TelemetryService } from '#/app/telemetry/telemetryService';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import { IProviderService, type ProviderConfig } from '#/llm-adapter/provider/provider';
+import type { McpOAuthService } from '#/mcpCore/oauth/service';
 
+import { stubLog } from '../../_base/log/stubs';
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubProviderService } from '../provider/stubs';
 
@@ -48,6 +52,8 @@ vi.mock('#/app/plugin/store', async (importOriginal) => {
 
 const readInstalled = vi.mocked(pluginStore.readInstalled);
 const writeInstalled = vi.mocked(pluginStore.writeInstalled);
+const cancelAuthorization = vi.fn(async () => undefined);
+const invalidateFromConfiguration = vi.fn(async () => undefined);
 
 function makeHost(
   homeDir: string,
@@ -73,6 +79,11 @@ function makeHost(
       }),
     } satisfies ISkillDiscovery),
     stubPair(ITelemetryService, telemetry),
+    stubPair(IMcpOAuthService, {
+      cancelAuthorization,
+      invalidateFromConfiguration,
+    } as unknown as McpOAuthService),
+    stubPair(ILogService, stubLog()),
   ]);
 }
 
@@ -167,6 +178,8 @@ describe('PluginService (plugin boundary)', () => {
     );
     readInstalled.mockClear();
     writeInstalled.mockClear();
+    cancelAuthorization.mockClear();
+    invalidateFromConfiguration.mockClear();
   });
 
   afterEach(async () => {
@@ -321,6 +334,32 @@ describe('PluginService (plugin boundary)', () => {
       expect(artifactFetch).toHaveBeenCalledTimes(1);
       expect(catalogFetch).not.toHaveBeenCalled();
       expect(reloads).toEqual([{ added: [], removed: [], errors: [] }]);
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('invalidates removed plugin OAuth credentials without a workspace', async () => {
+    const home = await makeHome();
+    await writeValidInstalledFile(home);
+    const url = 'https://mcp.example.test/mcp';
+    const pluginRoot = await makePluginDir('oauth-remove-demo', {
+      mcpServers: { docs: { url } },
+    });
+    createdDirs.push(pluginRoot);
+    const host = makeHost(home);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await svc.installPlugin({ source: pluginRoot });
+      await svc.removePlugin({ id: 'oauth-remove-demo' });
+
+      expect(cancelAuthorization).toHaveBeenCalledWith(expect.any(String), url);
+      expect(invalidateFromConfiguration).toHaveBeenCalledOnce();
+      expect(invalidateFromConfiguration).toHaveBeenCalledWith(
+        undefined,
+        expect.any(String),
+        url,
+      );
     } finally {
       host.dispose();
     }

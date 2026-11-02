@@ -169,6 +169,20 @@ export function parsePluginMarketplace(raw: string, location: MarketplaceLocatio
   };
 }
 
+export async function withLatestVersions(
+  marketplace: PluginMarketplace,
+  fetchImpl: typeof fetch,
+): Promise<PluginMarketplace> {
+  const plugins = await Promise.all(
+    marketplace.plugins.map(async (entry) => {
+      if (entry.version !== undefined) return entry;
+      const latest = await resolveLatestGithubRelease(entry.source, fetchImpl);
+      return latest === undefined ? entry : { ...entry, version: latest };
+    }),
+  );
+  return { ...marketplace, plugins };
+}
+
 async function readMarketplaceText(
   location: MarketplaceLocation,
   fetchImpl: typeof fetch,
@@ -331,6 +345,61 @@ function deriveVersionFromGithubSource(source: string): string | undefined {
   }
   const candidate = decoded.replace(/^v/i, '');
   return valid(candidate) !== null ? candidate : undefined;
+}
+
+async function resolveLatestGithubRelease(
+  source: string,
+  fetchImpl: typeof fetch,
+): Promise<string | undefined> {
+  const repo = parseGithubRepo(source);
+  if (repo === undefined) return undefined;
+  try {
+    const tag = await fetchLatestReleaseTag(repo.owner, repo.repo, fetchImpl);
+    if (tag === undefined) return undefined;
+    const candidate = tag.replace(/^v/i, '');
+    return valid(candidate) !== null ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseGithubRepo(source: string): { owner: string; repo: string } | undefined {
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return undefined;
+  }
+  if (url.hostname !== 'github.com' && url.hostname !== 'www.github.com') return undefined;
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (segments.length !== 2) return undefined;
+  const [owner, repo] = segments;
+  return { owner: owner!, repo: repo! };
+}
+
+async function fetchLatestReleaseTag(
+  owner: string,
+  repo: string,
+  fetchImpl: typeof fetch,
+): Promise<string | undefined> {
+  const url = `https://github.com/${owner}/${repo}/releases/latest`;
+  const resp = await fetchImpl(url, { redirect: 'manual' });
+  if (resp.status === 404) return undefined;
+  if (resp.status !== 301 && resp.status !== 302) {
+    throw new Error(
+      `Could not look up latest release of ${owner}/${repo}: HTTP ${resp.status} (${url}).`,
+    );
+  }
+  const location = resp.headers.get('location');
+  if (location === null) return undefined;
+  const match = /\/releases\/tag\/([^/?#]+)/.exec(location);
+  const tag = match?.[1];
+  if (tag === undefined) return undefined;
+  try {
+    return decodeURIComponent(tag);
+  } catch {
+    return tag;
+  }
 }
 
 function parseLocale(value: unknown, id: string): PluginMarketplaceLocale | undefined {

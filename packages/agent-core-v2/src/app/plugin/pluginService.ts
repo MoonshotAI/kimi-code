@@ -3,8 +3,10 @@ import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Service } from '#/_base/di/service';
 import { AsyncEmitter, Emitter, type Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import type { HookDef } from '#/features/externalHooks/internal/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { IRegionService } from '#/app/region/region';
 import { LifecycleScope } from '#/app/scopes';
 import type { PluginToggleEvent } from '#/app/telemetry/events';
@@ -14,6 +16,7 @@ import type { SkillRoot } from '#/features/skill/catalog/types';
 import { BugIndicatingError, Error2, ErrorCodes, PluginErrors } from '#/errors';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
+import type { McpOAuthService } from '#/mcpCore/oauth/service';
 
 import { PluginManager } from './manager';
 import {
@@ -90,6 +93,8 @@ export class PluginService extends Service implements IPluginService {
     @IProviderService private readonly providers: IProviderService,
     @IRegionService regions: IRegionService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IMcpOAuthService private readonly oauth: McpOAuthService,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
     this.homeDir = bootstrap.homeDir;
@@ -171,14 +176,30 @@ export class PluginService extends Service implements IPluginService {
     });
   }
 
-  removePlugin(input: RemovePluginInput): Promise<void> {
-    return this.runNotifiedMutation(async () => {
+  async removePlugin(input: RemovePluginInput): Promise<void> {
+    const id = normalizePluginId(input.id);
+    let removedServers: readonly PluginMcpServerEntry[] = [];
+    await this.runNotifiedMutation(async () => {
+      removedServers = this.manager.mcpServerEntries().filter((entry) => entry.pluginId === id);
       await this.manager.remove(input.id);
       const notification = await this.reloadAndNotify({
         mutation: { kind: 'remove', id: input.id },
       });
       return { result: undefined, notification };
     });
+    for (const entry of removedServers) {
+      if (!('url' in entry.config)) continue;
+      try {
+        await this.oauth.cancelAuthorization(entry.name, entry.config.url);
+        await this.oauth.invalidateFromConfiguration(undefined, entry.name, entry.config.url);
+      } catch (error) {
+        this.log.warn('plugin oauth credential cleanup failed', {
+          pluginId: id,
+          name: entry.name,
+          error,
+        });
+      }
+    }
   }
 
   reloadPlugins(): Promise<ReloadSummary> {
