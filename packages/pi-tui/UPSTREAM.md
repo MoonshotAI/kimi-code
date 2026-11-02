@@ -225,6 +225,6 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 ### opt-in-terminal-status-filter — keep
 
-**Decision:** Hosts may enable terminal-status filtering with `setFilterTerminalStatusResponses(true)`. When enabled, known DA/DCS/APC and cell-size replies are consumed before application input listeners; unhandled OSC replies reach protocol listeners but never focused keyboard input. The default preserves upstream dispatch behavior.
+**Decision:** Hosts may enable terminal-status filtering with `setFilterTerminalStatusResponses(true)`. When enabled, known DA/DCS/APC and cell-size replies are consumed before application input listeners; unhandled OSC replies reach protocol listeners but never focused keyboard input. Color-query completion still accepts only primary DA replies; secondary and tertiary DA replies never end an active color query. The default preserves upstream dispatch behavior.
 
 **Why not in the app:** Raw terminal replies enter `TuiBase` before host listeners and focused components; filtering them reliably requires the library input dispatch point. Kimi enables the switch for its main and alternate screen renderers.

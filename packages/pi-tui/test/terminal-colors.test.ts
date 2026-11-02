@@ -330,6 +330,21 @@ describe("TUI.queryTerminalColors", () => {
 		}
 	});
 
+	it("waits for primary DA before completing a color query", async () => {
+		const { terminal, tui, component } = setup();
+		try {
+			const first = tui.queryTerminalColors({ timeoutMs: 1000 });
+			terminal.sendInput("\x1b[>0;136;0c");
+			terminal.sendInput("\x1b[=0;0c");
+			terminal.sendInput("\x1b]11;#ffffff\x07");
+			terminal.sendInput(DA1);
+			assert.deepStrictEqual(await first, { foreground: undefined, background: WHITE, palette: undefined });
+			assert.deepStrictEqual(component.inputs, ["\x1b[>0;136;0c", "\x1b[=0;0c"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
 	it("reports late replies after a timeout and consumes them until DA1", async () => {
 		const { terminal, tui, component } = setup();
 		try {

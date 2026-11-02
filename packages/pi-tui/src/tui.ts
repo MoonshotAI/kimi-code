@@ -175,7 +175,7 @@ const TERMINAL_COLOR_QUERY = `\x1b]10;?\x07\x1b]11;?\x07${Array.from(
 	{ length: TERMINAL_PALETTE_SIZE },
 	(_, index) => `\x1b]4;${index};?\x07`,
 ).join("")}\x1b[c`;
-const DEVICE_ATTRIBUTES_RESPONSE_PATTERN = /^\x1b\[[?>=][\d;]*c$/;
+const DEVICE_ATTRIBUTES_RESPONSE_PATTERN = /^\x1b\[\?[\d;]*c$/;
 
 /**
  * Interface for components that can receive focus and display a hardware cursor.
