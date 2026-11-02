@@ -226,6 +226,7 @@ describe('QuestionDialog', () => {
     fireEvent.change(input, { target: { value: '  My answer  ' } });
     expect(send.disabled).toBe(false);
     fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByRole('button', { name: /Custom response: My answer/ })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
 
     await waitFor(() => {
