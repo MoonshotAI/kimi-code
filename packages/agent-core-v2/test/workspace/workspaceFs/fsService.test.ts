@@ -1239,7 +1239,7 @@ describe('WorkspaceFsService.suggest', () => {
       follow_gitignore: true,
     });
 
-    expect(receivedIgnore).toEqual(['node_modules/', '', '.git/']);
+    expect(receivedIgnore).toEqual(['node_modules/', '', '.git']);
     expect(result).toEqual({ items: [], truncated: true });
   });
 
@@ -1267,6 +1267,17 @@ describe('WorkspaceFsService.suggest', () => {
     ]);
     expect(result.files.some((file) => file.path.startsWith('.git/'))).toBe(false);
     expect(reads).toEqual(['/repo', '/repo/a', '/repo/a/nested']);
+  });
+
+  it.each([false, true])('skips a linked-worktree .git file when follow_gitignore is %s', async (followGitignore) => {
+    const backend = fakeFs({ '.git': 'gitdir: /elsewhere/.git/worktrees/repo\n', 'src/gitdir.ts': 'gitdir\n' });
+    const fs = makeRemoteWalkSession(backend);
+
+    const search = await fs.search({ query: 'git', limit: 50, follow_gitignore: followGitignore });
+    const grep = await fs.grep({ ...WALK_GREP_REQUEST, pattern: 'gitdir', follow_gitignore: followGitignore });
+
+    expect(search.items.map((item) => item.path)).toEqual(['src/gitdir.ts']);
+    expect(grep.files.map((file) => file.path)).toEqual(['src/gitdir.ts']);
   });
 
   it('falls back to the node walk when rg fails to spawn', async () => {

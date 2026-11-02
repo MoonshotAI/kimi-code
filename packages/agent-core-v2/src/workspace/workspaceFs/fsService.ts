@@ -97,7 +97,7 @@ const PROBE_MAX_DEPTH = 6;
 const PROBE_MAX_ENTRIES = 500;
 const GREP_TIMEOUT_MS = 30_000;
 const SUGGEST_TIMEOUT_MS = 10_000;
-const WALK_DEFAULT_IGNORE = ['.git/'];
+const WALK_DEFAULT_IGNORE = ['.git'];
 
 interface SuggestRoot {
   readonly dir: string;
@@ -1382,7 +1382,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       ig.add(contents);
     } catch {
     }
-    const rules = [...contents.split(/\r?\n/), '.git/'];
+    const rules = [...contents.split(/\r?\n/), '.git'];
     const result = { matcher: ig, walkRules: rules };
     this.gitignoreCache.set(rootDir, result);
     return result;
