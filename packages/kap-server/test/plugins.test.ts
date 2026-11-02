@@ -481,6 +481,7 @@ describe('server-v2 /api/v1 plugins', () => {
     expect((await call('POST', '/api/v1/plugins/demo-plugin:explode')).body.code).toBe(40001);
     expect((await call('POST', '/api/v1/plugins/nope:remove')).body.code).toBe(40419);
     expect((await call('POST', '/api/v1/plugins', { source: '' })).body.code).toBe(40001);
+    expect((await call('POST', '/api/v1/plugins', { marketplaceId: 'missing-plugin' })).body.code).toBe(40419);
     expect(
       (
         await call('POST', '/api/v1/plugins', {

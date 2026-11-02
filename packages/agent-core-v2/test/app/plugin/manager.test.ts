@@ -211,11 +211,39 @@ describe('PluginManager', () => {
       }),
       'utf8',
     );
+    await writeFile(
+      join(root, 'locales', 'en.json'),
+      JSON.stringify({
+        skillOverrides: {
+          'directory-skill': { displayName: 'Base English skill' },
+        },
+      }),
+      'utf8',
+    );
+    await writeFile(
+      join(root, 'locales', 'zh-TW.json'),
+      JSON.stringify({
+        skillOverrides: {
+          'directory-skill': { displayName: 'Taiwan skill' },
+        },
+      }),
+      'utf8',
+    );
+    await writeFile(
+      join(root, 'locales', 'zh.json'),
+      JSON.stringify({
+        skillOverrides: {
+          'directory-skill': { displayName: 'Base Chinese skill' },
+        },
+      }),
+      'utf8',
+    );
     const manager = new PluginManager({ kimiHomeDir: home });
 
     await manager.load();
     const info = manager.info('demo');
     const english = manager.info('demo', 'en');
+    const chinese = manager.info('demo', 'zh-CN');
 
     expect(info?.skills).toEqual([
       {
@@ -236,19 +264,26 @@ describe('PluginManager', () => {
     expect(english?.skills).toEqual([
       {
         name: 'runtime-skill',
-        displayName: 'English skill',
-        description: 'English skill description',
+        displayName: 'Base English skill',
+        description: 'Friendly skill description',
       },
     ]);
     expect(english?.mcpServers[0]).toMatchObject({
       name: 'mac',
-      displayName: 'English MCP',
-      description: 'English MCP description',
+      displayName: 'Friendly MCP',
+      description: 'Friendly MCP description',
       iconUrl: 'https://example.com/friendly-mcp.png',
       runtimeName: 'plugin-demo:mac',
       transport: 'stdio',
       command: 'sh',
     });
+    expect(chinese?.skills).toEqual([
+      {
+        name: 'runtime-skill',
+        displayName: 'Base Chinese skill',
+        description: 'Friendly skill description',
+      },
+    ]);
     expect(info?.manifest?.interface?.skillOverrides?.['directory-skill']?.displayName).toBe(
       'Friendly skill',
     );

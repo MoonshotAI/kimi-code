@@ -87,6 +87,25 @@ describe('pluginMarketplaceCliDescription', () => {
     })).toBeUndefined();
   });
 
+  it('prefers exact locale and base language over sibling regions', () => {
+    const entry = {
+      id: 'demo',
+      displayName: 'Demo',
+      source: 'demo.zip',
+      locale: {
+        defaultLocale: 'fr-fr',
+        'en-us': { cliDescription: 'US English' },
+        en: { cliDescription: 'Base English' },
+        'zh-tw': { cliDescription: 'Taiwan Chinese' },
+        zh: { cliDescription: 'Base Chinese' },
+      },
+    };
+
+    expect(pluginMarketplaceCliDescription(entry, 'en')).toBe('Base English');
+    expect(pluginMarketplaceCliDescription(entry, 'en-US')).toBe('US English');
+    expect(pluginMarketplaceCliDescription(entry, 'zh-CN')).toBe('Base Chinese');
+  });
+
   it('keeps the top-level description when no locale metadata exists', () => {
     expect(pluginMarketplaceCliDescription({
       id: 'demo',

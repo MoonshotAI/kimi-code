@@ -260,6 +260,7 @@ export function registerPluginsRoutes(
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.PLUGIN_NOT_FOUND]: {},
         [ErrorCode.PLUGIN_CATALOG_CHANGED]: {},
       },
       description: 'Install a custom plugin or a marketplace entry at an expected version',

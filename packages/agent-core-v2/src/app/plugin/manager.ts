@@ -995,10 +995,10 @@ function pluginInterfaceForLocale(record: PluginInspection, locale?: string): Pl
   const base = normalized.split('-')[0];
   const candidates = base === normalized ? [normalized] : [normalized, base];
   for (const candidate of candidates) {
-    for (const [key, value] of Object.entries(record.interfaceLocales ?? {})) {
-      const normalizedKey = normalizedLocale(key);
-      if (normalizedKey === candidate || normalizedKey.split('-')[0] === candidate) return value;
-    }
+    const localized = Object.entries(record.interfaceLocales ?? {}).find(
+      ([key]) => normalizedLocale(key) === candidate,
+    );
+    if (localized !== undefined) return localized[1];
   }
   return undefined;
 }

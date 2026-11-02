@@ -43,14 +43,21 @@ const WINDOWS_DOCTOR_SCRIPT =
 
 interface PluginLayerConfig {
   readonly id: string;
+  readonly zipUrl: string;
 }
 
 function macPlugin(): PluginLayerConfig {
-  return { id: MAC_PLUGIN_ID };
+  return {
+    id: MAC_PLUGIN_ID,
+    zipUrl: kimiCdnContentUrl('kimi-computer-use/latest/kimi-cu-plugin.zip'),
+  };
 }
 
 function windowsPlugin(): PluginLayerConfig {
-  return { id: WINDOWS_PLUGIN_ID };
+  return {
+    id: WINDOWS_PLUGIN_ID,
+    zipUrl: kimiCdnContentUrl('kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip'),
+  };
 }
 
 interface PermissionStatus {
@@ -171,19 +178,21 @@ async function installPluginLayer(
   ctx: CapabilityEntryContext,
   config: PluginLayerConfig,
 ): Promise<void> {
-  const marketplace = await ctx.marketplace.listMarketplace();
-  const entry = marketplace.plugins.find((candidate) => candidate.id === config.id);
-  if (entry === undefined) {
+  const marketplace = await ctx.marketplace.listMarketplace().catch(() => undefined);
+  const entry = marketplace?.plugins.find((candidate) => candidate.id === config.id);
+  if (marketplace !== undefined && entry === undefined) {
     throw new Error(`Marketplace plugin "${config.id}" was not found in the current catalog`);
   }
-  if (entry.version === undefined) {
+  if (marketplace !== undefined && entry?.version === undefined) {
     throw new Error(`Marketplace plugin "${config.id}" has no version in the current catalog`);
   }
-  const summary = await ctx.plugins.installPlugin({
-    marketplaceId: config.id,
-    expectedVersion: entry.version,
-    expectedSha256: entry.sha256sum,
-  });
+  const summary = marketplace === undefined
+    ? await ctx.plugins.installPlugin({ source: config.zipUrl })
+    : await ctx.plugins.installPlugin({
+        marketplaceId: config.id,
+        expectedVersion: entry!.version,
+        expectedSha256: entry!.sha256sum,
+      });
   if (!summary.enabled) {
     await ctx.plugins.setPluginEnabled({ id: config.id, enabled: true });
   }

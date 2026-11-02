@@ -123,7 +123,7 @@ export function kimiCodeCdnBinariesBase(): string {
 export {
   isTrustedPluginMarketplaceUrl as isTrustedKimiCodePluginMarketplace,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
-} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+} from '@moonshot-ai/kimi-code-sdk';
 export function kimiCodePluginMarketplaceUrl(): string {
   const auth = currentKimiManagedRuntimeAuth();
   const baseUrl = (auth.baseUrl ?? currentKimiProfile().baseUrl).trim().replace(/\/+$/, '');

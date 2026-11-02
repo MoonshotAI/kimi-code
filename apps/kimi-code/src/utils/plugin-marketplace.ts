@@ -10,7 +10,7 @@ import {
   withLatestVersions,
   type PluginMarketplace,
   type PluginMarketplaceEntry,
-} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+} from '@moonshot-ai/kimi-code-sdk';
 
 import {
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
@@ -28,7 +28,7 @@ export {
   type PluginMarketplaceEntry,
   type PluginMarketplaceTier,
   type MarketplaceUpdateStatus,
-} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+} from '@moonshot-ai/kimi-code-sdk';
 
 export interface LoadPluginMarketplaceOptions {
   readonly workDir: string;
@@ -95,13 +95,13 @@ function findLocaleBlock(
   const normalized = normalizedLocale(locale);
   const base = normalized.split('-')[0];
   const candidates = base === normalized ? [normalized] : [normalized, base];
+  const entries = Object.entries(entry.locale);
   for (const candidate of candidates) {
-    for (const [key, value] of Object.entries(entry.locale)) {
-      const normalizedKey = normalizedLocale(key);
-      if (normalizedKey !== candidate && normalizedKey.split('-')[0] !== candidate) continue;
-      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-        return value as Record<string, unknown>;
-      }
+    const match = entries.find(([key]) => normalizedLocale(key) === candidate);
+    if (match === undefined) continue;
+    const value = match[1];
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
     }
   }
   return undefined;
