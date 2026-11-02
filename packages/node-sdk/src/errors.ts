@@ -5,7 +5,7 @@ import {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
-} from '@moonshot-ai/kosong';
+} from '@moonshot-ai/agent-core-v2';
 
 export const ErrorCodes = {
   CONFIG_INVALID: 'config.invalid',
