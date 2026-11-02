@@ -106,7 +106,7 @@ function requestParamsForClient(
   if (tools.length === params.tools.length) return params;
   const cacheControl = params.tools.at(-1)?.cache_control;
   const lastTool = tools.at(-1);
-  if (cacheControl !== undefined && lastTool !== undefined && lastTool.cache_control === undefined) {
+  if (cacheControl !== undefined && lastTool !== undefined && (lastTool.cache_control === undefined || lastTool.cache_control === null)) {
     tools = [...tools.slice(0, -1), { ...lastTool, cache_control: cacheControl }];
   }
   const choice = params.tool_choice;

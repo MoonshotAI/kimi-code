@@ -149,7 +149,7 @@ describe('anthropic tool schema compatibility', () => {
         max_tokens: 100,
         messages: [{ role: 'user', content: 'hi' }],
         tools: [
-          { name: 'good', input_schema: { type: 'object' } },
+          { name: 'good', input_schema: { type: 'object' }, cache_control: null },
           { name: 'bad', input_schema: { type: 'object', oneOf: [] }, cache_control: { type: 'ephemeral' } },
         ] as AnthropicRequest['params']['tools'],
       },
@@ -162,7 +162,7 @@ describe('anthropic tool schema compatibility', () => {
     expect(sent?.['tools']).toEqual([
       { name: 'good', input_schema: { type: 'object' }, cache_control: { type: 'ephemeral' } },
     ]);
-    expect(request.params.tools?.[0]).not.toHaveProperty('cache_control');
+    expect(request.params.tools?.[0]).toHaveProperty('cache_control', null);
   });
 
   it.each([
