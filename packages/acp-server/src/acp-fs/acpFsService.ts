@@ -104,6 +104,15 @@ export class AcpHostFileSystem implements IHostFileSystem {
     }
   }
 
+  /**
+   * ACP has no append RPC. When both text capabilities are available, emulate
+   * append against the client's current buffer; otherwise preserve local
+   * append semantics. A missing client file means an empty buffer (so the
+   * first append creates it), while all other read failures are propagated.
+   * `readText` maps a structured resource-not-found into an `os.fs.not_found`
+   * `HostFsError`, so both that mapped error and a raw `RequestError` are
+   * treated as "no existing content".
+   */
   async appendText(path: string, data: string): Promise<void> {
     if (!this.connection.fsReadTextFile || !this.connection.fsWriteTextFile) {
       return this.inner.appendText(path, data);
@@ -112,7 +121,7 @@ export class AcpHostFileSystem implements IHostFileSystem {
     try {
       existing = await this.readText(path);
     } catch (error) {
-      if (!isResourceNotFound(error)) throw error;
+      if (!isResourceNotFound(error) && !isHostFsNotFound(error)) throw error;
     }
     await this.writeText(path, existing + data);
   }
