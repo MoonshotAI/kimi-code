@@ -66,6 +66,14 @@ export function lazyModelSelection(
 
 export type { ModelSwitchPersistence } from '../types';
 
+// The engine freezes a turn's model on its first request, which the TUI sees
+// as turn.step.started with step >= 1. beginSessionRequest clears the turn id
+// but not the step, and turn.started resets the step to 0.
+function currentTurnSentRequest(host: SlashCommandHost): boolean {
+  const { turnId, step } = host.streamingUI.getTurnContext();
+  return turnId !== undefined && step > 0;
+}
+
 export async function performModelSwitch(
   host: SlashCommandHost,
   alias: string,
@@ -82,15 +90,11 @@ export async function performModelSwitch(
     session = host.session;
   }
   const phase = host.state.appState.streamingPhase;
-  const { turnId, step } = host.streamingUI.getTurnContext();
-  // The engine freezes the model on the turn's first request, which the TUI
-  // sees as turn.step.started with step >= 1. beginSessionRequest clears the
-  // turn id but not the step, and turn.started resets the step to 0. Replay
-  // can leave both set while idle.
-  const currentTurnSentRequest = phase !== 'idle' && turnId !== undefined && step > 0;
   const appliesNextTurn =
     options?.appliesNextTurn ??
-    (host.state.appState.isCompacting || phase === 'shell' || currentTurnSentRequest);
+    (host.state.appState.isCompacting ||
+      phase === 'shell' ||
+      (phase !== 'idle' && currentTurnSentRequest(host)));
   const prevModel = host.state.appState.model;
   const prevEffort = host.state.appState.thinkingEffort;
   const modelChanged = alias !== prevModel;
