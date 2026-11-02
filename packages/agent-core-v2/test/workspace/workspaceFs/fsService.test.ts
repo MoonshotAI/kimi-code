@@ -28,6 +28,16 @@ import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 
 const WORK_DIR = '/repo';
+const WALK_GREP_REQUEST = {
+  pattern: 'hello',
+  regex: false,
+  case_sensitive: true,
+  follow_gitignore: false,
+  max_files: 200,
+  max_matches_per_file: 50,
+  max_total_matches: 5000,
+  context_lines: 0,
+};
 
 function stubWorkspaceContext(): IWorkspaceContext {
   return {
@@ -374,6 +384,7 @@ let host: ReturnType<typeof createScopedTestHost> | undefined;
 afterEach(() => {
   host?.dispose();
   host = undefined;
+  vi.restoreAllMocks();
 });
 
 function defaultGitStub(): IGitService {
@@ -466,6 +477,10 @@ function makeRemoteSession(
     workspaceGitStub(defaultGitStub()),
     environmentId,
   );
+}
+
+function makeRemoteWalkSession(backend: IHostFileSystem): IWorkspaceFsService {
+  return makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
 }
 
 describe('WorkspaceFsService.gitStatus', () => {
@@ -1203,24 +1218,13 @@ describe('WorkspaceFsService.suggest', () => {
   });
 
   it('passes ignore rules to the walk and reports inventory truncation', async () => {
-    const backend = fakeFs({
-      '.gitignore': 'node_modules/\n',
-      'src/app.ts': '',
-      'node_modules/pkg/index.ts': '',
-    });
+    const backend = fakeFs({ '.gitignore': 'node_modules/\n' });
     let receivedIgnore: readonly string[] | undefined;
     backend.walk = async (_path, options) => {
       receivedIgnore = options.ignore;
       return { entries: [], errors: [], truncated: true, responseBytes: 64 };
     };
-    const fs = makeRemoteSession(
-      { '.gitignore': 'node_modules/\n' },
-      () => ({ stdout: '', exitCode: 127 }),
-      [],
-      'ssh-dev',
-      '/home/target',
-      backend,
-    );
+    const fs = makeRemoteWalkSession(backend);
 
     const result = await fs.suggest({
       query: 'app',
@@ -1246,25 +1250,9 @@ describe('WorkspaceFsService.suggest', () => {
       reads.push(path);
       return readdir(path);
     };
-    const fs = makeRemoteSession(
-      {},
-      () => ({ stdout: '', exitCode: 127 }),
-      [],
-      'ssh-dev',
-      '/home/target',
-      backend,
-    );
+    const fs = makeRemoteWalkSession(backend);
 
-    const result = await fs.grep({
-      pattern: 'hello',
-      regex: false,
-      case_sensitive: true,
-      follow_gitignore: false,
-      max_files: 200,
-      max_matches_per_file: 50,
-      max_total_matches: 5000,
-      context_lines: 0,
-    });
+    const result = await fs.grep({ ...WALK_GREP_REQUEST });
 
     expect(result.files.map((file) => file.path)).toEqual([
       'a/nested/second.ts',
@@ -1592,7 +1580,7 @@ describe('WorkspaceFsService.suggest', () => {
   it('keeps partial candidates at the shared deadline without walking later roots', async () => {
     const backend = fakeFs({ 'src/foo.ts': '', '/extra/foo-extra.ts': '' });
     let clock = 1_000;
-    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
     let deadline: number | undefined;
     const roots: string[] = [];
     backend.walk = async (path, options) => {
@@ -1609,35 +1597,31 @@ describe('WorkspaceFsService.suggest', () => {
         responseBytes: 128,
       };
     };
-    try {
-      const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
-      Object.defineProperty(fs, 'suggestRoots', {
-        value: async () => [
-          { dir: WORK_DIR, real: WORK_DIR, primary: true },
-          { dir: '/extra', real: '/extra', primary: false },
-        ],
-      });
+    const fs = makeRemoteWalkSession(backend);
+    Object.defineProperty(fs, 'suggestRoots', {
+      value: async () => [
+        { dir: WORK_DIR, real: WORK_DIR, primary: true },
+        { dir: '/extra', real: '/extra', primary: false },
+      ],
+    });
 
-      const result = await fs.suggest({
-        query: 'foo',
-        limit: 50,
-        follow_gitignore: false,
-        show_hidden: false,
-      });
+    const result = await fs.suggest({
+      query: 'foo',
+      limit: 50,
+      follow_gitignore: false,
+      show_hidden: false,
+    });
 
-      expect(result.items.map((item) => item.path)).toEqual(['src/foo.ts']);
-      expect(result.truncated).toBe(true);
-      expect(roots).toEqual([WORK_DIR]);
-      expect(deadline).toBe(11_000);
-    } finally {
-      now.mockRestore();
-    }
+    expect(result.items.map((item) => item.path)).toEqual(['src/foo.ts']);
+    expect(result.truncated).toBe(true);
+    expect(roots).toEqual([WORK_DIR]);
+    expect(deadline).toBe(11_000);
   });
 
   it('does not restart the suggest budget after the rg attempt', async () => {
     const backend = fakeFs({ 'src/foo.ts': '' });
     let clock = 1_000;
-    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
     let deadline: number | undefined;
     backend.walk = async (_path, options) => {
       deadline = options.deadlineMs;
@@ -1651,25 +1635,21 @@ describe('WorkspaceFsService.suggest', () => {
         throw new Error('spawn failed');
       },
     };
-    try {
-      const fs = makeRemoteSession({}, emptyHandler, [], 'ssh-dev', '/home/target', backend);
-      Object.defineProperty(fs, 'resolver', {
-        value: {
-          acquire: () => ({
-            environment: { process: runner },
-            track: (resource: unknown) => resource,
-            dispose: () => {},
-          }),
-        },
-      });
-      Object.defineProperty(fs, 'rgResolution', { value: { path: 'rg' } });
+    const fs = makeRemoteWalkSession(backend);
+    Object.defineProperty(fs, 'resolver', {
+      value: {
+        acquire: () => ({
+          environment: { process: runner },
+          track: (resource: unknown) => resource,
+          dispose: () => {},
+        }),
+      },
+    });
+    Object.defineProperty(fs, 'rgResolution', { value: { path: 'rg' } });
 
-      await fs.suggest({ query: 'foo', limit: 50, follow_gitignore: false, show_hidden: false });
+    await fs.suggest({ query: 'foo', limit: 50, follow_gitignore: false, show_hidden: false });
 
-      expect(deadline).toBe(11_000);
-    } finally {
-      now.mockRestore();
-    }
+    expect(deadline).toBe(11_000);
   });
 
   it('lists top-level entries of every root for an empty query', async () => {
@@ -1957,7 +1937,7 @@ describe('WorkspaceFsService.grep', () => {
   it('distinguishes partial matches from an empty timed-out inventory', async () => {
     const backend = fakeFs({ 'src/a.ts': 'hello primary\n', '/extra/b.ts': 'hello extra\n' });
     let clock = 1_000;
-    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
     const roots: string[] = [];
     backend.walk = async (path) => {
       roots.push(path);
@@ -1972,50 +1952,28 @@ describe('WorkspaceFsService.grep', () => {
         responseBytes: 128,
       };
     };
-    try {
-      const fs = makeRemoteSession({}, () => ({ stdout: '', exitCode: 127 }), [], 'ssh-dev', '/home/target', backend);
-      Object.defineProperty(fs, 'suggestRoots', {
-        value: async () => [
-          { dir: WORK_DIR, real: WORK_DIR, primary: true },
-          { dir: '/extra', real: '/extra', primary: false },
-        ],
-      });
+    const fs = makeRemoteWalkSession(backend);
+    Object.defineProperty(fs, 'suggestRoots', {
+      value: async () => [
+        { dir: WORK_DIR, real: WORK_DIR, primary: true },
+        { dir: '/extra', real: '/extra', primary: false },
+      ],
+    });
 
-      const result = await fs.grep({
-        pattern: 'hello',
-        regex: false,
-        case_sensitive: true,
-        follow_gitignore: false,
-        max_files: 200,
-        max_matches_per_file: 50,
-        max_total_matches: 5000,
-        context_lines: 0,
-      });
+    const result = await fs.grep({ ...WALK_GREP_REQUEST });
 
-      expect(result.files.map((file) => file.path)).toEqual(['src/a.ts']);
-      expect(result.files_scanned).toBe(1);
-      expect(result.truncated).toBe(true);
-      expect(roots).toEqual([WORK_DIR]);
-      backend.walk = async () => {
-        clock += 30_000;
-        return { entries: [], errors: [], truncated: true, responseBytes: 64 };
-      };
-      await expect(fs.grep({
-        pattern: 'hello',
-        regex: false,
-        case_sensitive: true,
-        follow_gitignore: false,
-        max_files: 200,
-        max_matches_per_file: 50,
-        max_total_matches: 5000,
-        context_lines: 0,
-      })).rejects.toMatchObject({
-        code: ErrorCodes.FS_GREP_TIMEOUT,
-        message: 'grep timed out after 30000ms',
-      });
-    } finally {
-      now.mockRestore();
-    }
+    expect(result.files.map((file) => file.path)).toEqual(['src/a.ts']);
+    expect(result.files_scanned).toBe(1);
+    expect(result.truncated).toBe(true);
+    expect(roots).toEqual([WORK_DIR]);
+    backend.walk = async () => {
+      clock += 30_000;
+      return { entries: [], errors: [], truncated: true, responseBytes: 64 };
+    };
+    await expect(fs.grep({ ...WALK_GREP_REQUEST })).rejects.toMatchObject({
+      code: ErrorCodes.FS_GREP_TIMEOUT,
+      message: 'grep timed out after 30000ms',
+    });
   });
 });
 

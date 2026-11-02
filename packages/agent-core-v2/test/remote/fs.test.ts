@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { FileEditService } from '#/app/edit/fileEditService';
 import { HostFsError } from '#/os/interface/hostFsErrors';
@@ -43,18 +43,18 @@ describe('fs group over a subprocess loopback', () => {
     await rm(workDir, { recursive: true, force: true });
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('reads a small whole file in one RPC', async () => {
     const path = join(workDir, 'whole.txt');
     await writeFile(path, 'alpha\nbeta\n');
     const calls = vi.spyOn(connection, 'call');
-    try {
-      const result = await fs.readWholeFile(path);
-      expect(Buffer.from(result?.bytes ?? []).toString('utf8')).toBe('alpha\nbeta\n');
-      expect(result?.stat).toEqual({ isFile: true, isDirectory: false, size: 11 });
-      expect(calls.mock.calls.map(([method]) => method)).toEqual(['fs/readFile']);
-    } finally {
-      calls.mockRestore();
-    }
+    const result = await fs.readWholeFile(path);
+    expect(Buffer.from(result?.bytes ?? []).toString('utf8')).toBe('alpha\nbeta\n');
+    expect(result?.stat).toEqual({ isFile: true, isDirectory: false, size: 11 });
+    expect(calls.mock.calls.map(([method]) => method)).toEqual(['fs/readFile']);
   });
 
   it('edits a small file with one read and one write RPC', async () => {
@@ -62,33 +62,25 @@ describe('fs group over a subprocess loopback', () => {
     await writeFile(path, 'before\nold value\n');
     const editor = new FileEditService(fs);
     const calls = vi.spyOn(connection, 'call');
-    try {
-      const result = await editor.edit({
-        path,
-        displayPath: 'edit.txt',
-        old_string: 'old value',
-        new_string: 'new value',
-        replace_all: false,
-      });
-      expect(result).toEqual({ ok: true, count: 1 });
-      expect(calls.mock.calls.map(([method]) => method)).toEqual(['fs/readFile', 'fs/writeFile']);
-      expect(await readFile(path, 'utf8')).toBe('before\nnew value\n');
-    } finally {
-      calls.mockRestore();
-    }
+    const result = await editor.edit({
+      path,
+      displayPath: 'edit.txt',
+      old_string: 'old value',
+      new_string: 'new value',
+      replace_all: false,
+    });
+    expect(result).toEqual({ ok: true, count: 1 });
+    expect(calls.mock.calls.map(([method]) => method)).toEqual(['fs/readFile', 'fs/writeFile']);
+    expect(await readFile(path, 'utf8')).toBe('before\nnew value\n');
   });
 
   it('creates the parent and writes text in one RPC', async () => {
     const parent = join(workDir, 'created', 'nested');
     const path = join(parent, 'out.txt');
     const calls = vi.spyOn(connection, 'call');
-    try {
-      await fs.writeTextWithParent(path, 'hello', 'overwrite', parent);
-      expect(calls.mock.calls.map(([method]) => method)).toEqual(['fs/writeFile']);
-      expect(await readFile(path, 'utf8')).toBe('hello');
-    } finally {
-      calls.mockRestore();
-    }
+    await fs.writeTextWithParent(path, 'hello', 'overwrite', parent);
+    expect(calls.mock.calls.map(([method]) => method)).toEqual(['fs/writeFile']);
+    expect(await readFile(path, 'utf8')).toBe('hello');
   });
 
   it('writes a byte stream progressively without retaining the complete input', async () => {
@@ -232,7 +224,7 @@ describe('fs protocol semantics', () => {
     expect(expired).toEqual({ entries: [], errors: [], truncated: true, responseBytes: 0 });
   });
 
-  it('walks nested directories in one rpc and prunes ignored subtrees', async () => {
+  it('batches remote walks and falls back locally for oversized ignore rules', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'remote-exec-walk-'));
     const { connection, loopback } = await connectInProcess();
     const methods: string[] = [];
@@ -247,57 +239,30 @@ describe('fs protocol semantics', () => {
       await writeFile(join(dir, 'src/nested/app.ts'), '');
       await writeFile(join(dir, 'node_modules/pkg/index.ts'), '');
       const fs = new RemoteFileSystem(connection);
-      const result = await fs.walk(dir, {
-        ...walkOptions,
-        ignore: ['node_modules/'],
-      });
+      const batched = await fs.walk(dir, { ...walkOptions, ignore: ['node_modules/'] });
 
-      expect(result.entries.map((entry) => entry.name.slice(dir.length + 1)).toSorted()).toEqual([
+      expect(batched.entries.map((entry) => entry.name.slice(dir.length + 1)).toSorted()).toEqual([
         'src',
         'src/nested',
         'src/nested/app.ts',
       ]);
-      expect(result.errors).toEqual([]);
-      expect(result.truncated).toBe(false);
+      expect(batched.errors).toEqual([]);
+      expect(batched.truncated).toBe(false);
       expect(methods.filter((method) => method === FS_WALK_METHOD)).toHaveLength(1);
       expect(methods.filter((method) => method === FS_READ_DIRECTORY_METHOD)).toHaveLength(0);
-    } finally {
-      connection.close();
-      await loopback.host.done;
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
 
-  it('falls back locally for oversized ignore rules without pruning them', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'remote-exec-walk-ignore-cap-'));
-    const { connection, loopback } = await connectInProcess();
-    const methods: string[] = [];
-    loopback.clientInput.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString('utf8').trim().split('\n')) {
-        if (line.length > 0) methods.push((JSON.parse(line) as { method?: string }).method ?? '');
-      }
-    });
-    try {
-      await mkdir(join(dir, 'src'));
-      await mkdir(join(dir, 'ignored'));
-      await writeFile(join(dir, 'src/app.ts'), '');
-      await writeFile(join(dir, 'ignored/app.ts'), '');
-      const fs = new RemoteFileSystem(connection);
+      methods.length = 0;
       const unusedRule = `unused-${'x'.repeat(8 * 1024)}`;
       const unusedRuleCount = Math.ceil(HOST_WALK_MAX_IGNORE_BYTES / Buffer.byteLength(JSON.stringify(unusedRule)));
-
-      const result = await fs.walk(dir, {
+      const fallback = await fs.walk(dir, {
         ...walkOptions,
-        ignore: ['ignored/', ...Array.from({ length: unusedRuleCount }, () => unusedRule)],
+        ignore: ['node_modules/', ...Array.from({ length: unusedRuleCount }, () => unusedRule)],
       });
 
-      expect(result.entries.map((entry) => entry.name.slice(dir.length + 1)).toSorted()).toEqual([
-        'src',
-        'src/app.ts',
-      ]);
-      expect(result.truncated).toBe(false);
+      expect(fallback.entries).toEqual(batched.entries);
+      expect(fallback.truncated).toBe(false);
       expect(methods.filter((method) => method === FS_WALK_METHOD)).toHaveLength(0);
-      expect(methods.filter((method) => method === FS_READ_DIRECTORY_METHOD)).toHaveLength(2);
+      expect(methods.filter((method) => method === FS_READ_DIRECTORY_METHOD)).toHaveLength(3);
     } finally {
       connection.close();
       await loopback.host.done;
