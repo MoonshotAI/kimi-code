@@ -222,3 +222,9 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** In tmux, program-status reports and clears use DCS passthrough. Auto mode uses the Rex environment fallback and does not send a support query in tmux, screen, or zellij; explicit enablement still reports the root record.
 
 **Why not in the app:** The terminal owns capability detection, replay, stop, and direct-exit restoration. An app wrapper around ordinary reports would leave the other lifecycle paths unwrapped.
+
+### opt-in-terminal-status-filter — keep
+
+**Decision:** Hosts may enable terminal-status filtering with `setFilterTerminalStatusResponses(true)`. When enabled, known DA/DCS/APC and cell-size replies are consumed before application input listeners; unhandled OSC replies reach protocol listeners but never focused keyboard input. The default preserves upstream dispatch behavior.
+
+**Why not in the app:** Raw terminal replies enter `TuiBase` before host listeners and focused components; filtering them reliably requires the library input dispatch point. Kimi enables the switch for its main and alternate screen renderers.

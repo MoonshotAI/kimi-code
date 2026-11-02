@@ -541,6 +541,7 @@ export abstract class TuiBase extends Container implements TUI {
 	private pendingTerminalColorQueries: PendingTerminalColorQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
+	private filterTerminalStatusResponses = false;
 	/** Directory for debug/crash logs. When undefined, debug logging is disabled and crash dumps fall back to the OS temp directory. */
 	protected readonly logDirectory: string | undefined;
 
@@ -561,6 +562,10 @@ export abstract class TuiBase extends Container implements TUI {
 		if (showHardwareCursor !== undefined) {
 			this.showHardwareCursor = showHardwareCursor;
 		}
+	}
+
+	public setFilterTerminalStatusResponses(enabled: boolean): void {
+		this.filterTerminalStatusResponses = enabled;
 	}
 
 	protected abstract doRender(): void;
@@ -1101,7 +1106,8 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 		// Terminal query replies are control traffic, not keyboard input. Consume
 		// known replies before global listeners can interpret them as user intent.
-		if (this.consumeCellSizeResponse(data) || TERMINAL_STATUS_RESPONSE_PATTERN.test(data)) {
+		if (this.filterTerminalStatusResponses &&
+			(this.consumeCellSizeResponse(data) || TERMINAL_STATUS_RESPONSE_PATTERN.test(data))) {
 			return;
 		}
 
@@ -1121,9 +1127,12 @@ export abstract class TuiBase extends Container implements TUI {
 			}
 			data = current;
 		}
-		// OSC reports may be consumed by application listeners (for example,
-		// live theme tracking), but must never fall through to focused input.
-		if (OSC_STATUS_RESPONSE_PATTERN.test(data)) {
+		// Preserve upstream dispatch order unless the host opts in to filtering.
+		if (this.consumeCellSizeResponse(data)) {
+			return;
+		}
+		// OSC reports may be consumed by application listeners (for example, live theme tracking).
+		if (this.filterTerminalStatusResponses && OSC_STATUS_RESPONSE_PATTERN.test(data)) {
 			return;
 		}
 

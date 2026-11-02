@@ -136,9 +136,25 @@ function setup(): { terminal: TestTerminal; tui: TUI; component: InputRecorder }
 }
 
 describe("TUI terminal status responses", () => {
+	it("preserves upstream input forwarding by default", () => {
+		const terminal = new TestTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new InputRecorder();
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.start();
+		try {
+			terminal.sendInput("\x1bP>|XTerm(390)\x1b\\");
+			assert.deepStrictEqual(component.inputs, ["\x1bP>|XTerm(390)\x1b\\"]);
+		} finally {
+			tui.stop();
+		}
+	});
+
 	it("filters non-OSC terminal status responses before application dispatch", () => {
 		const terminal = new TestTerminal();
 		const tui = new TuiMainScreen(terminal);
+		tui.setFilterTerminalStatusResponses(true);
 		const component = new InputRecorder();
 		const listenerInputs: string[] = [];
 		tui.addChild(component);
@@ -164,6 +180,7 @@ describe("TUI terminal status responses", () => {
 	it("preserves a key between replies in one raw stdin chunk", () => {
 		const terminal = new TestTerminal();
 		const tui = new TuiMainScreen(terminal);
+		tui.setFilterTerminalStatusResponses(true);
 		const component = new InputRecorder();
 		const buffer = new StdinBuffer();
 		buffer.on("data", (sequence) => terminal.sendInput(sequence));
@@ -181,6 +198,7 @@ describe("TUI terminal status responses", () => {
 	it("lets protocol listeners consume OSC status before focused input", () => {
 		const terminal = new TestTerminal();
 		const tui = new TuiMainScreen(terminal);
+		tui.setFilterTerminalStatusResponses(true);
 		const component = new InputRecorder();
 		const oscStatusResponse = "\x1b]11;rgb:1515/1919/1e1e\x1b\\";
 		let observedStatus: string | undefined;
@@ -205,6 +223,7 @@ describe("TUI terminal status responses", () => {
 	it("filters unhandled OSC status before focused input", () => {
 		const terminal = new TestTerminal();
 		const tui = new TuiMainScreen(terminal);
+		tui.setFilterTerminalStatusResponses(true);
 		const component = new InputRecorder();
 		tui.addChild(component);
 		tui.setFocus(component);
@@ -221,6 +240,7 @@ describe("TUI terminal status responses", () => {
 	it("preserves keyboard and mouse input after filtering terminal status responses", () => {
 		const terminal = new TestTerminal();
 		const tui = new TuiMainScreen(terminal);
+		tui.setFilterTerminalStatusResponses(true);
 		const component = new InputRecorder();
 		const listenerInputs: string[] = [];
 		tui.addChild(component);
@@ -322,9 +342,9 @@ describe("TUI.queryTerminalColors", () => {
 			assert.deepStrictEqual(late, [{ foreground: undefined, background: WHITE, palette: undefined }]);
 			assert.deepStrictEqual(component.inputs, []);
 
-			// Terminal status replies never become keyboard input, even after the query ends.
+			// With no query pending and filtering disabled, color replies are ordinary input again.
 			terminal.sendInput("\x1b]11;#ffffff\x07");
-			assert.deepStrictEqual(component.inputs, []);
+			assert.deepStrictEqual(component.inputs, ["\x1b]11;#ffffff\x07"]);
 		} finally {
 			tui.stop();
 		}

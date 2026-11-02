@@ -146,6 +146,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
         })
       : new TuiMainScreen(terminal);
 
+  ui.setFilterTerminalStatusResponses(true);
   setMarkdownAltScreenActive(ui instanceof TuiAltScreen);
   setMarkdownRenderRequester(() => {
     ui.requestRender(true);
