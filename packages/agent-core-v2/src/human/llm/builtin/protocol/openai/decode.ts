@@ -232,10 +232,16 @@ export function createDecoder(
   function convertStreamToolCall(
     toolCall: RawStreamToolCallDelta,
   ): StreamedMessagePart[] {
+    const streamIndex = toolCall.index;
+    if (streamIndex !== undefined && toolCall.id !== undefined) {
+      const buffered = bufferedToolCalls.get(streamIndex) ?? { arguments: '', emitted: false };
+      buffered.id = toolCall.id;
+      bufferedToolCalls.set(streamIndex, buffered);
+    }
+
     if (toolCall.function === undefined || toolCall.function === null) {
       return [];
     }
-    const streamIndex = toolCall.index;
     const functionName = toolCall.function.name;
     const functionArguments = toolCall.function.arguments;
     const hasConcreteName = typeof functionName === 'string' && functionName.length > 0;
@@ -259,9 +265,6 @@ export function createDecoder(
     }
 
     const buffered = bufferedToolCalls.get(streamIndex) ?? { arguments: '', emitted: false };
-    if (toolCall.id !== undefined) {
-      buffered.id = toolCall.id;
-    }
     if (!buffered.emitted) {
       if (!hasConcreteName) {
         if (hasArguments) {
