@@ -80,6 +80,7 @@ function fakeInitialAppState(): AppState {
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
+    transcript: { groupTools: 'auto', groupThinking: true },
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
@@ -338,6 +339,32 @@ describe('fullscreen layout', () => {
       measure.mockRestore();
       alt.stop();
     }
+  });
+
+  it('keeps the viewport anchored when bottom collapse removes lines', async () => {
+    const { state, vt } = await mountFullscreen();
+    const first = new Text(Array.from({ length: 20 }, (_, i) => `first ${i}`).join('\n'), 0, 0);
+    state.transcriptContainer.addChild(first);
+    state.transcriptContainer.addChild(new Text(Array.from({ length: 20 }, (_, i) => `second ${i}`).join('\n'), 0, 0));
+    const alt = state.ui as TuiAltScreen;
+    alt.renderNow();
+    alt.scrollToTop();
+    alt.scrollBy(5);
+    await vt.waitForRender();
+    const before = alt.viewportTop;
+    if (state.transcriptView === undefined) throw new Error('transcript view missing');
+
+    state.transcriptView.withBottomAnchor(() => {
+      state.transcriptContainer.replaceChild(
+        first,
+        new Text(Array.from({ length: 15 }, (_, i) => `first ${i}`).join('\n'), 0, 0),
+      );
+    }, 5);
+    alt.renderNow();
+    await vt.flush();
+
+    expect(alt.viewportTop).toBe(before - 5);
+    alt.stop();
   });
 
   it('leaves a temporary fullscreen viewer alone and resumes the transcript when restored', async () => {
@@ -1194,7 +1221,11 @@ describe('fullscreen layout', () => {
   it('keeps Settings usable with pointer selection, wheel paging, and focus loss at 24 rows', async () => {
     const { state, vt } = await mountFullscreen(24);
     vt.resize(80, 24);
-    const picker = new SettingsSelectorComponent({ onSelect: vi.fn(), onCancel: vi.fn() });
+    const picker = new SettingsSelectorComponent({
+      fullscreen: true,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
     setEditorSlot(state, picker);
     state.ui.setFocus(picker);
     state.ui.requestRender();
@@ -1215,7 +1246,7 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     rows = screenRows(vt);
     expect(rows.join('\n')).toContain('Page 2/2');
-    expect(rows.join('\n')).toContain('❯ Usage');
+    expect(rows.join('\n')).toContain('❯ Experiments');
 
     state.ui.setFocus(state.notifyPanel);
     state.ui.requestRender();

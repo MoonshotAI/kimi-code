@@ -63,6 +63,10 @@ export class MoonLoader extends Text {
     this.stop();
   }
 
+  get currentLabel(): string {
+    return this.label;
+  }
+
   setLabel(label: string): void {
     this.label = label;
     this.updateDisplay();

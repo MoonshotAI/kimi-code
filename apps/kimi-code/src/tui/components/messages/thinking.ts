@@ -15,11 +15,14 @@ import {
 } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import type { Elapsed } from '#/tui/types';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 export type ThinkingRenderMode = 'live' | 'finalized';
 
 export class ThinkingComponent implements Component {
+  readonly startedAtMs = Date.now();
+
   private text: string;
   private showMarker: boolean;
   private mode: ThinkingRenderMode;
@@ -28,6 +31,8 @@ export class ThinkingComponent implements Component {
   private readonly ui: TUI | undefined;
   private spinnerFrame = 0;
   private spinnerInterval: ReturnType<typeof setInterval> | undefined;
+  private elapsed: Elapsed | undefined;
+  private projectionVersion = 0;
   // Hold a single Text instance so pi-tui's (text, width) → lines cache
   // actually survives across renders. Re-constructing per render destroys
   // the cache and forces full re-wrap on every frame, which dominates CPU
@@ -46,6 +51,7 @@ export class ThinkingComponent implements Component {
     this.showMarker = showMarker;
     this.mode = mode;
     this.ui = ui;
+    this.elapsed = mode === 'live' ? undefined : { known: false };
     this.textComponent = new Text(this.styled(text), 0, 0);
     if (mode === 'live') {
       this.startSpinner();
@@ -72,10 +78,20 @@ export class ThinkingComponent implements Component {
     return currentTheme.italicFg('textDim', text);
   }
 
-  finalize(): void {
+  finalize(elapsed: Elapsed): void {
+    this.elapsed = elapsed;
+    this.projectionVersion += 1;
     this.mode = 'finalized';
     this.markRenderDirty();
     this.stopSpinner();
+  }
+
+  get thinkingElapsed(): Elapsed | undefined {
+    return this.elapsed;
+  }
+
+  get transcriptProjectionVersion(): number {
+    return this.projectionVersion;
   }
 
   dispose(): void {

@@ -1,9 +1,12 @@
+import type { TranscriptGroupTools } from '../../config';
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
 export type SettingsSelection =
   | 'model'
   | 'theme'
   | 'tuiMode'
+  | 'groupTools'
+  | 'groupThinking'
   | 'mermaid'
   | 'editor'
   | 'permission'
@@ -32,6 +35,16 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     value: 'tuiMode',
     label: 'TUI mode',
     description: 'Choose the regular or fullscreen layout.',
+  },
+  {
+    value: 'groupTools',
+    label: 'Tool grouping',
+    description: 'Choose which tool calls to fold. Fullscreen only.',
+  },
+  {
+    value: 'groupThinking',
+    label: 'Group thinking',
+    description: 'Include thinking in transcript groups. Fullscreen only.',
   },
   {
     value: 'mermaid',
@@ -70,6 +83,8 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'model' ||
     value === 'theme' ||
     value === 'tuiMode' ||
+    value === 'groupTools' ||
+    value === 'groupThinking' ||
     value === 'mermaid' ||
     value === 'editor' ||
     value === 'permission' ||
@@ -81,6 +96,7 @@ function isSettingsSelection(value: string): value is SettingsSelection {
 }
 
 export interface SettingsSelectorOptions {
+  readonly fullscreen?: boolean;
   readonly onSelect: (value: SettingsSelection) => void;
   readonly onCancel: () => void;
 }
@@ -89,9 +105,84 @@ export class SettingsSelectorComponent extends ChoicePickerComponent {
   constructor(opts: SettingsSelectorOptions) {
     super({
       title: 'Settings',
-      options: [...SETTINGS_OPTIONS],
+      options: SETTINGS_OPTIONS.filter(
+        (option) =>
+          opts.fullscreen === true ||
+          (option.value !== 'groupTools' && option.value !== 'groupThinking'),
+      ),
       onSelect: (value) => {
         if (isSettingsSelection(value)) opts.onSelect(value);
+      },
+      onCancel: opts.onCancel,
+    });
+  }
+}
+
+const GROUP_TOOLS_OPTIONS: readonly ChoiceOption[] = [
+  {
+    value: 'auto',
+    label: 'Auto',
+    description: 'Fold all tools except subagents and communication tools.',
+  },
+  {
+    value: 'explore',
+    label: 'Explore',
+    description: 'Fold reads, searches, and read-only commands.',
+  },
+  {
+    value: 'off',
+    label: 'Off',
+    description: 'Keep every tool call as its own card.',
+  },
+];
+
+const GROUP_THINKING_OPTIONS: readonly ChoiceOption[] = [
+  {
+    value: 'on',
+    label: 'On',
+    description: 'Include finished thinking in transcript groups.',
+  },
+  {
+    value: 'off',
+    label: 'Off',
+    description: 'Show a two-line preview of each thinking block.',
+  },
+];
+
+export interface TranscriptGroupToolsSelectorOptions {
+  readonly currentValue: TranscriptGroupTools;
+  readonly onSelect: (value: TranscriptGroupTools) => void;
+  readonly onCancel: () => void;
+}
+
+export class TranscriptGroupToolsSelectorComponent extends ChoicePickerComponent {
+  constructor(opts: TranscriptGroupToolsSelectorOptions) {
+    super({
+      title: 'Tool grouping (fullscreen only)',
+      options: GROUP_TOOLS_OPTIONS,
+      currentValue: opts.currentValue,
+      onSelect: (value) => {
+        if (value === 'auto' || value === 'explore' || value === 'off') opts.onSelect(value);
+      },
+      onCancel: opts.onCancel,
+    });
+  }
+}
+
+export interface TranscriptGroupThinkingSelectorOptions {
+  readonly currentValue: boolean;
+  readonly onSelect: (value: boolean) => void;
+  readonly onCancel: () => void;
+}
+
+export class TranscriptGroupThinkingSelectorComponent extends ChoicePickerComponent {
+  constructor(opts: TranscriptGroupThinkingSelectorOptions) {
+    super({
+      title: 'Group thinking (fullscreen only)',
+      options: GROUP_THINKING_OPTIONS,
+      currentValue: opts.currentValue ? 'on' : 'off',
+      onSelect: (value) => {
+        if (value === 'on' || value === 'off') opts.onSelect(value === 'on');
       },
       onCancel: opts.onCancel,
     });

@@ -46,7 +46,7 @@ describe('ThinkingComponent', () => {
     expect(requestRender).toHaveBeenCalled();
     expect(strip(component.render(80).join('\n'))).toContain('⠙ thinking…');
 
-    component.finalize();
+    component.finalize({ known: false });
     requestRender.mockClear();
     vi.advanceTimersByTime(160);
     expect(requestRender).not.toHaveBeenCalled();
@@ -56,7 +56,7 @@ describe('ThinkingComponent', () => {
   it('finalizes in place into a collapsed preview', () => {
     const component = new ThinkingComponent(longThinking, true, 'live');
 
-    component.finalize();
+    component.finalize({ known: false });
 
     const out = strip(component.render(80).join('\n'));
     expect(out).toContain('line1');
@@ -68,7 +68,7 @@ describe('ThinkingComponent', () => {
 
   it('expands and collapses after finalization', () => {
     const component = new ThinkingComponent(longThinking, true, 'live');
-    component.finalize();
+    component.finalize({ known: false });
 
     component.setExpanded(true);
     const expanded = strip(component.render(80).join('\n'));
@@ -83,7 +83,7 @@ describe('ThinkingComponent', () => {
 
   it('keeps the finalized truncation footer within the requested render width', () => {
     const component = new ThinkingComponent(longThinking, true, 'live');
-    component.finalize();
+    component.finalize({ known: false });
 
     for (const line of component.render(37)) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(37);
@@ -92,7 +92,7 @@ describe('ThinkingComponent', () => {
 
   it('shows a single overflow line instead of swapping it for a same-height hint', () => {
     const component = new ThinkingComponent(['line1', 'line2', 'line3'].join('\n'), true, 'live');
-    component.finalize();
+    component.finalize({ known: false });
 
     const out = strip(component.render(80).join('\n'));
     expect(out).toContain('line1');
@@ -108,7 +108,7 @@ describe('ThinkingComponent', () => {
       true,
       'live',
     );
-    component.finalize();
+    component.finalize({ known: false });
 
     const out = strip(component.render(80).join('\n'));
     expect(out).toContain('line1');

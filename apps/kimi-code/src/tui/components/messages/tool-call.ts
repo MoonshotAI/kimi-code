@@ -24,6 +24,8 @@ import {
   BRAILLE_SPINNER_FRAMES,
   BRAILLE_SPINNER_INTERVAL_MS,
   COMMAND_PREVIEW_LINES,
+  DETACH_HINT_TEXT,
+  FOREGROUND_BASH_HINT_DELAY_MS,
   MESSAGE_INDENT,
   OUTCOME_MAX_LINES,
   RESULT_PREVIEW_LINES,
@@ -43,7 +45,7 @@ import {
 } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
-import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
+import type { Elapsed, ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
@@ -94,10 +96,6 @@ const MAX_LIVE_OUTPUT_CHARS = 50_000;
 // time so theme switches still apply.
 const dimHeaderStyle = (text: string): string => currentTheme.dim(text);
 const notifyTitleStyle = (text: string): string => currentTheme.boldFg('textStrong', text);
-
-/** Delay before a long-running foreground Bash/Agent card advertises Ctrl+B. */
-const DETACH_HINT_DELAY_MS = 10_000;
-const DETACH_HINT_TEXT = 'Press Ctrl+B to run in background';
 
 type SubagentTextKind = 'thinking' | 'text';
 type SubagentPhase = 'queued' | 'spawning' | 'running' | 'done' | 'failed' | 'backgrounded';
@@ -798,7 +796,11 @@ export class ToolCallComponent extends Container {
   private hiddenContent: boolean | undefined = undefined;
   /** Width-dependent half of hasHiddenContent(); recomputed on every collapsed render. */
   private truncatedAtLastRender = false;
+  readonly startedAtMs = Date.now();
+
   private result: ToolResultBlockData | undefined;
+  private elapsed: Elapsed | undefined;
+  private projectionVersion = 0;
   private ui: TUI | undefined;
   private planPath: string | undefined;
   /**
@@ -885,7 +887,7 @@ export class ToolCallComponent extends Container {
 
   /**
    * Advertises `Ctrl+B` on a foreground Bash/Agent card that has been running
-   * for {@link DETACH_HINT_DELAY_MS}. Cleared when the result lands.
+   * for {@link FOREGROUND_BASH_HINT_DELAY_MS}. Cleared when the result lands.
    */
   private detachHintTimer: ReturnType<typeof setTimeout> | undefined;
   private detachHintVisible = false;
@@ -909,6 +911,7 @@ export class ToolCallComponent extends Container {
     super();
     this.toolCall = toolCall;
     this.result = result;
+    this.elapsed = result === undefined ? undefined : { known: false };
     this.ui = ui;
     this.applySubagentReplay(toolCall.subagent);
 
@@ -1202,8 +1205,10 @@ export class ToolCallComponent extends Container {
     }
   }
 
-  setResult(result: ToolResultBlockData): void {
+  setResult(result: ToolResultBlockData, elapsed: Elapsed): void {
     this.result = result;
+    this.elapsed = elapsed;
+    this.projectionVersion += 1;
     // Result supersedes any live progress chatter; the result body is the
     // authoritative final state. Without this clear, a finished tool would
     // show both the streamed status lines and the final output stacked.
@@ -1226,6 +1231,7 @@ export class ToolCallComponent extends Container {
   }
 
   updateToolCall(toolCall: ToolCallBlockData): void {
+    this.projectionVersion += 1;
     this.toolCall = toolCall;
     this.syncStreamingProgressTimer();
     this.headerText.setText(this.buildHeader());
@@ -1440,6 +1446,18 @@ export class ToolCallComponent extends Container {
     return this.toolCall;
   }
 
+  get toolResultView(): Readonly<ToolResultBlockData> | undefined {
+    return this.result;
+  }
+
+  get toolElapsed(): Elapsed | undefined {
+    return this.elapsed;
+  }
+
+  get transcriptProjectionVersion(): number {
+    return this.projectionVersion;
+  }
+
   /** Notifies the listener when internal state changes, if a group is attached. */
   private notifySnapshotChange(): void {
     this.onSnapshotChange?.();
@@ -1529,7 +1547,7 @@ export class ToolCallComponent extends Container {
       this.detachHintVisible = true;
       this.rebuildBody();
       this.ui?.requestRender();
-    }, DETACH_HINT_DELAY_MS);
+    }, FOREGROUND_BASH_HINT_DELAY_MS);
   }
 
   private stopDetachHintTimer(): void {
@@ -1601,6 +1619,7 @@ export class ToolCallComponent extends Container {
     this.subagentAgentId = meta.agentId;
     this.subagentAgentName = meta.agentName;
     this.subagentPhase = meta.runInBackground ? 'backgrounded' : 'queued';
+    this.projectionVersion += 1;
     this.subagentStartedAtMs = Date.now();
     this.subagentEndedAtMs = undefined;
     this.syncSubagentElapsedTimer();
@@ -1641,6 +1660,7 @@ export class ToolCallComponent extends Container {
     resultSummary: string;
   }): void {
     this.subagentPhase = 'done';
+    this.projectionVersion += 1;
     this.subagentEndedAtMs ??= Date.now();
     if (payload.contextTokens !== undefined && payload.contextTokens > 0) {
       this.subagentContextTokens = payload.contextTokens;
@@ -1686,6 +1706,7 @@ export class ToolCallComponent extends Container {
   /** Handles SDK `subagent.failed`. */
   onSubagentFailed(payload: { error: string }): void {
     this.subagentPhase = 'failed';
+    this.projectionVersion += 1;
     this.subagentEndedAtMs ??= Date.now();
     this.subagentError = payload.error;
     this.syncSubagentElapsedTimer();
@@ -1735,6 +1756,7 @@ export class ToolCallComponent extends Container {
     }
     if (phaseUnchanged && !errorChanged) return;
     this.backgroundTaskTerminalPhase = phase;
+    this.projectionVersion += 1;
     this.subagentEndedAtMs ??= Date.now();
     this.syncSubagentElapsedTimer();
     this.headerText.setText(this.buildHeader());
@@ -1752,6 +1774,7 @@ export class ToolCallComponent extends Container {
     if (this.detachedFromForeground) return;
     this.detachedFromForeground = true;
     this.subagentPhase = 'backgrounded';
+    this.projectionVersion += 1;
     this.headerText.setText(this.buildHeader());
     this.rebuildContent();
     this.notifySnapshotChange();

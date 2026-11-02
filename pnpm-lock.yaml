@@ -121,6 +121,9 @@ importers:
       '@moonshot-ai/session-import':
         specifier: workspace:^
         version: link:../../packages/session-import
+      '@moonshot-ai/tree-sitter-bash':
+        specifier: workspace:^
+        version: link:../../packages/tree-sitter-bash
       '@moonshot-ai/vis-server':
         specifier: workspace:^
         version: link:../vis/server

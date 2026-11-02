@@ -864,7 +864,7 @@ export class SessionEventHandler {
     } else if (change.kind === 'lifecycle') {
       this.pendingModelBlockedFallback = undefined;
     }
-    const marker = buildGoalMarker(change, state.toolOutputExpanded, change.actor);
+    const marker = buildGoalMarker(change, state.transcriptContainer.toolOutputExpanded, change.actor);
     if (marker !== null) {
       state.transcriptContainer.addChild(marker);
       state.ui.requestRender();
@@ -876,7 +876,7 @@ export class SessionEventHandler {
     if (change === undefined) return;
     this.pendingModelBlockedFallback = undefined;
     const { state } = this.host;
-    const marker = buildGoalMarker(change, state.toolOutputExpanded, 'model');
+    const marker = buildGoalMarker(change, state.transcriptContainer.toolOutputExpanded, 'model');
     if (marker !== null) {
       state.transcriptContainer.addChild(marker);
       state.ui.requestRender();
@@ -1136,7 +1136,7 @@ export class SessionEventHandler {
     if (idx >= 0) {
       // In-place replacement is picked up by the container's ref-checked
       // render cache; a tree-wide invalidate is unnecessary (and costly).
-      children[idx] = status;
+      this.host.state.transcriptContainer.replaceChild(spinner, status);
     } else {
       state.transcriptContainer.addChild(status);
     }
