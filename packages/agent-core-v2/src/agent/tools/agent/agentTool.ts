@@ -26,6 +26,7 @@ import {
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
+import { TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -228,6 +229,9 @@ export class SubagentTool implements ISubagentTool {
       } else {
         refs.delete(READ_MEDIA_FILE_TOOL_NAME);
       }
+    }
+    if (refs.get(TODO_LIST_TOOL_NAME)?.source !== 'user') {
+      refs.delete(TODO_LIST_TOOL_NAME);
     }
     if (
       !this.flags.enabled(TOOL_SELECT_FLAG_ID) ||
