@@ -105,7 +105,7 @@ describe('session conversion', () => {
     expect(body(result.messages)).toContain(`a path under ${folder} maps to ${join(copy, 'source')}.`);
   });
 
-  it('reports an unreadable source session folder instead of silently omitting it', async () => {
+  it.skipIf(process.getuid?.() === 0)('reports an unreadable source session folder instead of silently omitting it', async () => {
     const paths = await fixture([user('Original request'), assistant('Original answer')]);
     const folder = join(dirname(paths.sourcePath), 'source');
     await mkdir(folder);
