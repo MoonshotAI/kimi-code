@@ -63,6 +63,7 @@ import type { AgentFeedMessage } from '../../../protocol/ws-agent';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
+import { ensureMainAgent } from '../../mainAgent';
 import { SessionAgentFeed } from './sessionAgentFeed';
 import { SessionTaskFeed } from './sessionTaskFeed';
 import { toTaskMessage } from './taskState';
@@ -196,14 +197,25 @@ export class SessionEventBroadcaster {
     transcriptGrades: TranscriptGradeSpec,
     transcriptSince?: Record<string, number>,
   ): Promise<boolean> {
+    let session: ISessionScopeHandle | undefined;
     try {
-      await resumeSessionById(this.opts.core.accessor, sessionId);
+      session = await resumeSessionById(this.opts.core.accessor, sessionId);
     } catch (error) {
       this.opts.logger?.warn(
         { sessionId, err: error instanceof Error ? error.message : String(error) },
         'session subscribe resume failed',
       );
       return false;
+    }
+    if (session !== undefined) {
+      try {
+        await ensureMainAgent(session);
+      } catch (error) {
+        this.opts.logger?.warn(
+          { sessionId, err: error instanceof Error ? error.message : String(error) },
+          'session subscribe main agent failed',
+        );
+      }
     }
     const state = await this.ensureState(sessionId);
     if (state === undefined || this.sessions.get(sessionId) !== state) return false;

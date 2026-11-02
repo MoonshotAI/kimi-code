@@ -28,6 +28,8 @@ import {
 
 export const USAGE_FRAME_INTERVAL_MS = 250;
 
+const STATE_EVENT_TYPES = ['turn.started', 'turn.ended', 'agent.status.updated', 'goal.updated'] as const;
+
 export type AgentFeedSend = (agentId: string, message: AgentFeedMessage) => void;
 
 export class SessionAgentFeed implements IDisposable {
@@ -104,11 +106,13 @@ class AgentWatch implements IDisposable {
     this.running = loopRunning(handle);
     const bus = optionalService(handle, IEventBus);
     if (bus !== undefined) {
-      this.subscriptions.push(
-        bus.subscribe((event) => {
-          this.onEvent(event);
-        }),
-      );
+      for (const type of STATE_EVENT_TYPES) {
+        this.subscriptions.push(
+          bus.subscribe(type, (event) => {
+            this.onEvent(event);
+          }),
+        );
+      }
     }
     const todo = optionalService(handle, IAgentTodoService);
     if (todo !== undefined) {

@@ -282,6 +282,9 @@ class FakeLifecycle {
     for (const cb of this.createHandlers) cb(handle.context);
     return handle;
   }
+  async create(options: { agentId: string }): Promise<AgentContext> {
+    return (this.handleOf(options.agentId) ?? this.addAgent(options.agentId)).context;
+  }
   removeAgent(id: string): void {
     const idx = this.handles.findIndex((h) => h.id === id);
     const [removed] = idx >= 0 ? this.handles.splice(idx, 1) : [];
@@ -863,9 +866,10 @@ describe('SessionEventBroadcaster', () => {
         payload: { agentId: 'main', sessionId: 's1', session: { id: 's1' } },
       });
 
-      await vi.waitFor(() => expect(both.envelopes).toHaveLength(1));
+      const sessionEvents = () => both.envelopes.filter((e) => e.type.startsWith('event.'));
+      await vi.waitFor(() => expect(sessionEvents()).toHaveLength(1));
       await settle();
-      expect(both.envelopes).toHaveLength(1);
+      expect(sessionEvents()).toHaveLength(1);
     });
 
     it('delivers event.config.warning to a global-only target that never subscribed', async () => {
@@ -1786,7 +1790,7 @@ describe('SessionEventBroadcaster', () => {
       expect(summarize(taskFramesOf(view))).toEqual(['list:main', 'task:agent-1:bash-3:running']);
     });
 
-    it('streams for a client subscribed before any agent exists', async () => {
+    it('creates the main agent when a client subscribes before any agent exists', async () => {
       const lc = new FakeLifecycle();
       sessions.set('s1', lc);
       bc = makeBroadcasterWithTranscript();
@@ -1794,8 +1798,10 @@ describe('SessionEventBroadcaster', () => {
       const view = collectingTarget();
       await bc.subscribe('s1', view.target, { '*': 'delta' });
 
-      const main = lc.addAgent('main');
-      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      const main = lc.handleOf('main');
+      expect(main).toBeDefined();
+      expect(view.envelopes.map((e) => e.type)).toEqual(expect.arrayContaining(['agent', 'todo', 'goal']));
+      main?.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
 
       const types = transcriptEnvelopes(view.envelopes).map((e) => e.type);
       expect(types).toContain('transcript.reset');
@@ -1813,6 +1819,7 @@ describe('SessionEventBroadcaster', () => {
       let todos: { title: string; status: string }[] = [];
       let goal: unknown = null;
       let contextTokens = 0;
+      let statusReads = 0;
       const todoListeners = new Set<() => void>();
       handle.set(IAgentPermissionModeService, { get mode() { return permission; } });
       handle.set(IAgentTodoService, {
@@ -1829,8 +1836,14 @@ describe('SessionEventBroadcaster', () => {
         getModelCapabilities: () => ({ max_context_tokens: 1000 }),
       });
       handle.set(ISessionUsageService, { status: () => undefined });
-      handle.set(ISessionTokenCountingService, { statusSize: () => contextTokens });
+      handle.set(ISessionTokenCountingService, {
+        statusSize: () => {
+          statusReads += 1;
+          return contextTokens;
+        },
+      });
       return {
+        statusReads: (): number => statusReads,
         setPermission(mode: string): void {
           permission = mode;
           handle.bus.emit(agentEvent('agent.status.updated', { permission: mode }));
@@ -1893,7 +1906,7 @@ describe('SessionEventBroadcaster', () => {
     it('follows turn events and sends the agent frame after the transcript batch of the same event', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
-      withAgentState(main);
+      const state = withAgentState(main);
       sessions.set('s1', lc);
       bc = makeBroadcasterWithTranscript();
 
@@ -1907,8 +1920,10 @@ describe('SessionEventBroadcaster', () => {
       expect(started).toEqual(['transcript.ops', 'agent']);
       expect(stateFramesOf(view).at(-1)).toMatchObject({ type: 'agent', status: 'running' });
 
+      const readsBeforeDelta = state.statusReads();
       main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'hi' }));
       await settle();
+      expect(state.statusReads()).toBe(readsBeforeDelta);
       expect(stateFramesOf(view).filter((frame) => frame.type === 'agent')).toHaveLength(2);
 
       const beforeEnd = view.envelopes.length;

@@ -673,16 +673,18 @@ describe('transcript contract e2e', () => {
     channel.close();
   });
 
-  it('S10: a TodoList write reaches subscribers as a todo frame', async () => {
+  it('S10: a fresh session sends main agent frames on subscribe and a TodoList write reaches subscribers as a todo frame', async () => {
     const todos = '{"todos":[{"title":"write tests","status":"in_progress"},{"title":"ship","status":"pending"}]}';
     await boot([
       { match: (body) => !body.includes('call_todo'), respond: () => sseToolCall('call_todo', 'TodoList', todos) },
       { match: () => true, respond: () => sseText('planned') },
     ]);
     const sid = await createSession(server!, base);
-    await submitPrompt(server!, base, sid, 'plan the work');
     const channel = await subscribeTranscript(server!, sid);
-    expect(channel.todos[0]).toMatchObject({ type: 'todo', session_id: sid });
+    await until('main agent frames', () => channel.agents.length > 0 && channel.todos.length > 0);
+    expect(channel.agents[0]).toMatchObject({ type: 'agent', session_id: sid, status: 'idle' });
+    expect(channel.todos[0]).toMatchObject({ type: 'todo', session_id: sid, items: [] });
+    await submitPrompt(server!, base, sid, 'plan the work');
     await idleOrDump(server!, base, sid);
     await until('todo frame', () => (channel.todos.at(-1)?.items.length ?? 0) > 0);
     expect(channel.todos.at(-1)!.items).toEqual([
