@@ -871,6 +871,26 @@ describe('OpenAI Responses stream errors', () => {
     expect(failure).not.toHaveProperty('statusCode');
   });
 
+  it('unwraps only known gateway payloads without dropping ordinary prose', () => {
+    const nested = { code: 'context_length_exceeded', message: 'field invalid' };
+    for (const payload of [
+      `received error while streaming: ${JSON.stringify(nested)}`,
+      JSON.stringify(nested),
+    ]) {
+      expect(streamError({ message: payload })).toMatchObject({
+        kind: 'context_overflow',
+        message: 'field invalid',
+      });
+    }
+
+    const prose = `schema rejected: ${JSON.stringify(nested)}`;
+    expect(streamError({ message: prose })).toMatchObject({
+      kind: 'status',
+      message: prose,
+      retryable: true,
+    });
+  });
+
   it('uses only the response.failed backend error message', () => {
     const failure = streamError({
       type: 'response.failed',

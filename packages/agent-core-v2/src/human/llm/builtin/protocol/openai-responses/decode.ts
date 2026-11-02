@@ -193,12 +193,14 @@ function parseNestedGatewayStreamError(message: string):
       message: string;
     }
   | undefined {
-  const jsonStart = message.indexOf('{');
-  if (jsonStart < 0) return undefined;
+  const marker = 'received error while streaming:';
+  const markerIndex = message.indexOf(marker);
+  const jsonText = markerIndex === -1 ? message.trim() : message.slice(markerIndex + marker.length).trim();
+  if (!jsonText.startsWith('{') || !jsonText.endsWith('}')) return undefined;
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(message.slice(jsonStart));
+    parsed = JSON.parse(jsonText);
   } catch {
     return undefined;
   }
