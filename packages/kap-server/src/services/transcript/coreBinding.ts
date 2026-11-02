@@ -3,7 +3,6 @@ import {
   IAgentConversationUndoParticipantRegistry,
   IAgentLoopService,
   IAgentScopeContext,
-  IAgentTaskService,
   IEventBus,
   INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
@@ -118,25 +117,6 @@ export function bindSessionTranscript(
         resolvePlanRevisionKey: (key) =>
           agents.handleOf(agentId)?.accessor.get(IAgentScopeContext).scope(key) ?? key,
       });
-      const agentHandle = agents.handleOf(agentId);
-      if (agentHandle !== undefined) {
-        const tasks = agentHandle.accessor.get(IAgentTaskService)?.list() ?? [];
-        for (const info of tasks) {
-          if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
-            applyOps(
-              agentId,
-              projector.seedSubagentTask({
-                taskId: info.taskId,
-                agentId: info.agentId,
-                description: info.description,
-                status: info.status,
-                detached: info.detached ?? false,
-                startedAt: info.startedAt,
-              }),
-            );
-          }
-        }
-      }
       projectors.set(agentId, projector);
     }
     return projector;
