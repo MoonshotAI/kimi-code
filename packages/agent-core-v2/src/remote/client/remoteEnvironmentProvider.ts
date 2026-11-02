@@ -22,6 +22,7 @@ import type {
 
 import { EnvironmentError, type EnvironmentRegistrationHandle } from '#/environment/environmentRegistry';
 import { createEnvironmentPath, createEnvironmentWorkspace } from '#/environment/environmentDefaults';
+import { REMOTE_SHELL_PATH_BRIDGE } from '#/_base/execEnv/shellPathBridge';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { classifyHandshakeFailure, connectWithGuidance } from './connectGuidance';
@@ -118,6 +119,11 @@ class DeclaredRemoteEnvironment implements Environment {
 
   get workspace(): Environment['workspace'] {
     return this.session === undefined ? undefined : createEnvironmentWorkspace(this.session.host.pathClass);
+  }
+
+  get shellPathBridge(): Environment['shellPathBridge'] {
+    const host = this.session?.host;
+    return host?.osKind === 'Windows' && host.shellName === 'bash' ? REMOTE_SHELL_PATH_BRIDGE : undefined;
   }
 
   private connected(): RemoteSession {

@@ -9,7 +9,7 @@ export interface ShellPathBridge {
   fromShellPath(path: string): string;
 }
 
-export type ShellPathBridgeEnv = Pick<HostEnvironmentInfo, 'osKind' | 'shellName' | 'shellPath' | 'pathResolution'>;
+export type ShellPathBridgeEnv = Pick<HostEnvironmentInfo, 'osKind' | 'shellName' | 'shellPath'>;
 
 export interface ShellPathBridgeDeps {
   readonly execFileSync: (file: string, args: readonly string[]) => string;
@@ -70,7 +70,6 @@ export function createShellPathBridge(
   }
 
   function resolveRootSegment(firstSegment: string): string | null {
-    if (env.pathResolution === 'reject-unresolved') return null;
     const cached = segmentCache.get(firstSegment);
     if (cached !== undefined) return cached;
 
@@ -98,16 +97,11 @@ export function createShellPathBridge(
       const normalized = nodePath.posix.normalize(path);
       const lexical = translateShellDrivePath(normalized);
       if (lexical !== normalized) return lexical;
-      if (normalized === '/' && env.pathResolution !== 'reject-unresolved') return normalized;
-      if (env.pathResolution !== 'reject-unresolved' && VIRTUAL_FS_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return normalized;
+      if (normalized === '/') return normalized;
+      if (VIRTUAL_FS_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return normalized;
       const firstSegment = normalized.slice(1).split('/')[0]!;
       const prefix = resolveRootSegment(firstSegment);
-      if (prefix === null) {
-        if (env.pathResolution === 'reject-unresolved') {
-          throw new Error(`Windows remote path ${normalized} cannot be resolved on the target; use an absolute drive or UNC path instead`);
-        }
-        return normalized;
-      }
+      if (prefix === null) return normalized;
       const remainder = normalized.slice(firstSegment.length + 1);
       const joined = `${prefix}${remainder}`.replaceAll('\\', '/');
       return /^[A-Za-z]:$/.test(joined) ? `${joined}/` : joined;
@@ -117,29 +111,42 @@ export function createShellPathBridge(
   }
 
   function toShellPath(nativePath: string): string {
-    if (!enabled) return nativePath;
-
-    if (nativePath.startsWith('\\\\')) {
-      return nativePath.replaceAll('\\', '/');
-    }
-
-    const driveMatch = /^([A-Za-z]):(?:[\\/]|$)/.exec(nativePath);
-    if (driveMatch !== null) {
-      const drive = driveMatch[1]!.toLowerCase();
-      const rest = nativePath.slice(2).replaceAll('\\', '/');
-      return `/${drive}${rest.startsWith('/') ? rest : `/${rest}`}`;
-    }
-
-    return nativePath.replaceAll('\\', '/');
+    return enabled ? toMsysPath(nativePath) : nativePath;
   }
 
   return { toShellPath, fromShellPath };
 }
 
+function toMsysPath(nativePath: string): string {
+  if (nativePath.startsWith('\\\\')) {
+    return nativePath.replaceAll('\\', '/');
+  }
+
+  const driveMatch = /^([A-Za-z]):(?:[\\/]|$)/.exec(nativePath);
+  if (driveMatch !== null) {
+    const drive = driveMatch[1]!.toLowerCase();
+    const rest = nativePath.slice(2).replaceAll('\\', '/');
+    return `/${drive}${rest.startsWith('/') ? rest : `/${rest}`}`;
+  }
+
+  return nativePath.replaceAll('\\', '/');
+}
+
+export const REMOTE_SHELL_PATH_BRIDGE: ShellPathBridge = {
+  toShellPath: toMsysPath,
+  fromShellPath(path) {
+    if (!path.startsWith('/') || path.startsWith('//')) return path;
+    const normalized = nodePath.posix.normalize(path);
+    const lexical = translateShellDrivePath(normalized);
+    if (lexical !== normalized) return lexical;
+    throw new Error(`Windows remote path ${normalized} cannot be resolved on the target; use an absolute drive or UNC path instead`);
+  },
+};
+
 const bridgeCache = new Map<string, ShellPathBridge>();
 
 export function getShellPathBridge(env: ShellPathBridgeEnv): ShellPathBridge {
-  const key = `${env.osKind} ${env.shellName} ${env.shellPath} ${env.pathResolution ?? 'local'}`;
+  const key = `${env.osKind} ${env.shellName} ${env.shellPath}`;
   const cached = bridgeCache.get(key);
   if (cached !== undefined) return cached;
   const bridge = createShellPathBridge(env, {

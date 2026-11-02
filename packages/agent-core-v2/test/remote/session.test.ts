@@ -45,7 +45,6 @@ describe('RemoteSession over a subprocess loopback', () => {
       expect(session.executorVersion).toBe(TEST_VERSION);
       expect(session.host.osKind.length).toBeGreaterThan(0);
       expect(session.host.pathClass).toBe(process.platform === 'win32' ? 'win32' : 'posix');
-      expect(session.host.pathResolution).toBe(process.platform === 'win32' ? 'reject-unresolved' : undefined);
       expect(session.host.shellPath.length).toBeGreaterThan(0);
       expect(session.host.homeDir.length).toBeGreaterThan(0);
       expect(session.host.cwd.length).toBeGreaterThan(0);

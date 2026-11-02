@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createShellPathBridge,
+  REMOTE_SHELL_PATH_BRIDGE,
   type ShellPathBridgeDeps,
   type ShellPathBridgeEnv,
 } from '#/_base/execEnv/shellPathBridge';
@@ -221,26 +222,16 @@ describe('fromShellPath cygpath resolution', () => {
   });
 });
 
-describe('remote unresolved path rejection', () => {
-  const env: ShellPathBridgeEnv = { ...WINDOWS_ENV, pathResolution: 'reject-unresolved' };
-
-  it.each(['/', '/tmp/x', '/usr/bin/node', '/home/user/file', '/dev/null', '/proc/self/status', '/sys/kernel'])('rejects %s without local cygpath calls', (input) => {
-    const { deps, execFileSync } = stubDeps({ existingPaths: [USR_BIN_CYGPATH] });
-    const bridge = createShellPathBridge(env, deps);
-
-    expect(() => bridge.fromShellPath(input)).toThrow('cannot be resolved on the target');
-    expect(execFileSync).not.toHaveBeenCalled();
+describe('remote shell path bridge', () => {
+  it.each(['/', '/tmp/x', '/usr/bin/node', '/home/user/file', '/dev/null', '/proc/self/status', '/sys/kernel'])('rejects unresolved %s', (input) => {
+    expect(() => REMOTE_SHELL_PATH_BRIDGE.fromShellPath(input)).toThrow('cannot be resolved on the target');
   });
 
-  it('keeps native and lexical drive paths without consulting cygpath', () => {
-    const { deps, execFileSync } = stubDeps();
-    const bridge = createShellPathBridge(env, deps);
-
-    expect(bridge.fromShellPath('/c/work/file.txt')).toBe('C:/work/file.txt');
-    expect(bridge.fromShellPath('C:\\work\\file.txt')).toBe('C:\\work\\file.txt');
-    expect(bridge.fromShellPath('//server/share/file.txt')).toBe('//server/share/file.txt');
-    expect(bridge.toShellPath('C:\\work\\file.txt')).toBe('/c/work/file.txt');
-    expect(execFileSync).not.toHaveBeenCalled();
+  it('keeps native and lexical drive paths', () => {
+    expect(REMOTE_SHELL_PATH_BRIDGE.fromShellPath('/c/work/file.txt')).toBe('C:/work/file.txt');
+    expect(REMOTE_SHELL_PATH_BRIDGE.fromShellPath('C:\\work\\file.txt')).toBe('C:\\work\\file.txt');
+    expect(REMOTE_SHELL_PATH_BRIDGE.fromShellPath('//server/share/file.txt')).toBe('//server/share/file.txt');
+    expect(REMOTE_SHELL_PATH_BRIDGE.toShellPath('C:\\work\\file.txt')).toBe('/c/work/file.txt');
   });
 });
 

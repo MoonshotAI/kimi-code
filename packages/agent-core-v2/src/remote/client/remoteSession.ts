@@ -106,7 +106,6 @@ export class RemoteSession {
       homeDir: environment.homeDir,
       cwd: environment.cwd,
       tempDir: environment.tempDir,
-      pathResolution: environment.pathClass === 'win32' ? 'reject-unresolved' : undefined,
     };
     this.executorVersion = connection.executorVersion;
     this.fs = new RemoteFileSystem(connection);

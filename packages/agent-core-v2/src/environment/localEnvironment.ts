@@ -1,4 +1,5 @@
 import { Emitter } from '#/_base/event';
+import { getShellPathBridge, type ShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
@@ -14,6 +15,7 @@ export class LocalEnvironment implements Environment {
   readonly host;
   readonly path: EnvironmentPath;
   readonly workspace: Environment['workspace'];
+  readonly shellPathBridge: ShellPathBridge | undefined;
   readonly fs;
   readonly process;
   private currentStatus: EnvironmentStatus = 'ready';
@@ -41,6 +43,7 @@ export class LocalEnvironment implements Environment {
     };
     this.path = createEnvironmentPath(environment.pathClass);
     this.workspace = createEnvironmentWorkspace(environment.pathClass);
+    this.shellPathBridge = environment.pathClass === 'win32' ? getShellPathBridge(environment) : undefined;
     this.fs = fs;
     this.process = process;
   }

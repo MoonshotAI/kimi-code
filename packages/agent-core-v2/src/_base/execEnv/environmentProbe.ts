@@ -28,7 +28,6 @@ export interface HostEnvironmentInfo {
   readonly homeDir: string;
   readonly cwd?: string;
   readonly tempDir?: string;
-  readonly pathResolution?: 'reject-unresolved';
 }
 
 export interface HostEnvironmentProbeDeps {

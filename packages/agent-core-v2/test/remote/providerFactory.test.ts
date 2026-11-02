@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter } from '#/_base/event';
+import { REMOTE_SHELL_PATH_BRIDGE } from '#/_base/execEnv/shellPathBridge';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService, type ConfigSectionChangedEvent } from '#/app/config/config';
 import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
@@ -233,6 +234,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
     const session = connectedSession();
     Object.assign(session.host, {
       osKind: 'Windows',
+      shellName: 'bash',
       pathClass: 'win32',
       homeDir: 'C:\\Users\\me',
       cwd: 'C:\\work',
@@ -251,6 +253,7 @@ describe('RemoteEnvironmentProviderFactory', () => {
       workDir: 'C:\\work\\project',
       additionalDirs: undefined,
     });
+    expect(environment.shellPathBridge).toBe(REMOTE_SHELL_PATH_BRIDGE);
 
     await attachment.dispose();
     await registry.dispose();
