@@ -197,6 +197,107 @@ describe("Webview model metadata", () => {
   });
 });
 
+describe("Webview model catalog refresh", () => {
+  it("keeps a valid non-default model and its thinking effort", () => {
+    useSettingsStore.setState({
+      currentModel: "reasoning",
+      thinkingEffort: "low",
+      modelsLoaded: false,
+    });
+    const models = [
+      ...MODELS,
+      { id: "new", name: "New", provider: "managed:kimi-code", capabilities: [] },
+    ];
+
+    useSettingsStore.getState().refreshModels({
+      models,
+      defaultModel: "plain",
+      defaultThinking: true,
+      defaultThinkingEffort: "high",
+    });
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      models,
+      currentModel: "reasoning",
+      thinkingEffort: "low",
+      defaultModel: "plain",
+      defaultThinking: true,
+      defaultThinkingEffort: "high",
+      modelsLoaded: true,
+    });
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("recomputes thinking when the current model drops the selected effort", () => {
+    useSettingsStore.setState({ currentModel: "reasoning", thinkingEffort: "low" });
+    const reasoning = MODELS.find((model) => model.id === "reasoning");
+    if (reasoning === undefined) throw new Error("Missing reasoning fixture");
+
+    useSettingsStore.getState().refreshModels({
+      models: [{ ...reasoning, support_efforts: ["high"], default_effort: "high" }],
+      defaultModel: "reasoning",
+      defaultThinking: true,
+    });
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "reasoning",
+      thinkingEffort: "high",
+    });
+  });
+
+  it("falls back only to a valid default and recomputes thinking", () => {
+    useSettingsStore.setState({ currentModel: "reasoning", thinkingEffort: "low" });
+    const models = [MODELS[0], MODELS[2]];
+
+    useSettingsStore.getState().refreshModels({
+      models,
+      defaultModel: "always",
+      defaultThinking: false,
+    });
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      models,
+      currentModel: "always",
+      thinkingEffort: "on",
+    });
+  });
+
+  it("clears the selection when both current and default models are invalid", () => {
+    useSettingsStore.setState({ currentModel: "reasoning", thinkingEffort: "high" });
+
+    useSettingsStore.getState().refreshModels({
+      models: [MODELS[0]],
+      defaultModel: "removed",
+      defaultThinking: true,
+    });
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "",
+      thinkingEffort: "off",
+      modelsLoaded: true,
+    });
+  });
+
+  it("does not supersede an in-flight settings save", async () => {
+    let rejectSave!: (error: Error) => void;
+    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    useSettingsStore.getState().updateModel("reasoning");
+
+    useSettingsStore.getState().refreshModels({
+      models: MODELS,
+      defaultModel: "plain",
+      defaultThinking: false,
+    });
+    rejectSave(new Error("save failed"));
+
+    await vi.waitFor(() => {
+      expect(useSettingsStore.getState().currentModel).toBe("plain");
+    });
+  });
+});
+
 describe("Webview MCP update bridge", () => {
   it("sends a lossless structured MCP edit request to the extension host", async () => {
     const posted: unknown[] = [];

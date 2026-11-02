@@ -2,7 +2,12 @@ import { create } from "zustand";
 import { bridge } from "@/services";
 import { toast } from "@/components/ui/sonner";
 import type { ExtensionConfig } from "shared/types";
-import type { ModelConfig, ThinkingMode, SlashCommandInfo } from "shared/legacy-sdk";
+import type {
+  KimiConfig as WebviewKimiConfig,
+  ModelConfig,
+  ThinkingMode,
+  SlashCommandInfo,
+} from "shared/legacy-sdk";
 
 let settingsSaveRevision = 0;
 const MANAGED_KIMI_CODE_PROVIDER = "managed:kimi-code";
@@ -109,6 +114,15 @@ function defaultEffortForModel(model: ModelConfig, defaultThinking: boolean, con
  * tier below the top when the model carries no listed default. Only listed
  * efforts reach this helper (selectThinkingEffort rejects the rest).
  */
+function isThinkingEffortSupported(model: ModelConfig, effort: string): boolean {
+  const mode = getModelThinkingMode(model);
+  if (mode === "none") return effort === "off";
+  if (mode === "switch") return effort === "off" || effort === "on";
+  if (mode === "always") return effort === "on";
+  const alwaysOn = model.capabilities.includes("always_thinking");
+  return (effort === "off" && !alwaysOn) || (model.support_efforts ?? []).includes(effort);
+}
+
 function persistsAsDefaultEffort(model: ModelConfig, effort: string): boolean {
   const efforts = model.support_efforts ?? [];
   const declared = model.default_effort;
@@ -184,6 +198,7 @@ interface SettingsState {
   setCurrentWorkDir: (workDir: string | null) => void;
   setWorkspaceRoot: (root: string | null) => void;
   initModels: (models: ModelConfig[], defaultModel: string | null, defaultThinking: boolean, defaultThinkingEffort?: string) => void;
+  refreshModels: (config: WebviewKimiConfig) => void;
   setWireSlashCommands: (commands: SlashCommandInfo[]) => void;
   setIsLoggedIn: (loggedIn: boolean) => void;
   getCurrentThinkingMode: () => ThinkingMode;
@@ -328,6 +343,27 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       modelsLoaded: true,
       currentModel: initialModel,
       thinkingEffort,
+    });
+  },
+
+  refreshModels: (config) => {
+    const { currentModel, thinkingEffort } = get();
+    const current = getModelById(config.models, currentModel);
+    const nextModel = current ?? getModelById(config.models, config.defaultModel ?? "");
+    const preserveThinking = current !== undefined && isThinkingEffortSupported(current, thinkingEffort);
+
+    set({
+      models: config.models,
+      defaultModel: config.defaultModel,
+      defaultThinking: config.defaultThinking,
+      defaultThinkingEffort: config.defaultThinkingEffort,
+      modelsLoaded: true,
+      currentModel: nextModel?.id ?? "",
+      thinkingEffort: preserveThinking
+        ? thinkingEffort
+        : nextModel === undefined
+          ? "off"
+          : defaultEffortForModel(nextModel, config.defaultThinking, config.defaultThinkingEffort),
     });
   },
 

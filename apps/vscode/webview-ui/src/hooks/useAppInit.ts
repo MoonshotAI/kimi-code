@@ -58,7 +58,7 @@ export function useAppInit(): AppInitState {
     modelsCount: 0,
   });
   const [initKey, setInitKey] = useState(0);
-  const { initModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
+  const { initModels, refreshModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
 
   const refresh = useCallback(() => {
     setState({ status: "loading", errorMessage: null, modelsCount: 0 });
@@ -70,6 +70,26 @@ export function useAppInit(): AppInitState {
       setExtensionConfig(config);
     });
   }, [setExtensionConfig, refresh]);
+
+  useEffect(() => {
+    return bridge.on(Events.ModelCatalogChanged, () => {
+      if (state.status !== "ready") {
+        refresh();
+        return;
+      }
+      void bridge.getModels().then((kimiConfig) => {
+        const modelsCount = kimiConfig.models?.length ?? 0;
+        if (modelsCount === 0) {
+          refresh();
+          return;
+        }
+        refreshModels(kimiConfig);
+        setState((current) => ({ ...current, modelsCount }));
+      }).catch((error: unknown) => {
+        console.error("[AppInit] Failed to refresh models:", error);
+      });
+    });
+  }, [refresh, refreshModels, state.status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,11 +147,11 @@ export function useAppInit(): AppInitState {
         }
 
         setState({ status: "ready", errorMessage: null, modelsCount });
-      } catch (err) {
+      } catch (error) {
         if (!cancelled) {
           setState({
             status: "runtime-error",
-            errorMessage: err instanceof Error ? err.message : "Failed to initialize",
+            errorMessage: error instanceof Error ? error.message : "Failed to initialize",
             modelsCount: 0,
           });
         }
