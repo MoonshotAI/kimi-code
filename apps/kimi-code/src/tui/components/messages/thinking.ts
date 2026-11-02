@@ -5,18 +5,22 @@
  * Supports expand/collapse via Ctrl+O (shared with tool output).
  */
 
-import { Text, truncateToWidth, type Component, type TUI } from '@moonshot-ai/pi-tui';
+import { Text, truncateToWidth, visibleWidth, type Component, type TUI } from '@moonshot-ai/pi-tui';
 
 import {
-  BRAILLE_SPINNER_FRAMES,
-  BRAILLE_SPINNER_INTERVAL_MS,
+  ANSI_ESCAPE_PATTERN,
   MESSAGE_INDENT,
   THINKING_PREVIEW_LINES,
+  TRANSCRIPT_GROUP_FRAME_INTERVAL_MS,
 } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { Elapsed } from '#/tui/types';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
+import { elapsedSuffix, TitleSweep } from './running-title';
+
+const LIVE_LABEL = 'Thinking';
+const FINALIZED_FOLD_HINT_ROWS = 1;
 
 export type ThinkingRenderMode = 'live' | 'finalized';
 
@@ -29,8 +33,8 @@ export class ThinkingComponent implements Component {
   private expanded = false;
   private previewHidesLines = false;
   private readonly ui: TUI | undefined;
-  private spinnerFrame = 0;
-  private spinnerInterval: ReturnType<typeof setInterval> | undefined;
+  private readonly sweep = new TitleSweep();
+  private frameInterval: ReturnType<typeof setInterval> | undefined;
   private elapsed: Elapsed | undefined;
   private projectionVersion = 0;
   // Hold a single Text instance so pi-tui's (text, width) → lines cache
@@ -55,7 +59,7 @@ export class ThinkingComponent implements Component {
     this.elapsed = mode === 'live' ? undefined : { known: false };
     this.textComponent = new Text(this.styled(text), 0, 0);
     if (mode === 'live') {
-      this.startSpinner();
+      this.startFrames();
     }
   }
 
@@ -85,7 +89,7 @@ export class ThinkingComponent implements Component {
     this.projectionVersion += 1;
     this.mode = 'finalized';
     this.markRenderDirty();
-    this.stopSpinner();
+    this.stopFrames();
   }
 
   get thinkingElapsed(): Elapsed | undefined {
@@ -97,7 +101,7 @@ export class ThinkingComponent implements Component {
   }
 
   dispose(): void {
-    this.stopSpinner();
+    this.stopFrames();
   }
 
   setExpanded(expanded: boolean): void {
@@ -129,29 +133,28 @@ export class ThinkingComponent implements Component {
 
     const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
     const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
-    // Live folding hides every row beyond the tail. Finalized folding swaps
-    // hidden rows for a one-line hint, so it must save at least one row.
-    this.previewHidesLines =
-      this.mode === 'live'
-        ? contentLines.length > THINKING_PREVIEW_LINES
-        : contentLines.length > THINKING_PREVIEW_LINES + 1;
 
     let rendered: string[];
     if (this.mode === 'live') {
+      const streamed = withoutTrailingBlankLines(contentLines);
+      this.previewHidesLines = streamed.length > THINKING_PREVIEW_LINES;
       const visibleLines =
         !this.expanded && this.previewHidesLines
-          ? contentLines.slice(contentLines.length - THINKING_PREVIEW_LINES)
-          : contentLines;
-      const spinner = currentTheme.fg(
-        'textDim',
-        `${BRAILLE_SPINNER_FRAMES[this.spinnerFrame] ?? BRAILLE_SPINNER_FRAMES[0]} `,
-      );
+          ? streamed.slice(streamed.length - THINKING_PREVIEW_LINES)
+          : streamed;
+      const now = Date.now();
+      this.sweep.advance(now, visibleWidth(STATUS_BULLET + LIVE_LABEL), true);
+      const title =
+        this.sweep.paint(STATUS_BULLET, 0) +
+        this.sweep.paint(LIVE_LABEL, visibleWidth(STATUS_BULLET)) +
+        elapsedSuffix(this.startedAtMs, now);
       rendered = [
         '',
-        spinner + currentTheme.fg('textDim', 'thinking…'),
+        truncateToWidth(title, width, '…'),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
       ];
     } else {
+      this.previewHidesLines = contentLines.length > THINKING_PREVIEW_LINES + FINALIZED_FOLD_HINT_ROWS;
       const lines: string[] = [''];
       for (let i = 0; i < contentLines.length; i++) {
         const p = i === 0 && this.showMarker ? currentTheme.fg('textDim', STATUS_BULLET) : MESSAGE_INDENT;
@@ -191,18 +194,23 @@ export class ThinkingComponent implements Component {
     return lines;
   }
 
-  private startSpinner(): void {
-    if (this.ui === undefined || this.spinnerInterval !== undefined) return;
-    this.spinnerInterval = setInterval(() => {
-      this.spinnerFrame = (this.spinnerFrame + 1) % BRAILLE_SPINNER_FRAMES.length;
+  private startFrames(): void {
+    if (this.ui === undefined || this.frameInterval !== undefined) return;
+    this.frameInterval = setInterval(() => {
       this.markRenderDirty();
       this.ui?.requestRender();
-    }, BRAILLE_SPINNER_INTERVAL_MS);
+    }, TRANSCRIPT_GROUP_FRAME_INTERVAL_MS);
   }
 
-  private stopSpinner(): void {
-    if (this.spinnerInterval === undefined) return;
-    clearInterval(this.spinnerInterval);
-    this.spinnerInterval = undefined;
+  private stopFrames(): void {
+    if (this.frameInterval === undefined) return;
+    clearInterval(this.frameInterval);
+    this.frameInterval = undefined;
   }
+}
+
+function withoutTrailingBlankLines(lines: readonly string[]): readonly string[] {
+  let end = lines.length;
+  while (end > 0 && (lines[end - 1] ?? '').replaceAll(ANSI_ESCAPE_PATTERN, '').trim() === '') end--;
+  return lines.slice(0, end);
 }

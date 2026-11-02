@@ -7,21 +7,14 @@ import {
 } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
-import {
-  TRANSCRIPT_GROUP_FADE_MS,
-  TRANSCRIPT_GROUP_FRAME_INTERVAL_MS,
-  TRANSCRIPT_GROUP_HOLD_MS,
-  TRANSCRIPT_GROUP_SWEEP_COLUMNS_PER_SECOND,
-  TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH,
-  TRANSCRIPT_GROUP_SWEEP_RESTART_GAP_COLUMNS,
-  TRANSCRIPT_GROUP_TAIL_ELAPSED_MS,
-} from '#/tui/constant/rendering';
+import { TRANSCRIPT_GROUP_FRAME_INTERVAL_MS, TRANSCRIPT_GROUP_HOLD_MS } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
-import { colorDistance, mixColors } from '#/tui/theme/color-mix';
+import { mixColors } from '#/tui/theme/color-mix';
 import { hasRowDetail, isExpandedComponent } from '#/tui/utils/component-capabilities';
 import type { ItemStatus, LogicalTranscriptItem } from '#/tui/utils/transcript-items';
 import type { GroupSummary } from '#/tui/utils/transcript-projection';
+import { elapsedSuffix, shownSeconds, TitleSweep } from './running-title';
 import { renderHeaderContent, TruncatedHeaderLine } from './truncated-header-line';
 
 export interface TranscriptGroupModel {
@@ -110,9 +103,7 @@ export class TranscriptGroupComponent implements Component {
   private frame: Frame | undefined;
   private interval: ReturnType<typeof setInterval> | undefined;
   private disposed = false;
-  private sweepPosition = -TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH;
-  private lastFrame: number | undefined;
-  private intensity = 0;
+  private readonly sweep = new TitleSweep();
   private lastActiveAt: number | undefined;
 
   constructor(
@@ -165,10 +156,8 @@ export class TranscriptGroupComponent implements Component {
     const titleText = shape.title.kind === 'summary'
       ? this.model.summary.fragments.join(', ')
       : itemText(shape.title.item);
-    const intensity = this.advance(now, visibleWidth(`${MARKER} ${titleText}`));
-    const animationKey = intensity === 0
-      ? 'static'
-      : `${this.sweepPosition.toFixed(3)}:${intensity.toFixed(4)}`;
+    this.advance(now, visibleWidth(`${MARKER} ${titleText}`));
+    const animationKey = this.sweep.frameKey;
     const tail = shape.body.kind === 'tail' ? shape.body.items : [];
     const key: FrameKey = {
       ...base,
@@ -176,7 +165,7 @@ export class TranscriptGroupComponent implements Component {
       tailKey: tail.map((item) => `${String(item.projectionVersion)}:${String(elapsedSeconds(item.status, now))}`).join('|'),
     };
     const sameKey = previous !== undefined && sameFrameKey(previous.key, key);
-    const title = sameKey ? previous.title : this.renderTitle(shape, titleText, intensity, width, now);
+    const title = sameKey ? previous.title : this.renderTitle(shape, titleText, width, now);
     const sameBase = previous !== undefined &&
       previous.key.width === width &&
       previous.key.palette === base.palette &&
@@ -242,20 +231,11 @@ export class TranscriptGroupComponent implements Component {
     }
   }
 
-  private renderTitle(shape: GroupShape, text: string, intensity: number, width: number, now: number): string[] {
+  private renderTitle(shape: GroupShape, text: string, width: number, now: number): string[] {
     const { summary } = this.model;
-    const dim = currentTheme.color('textDim');
-    const strong = currentTheme.color('textStrong');
-    const background = currentTheme.terminalBackground();
-    const bandTarget = colorDistance(dim, background) > colorDistance(dim, strong) ? background : strong;
-    const band = mixColors(dim, bandTarget, 0.45);
-    let markerStyle = (value: string): string => currentTheme.fg('textDim', value);
-    let textStyle = (value: string): string => currentTheme.fg('textDim', value);
-    if (intensity > 0) {
-      const offset = visibleWidth(MARKER) + 1;
-      markerStyle = (value) => sweep(value, 0, this.sweepPosition, dim, band, intensity);
-      textStyle = (value) => sweep(value, offset, this.sweepPosition, dim, band, intensity);
-    }
+    const offset = visibleWidth(MARKER) + 1;
+    let markerStyle = (value: string): string => this.sweep.paint(value, 0);
+    const textStyle = (value: string): string => this.sweep.paint(value, offset);
     if (summary.allFailed) markerStyle = (value) => currentTheme.fg('error', value);
     const head = `${markerStyle(MARKER)} `;
 
@@ -336,24 +316,17 @@ export class TranscriptGroupComponent implements Component {
     );
   }
 
-  private advance(now: number, total: number): number {
-    const elapsed = this.lastFrame === undefined ? 0 : Math.min(100, Math.max(0, now - this.lastFrame));
-    this.lastFrame = now;
+  private advance(now: number, columns: number): void {
     if (this.model.active) this.lastActiveAt = now;
-    const holding = this.lastActiveAt !== undefined && now - this.lastActiveAt < TRANSCRIPT_GROUP_HOLD_MS;
-    const target = this.model.active || holding ? 1 : 0;
-    this.intensity += (target - this.intensity) * Math.min(1, elapsed / TRANSCRIPT_GROUP_FADE_MS);
-    if (this.intensity < 0.01 && target === 0) this.intensity = 0;
-    this.sweepPosition += elapsed * TRANSCRIPT_GROUP_SWEEP_COLUMNS_PER_SECOND / 1000;
-    if (this.sweepPosition > total + TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH + TRANSCRIPT_GROUP_SWEEP_RESTART_GAP_COLUMNS) {
-      this.sweepPosition = -TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH;
-    }
-    return this.intensity;
+    this.sweep.advance(now, columns, this.model.active || this.holding(now));
+  }
+
+  private holding(now: number): boolean {
+    return this.lastActiveAt !== undefined && now - this.lastActiveAt < TRANSCRIPT_GROUP_HOLD_MS;
   }
 
   private needsClock(now: number): boolean {
-    const holding = this.lastActiveAt !== undefined && now - this.lastActiveAt < TRANSCRIPT_GROUP_HOLD_MS;
-    if (this.model.active || this.intensity > 0 || holding) return true;
+    if (this.model.active || this.sweep.intensity > 0 || this.holding(now)) return true;
     const body = shapeOf(this.model).body;
     switch (body.kind) {
       case 'tail': return body.items.some((item) => item.status.kind === 'running');
@@ -451,19 +424,12 @@ function itemText(item: LogicalTranscriptItem): string {
 }
 
 function elapsedSeconds(status: ItemStatus, now: number): number | undefined {
-  if (status.kind !== 'running') return undefined;
-  const elapsed = now - status.startedAtMs;
-  return elapsed >= TRANSCRIPT_GROUP_TAIL_ELAPSED_MS ? Math.floor(elapsed / 1000) : undefined;
+  return status.kind === 'running' ? shownSeconds(status.startedAtMs, now) : undefined;
 }
 
 function statusSuffix(status: ItemStatus, now: number): string {
   switch (status.kind) {
-    case 'running': {
-      const seconds = elapsedSeconds(status, now);
-      return seconds === undefined
-        ? ''
-        : chalk.hex(currentTheme.faintForeground())(` · ${String(seconds)}s`);
-    }
+    case 'running': return elapsedSuffix(status.startedAtMs, now);
     case 'failed': return currentTheme.dim(' · failed');
     case 'interrupted': return currentTheme.dim(' · interrupted');
     case 'done': {
@@ -527,20 +493,4 @@ function sameFrameKey(left: FrameKey, right: FrameKey): boolean {
     left.animationKey === right.animationKey &&
     left.tailKey === right.tailKey &&
     left.viewportRows === right.viewportRows;
-}
-
-function sweep(
-  text: string,
-  offset: number,
-  position: number,
-  base: string,
-  band: string,
-  intensity: number,
-): string {
-  return Array.from(text).map((character, index) => {
-    const distance = Math.abs(index + offset - position);
-    const amount = Math.max(0, 1 - distance / TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH);
-    const eased = amount * amount * (3 - 2 * amount);
-    return chalk.hex(mixColors(base, band, eased * intensity))(character);
-  }).join('');
 }
