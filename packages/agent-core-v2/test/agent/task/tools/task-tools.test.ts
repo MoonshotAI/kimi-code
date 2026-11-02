@@ -7,6 +7,7 @@ import {
   IAgentTaskService,
   type AgentTask,
   type AgentTaskInfo,
+  type AgentTaskOutputChunk,
   type AgentTaskOutputSnapshot,
   type AgentTaskTrackOptions,
   type AgentTaskWaitDelivery,
@@ -25,6 +26,7 @@ import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
 import { WaitForInputSchema } from '#/agent/tools/task/task-wait/task-wait';
 import { WaitForTool, startWaitProgress, waitForProgressUpdate } from '#/agent/tools/task/task-wait/taskWaitTool';
 import { abortError } from '#/_base/utils/abort';
+import { Event } from '#/_base/event';
 import type { ITaskHandle } from '#/app/task/task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { compileToolArgsValidator, validateToolArgs } from '#/tool/args-validator';
@@ -121,6 +123,8 @@ interface FakeTaskEntry {
 
 class FakeTaskService implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
+  readonly onDidAppendOutput = Event.None as Event<AgentTaskOutputChunk>;
+  readonly onDidChangeTask = Event.None as Event<AgentTaskInfo>;
 
   readonly stopCalls: Array<{ taskId: string; reason: string | undefined }> = [];
   readonly suppressCalls: string[] = [];
@@ -162,6 +166,8 @@ class FakeTaskService implements IAgentTaskService {
     throw new Error('registerTask is not implemented in FakeTaskService.');
   }
 
+  refresh(): void {}
+
   getTask(taskId: string): AgentTaskInfo | undefined {
     return this.entries.get(taskId)?.info;
   }
@@ -194,6 +200,10 @@ class FakeTaskService implements IAgentTaskService {
     const preview = this.entries.get(taskId)?.output.preview ?? '';
     if (tail === undefined) return preview;
     return preview.slice(-Math.max(0, Math.trunc(tail)));
+  }
+
+  async readOutputTail(): Promise<never> {
+    throw new Error('FakeTaskService.readOutputTail is not implemented');
   }
 
   async suppressTerminalNotification(taskId: string): Promise<void> {

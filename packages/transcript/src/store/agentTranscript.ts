@@ -1,10 +1,9 @@
-import type { AgentId, AttachmentId, InteractionId, PromptId, TaskId, TodoId, TurnId } from '../model/ids';
+import type { AgentId, AttachmentId, InteractionId, PromptId, TodoId, TurnId } from '../model/ids';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem } from '../model/item';
 import type { TranscriptMeta } from '../model/meta';
 import type { TranscriptPrompt } from '../model/prompt';
-import type { TranscriptTask } from '../model/task';
 import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptTurn } from '../model/turn';
 import {
@@ -72,14 +71,6 @@ export class AgentTranscript {
       (entry) => entry.kind === 'turn' && entry.turnId === turnId,
     );
     return item?.kind === 'turn' ? item : undefined;
-  }
-
-  getTasks(): ReadonlyMap<TaskId, TranscriptTask> {
-    return this.#state.tasks;
-  }
-
-  getTask(taskId: TaskId): TranscriptTask | undefined {
-    return this.#state.tasks.get(taskId);
   }
 
   getInteractions(): ReadonlyMap<InteractionId, TranscriptInteraction> {
@@ -150,7 +141,6 @@ export class AgentTranscript {
     }
     return {
       items,
-      tasks: [...this.#state.tasks.values()],
       interactions: [...this.#state.interactions.values()],
       attachments: [...this.#state.attachments.values()],
       todos: [...this.#state.todos.values()],

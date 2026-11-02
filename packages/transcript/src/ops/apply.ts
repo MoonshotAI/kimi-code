@@ -1,4 +1,4 @@
-import type { AttachmentId, InteractionId, PromptId, TaskId, TodoId, TurnId } from '../model/ids';
+import type { AttachmentId, InteractionId, PromptId, TodoId, TurnId } from '../model/ids';
 import { turnOrdinal } from '../model/ids';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame } from '../model/frame';
@@ -6,7 +6,6 @@ import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem } from '../model/item';
 import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
 import type { TranscriptPrompt } from '../model/prompt';
-import type { TranscriptTask } from '../model/task';
 import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 import type {
@@ -18,7 +17,6 @@ import type {
 
 export interface AgentState {
   readonly items: readonly TranscriptItem[];
-  readonly tasks: ReadonlyMap<TaskId, TranscriptTask>;
   readonly interactions: ReadonlyMap<InteractionId, TranscriptInteraction>;
   readonly attachments: ReadonlyMap<AttachmentId, TranscriptAttachment>;
   readonly todos: ReadonlyMap<TodoId, TranscriptTodo>;
@@ -30,7 +28,6 @@ export interface AgentState {
 
 export const EMPTY_AGENT_STATE: AgentState = {
   items: [],
-  tasks: new Map(),
   interactions: new Map(),
   attachments: new Map(),
   todos: new Map(),
@@ -60,10 +57,6 @@ export function applyOperation(state: AgentState, op: TranscriptOperation): Appl
       return applyAppend(state, op);
     case 'marker.upsert':
       return applyItemUpsert(state, op.item, op.item.markerId, op.beforeTurn);
-    case 'taskref.upsert':
-      return applyItemUpsert(state, op.item, op.item.refId, op.beforeTurn);
-    case 'task.upsert':
-      return applyTaskUpsert(state, op.task);
     case 'interaction.upsert':
       return applyInteractionUpsert(state, op.interaction);
     case 'attachment.upsert':
@@ -87,7 +80,6 @@ function applyReset(state: AgentState, op: Extract<TranscriptOperation, { op: 'r
   return {
     state: {
       items: op.snapshot.items,
-      tasks: new Map(op.snapshot.tasks.map((task) => [task.taskId, task])),
       interactions: new Map(
         op.snapshot.interactions.map((interaction) => [interaction.interactionId, interaction]),
       ),
@@ -301,7 +293,6 @@ function frameEquals(a: TranscriptFrame, b: TranscriptFrame): boolean {
 }
 
 function applyAppend(state: AgentState, op: AppendOp): ApplyResult {
-  if (op.target.type === 'task') return applyTaskAppend(state, op);
   const { turnId, stepId, frameId } = op.target;
   const turn = getTurn(state, turnId);
   const step = turn?.steps.find((entry) => entry.stepId === stepId);
@@ -325,22 +316,6 @@ function applyAppend(state: AgentState, op: AppendOp): ApplyResult {
     state: { ...state, items: replaceTurn(state.items, turnId, () => nextTurn) },
     changed: true,
   };
-}
-
-function applyTaskAppend(state: AgentState, op: AppendOp): ApplyResult {
-  if (op.target.type !== 'task') throw new Error('unreachable');
-  const taskId = op.target.taskId;
-  const task = state.tasks.get(taskId);
-  const current = task?.outputTail ?? '';
-  const merged = appendAtOffset(current, op.offset, op.text);
-  if (merged.gap) return { state, changed: false, gap: merged.gap };
-  if (!merged.changed) return { state, changed: false };
-  const nextTask: TranscriptTask = task
-    ? { ...task, outputTail: merged.text }
-    : { taskId, kind: 'other', state: 'running', detached: false, outputTail: merged.text };
-  const tasks = new Map(state.tasks);
-  tasks.set(taskId, nextTask);
-  return { state: { ...state, tasks }, changed: true };
 }
 
 export function appendAtOffset(
@@ -401,8 +376,6 @@ function itemIdOf(item: TranscriptItem): string {
       return item.turnId;
     case 'marker':
       return item.markerId;
-    case 'taskref':
-      return item.refId;
   }
 }
 
@@ -440,14 +413,6 @@ function applyItemsRemove(state: AgentState, ids: readonly string[]): ApplyResul
     pending = nextPending;
   }
   return { state: { ...state, items, interactions, pendingInteractions: pending }, changed: true };
-}
-
-function applyTaskUpsert(state: AgentState, task: TranscriptTask): ApplyResult {
-  const current = state.tasks.get(task.taskId);
-  if (current && taskEquals(current, task)) return { state, changed: false };
-  const tasks = new Map(state.tasks);
-  tasks.set(task.taskId, task);
-  return { state: { ...state, tasks }, changed: true };
 }
 
 function applyInteractionUpsert(
@@ -532,23 +497,6 @@ function promptEquals(a: TranscriptPrompt, b: TranscriptPrompt): boolean {
     a.createdAt === b.createdAt &&
     a.finishedAt === b.finishedAt &&
     a.steeredAt === b.steeredAt
-  );
-}
-
-function taskEquals(a: TranscriptTask, b: TranscriptTask): boolean {
-  return (
-    a.kind === b.kind &&
-    a.state === b.state &&
-    a.detached === b.detached &&
-    a.description === b.description &&
-    a.agentId === b.agentId &&
-    a.outputTail === b.outputTail &&
-    a.startedAt === b.startedAt &&
-    a.endedAt === b.endedAt &&
-    a.resultSummary === b.resultSummary &&
-    a.error === b.error &&
-    a.stateReason === b.stateReason &&
-    a.usage === b.usage
   );
 }
 
