@@ -135,7 +135,7 @@ export function useAppInit(): AppInitState {
           kimiConfig.defaultThinkingEffort,
         );
 
-        const modelsCount = kimiConfig.models?.length ?? 0;
+        const modelsCount = useSettingsStore.getState().models.length;
 
         if (modelsCount === 0 && !loginStatus.loggedIn) {
           setState({ status: "not-logged-in", errorMessage: null, modelsCount });

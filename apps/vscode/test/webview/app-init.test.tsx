@@ -87,6 +87,29 @@ describe("useAppInit model catalog events", () => {
     expect(useSettingsStore.getState().models).toHaveLength(2);
   });
 
+  it("uses the applied catalog count during initialization", async () => {
+    let resolveInitial!: (config: { models: never[]; defaultModel: null; defaultThinking: boolean }) => void;
+    bridge.getModels.mockReturnValueOnce(new Promise((resolve) => {
+      resolveInitial = resolve;
+    }));
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => expect(bridge.getModels).toHaveBeenCalledTimes(1));
+    bridge.getModels.mockResolvedValueOnce({
+      models: [PLAIN_MODEL],
+      defaultModel: "plain",
+      defaultThinking: false,
+    });
+
+    await emitCatalogChanged();
+    await act(async () => resolveInitial({
+      models: [],
+      defaultModel: null,
+      defaultThinking: false,
+    }));
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+  });
+
   it("does not let initial loading overwrite a newer catalog", async () => {
     let resolveInitial!: (config: typeof INITIAL_CONFIG) => void;
     bridge.getModels.mockReturnValueOnce(new Promise((resolve) => {
