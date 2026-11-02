@@ -81,6 +81,9 @@ export function shQuote(value: string): string {
 const TILDE_PREFIX = /^~[a-zA-Z0-9._-]*/;
 
 function execServerShellCommand(remoteBin: string): string {
+  if (/^[A-Za-z0-9_.-]+$/.test(remoteBin)) {
+    return [remoteBin, ...EXEC_SERVER_ARGV].join(' ');
+  }
   const tilde = TILDE_PREFIX.exec(remoteBin);
   if (tilde === null) {
     return [shQuote(remoteBin), ...EXEC_SERVER_ARGV.map(shQuote)].join(' ');

@@ -1056,6 +1056,22 @@ describe('SessionManager creation environment', () => {
     expect(options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/remote/project' });
   });
 
+  it('normalizes Windows remote cwd without changing POSIX double-slash inputs', async () => {
+    const { options } = setup(configWith({
+      drive: { command: 'sandbox', defaultCwd: 'C:/remote//project/./sub/..' },
+      unc: { command: 'sandbox', defaultCwd: '\\\\server\\share\\project\\sub\\..' },
+      posix: { command: 'sandbox', defaultCwd: '//remote/project' },
+    }), true);
+    await manager.create({ workDir: '/workspace', environmentId: 'drive' });
+    await manager.create({ workDir: '/workspace', environmentId: 'unc' });
+    await manager.create({ workDir: '/workspace', environmentId: 'posix' });
+    expect(options).toMatchObject([
+      { environmentId: 'drive', environmentCwd: 'C:\\remote\\project' },
+      { environmentId: 'unc', environmentCwd: '\\\\server\\share\\project' },
+      { environmentId: 'posix', environmentCwd: '/remote/project' },
+    ]);
+  });
+
   it('requires a cwd for a registered environment that is not declared', async () => {
     const { options } = setup(configWith(undefined), true);
     await expect(manager.create({ workDir: '/workspace', environmentId: 'sandbox' })).rejects.toThrow('requires a cwd');

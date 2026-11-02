@@ -85,12 +85,21 @@ describe('handshake', () => {
     await expect(connectInProcess({ version: '0.0.1' })).rejects.toThrow(/below the minimum/);
   });
 
-  it('refuses a non-posix executor environment', async () => {
+  it('accepts a Windows executor environment', async () => {
+    const { connection, loopback } = await connectInProcess({
+      environment: { ...TEST_ENVIRONMENT, osKind: 'Windows', pathClass: 'win32' },
+    });
+    expect(connection.environment.pathClass).toBe('win32');
+    connection.close();
+    await loopback.host.done;
+  });
+
+  it('refuses an unsupported executor path class', async () => {
     await expect(
       connectInProcess({
-        environment: { ...TEST_ENVIRONMENT, osKind: 'Windows', pathClass: 'win32' },
+        environment: { ...TEST_ENVIRONMENT, pathClass: 'plan9' },
       }),
-    ).rejects.toThrow(/not posix/);
+    ).rejects.toThrow(/unsupported path class plan9/);
   });
 
   it('fails pending calls when the connection drops', async () => {

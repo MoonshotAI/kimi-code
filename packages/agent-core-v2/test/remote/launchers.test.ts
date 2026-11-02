@@ -77,6 +77,15 @@ describe('ssh remote command quoting', () => {
     expect(resolved.args.at(-1)).toBe(`'/opt/$(whoami)/kimi' 'exec-server' '--listen' 'stdio'`);
   });
 
+  it('invokes a bare executor name without POSIX-only quoting', () => {
+    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: 'kimi' }).args.at(-1)).toBe(
+      'kimi exec-server --listen stdio',
+    );
+    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: 'kimi.exe' }).args.at(-1)).toBe(
+      'kimi.exe exec-server --listen stdio',
+    );
+  });
+
   it('keeps tilde prefixes expandable while quoting the remainder', () => {
     expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '~/bin/kimi' }).args.at(-1)).toBe(
       `"$HOME"'/bin/kimi' 'exec-server' '--listen' 'stdio'`,

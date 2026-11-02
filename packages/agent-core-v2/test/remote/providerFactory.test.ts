@@ -227,6 +227,34 @@ describe('RemoteEnvironmentProviderFactory', () => {
     await attachment.dispose();
     await registry.dispose();
   });
+
+  it('uses target-native paths for a Windows executor', async () => {
+    const registry = new EnvironmentRegistry();
+    const session = connectedSession();
+    Object.assign(session.host, {
+      osKind: 'Windows',
+      pathClass: 'win32',
+      homeDir: 'C:\\Users\\me',
+      cwd: 'C:\\work',
+      tempDir: 'C:\\Temp',
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: async () => session }));
+    const attachment = await factory.attach(fakeHost(baseServices(registry), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const environment = registry.current('dev-box')!;
+    expect(environment.path?.separator).toBe('\\');
+    expect(environment.path?.delimiter).toBe(';');
+    expect(environment.path?.isAbsolute('C:\\work')).toBe(true);
+    expect(environment.path?.join('C:\\work', 'src')).toBe('C:\\work\\src');
+    expect(environment.workspace?.mapRoots({ workDir: 'C:\\work\\.\\project\\sub\\..' })).toEqual({
+      workDir: 'C:\\work\\project',
+      additionalDirs: undefined,
+    });
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
 });
 
 describe('declaration watch', () => {

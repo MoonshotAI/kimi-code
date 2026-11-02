@@ -103,6 +103,28 @@ jobs:
         env:
           KIMI_CODE_LEGACY_FLAG: "1"
 
+  test-windows-remote:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: >-
+          pnpm exec vitest run
+          packages/agent-core-v2/test/remote/session.test.ts
+          packages/agent-core-v2/test/remote/protocol.test.ts
+          packages/agent-core-v2/test/remote/providerFactory.test.ts
+          packages/agent-core-v2/test/os/backends/node-local/tools/rgLocator.test.ts
+          --testTimeout=30000
+
   test-windows:
     runs-on: windows-latest
     # Temporarily disabled while Windows tests are being stabilized.

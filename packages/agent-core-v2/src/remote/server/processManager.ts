@@ -227,6 +227,10 @@ export class ProcessManager {
     entry.closed = true;
     this.notify(PROCESS_CLOSED_METHOD, { processId: entry.processId });
     this.processes.delete(entry.processId);
+    if (process.platform === 'win32') {
+      if (entry.killTimer !== undefined) clearTimeout(entry.killTimer);
+      return;
+    }
     const group: ExitedProcessGroup = {
       pid: entry.pid,
       killTimer: entry.killTimer,

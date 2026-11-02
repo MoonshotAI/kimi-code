@@ -21,7 +21,7 @@ import type {
 } from '#/environment/environmentProvider';
 
 import { EnvironmentError, type EnvironmentRegistrationHandle } from '#/environment/environmentRegistry';
-import { POSIX_ENVIRONMENT_PATH, POSIX_ENVIRONMENT_WORKSPACE } from '#/environment/environmentDefaults';
+import { createEnvironmentPath, createEnvironmentWorkspace } from '#/environment/environmentDefaults';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { classifyHandshakeFailure, connectWithGuidance } from './connectGuidance';
@@ -113,11 +113,11 @@ class DeclaredRemoteEnvironment implements Environment {
   }
 
   get path(): Environment['path'] {
-    return this.session === undefined ? undefined : POSIX_ENVIRONMENT_PATH;
+    return this.session === undefined ? undefined : createEnvironmentPath(this.session.host.pathClass);
   }
 
   get workspace(): Environment['workspace'] {
-    return this.session === undefined ? undefined : POSIX_ENVIRONMENT_WORKSPACE;
+    return this.session === undefined ? undefined : createEnvironmentWorkspace(this.session.host.pathClass);
   }
 
   private connected(): RemoteSession {

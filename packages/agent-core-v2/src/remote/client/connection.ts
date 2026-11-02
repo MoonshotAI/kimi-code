@@ -230,9 +230,9 @@ export class RemoteExecConnection implements ExecChannel {
         },
       );
     }
-    if (this.environmentValue.pathClass !== 'posix') {
+    if (this.environmentValue.pathClass !== 'posix' && this.environmentValue.pathClass !== 'win32') {
       return new HandshakeError(
-        `executor environment ${this.environmentValue.osKind} is not posix; remote environments require a posix target`,
+        `executor environment ${this.environmentValue.osKind} has unsupported path class ${this.environmentValue.pathClass}`,
         { kind: 'incompatible' },
       );
     }

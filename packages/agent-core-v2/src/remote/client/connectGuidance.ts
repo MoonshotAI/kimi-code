@@ -19,7 +19,7 @@ function launcherLabel(launcher: LauncherSpec): string {
 export function classifyHandshakeFailure(error: unknown): HandshakeFailureClass {
   if (!(error instanceof HandshakeError)) return 'other';
   if (error.kind === 'executor-exit') {
-    return error.exitCode === 127 || error.exitCode === 126 ? 'missing' : 'other';
+    return error.exitCode === 127 || error.exitCode === 126 || error.exitCode === 9009 ? 'missing' : 'other';
   }
   if (error.kind === 'timeout') return 'timeout';
   if (error.kind === 'incompatible') return 'incompatible';
@@ -33,6 +33,9 @@ function expectedPathSuffix(launcher: LauncherSpec): string {
 
 function executorAction(launcher: LauncherSpec): string {
   const remoteBin = launcherRemoteBin(launcher);
+  if (remoteBin !== undefined && /^[A-Za-z0-9_.-]+$/.test(remoteBin)) {
+    return `download the \`kimi\` binary for the target platform from the Kimi Code release CDN and install it as \`${remoteBin}\` on the target's PATH`;
+  }
   const location =
     remoteBin === undefined
       ? 'the absolute path your launcher command invokes'

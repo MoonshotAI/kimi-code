@@ -31,6 +31,18 @@ describe('connectWithGuidance', () => {
     expect(message).not.toContain('/tmp/kimi-install');
   });
 
+  it('points a bare executor name at the target PATH', async () => {
+    const error = await connectWithGuidance(
+      async () => {
+        throw missingExecutorError(9009);
+      },
+      { launcher: { type: 'ssh', host: 'windows-dev', remoteBin: 'kimi' } },
+    ).catch((error: unknown) => error);
+    const message = (error as Error).message;
+    expect(message).toContain('expected at kimi');
+    expect(message).toContain('install it as `kimi` on the target\'s PATH');
+  });
+
   it('points a command launcher at the remoteBin it appends', async () => {
     const error = await connectWithGuidance(
       async () => {

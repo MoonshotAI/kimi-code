@@ -15,7 +15,7 @@ The security boundaries are fixed:
 - **Hooks and MCP servers stay local by default**: lifecycle hooks and stdio MCP servers without an explicit `environment_id` run on your machine — see [Limitations](#limitations).
 - **SSH uses the system `ssh`**: the SSH launcher spawns the system `ssh` binary, so `~/.ssh/config` (users, ports, keys, `ProxyJump`, `ControlMaster`) and your ssh-agent apply as usual — see [SSH authentication](#ssh-authentication) for passwords, passphrases, and host keys.
 
-Only POSIX targets are supported; Windows targets are not.
+POSIX and Windows targets are supported. Windows targets require Git for Windows (Git Bash) and support SSH and custom command launchers, not Docker launchers.
 
 ::: info Remote environments vs. Remote Control
 [Remote Control](./remote-control.md) is the opposite direction: it lets another device (like your phone) watch and steer sessions that run on **this** machine. A remote environment does the reverse — this machine's CLI drives tool execution on **another** machine or container.
@@ -50,7 +50,7 @@ defaultCwd = "/home/me/kimi-code"
 Key rules:
 
 - `type` and `command` are mutually exclusive within one entry: `type = "ssh"` and `type = "docker"` are built-in launchers, while `command` + `args` is the generic form (same shape as stdio entries in `.mcp.json`). For the generic form, Kimi Code appends `<remoteBin> exec-server` (default `~/.kimi-code/bin/kimi`) after `args` unless `args` already invokes `exec-server`; launchers that pass arguments straight through without a shell, such as `kubectl exec`, need an absolute `remoteBin` because `~` is not expanded. `env` sets the launcher process's environment on your machine; it is **not** propagated into commands the agent runs on the target.
-- `defaultCwd` is used when a session is created on the environment unless `--environment-cwd` overrides it. It must be an absolute POSIX path on the target; relative paths and `~` are not expanded against your machine or the target's home. Repeated separators, `.` and `..` are normalized before checking that directory on the target, and the normalized path is saved in the binding. Symlink names are preserved, not rewritten with realpath; `symlink/..` therefore uses the lexical parent, not the symlink target's physical parent.
+- `defaultCwd` is used when a session is created on the environment unless `--environment-cwd` overrides it. It must be an absolute POSIX path, a Windows drive path such as `C:\work\project`, or a Windows UNC path such as `\\server\share\project`; relative paths and `~` are not expanded against your machine or the target's home. Repeated separators, `.` and `..` are normalized before checking that directory on the target, and the normalized path is saved in the binding. Symlink names are preserved, not rewritten with realpath; `symlink/..` therefore uses the lexical parent, not the symlink target's physical parent.
 - The optional top-level `default` names the environment a session binds to when creation does not specify one — a cold start, print mode, or an API create. The entry it points at must set `defaultCwd`. Without a `default`, those sessions start on the `local` environment. In the TUI, `/new` instead keeps the current session's environment and working directory. If no session exists yet, `/new` uses `--environment` when the process was started with it, otherwise the resolved default.
 - If the configuration file cannot be read or the `[environments]` section is invalid, session creation fails with `config.invalid` instead of treating this as no default. Explicitly selecting `local` still creates a local session.
 - The environment id is the entry's key: at most 64 characters, no leading or trailing whitespace; `local` and `default` are reserved words.
@@ -62,6 +62,22 @@ Changing an environment's launcher (for example `host`, `container`, `context`, 
 Environment IDs are process-wide: sessions bound to the same ID share one connection, and their working directories can differ.
 
 For the full field reference, see [`environments`](../configuration/config-files.md#environments).
+
+### Windows targets
+
+Windows targets use Git Bash for the `Bash` tool, matching local Windows sessions. Install [Git for Windows](https://gitforwindows.org/) and the Windows `kimi` binary on the target. Native PowerShell tool commands and Windows Docker containers are not supported.
+
+For SSH, put the binary on the target account's `PATH` and verify that `ssh windows-dev kimi --version` succeeds without a prompt. Set `remoteBin` to the bare name `kimi` or `kimi.exe`, not an absolute Windows path, so the same invocation works with cmd, PowerShell, or Git Bash as the SSH default shell. Use a native drive or UNC path for `defaultCwd`; do not use Git Bash paths such as `/c/work/project` as Windows working directories.
+
+```toml
+[environments.windows-dev]
+type = "ssh"
+host = "windows-dev"
+remoteBin = "kimi"
+defaultCwd = 'C:\work\project'
+```
+
+Custom command launchers also need the Windows executor and Git Bash on the target. If the supplied `args` already invoke `exec-server`, the launcher is responsible for its own Windows command quoting.
 
 ## Creating and resuming sessions
 
@@ -122,7 +138,7 @@ Host dev-box
 
 The executor is a light build of Kimi Code itself, started as `kimi exec-server` on the target. It only serves filesystem and process requests — it never touches model APIs, credentials, or session state. stdio is the default and only supported transport, so the explicit `kimi exec-server --listen stdio` spelling is equivalent and keeps working.
 
-The fixed install path is `~/.kimi-code/bin/kimi` on the target (override it per entry with `remoteBin` when the executor lives elsewhere, for example a preinstalled container image).
+The default POSIX install path is `~/.kimi-code/bin/kimi` on the target (override it per entry with `remoteBin` when the executor lives elsewhere, for example a preinstalled container image). [Windows targets](#windows-targets) instead use a bare executable name on the target's `PATH`.
 
 ### Installing the executor
 
@@ -130,11 +146,13 @@ Kimi Code does not install the executor automatically. When a connect finds no e
 
 ### Version compatibility
 
-The connection handshake requires a minimum executor version and a POSIX target. An executor that is too old is rejected with upgrade guidance — install the current build over it, then reconnect.
+The connection handshake requires a minimum executor version and a recognized POSIX or Windows target. An executor that is too old or reports an unknown path class is rejected with upgrade guidance — install the current build over it, then reconnect.
 
 ## Limitations
 
 Several behaviors are deliberately scoped. Each of the following is a known limitation:
+
+- **Windows process-tree cleanup after the leader exits**: running processes are terminated through `taskkill`, but descendants left behind by an already-exited leader are not reaped as a process group on Windows. Stop background tasks before their leader exits when descendant cleanup matters.
 
 - **Hooks run on the Kimi Code host**: `PreToolUse` and other lifecycle hooks always execute on the machine running Kimi Code, so in a remote session they observe local facts (local files, local processes), not the target's. They run with the session's local working directory; hooks that would execute on the target itself are a future, undesigned concept.
 - **MCP servers stay local by default**: stdio MCP servers without an explicit `environment_id` keep running on your machine even in remote sessions; they do not see the target's filesystem. MCP configuration comes from the local directory you started Kimi Code in, including its project-level configuration; MCP configuration on the target is not read.
