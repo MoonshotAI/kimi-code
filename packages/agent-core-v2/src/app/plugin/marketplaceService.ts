@@ -213,17 +213,17 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
       if (token !== undefined) headers.set('Authorization', `Bearer ${token}`);
       headers.set('Accept', 'application/json');
     }
-    return fetch(input, {
+    return this.fetchWithRedirects(input, {
       ...init,
       headers,
       signal: init?.signal ?? AbortSignal.timeout(MARKETPLACE_FETCH_TIMEOUT_MS),
-    });
+    }, context);
   }
 
   private artifactFetch(context: MarketplaceContext): typeof fetch {
     return async (input, init) => {
       const headers = this.requestHeaders(init, input, context);
-      const response = await fetch(input, { ...init, headers });
+      const response = await this.fetchWithRedirects(input, { ...init, headers }, context);
       if (!context.managed || (response.status !== 401 && response.status !== 403)) {
         return response;
       }
@@ -237,15 +237,43 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
     };
   }
 
+  private async fetchWithRedirects(
+    input: Parameters<typeof fetch>[0],
+    init: Parameters<typeof fetch>[1],
+    context: MarketplaceContext,
+  ): Promise<Response> {
+    let currentInput = input;
+    let currentInit = init;
+    for (let redirect = 0; ; redirect += 1) {
+      const response = await fetch(currentInput, { ...currentInit, redirect: 'manual' });
+      if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+      const location = response.headers.get('location');
+      if (location === null) return response;
+      if (redirect >= 10) throw new Error('Too many marketplace redirects');
+      await response.body?.cancel().catch(() => undefined);
+      currentInput = new URL(location, requestUrl(currentInput));
+      currentInit = {
+        ...currentInit,
+        headers: this.requestHeaders(currentInit, currentInput, context, true),
+      };
+    }
+  }
+
   private requestHeaders(
     init: RequestInit | undefined,
     input: Parameters<typeof fetch>[0],
     context: MarketplaceContext,
+    stripSensitive = false,
   ): Headers {
     const headers = new Headers(init?.headers);
-    if (!context.managed || new URL(requestUrl(input)).origin !== context.tokenOrigin) {
-      return headers;
+    const crossOrigin = new URL(requestUrl(input)).origin !== context.tokenOrigin;
+    if (stripSensitive && crossOrigin) {
+      headers.delete('Authorization');
+      headers.delete('Proxy-Authorization');
+      headers.delete('Cookie');
+      for (const key of Object.keys(this.bootstrap.args.requestHeaders)) headers.delete(key);
     }
+    if (!context.managed || crossOrigin) return headers;
     for (const [key, value] of Object.entries(this.bootstrap.args.requestHeaders)) {
       if (!headers.has(key)) headers.set(key, value);
     }

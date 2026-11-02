@@ -1142,6 +1142,69 @@ describe('server-v2 /api/v1 plugins', () => {
     await call('POST', '/api/v1/plugins/demo-plugin:remove');
   });
 
+  it('strips managed credentials and device identity on cross-origin redirects', async () => {
+    await server?.close();
+    catalog.plugins[0]!['source'] = 'http://marketplace.test/artifacts/demo.zip';
+    await useDemoArtifact();
+    vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_URL', undefined);
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'http://marketplace.test/coding/v1/');
+    vi.spyOn(KimiOAuthToolkit.prototype, 'tokenProvider').mockReturnValue({
+      getAccessToken: async () => 'managed-token',
+    });
+    const currentFetch = globalThis.fetch;
+    const catalogRedirect = 'https://cdn.example.test/catalog.json';
+    const artifactRedirect = 'https://cdn.example.test/demo.zip';
+    const redirectedRequests: Array<{ url: string; headers: Headers }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === DEFAULT_CATALOG_URL) {
+          return new Response(null, { status: 302, headers: { location: catalogRedirect } });
+        }
+        if (url === catalogRedirect) {
+          redirectedRequests.push({ url, headers: new Headers(init?.headers) });
+          return new Response(JSON.stringify(catalog), { status: 200 });
+        }
+        if (artifact !== undefined && url === artifact.source) {
+          return new Response(null, { status: 302, headers: { location: artifactRedirect } });
+        }
+        if (url === artifactRedirect) {
+          redirectedRequests.push({ url, headers: new Headers(init?.headers) });
+          return new Response(artifact!.buffer, { status: 200 });
+        }
+        return currentFetch(input as never, init);
+      }),
+    );
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home!,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    custom = true;
+
+    const installed = await call('POST', '/api/v1/plugins', {
+      marketplaceId: 'demo-plugin',
+      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
+    });
+
+    expect(installed.body.code).toBe(0);
+    expect(redirectedRequests.map((request) => request.url)).toEqual([
+      catalogRedirect,
+      artifactRedirect,
+    ]);
+    for (const { headers } of redirectedRequests) {
+      expect(headers.get('Authorization')).toBeNull();
+      expect(headers.get('Proxy-Authorization')).toBeNull();
+      expect(headers.get('Cookie')).toBeNull();
+      expect(headers.get('X-Msh-Device-Id')).toBeNull();
+      expect(headers.get('X-Msh-Device-Name')).toBeNull();
+    }
+  });
+
   it('does not send managed OAuth to a third-party artifact host after a 401', async () => {
     await server?.close();
     await useDemoArtifact();

@@ -178,7 +178,10 @@ async function installPluginLayer(
   ctx: CapabilityEntryContext,
   config: PluginLayerConfig,
 ): Promise<void> {
-  const marketplace = await ctx.marketplace.listMarketplace().catch(() => undefined);
+  const defaultCatalog = await ctx.marketplace.isDefaultMarketplace().catch(() => false);
+  const marketplace = defaultCatalog
+    ? await ctx.marketplace.listMarketplace().catch(() => undefined)
+    : undefined;
   const entry = marketplace?.plugins.find((candidate) => candidate.id === config.id);
   if (marketplace !== undefined && entry === undefined) {
     throw new Error(`Marketplace plugin "${config.id}" was not found in the current catalog`);

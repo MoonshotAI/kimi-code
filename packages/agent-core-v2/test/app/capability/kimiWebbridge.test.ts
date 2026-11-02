@@ -418,6 +418,34 @@ describe('kimi-webbridge entry', () => {
     });
   });
 
+  it('uses the fixed official CDN when a custom catalog lacks the capability entry', async () => {
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess();
+    const { fetchImpl } = fakeFetch({
+      statusSequence: [{ running: true, version: 'v1.11.3', extension_connected: true }],
+    });
+    const marketplace = fakeMarketplace();
+    const entry = createKimiWebbridgeEntry(
+      makeCtx({
+        plugins: plugins.service,
+        marketplace: {
+          ...marketplace,
+          isDefaultMarketplace: () => Promise.resolve(false),
+          listMarketplace: () => Promise.resolve({ source: 'custom', plugins: [] }),
+        },
+        hostProcess: host.service,
+        fetchImpl,
+      }),
+    );
+
+    await entry.install(() => {});
+
+    expect(plugins.installOptions[0]?.resolved).toMatchObject({
+      source: expect.stringContaining('plugins/official/kimi-webbridge.zip'),
+      expectedPluginId: 'kimi-browser-extension',
+    });
+  });
+
   it('never starts the daemon when one is already running (coexistence)', async () => {
     const plugins = fakePlugins([]);
     const host = fakeHostProcess();

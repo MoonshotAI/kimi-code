@@ -888,6 +888,33 @@ describe('kimi-cu entry', () => {
     ]);
   });
 
+  it('uses the fixed official CDN when a custom catalog lacks the capability entry', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess([
+      { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+      { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=true' },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({
+        applicationsDir,
+        plugins: plugins.service,
+        marketplace: {
+          ...fakeMarketplace(),
+          isDefaultMarketplace: () => Promise.resolve(false),
+          listMarketplace: () => Promise.resolve({ source: 'custom', plugins: [] }),
+        },
+        hostProcess: host.service,
+      }),
+    );
+
+    await entry.install(() => {});
+
+    expect(plugins.installs).toEqual([
+      { source: expect.stringContaining('kimi-computer-use/latest/kimi-cu-plugin.zip') },
+    ]);
+  });
+
   it('migrates the exact legacy standalone MCP registration after installing the plugin', async () => {
     const applicationsDir = await fakeAppBundle();
     const appBin = path.join(applicationsDir, 'KimiCU.app', 'Contents', 'MacOS', 'kimi-cu');
