@@ -51,7 +51,7 @@ interface TurnContract {
 
 interface TranscriptContract {
   agent_id: string;
-  items: (TurnContract | { kind: 'marker' | 'taskref' })[];
+  items: (TurnContract | { kind: 'marker' })[];
   has_more: boolean;
   tasks: unknown[];
   interactions: {
