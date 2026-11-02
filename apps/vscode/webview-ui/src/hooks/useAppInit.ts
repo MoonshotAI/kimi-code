@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { bridge, Events } from "@/services";
-import { requiresManagedProviderLogin, useSettingsStore } from "@/stores";
+import { getSettingsSaveRevision, requiresManagedProviderLogin, useSettingsStore } from "@/stores";
 import type { ExtensionConfig } from "shared/types";
 
 export type AppStatus = "loading" | "no-workspace" | "runtime-error" | "not-logged-in" | "no-models" | "ready";
@@ -81,8 +81,9 @@ export function useAppInit(skippedLogin = false, showLogin = false): AppInitStat
         return;
       }
       const read = ++latestRead;
+      const saveRevision = getSettingsSaveRevision();
       void bridge.getModels().then((kimiConfig) => {
-        if (cancelled || read !== latestRead) return;
+        if (cancelled || read !== latestRead || saveRevision !== getSettingsSaveRevision()) return;
         const modelsCount = kimiConfig.models?.length ?? 0;
         if (modelsCount === 0) {
           if (!preserveView) {

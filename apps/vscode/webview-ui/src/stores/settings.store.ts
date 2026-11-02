@@ -11,6 +11,11 @@ import type {
 
 let settingsSaveRevision = 0;
 let catalogRevision = 0;
+
+export function getSettingsSaveRevision(): number {
+  return settingsSaveRevision;
+}
+
 const MANAGED_KIMI_CODE_PROVIDER = "managed:kimi-code";
 
 function saveConfigWithRollback(

@@ -5,6 +5,7 @@ export { useSettingsStore } from "./settings.store";
 export {
   DEFAULT_EXTENSION_CONFIG,
   getMediaFallbackModel,
+  getSettingsSaveRevision,
   getModelThinkingMode,
   getModelById,
   getModelsForMedia,

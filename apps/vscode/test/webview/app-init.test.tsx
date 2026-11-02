@@ -8,6 +8,7 @@ const appInitBridge = vi.hoisted(() => ({
   getSlashCommands: vi.fn(),
   checkLoginStatus: vi.fn(),
   getModels: vi.fn(),
+  saveConfig: vi.fn(),
 }));
 
 vi.mock("@/services", () => ({
@@ -98,6 +99,7 @@ beforeEach(() => {
     siteBase: "https://example.com",
   });
   appInitBridge.getModels.mockResolvedValue(INITIAL_CONFIG);
+  appInitBridge.saveConfig.mockResolvedValue({ ok: true });
   useSettingsStore.getState().initModels(INITIAL_CONFIG.models, "plain", false);
 });
 
@@ -180,6 +182,29 @@ describe("useAppInit model catalog events", () => {
     });
     expect(result.current.modelsCount).toBe(0);
     expect(appInitBridge.checkWorkspace).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a catalog snapshot that predates a settings save", async () => {
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+    useSettingsStore.getState().initModels([PLAIN_MODEL, NEW_MODEL], "plain", false);
+    let resolveModels!: (config: typeof INITIAL_CONFIG) => void;
+    appInitBridge.getModels.mockReturnValueOnce(new Promise((resolve) => {
+      resolveModels = resolve;
+    }));
+    await emitModelCatalogChanged();
+
+    await act(async () => {
+      useSettingsStore.getState().updateModel("new");
+      resolveModels(INITIAL_CONFIG);
+    });
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      models: [PLAIN_MODEL, NEW_MODEL],
+      currentModel: "new",
+    });
   });
 
   it("ignores an older catalog read that finishes out of order", async () => {
