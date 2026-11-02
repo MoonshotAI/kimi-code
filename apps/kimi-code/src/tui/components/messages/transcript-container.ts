@@ -401,9 +401,16 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   private tailFor(projection: GroupProjection): readonly TranscriptGroupTail[] {
     const running = projection.members.filter((member) => member.current);
     const shown = running.length > 0 ? running : projection.members.slice(-1);
-    return shown.flatMap(({ tail, current }) =>
-      tail === undefined ? [] : [{ text: tail.text, startedAtMs: tail.startedAtMs, running: current }],
-    );
+    return shown.flatMap(({ family, label, status }) => {
+      if (family !== 'tool') return [];
+      const [first = ''] = label.subject?.split('\n') ?? [];
+      const subject = label.subject === undefined ? '' : ` ${first}${first === label.subject ? '' : '…'}`;
+      return [{
+        text: `${label.verb}${subject}`,
+        startedAtMs: status.kind === 'running' ? status.startedAtMs : 0,
+        running: status.kind === 'running',
+      }];
+    });
   }
 
   private hasExpandedContentAnywhere(projections: readonly TranscriptProjection[]): boolean {

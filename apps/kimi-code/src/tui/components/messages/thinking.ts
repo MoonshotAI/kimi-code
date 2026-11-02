@@ -40,6 +40,7 @@ export class ThinkingComponent implements Component {
   private readonly textComponent: Text;
 
   private renderCache: { width: number; lines: string[] } | undefined;
+  private rowDetailCache: { width: number; lines: string[] } | undefined;
 
   constructor(
     text: string,
@@ -60,6 +61,7 @@ export class ThinkingComponent implements Component {
 
   private markRenderDirty(): void {
     this.renderCache = undefined;
+    this.rowDetailCache = undefined;
   }
 
   invalidate(): void {
@@ -176,6 +178,17 @@ export class ThinkingComponent implements Component {
       this.renderCache = { width, lines: rendered };
     }
     return rendered;
+  }
+
+  renderRowDetail(width: number): string[] {
+    if (isRenderCacheEnabled() && this.rowDetailCache?.width === width) {
+      return this.rowDetailCache.lines;
+    }
+    const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
+    const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
+    const lines = contentLines.map((line) => MESSAGE_INDENT + line);
+    this.rowDetailCache = { width, lines };
+    return lines;
   }
 
   private startSpinner(): void {

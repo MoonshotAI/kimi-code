@@ -63,13 +63,13 @@ import {
   type HeaderSegments,
 } from './truncated-header-line';
 import { ShellExecutionComponent } from './shell-execution';
-import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
+import { chipText, countNonEmptyLines } from './tool-renderers/chip';
 import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal';
 import { searchNoticeOnly } from './tool-renderers/grep-output';
 import { parseReadMediaOutput } from './tool-renderers/media';
 import { nonEmptyLines, outcomeLine, outcomeRows } from './tool-renderers/outcome';
 import { TruncatedOutputComponent, trimTrailingEmptyLines } from './tool-renderers/truncated';
-import { isSpilledToolOutput } from './tool-renderers/types';
+import { CardOnly, isSpilledToolOutput } from './tool-renderers/types';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
 import {
   isTodoListRead,
@@ -91,6 +91,7 @@ const STREAMING_PROGRESS_INTERVAL_MS = 1000;
 const PROGRESS_URL_RE = /https?:\/\/\S+/g;
 const ABORTED_MARK = '⊘';
 const MAX_LIVE_OUTPUT_CHARS = 50_000;
+const CARD_PREAMBLE_CHILDREN = 2;
 // One shared reference: the header line compares segment styles by identity
 // to keep its render cache across rebuilds, and the palette is read at call
 // time so theme switches still apply.
@@ -996,8 +997,31 @@ export class ToolCallComponent extends Container {
     return out;
   }
 
+  private rowDetailCache:
+    | { width: number; lines: string[]; parts: Component[]; partLines: string[][] }
+    | undefined;
+
+  renderRowDetail(width: number): string[] {
+    const parts = this.children.slice(CARD_PREAMBLE_CHILDREN).filter((child) => !(child instanceof CardOnly));
+    const partLines = parts.map((part) => part.render(width));
+    const cache = this.rowDetailCache;
+    if (
+      isRenderCacheEnabled() &&
+      cache !== undefined &&
+      cache.width === width &&
+      cache.parts.length === parts.length &&
+      parts.every((part, index) => cache.parts[index] === part && cache.partLines[index] === partLines[index])
+    ) {
+      return cache.lines;
+    }
+    const lines = partLines.flat();
+    this.rowDetailCache = { width, lines, parts, partLines };
+    return lines;
+  }
+
   override invalidate(): void {
     this.renderCache = undefined;
+    this.rowDetailCache = undefined;
     this.headerText.setText(this.buildHeader());
     this.rebuildBody();
     super.invalidate();
@@ -2104,11 +2128,7 @@ export class ToolCallComponent extends Container {
   }
 
   private buildHeaderChip(result: ToolResultBlockData): string {
-    // The truncation envelope of an oversized result is not countable data.
-    if (isSpilledToolOutput(result.output)) return '';
-    const provider = pickChip(this.toolCall.name);
-    if (provider === undefined) return '';
-    const text = provider(this.toolCall, result);
+    const text = chipText(this.toolCall, result);
     if (text.length === 0) return '';
     if (result.is_error) return currentTheme.fg('error', ` · ${text}`);
     return currentTheme.dim(` · ${text}`);
@@ -2128,7 +2148,7 @@ export class ToolCallComponent extends Container {
 
   private rebuildBody(): void {
     this.hiddenContent = undefined;
-    while (this.children.length > 2) {
+    while (this.children.length > CARD_PREAMBLE_CHILDREN) {
       this.children.pop();
     }
     this.buildCallPreview();
@@ -2637,8 +2657,9 @@ export class ToolCallComponent extends Container {
         contextLines: 3,
         ...(shouldCap ? { maxLines: COMMAND_PREVIEW_LINES } : {}),
       });
-      for (const line of lines) {
-        this.addChild(new Text(line, 2, 0));
+      for (const [index, line] of lines.entries()) {
+        const text = new Text(line, 2, 0);
+        this.addChild(index === 0 ? new CardOnly(text) : text);
       }
     } else if (name === 'Bash') {
       // The engine stamps the cwd the command actually executes in (the bound
@@ -2659,11 +2680,13 @@ export class ToolCallComponent extends Container {
       const command = str(this.toolCall.args['command']);
       if (command.length === 0) return;
       this.addChild(
-        new ShellExecutionComponent({
-          command,
-          showCommand: true,
-          commandPreviewLines: undefined,
-        }),
+        new CardOnly(
+          new ShellExecutionComponent({
+            command,
+            showCommand: true,
+            commandPreviewLines: undefined,
+          }),
+        ),
       );
     }
   }
@@ -2733,11 +2756,13 @@ export class ToolCallComponent extends Container {
       const cmd = extractPartialStringField(previewText, 'command');
       if (cmd === undefined || cmd.length === 0) return;
       this.addChild(
-        new ShellExecutionComponent({
-          command: cmd,
-          showCommand: true,
-          commandPreviewLines: undefined,
-        }),
+        new CardOnly(
+          new ShellExecutionComponent({
+            command: cmd,
+            showCommand: true,
+            commandPreviewLines: undefined,
+          }),
+        ),
       );
     }
     // Unknown tools: nothing sensible to stream without a schema, so

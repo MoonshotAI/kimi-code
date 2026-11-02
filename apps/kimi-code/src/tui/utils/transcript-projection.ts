@@ -1,7 +1,7 @@
 import type { Component } from '@moonshot-ai/pi-tui';
 
 import { transcriptGroupingActive, type TranscriptPresentationOptions } from '#/tui/config';
-import { combineOutcomes } from '#/tui/utils/transcript-items';
+import { combineOutcomes, formatDuration } from '#/tui/utils/transcript-items';
 import type {
   LogicalTranscriptItem,
   SummaryEvent,
@@ -212,9 +212,7 @@ function formatThought(
   if (running) return 'thinking';
   if (events.some((event) => event.durationMs === undefined)) return 'thought';
   const totalMs = events.reduce((total, event) => total + (event.durationMs ?? 0), 0);
-  const seconds = Math.max(1, Math.round(totalMs / 1000));
-  if (seconds < 60) return `thought for ${String(seconds)}s`;
-  return `thought for ${String(Math.floor(seconds / 60))}m ${String(seconds % 60)}s`;
+  return `thought for ${formatDuration(totalMs)}`;
 }
 
 function countLabel(count: number, singular: string, plural = `${singular}s`): string {

@@ -8,6 +8,7 @@ import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { ToolCallComponent, extractKeyArgumentDetail } from '#/tui/components/messages/tool-call';
 import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import {
+  chipText,
   computeEditStats,
   computeWriteStats,
 } from '#/tui/components/messages/tool-renderers/chip';
@@ -52,10 +53,21 @@ export type SummaryEvent =
 
 export type FoldClass = 'thinking' | 'explore' | 'all';
 
-export interface TranscriptTail {
-  readonly text: string;
-  readonly startedAtMs: number;
+export interface ItemLabel {
+  readonly verb: string;
+  readonly rowVerb: string;
+  readonly subject?: string;
 }
+
+export type ItemStat =
+  | { readonly kind: 'diff'; readonly added: number; readonly removed: number }
+  | { readonly kind: 'note'; readonly text: string };
+
+export type ItemStatus =
+  | { readonly kind: 'running'; readonly startedAtMs: number }
+  | { readonly kind: 'failed' }
+  | { readonly kind: 'interrupted' }
+  | { readonly kind: 'done'; readonly stat?: ItemStat };
 
 export interface LogicalTranscriptItem {
   readonly kind: 'logical';
@@ -67,7 +79,8 @@ export interface LogicalTranscriptItem {
   readonly foldClass: FoldClass;
   readonly current: boolean;
   readonly event: SummaryEvent;
-  readonly tail?: TranscriptTail;
+  readonly label: ItemLabel;
+  readonly status: ItemStatus;
 }
 
 export interface TransparentTranscriptItem {
@@ -135,6 +148,7 @@ const TOOL_PROFILES: Readonly<Record<string, ToolProfile>> = {
 };
 
 const SUCCESS: OutcomeCounts = { calls: 1, failed: 0, interrupted: 0 };
+const LINE_COUNT_CHIP_TOOLS: ReadonlySet<string> = new Set(['Read', 'Bash']);
 const INTERRUPTION_TEXT = [
   'The user manually interrupted "',
   'Interrupted by user',
@@ -270,6 +284,7 @@ export class TranscriptItemInspector {
 
   private inspectThinking(component: ThinkingComponent, sourceIndex: number): LogicalTranscriptItem {
     const elapsed = component.thinkingElapsed;
+    const durationMs = elapsed?.known === true ? elapsed.ms : undefined;
     return {
       kind: 'logical',
       display: component,
@@ -279,10 +294,15 @@ export class TranscriptItemInspector {
       family: 'thinking',
       foldClass: 'thinking',
       current: elapsed === undefined,
-      event: {
-        kind: 'thought',
-        durationMs: elapsed?.known === true ? elapsed.ms : undefined,
+      event: { kind: 'thought', durationMs },
+      label: {
+        verb: 'Thought',
+        rowVerb: 'Thought',
+        subject: durationMs === undefined ? undefined : `for ${formatDuration(durationMs)}`,
       },
+      status: elapsed === undefined
+        ? { kind: 'running', startedAtMs: component.startedAtMs }
+        : { kind: 'done' },
     };
   }
 
@@ -312,7 +332,10 @@ export class TranscriptItemInspector {
       foldClass,
       current,
       event,
-      tail: transcriptTail(component),
+      label: toolLabel(component),
+      status: current
+        ? { kind: 'running', startedAtMs: component.startedAtMs }
+        : finishedStatus(outcome, toolStat(component, event)),
     };
   }
 
@@ -325,6 +348,8 @@ export class TranscriptItemInspector {
     if (groupTools !== 'off') return tools.map((tool) => this.inspectTool(tool, sourceIndex, groupTools));
     const first = tools[0];
     const outcome = combineOutcomes(tools.map((tool) => this.inspectOutcome(tool)));
+    const path = first?.getReadSnapshot().filePath ?? first?.toolCallView.id ?? '';
+    const running = tools.find((tool) => this.isCurrent(tool));
     return [{
       kind: 'logical',
       display: component,
@@ -333,12 +358,12 @@ export class TranscriptItemInspector {
       projectionVersion: component.transcriptProjectionVersion,
       family: 'tool',
       foldClass: 'explore',
-      current: tools.some((tool) => this.isCurrent(tool)),
-      event: {
-        kind: 'read',
-        path: first?.getReadSnapshot().filePath ?? first?.toolCallView.id ?? '',
-        outcome,
-      },
+      current: running !== undefined,
+      event: { kind: 'read', path, outcome },
+      label: { verb: 'Read', rowVerb: 'Read', subject: nonEmpty(path) },
+      status: running === undefined
+        ? finishedStatus(outcome, undefined)
+        : { kind: 'running', startedAtMs: running.startedAtMs },
     }];
   }
 
@@ -411,65 +436,81 @@ export class TranscriptItemInspector {
   }
 }
 
-function transcriptTail(component: ToolCallComponent): TranscriptTail {
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  if (seconds < 60) return `${String(seconds)}s`;
+  return `${String(Math.floor(seconds / 60))}m ${String(seconds % 60)}s`;
+}
+
+function finishedStatus(outcome: OutcomeCounts, stat: ItemStat | undefined): ItemStatus {
+  if (outcome.interrupted > 0) return { kind: 'interrupted' };
+  if (outcome.failed > 0) return { kind: 'failed' };
+  return { kind: 'done', stat };
+}
+
+function toolStat(component: ToolCallComponent, event: SummaryEvent): ItemStat | undefined {
+  const result = component.toolResultView;
+  if (result === undefined) return undefined;
+  if (event.kind === 'edit') {
+    return event.added + event.removed === 0
+      ? undefined
+      : { kind: 'diff', added: event.added, removed: event.removed };
+  }
   const toolCall = component.toolCallView;
-  const { name, args } = toolCall;
+  if (LINE_COUNT_CHIP_TOOLS.has(toolCall.name)) return undefined;
+  const text = chipText(toolCall, result);
+  return text.length === 0 ? undefined : { kind: 'note', text };
+}
+
+function toolLabel(component: ToolCallComponent): ItemLabel {
+  const { name, args } = component.toolCallView;
   const path = nonEmpty(component.getReadSnapshot().filePath);
   const argument = (key: string): string | undefined => nonEmpty(args[key]);
-  const withSubject = (verb: string, subject: string | undefined): string =>
-    subject === undefined ? verb : `${verb} ${subject}`;
+  const label = (verb: string, subject?: string): ItemLabel => ({ verb, rowVerb: verb, subject });
   const taskId = argument('task_id');
-  let text: string;
   switch (name) {
-    case 'Read': text = withSubject('Read', path); break;
-    case 'ReadMediaFile': text = withSubject('View', path); break;
+    case 'Read': return label('Read', path);
+    case 'ReadMediaFile': return label('View', path);
     case 'Grep': {
       const pattern = argument('pattern');
-      text = pattern === undefined
-        ? 'Search'
-        : `Search "${pattern}"${path === undefined ? '' : ` in ${path}`}`;
-      break;
+      if (pattern === undefined) return label('Search');
+      return label('Search', `"${pattern}"${path === undefined ? '' : ` in ${path}`}`);
     }
-    case 'Glob': text = withSubject('Find', argument('pattern')); break;
-    case 'Bash': {
-      text = withSubject('$', extractKeyArgumentDetail(name, args)?.text);
-      break;
-    }
-    case 'Edit': text = withSubject('Edit', path); break;
-    case 'Write': text = withSubject('Write', path); break;
+    case 'Glob': return label('Find', argument('pattern'));
+    case 'Bash': return { verb: '$', rowVerb: 'Bash', subject: argument('command') };
+    case 'Edit': return label('Edit', path);
+    case 'Write': return label('Write', path);
     case 'TodoList': {
-      const todos = args['todos'];
-      const active = Array.isArray(todos) ? todos.find((todo) => {
-        if (typeof todo !== 'object' || todo === null) return false;
-        return 'status' in todo && todo.status === 'in_progress' &&
-          'title' in todo && typeof todo.title === 'string';
-      }) : undefined;
-      const title = typeof active === 'object' && active !== null && 'title' in active
-        ? nonEmpty(active.title)
-        : undefined;
-      text = `Update todos${title === undefined ? '' : ` · ${title}`}`;
-      break;
+      const title = activeTodoTitle(args['todos']);
+      return label('Update todos', title === undefined ? undefined : `· ${title}`);
     }
-    case 'Skill': text = withSubject('Load skill', argument('skill')); break;
+    case 'Skill': return label('Load skill', argument('skill'));
     case 'WebSearch': {
       const query = argument('query');
-      text = query === undefined ? 'Search web' : `Search web "${query}"`;
-      break;
+      return label('Search web', query === undefined ? undefined : `"${query}"`);
     }
-    case 'FetchURL': {
-      text = withSubject('Fetch', nonEmpty(argument('url')?.replace(/^[a-z][a-z\d+.-]*:\/\//i, '')));
-      break;
-    }
-    case 'WaitFor': text = taskId === undefined ? 'Wait for any task' : `Wait for ${taskId}`; break;
-    case 'TaskOutput': text = taskId === undefined ? 'Read output' : `Read output of ${taskId}`; break;
-    case 'TaskList': text = 'List tasks'; break;
+    case 'FetchURL': return label('Fetch', nonEmpty(argument('url')?.replace(/^[a-z][a-z\d+.-]*:\/\//i, '')));
+    case 'WaitFor': return label('Wait for', taskId ?? 'any task');
+    case 'TaskOutput': return label('Read output', taskId === undefined ? undefined : `of ${taskId}`);
+    case 'TaskList': return label('List tasks');
     default: {
       const decoded = decodeMcpToolName(name);
-      if (decoded !== null) text = `${decoded.serverName}: ${decoded.toolName}`;
-      else text = withSubject(name, nonEmpty(extractKeyArgumentDetail(name, args)?.text));
+      if (decoded !== null) return label(`${decoded.serverName}:`, decoded.toolName);
+      return label(name, nonEmpty(extractKeyArgumentDetail(name, args)?.text));
     }
   }
-  return { text, startedAtMs: component.startedAtMs };
+}
+
+function activeTodoTitle(todos: unknown): string | undefined {
+  if (!Array.isArray(todos)) return undefined;
+  const active: unknown = todos.find((todo) => {
+    if (typeof todo !== 'object' || todo === null) return false;
+    return 'status' in todo && todo.status === 'in_progress' &&
+      'title' in todo && typeof todo.title === 'string';
+  });
+  return typeof active === 'object' && active !== null && 'title' in active
+    ? nonEmpty(active.title)
+    : undefined;
 }
 
 function nonEmpty(value: unknown): string | undefined {
