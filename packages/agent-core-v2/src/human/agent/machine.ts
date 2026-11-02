@@ -243,7 +243,8 @@ function hasStartableWork(context: AgentMachineContext): boolean {
 }
 
 function headWaitsForNotifications(context: AgentMachineContext): boolean {
-  return context.queue[0]?.meta?.compaction !== undefined && context.notifications.length > 0;
+  const head = context.queue[0]?.meta;
+  return (head?.compaction !== undefined || head?.launch !== undefined) && context.notifications.length > 0;
 }
 
 function canGateHead(context: AgentMachineContext): boolean {
