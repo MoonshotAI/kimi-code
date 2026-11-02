@@ -39,7 +39,7 @@ export interface LoopSnapshot {
   readonly activePromptId?: string;
   readonly queue: readonly UserEntry[];
   readonly queuePaused: boolean;
-  readonly queueHeld: boolean;
+  readonly startingPromptId?: string;
   readonly notificationCount: number;
   readonly paused: boolean;
   readonly hasPendingRequests: boolean;
@@ -183,7 +183,12 @@ export interface SteerPayload {
 }
 
 export interface QuiescenceOptions {
-  readonly allowHeldQueue?: boolean;
+  readonly allowPausedQueue?: boolean;
+}
+
+export interface QueuedCompactionContext {
+  readonly instruction?: string;
+  readonly signal: AbortSignal;
 }
 
 export interface PromptLaunchResult {
@@ -234,8 +239,6 @@ export interface IAgentLoopService {
 
   resumeQueue(): void;
 
-  holdQueue(): IDisposable;
-
   moveQueued(promptId: string, beforePromptId?: string): void;
 
   tryAcquireHistorySnapshot(): IDisposable | undefined;
@@ -261,6 +264,7 @@ export interface IAgentLoopService {
     onWillBeginStep: BeforeStepContext;
     onDidFinishStep: AfterStepContext;
     onBeforeSubmitPrompt: PromptSubmitContext;
+    onRunQueuedCompaction: QueuedCompactionContext;
   }>;
 }
 

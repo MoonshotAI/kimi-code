@@ -175,7 +175,7 @@ export class AgentSkillService implements IAgentSkillService {
     const handle = this.loop.promptHandle(id)!;
     if (
       !steerable &&
-      (status.state === 'running' || status.paused || status.queueHeld || status.queue.length > 0)
+      (status.state === 'running' || status.paused || status.queuePaused || status.queue.length > 0)
     ) {
       return { prompt_id: id, created_at: handle.createdAt, state: 'queued' };
     }

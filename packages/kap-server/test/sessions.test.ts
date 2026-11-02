@@ -1505,15 +1505,6 @@ describe('server-v2 /api/v1/sessions', () => {
     loop.pauseQueue();
     expect((await postJson<null>(`/api/v1/sessions/${id}:reload`)).body.code).toBe(40901);
     loop.resumeQueue();
-
-    const queued = vi
-      .spyOn(agent.accessor.get(IAgentFullCompactionService), 'queued', 'get')
-      .mockReturnValue({ id: 'c1', createdAt: '2026-01-01T00:00:00.000Z' });
-    try {
-      expect((await postJson<null>(`/api/v1/sessions/${id}:reload`)).body.code).toBe(40901);
-    } finally {
-      queued.mockRestore();
-    }
   });
 
   it('creates a child session tagged with parent_session_id and child_session_kind', async () => {

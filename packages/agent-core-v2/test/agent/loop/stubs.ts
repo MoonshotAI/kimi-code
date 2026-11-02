@@ -126,7 +126,12 @@ function stubAttachEngine(): MachineEngine {
   };
 }
 export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
-  const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep', 'onBeforeSubmitPrompt']) as IAgentLoopService['hooks'];
+  const hooks = createHooks([
+    'onWillBeginStep',
+    'onDidFinishStep',
+    'onBeforeSubmitPrompt',
+    'onRunQueuedCompaction',
+  ]) as IAgentLoopService['hooks'];
   const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
   const pending: PendingEntry[] = [];
   const handles = new Map<string, PromptHandle>();
@@ -197,7 +202,6 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         notificationCount: 0,
         paused: false,
         queuePaused: false,
-        queueHeld: false,
         hasPendingRequests: hasPending(),
         turn: undefined,
         activeTraceId: undefined,
@@ -209,7 +213,6 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     onDidChangeQueue: Event.None as Event<void>,
     pauseQueue: () => {},
     resumeQueue: () => {},
-    holdQueue: () => toDisposable(() => {}),
     moveQueued: () => {},
     tryAcquireHistorySnapshot: () => toDisposable(() => {}),
     buildAttachBundle: () => stubAttachBundle(),

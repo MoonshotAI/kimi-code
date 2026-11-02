@@ -12,7 +12,7 @@ import type { AgentLLMRequestFinish } from '#/agent/loop/requesterContract';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { retryBackoffDelay, sleepForRetry } from '#/_base/utils/retry';
 import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
-import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
+import { IAgentLoopService, type LoopErrorContext, type QueuedCompactionContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { isAbortError } from '#/_base/utils/abort';
@@ -53,7 +53,6 @@ import {
   type FullCompactionInput,
   type FullCompactionRequest,
   type FullCompactionTask,
-  type QueuedFullCompaction,
 } from './fullCompaction';
 import {
   RuntimeCompactionStrategy,
@@ -137,11 +136,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   };
   private readonly _onDidFinishCompaction = this._register(new Emitter<FullCompactionTask>());
   readonly onDidFinishCompaction: Event<FullCompactionTask> = this._onDidFinishCompaction.event;
-  private readonly _onDidChangeQueued = this._register(new Emitter<void>());
-  readonly onDidChangeQueued: Event<void> = this._onDidChangeQueued.event;
-  private queuedCompaction:
-    | { readonly request: QueuedFullCompaction; readonly hold: IDisposable; readonly watch: IDisposable }
-    | undefined;
 
   private readonly strategy: CompactionStrategy;
   private _compacting: ActiveCompaction | null = null;
@@ -190,6 +184,12 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     this._register(
       this.loopService.hooks.onWillBeginStep.register('full-compaction', async (ctx, next) => {
         await this.beforeStep(ctx.signal, ctx.turnId);
+        await next();
+      }),
+    );
+    this._register(
+      this.loopService.hooks.onRunQueuedCompaction.register('full-compaction', async (ctx, next) => {
+        await this.runQueued(ctx);
         await next();
       }),
     );
@@ -333,7 +333,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
     const tokenCount = this.validateCompactionStart(data.source);
     const quiescence = data.source === 'manual'
-      ? this.loopService.tryAcquireQuiescence({ allowHeldQueue: true })
+      ? this.loopService.tryAcquireQuiescence()
       : undefined;
     if (data.source === 'manual' && quiescence === undefined) {
       throw new Error2(
@@ -344,12 +344,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     return this.startCompaction(data, tokenCount, quiescence);
   }
 
-  get queued(): QueuedFullCompaction | undefined {
-    return this.queuedCompaction?.request;
-  }
-
   request(input: FullCompactionRequest): 'compact' | 'queue' {
-    if (this._compacting !== null || this.queuedCompaction !== undefined) {
+    const loop = this.loopService.snapshot();
+    if (this._compacting !== null || loop.queue.some((entry) => entry.meta?.compaction !== undefined)) {
       throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'A compaction is already running or queued.');
     }
     this.runGate.begin();
@@ -357,48 +354,30 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     if (history.length === 0) {
       throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
     }
-    const quiescence = this.loopService.snapshot().state === 'idle'
-      ? this.loopService.tryAcquireQuiescence({ allowHeldQueue: true })
-      : undefined;
+    const quiescence = loop.state === 'idle' ? this.loopService.tryAcquireQuiescence() : undefined;
     if (quiescence !== undefined) {
       this.reserveCompactionSlot('manual');
       this.startCompaction({ source: 'manual', instruction: input.instruction }, this.requestTokens(history), quiescence);
       return 'compact';
     }
-    this.queuedCompaction = {
-      request: { id: input.id, instruction: input.instruction, createdAt: new Date().toISOString() },
-      hold: this.loopService.holdQueue(),
-      watch: this.loopService.onDidChangeQueue(() => {
-        queueMicrotask(() => this.startQueued());
-      }),
-    };
-    this._onDidChangeQueued.fire();
+    this.loopService.submit({
+      message: { role: 'user', content: [] },
+      meta: {
+        promptId: input.id,
+        createdAt: new Date().toISOString(),
+        compaction: { instruction: input.instruction },
+      },
+    });
     return 'queue';
   }
 
-  cancelQueued(id: string): boolean {
-    if (this.queuedCompaction?.request.id !== id) return false;
-    this.clearQueued();
-    return true;
-  }
-
-  private clearQueued(): void {
-    const queued = this.queuedCompaction;
-    if (queued === undefined) return;
-    this.queuedCompaction = undefined;
-    queued.watch.dispose();
-    queued.hold.dispose();
-    this._onDidChangeQueued.fire();
-  }
-
-  private startQueued(): void {
-    const queued = this.queuedCompaction;
-    if (queued === undefined || this._compacting !== null) return;
-    if (this.loopService.snapshot().state !== 'idle') return;
-    const quiescence = this.loopService.tryAcquireQuiescence({ allowHeldQueue: true });
-    if (quiescence === undefined) return;
-    this.clearQueued();
+  private async runQueued(ctx: QueuedCompactionContext): Promise<void> {
+    if (ctx.signal.aborted) return;
+    let task: ActiveCompaction;
     try {
+      if (this._compacting !== null) {
+        throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'Another compaction is already running.');
+      }
       this.runGate.begin();
       const history = this.context.get();
       if (history.length === 0) {
@@ -406,12 +385,12 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       }
       this.reserveCompactionSlot('manual');
       this.startCompaction(
-        { source: 'manual', instruction: queued.request.instruction },
+        { source: 'manual', instruction: ctx.instruction },
         this.requestTokens(history),
-        quiescence,
+        undefined,
       );
+      task = this._compacting!;
     } catch (error) {
-      quiescence.dispose();
       void this.dispatcher.dispatch(
         new WarningIssued({
           agentId: this.agent.agentId,
@@ -419,6 +398,14 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
           message: `The queued compaction did not start: ${toErrorMessage(error)}`,
         }),
       );
+      return;
+    }
+    const abort = (): void => task.abortController.abort(ctx.signal.reason);
+    ctx.signal.addEventListener('abort', abort, { once: true });
+    try {
+      await task.promise.catch(() => undefined);
+    } finally {
+      ctx.signal.removeEventListener('abort', abort);
     }
   }
 
@@ -512,7 +499,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   override dispose(): void {
-    this.clearQueued();
     if (this._compacting !== null && !this._compacting.abortController.signal.aborted) {
       this._compacting.abortController.abort();
     }

@@ -1029,7 +1029,7 @@ describe('Agent loop', () => {
       changes += 1;
     });
     loop.pauseQueue();
-    expect(loop.snapshot()).toMatchObject({ queuePaused: true, queueHeld: true });
+    expect(loop.snapshot()).toMatchObject({ queuePaused: true });
     const first = submitTracked(loop, 'first');
     const second = submitTracked(loop, 'second');
     await Promise.resolve();
@@ -1045,16 +1045,7 @@ describe('Agent loop', () => {
     loop.resumeQueue();
     await loop.promptHandle(first)!.completion;
     expect(userTexts(ctx)).toEqual(['second', 'first']);
-    expect(loop.snapshot()).toMatchObject({ queuePaused: false, queueHeld: false });
-
-    const hold = loop.holdQueue();
-    const held = submitTracked(loop, 'held');
-    await Promise.resolve();
-    expect(loop.snapshot()).toMatchObject({ queuePaused: false, queueHeld: true });
-    ctx.mockNextResponse({ type: 'text', text: 'held answer' });
-    hold.dispose();
-    await loop.promptHandle(held)!.completion;
-    expect(userTexts(ctx)).toEqual(['second', 'first', 'held']);
+    expect(loop.snapshot()).toMatchObject({ queuePaused: false });
     watch.dispose();
   });
 
@@ -1071,7 +1062,11 @@ describe('Agent loop', () => {
       expect(gated).toBe(1);
     });
     const next = submitTracked(loop, 'next');
+    expect(loop.snapshot().startingPromptId).toBe(withdrawn);
     expect(() => loop.moveQueued(withdrawn, next)).toThrow('not waiting in the queue');
+    loop.pauseQueue();
+    expect(loop.tryAcquireQuiescence({ allowPausedQueue: true })).toBeUndefined();
+    loop.resumeQueue();
     expect(loop.cancel({ promptId: withdrawn }, userCancellationReason())).toBe(true);
 
     ctx.mockNextResponse({ type: 'text', text: 'next answer' });
@@ -1083,12 +1078,12 @@ describe('Agent loop', () => {
     hook.dispose();
   });
 
-  it('acquires quiescence over a held queue only when asked to', async () => {
+  it('acquires quiescence over a paused queue only when asked to', async () => {
     loop.pauseQueue();
     const waiting = submitTracked(loop, 'waiting');
     await Promise.resolve();
     expect(loop.tryAcquireQuiescence()).toBeUndefined();
-    const lease = loop.tryAcquireQuiescence({ allowHeldQueue: true });
+    const lease = loop.tryAcquireQuiescence({ allowPausedQueue: true });
     expect(lease).toBeDefined();
     lease?.dispose();
     expect(ctx.llmCalls).toHaveLength(0);
@@ -1096,6 +1091,44 @@ describe('Agent loop', () => {
     ctx.mockNextResponse({ type: 'text', text: 'waiting answer' });
     loop.resumeQueue();
     await expect(loop.promptHandle(waiting)!.completion).resolves.toMatchObject({ state: 'completed' });
+  });
+
+  it('runs a queued compaction entry in its queue position without starting a turn', async () => {
+    const runs: (string | undefined)[] = [];
+    const release = deferred();
+    let signal: AbortSignal | undefined;
+    const hook = loop.hooks.onRunQueuedCompaction.register('test-compaction', async (run, next) => {
+      runs.push(run.instruction);
+      signal = run.signal;
+      if (runs.length === 1) await release.promise;
+      await next();
+    });
+    loop.pauseQueue();
+    const first = submitTracked(loop, 'first');
+    loop.submit({
+      message: { role: 'user', content: [] },
+      meta: { promptId: 'compact-1', compaction: { instruction: 'keep the plan' } },
+    });
+    const second = submitTracked(loop, 'second');
+    loop.moveQueued(second, 'compact-1');
+    expect(loop.snapshot().queue.map((item) => item.meta?.promptId)).toEqual([first, second, 'compact-1']);
+
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    ctx.mockNextResponse({ type: 'text', text: 'second answer' });
+    loop.resumeQueue();
+    await vi.waitFor(() => {
+      expect(runs).toEqual(['keep the plan']);
+    });
+    expect(userTexts(ctx)).toEqual(['first', 'second']);
+    expect(loop.snapshot().startingPromptId).toBe('compact-1');
+    expect(loop.tryAcquireQuiescence()).toBeUndefined();
+    expect(loop.cancel({ promptId: 'compact-1' }, userCancellationReason())).toBe(true);
+    expect(signal?.aborted).toBe(true);
+    release.resolve();
+    await expect(loop.promptHandle('compact-1')!.completion).resolves.toMatchObject({ state: 'completed' });
+    expect(loop.snapshot().queue).toEqual([]);
+    expect(ctx.llmCalls).toHaveLength(2);
+    hook.dispose();
   });
 
   it('can abort an admission while quiescence holds it', async () => {

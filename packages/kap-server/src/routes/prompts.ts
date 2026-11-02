@@ -8,7 +8,6 @@ import {
   IAgentProfileService,
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
-  IAgentFullCompactionService,
   IAgentGoalService,
   IAgentToolPolicyService,
   IAgentSkillService,
@@ -140,7 +139,6 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     agentId: agentId ?? MAIN_AGENT_ID,
     agent,
     prompt: agent.accessor.get(IAgentLoopService),
-    compaction: agent.accessor.get(IAgentFullCompactionService),
     skill: agent.accessor.get(IAgentSkillService),
     events: agent.accessor.get(IEventBus),
     profile: agent.accessor.get(IAgentProfileService),
@@ -409,7 +407,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           reservation.submit();
           enqueued = true;
           const handle = resolved.prompt.promptHandle(id)!;
-          if (status.state === 'idle' && !status.paused && !status.queueHeld && status.queue.length === 0) {
+          if (status.state === 'idle' && !status.paused && !status.queuePaused && status.queue.length === 0) {
             await Promise.race([handle.launched, handle.completion]);
           }
           const staging = preparedMedia;
@@ -606,7 +604,7 @@ const promptActions: ActionTable<'abort' | 'steer', PromptActionExtra> = {
 
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, session_id, req, reply, id } = ctx;
-  if (!resolved.compaction.cancelQueued(id)) resolved.prompt.cancel({ promptId: id });
+  resolved.prompt.cancel({ promptId: id });
   requestLog(req)?.info({ session_id, prompt_id: id }, 'prompt aborted');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }
@@ -651,37 +649,30 @@ const queueActions: ActionTable<'move', QueueActionExtra> = {
     if (!parsed.success) {
       throw new Error2(ErrorCodes.REQUEST_INVALID, parsed.error.issues.map((issue) => issue.message).join('; '));
     }
-    resolved.prompt.moveQueued(id, moveTarget(resolved, parsed.data.before_prompt_id));
+    resolved.prompt.moveQueued(id, parsed.data.before_prompt_id);
     reply.send(okEnvelope({}, req.id));
   } },
 };
 
-function moveTarget(resolved: ResolvedPrompt, beforePromptId: string | undefined): string | undefined {
-  if (beforePromptId === undefined || beforePromptId !== resolved.compaction.queued?.id) return beforePromptId;
-  return resolved.prompt.snapshot().queue.find((item) => item.meta?.tracked === true)?.meta?.promptId;
-}
-
-export function projectQueueState(
-  loop: IAgentLoopService,
-  compaction: IAgentFullCompactionService,
-): QueueStateWire {
+export function projectQueueState(loop: IAgentLoopService): QueueStateWire {
   const snapshot = loop.snapshot();
-  const queuedCompaction = compaction.queued;
-  const inputs: QueuedInputWire[] =
-    queuedCompaction === undefined
-      ? []
-      : [
-          {
-            prompt_id: queuedCompaction.id,
-            user_message_id: queuedCompaction.id,
-            kind: 'compact',
-            delivery: 'queue',
-            content: [],
-            instruction: queuedCompaction.instruction,
-            created_at: queuedCompaction.createdAt,
-          },
-        ];
+  const inputs: QueuedInputWire[] = [];
   for (const item of snapshot.queue) {
+    const compaction = item.meta?.compaction;
+    if (compaction !== undefined) {
+      const id = item.meta?.promptId ?? '';
+      if (id === snapshot.startingPromptId) continue;
+      inputs.push({
+        prompt_id: id,
+        user_message_id: id,
+        kind: 'compact',
+        delivery: 'queue',
+        content: [],
+        instruction: compaction.instruction,
+        created_at: item.meta?.createdAt ?? '',
+      });
+      continue;
+    }
     if (item.meta?.tracked !== true) continue;
     const origin = item.meta.origin as PromptOrigin | undefined;
     const projected = projectPromptSnapshot({

@@ -7,7 +7,6 @@ import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import {
-  IAgentFullCompactionService,
   IAgentLifecycleService,
   IAgentPlanService,
   IAgentTaskService,
@@ -493,17 +492,14 @@ describe('transcript contract e2e', () => {
     expect(JSON.stringify(tx.items)).not.toContain('fourth prompt');
   });
 
-  it('queues a compaction requested through :compact behind a running turn', async () => {
+  it('queues a compaction requested through :compact in order behind queued prompts', async () => {
     await boot([{ match: () => true, respond: () => sseText('done'), delayMs: 2000 }]);
     const sid = await createSession(server!, base);
     await submitPrompt(server!, base, sid, 'first prompt');
     await until('first prompt reaches model', () => llm!.hits.length > 0);
-    const compaction = getLiveSessionById(server!.core.accessor, sid)!
-      .accessor.get(IAgentLifecycleService)
-      .handleOf(MAIN_AGENT_ID)!
-      .accessor.get(IAgentFullCompactionService);
     const channel = await subscribeTranscript(server!, sid);
     try {
+      const second = await submitPrompt(server!, base, sid, 'second prompt');
       const queued = await rest<{ prompt_id: string; accepted_as: string }>(
         server!,
         base,
@@ -511,16 +507,22 @@ describe('transcript contract e2e', () => {
         { method: 'POST', body: { instruction: '  keep the plan  ' } },
       );
       expect(queued.accepted_as).toBe('queue');
-      expect(compaction.queued).toMatchObject({ id: queued.prompt_id, instruction: 'keep the plan' });
       expect(await restCode(server!, base, `/api/v1/sessions/${sid}:compact`)).toBe(40910);
+      const queueFrames = () => channel.frames.filter((f) => f.type === 'queue' && f.agent_id === 'main');
       await until('queue frame lists the compaction', () =>
-        channel.frames.some(
-          (f) => f.type === 'queue' && f.inputs.some((input: any) => input.prompt_id === queued.prompt_id && input.kind === 'compact'),
-        ),
+        queueFrames().some((f) => f.inputs.some((input: any) => input.prompt_id === queued.prompt_id)),
       );
+      expect(queueFrames().at(-1).inputs).toMatchObject([
+        { prompt_id: second.prompt_id, kind: 'input' },
+        { prompt_id: queued.prompt_id, kind: 'compact', instruction: 'keep the plan', content: [] },
+      ]);
 
       await until('queued compaction runs', () => llm!.hits.some((hit) => hit.includes('keep the plan')), 30000);
-      expect(compaction.queued).toBeUndefined();
+      const secondHit = llm!.hits.findIndex((hit) => hit.includes('second prompt'));
+      const compactHit = llm!.hits.findIndex((hit) => hit.includes('keep the plan'));
+      expect(secondHit).toBeGreaterThan(-1);
+      expect(secondHit).toBeLessThan(compactHit);
+      await until('queue drained', () => queueFrames().at(-1)?.inputs.length === 0);
       await idle(server!, base, sid);
     } finally {
       channel.close();

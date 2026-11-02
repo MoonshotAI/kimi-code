@@ -788,13 +788,13 @@ On success, `data` is [the session object](#the-session-object) of the new sessi
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
-Starts a manual full compaction of the main agent's context, or queues it while the agent is busy. The call returns immediately; progress and completion are delivered as the `compaction.*` WebSocket events.
+Starts a manual full compaction of the main agent's context, or queues it when the agent is busy or prompts are already waiting. The call returns immediately; progress and completion are delivered as the `compaction.*` WebSocket events.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `instruction` | body | string | Extra guidance for the compaction summary; a blank value is ignored |
 
-On success, `data` is `{ accepted_as, prompt_id }`: `accepted_as` is `compact` when the compaction started and `queue` when it waits in the main agent's [prompt queue](#prompt-queue); `prompt_id` identifies the queued compaction. A queued compaction starts as soon as the agent is idle, before any queued prompt; if it cannot start then, the session records a warning and the queued prompts continue.
+On success, `data` is `{ accepted_as, prompt_id }`: `accepted_as` is `compact` when the compaction started and `queue` when it joins the end of the main agent's [prompt queue](#prompt-queue); `prompt_id` identifies the queue entry. A queued compaction runs when it reaches the head of the queue; if it cannot start then, the session records a warning and the queue moves on.
 
 - `40910`: a compaction is already running or queued, or the history has nothing to compact
 
@@ -842,7 +842,7 @@ Reloads the session with the latest on-disk configuration: re-reads `config.toml
 
 On success, `data` is [the session object](#the-session-object).
 
-- `40901`: the session has an active turn, or the main agent's prompt queue is paused or still holds prompts or a compaction, and cannot be reloaded; a session changed by another client still reloads and drops its queue
+- `40901`: the session has an active turn, or the main agent's prompt queue is paused or not empty, and cannot be reloaded; a session changed by another client still reloads and drops its queue
 
 #### `POST /api/v1/sessions/{session_id}:takeover`
 
@@ -1085,7 +1085,7 @@ A prompt is one unit of user input: submitting one enqueues it on the session's 
 
 #### Prompt queue
 
-A prompt submitted while the agent is busy waits in the agent's queue and starts, in order, once the agent is idle. The main agent's queue is also visible and controllable: it is pushed over the WebSocket as [`queue` frames](#events), and the queue routes below pause, resume and reorder it. While the queue is paused, queued prompts do not start and new prompts join the queue; steering still moves a queued prompt into the running turn, and a compaction requested while the agent is idle still starts right away. A compaction requested while the agent is busy waits ahead of the queued prompts. A queued prompt starts by passing the prompt hooks; from then on it has left the queue: pausing no longer holds it, it cannot be reordered or steered, and aborting it stops its turn as soon as the turn begins. Other agents have no queue controls. The queue lives in server memory, so queued prompts are lost when the server restarts.
+A prompt submitted while the agent is busy waits in the agent's queue and starts, in order, once the agent is idle. The main agent's queue is also visible and controllable: it is pushed over the WebSocket as [`queue` frames](#events), and the queue routes below pause, resume and reorder it. While the queue is paused, queued prompts do not start and new prompts join the queue; steering still moves a queued prompt into the running turn, and a compaction requested while the agent is idle and the queue is empty still starts right away. Otherwise a compaction joins the queue like a prompt: it keeps its position, can be reordered or withdrawn, and runs when it reaches the head. A queued prompt starts by passing the prompt hooks; from then on it has left the queue: pausing no longer holds it, it cannot be reordered or steered, and aborting it stops its turn as soon as the turn begins. Other agents have no queue controls. The queue lives in server memory, so queued prompts are lost when the server restarts.
 
 | Method and path | Description |
 | --- | --- |
@@ -1106,7 +1106,7 @@ Reads the main agent's prompt queue snapshot.
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ active, queued }`: `active` is the running prompt (`null` when idle) and `queued` lists the pending prompts in order, without a queued compaction. A prompt is `{ prompt_id, user_message_id, status, content, created_at }` with `status` one of `running` / `queued` / `blocked` and `content` in the content-part format accepted by `POST /api/v1/sessions/{session_id}/prompts`.
+On success, `data` is `{ active, queued }`: `active` is the running prompt (`null` when idle) and `queued` lists the pending prompts in order, without queued compactions. A prompt is `{ prompt_id, user_message_id, status, content, created_at }` with `status` one of `running` / `queued` / `blocked` and `content` in the content-part format accepted by `POST /api/v1/sessions/{session_id}/prompts`.
 
 - `40401`: session not found
 
@@ -1173,7 +1173,7 @@ On success, `data` is `{ steered: true, prompt_ids }`.
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort`
 
-Aborts a running prompt, or removes a prompt or the compaction that still waits in the [prompt queue](#prompt-queue); a queued prompt that is already starting is aborted as soon as its turn begins. This endpoint and `:steer` below dispatch through one route, `POST /api/v1/sessions/{session_id}/prompts/{tail}`: the tail is parsed as `{prompt_id}:{action}`, and a missing or unknown action fails `40001` (`unsupported action: ...`).
+Aborts a running prompt, or removes a prompt or compaction that still waits in the [prompt queue](#prompt-queue); a queued prompt that is already starting is aborted as soon as its turn begins, and a queued compaction that is already running is cancelled. This endpoint and `:steer` below dispatch through one route, `POST /api/v1/sessions/{session_id}/prompts/{tail}`: the tail is parsed as `{prompt_id}:{action}`, and a missing or unknown action fails `40001` (`unsupported action: ...`).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1215,19 +1215,19 @@ On success, `data` is `{ paused }`. Pausing a paused queue or resuming a running
 
 #### `POST /api/v1/sessions/{session_id}/agents/main/queue/{prompt_id}:move`
 
-Moves a queued prompt of the main agent. A queued compaction always runs first and cannot be moved; moving in front of it moves the prompt to the front of the queue.
+Moves a queued prompt or compaction of the main agent.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `prompt_id` | path | string | **Required.** Queued prompt id |
+| `prompt_id` | path | string | **Required.** Queued prompt or compaction id |
 | `before_prompt_id` | body | string | Move in front of this queued entry; omit to move to the end |
 
 On success, `data` is an empty object.
 
 - `40001`: validation failure, or the agent in the path is not `main`
 - `40401`: session not found
-- `40402`: a prompt id is not waiting in the queue, including a prompt that is already starting
+- `40402`: an id is not waiting in the queue, including an entry that is already starting
 
 ### Approvals and questions
 
@@ -2462,7 +2462,7 @@ Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "sess
 | Background | `task.started` / `terminated`, `shell.started` / `output` / `completed` |
 | Misc | `compaction.*`, `skill.activated`, `goal.updated`, `prompt.*`, `error`, `warning` |
 
-Subscribed connections also receive a `queue` frame with the main agent's [prompt queue](#prompt-queue): `{ "type": "queue", "session_id", "agent_id", "event_created_at", "paused", "inputs" }`. It is sent after every accepted subscription and whenever the queue changes, and always carries the full queue, so clients replace their copy. Each entry of `inputs` is `{ prompt_id, user_message_id, kind, delivery, content, skills?, instruction?, client_metadata?, created_at }`: `kind` is `input` or `compact`, `delivery` is always `queue`, and a queued compaction comes first, with its `instruction` and empty `content`.
+Subscribed connections also receive a `queue` frame with the main agent's [prompt queue](#prompt-queue): `{ "type": "queue", "session_id", "agent_id", "event_created_at", "paused", "inputs" }`. It is sent after every accepted subscription and whenever the queue changes, and always carries the full queue, so clients replace their copy. Each entry of `inputs` is `{ prompt_id, user_message_id, kind, delivery, content, skills?, instruction?, client_metadata?, created_at }`: `kind` is `input` or `compact`, `delivery` is always `queue`, and a queued compaction keeps its position with its `instruction` and empty `content` until it starts.
 
 Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 

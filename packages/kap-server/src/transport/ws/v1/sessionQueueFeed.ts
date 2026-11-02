@@ -1,5 +1,4 @@
 import {
-  IAgentFullCompactionService,
   IAgentLifecycleService,
   IAgentLoopService,
   MAIN_AGENT_ID,
@@ -12,7 +11,7 @@ import { projectQueueState } from '../../../routes/prompts';
 const EMPTY_QUEUE: QueueStateWire = { paused: false, inputs: [] };
 
 export class SessionQueueFeed implements IDisposable {
-  private mainWatches: readonly IDisposable[] = [];
+  private mainWatch: IDisposable | undefined;
   private readonly lifecycleWatches: readonly IDisposable[];
   private lastPublished: string | undefined;
 
@@ -32,9 +31,8 @@ export class SessionQueueFeed implements IDisposable {
   }
 
   current(): QueueStateWire {
-    const accessor = this.agents.handleOf(MAIN_AGENT_ID)?.accessor;
-    if (accessor === undefined) return EMPTY_QUEUE;
-    return projectQueueState(accessor.get(IAgentLoopService), accessor.get(IAgentFullCompactionService));
+    const loop = this.agents.handleOf(MAIN_AGENT_ID)?.accessor.get(IAgentLoopService);
+    return loop === undefined ? EMPTY_QUEUE : projectQueueState(loop);
   }
 
   dispose(): void {
@@ -43,19 +41,14 @@ export class SessionQueueFeed implements IDisposable {
   }
 
   private watchMain(): void {
-    if (this.mainWatches.length > 0) return;
-    const accessor = this.agents.handleOf(MAIN_AGENT_ID)?.accessor;
-    if (accessor === undefined) return;
-    const publish = (): void => this.publish();
-    this.mainWatches = [
-      accessor.get(IAgentLoopService).onDidChangeQueue(publish),
-      accessor.get(IAgentFullCompactionService).onDidChangeQueued(publish),
-    ];
+    if (this.mainWatch !== undefined) return;
+    const loop = this.agents.handleOf(MAIN_AGENT_ID)?.accessor.get(IAgentLoopService);
+    this.mainWatch = loop?.onDidChangeQueue(() => this.publish());
   }
 
   private unwatchMain(): void {
-    for (const watch of this.mainWatches) watch.dispose();
-    this.mainWatches = [];
+    this.mainWatch?.dispose();
+    this.mainWatch = undefined;
   }
 
   private publish(): void {

@@ -44,7 +44,7 @@ export class AgentPromptChannel implements IAgentPromptChannel {
       message: { role: 'user', content: [...payload.input] },
       meta: { promptId: payload.promptId, origin: { kind: 'user' }, tracked: true },
     });
-    if (status.state === 'running' || status.paused || status.queueHeld || status.queue.length > 0) {
+    if (status.state === 'running' || status.paused || status.queuePaused || status.queue.length > 0) {
       return undefined;
     }
     return launchResult(this.loop, id);

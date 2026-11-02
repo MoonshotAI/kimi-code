@@ -1096,11 +1096,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
           { details: { sessionId: id } },
         );
       }
-      const holdsWork =
-        loop.queuePaused ||
-        loop.queue.length > 0 ||
-        agentHandle.accessor.get(IAgentFullCompactionService).queued !== undefined;
-      if (!stale && holdsWork) {
+      if (!stale && (loop.queuePaused || loop.queue.length > 0)) {
         throw new Error2(
           ErrorCodes.SESSION_BUSY,
           `Session "${id}" cannot be reloaded while its queue is paused or holds prompts`,

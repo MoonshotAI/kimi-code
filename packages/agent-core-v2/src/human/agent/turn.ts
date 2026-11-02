@@ -48,6 +48,10 @@ export interface EntryMeta {
 
 export type SystemMeta = EntryMeta;
 
+export interface QueuedCompaction {
+  readonly instruction?: string;
+}
+
 export interface PromptLaunch {
   readonly planMode?: boolean;
   readonly goalObjective?: string;
@@ -60,6 +64,7 @@ export interface UserMeta extends EntryMeta {
   createdAt?: string;
   userMessageId?: string;
   launch?: PromptLaunch;
+  compaction?: QueuedCompaction;
 }
 
 export type ToolMeta = EntryMeta;

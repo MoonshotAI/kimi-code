@@ -109,7 +109,7 @@ export class AgentConversationUndoService
   private async undoNow(turns: number): Promise<number> {
     let quiescence: IDisposable | undefined;
     try {
-      quiescence = this.loop.tryAcquireQuiescence({ allowHeldQueue: true });
+      quiescence = this.loop.tryAcquireQuiescence({ allowPausedQueue: true });
       if (quiescence === undefined) {
         throw this.busyError('loop');
       }

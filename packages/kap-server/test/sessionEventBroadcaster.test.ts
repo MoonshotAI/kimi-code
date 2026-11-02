@@ -15,7 +15,6 @@ import {
   LifecycleScope,
   IAgentLifecycleService,
   IAgentConversationUndoParticipantRegistry,
-  IAgentFullCompactionService,
   IAgentLoopService,
   IAgentProfileService,
   IAgentScopeContext,
@@ -191,7 +190,7 @@ class FakeAgentHandle {
   activity: AgentActivitySnapshot = {};
   queue: unknown[] = [];
   queuePaused = false;
-  queuedCompaction: { id: string; instruction?: string; createdAt: string } | undefined;
+  startingPromptId: string | undefined;
   private readonly services = new Map<unknown, unknown>();
   private readonly queueListeners = new Set<() => void>();
   constructor(readonly id: string) {
@@ -217,13 +216,10 @@ class FakeAgentHandle {
         turn: this.activity.turn,
         queue: this.queue,
         queuePaused: this.queuePaused,
+        startingPromptId: this.startingPromptId,
       }),
       onDidChangeQueue: watchQueue,
     });
-    this.services.set(
-      IAgentFullCompactionService,
-      Object.defineProperty({ onDidChangeQueued: watchQueue }, 'queued', { get: () => this.queuedCompaction }),
-    );
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
     };
@@ -1567,7 +1563,6 @@ describe('SessionEventBroadcaster', () => {
     lc.addAgent('agent-0');
     sessions.set('s1', lc);
     main.queuePaused = true;
-    main.queuedCompaction = { id: 'c1', instruction: 'keep the plan', createdAt: '2026-01-01T00:00:01.000Z' };
     main.queue = [
       {
         message: { role: 'user', content: [{ type: 'text', text: 'later' }] },
@@ -1578,6 +1573,10 @@ describe('SessionEventBroadcaster', () => {
           origin: { kind: 'user', clientMetadata: [{ display_text: 'later' }] },
           tracked: true,
         },
+      },
+      {
+        message: { role: 'user', content: [] },
+        meta: { promptId: 'c1', createdAt: '2026-01-01T00:00:01.000Z', compaction: { instruction: 'keep the plan' } },
       },
       { message: { role: 'user', content: [{ type: 'text', text: 'continue the goal' }] }, meta: {} },
     ];
@@ -1597,14 +1596,6 @@ describe('SessionEventBroadcaster', () => {
         paused: true,
         inputs: [
           {
-            prompt_id: 'c1',
-            kind: 'compact',
-            delivery: 'queue',
-            content: [],
-            instruction: 'keep the plan',
-            created_at: '2026-01-01T00:00:01.000Z',
-          },
-          {
             prompt_id: 'p1',
             user_message_id: 'p1',
             kind: 'input',
@@ -1612,6 +1603,14 @@ describe('SessionEventBroadcaster', () => {
             content: [{ type: 'text', text: 'later' }],
             client_metadata: { display_text: 'later' },
             created_at: '2026-01-01T00:00:00.000Z',
+          },
+          {
+            prompt_id: 'c1',
+            kind: 'compact',
+            delivery: 'queue',
+            content: [],
+            instruction: 'keep the plan',
+            created_at: '2026-01-01T00:00:01.000Z',
           },
         ],
       },
@@ -1621,12 +1620,16 @@ describe('SessionEventBroadcaster', () => {
     bc.sendQueueSnapshot('s1', otherView.target);
     expect(queueFrames(otherView)).toHaveLength(0);
 
+    main.startingPromptId = 'c1';
+    main.fireQueueChange();
+    expect(queueFrames(mainView).at(-1)).toMatchObject({ inputs: [{ prompt_id: 'p1' }] });
+
     main.queuePaused = false;
     main.queue = [];
-    main.queuedCompaction = undefined;
+    main.startingPromptId = undefined;
     main.fireQueueChange();
     main.fireQueueChange();
-    expect(queueFrames(mainView)).toHaveLength(2);
+    expect(queueFrames(mainView)).toHaveLength(3);
     expect(queueFrames(mainView).at(-1)).toMatchObject({ agent_id: 'main', paused: false, inputs: [] });
     expect(queueFrames(otherView)).toHaveLength(0);
   });

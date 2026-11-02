@@ -788,13 +788,13 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
-对 main agent 的上下文发起一次手动全量压缩；Agent 忙碌时压缩进入队列。调用立即返回；进度与完成通过 `compaction.*` WebSocket 事件投递。
+对 main agent 的上下文发起一次手动全量压缩；Agent 忙碌或已有提示词在排队时，压缩进入队列。调用立即返回；进度与完成通过 `compaction.*` WebSocket 事件投递。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `instruction` | body | string | 给压缩摘要的额外指引；空值会被忽略 |
 
-成功时，`data` 为 `{ accepted_as, prompt_id }`：压缩已开始时 `accepted_as` 为 `compact`，在 main agent 的[提示词队列](#提示词队列)中等待时为 `queue`；`prompt_id` 标识排队的压缩。排队的压缩在 Agent 空闲后立即开始，先于所有排队的提示词；那时无法开始的，会话会记录一条警告，排队的提示词照常继续。
+成功时，`data` 为 `{ accepted_as, prompt_id }`：压缩已开始时 `accepted_as` 为 `compact`，排到 main agent 的[提示词队列](#提示词队列)末尾时为 `queue`；`prompt_id` 标识这个队列条目。排队的压缩轮到队首时执行；那时无法开始的，会话会记录一条警告，队列继续往下处理。
 
 - `40910`：已有压缩正在进行或在排队，或历史中没有可压缩的内容
 
@@ -842,7 +842,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 成功时，`data` 为 [session 对象](#session-对象)。
 
-- `40901`：会话有正在运行的轮次，或 main agent 的提示词队列已暂停、仍有排队的提示词或压缩，无法重新加载；被其他客户端修改过的会话仍可重新加载，队列随之丢弃
+- `40901`：会话有正在运行的轮次，或 main agent 的提示词队列已暂停或不为空，无法重新加载；被其他客户端修改过的会话仍可重新加载，队列随之丢弃
 
 #### `POST /api/v1/sessions/{session_id}:takeover`
 
@@ -1085,7 +1085,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### 提示词队列
 
-Agent 忙碌时提交的提示词在它的队列中等待，Agent 空闲后按顺序开始。main agent 的队列还可以查看和控制：队列通过 WebSocket 的 [`queue` 帧](#事件) 推送，可以用下面的队列路由暂停、恢复和调整顺序。队列暂停期间，排队的提示词不会开始，新提交的提示词都进入队列；插话仍会把排队的提示词送入运行中的轮次，Agent 空闲时请求的压缩也仍会立即开始。Agent 忙碌时请求的压缩排在所有排队的提示词之前。排队的提示词经过提示词钩子后开始；从那时起它已离开队列：暂停不再挡住它，不能调整顺序或插话，中止会在它的轮次开始后立即停止那一轮。其他 Agent 没有队列控制。队列只在服务端内存中，服务端重启后排队的提示词会丢失。
+Agent 忙碌时提交的提示词在它的队列中等待，Agent 空闲后按顺序开始。main agent 的队列还可以查看和控制：队列通过 WebSocket 的 [`queue` 帧](#事件) 推送，可以用下面的队列路由暂停、恢复和调整顺序。队列暂停期间，排队的提示词不会开始，新提交的提示词都进入队列；插话仍会把排队的提示词送入运行中的轮次，Agent 空闲且队列为空时请求的压缩也仍会立即开始。其余情况下压缩和提示词一样进入队列：保持自己的位置，可以调整顺序或撤回，轮到队首时执行。排队的提示词经过提示词钩子后开始；从那时起它已离开队列：暂停不再挡住它，不能调整顺序或插话，中止会在它的轮次开始后立即停止那一轮。其他 Agent 没有队列控制。队列只在服务端内存中，服务端重启后排队的提示词会丢失。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -1173,7 +1173,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort`
 
-中止运行中的提示词，或移除仍在[提示词队列](#提示词队列)中等待的提示词或压缩；正在启动的排队提示词会在其轮次开始后立即被中止。本端点与下面的 `:steer` 通过同一条路由 `POST /api/v1/sessions/{session_id}/prompts/{tail}` 分发：尾部解析为 `{prompt_id}:{action}`，动作缺失或未知时返回 `40001`（`unsupported action: ...`）。
+中止运行中的提示词，或移除仍在[提示词队列](#提示词队列)中等待的提示词或压缩；正在启动的排队提示词会在其轮次开始后立即被中止，已在执行的排队压缩会被取消。本端点与下面的 `:steer` 通过同一条路由 `POST /api/v1/sessions/{session_id}/prompts/{tail}` 分发：尾部解析为 `{prompt_id}:{action}`，动作缺失或未知时返回 `40001`（`unsupported action: ...`）。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1215,19 +1215,19 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/agents/main/queue/{prompt_id}:move`
 
-移动 main agent 的一条排队提示词。排队的压缩总是最先执行，不能移动；移到压缩之前即移到队列最前。
+移动 main agent 的一条排队提示词或压缩。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `prompt_id` | path | string | **必填。** 排队中的提示词 id |
+| `prompt_id` | path | string | **必填。** 排队中的提示词或压缩 id |
 | `before_prompt_id` | body | string | 移到这个排队条目之前；省略时移到末尾 |
 
 成功时，`data` 为空对象。
 
 - `40001`：校验失败，或路径中的 Agent 不是 `main`
 - `40401`：会话不存在
-- `40402`：提示词 id 不在队列中等待，包括已在启动的提示词
+- `40402`：id 不在队列中等待，包括已在启动的条目
 
 ### 审批与提问
 
@@ -2465,7 +2465,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
 | 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
 
-订阅的连接还会收到 main agent [提示词队列](#提示词队列)的 `queue` 帧：`{ "type": "queue", "session_id", "agent_id", "event_created_at", "paused", "inputs" }`。每次订阅成功后以及队列每次变化时发送，始终携带完整队列，客户端整体替换本地副本。`inputs` 的每个条目为 `{ prompt_id, user_message_id, kind, delivery, content, skills?, instruction?, client_metadata?, created_at }`：`kind` 为 `input` 或 `compact`，`delivery` 始终为 `queue`；排队的压缩排在最前，带 `instruction`，`content` 为空。
+订阅的连接还会收到 main agent [提示词队列](#提示词队列)的 `queue` 帧：`{ "type": "queue", "session_id", "agent_id", "event_created_at", "paused", "inputs" }`。每次订阅成功后以及队列每次变化时发送，始终携带完整队列，客户端整体替换本地副本。`inputs` 的每个条目为 `{ prompt_id, user_message_id, kind, delivery, content, skills?, instruction?, client_metadata?, created_at }`：`kind` 为 `input` 或 `compact`，`delivery` 始终为 `queue`；排队的压缩在开始前保持自己的位置，带 `instruction`，`content` 为空。
 
 有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
