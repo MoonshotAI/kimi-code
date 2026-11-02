@@ -29,13 +29,16 @@ describe('/api/v1/debug transport mapError', () => {
     expect(env.code).toBe(wire);
   });
 
-  it('preserves session conflict details', () => {
+  it('maps session-specific public errors and preserves conflict details', () => {
     const details = { holder: { clientIdentity: 'other' } };
     const env = mapError(
       new Error2(ErrorCodes.SESSION_OCCUPIED, 'boom', { details }),
       'req-1',
     );
     expect(env.details).toEqual(details);
+    const incompatible = mapError(new Error2(ErrorCodes.WIRE_VERSION_TOO_LOW, 'upgrade'), 'req-1');
+    expect(incompatible.code).toBe(ErrorCode.WIRE_VERSION_TOO_LOW);
+    expect(incompatible.msg).toBe('upgrade');
   });
 
   it('falls back to INTERNAL_ERROR for coded errors without a wire equivalent', () => {
@@ -67,10 +70,13 @@ describe('installErrorHandler (catch-all)', () => {
     return payload!;
   }
 
-  it('maps an escaped config.invalid to VALIDATION_FAILED', () => {
+  it('maps escaped public errors to their protocol codes', () => {
     const env = run(new Error2(ErrorCodes.CONFIG_INVALID, 'broken pool'));
     expect(env.code).toBe(ErrorCode.VALIDATION_FAILED);
     expect(env.msg).toContain('broken pool');
+    const incompatible = run(new Error2(ErrorCodes.WIRE_VERSION_TOO_LOW, 'upgrade required'));
+    expect(incompatible.code).toBe(ErrorCode.WIRE_VERSION_TOO_LOW);
+    expect(incompatible.msg).toContain('upgrade required');
   });
 
   it('keeps unknown exceptions at INTERNAL_ERROR', () => {

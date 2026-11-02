@@ -11,6 +11,7 @@ import {
   ISessionIndex,
   ISessionMetadata,
   IAgentLoopService,
+  assertWireRecordsReaderVersion,
   flattenChain,
   makeAgentScopeContext,
   followSessionLifecycles,
@@ -554,7 +555,9 @@ export class TranscriptService {
     await this.drainLiveWire(liveAgents, sessionId, agentId);
     let records: ContextRecord[];
     try {
-      records = flattenChain(await this.wireCache.read(wirePath));
+      const persistedRecords = await this.wireCache.read(wirePath);
+      assertWireRecordsReaderVersion(persistedRecords);
+      records = flattenChain(persistedRecords);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return groupMessagesIntoSnapshot([]);

@@ -126,6 +126,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
       success: { data: listSkillsResponseSchema },
       errors: {
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'List the skills available to a session',
       tags: ['skills'],
