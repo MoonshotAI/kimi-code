@@ -343,6 +343,99 @@ describe('AgentPromptQueueService', () => {
     await loop.settled();
   });
 
+  it('holds a queued prompt at the head when the queue is paused while its settings are applied', async () => {
+    setup();
+    respond(2);
+    const release = await startHeldTurn();
+    let finishPrepare!: () => void;
+    const prepare = vi.fn(() => new Promise<void>((resolve) => {
+      finishPrepare = resolve;
+    }));
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', prepare });
+    release();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
+
+    queue.pause();
+    finishPrepare();
+    await vi.waitFor(() => expect(queue.hasPendingItems()).toBe(false));
+    expect(launched).toEqual(['first']);
+    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
+
+    queue.resume();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
+    await loop.settled();
+    expect(prepare).toHaveBeenCalledOnce();
+  });
+
+  it('withdraws a queued prompt that is cancelled while its settings are applied', async () => {
+    setup();
+    respond(1);
+    const release = await startHeldTurn();
+    let finishPrepare!: () => void;
+    const prepare = vi.fn(() => new Promise<void>((resolve) => {
+      finishPrepare = resolve;
+    }));
+    const onDrop = vi.fn();
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', prepare, onDrop });
+    release();
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+
+    queue.cancel('p2');
+    finishPrepare();
+    await vi.waitFor(() => expect(queue.hasPendingItems()).toBe(false));
+    await loop.settled();
+    expect(launched).toEqual(['first']);
+    expect(onDrop).toHaveBeenCalledOnce();
+    expect(queue.snapshot().items).toEqual([]);
+  });
+
+  it('fails an idle prompt whose start bookkeeping fails', async () => {
+    setup();
+    const onStart = vi.fn(async () => {
+      throw new Error('metadata write failed');
+    });
+
+    await expect(
+      queue.submitInput({ id: 'p1', entry: entry('p1', 'hello'), delivery: 'queue', onStart }),
+    ).rejects.toThrow('metadata write failed');
+    expect(launched).toEqual([]);
+    expect(queue.snapshot().items).toEqual([]);
+  });
+
+  it('retries failed start bookkeeping once and does not repeat finished start steps', async () => {
+    setup();
+    respond(2);
+    const dispatch = vi.spyOn(ctx.dispatcher, 'dispatch');
+    const release = await startHeldTurn();
+    const prepare = vi.fn(async () => {});
+    const onStart = vi.fn(async () => {}).mockRejectedValueOnce(new Error('metadata write failed'));
+    await queue.submitInput({ id: 'p2', entry: entry('p2', 'second'), delivery: 'queue', prepare, onStart });
+
+    release();
+    await vi.waitFor(() => expect(queue.snapshot().paused).toBe(true));
+    expect(ids(queue.snapshot())).toEqual(['p2:queue']);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'warning',
+      code: 'queued-prompt-failed',
+      message: expect.stringContaining('metadata write failed'),
+    }));
+
+    const submit = vi.spyOn(loop, 'submit').mockImplementationOnce(() => {
+      throw new Error('session is stale');
+    });
+    queue.resume();
+    await vi.waitFor(() => expect(submit).toHaveBeenCalled());
+    expect(queue.snapshot().paused).toBe(true);
+    submit.mockRestore();
+
+    queue.resume();
+    await vi.waitFor(() => expect(launched).toEqual(['first', 'second']));
+    await loop.settled();
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(onStart).toHaveBeenCalledTimes(2);
+  });
+
   it('checks that the session is current before applying the settings of an idle prompt', async () => {
     setup();
     const prepare = vi.fn(async () => {});

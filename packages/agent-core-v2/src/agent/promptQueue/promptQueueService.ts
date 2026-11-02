@@ -256,48 +256,65 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
 
   private async start(entry: InputEntry, fromQueue: boolean): Promise<PromptQueueSubmitResult> {
     this.launching = true;
-    if (fromQueue) this.take(entry);
     let current = entry;
     try {
       if (current.prepare !== undefined) {
         this.runGate.begin();
         await current.prepare();
-        current = { ...current, prepare: undefined };
+        current = this.consume(current, { prepare: undefined });
         this.assertOpen();
       }
+      if (current.onStart !== undefined) {
+        await current.onStart();
+        current = this.consume(current, { onStart: undefined });
+        this.assertOpen();
+      }
+      if (fromQueue) {
+        const queued = this.entries.find((item): item is InputEntry => item.id === current.id);
+        if (queued === undefined || this.paused) return { acceptedAs: 'queue' };
+        current = queued;
+      }
       if (current.delivery === 'steer' && this.loop.canSteerPrompt()) {
-        await this.notifyStarted(current);
         const { id } = this.loop.submit(current.entry);
+        this.remove(current);
         const handle = this.loop.promptHandle(id);
         return { acceptedAs: (await this.steerSubmitted(id)) ? 'steer' : 'queue', handle };
       }
-      if (entry.prepare !== undefined && !this.loop.canLaunchPrompt()) {
-        this.restoreAtHead(current);
-        this.emitChange();
+      if (!this.loop.canLaunchPrompt()) {
+        if (!fromQueue) this.restoreAtHead(current);
         return { acceptedAs: 'queue' };
       }
-      await this.notifyStarted(current);
-      return { acceptedAs: 'turn', handle: this.launch(current.entry) };
+      const handle = this.launch(current.entry);
+      this.remove(current);
+      return { acceptedAs: 'turn', handle };
     } catch (error) {
       if (!fromQueue) throw error;
-      if (this.disposed) {
-        current.onDrop?.();
-      } else {
-        this.restoreAtHead(current);
+      if (!this.disposed && this.entries.some((item) => item.id === current.id)) {
         this.pauseAfterFailedStart(current, error);
       }
       return { acceptedAs: 'queue' };
     } finally {
       this.launching = false;
-      if (!this.disposed) this.onDidChangeEmitter.fire(this.snapshot());
+      if (!this.disposed) this.emitChange();
       this.schedulePump();
     }
+  }
+
+  private consume(current: InputEntry, done: Pick<QueueEntry, 'prepare'> | Pick<QueueEntry, 'onStart'>): InputEntry {
+    const index = this.entries.findIndex((item) => item.id === current.id);
+    if (index === -1) return { ...current, ...done };
+    const updated = { ...(this.entries[index] as InputEntry), ...done };
+    this.entries = this.entries.map((item, i) => (i === index ? updated : item));
+    return updated;
+  }
+
+  private remove(entry: QueueEntry): void {
+    this.entries = this.entries.filter((item) => item.id !== entry.id);
   }
 
   private pauseAfterFailedStart(entry: QueueEntry, error: unknown): void {
     this.logger.warn('queued prompt could not start', { promptId: entry.id, error });
     this.paused = true;
-    this.emitChange();
     this.warn('queued-prompt-failed', `The queue was paused because a queued prompt could not start: ${reasonOf(error)}`);
   }
 
@@ -316,14 +333,6 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   private launch(entry: UserEntry): PromptHandle | undefined {
     const { id } = this.loop.submit(entry);
     return this.loop.promptHandle(id);
-  }
-
-  private async notifyStarted(entry: InputEntry): Promise<void> {
-    try {
-      await entry.onStart?.();
-    } catch (error) {
-      this.logger.warn('prompt start bookkeeping failed', { promptId: entry.id, error });
-    }
   }
 
   private async steerSubmitted(id: string): Promise<boolean> {
