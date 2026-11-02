@@ -108,6 +108,19 @@ describe('HostFileSystem walk', () => {
     expect(truncated).toBe(false);
   });
 
+  it('keeps dot-only filenames while pruning ignored directories', async () => {
+    const readdir = vi.fn(async (): Promise<HostDirEntry[]> => [
+      { name: '...', isFile: true, isDirectory: false },
+      { name: '.git', isFile: false, isDirectory: true },
+      { name: 'kept.ts', isFile: true, isDirectory: false },
+    ]);
+    const { entries, truncated } = await collect((visit) => walkDirectoryTree({ readdir }, '/root', { ignore: ['.git'] }, visit));
+
+    expect(entries.map((entry) => entry.path)).toEqual(['...', 'kept.ts']);
+    expect(readdir).toHaveBeenCalledTimes(1);
+    expect(truncated).toBe(false);
+  });
+
   it('reports truncation when the visitor stops or the deadline passes', async () => {
     const readdir = async (path: string): Promise<HostDirEntry[]> => path === '/root'
       ? [{ name: 'a', isFile: false, isDirectory: true }, { name: 'b.ts', isFile: true, isDirectory: false }]

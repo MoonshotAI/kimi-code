@@ -1280,6 +1280,17 @@ describe('WorkspaceFsService.suggest', () => {
     expect(grep.files.map((file) => file.path)).toEqual(['src/gitdir.ts']);
   });
 
+  it.each(['search', 'suggest', 'grep'] as const)('handles dot-only filenames during %s with gitignore disabled', async (operation) => {
+    const fs = makeRemoteWalkSession(fakeFs({ '...': 'hello\n', 'kept.ts': 'hello\n', '.git/config': 'hello\n' }));
+    const result = operation === 'search'
+      ? await fs.search({ query: 'kept', limit: 50, follow_gitignore: false })
+      : operation === 'suggest'
+        ? await fs.suggest({ query: 'kept', limit: 50, follow_gitignore: false, show_hidden: false })
+        : await fs.grep({ ...WALK_GREP_REQUEST, include_globs: ['**/*.ts'] });
+
+    expect(('items' in result ? result.items : result.files).map((item) => item.path)).toEqual(['kept.ts']);
+  });
+
   it('falls back to the node walk when rg fails to spawn', async () => {
     const events: Array<{ event: string; properties: Record<string, unknown> }> = [];
     const runner: IHostProcessService = {
@@ -1603,9 +1614,10 @@ describe('WorkspaceFsService.suggest', () => {
     backend.walk = async (path, options, visit) => {
       roots.push(path);
       deadline = options.deadlineMs;
-      clock += 10_000;
       await visit({ path: 'src', kind: 'directory' });
       await visit({ path: 'src/foo.ts', kind: 'file' });
+      clock += 10_000;
+      expect(await visit({ path: 'src/foo-late.ts', kind: 'file' })).toBe(false);
       return { truncated: true };
     };
     const fs = makeRemoteWalkSession(backend);

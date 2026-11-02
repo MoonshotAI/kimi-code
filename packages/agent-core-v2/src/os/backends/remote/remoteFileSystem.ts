@@ -259,6 +259,7 @@ export class RemoteFileSystem implements IHostFileSystem {
       timeoutMs: Math.min(remainingMs, FS_WALK_DEFAULT_TIMEOUT_MS),
     });
     for (const entry of result.entries) {
+      if (options.deadlineMs !== undefined && Date.now() >= options.deadlineMs) return { truncated: true };
       if (await visit(entry) === false) return { truncated: true };
     }
     return { truncated: result.truncated };

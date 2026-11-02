@@ -458,13 +458,14 @@ describe('GlobTool', () => {
     expect(text).toContain('of 3.');
   });
 
-  it('does not present a capped capture as a complete search when returning all matches', async () => {
-    const exec = vi.fn(async () => fakeProcess(`/workspace/${'x'.repeat(200)}.ts\n`.repeat(50_000)));
+  it.each([0, -1])('does not present a capped capture as complete or unreadable with exit code %s', async (exitCode) => {
+    const exec = vi.fn(async () => fakeProcess(`/workspace/${'x'.repeat(200)}.ts\n`.repeat(50_000), '', exitCode));
     const { tool } = makeTool(workspace, { exec });
     const result = await execute(tool, GlobInputSchema.parse({ pattern: '*.ts', head_limit: 0 }));
     expect(result.output).toContain('stdout truncated');
     expect(result.output).toContain('collected matches (partial result set)');
     expect(result.output).not.toContain('Continue with');
+    expect(toolContentString(result).includes('some directories could not be read')).toBe(false);
     const process = await exec.mock.results[0]!.value as IHostProcess;
     expect(process.kill).toHaveBeenCalledWith('SIGTERM');
   });

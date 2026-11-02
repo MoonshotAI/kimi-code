@@ -1040,6 +1040,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     for (const root of roots) {
       const ignoreRules = query.followGitignore ? await this.walkIgnoreFor(root.dir) : WALK_DEFAULT_IGNORE;
       inventoryTruncated = await this.walk(root.dir, ignoreRules, async (relPath, _name, kind) => {
+        if (signal.aborted || Date.now() >= deadline) return false;
         if (multi) {
           const pathKey = `${root.real}/${relPath}`;
           if (seenPaths.has(pathKey)) return;
@@ -1344,7 +1345,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       relPath: string,
       name: string,
       kind: 'file' | 'directory' | 'symlink',
-    ) => Promise<void>,
+    ) => Promise<void | false>,
     options: { deadlineMs?: number } = {},
   ): Promise<boolean> {
     try {

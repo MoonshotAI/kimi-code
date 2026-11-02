@@ -36,7 +36,7 @@ export async function walkDirectoryTree(
   options: HostWalkOptions,
   visit: HostWalkVisitor,
 ): Promise<{ readonly truncated: boolean }> {
-  const matcher = options.ignore === undefined ? undefined : ignore().add(options.ignore);
+  const matcher = options.ignore === undefined ? undefined : ignore({ allowRelativePaths: true }).add(options.ignore);
   const expired = (): boolean => options.deadlineMs !== undefined && Date.now() >= options.deadlineMs;
   const walkDirectory = async (relDir: string, depth: number): Promise<boolean> => {
     if (depth > WALK_MAX_DEPTH) return true;

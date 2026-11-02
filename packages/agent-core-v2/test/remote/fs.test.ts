@@ -173,6 +173,33 @@ describe('fs group over a subprocess loopback', () => {
 });
 
 describe('fs protocol semantics', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each(['response', 'visitor'])('stops replaying entries when the deadline expires during the %s', async (phase) => {
+    let clock = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const fs = new RemoteFileSystem({
+      call: async () => {
+        if (phase === 'response') clock = 2_000;
+        return { entries: [{ path: 'first.ts', kind: 'file' }, { path: 'second.ts', kind: 'file' }], truncated: false };
+      },
+      notify: () => {},
+      onNotification: () => () => {},
+      onDidClose: () => {},
+    });
+    const visited: string[] = [];
+
+    const result = await fs.walk('/root', { deadlineMs: 2_000 }, (entry) => {
+      visited.push(entry.path);
+      clock = 2_000;
+    });
+
+    expect(visited).toEqual(phase === 'response' ? [] : ['first.ts']);
+    expect(result).toEqual({ truncated: true });
+  });
+
   it('honors the caller deadline before and during a remote walk', async () => {
     const calls: Array<{ method: string; timeoutMs?: number }> = [];
     const fs = new RemoteFileSystem({
