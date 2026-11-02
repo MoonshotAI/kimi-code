@@ -2,16 +2,14 @@ import type {
   AgentId,
   FrameId,
   StepId,
-  TaskId,
   TurnId,
 } from '../model/ids';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
-import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
+import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
 import type { TranscriptPrompt } from '../model/prompt';
-import type { TranscriptTask } from '../model/task';
 import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 
@@ -42,9 +40,12 @@ export interface FrameUpsertOp {
   readonly frame: TranscriptFrame;
 }
 
-export type AppendTarget =
-  | { readonly type: 'frame'; readonly turnId: TurnId; readonly stepId: StepId; readonly frameId: FrameId }
-  | { readonly type: 'task'; readonly taskId: TaskId };
+export interface AppendTarget {
+  readonly type: 'frame';
+  readonly turnId: TurnId;
+  readonly stepId: StepId;
+  readonly frameId: FrameId;
+}
 
 export interface AppendOp {
   readonly op: 'append';
@@ -57,17 +58,6 @@ export interface MarkerUpsertOp {
   readonly op: 'marker.upsert';
   readonly item: TranscriptMarker;
   readonly beforeTurn?: number;
-}
-
-export interface TaskRefUpsertOp {
-  readonly op: 'taskref.upsert';
-  readonly item: TranscriptTaskRef;
-  readonly beforeTurn?: number;
-}
-
-export interface TaskUpsertOp {
-  readonly op: 'task.upsert';
-  readonly task: TranscriptTask;
 }
 
 export interface InteractionUpsertOp {
@@ -107,8 +97,6 @@ export type TranscriptOperation =
   | FrameUpsertOp
   | AppendOp
   | MarkerUpsertOp
-  | TaskRefUpsertOp
-  | TaskUpsertOp
   | InteractionUpsertOp
   | AttachmentUpsertOp
   | TodoUpsertOp
@@ -123,7 +111,6 @@ export interface TranscriptOpBatch {
 
 export interface AgentTranscriptSnapshot {
   readonly items: readonly TranscriptItem[];
-  readonly tasks: readonly TranscriptTask[];
   readonly interactions: readonly TranscriptInteraction[];
   readonly attachments: readonly TranscriptAttachment[];
   readonly todos: readonly TranscriptTodo[];
