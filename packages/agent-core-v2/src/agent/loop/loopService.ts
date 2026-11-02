@@ -733,6 +733,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       block: false,
     };
     this.gatingPromptId = queueItemId;
+    this.onDidChangeQueueEmitter.fire();
     try {
       await this.hooks.onBeforeSubmitPrompt.run(ctx);
       if (ctx.block) return { block: true };

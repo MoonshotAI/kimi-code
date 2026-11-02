@@ -84,6 +84,9 @@ export const queuedInputSchema = z.object({
   skills: z.array(promptSkillActivationSchema).optional(),
   instruction: z.string().optional(),
   client_metadata: z.record(z.string(), z.unknown()).optional(),
+  plan_mode: z.boolean().optional(),
+  goal_objective: z.string().optional(),
+  starting: z.boolean().optional(),
   created_at: isoDateTimeSchema,
 });
 export type QueuedInputWire = z.infer<typeof queuedInputSchema>;

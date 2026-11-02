@@ -2465,7 +2465,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
 | 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
 
-订阅的连接还会收到 main agent [提示词队列](#提示词队列)的 `queue` 帧：`{ "type": "queue", "session_id", "agent_id", "event_created_at", "paused", "inputs" }`。每次订阅成功后以及队列每次变化时发送，始终携带完整队列，客户端整体替换本地副本。`inputs` 的每个条目为 `{ prompt_id, user_message_id, kind, delivery, content, skills?, instruction?, client_metadata?, created_at }`：`kind` 为 `input` 或 `compact`，`delivery` 始终为 `queue`；排队的压缩在开始前保持自己的位置，带 `instruction`，`content` 为空。
+订阅的连接还会收到 main agent [提示词队列](#提示词队列)的 `queue` 帧：`{ "type": "queue", "session_id", "agent_id", "event_created_at", "paused", "inputs" }`。每次订阅成功后以及队列每次变化时发送，始终携带完整队列，客户端整体替换本地副本。`inputs` 的每个条目为 `{ prompt_id, user_message_id, kind, delivery, content, skills?, instruction?, client_metadata?, plan_mode?, goal_objective?, starting?, created_at }`：`kind` 为 `input` 或 `compact`，`delivery` 始终为 `queue`；`plan_mode` / `goal_objective` 是提交这条提示词时带的值；`starting: true` 表示这条提示词已开始启动，不能再移动、插话或编辑。排队的压缩在开始前保持自己的位置，带 `instruction`，`content` 为空。
 
 有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 

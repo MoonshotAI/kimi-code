@@ -1057,10 +1057,16 @@ describe('Agent loop', () => {
       if (gated === 1) await gate.promise;
       await next();
     });
+    const starting: (string | undefined)[] = [];
+    const watch = loop.onDidChangeQueue(() => {
+      starting.push(loop.snapshot().startingPromptId);
+    });
     const withdrawn = submitTracked(loop, 'withdrawn');
     await vi.waitFor(() => {
       expect(gated).toBe(1);
     });
+    expect(starting).toContain(withdrawn);
+    watch.dispose();
     const next = submitTracked(loop, 'next');
     expect(loop.snapshot().startingPromptId).toBe(withdrawn);
     expect(() => loop.moveQueued(withdrawn, next)).toThrow('not waiting in the queue');

@@ -1572,6 +1572,7 @@ describe('SessionEventBroadcaster', () => {
           createdAt: '2026-01-01T00:00:00.000Z',
           origin: { kind: 'user', clientMetadata: [{ display_text: 'later' }] },
           tracked: true,
+          launch: { planMode: true },
         },
       },
       {
@@ -1602,6 +1603,7 @@ describe('SessionEventBroadcaster', () => {
             delivery: 'queue',
             content: [{ type: 'text', text: 'later' }],
             client_metadata: { display_text: 'later' },
+            plan_mode: true,
             created_at: '2026-01-01T00:00:00.000Z',
           },
           {
@@ -1620,16 +1622,22 @@ describe('SessionEventBroadcaster', () => {
     bc.sendQueueSnapshot('s1', otherView.target);
     expect(queueFrames(otherView)).toHaveLength(0);
 
+    main.startingPromptId = 'p1';
+    main.fireQueueChange();
+    expect(queueFrames(mainView).at(-1)).toMatchObject({
+      inputs: [{ prompt_id: 'p1', starting: true }, { prompt_id: 'c1' }],
+    });
     main.startingPromptId = 'c1';
     main.fireQueueChange();
     expect(queueFrames(mainView).at(-1)).toMatchObject({ inputs: [{ prompt_id: 'p1' }] });
+    expect((queueFrames(mainView).at(-1) as { inputs: unknown[] }).inputs).toHaveLength(1);
 
     main.queuePaused = false;
     main.queue = [];
     main.startingPromptId = undefined;
     main.fireQueueChange();
     main.fireQueueChange();
-    expect(queueFrames(mainView)).toHaveLength(3);
+    expect(queueFrames(mainView)).toHaveLength(4);
     expect(queueFrames(mainView).at(-1)).toMatchObject({ agent_id: 'main', paused: false, inputs: [] });
     expect(queueFrames(otherView)).toHaveLength(0);
   });
