@@ -1,6 +1,8 @@
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
+import { DYNAMIC_TOOL_SCHEMA_VARIANT } from '#/agent/toolSelect/dynamicTools';
 import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 
 import {
@@ -34,13 +36,7 @@ export class SelectToolsTool implements ISelectToolsTool {
     return {
       description: `Loading ${args.names.join(', ')}`,
       approvalRule: this.name,
-      execute: async () => {
-        if (!this.toolSelect.enabled()) {
-          return {
-            output: 'select_tools is not available for the current model.',
-            isError: true,
-          };
-        }
+      execute: async (ctx) => {
         const {
           toLoad,
           alreadyAvailable,
@@ -52,7 +48,18 @@ export class SelectToolsTool implements ISelectToolsTool {
           consecutiveFailures,
           suggestions,
           loadable,
+          schemas,
         } = this.toolSelect.load(args.names);
+
+        for (const tool of schemas) {
+          const message: ContextMessage = {
+            role: 'system',
+            content: [],
+            tools: [tool],
+            origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+          };
+          ctx.remind?.(message);
+        }
 
         const lines: string[] = [];
         if (toLoad.length > 0) lines.push(`Loaded: ${toLoad.join(', ')}`);

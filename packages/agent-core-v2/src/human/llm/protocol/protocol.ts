@@ -6,7 +6,13 @@ import type {
   LlmRequestProfile,
   ModelCapability,
 } from '#/llm/request';
-import type { FinishInfo, LlmRemoteErrorMessage, TokenUsage } from '#/llm/response';
+import type {
+  FinishInfo,
+  LlmErrorDiagnostics,
+  LlmErrorMessage,
+  LlmRemoteErrorMessage,
+  TokenUsage,
+} from '#/llm/response';
 
 import { runPipeline, type EncodeHooks, type PipelineSpec } from './pipeline';
 import type { MediaSupport } from './rules/media';
@@ -67,6 +73,13 @@ export interface Protocol<
   readonly replay: (response: TResponse) => Iterable<TChunk>;
   readonly requestId?: (headers: Readonly<Record<string, string>>) => string | undefined;
   readonly decodeError: (error: unknown) => LlmRemoteErrorMessage;
+  readonly diagnoseError?: (input: LlmErrorDiagnosticsInput) => LlmErrorDiagnostics;
+}
+
+export interface LlmErrorDiagnosticsInput {
+  readonly error: LlmErrorMessage;
+  readonly rawError?: unknown;
+  readonly headers?: Record<string, string>;
 }
 
 export interface ProtocolDefinition<

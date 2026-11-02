@@ -7,7 +7,7 @@ import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract
 import { type ThinkingEffort } from '#human/llm-requester/thinking';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { type ModelOverrides } from '#/llm-adapter/model/model.types';
-import { type ModelRequestParams, type SamplingOptions } from '#/llm-adapter/model/model-requester';
+import { type ModelRequestParams, type SamplingOptions } from '#/llm-adapter/model/generate';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import {
   drivesThinkingThroughTraits,

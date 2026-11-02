@@ -245,11 +245,13 @@ export function projectContext(
           // resetting to 0 — so guard against a false drop here too.
           if ('usage' in ev && ev.usage !== undefined) {
             const fill =
-              ev.usage.inputCacheRead +
-              ev.usage.inputCacheCreation +
-              ev.usage.inputOther +
-              ev.usage.output;
-            if (fill > 0) contextTokens = fill;
+              ev.usage.inputCacheRead === undefined
+                ? undefined
+                : ev.usage.inputCacheRead +
+                  ev.usage.inputCacheCreation +
+                  ev.usage.inputOther +
+                  ev.usage.output;
+            if (fill !== undefined && fill > 0) contextTokens = fill;
           }
         }
         break;
@@ -583,6 +585,8 @@ export function projectContext(
       case 'llm.tools_snapshot':
       case 'llm.request':
       case 'mcp.tools_discovered':
+      case 'tool_select.initialized':
+      case 'tool_select.tools_changed':
       case 'mcp.server_failed':
       case 'mcp.server_failure_resolved':
       case 'file_history.checkpoint':

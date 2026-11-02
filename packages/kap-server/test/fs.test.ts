@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -75,6 +76,28 @@ describe('server-v2 /api/v1 fs routes', () => {
       home = undefined;
     }
   });
+
+  function git(cwd: string, ...args: string[]): void {
+    execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+  }
+
+  async function createWorkspaceSession(root: string, additionalDirs: string[]): Promise<string> {
+    const workspaceRes = await fetch(`${base}/api/v1/workspaces`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ root, additional_dirs: additionalDirs }),
+    } as never);
+    const workspace = (await workspaceRes.json()) as Envelope<{ id: string }>;
+    expect(workspace.code).toBe(0);
+    const sessionRes = await fetch(`${base}/api/v1/sessions`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ workspace_id: workspace.data.id }),
+    } as never);
+    const session = (await sessionRes.json()) as Envelope<{ id: string }>;
+    expect(session.code).toBe(0);
+    return session.data.id;
+  }
 
   async function createSession(): Promise<string> {
     const res = await fetch(`${base}/api/v1/sessions`, {
@@ -504,6 +527,53 @@ describe('server-v2 /api/v1 fs routes', () => {
     const body = await postFs<null>(id, 'git_status', {});
     expect(body.code).toBe(ErrorCode.FS_GIT_UNAVAILABLE);
   });
+
+  it('fs:git_status selects and scopes an additional root', async () => {
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-extra-'));
+    try {
+      for (const [cwd, name] of [[work!, 'main.txt'], [extra, 'extra.txt']] as const) {
+        git(cwd, 'init', '-b', 'main');
+        git(cwd, 'config', 'user.email', 'test@example.com');
+        git(cwd, 'config', 'user.name', 'Test');
+        await writeFile(join(cwd, name), 'one\n');
+        git(cwd, 'add', '-A');
+        git(cwd, 'commit', '-m', 'init');
+        await writeFile(join(cwd, name), 'one\ntwo\n');
+      }
+      const id = await createWorkspaceSession(work!, [extra]);
+
+      const primary = await postFs<{ branch: string; entries: Record<string, string>; additions: number }>(id, 'git_status', { root: work });
+      const additional = await postFs<{ branch: string; entries: Record<string, string>; additions: number }>(id, 'git_status', { root: extra, include_pull_request: false });
+      const pullRequest = await postFs<null>(id, 'pull_request', { root: extra });
+      const batch = await postFs<{ results: Record<string, { entries: Record<string, string> }> }>(id, 'git_status:batch', { roots: [work, extra], include_pull_request: false });
+      const prBatch = await postFs<{ results: Record<string, null> }>(id, 'pull_request:batch', { roots: [work, extra] });
+      const additionalDiff = await postFs<{ path: string; diff: string }>(id, 'diff', { root: extra, path: 'extra.txt' });
+      const fileRoot = await postFs<null>(id, 'git_status', { root: 'main.txt' });
+      const outside = await postFs<null>(id, 'git_status', { root: tmpdir() });
+
+      expect(primary.code).toBe(0);
+      expect(primary.data.entries).toEqual({ 'main.txt': 'modified' });
+      expect(primary.data.additions).toBe(1);
+      expect(additional.code).toBe(0);
+      expect(additional.data.branch).toBe('main');
+      expect(additional.data.entries).toEqual({ 'extra.txt': 'modified' });
+      expect(additional.data.additions).toBe(1);
+      expect(pullRequest.code).toBe(0);
+      expect(pullRequest.data).toBeNull();
+      expect(batch.code).toBe(0);
+      expect(batch.data.results[work!]?.entries).toEqual({ 'main.txt': 'modified' });
+      expect(batch.data.results[extra]?.entries).toEqual({ 'extra.txt': 'modified' });
+      expect(prBatch.code).toBe(0);
+      expect(prBatch.data.results).toEqual({ [work!]: null, [extra]: null });
+      expect(additionalDiff.code).toBe(0);
+      expect(additionalDiff.data.path).toBe('extra.txt');
+      expect(additionalDiff.data.diff).toContain('+two');
+      expect(fileRoot.code).toBe(ErrorCode.FS_GIT_UNAVAILABLE);
+      expect(outside.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+    } finally {
+      await rm(extra, { recursive: true, force: true });
+    }
+  }, 20000);
 
   it('rejects an unknown action with VALIDATION_FAILED', async () => {
     const id = await createSession();

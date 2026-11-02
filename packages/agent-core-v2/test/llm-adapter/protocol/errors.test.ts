@@ -86,14 +86,14 @@ describe('translateProviderError — classification', () => {
     }
   });
 
-  it('keeps requestId and traceId in the details', () => {
+  it('keeps requestId and diagnostics in the details', () => {
     const translated = translateProviderError(
-      new APIStatusError(429, 'too many requests', 'req-1', null, 'trace-1'),
+      new APIStatusError(429, 'too many requests', 'req-1', null, { requestId: 'trace-1' }),
     );
     expect(translated.details).toMatchObject({
       statusCode: 429,
       requestId: 'req-1',
-      traceId: 'trace-1',
+      diagnostics: { requestId: 'trace-1' },
     });
   });
 

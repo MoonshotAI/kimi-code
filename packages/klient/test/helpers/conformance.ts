@@ -17,9 +17,15 @@ import { ToolResultEvent } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/t
 import { IEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionLookup';
+import { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
+import { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
+import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
+import { generateModel } from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
+import type { LlmRequester } from '@moonshot-ai/agent-core-v2/human/llm-requester/requester';
+import { coreRequesterFromA } from '../../../agent-core-v2/test/harness/scripted-generate.js';
 import {
   resetModelsDevUpstreamForTest,
   setModelsDevUpstreamForTest,
@@ -142,6 +148,18 @@ export function defineKlientConformance(
         title: 'conformance parent',
       });
       try {
+        const parentHandle = getLiveSessionById(target.app.accessor, parent.id)!;
+        const main = await parentHandle.accessor
+          .get(IAgentLifecycleService)
+          .create({ agentId: 'main' });
+        const mainHandle = parentHandle.accessor.get(IAgentLifecycleService).handleOf(main.agentId)!;
+        mainHandle.accessor.get(IAgentContextMemoryService).append({
+          role: 'user',
+          content: [{ type: 'text', text: 'fork through this turn' }],
+          origin: { kind: 'user' },
+        });
+        await mainHandle.accessor.get(IWireService).flush();
+
         const child = await target.klient.session(parent.id).createChild();
         try {
           expect(child.custom?.['parent_session_id']).toBe(parent.id);
@@ -150,10 +168,11 @@ export function defineKlientConformance(
         } finally {
           await target.klient.session(child.id).close();
         }
-        const forked = await target.klient.session(parent.id).fork();
+        const forked = await target.klient.session(parent.id).fork({ turnIndex: 0 });
         try {
           expect(forked.custom?.['parent_session_id']).toBeUndefined();
           expect(forked.custom?.['child_session_kind']).toBeUndefined();
+          expect(forked.lastPrompt).toBe('fork through this turn');
         } finally {
           await target.klient.session(forked.id).close();
         }
@@ -512,8 +531,17 @@ export function defineKlientConformance(
         await consume(kosong.generate(kimiId, publicInput, { thinkingEffort: 'on' }));
         await consume(kosong.generate(kimiId, publicInput, { thinkingEffort: 'max' }));
         const catalog = target.app.accessor.get(IModelCatalog);
-        await consume(catalog.generate(kimiId, coreInput, undefined, { thinkingEffort: 'on' }));
-        await consume(catalog.generate(kimiId, coreInput, undefined, { thinkingEffort: 'max' }));
+        const registry = target.app.accessor.get(IProtocolAdapterRegistry);
+        await consume(
+          generateModel(registry.request(catalog.get(kimiId), { thinkingEffort: 'on' }), coreInput, undefined, {
+            thinkingEffort: 'on',
+          }),
+        );
+        await consume(
+          generateModel(registry.request(catalog.get(kimiId), { thinkingEffort: 'max' }), coreInput, undefined, {
+            thinkingEffort: 'max',
+          }),
+        );
         expect(bodies.map((body) => body['thinking'])).toEqual([
           { type: 'enabled' },
           { type: 'enabled', effort: 'max' },
@@ -541,13 +569,21 @@ export function defineKlientConformance(
           type: 'image_url' as const,
           imageUrl: { url: 'data:image/png;base64,QUJD', id: 'response-image', name: 'pixel.png' },
         };
-        const generate = vi.spyOn(catalog, 'generate').mockImplementation(async function* () {
-          yield { type: 'part', part: responsePart };
-          yield {
-            type: 'finish',
-            message: { role: 'assistant', content: [responsePart], toolCalls: [] },
-          };
-        });
+        const fakeRequester: LlmRequester = {
+          generate: (_config, _content, control) => {
+            control.onEvent?.({ type: 'llm.streaming.part', part: responsePart });
+            control.onEvent?.({
+              type: 'llm.streaming.finish',
+              finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+            });
+            control.onEvent?.({ type: 'llm.done' });
+            return Promise.resolve();
+          },
+        };
+        const request = registry.request.bind(registry);
+        const generate = vi.spyOn(registry, 'request').mockImplementation((model, params) =>
+          coreRequesterFromA(request(model, params), fakeRequester),
+        );
         try {
           const responseEvents: unknown[] = [];
           for await (const event of kosong.generate(kimiId, publicInput)) {
@@ -563,10 +599,15 @@ export function defineKlientConformance(
           };
           expect(responseEvents).toStrictEqual([
             { type: 'part', part: publicPart },
-            {
+            expect.objectContaining({
               type: 'finish',
               message: { role: 'assistant', content: [publicPart], toolCalls: [] },
-            },
+            }),
+            expect.objectContaining({
+              type: 'timing',
+              firstTokenLatencyMs: expect.any(Number),
+              streamDurationMs: expect.any(Number),
+            }),
           ]);
         } finally {
           generate.mockRestore();

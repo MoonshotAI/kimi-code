@@ -29,6 +29,8 @@ export interface AgentSpawnAttemptOptions extends AgentRunAttemptOptions {
 export type AgentRunAttemptHandle = {
   readonly agentId: string;
   readonly profileName: string;
+  readonly model?: string;
+  readonly thinkingEffort?: string;
   readonly completion: Promise<{
     readonly result: string;
     readonly usage?: TokenUsage;
@@ -43,6 +45,7 @@ const RATE_LIMIT_RETRY_FACTOR = 2;
 const RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS = 2000;
 const RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS = 3 * 60 * 1000;
 const RATE_LIMIT_SUSPENDED_REASON = 'Provider rate limit; subagent requeued for retry.';
+const MEMBER_STOPPED_MESSAGE = 'The user stopped this subagent.';
 
 const AGENT_SWARM_MAX_CONCURRENCY_ENV = 'KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY';
 
@@ -99,8 +102,11 @@ type ActiveAttempt<T> = {
   timedOut: boolean;
 };
 
-export type AgentRunBatchOptions = {
+export type AgentRunBatchOptions<T = unknown> = {
   readonly maxConcurrency?: number;
+  readonly signal?: AbortSignal;
+  readonly onStarted?: (task: QueuedAgentRunTask<T>, handle: AgentRunAttemptHandle) => void;
+  readonly onSettled?: (result: AgentRunResult<T>) => void;
 };
 
 export class AgentRunBatch<T> {
@@ -111,6 +117,7 @@ export class AgentRunBatch<T> {
   private readonly controller = new AbortController();
   private readonly batchSignal: AbortSignal | undefined;
   private readonly batchAbortListener: () => void;
+  private readonly pendingStopUnlinks: Array<() => void> = [];
   private readonly maxConcurrency: number | undefined;
   private normalLaunchCount = 0;
   private normalLaunchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -131,7 +138,7 @@ export class AgentRunBatch<T> {
   constructor(
     private readonly launcher: AgentRunBatchLauncher,
     tasks: readonly QueuedAgentRunTask<T>[],
-    options: AgentRunBatchOptions = {},
+    private readonly options: AgentRunBatchOptions<T> = {},
   ) {
     this.maxConcurrency = options.maxConcurrency;
     this.states = tasks.map((task, index) => ({
@@ -143,7 +150,7 @@ export class AgentRunBatch<T> {
     }));
     this.pending = [...this.states];
     this.results = Array.from({ length: tasks.length });
-    this.batchSignal = tasks.find((task) => task.signal !== undefined)?.signal;
+    this.batchSignal = options.signal;
     this.batchAbortListener = () => {
       this.controller.abort(this.batchSignal?.reason);
       if (isUserCancellation(this.batchSignal?.reason)) {
@@ -175,6 +182,7 @@ export class AgentRunBatch<T> {
       }
 
       this.batchSignal?.addEventListener('abort', this.batchAbortListener, { once: true });
+      for (const state of this.states) this.watchPendingStop(state);
       this.schedule();
     });
   }
@@ -312,6 +320,7 @@ export class AgentRunBatch<T> {
     }
 
     attempt.state.agentId = handle.agentId;
+    this.options.onStarted?.(task, handle);
     try {
       const completion = await handle.completion;
       return {
@@ -370,7 +379,7 @@ export class AgentRunBatch<T> {
     if (this.finished) return;
 
     if ('status' in outcome) {
-      this.results[attempt.state.index] = outcome;
+      this.record(attempt.state.index, outcome);
     } else if (this.isOnlyUnfinishedTask(attempt.state)) {
       this.launcher.abandoned?.({
         task: attempt.state.task,
@@ -378,13 +387,13 @@ export class AgentRunBatch<T> {
         outcome: 'failed',
         error: outcome.error,
       });
-      this.results[attempt.state.index] = {
+      this.record(attempt.state.index, {
         task: attempt.state.task,
         agentId: outcome.agentId,
         status: 'failed',
         state: 'started',
         error: outcome.error,
-      };
+      });
     } else {
       this.requeueRateLimited(attempt, outcome.agentId);
     }
@@ -394,12 +403,53 @@ export class AgentRunBatch<T> {
   private handleAttemptError(attempt: ActiveAttempt<T>, error: unknown): void {
     if (!this.releaseAttempt(attempt)) return;
     if (this.finished) return;
-    this.results[attempt.state.index] = {
+    this.record(attempt.state.index, {
       task: attempt.state.task,
       agentId: attempt.state.agentId,
       status: 'failed',
       error: error instanceof Error ? error.message : String(error),
+    });
+    this.schedule();
+  }
+
+  private record(index: number, result: AgentRunResult<T>): void {
+    this.results[index] = result;
+    this.options.onSettled?.(result);
+  }
+
+  private watchPendingStop(state: TaskState<T>): void {
+    const signal = state.task.signal;
+    if (signal === undefined || signal === this.batchSignal) return;
+    const stop = (): void => {
+      this.stopPending(state);
     };
+    if (signal.aborted) {
+      stop();
+      return;
+    }
+    signal.addEventListener('abort', stop, { once: true });
+    this.pendingStopUnlinks.push(() => {
+      signal.removeEventListener('abort', stop);
+    });
+  }
+
+  private stopPending(state: TaskState<T>): void {
+    if (this.finished || this.batchSignal?.aborted === true) return;
+    const index = this.pending.indexOf(state);
+    if (index === -1) return;
+    this.pending.splice(index, 1);
+    if (state.agentId !== undefined) {
+      this.launcher.abandoned?.({ task: state.task, agentId: state.agentId, outcome: 'cancelled' });
+    }
+    const reason = state.task.signal?.reason;
+    const stoppedByUser = isUserCancellation(reason);
+    this.record(state.index, {
+      task: state.task,
+      agentId: state.agentId,
+      status: stoppedByUser ? 'aborted' : 'failed',
+      state: state.started || state.agentId !== undefined ? 'started' : 'not_started',
+      error: stoppedByUser ? MEMBER_STOPPED_MESSAGE : reason instanceof Error ? reason.message : String(reason),
+    });
     this.schedule();
   }
 
@@ -597,6 +647,8 @@ export class AgentRunBatch<T> {
 
   private cleanup(): void {
     this.batchSignal?.removeEventListener('abort', this.batchAbortListener);
+    for (const unlink of this.pendingStopUnlinks) unlink();
+    this.pendingStopUnlinks.length = 0;
     this.clearNormalTimer();
     this.clearRateLimitTimer();
     for (const attempt of this.active.values()) {
@@ -654,7 +706,9 @@ export class AgentRunBatch<T> {
     if (attempt.timedOut && attempt.state.task.timeout !== undefined) {
       return 'Subagent timed out.';
     }
-    if (status === 'aborted') return 'The user manually interrupted this subagent batch.';
+    if (status === 'aborted') {
+      return this.controller.signal.aborted ? 'The user manually interrupted this subagent batch.' : MEMBER_STOPPED_MESSAGE;
+    }
     return error instanceof Error ? error.message : String(error);
   }
 }

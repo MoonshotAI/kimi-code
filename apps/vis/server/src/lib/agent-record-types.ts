@@ -70,6 +70,8 @@ import type {
   TokenCountingRebased,
   TokenCountingTruncated,
   TokenCountingTurnRecorded,
+  ToolSelectInitialized,
+  ToolSelectToolsChanged,
   ToolsRegisterUserTool,
   ToolsUnregisterUserTool,
 } from '@moonshot-ai/agent-core-v2';
@@ -195,6 +197,8 @@ export type AgentRecord =
   | WireRecordOf<'mcp.server_failed', McpServerFailed>
   | WireRecordOf<'mcp.server_failure_resolved', McpServerFailureResolved>
   | WireRecordOf<'mcp.tools_discovered', McpToolsDiscovered>
+  | WireRecordOf<'tool_select.initialized', ToolSelectInitialized>
+  | WireRecordOf<'tool_select.tools_changed', ToolSelectToolsChanged>
   | WireRecordOf<'permission.record_approval_result', PermissionRecordApprovalResult>
   | WireRecordOf<'permission.set_mode', PermissionSetMode>
   | WireRecordOf<'plan_mode.cancel', PlanModeCancel>

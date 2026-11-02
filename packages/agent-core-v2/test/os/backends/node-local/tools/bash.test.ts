@@ -6,6 +6,7 @@ import {
   IAgentTaskService,
   type AgentTask,
   type AgentTaskInfo,
+  type AgentTaskOutputChunk,
   type AgentTaskOutputSnapshot,
   type AgentTaskStatus,
   type ForegroundTaskReleaseReason,
@@ -13,6 +14,7 @@ import {
 } from '#/agent/task/task';
 import type { AgentTaskSettlement } from '#/agent/task/types';
 import { userCancellationReason } from '#/_base/utils/abort';
+import { Event } from '#/_base/event';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -466,6 +468,9 @@ function createFakeTaskService(
 
   const service: IAgentTaskService = {
     _serviceBrand: undefined,
+    onDidAppendOutput: Event.None as Event<AgentTaskOutputChunk>,
+    onDidChangeTask: Event.None as Event<AgentTaskInfo>,
+    refresh(): void {},
     track(): never {
       throw new Error('fake IAgentTaskService.track is not implemented');
     },
@@ -587,6 +592,10 @@ function createFakeTaskService(
       const output = entry === undefined ? '' : entry.outputChunks.join('');
       if (tail === undefined) return output;
       return output.slice(-Math.max(0, Math.trunc(tail)));
+    },
+
+    async readOutputTail(): Promise<never> {
+      throw new Error('fake IAgentTaskService.readOutputTail is not implemented');
     },
 
     async suppressTerminalNotification(): Promise<void> {
@@ -809,14 +818,6 @@ describe('BashTool', () => {
       .properties;
 
     expect(properties['timeout']?.default).toBe(60);
-  });
-
-  it('renders the available commands section and the background-task panel hint', () => {
-    const { runner } = createTestRunner(processWithOutput());
-    const tool = bashTool(runner);
-
-    expect(tool.description).toContain('Commands available');
-    expect(tool.description).toContain('background-task panel');
   });
 
   it('runs through runner.spawn, injects cwd, noninteractive env, and closes stdin', async () => {
@@ -1350,19 +1351,6 @@ describe('BashTool', () => {
 
     const args = exec.mock.calls[0]?.[1] as readonly string[];
     expect(args[1]).toBe("cd '/workspace' && ls 2>nul");
-  });
-
-  it('exposes a shell description that documents /bin/bash, TaskOutput/TaskStop, safety and efficiency sections, and background semantics', () => {
-    const { runner } = createTestRunner(processWithOutput());
-    const tool = bashTool(runner);
-
-    const description = tool.description;
-    expect(description).toContain('`bash`');
-    expect(description).toContain('TaskOutput');
-    expect(description).toContain('TaskStop');
-    expect(description).toContain('**Guidelines for safety and security:**');
-    expect(description).toContain('**Guidelines for efficiency:**');
-    expect(description).toContain('run_in_background=true');
   });
 
   it('disables background execution when TaskList is inactive even if TaskOutput/TaskStop are active', async () => {

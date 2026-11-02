@@ -3,18 +3,15 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { afterEach } from 'vitest';
 
-import { IInstantiationService } from '#/_base/di/instantiation';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type {
   AgentLLMRequestOverrides,
   AgentLLMRequestPartHandler,
   AgentLLMRequestSource,
   AgentLLMRequestTask,
-  AgentLLMTurnRequestSnapshot,
-  IAgentLLMRequesterService,
+  LoopRequester,
   PreparedTurnRequestConfig,
-} from '#/agent/llmRequester/llmRequester';
-import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
+} from '#/agent/loop/requesterContract';
 import type {
   LlmCredentialProvider,
   LlmRequestConfig,
@@ -55,17 +52,11 @@ export function promptCacheComparisons(): number {
   return comparisons;
 }
 
-export class PromptCacheGuardedLLMRequesterService implements IAgentLLMRequesterService {
-  declare readonly _serviceBrand: undefined;
-
-  private readonly inner: IAgentLLMRequesterService;
-
+export class PromptCacheGuardedLoopRequester implements LoopRequester {
   constructor(
-    @IInstantiationService instantiation: IInstantiationService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-  ) {
-    this.inner = instantiation.createInstance(AgentLLMRequesterService);
-  }
+    private readonly inner: LoopRequester,
+    private readonly context: IAgentContextMemoryService,
+  ) {}
 
   prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined {
     return this.inner.prepareTurnConfig(turnId);
@@ -77,10 +68,6 @@ export class PromptCacheGuardedLLMRequesterService implements IAgentLLMRequester
 
   credentialProviderForTurn(turnId: number): LlmCredentialProvider | undefined {
     return this.inner.credentialProviderForTurn(turnId);
-  }
-
-  lastTurnRequest(): AgentLLMTurnRequestSnapshot | undefined {
-    return this.inner.lastTurnRequest();
   }
 
   request(

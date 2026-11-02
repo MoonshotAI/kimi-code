@@ -35,6 +35,14 @@ import {
 import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facade';
 import { IAgentLoopService, type PromptPayload, type SteerPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentPromptChannel } from '@moonshot-ai/agent-core-v2/agent/loop/promptChannel';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
+import {
+  generateModel,
+  type ModelRequestInput,
+  type ModelRequestParams,
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
+import { streamWithCredentialRecovery } from '@moonshot-ai/agent-core-v2/llm-adapter/model/credential-recovery';
 import {
   fromCorePart,
   toCorePart,
@@ -262,7 +270,7 @@ function agentLoopServiceView(agent: IAgentScopeHandle): Record<string, unknown>
       if (snapshot.state === 'running') {
         agent.accessor.get(ITelemetryService).track2('cancel', {
           from: 'streaming',
-          trace_id: snapshot.activeTraceId,
+          request_id: snapshot.activeRequestId,
         });
       }
       loop.cancel(turnId === undefined ? undefined : { turnId });
@@ -577,9 +585,8 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     },
 
     stream(scope, service, method, args): AsyncIterable<unknown> {
-      // Special case: modelResolver.generate routes to IModelCatalog.generate
-      // (which owns credential recovery); the dispatcher only supplies the
-      // abort signal so client cancellation still reaches the request.
+      // Special case: direct generate initializes one core request here;
+      // credential recovery and client cancellation stay at this boundary.
       if (service === 'modelResolver' && method === 'generate') {
         return {
           [Symbol.asyncIterator]() {
@@ -590,22 +597,21 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
             const ensureStarted = (): Promise<void> => {
               started ??= (async () => {
                 const resolved = await resolveScope(scope);
-                const catalog = resolveService(resolved, 'modelResolver');
                 const [modelId, input, params] = args;
-                const iterable = (
-                  catalog as {
-                    generate(
-                      id: string,
-                      input: unknown,
-                      signal: AbortSignal,
-                      params: unknown,
-                    ): AsyncIterable<unknown>;
-                  }
-                ).generate(
-                  modelId as string,
-                  wireClone(input),
+                const model = resolved.like.accessor.get(IModelCatalog).get(modelId as string);
+                const request = resolved.like.accessor
+                  .get(IProtocolAdapterRegistry)
+                  .request(model, wireClone(params) as ModelRequestParams | undefined);
+                const iterable = streamWithCredentialRecovery(
+                  model.credentialProvider,
+                  () =>
+                    generateModel(
+                      request,
+                      wireClone(input) as ModelRequestInput,
+                      controller.signal,
+                      wireClone(params) as ModelRequestParams | undefined,
+                    ),
                   controller.signal,
-                  wireClone(params),
                 );
                 source = iterable[Symbol.asyncIterator]();
               })();

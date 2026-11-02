@@ -353,7 +353,7 @@ describe('AskUserQuestionTool', () => {
     );
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
-      trace_id: undefined,
+      request_id: undefined,
     });
   });
 
@@ -409,7 +409,7 @@ describe('AskUserQuestionTool', () => {
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
       method: 'number_key',
-      trace_id: undefined,
+      request_id: undefined,
     });
   });
 
@@ -421,13 +421,13 @@ describe('AskUserQuestionTool', () => {
       toolCallId: 'call_question',
       args: input(),
       signal,
-      trace: { traceId: 'trace-q-1' },
+      trace: { requestId: 'trace-q-1' },
     });
 
     expect(result).toMatchObject({ isError: false });
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
-      trace_id: 'trace-q-1',
+      request_id: 'trace-q-1',
     });
   });
 
@@ -446,7 +446,7 @@ describe('AskUserQuestionTool', () => {
     expect(result).toMatchObject({ isError: false });
     expect(result.output).toContain('dismissed');
     expect(result.output).toContain('answers');
-    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', { trace_id: undefined });
+    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', { request_id: undefined });
   });
 
   it('resolves dismissed when the waiting question is aborted', async () => {

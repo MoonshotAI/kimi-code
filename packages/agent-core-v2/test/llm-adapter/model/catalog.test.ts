@@ -26,6 +26,9 @@ import {
   toProtocolProvider,
 } from '#/llm-adapter/model/catalog';
 import { ModelCatalog } from '#/llm-adapter/model/catalog-service';
+import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import { generateModel } from '#/llm-adapter/model/generate';
+import { coreRequesterFromA } from '../../harness/scripted-generate';
 import { ProviderCatalogRuntimeService } from '#/llm-adapter/model/catalog-runtime';
 import '#/llm-adapter/model/errors';
 import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
@@ -557,14 +560,11 @@ describe('Model assembly (pure data)', () => {
 });
 
 describe('ModelCatalog caching and config-event invalidation', () => {
-  it('caches per id; getRequester returns the cached pair', () => {
+  it('caches per id and returns the same model metadata', () => {
     const { host, catalog } = createHost(kimiSections);
     try {
       const model = catalog.get('k1');
       expect(catalog.get('k1')).toBe(model);
-      const requester = catalog.getRequester('k1');
-      expect(catalog.getRequester('k1')).toBe(requester);
-      expect(requester.model).toBe(model);
     } finally {
       host.dispose();
     }
@@ -643,9 +643,9 @@ describe('headers merge order', () => {
   });
 });
 
-describe('ModelCatalog ping', () => {
+describe('direct generate', () => {
   it('returns the streamed text and usage on a live success', async () => {
-    const { host, models, providers } = createHost(kimiSections, stubModelOAuthTokens());
+    const { host, catalog } = createHost(kimiSections, stubModelOAuthTokens());
     try {
       const fakeRequester: LlmRequester = {
         generate: (_config, _content, control) => {
@@ -662,50 +662,38 @@ describe('ModelCatalog ping', () => {
           return Promise.resolve();
         },
       };
-      const registry = {
-        _serviceBrand: undefined,
-        supportedProtocols: () => [],
-        resolveAdapterIdentity: () => {
-          throw new Error('not exercised');
-        },
-        resolveProviderBaseId: () => {
-          throw new Error('not exercised');
-        },
-        resolveCapability: () => UNKNOWN_CAPABILITY,
-        resolve: (model: Model) => ({
-          requester: fakeRequester,
-          protocol: 'openai',
-          model: {
-            provider: 'fake',
-            model: model.name,
-            capability: {
-              image_in: false,
-              video_in: false,
-              audio_in: false,
-              thinking: false,
-              tool_use: true,
-            },
-          },
-        }),
-      } as unknown as IProtocolAdapterRegistry;
-      const catalog = new ModelCatalog(
-        new ProviderCatalogRuntimeService(models, providers),
-        providers,
-        models,
-        stubModelOAuthTokens(),
-        registry,
-        { headers: {}, thirdPartyHeaders: {} },
+      const model = catalog.get('k1');
+      const requester = coreRequesterFromA(
+        new ProtocolAdapterRegistry().request(model, { maxCompletionTokens: 512 }),
+        fakeRequester,
       );
-      const result = await catalog.ping('k1');
-      expect(result).toMatchObject({ ok: true, text: 'pong', finishReason: 'completed' });
-      expect(result.usage).toEqual(emptyUsage());
-      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+      const events = [];
+      for await (const event of generateModel(
+        requester,
+        {
+          systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
+          tools: [],
+          messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }],
+        },
+        undefined,
+        { maxCompletionTokens: 512 },
+      )) {
+        events.push(event);
+      }
+      expect(events.find((event) => event.type === 'part')).toMatchObject({
+        part: { type: 'text', text: 'pong' },
+      });
+      expect(events.find((event) => event.type === 'usage')).toMatchObject({ usage: emptyUsage() });
+      expect(events.find((event) => event.type === 'finish')).toMatchObject({
+        providerFinishReason: 'completed',
+        id: 'msg-1',
+      });
     } finally {
       host.dispose();
     }
   });
 
-  it('returns ok:false with the translated error when the wire fails', async () => {
+  it('surfaces the translated error when the wire fails', async () => {
     const { host, catalog } = createHost({
       models: {
         flat: {
@@ -718,9 +706,21 @@ describe('ModelCatalog ping', () => {
       },
     });
     try {
-      const result = await catalog.ping('flat');
-      expect(result.ok).toBe(false);
-      expect(result.error).toBeTruthy();
+      const model = catalog.get('flat');
+      const failure = await (async () => {
+        try {
+          for await (const _event of generateModel(
+            new ProtocolAdapterRegistry().request(model),
+            { systemPrompt: 'ping', tools: [], messages: [] },
+            undefined,
+          )) {
+          }
+          return undefined;
+        } catch (error) {
+          return error;
+        }
+      })();
+      expect(failure).toBeTruthy();
     } finally {
       host.dispose();
     }
@@ -729,7 +729,7 @@ describe('ModelCatalog ping', () => {
   it('rejects with config.invalid for unknown models', async () => {
     const { host, catalog } = createHost(kimiSections);
     try {
-      await expect(catalog.ping('nope')).rejects.toThrowError(
+      expect(() => catalog.get('nope')).toThrowError(
         expect.objectContaining({ code: ConfigErrors.codes.CONFIG_INVALID }),
       );
     } finally {

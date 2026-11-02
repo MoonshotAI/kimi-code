@@ -6,15 +6,6 @@ export function fakeModelCatalog(): IModelCatalog {
     get: () => {
       throw new Error('modelCatalog.get not exercised in this test');
     },
-    getRequester: () => {
-      throw new Error('modelCatalog.getRequester not exercised in this test');
-    },
-    generate: () => {
-      throw new Error('modelCatalog.generate not exercised in this test');
-    },
-    ping: () => {
-      throw new Error('modelCatalog.ping not exercised in this test');
-    },
     findByName: () => [],
     listModels: async () => [],
     listProviders: async () => [],
