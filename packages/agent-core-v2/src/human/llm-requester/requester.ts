@@ -11,7 +11,7 @@ import type { ThinkingRequestOptions } from '#/llm-requester/thinking';
 import type { TokenUsage } from '#/llm-requester/usage';
 
 import type { LlmCredentialProvider } from '#/llm/request';
-import type { LlmRemoteErrorMessage as CoreLlmRemoteErrorMessage } from '#/llm/response';
+import type { LlmNotice, LlmRemoteErrorMessage as CoreLlmRemoteErrorMessage } from '#/llm/response';
 
 import type { AnthropicExtraParams } from '#/llm/builtin/protocol/anthropic/extra-params';
 import type { GoogleGenAIExtraParams } from '#/llm/builtin/protocol/google-genai/extra-params';
@@ -30,6 +30,7 @@ export interface ToolCallIdPolicy {
 export type LlmErrorClassifier = (error: unknown) => CoreLlmRemoteErrorMessage | undefined;
 
 export type LlmRequestEvent =
+  | { type: 'llm.notice'; notice: LlmNotice }
   | { type: 'llm.sent' }
   | { type: 'llm.streaming.headers'; headers: Record<string, string> }
   | { type: 'llm.streaming.part'; part: StreamedMessagePart }

@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 
 import type { ResolvedEndpoint } from '#/llm/endpoint';
+import type { LlmNotice } from '#/llm/response';
 import { headersToRecord, requestIdFromHeader } from '#/llm/protocol/kit/http';
 import { defineProtocol } from '#/llm/protocol/protocol';
 
@@ -88,6 +89,7 @@ const UNSUPPORTED_ROOT_SCHEMA_KEYS = new Set(['oneOf', 'anyOf', 'allOf']);
 function requestParamsForClient(
   client: Anthropic,
   params: Request['params'],
+  report?: (notice: LlmNotice) => void,
 ): Request['params'] {
   let officialEndpoint = false;
   try {
@@ -97,13 +99,22 @@ function requestParamsForClient(
   }
   if (!officialEndpoint) return params;
   if (params.tools === undefined) return params;
+  const omittedNames: string[] = [];
   let tools = params.tools.filter((tool) => {
     if (!('input_schema' in tool)) return true;
-    return !Object.entries(tool.input_schema).some(
+    const compatible = !Object.entries(tool.input_schema).some(
       ([key, value]) => value !== undefined && UNSUPPORTED_ROOT_SCHEMA_KEYS.has(key),
     );
+    if (!compatible) omittedNames.push(tool.name);
+    return compatible;
   });
-  if (tools.length === params.tools.length) return params;
+  if (omittedNames.length === 0) return params;
+  report?.({
+    source: 'anthropic.tool_schema',
+    code: 'incompatible_tools_omitted',
+    message: `Anthropic cannot use these tools because their root input schema has oneOf, anyOf, or allOf: ${omittedNames.join(', ')}`,
+    data: { toolNames: omittedNames },
+  });
   const cacheControl = params.tools.at(-1)?.cache_control;
   const lastTool = tools.at(-1);
   if (cacheControl !== undefined && lastTool !== undefined && (lastTool.cache_control === undefined || lastTool.cache_control === null)) {
@@ -133,8 +144,8 @@ export const anthropicProtocol = defineProtocol<
   ...anthropicPipeline,
   capability: getAnthropicModelCapability,
   client: createClient,
-  send: async (client: Anthropic, request: Request, signal) => {
-    const params = { ...requestParamsForClient(client, request.params), stream: false as const };
+  send: async (client: Anthropic, request: Request, signal, report) => {
+    const params = { ...requestParamsForClient(client, request.params, report), stream: false as const };
     const options = requestOptionsOf(request, signal);
     const { data, response } = request.useBetaApi
       ? await client.beta.messages.create(params, options).withResponse()
@@ -144,8 +155,8 @@ export const anthropicProtocol = defineProtocol<
       headers: headersToRecord(response.headers) ?? {},
     };
   },
-  sendStream: async (client: Anthropic, request: Request, signal) => {
-    const params = { ...requestParamsForClient(client, request.params), stream: true as const };
+  sendStream: async (client: Anthropic, request: Request, signal, report) => {
+    const params = { ...requestParamsForClient(client, request.params, report), stream: true as const };
     const options = requestOptionsOf(request, signal);
     const { data, response } = request.useBetaApi
       ? await client.beta.messages.create(params, options).withResponse()

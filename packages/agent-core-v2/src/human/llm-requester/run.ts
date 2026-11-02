@@ -52,6 +52,7 @@ function translateEvent(
   onEvent: (event: LlmRequestEvent) => void,
 ): void {
   switch (event.type) {
+    case 'llm.notice':
     case 'llm.sent':
     case 'llm.streaming.headers':
     case 'llm.streaming.usage':
