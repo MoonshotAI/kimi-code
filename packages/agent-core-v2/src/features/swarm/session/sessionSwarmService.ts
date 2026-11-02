@@ -4,6 +4,7 @@ import { Error2, ErrorCodes } from '#/errors';
 import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { Event2 } from '#/app/event/event2';
@@ -43,6 +44,7 @@ import {
   type AgentRunBatchLauncher,
   type AgentRunAttemptHandle,
 } from './agentRunBatch';
+import { SwarmMemberTasks } from './swarmMemberTask';
 
 export interface SubagentSuspendedPayload {
   readonly subagentId: string;
@@ -86,13 +88,24 @@ export class SessionSwarmService implements ISessionSwarmService {
 
   run<T>(args: SessionSwarmRunArgs<T>): Promise<readonly SessionSwarmRunResult<T>[]> {
     const { callerAgentId, tasks } = args;
+    const maxConcurrency = resolveSwarmMaxConcurrency();
     const controller = new AbortController();
     this.inFlight.set(callerAgentId, controller);
     const unlinks: Array<() => void> = [];
+    const memberControllers = new Map<SessionSwarmTask, AbortController>();
     const linkedTasks: SessionSwarmTask<T>[] = tasks.map((task) => {
       if (task.signal !== undefined) unlinks.push(linkAbortSignal(task.signal, controller));
-      return { ...task, signal: controller.signal };
+      const memberController = new AbortController();
+      unlinks.push(linkAbortSignal(controller.signal, memberController));
+      const linked = { ...task, signal: memberController.signal };
+      memberControllers.set(linked, memberController);
+      return linked;
     });
+    const members = new SwarmMemberTasks(
+      this.agentLifecycle.handleOf(callerAgentId)?.accessor.get(IAgentTaskService),
+      linkedTasks,
+      (member, reason) => memberControllers.get(member)?.abort(reason),
+    );
     const terminalized = new Set<string>();
     const terminalize: TerminalizeSubagent = (agentId, event) => {
       if (terminalized.has(agentId)) return;
@@ -111,6 +124,7 @@ export class SessionSwarmService implements ISessionSwarmService {
             reason: event.reason,
           }),
         );
+        members.suspended(event.task, event.reason);
       },
       abandoned: (event) => {
         terminalize(
@@ -124,8 +138,18 @@ export class SessionSwarmService implements ISessionSwarmService {
         );
       },
     };
-    const maxConcurrency = resolveSwarmMaxConcurrency();
-    const promise = new AgentRunBatch(launcher, linkedTasks, { maxConcurrency }).run();
+    const promise = new AgentRunBatch(launcher, linkedTasks, {
+      maxConcurrency,
+      signal: controller.signal,
+      onStarted: (task, handle) => members.started(task, handle),
+      onSettled: (result) => members.settled(result),
+    }).run();
+    void promise.then(
+      (results) => {
+        for (const result of results) members.settled(result);
+      },
+      (error: unknown) => members.failAll(error),
+    );
     void promise
       .finally(() => {
         for (const unlink of unlinks) unlink();
@@ -243,9 +267,12 @@ export class SessionSwarmService implements ISessionSwarmService {
       signal: options.signal,
       terminalize,
     });
+    const profile = child.accessor.get(IAgentProfileService);
     return {
       agentId,
       profileName,
+      model: profile.data().modelAlias,
+      thinkingEffort: profile.getEffectiveThinkingLevel(),
       completion: mirrored.then((r) => ({
         result: r.summary,
         usage: r.usage,
