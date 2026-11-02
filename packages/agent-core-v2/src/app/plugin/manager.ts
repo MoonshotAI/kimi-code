@@ -215,7 +215,7 @@ export class PluginManager {
       }
       if (
         options.expectedPluginId !== undefined &&
-        parsed.manifest.name !== options.expectedPluginId
+        normalizePluginId(parsed.manifest.name) !== normalizePluginId(options.expectedPluginId)
       ) {
         throw new Error2(
           ErrorCodes.PLUGIN_LOAD_FAILED,
@@ -620,7 +620,7 @@ export class PluginManager {
           { details: { source } },
         );
       }
-      if (parsed.manifest.name !== options.expectedPluginId) {
+      if (normalizePluginId(parsed.manifest.name) !== normalizePluginId(options.expectedPluginId)) {
         throw new Error2(
           ErrorCodes.PLUGIN_LOAD_FAILED,
           `Plugin manifest ID mismatch: expected "${options.expectedPluginId}", got "${parsed.manifest.name}"`,

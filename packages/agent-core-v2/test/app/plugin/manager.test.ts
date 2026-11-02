@@ -506,6 +506,26 @@ describe('PluginManager', () => {
     expect(manager.get('demo')).toBeUndefined();
   });
 
+  it('normalizes catalog and manifest IDs before installing and inspecting archives', async () => {
+    const fixture = await makeZip('MY-PLUGIN');
+    try {
+      const manager = new PluginManager({ kimiHomeDir: home });
+      const expectedSha256 = createHash('sha256').update(fixture.buffer).digest('hex');
+      const source = 'https://example.test/case-plugin.zip';
+      const options = {
+        expectedSha256,
+        expectedPluginId: 'my-plugin',
+        fetchImpl: async () => new Response(fixture.buffer),
+      };
+
+      await expect(manager.inspect(source, options)).resolves.toBeDefined();
+      const record = await manager.install(source, options);
+      expect(record.id).toBe('my-plugin');
+    } finally {
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a manifest ID mismatch before publishing the managed copy', async () => {
     const fixture = await makeZip('actual-id');
     try {
