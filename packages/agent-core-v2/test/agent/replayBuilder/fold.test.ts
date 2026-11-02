@@ -4,6 +4,8 @@ import { foldWireRecords } from '#/agent/replayBuilder/fold';
 import type { AgentReplayRecord } from '#/agent/replayBuilder/types';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { WireRecord } from '#/wire/record';
+import { fromCoreMessage } from '#human/message';
+import { fromLlmMessage } from '#/llm-adapter/contract/message';
 
 const METADATA: WireRecord = { type: 'metadata', protocol_version: '1.5', created_at: 0 };
 
@@ -15,7 +17,6 @@ function userMessage(text: string, origin?: ContextMessage['origin']): ContextMe
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin,
   };
 }
@@ -72,6 +73,7 @@ describe('foldWireRecords', () => {
     expect(assistant).toMatchObject({ type: 'message', time: 10 });
     if (assistant?.type !== 'message') throw new Error('expected message record');
     expect(assistant.message.role).toBe('assistant');
+    if (assistant.message.role !== 'assistant') throw new Error('expected assistant message');
     expect(assistant.message.content).toEqual([{ type: 'text', text: 'working' }]);
     expect(assistant.message.toolCalls).toEqual([
       { type: 'function', id: 'tc1', name: 'Shell', arguments: '{"command":"ls"}', extras: undefined },
@@ -383,16 +385,71 @@ describe('foldWireRecords', () => {
       { type: 'totally.unknown.op', time: 13 },
     ]);
     expect(folded).toEqual({ replay: [], toolStore: {} });
+
+    const turnClock = fold([
+      { type: 'turn.prompt', turnId: 4, input: [{ type: 'text', text: 'current' }], origin: { kind: 'user' }, time: 1 },
+      { type: 'turn.steer', input: [{ type: 'text', text: 'steered' }], origin: { kind: 'user' }, time: 2 },
+      { type: 'turn.cancel', turnId: 5, time: 3 },
+      appendMessage(userMessage('current', { kind: 'user' }), 4),
+      appendMessage(userMessage('steered', { kind: 'user' }), 4.5),
+      { type: 'turn.cancel', turnId: 5, target: 'queued', time: 5 },
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'next' }], origin: { kind: 'user' }, time: 6 },
+      appendMessage(userMessage('next', { kind: 'user' }), 7),
+    ]);
+    expect(messageRecords(turnClock.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([4, 4, 6]);
+
+    const mixed = fold([
+      { type: 'turn.prompt', turnId: 7, input: [{ type: 'text', text: 'persistent' }], origin: { kind: 'user' }, time: 1 },
+      appendMessage(userMessage('persistent', { kind: 'user' }), 2),
+      { type: 'turn.ended', turnId: 7, reason: 'completed', time: 3 },
+      appendMessage(userMessage('legacy tail', { kind: 'user' }), 4),
+      appendMessage({ role: 'assistant', content: [], toolCalls: [] }, 5),
+    ]);
+    expect(messageRecords(mixed.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([7, undefined, undefined]);
+
+    const ordered = fold([
+      appendMessage(userMessage('same', { kind: 'user' }), 1),
+      { type: 'turn.prompt', turnId: 7, input: [{ type: 'text', text: 'same' }], origin: { kind: 'user' }, time: 2 },
+      appendMessage(userMessage('same', { kind: 'user' }), 3),
+    ]);
+    expect(messageRecords(ordered.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([undefined, 7]);
   });
 
   it('migrates older protocol journals before folding', () => {
     const legacy: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.0', created_at: 0 },
-      appendMessage(userMessage('hi'), 3),
+      {
+        type: 'context.append_message',
+        message: fromLlmMessage(fromCoreMessage(userMessage('hi'))),
+        time: 3,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call_legacy',
+              function: { name: 'Bash', arguments: '{}' },
+            },
+          ],
+        },
+        time: 4,
+      },
     ];
-    const folded = foldWireRecords(legacy);
-    expect(folded.replay).toHaveLength(1);
+    const decoded: WireRecord[] = [];
+    const folded = foldWireRecords(legacy, (record) => {
+      decoded.push(record);
+      return record;
+    });
+    expect(folded.replay).toHaveLength(2);
     expect(folded.replay[0]).toMatchObject({ type: 'message', time: 3 });
+    expect(decoded).toHaveLength(3);
+    expect(decoded[2]?.['message']).toMatchObject({
+      toolCalls: [{ id: 'call_legacy', name: 'Bash', arguments: '{}' }],
+    });
   });
 
   it('clears replay-visible state on context.clear without touching earlier replay records', () => {

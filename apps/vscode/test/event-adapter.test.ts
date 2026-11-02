@@ -29,7 +29,7 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
 
     expect(result.event).toEqual({
       type: 'TurnBegin',
-      payload: { user_input: 'Fix the failing test' },
+      payload: { user_input: 'Fix the failing test', turnIndex: 7 },
       _sessionId: 'session-1',
     });
   });

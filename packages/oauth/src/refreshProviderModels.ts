@@ -246,12 +246,27 @@ interface ProviderModelSnapshot {
   readonly model: ManagedKimiModelAlias;
 }
 
+// Field order follows how the config file happened to be written: the writer
+// keeps existing keys in place and appends new ones, while a refresh builds
+// aliases in registry order. Snapshots sort keys so order alone never counts as
+// a change.
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .toSorted()
+      .map((key) => [key, sortKeysDeep(value[key])]),
+  );
+}
+
 // Compare the full model metadata for the relevant aliases, not just model IDs:
 // a registry can change capabilities (e.g. enabling reasoning) without changing
 // any model ID. Spreading the whole alias keeps this in sync with the schema
-// automatically; only `capabilities` needs normalizing because its order is not
-// meaningful. `defaultModel` joins the snapshot so a lost selection flips the
-// provider to changed and the re-selected default is written back.
+// automatically; `capabilities` is sorted because its order is not meaningful,
+// and keys are sorted for the same reason. `defaultModel` joins the snapshot so
+// a lost selection flips the provider to changed and the re-selected default is
+// written back.
 function providerModelSnapshot(
   config: ManagedKimiConfigShape,
   providerId: string,
@@ -270,7 +285,7 @@ function providerModelSnapshot(
     });
   }
   snapshots.sort((a, b) => a.alias.localeCompare(b.alias));
-  return JSON.stringify({ defaultModel: config.defaultModel ?? null, models: snapshots });
+  return JSON.stringify(sortKeysDeep({ defaultModel: config.defaultModel ?? null, models: snapshots }));
 }
 
 function providerModelsEqual(
@@ -286,7 +301,7 @@ function providerModelsEqual(
 }
 
 function providerConfigSnapshot(config: ManagedKimiConfigShape, providerId: string): string {
-  return JSON.stringify(config.providers[providerId] ?? null);
+  return JSON.stringify(sortKeysDeep(config.providers[providerId] ?? null));
 }
 
 function providerConfigEqual(

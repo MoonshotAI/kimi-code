@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { Jimp } from 'jimp';
 
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -50,10 +50,11 @@ import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
-import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
+import { stubAgentEnvironment } from '../../environment/stubs';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -222,14 +223,14 @@ describe('AgentToolExecutorService', () => {
     await execute(
       [toolCall('call_traced', 'echo', { text: 'hi' })],
       undefined,
-      { traceId: 'trace-tool-1' },
+      { requestId: 'trace-tool-1' },
     );
 
     expect(telemetryEvents).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
         tool_call_id: 'call_traced',
-        trace_id: 'trace-tool-1',
+        request_id: 'trace-tool-1',
       }),
     });
   });
@@ -1060,7 +1061,7 @@ describe('truncation pipeline', () => {
   let readConfig: IConfigService;
   let globProcess: HostProcessService;
   let attachmentStore: SessionMediaStoreService;
-  let mediaRuntime: IAgentRuntimeService;
+  let mediaEnvironment: IAgentEnvironmentService;
 
   beforeEach(async () => {
     homeDir = await mkdtemp(join(tmpdir(), 'tool-executor-truncation-'));
@@ -1093,18 +1094,12 @@ describe('truncation pipeline', () => {
     readConfig = truncationContainer.get(IConfigService);
     await readConfig.ready;
     globProcess = new HostProcessService();
-    const runtime = Object.assign(new FakeRuntime(
-      { workspaceId: 'workspace', runtimeId: 'local', generation: 'test' },
+    const environment = Object.assign(new FakeEnvironment(
+      { environmentId: 'local', generation: 'test' },
       { capabilities: ['fs', 'process'] },
     ), { fs: new HostFileSystem(), process: globProcess });
-    const binding: IAgentRuntimeService = {
-      _serviceBrand: undefined,
-      onDidChange: () => ({ dispose: () => {} }),
-      isAvailable: () => true,
-      inspect: () => runtime,
-      acquire: () => ({ runtime, track: (resource) => resource, dispose: () => {} }),
-    };
-    mediaRuntime = binding;
+    const binding = stubAgentEnvironment(environment);
+    mediaEnvironment = binding;
     registry.register(new ReadTool(
       binding,
       stubWorkspaceContext(homeDir),
@@ -1190,6 +1185,8 @@ describe('truncation pipeline', () => {
   });
 
   it('recovers an expanded Glob listing beyond spill retention using complete saved pages', async () => {
+    await readConfig.set('read', { maxChars: 500_000 });
+    await readConfig.reload();
     const root = await mkdtemp(join(tmpdir(), 'r'.repeat(180)));
     try {
       const names = Array.from({ length: 60_000 }, (_, i) => `file-${String(i).padStart(6, '0')}.ts`);
@@ -1311,15 +1308,13 @@ describe('truncation pipeline', () => {
   });
 
   it('resolves attachment references for media reads and exposes binary paths for converters', async () => {
-    const runtimeFs = mediaRuntime.inspect().fs!;
-    vi.spyOn(runtimeFs, 'stat').mockRejectedValue(new Error('client cannot access daemon storage'));
-    vi.spyOn(runtimeFs, 'readBytes').mockRejectedValue(new Error('client cannot access daemon storage'));
-    vi.spyOn(runtimeFs, 'readLines').mockImplementation(() => {
+    const environmentFs = mediaEnvironment.inspect().fs!;
+    vi.spyOn(environmentFs, 'stat').mockRejectedValue(new Error('client cannot access daemon storage'));
+    vi.spyOn(environmentFs, 'readBytes').mockRejectedValue(new Error('client cannot access daemon storage'));
+    vi.spyOn(environmentFs, 'readLines').mockImplementation(() => {
       throw new Error('client cannot access daemon storage');
     });
-    registry.register(new ReadMediaFileTool(mediaRuntime, { workspaceDir: homeDir, additionalDirs: [] }, {
-      image_in: true, video_in: false, audio_in: false, thinking: false, tool_use: true,
-    }, undefined, undefined, undefined, undefined, attachmentStore));
+    registry.register(new ReadMediaFileTool(mediaEnvironment, { workspaceDir: homeDir, additionalDirs: [] }, attachmentStore));
     const png = Buffer.from(await new Jimp({ width: 32, height: 32, color: 0x3366ccff }).getBuffer('image/png'));
     const bytes = [png, Buffer.from('%PDF-1.4\nexample\n%%EOF')];
     const client: MCPClient = {
@@ -1353,9 +1348,9 @@ describe('truncation pipeline', () => {
     expect(readFileSync(paths[1]!).equals(bytes[1]!)).toBe(true);
   });
 
-  it('reads session text from its owner while workspace text still uses the runtime buffer', async () => {
-    const runtimeFs = mediaRuntime.inspect().fs!;
-    const clientRead = vi.spyOn(runtimeFs, 'readLines').mockImplementation(async function* () {
+  it('reads session text from its owner while workspace text still uses the environment buffer', async () => {
+    const environmentFs = mediaEnvironment.inspect().fs!;
+    const clientRead = vi.spyOn(environmentFs, 'readLines').mockImplementation(async function* () {
       yield 'unsaved client buffer\n';
     });
     const workspaceFile = join(homeDir, 'workspace.txt');
@@ -1532,7 +1527,7 @@ describe('truncation pipeline', () => {
     expect(result.output.length).toBeGreaterThan(50_000);
     expect(result.output.replaceAll(/^\d+\t/gm, '')).toBe(content.trimEnd());
     expect(result.truncated).toBeUndefined();
-    expect(result.note).toContain('Requested range complete.');
+    expect(result.note).toBeUndefined();
     expect(result.output).not.toContain('output_path:');
   });
 

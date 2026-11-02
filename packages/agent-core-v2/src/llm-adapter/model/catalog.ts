@@ -3,19 +3,12 @@ import { z } from 'zod';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { ModelCapability } from '../contract/capability';
-import type { LlmCredentialProvider } from '#human/llm/requester/requester';
-import type { TokenUsage } from '#human/llm/usage';
+import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import type { Protocol, ProtocolProviderOptions } from '../protocol/protocol';
 import type { ProviderConfig } from '../provider/provider';
 
 import type { ModelRecord, ModelUpgrade } from './model';
 import { effectiveModelConfig } from './model-auth';
-import type {
-  ModelRequestEvent,
-  ModelRequestInput,
-  ModelRequestParams,
-  ModelRequester,
-} from './model-requester';
 
 export interface Model {
   readonly id: string;
@@ -40,15 +33,6 @@ export interface Model {
 
   readonly credentialProvider?: LlmCredentialProvider;
   readonly providerOptions?: ProtocolProviderOptions;
-}
-
-export interface ModelPingResult {
-  readonly ok: boolean;
-  readonly durationMs: number;
-  readonly text?: string;
-  readonly finishReason?: string;
-  readonly usage?: TokenUsage;
-  readonly error?: string;
 }
 
 export const modelCatalogItemSchema = z.object({
@@ -193,14 +177,6 @@ export interface IModelCatalog {
   readonly _serviceBrand: undefined;
 
   get(id: string): Model;
-  getRequester(id: string): ModelRequester;
-  generate(
-    id: string,
-    input: ModelRequestInput,
-    signal?: AbortSignal,
-    params?: ModelRequestParams,
-  ): AsyncIterable<ModelRequestEvent>;
-  ping(id: string): Promise<ModelPingResult>;
   findByName(name: string): readonly string[];
 
   listModels(): Promise<readonly ModelCatalogItem[]>;

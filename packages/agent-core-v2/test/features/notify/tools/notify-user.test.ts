@@ -133,7 +133,6 @@ describe('NotifyUserTool', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'do the thing' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     context.append({
@@ -147,7 +146,6 @@ describe('NotifyUserTool', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'nudge' }],
-      toolCalls: [],
       origin: { kind: 'injection', variant: NOTIFY_USER_NUDGE_VARIANT },
     });
     context.append({

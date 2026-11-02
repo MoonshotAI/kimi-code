@@ -1,4 +1,4 @@
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentPlanService, type PlanData } from '#/features/plan/plan';
@@ -39,6 +39,7 @@ function planService({
     cancel: vi.fn(),
     clear: vi.fn(async () => {}),
     exit: exit ?? vi.fn(),
+    resolveFile: async () => undefined,
     recordRevision: vi.fn(async () => {}),
     status: vi.fn(async () => status),
   };

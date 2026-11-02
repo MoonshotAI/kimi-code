@@ -28,7 +28,6 @@ export interface TaskStarted {
 const taskTerminatedSchema = z.object({
   agentId: z.string(),
   info: z.custom<AgentTaskInfo>(),
-  outputTail: z.string().optional(),
 });
 
 export class TaskTerminated extends AgentEvent2<z.infer<typeof taskTerminatedSchema>> {
@@ -39,7 +38,6 @@ export class TaskTerminated extends AgentEvent2<z.infer<typeof taskTerminatedSch
 export interface TaskTerminated {
   readonly agentId: string;
   readonly info: AgentTaskInfo;
-  readonly outputTail?: string;
 }
 
 export interface TaskTerminatedNoticePayload {

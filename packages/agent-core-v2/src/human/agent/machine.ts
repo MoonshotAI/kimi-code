@@ -17,7 +17,7 @@ import {
 } from '#/xstate2';
 
 import { createUserMessage, type ToolCall, type UserMessage } from '#/llm/message';
-import type { LlmRequestConfig } from '#/llm/requester/requester';
+import type { LlmRequestConfig } from '#/llm-requester/requester';
 import type { ToolExecutor, ToolResult } from '#/tool/executor';
 import { createToolMachine, type ToolEvent, type ToolOutput } from '#/tool/machine';
 import type { ToolDefinition } from '#/tool/tool';
@@ -84,7 +84,7 @@ export type AgentEvent =
   | ToolEvent
   | { type: 'input.submit'; entry: UserEntry }
   | { type: 'input.notify'; entry: UserEntry }
-  | { type: 'input.remind'; key: string; entry: SystemEntry | UserEntry }
+  | { type: 'input.remind'; entry: SystemEntry | UserEntry }
   | { type: 'input.steer'; id: string | readonly string[] }
   | { type: 'input.cancel'; id: string }
   | { type: 'input.abort'; reason?: unknown }
@@ -477,14 +477,12 @@ export function createAgentMachine({
       'input.remind': {
         actions: assign(({ context, event }) => {
           if (event.type !== 'input.remind') return {};
-          const kept = context.reminders.filter((entry) => entry.meta?.key !== event.key);
-          const meta = { source: 'reminder', key: event.key, ...event.entry.meta };
-          kept.push(
+          const meta = { source: 'reminder', ...event.entry.meta };
+          const entry =
             event.entry.message.role === 'system'
               ? createSystemEntry(event.entry.message, meta)
-              : createUserEntry(event.entry.message, meta),
-          );
-          return { reminders: kept };
+              : createUserEntry(event.entry.message, meta);
+          return { reminders: [...context.reminders, entry] };
         }),
       },
       'input.steer': {
@@ -603,13 +601,7 @@ export function createAgentMachine({
             actions: assign(({ context, event }) => ({
               ...mirrorPatch(event.state),
               notifications: [...event.state.notifications, ...context.notifications],
-              reminders: [
-                ...event.state.reminders.filter(
-                  (entry) =>
-                    !context.reminders.some((local) => local.meta?.key === entry.meta?.key),
-                ),
-                ...context.reminders,
-              ],
+              reminders: [...event.state.reminders, ...context.reminders],
               queue: [...event.state.queue, ...context.queue],
               turnId: event.state.turnIndex.nextTurnId,
               branchId: event.branch,

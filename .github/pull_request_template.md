@@ -8,8 +8,8 @@ See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
 
 ## Requirement or Bug
 
-<!-- If there's an issue, write Resolve #(issue_number).
-     If it's a requirement, describe it briefly in plain language (under 100 characters). -->
+<!-- If there's an issue, write Resolve #(issue_number) and add one sentence of context.
+     Otherwise, in 2–3 plain sentences: who hits what problem, and what this PR makes possible. -->
 
 ## Bug Reproduction Steps
 
@@ -23,7 +23,11 @@ See https://github.com/MoonshotAI/kimi-code/blob/main/CONTRIBUTING.md for more.
 
 ## Code Changes
 
-<!-- Describe the code changes in plain, easy-to-understand language for the reviewer. -->
+<!-- Help the reviewer understand the change without reading the diff.
+     For changes that span modules, introduce new concepts, or replace an old path, start with the
+     core idea and a diagram of the resulting structure, then the key decisions and where to start reading.
+     Pair diagrams and tables with sentences that explain why.
+     If the UI changes, add a "Screenshots / Recordings" section with before/after images. -->
 
 ## Behavior Changes and Affected Users
 

@@ -16,7 +16,7 @@ import {
 } from '#/features/btw/btw';
 import { SessionBtwService } from '#/features/btw/btwService';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import {
   IAgentLifecycleService,

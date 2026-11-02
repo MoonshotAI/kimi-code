@@ -18,14 +18,21 @@ import {
   IAuthSummaryService,
   IBootstrapService,
   IConfigService,
+  IEnvironmentService,
   IEventBus,
   IEventDispatcher,
+  IEventService,
   IFileSystemStorageService,
   IHostFileSystem,
+  ILogService,
+  IMcpOAuthService,
+  IModelService,
   IOAuthToolkit,
+  IProviderService,
   IRegionService,
   ISessionContext,
   ISessionIndex,
+  ISessionIndexMirror,
   ISessionLockService,
   ISessionRunGate,
   ISessionManager,
@@ -123,6 +130,7 @@ interface FakeScope {
   readonly id: string;
   readonly accessor: { readonly get: (token: unknown) => unknown };
   readonly dispose: ReturnType<typeof vi.fn>;
+  readonly instantiation: { readonly disposeAsync: ReturnType<typeof vi.fn> };
 }
 
 function fakeScope(id: string, services: Map<unknown, unknown>): FakeScope {
@@ -135,6 +143,7 @@ function fakeScope(id: string, services: Map<unknown, unknown>): FakeScope {
       },
     },
     dispose: vi.fn(),
+    instantiation: { disposeAsync: vi.fn(async () => {}) },
   };
 }
 
@@ -162,6 +171,7 @@ function opts(overrides: Record<string, unknown> = {}) {
     skillsDirs: [],
     agent: undefined,
     agentFiles: [],
+    environment: undefined,
     addDirs: [],
     ...overrides,
   } as const;
@@ -320,7 +330,10 @@ function makeFakeHarness() {
     ],
     [ISessionIndex, { get: vi.fn(async () => undefined), listRecent: vi.fn(async () => ({ items: [] })) }],
     [ISessionLockService, new InMemorySessionLockService()],
-    [IAppendLogStore, { externallyModified: vi.fn(() => false) }],
+    [
+      IAppendLogStore,
+      { externallyModified: vi.fn(() => false), drainRetirements: vi.fn(async () => {}) },
+    ],
     [
       IBootstrapService,
       {
@@ -336,6 +349,12 @@ function makeFakeHarness() {
       },
     ],
     [IOAuthToolkit, { getCachedAccessToken: vi.fn(async () => undefined) }],
+    [IModelService, { ready: Promise.resolve() }],
+    [IProviderService, { ready: Promise.resolve() }],
+    [IEventService, { subscribe: vi.fn(() => ({ dispose: vi.fn() })) }],
+    [ILogService, { warn: vi.fn() }],
+    [IMcpOAuthService, { shutdown: vi.fn(async () => {}) }],
+    [ISessionIndexMirror, { drain: vi.fn(async () => {}) }],
     [
       IRegionService,
       {
@@ -346,11 +365,15 @@ function makeFakeHarness() {
     ],
     [IFileSystemStorageService, {}],
     [IHostFileSystem, {}],
+    [IEnvironmentService, { addProvider: vi.fn(async () => ({ dispose: vi.fn() })) }],
     [
       IWorkspaceInstanceManager,
       {
-        getOrCreate: vi.fn(async () => ({
-          program: { trust: { get: vi.fn(async () => trustState.trusted) } },
+        acquire: vi.fn(async () => ({
+          instance: {
+            program: { trust: { get: vi.fn(async () => trustState.trusted) } },
+          },
+          dispose: vi.fn(),
         })),
       },
     ],
@@ -427,6 +450,23 @@ describe('runV2Print', () => {
     expect(app.dispose).toHaveBeenCalled();
   });
 
+  it('keeps local print usable when remote provider registration fails', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+    const environments = appServices.get(IEnvironmentService) as {
+      addProvider: ReturnType<typeof vi.fn>;
+    };
+    environments.addProvider.mockRejectedValueOnce(new Error('provider unavailable'));
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    expect(stdout.text()).toContain('hello world');
+    expect(app.dispose).toHaveBeenCalledOnce();
+  });
+
   it('reloads a stale session in place, retries once, and still reports occupied', async () => {
     const stdout = writer();
     const stderr = writer();
@@ -485,6 +525,7 @@ describe('runV2Print', () => {
 
     const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
     expect(input.args?.skillDirs).toEqual(['/skills']);
+    expect(input.args?.nonInteractive).toBe(true);
   });
 
   it('leaves the skill dirs arg unset when --skillsDir is empty', async () => {
@@ -572,6 +613,30 @@ describe('runV2Print', () => {
     });
     const profile = agentServices.get(IAgentProfileService) as { bind: ReturnType<typeof vi.fn> };
     expect(profile.bind).not.toHaveBeenCalled();
+  });
+
+  it('threads the environment flags into the initial session binding', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(
+      opts({ environment: 'dev-box', environmentCwd: '/remote/work' }) as never,
+      '1.2.3-test',
+      { stdout, stderr },
+    );
+
+    const sessions = appServices.get(ISessionManager) as { create: ReturnType<typeof vi.fn> };
+    expect(sessions.create).toHaveBeenCalledWith({
+      workDir: process.cwd(),
+      additionalDirs: undefined,
+      mainAgentBinding: { profile: 'agent', model: 'k2' },
+      environmentId: 'dev-box',
+      environmentCwd: '/remote/work',
+    });
   });
 
   it('does not materialize a main agent after fresh profile binding fails', async () => {
@@ -1101,7 +1166,10 @@ describe('runV2Print', () => {
     }
   });
 
-  it('cancels and settles the active turn before flushing on a termination signal', async () => {
+  it.each([
+    ['SIGINT', 130],
+    ['SIGTERM', 143],
+  ])('cancels and settles the active turn before flushing on %s', async (signal, exitCode) => {
     const stdout = writer();
     const stderr = writer();
     const { app, agentServices, appServices } = makeFakeHarness();
@@ -1224,12 +1292,12 @@ describe('runV2Print', () => {
       process: fakeProcess as never,
     });
     const outcome = run.catch((error: unknown) => error);
-    for (let i = 0; i < 100 && !handlers.has('SIGINT'); i++) {
+    for (let i = 0; i < 100 && !handlers.has(signal); i++) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
-    const onSigint = handlers.get('SIGINT')!;
+    const onTermination = handlers.get(signal)!;
     settleTurn({ type: 'cancelled', steps: 0, reason: new Error('aborted') });
-    const sigintRun = onSigint();
+    const terminationRun = onTermination();
     // The flush must wait for the prompt queue to empty, even with idle loops.
     for (let i = 0; i < 100 && !order.includes('settled'); i++) {
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -1241,9 +1309,10 @@ describe('runV2Print', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(order).toEqual(['stop', 'cancel', 'settled']);
     promptPhase = 'empty';
-    await sigintRun;
+    await terminationRun;
 
-    expect(order).toEqual(['stop', 'cancel', 'settled', 'flush', 'exit:130']);
+    expect(order).toEqual(['stop', 'cancel', 'settled', 'flush', `exit:${exitCode}`]);
+    expect(app.dispose).toHaveBeenCalledOnce();
     // Without an agent-close event, fallback release happens after app disposal.
     expect(loop.tryAcquireQuiescence).toHaveBeenCalled();
     const lastGuardRelease = guardDispose.mock.invocationCallOrder.at(-1);
@@ -1346,9 +1415,9 @@ describe('runV2Print', () => {
     const { app, appServices, trustState } = makeFakeHarness();
     trustState.trusted = false;
     const workspaces = appServices.get(IWorkspaceInstanceManager) as {
-      getOrCreate: ReturnType<typeof vi.fn>;
+      acquire: ReturnType<typeof vi.fn>;
     };
-    workspaces.getOrCreate.mockRejectedValueOnce(new Error('trust store unavailable'));
+    workspaces.acquire.mockRejectedValueOnce(new Error('trust store unavailable'));
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });

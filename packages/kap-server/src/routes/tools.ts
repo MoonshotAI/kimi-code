@@ -240,6 +240,7 @@ function toProtocolMcpServer(entry: McpEntry): McpServer {
     transport: entry.transport,
     status: mapMcpStatus(entry.status),
     tool_count: entry.toolCount,
+    next_retry_at: entry.nextRetryAt,
   };
   if (entry.error !== undefined && entry.error.length > 0) {
     return { ...base, last_error: entry.error };

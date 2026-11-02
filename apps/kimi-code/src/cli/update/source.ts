@@ -71,6 +71,7 @@ export interface DetectInstallSourceDeps {
   readonly getGlobalPrefix: () => Promise<string>;
   readonly detectNative: () => boolean;
   readonly platform: NodeJS.Platform;
+  readonly allowGlobalPrefix?: boolean;
 }
 
 function npmCommand(platform: NodeJS.Platform): string {
@@ -144,9 +145,23 @@ export function classifyInstallSource(
   return 'unsupported';
 }
 
+export function detectInstallSource(
+  deps: Partial<DetectInstallSourceDeps> & { readonly allowGlobalPrefix: false },
+): Promise<InstallSource | null>;
+export function detectInstallSource(
+  deps?: Partial<Omit<DetectInstallSourceDeps, 'allowGlobalPrefix'>> & {
+    readonly allowGlobalPrefix?: true;
+  },
+): Promise<InstallSource>;
+export function detectInstallSource(
+  deps: Partial<DetectInstallSourceDeps> & { readonly allowGlobalPrefix: boolean },
+): Promise<InstallSource | null>;
+export function detectInstallSource(
+  deps?: Partial<DetectInstallSourceDeps>,
+): Promise<InstallSource | null>;
 export async function detectInstallSource(
   deps: Partial<DetectInstallSourceDeps> = {},
-): Promise<InstallSource> {
+): Promise<InstallSource | null> {
   const platform = deps.platform ?? process.platform;
   const resolved: DetectInstallSourceDeps = {
     getPackageRoot: deps.getPackageRoot ?? getHostPackageRoot,
@@ -155,13 +170,14 @@ export async function detectInstallSource(
       (() => npmGlobalPrefix(platform)),
     detectNative: deps.detectNative ?? detectNativeInstall,
     platform,
+    allowGlobalPrefix: deps.allowGlobalPrefix ?? true,
   };
 
   if (resolved.detectNative()) return 'native';
 
   const packageRoot = resolved.getPackageRoot();
   const heuristic = classifyByPathHeuristic(packageRoot);
-  if (heuristic !== null) return heuristic;
+  if (heuristic !== null || !resolved.allowGlobalPrefix) return heuristic;
 
   try {
     const globalPrefix = await resolved.getGlobalPrefix();

@@ -7,8 +7,8 @@ Show the end user a progress update without ending your turn. Main-agent and sub
 4. When blocked, explain the blocker and your next step.
 
 **How to use:**
-- Make the `title` a single line that stands on its own: the conclusion or the current phase, in the end user's language, under roughly 60 characters, in plain text without Markdown or a trailing period.
-- Put the details behind the title in `message`, without repeating the title. Write the way you would update a colleague in chat, in the end user's language, in light Markdown: open with a short flowing paragraph (two to four sentences — the evidence and reasoning behind the title), then put the details into structure — a few bullet points, short separated paragraphs, or key-value lines with file paths and error excerpts. Avoid tables and wide code blocks; updates can be shown in a narrow column. Keep the message under roughly 1000 characters, self-contained enough to read on its own. Avoid repeating unchanged status or narrating individual tool calls.
+- Write the `title` without Markdown or a trailing period.
+- Write the `message` the way you would update a colleague in chat: open with two to four sentences of evidence and reasoning, then give details as bullet points, short paragraphs, or key-value lines with file paths and error excerpts. Avoid tables and wide code blocks; updates can be shown in a narrow column. Keep it self-contained, and avoid repeating unchanged status or narrating individual tool calls.
 - When working as a subagent, describe only your own subtask. Its completion does not mean the whole task is complete.
 - Do not add an agent name or source prefix; the UI supplies it.
 - Batch the update with your next tool calls when possible.

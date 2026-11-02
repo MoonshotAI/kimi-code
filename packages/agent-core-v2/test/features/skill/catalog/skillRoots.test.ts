@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { configuredRoots, projectRoots, userRoots } from '#/features/skill/catalog/skillRoots';
+import {
+  configuredRoots,
+  projectRoots,
+  projectRootsForDirs,
+  userRoots,
+} from '#/features/skill/catalog/skillRoots';
 
 describe('skillRoots', () => {
   let root: string;
@@ -67,6 +72,41 @@ describe('skillRoots', () => {
 
       expect(brandIdx).toBeGreaterThanOrEqual(0);
       expect(genericIdx).toBeGreaterThan(brandIdx);
+    });
+
+    it('resolves roots through the provided filesystem instead of the local one', async () => {
+      const remoteRoot = '/remote/project';
+      const fs = {
+        stat: async (p: string) => {
+          if (p === `${remoteRoot}/.git` || p === `${remoteRoot}/.kimi-code/skills`) {
+            return { isFile: false, isDirectory: true, size: 0 };
+          }
+          throw new Error('ENOENT');
+        },
+        realpath: async (p: string) => p,
+      };
+
+      const roots = await projectRoots(remoteRoot, {}, fs);
+
+      expect(roots).toEqual([{ path: '/remote/project/.kimi-code/skills', source: 'project' }]);
+    });
+  });
+
+  describe('projectRootsForDirs', () => {
+    it('preserves directory priority and deduplicates resolved skill roots', async () => {
+      const primary = join(root, 'primary');
+      const secondary = join(root, 'secondary');
+      const primarySkills = join(primary, '.kimi-code/skills');
+      const secondarySkills = join(secondary, '.kimi-code/skills');
+      await mkdir(primarySkills, { recursive: true });
+      await mkdir(secondarySkills, { recursive: true });
+
+      const roots = await projectRootsForDirs([primary, secondary, primary]);
+
+      expect(roots.map((entry) => entry.path)).toEqual([
+        await realpath(primarySkills),
+        await realpath(secondarySkills),
+      ]);
     });
   });
 
