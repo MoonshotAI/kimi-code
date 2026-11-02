@@ -67,7 +67,7 @@ For the full field reference, see [`environments`](../configuration/config-files
 
 Windows targets use Git Bash for the `Bash` tool, matching local Windows sessions. Install [Git for Windows](https://gitforwindows.org/) and the Windows `kimi` binary on the target. Native PowerShell tool commands and Windows Docker containers are not supported.
 
-For SSH, put the binary on the target account's `PATH` and verify that `ssh windows-dev kimi --version` succeeds without a prompt. Set `remoteBin` to the bare name `kimi` or `kimi.exe`, not an absolute Windows path, so the same invocation works with cmd, PowerShell, or Git Bash as the SSH default shell. Use a native drive or UNC path for `defaultCwd`; do not use Git Bash paths such as `/c/work/project` as Windows working directories.
+For SSH, put the binary on the target account's `PATH` and verify that `ssh windows-dev kimi --version` succeeds without a prompt. Set `remoteBin` to the bare name `kimi` or `kimi.exe`, not an absolute Windows path, so the same invocation works with cmd, PowerShell, or Git Bash as the SSH default shell. Use a native drive or UNC path for `defaultCwd`, not a Git Bash path such as `/c/work/project`. Tool arguments can use lexical drive forms such as `/c/work/file.txt`, but other MSYS paths such as `/tmp` and `/usr` are rejected because their mounts cannot be confirmed on the target; the controller never runs its local `cygpath` to guess them.
 
 ```toml
 [environments.windows-dev]
@@ -146,7 +146,7 @@ Kimi Code does not install the executor automatically. When a connect finds no e
 
 ### Version compatibility
 
-The connection handshake requires a minimum executor version and a recognized POSIX or Windows target. An executor that is too old or reports an unknown path class is rejected with upgrade guidance — install the current build over it, then reconnect.
+The connection handshake requires a minimum executor version and a recognized POSIX or Windows target. Windows executors must also advertise the process-lifecycle capability introduced with Windows support; older Windows executors without it are rejected with upgrade guidance. Install the current build over an outdated or incompatible executor, then reconnect.
 
 ## Limitations
 

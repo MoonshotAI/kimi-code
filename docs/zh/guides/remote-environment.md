@@ -67,7 +67,7 @@ defaultCwd = "/home/me/kimi-code"
 
 Windows 目标通过 Git Bash 执行 `Bash` 工具，与本机 Windows 会话一致。在目标机器上安装 [Git for Windows](https://gitforwindows.org/) 和 Windows 版 `kimi` 二进制文件。不支持原生 PowerShell 工具命令和 Windows Docker 容器。
 
-使用 SSH 时，把二进制文件放到目标账户的 `PATH` 中，并确认 `ssh windows-dev kimi --version` 可以无提示成功执行。`remoteBin` 应设为裸名称 `kimi` 或 `kimi.exe`，不要设为 Windows 绝对路径，这样无论 SSH 默认 Shell 是 cmd、PowerShell 还是 Git Bash，都能使用同一条调用命令。`defaultCwd` 使用原生驱动器或 UNC 路径，不要把 `/c/work/project` 这类 Git Bash 路径作为 Windows 工作目录。
+使用 SSH 时，把二进制文件放到目标账户的 `PATH` 中，并确认 `ssh windows-dev kimi --version` 可以无提示成功执行。`remoteBin` 应设为裸名称 `kimi` 或 `kimi.exe`，不要设为 Windows 绝对路径，这样无论 SSH 默认 Shell 是 cmd、PowerShell 还是 Git Bash，都能使用同一条调用命令。`defaultCwd` 使用原生驱动器或 UNC 路径，不要使用 `/c/work/project` 这类 Git Bash 路径。工具参数可以使用 `/c/work/file.txt` 这类驱动器路径形式，但 `/tmp`、`/usr` 等其他 MSYS 路径会由于无法在目标上确认挂载映射而被拒绝；控制端不会运行本机 `cygpath` 进行猜测。
 
 ```toml
 [environments.windows-dev]
@@ -146,7 +146,7 @@ Kimi Code 不会自动安装执行器。连接在预期路径上找不到执行�
 
 ### 版本兼容
 
-连接握手会校验执行器的最低版本和目标是否为可识别的 POSIX 或 Windows 环境。版本过旧或返回未知路径类型的执行器会被拒绝接入并给出升级指引——安装当前构建覆盖旧版本，然后重新连接。
+连接握手会校验执行器的最低版本和目标是否为可识别的 POSIX 或 Windows 环境。Windows 执行器还必须声明随 Windows 支持引入的进程生命周期能力；缺少该能力的旧执行器会被拒绝接入并给出升级指引。安装当前构建覆盖过旧或不兼容的执行器，然后重新连接。
 
 ## 限制
 

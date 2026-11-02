@@ -221,6 +221,29 @@ describe('fromShellPath cygpath resolution', () => {
   });
 });
 
+describe('remote unresolved path rejection', () => {
+  const env: ShellPathBridgeEnv = { ...WINDOWS_ENV, pathResolution: 'reject-unresolved' };
+
+  it.each(['/', '/tmp/x', '/usr/bin/node', '/home/user/file'])('rejects %s without local cygpath calls', (input) => {
+    const { deps, execFileSync } = stubDeps({ existingPaths: [USR_BIN_CYGPATH] });
+    const bridge = createShellPathBridge(env, deps);
+
+    expect(() => bridge.fromShellPath(input)).toThrow('cannot be resolved on the target');
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it('keeps native and lexical drive paths without consulting cygpath', () => {
+    const { deps, execFileSync } = stubDeps();
+    const bridge = createShellPathBridge(env, deps);
+
+    expect(bridge.fromShellPath('/c/work/file.txt')).toBe('C:/work/file.txt');
+    expect(bridge.fromShellPath('C:\\work\\file.txt')).toBe('C:\\work\\file.txt');
+    expect(bridge.fromShellPath('//server/share/file.txt')).toBe('//server/share/file.txt');
+    expect(bridge.toShellPath('C:\\work\\file.txt')).toBe('/c/work/file.txt');
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+});
+
 describe('identity outside win32 bash', () => {
   it('is identity on posix', () => {
     const { deps, execFileSync } = stubDeps();

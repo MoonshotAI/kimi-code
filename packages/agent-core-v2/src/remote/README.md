@@ -176,6 +176,8 @@ handshake completes: any byte or unknown notification disconnects.
 
 - The executor supports POSIX and Windows targets; Windows uses the same Git
   Bash environment probe as the local Windows host. The client refuses unknown
-  path classes and executors below `MIN_EXECUTOR_VERSION` at the handshake gate.
+  path classes, executors below `MIN_EXECUTOR_VERSION`, and Windows executors
+  without `windowsProcessLifecycle`. Remote Windows path resolution rejects
+  unresolved MSYS paths instead of invoking cygpath on the controller.
 - `test/remote/e2e/` holds the real-machine (ssh/docker) acceptance driver and
   step-by-step docs; the vitest suite covers the local loopback.

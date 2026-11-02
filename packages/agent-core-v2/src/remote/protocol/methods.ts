@@ -39,6 +39,7 @@ export interface RemoteEnvironmentInfo {
   readonly homeDir: string;
   readonly cwd: string;
   readonly tempDir: string;
+  readonly windowsProcessLifecycle?: boolean;
 }
 
 export interface InitializeResult {
