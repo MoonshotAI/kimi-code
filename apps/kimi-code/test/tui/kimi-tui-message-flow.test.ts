@@ -5448,6 +5448,135 @@ command = "vim"
     });
   });
 
+  async function holdDequeuedModelSwitch(behind: readonly string[]): Promise<{
+    driver: MessageDriver;
+    session: ReturnType<typeof makeSession>;
+    resolveSetModel: () => void;
+    sendQueued: (item: QueuedMessage) => void;
+    sent: Array<{ text: string; model: string; effort: string }>;
+  }> {
+    const session = makeSession();
+    const emitSessionEvent = sessionEventEmitter(session);
+    const { driver } = await makeDriver(session);
+    const sent: Array<{ text: string; model: string; effort: string }> = [];
+    const originalSetModel = session.setModel.getMockImplementation();
+    const originalSetThinking = session.setThinking.getMockImplementation();
+    assert.ok(originalSetModel !== undefined && originalSetThinking !== undefined);
+    let resolveSetModel!: () => void;
+    const setModelGate = new Promise<void>((resolve) => {
+      resolveSetModel = resolve;
+    });
+    session.setModel.mockImplementation(async (alias: string) => {
+      await setModelGate;
+      await originalSetModel(alias);
+    });
+    session.setThinking.mockImplementation(async (effort: string) => {
+      await originalSetThinking(effort);
+    });
+    session.prompt.mockImplementation(async (input: unknown) => {
+      const status = await session.getStatus();
+      sent.push({
+        text: String(input),
+        model: status.model,
+        effort: status.thinkingEffort,
+      });
+    });
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.enqueueModelSwitch('model-b', 'low', 'session');
+    for (const text of behind) driver.handleUserInput(text);
+
+    const sendQueued = (item: QueuedMessage) => {
+      driver.sendQueuedMessage(session, item);
+    };
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      sendQueued,
+    );
+    await vi.waitFor(() => {
+      expect(session.compact).toHaveBeenCalledWith({});
+    });
+    driver.sessionEventHandler.handleEvent(
+      { type: 'compaction.started', agentId: 'main', sessionId: 'ses-1', trigger: 'manual' } as Event,
+      sendQueued,
+    );
+    const completed = {
+      type: 'compaction.completed',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      result: { summary: 's', compactedCount: 1, tokensBefore: 10, tokensAfter: 5 },
+    } as Event;
+    driver.sessionEventHandler.handleEvent(completed, sendQueued);
+    emitSessionEvent(completed);
+    await vi.waitFor(() => {
+      expect(session.setModel).toHaveBeenCalledWith('model-b');
+    });
+    expect(driver.state.appState.isCompacting).toBe(false);
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+    expect(driver.state.queuedMessageDispatchPending).toBe(true);
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages.map((item) => item.text)).toEqual(behind);
+    return { driver, session, resolveSetModel, sendQueued, sent };
+  }
+
+  async function finishHeldModelSwitch(
+    held: Awaited<ReturnType<typeof holdDequeuedModelSwitch>>,
+    expected: readonly string[],
+  ): Promise<void> {
+    held.resolveSetModel();
+    for (const text of expected) {
+      await vi.waitFor(() => {
+        expect(held.sent.map((item) => item.text)).toContain(text);
+      });
+      if (held.sent.length < expected.length) {
+        held.driver.sessionEventHandler.handleEvent(
+          {
+            type: 'turn.ended',
+            agentId: 'main',
+            turnId: held.sent.length + 1,
+            reason: 'completed',
+          } as Event,
+          held.sendQueued,
+        );
+      }
+    }
+    expect(held.sent).toEqual(
+      expected.map((text) => ({ text, model: 'model-b', effort: 'low' })),
+    );
+    expect(held.session.steer).not.toHaveBeenCalled();
+  }
+
+  it('keeps queued prompts in place on Ctrl-S until a dequeued model switch applies', async () => {
+    const held = await holdDequeuedModelSwitch(['first after', 'second after']);
+
+    held.driver.state.editor.onCtrlS?.();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(held.session.steer).not.toHaveBeenCalled();
+    expect(held.driver.state.queuedMessages.map((item) => item.text)).toEqual([
+      'first after',
+      'second after',
+    ]);
+
+    await finishHeldModelSwitch(held, ['first after', 'second after']);
+  });
+
+  it('keeps a tower-mode submission queued until a dequeued model switch applies', async () => {
+    const held = await holdDequeuedModelSwitch(['first after']);
+    held.driver.state.appState.towerMode = true;
+
+    held.driver.handleUserInput('typed during switch');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(held.session.steer).not.toHaveBeenCalled();
+    expect(held.driver.state.queuedMessages.map((item) => item.text)).toEqual([
+      'first after',
+      'typed during switch',
+    ]);
+
+    await finishHeldModelSwitch(held, ['first after', 'typed during switch']);
+  });
+
   it('skips a queued model-switch compaction after another compaction completes', async () => {
     const { driver, session } = await makeDriver();
     const sendQueued = (item: QueuedMessage) => { driver.sendQueuedMessage(session, item); };

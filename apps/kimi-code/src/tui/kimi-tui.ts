@@ -2531,6 +2531,7 @@ export class KimiTUI {
   steerQueuedMessagesIntoRunningTurn(manual = false): void {
     const session = this.session;
     if (session === undefined || this.steeringQueuedMessages.size > 0) return;
+    if (this.state.queuedMessageDispatchPending) return;
     if (manual ? !this.canManuallySteer() : !this.canSteerQueueIntoRunningTurn()) return;
     // Compaction and model-switch items are FIFO barriers for steering:
     // messages behind them must not jump into the pre-compaction context.
