@@ -409,12 +409,26 @@ export class PluginsPanelComponent extends Container implements Focusable {
   }
 
   private get marketplaceEntries(): readonly PluginMarketplaceEntry[] {
-    if (this.market.status !== 'loaded') return [];
+    const entries = this.market.status === 'loaded' ? this.market.entries : this.pendingBuiltInEntries;
     return dedupeCapabilityMarketplaceEntries(
-      this.market.entries.filter(marketplaceEntryIsVisible),
+      entries.filter(marketplaceEntryIsVisible),
       this.opts.capabilities ?? [],
       this.catalogIsDefault,
     );
+  }
+
+  private get pendingBuiltInEntries(): readonly PluginMarketplaceEntry[] {
+    if (!this.catalogIsDefault) return [];
+    return (this.opts.capabilities ?? [])
+      .filter((capability) => capability.supported)
+      .map((capability) => ({
+        id: capability.pluginId ?? capability.id,
+        displayName: capability.displayName,
+        description: capability.description,
+        tier: 'official',
+        source: `capability:${capability.id}`,
+        builtIn: true,
+      }));
   }
 
   private get catalogIsDefault(): boolean {
@@ -672,12 +686,11 @@ export class PluginsPanelComponent extends Container implements Focusable {
     const colors = currentTheme.palette;
     if (this.market.status === 'loading' || this.market.status === 'idle') {
       lines.push(chalk.hex(colors.textMuted)('  Loading marketplace…'));
-      return;
-    }
-    if (this.market.status === 'error') {
+      if (entries.length === 0) return;
+    } else if (this.market.status === 'error') {
       lines.push(chalk.hex(colors.warning)(`  Marketplace unavailable: ${this.market.message}`));
       lines.push(mutedHintLine('  Use the Custom tab to install from a URL.', colors));
-      return;
+      if (entries.length === 0) return;
     }
     if (entries.length === 0) {
       lines.push(chalk.hex(colors.textMuted)('  No plugins found.'));
@@ -696,7 +709,9 @@ export class PluginsPanelComponent extends Container implements Focusable {
         colors,
       ),
     );
-    lines.push(mutedHintLine(` Source: ${this.market.source}`, colors));
+    if (this.market.status === 'loaded') {
+      lines.push(mutedHintLine(` Source: ${this.market.source}`, colors));
+    }
   }
 
   private renderOfficial(lines: string[], width: number): void {

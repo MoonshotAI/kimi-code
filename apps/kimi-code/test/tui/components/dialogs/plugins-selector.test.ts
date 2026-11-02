@@ -633,7 +633,7 @@ describe('plugins selector dialogs', () => {
     expect(out).toContain('1 installed · 2 available');
   });
 
-  it('shows only the loading state while the Official catalog is unavailable', () => {
+  it('keeps built-in capability rows while the Official catalog is unavailable', () => {
     const capabilities = [
       makeCapability(),
       makeCapability({ id: 'kimi-webbridge', displayName: 'Kimi Browser Extension' }),
@@ -642,8 +642,8 @@ describe('plugins selector dialogs', () => {
     const out = strip(renderRaw(panel));
 
     expect(out).toContain('Loading marketplace');
-    expect(out).not.toContain('Kimi Computer Use');
-    expect(out).not.toContain('Kimi Browser Extension');
+    expect(out).toContain('Kimi Computer Use');
+    expect(out).toContain('Kimi Browser Extension');
     expect(out).not.toContain('open in browser');
   });
 
@@ -662,7 +662,7 @@ describe('plugins selector dialogs', () => {
     const out = strip(renderRaw(panel));
     expect(out).toContain('Marketplace unavailable: fetch failed');
     expect(out).toContain('Use the Custom tab');
-    expect(out).not.toContain('Kimi Computer Use');
+    expect(out).toContain('Kimi Computer Use');
     expect(out).not.toContain('Kimi Browser Extension');
   });
 
