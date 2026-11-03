@@ -1422,7 +1422,7 @@ describe('Agent loop', () => {
 
   it('answers steer and skill activation requests on a paused idle queue instead of waiting', async () => {
     loop.pauseQueue();
-    await expect(ctx.get(IAgentPromptChannel).submitSteer({ input: [{ type: 'text', text: 'held steer' }] })).resolves.toBeUndefined();
+    await expect(ctx.get(IAgentPromptChannel).submitSteer({ input: [{ type: 'text', text: 'held steer' }] })).resolves.toMatchObject({ state: 'queued', steered: false });
     await expect(ctx.rpc.activateSkill({ name: 'any-skill' })).rejects.toMatchObject({ code: 'turn.agent_busy' });
     expect(ctx.llmCalls).toHaveLength(0);
     for (const item of loop.snapshot().queue) loop.cancel({ promptId: item.meta!.promptId! });

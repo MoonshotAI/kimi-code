@@ -630,6 +630,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/sessions/{session_id}/children` | 列出子会话 |
 | `POST /api/v1/sessions/{session_id}/children` | 创建子会话（fork 并打标） |
 | `GET /api/v1/sessions/{session_id}/goal` | 当前目标快照（无则 `null`） |
+| `PATCH /api/v1/sessions/{session_id}/goal` | 就地修改当前目标的 objective |
 | `GET /api/v1/sessions/{session_id}/warnings` | 会话级告警 |
 | `GET /api/v1/sessions/{session_id}/environment` | 读取 main agent 的环境绑定 |
 | `GET /api/v1/sessions/{session_id}/environments` | 列出会话工作区已注册的环境 |
@@ -892,6 +893,23 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 成功时，`data` 为 `null` 或 `{ goalId, objective, completionCriterion?, status, turnsUsed, tokensUsed, wallClockMs, budget, terminalReason? }`，其中 `status` 为 `active` / `paused` / `blocked` / `complete`，`budget` 报告 token、轮次与 wall-clock 三项预算，以及各自的剩余量与每项预算的 reached 标志（未设置对应预算时各项为 null）。
 
 - `40401`：会话不存在
+
+#### `PATCH /api/v1/sessions/{session_id}/goal`
+
+替换当前目标的 objective，`goalId`、状态、进度和预算均保持不变。适用于 active、paused、blocked 状态的目标。正在运行的 turn 不会被打断，agent 在下一个 turn 收到新的 objective。已连接的客户端通过 `goal.updated` 事件获知变化。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `objective` | body | string | **必填。** 新的 objective，首尾空白会被去除 |
+
+成功时 `data` 是更新后的目标快照，形状与 `GET /api/v1/sessions/{session_id}/goal` 相同（camelCase）。
+
+- `40401`: 会话不存在
+- `40914`: 当前没有目标
+- `40915`: 目标已完成
+- `40917`: objective 为空
+- `40918`: objective 超过 4000 字符
 
 #### `GET /api/v1/sessions/{session_id}/warnings`
 
@@ -1416,7 +1434,9 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `GET /api/v1/capabilities/{capability_id}` | 读取单个能力的状态 |
 | `POST /api/v1/capabilities/{capability_id}:install` | 开始安装能力（后台进行，轮询 GET 查看进度） |
 | `GET /api/v1/plugins` | 列出已安装插件 |
-| `POST /api/v1/plugins` | 从本地路径、zip URL 或 GitHub 仓库安装插件 |
+| `GET /api/v1/plugins/{plugin_id}` | 读取已安装插件及其声明的能力 |
+| `POST /api/v1/plugins` | 安装自定义插件或指定预期版本的市场条目 |
+| `POST /api/v1/plugins/preview` | 只读检查市场条目的能力，不安装插件 |
 | `GET /api/v1/plugins/marketplace` | 插件市场目录，合并实时安装状态 |
 | `POST /api/v1/plugins/{plugin_id}:{action}` | 插件动作：`enable` / `disable` / `remove` |
 
@@ -1457,28 +1477,46 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 列出已安装插件。
 
-成功时 `data` 为 `{ plugins }`，每项为 `{ id, displayName, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`：`state` 为 `ok` / `error`（加载失败也会置 `hasErrors`）；`source` 为 `local-path` / `zip-url` / `github`；GitHub 来源的插件由 `github` 携带来源信息 `{ owner, repo, ref, installedSha? }`，其中 `ref` 为 `{ kind: branch|tag|sha, value }`。
+成功时 `data` 为 `{ plugins }`，每项为 `{ id, displayName, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`：`state` 为 `ok` / `error`（加载失败也会置 `hasErrors`）；`source` 为 `local-path` / `zip-url` / `github`；GitHub 来源的插件由 `github` 携带来源信息 `{ owner, repo, ref, installedSha? }`，其中 `ref` 为 `{ kind: branch|tag|sha, value }`。每项还包含 `origin`（`marketplace` / `custom` / `unknown`）、可选的 `catalogId`，以及 ISO 时间戳 `installedAt`。
 
 #### `POST /api/v1/plugins`
 
-安装插件并返回其摘要。
+安装插件并返回其摘要。请求体有两种形式：
 
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `source` | body | string | **必填。** 安装来源：本地绝对路径、指向 zip 压缩包的 `http(s)` URL，或 GitHub URL——`https://github.com/<owner>/<repo>`，可选地用 `/tree/<branch-or-sha>`、`/releases/tag/<tag>` 或 `/commit/<sha>` 锁定版本 |
+- 自定义安装：`{ "source": "<本地绝对路径、http(s) ZIP URL 或 GitHub URL>" }`。GitHub URL 可通过 `/tree/<branch-or-sha>`、`/releases/tag/<tag>` 或 `/commit/<sha>` 锁定版本。
+- 市场安装：`{ "marketplaceId": "<目录条目 id>", "expectedVersion": "<用户看到的版本>", "expectedSha256": "<用户看到的 sha256sum>" }`。daemon 从同一目录快照解析 `source`、`sha256sum` 和预期插件 ID，在解压前校验压缩包，并校验 manifest ID。ZIP 条目声明了 `sha256sum` 时，必须传入与目录一致的 `expectedSha256`；无版本的自定义条目可省略 `expectedVersion`，本地目录和 GitHub 条目无需传 `expectedSha256`。
 
 成功时 `data` 为上文 `GET /api/v1/plugins` 说明的插件摘要。
 
 - `40001`：校验失败——例如 `source` 既不是 URL 也不是绝对路径，或插件加载失败
 - `40409`：本地路径不存在
+- `40934`：目录条目已相对用户看到的版本发生变化，请刷新目录后重试
 
 #### `GET /api/v1/plugins/marketplace`
 
-列出插件市场目录并合并实时安装状态。目录按请求从配置的市场 URL 拉取（超时 10 秒）；使用默认目录时，目录中缺少的内置能力会作为条目合并进来（带 `capabilityId`），而当前平台不支持的能力对应条目会被剔除。
+列出插件市场目录并合并实时安装状态。默认目录 URL 由当前 managed `baseURL` 派生为 `${baseURL}/plugins/marketplace`，不再注入内置能力条目。`platforms` 包含 daemon 所在平台或全部为 `cloud` 时保留条目；包含 `cloud` 但本机平台为其他平台的条目会被过滤。cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回，Computer Use 只返回当前平台对应的接线插件。
 
-成功时 `data` 为 `{ entries }`，每项为 `{ id, tier, displayName, description?, homepage?, keywords?, version?, source, installed?, updateAvailable?, capabilityId? }`：`tier` 为 `official` / `curated` / `third-party`；插件已安装时 `installed` 为 `{ version?, enabled }`；`updateAvailable` 标记目录版本新于已安装版本的条目。条目的 `source` 即 `POST /api/v1/plugins` 的 `source` 字段取值。
+成功时 `data` 为 `{ entries }`，每项包含 `id`、`tier`、`classification`、`displayName`、`description?`、`cliDescription?`、`homepage?`、`keywords?`、`version?`、`source`、`iconUrl?`、`sha256sum?`、`filename?`、`locale?`、`defaultLocale?`、`platforms?`、`distribution?`、`billing?`、`installed?`、`updateAvailable?` 和 `capabilityId?`。`defaultLocale` 声明顶层 `description` / `cliDescription` 的语言，`locale` 存放各语言的 `shortDescription`、`longDescription` 和 `cliDescription` 翻译。`distribution.category` 为 `official` 或 `third_party`；`platforms` 使用 `darwin` / `win32` / `linux` / `cloud`。市场安装传 `marketplaceId`、可用时的 `expectedVersion`，以及带摘要 ZIP 的 `expectedSha256`，不直接传 `source`；自定义安装传 `source`。capability 只由 daemon 标注：`kimi-browser-extension` 映射到 `kimi-webbridge` capability，`kimi-cu` / `kimi-cu-win` 映射到 `kimi-cu`。
 
 - `50001`：市场不可达或返回了非法目录
+
+#### `GET /api/v1/plugins/{plugin_id}`
+
+读取已安装插件的详情与能力。`skills` 包含实际发现的 Skill 调用名称，以及可选的展示名称与描述；`mcpServers` 包含 manifest 声明的 MCP 服务及其名称、运行时名称、启停状态、传输方式、非敏感连接配置，以及可选的展示名称、描述和图标 URL。两份清单都来自插件的真实文件与 manifest。`interface.skillOverrides` 和 `interface.mcpOverrides` 只覆盖展示信息，不改变调用名称或运行配置。
+
+成功时 `data` 为上文 `GET /api/v1/plugins` 的插件摘要，加上 `root`、`updatedAt?`、`manifestKind?`、`manifestPath?`、`skills`、`mcpServers`、`shadowedManifestPath?` 和 `diagnostics`。可选 query 参数 `locale`（例如 `en-US` 或 `zh-CN`）用于读取 `interface.locales` 中对应语言的翻译，只影响能力的展示文案；未匹配的字段回退到默认 `interface`。
+
+- `40419`：没有该 id 的已安装插件
+
+#### `POST /api/v1/plugins/preview`
+
+只读检查市场条目的能力，不安装插件。请求体为 `{ "marketplaceId": "<目录条目 id>", "expectedVersion": "<用户看到的版本>", "expectedSha256": "<用户看到的 sha256sum>", "locale": "<可选语言>" }`。`expectedSha256` 必须与当前目录一致。daemon 将压缩包下载到临时目录，在解压前校验 SHA-256，校验 manifest ID，并发现其中的 Skill 与 MCP 服务。不会写入安装记录、安装运行时或保留解压后的插件。
+
+成功时 `data` 为 `{ "skills": [{ "name": "<技能名称>", "description": "<可选描述>" }], "mcpServers": [{ "name": "<manifest 中的名称>", "runtimeName": "<运行时名称>", "enabled": true, "transport": "stdio" }] }`。两类条目还可包含 overrides 提供的 `displayName`、`description`，MCP 条目还可包含 `iconUrl`。`locale` 的选择规则与已安装详情相同。MCP 条目的字段结构与 `GET /api/v1/plugins/{plugin_id}` 相同，示例只列出常用字段。
+
+- `40001`：请求、压缩包、SHA-256 或 manifest 无效
+- `40419`：没有该 id 的市场条目
+- `40934`：目录条目已相对用户看到的版本发生变化，请刷新目录后重试
 
 #### `POST /api/v1/plugins/{plugin_id}:enable`
 

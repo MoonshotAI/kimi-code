@@ -68,6 +68,14 @@ interface Envelope<T> {
   stack?: string;
 }
 
+interface GoalWire {
+  goalId: string;
+  objective: string;
+  status: string;
+  turnsUsed: number;
+  tokensUsed: number;
+}
+
 interface SessionWire {
   id: string;
   workspace_id: string;
@@ -180,6 +188,18 @@ describe('server-v2 /api/v1/sessions', () => {
   async function getJson<T>(path: string): Promise<{ status: number; body: Envelope<T> }> {
     const res = await fetch(`${base}${path}`, {
       headers: authHeaders(server as RunningServer),
+    } as never);
+    return { status: res.status, body: (await res.json()) as Envelope<T> };
+  }
+
+  async function patchJson<T>(
+    path: string,
+    body: unknown,
+  ): Promise<{ status: number; body: Envelope<T> }> {
+    const res = await fetch(`${base}${path}`, {
+      method: 'PATCH',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
     } as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
@@ -916,6 +936,50 @@ describe('server-v2 /api/v1/sessions', () => {
     );
     expect(after.body.data?.objective).toBe('fix all lint warnings');
     expect(after.body.data?.status).toBe('active');
+  });
+
+  it('edits the goal objective via PATCH /goal and publishes goal.updated', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
+    const id = created.body.data.id;
+    await postJson(`/api/v1/sessions/${id}/profile`, {
+      agent_config: { goal_objective: 'fix all lint warnings' },
+    });
+    const agent = getLiveSessionById((server as RunningServer).core.accessor, id)
+      ?.accessor.get(IAgentLifecycleService)
+      .handleOf(MAIN_AGENT_ID);
+    if (agent === undefined) throw new Error('expected a live main agent');
+    const events: Event2<any>[] = [];
+    const subscription = agent.accessor.get(IEventBus).subscribe((event) => events.push(event));
+
+    try {
+      const edited = await patchJson<GoalWire>(`/api/v1/sessions/${id}/goal`, {
+        objective: 'fix all type errors',
+      });
+
+      expect(edited.body.code).toBe(0);
+      expect(edited.body.data.objective).toBe('fix all type errors');
+      const updated = events.filter((event) => event.type === 'goal.updated');
+      expect(updated).toHaveLength(1);
+      expect(updated[0]).toMatchObject({ snapshot: { objective: 'fix all type errors' } });
+    } finally {
+      subscription.dispose();
+    }
+  });
+
+  it('maps goal edit failures to typed errors', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
+    const id = created.body.data.id;
+
+    const missing = await patchJson<null>(`/api/v1/sessions/${id}/goal`, { objective: 'work' });
+    expect(missing.body.code).toBe(40914);
+
+    await postJson(`/api/v1/sessions/${id}/profile`, {
+      agent_config: { goal_objective: 'fix all lint warnings' },
+    });
+    const invalid = await patchJson<null>(`/api/v1/sessions/${id}/goal`, {});
+    expect(invalid.body.code).toBe(40001);
+    const unknown = await patchJson<null>('/api/v1/sessions/ses_missing/goal', { objective: 'work' });
+    expect(unknown.body.code).toBe(40401);
   });
 
   it('starts one continuation when the Web profile resumes a blocked goal', async () => {

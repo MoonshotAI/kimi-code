@@ -21,6 +21,7 @@ import type {
   ImportCustomRegistryOptions,
   ImportCustomRegistryResult,
   GlobalMcpServerAuthStatus,
+  InstallPluginInput,
   KimiConfig,
   KimiConfigPatch,
   KimiHostIdentity,
@@ -373,15 +374,15 @@ export class KimiHarness {
 
   /**
    * Workspace-level MCP server list, no session required. The v2 engine owns
-   * one shared connection set per workspace handler, so `/mcp` is inspectable
+   * one shared connection set per workspace `Program`, so `/mcp` is inspectable
    * before the first session exists; empty on the v1 engine.
    */
   async listWorkspaceMcpServers(workDir: string): Promise<readonly McpServerInfo[]> {
     return this.rpc.listWorkspaceMcpServers(workDir);
   }
 
-  async installPlugin(source: string): Promise<PluginSummary> {
-    return this.rpc.installPlugin(source);
+  async installPlugin(input: string | InstallPluginInput): Promise<PluginSummary> {
+    return this.rpc.installPlugin(input);
   }
 
   async setPluginEnabled(id: string, enabled: boolean): Promise<void> {

@@ -82,6 +82,21 @@ describe('fs group over a subprocess loopback', () => {
     expect(await readFile(path, 'utf8')).toBe('before\nnew value\n');
   });
 
+  it('preserves a UTF-8 BOM when editing', async () => {
+    const path = join(workDir, 'edit-bom.txt');
+    await writeFile(path, Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x0a, 0x62, 0x0a]));
+    const editor = new FileEditService(fs);
+    const result = await editor.edit({
+      path,
+      displayPath: 'edit-bom.txt',
+      old_string: 'b',
+      new_string: 'c',
+      replace_all: false,
+    });
+    expect(result).toEqual({ ok: true, count: 1 });
+    expect(await readFile(path)).toEqual(Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x0a, 0x63, 0x0a]));
+  });
+
   it('writes a byte stream progressively without retaining the complete input', async () => {
     const path = join(workDir, 'stream.bin');
     await fs.writeText(path, 'old content');

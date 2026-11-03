@@ -1,6 +1,7 @@
 import {
   ErrorCodes,
   IAgentChangeNotifierService,
+  IAgentGoalService,
   IAgentContextMemoryService,
   IAgentProfileService,
   IAgentConversationUndoService,
@@ -27,6 +28,7 @@ import {
   IWorkspaceInstanceManager,
   IWorkspaceService,
   closeSessionById,
+  ensureMainAgent as ensureMainAgentContext,
   getLiveSessionById,
   programForSession,
   resolveSubagentModelPool,
@@ -54,6 +56,8 @@ import {
   createSessionRequestSchema,
   deleteSessionResponseSchema,
   forkSessionRequestSchema,
+  editSessionGoalRequestSchema,
+  editSessionGoalResponseSchema,
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
   sessionAbortResponseSchema,
@@ -102,6 +106,14 @@ interface SessionRouteHost {
     options: { preHandler: unknown[]; schema?: Record<string, unknown> } | undefined,
     handler: (
       req: { id: string; query: unknown; params: unknown },
+      reply: { send(payload: unknown): unknown },
+    ) => Promise<void> | void,
+  ): unknown;
+  patch(
+    path: string,
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
+    handler: (
+      req: { id: string; body: unknown; params: unknown; headers: Record<string, unknown> },
       reply: { send(payload: unknown): unknown },
     ) => Promise<void> | void,
   ): unknown;
@@ -802,6 +814,51 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     goalRoute.path,
     goalRoute.options,
     goalRoute.handler as Parameters<SessionRouteHost['get']>[2],
+  );
+
+  const editGoalRoute = defineRoute(
+    {
+      method: 'PATCH',
+      path: '/sessions/{session_id}/goal',
+      params: sessionIdParamSchema,
+      body: editSessionGoalRequestSchema,
+      success: { data: editSessionGoalResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.GOAL_NOT_FOUND]: {},
+        [ErrorCode.GOAL_STATUS_INVALID]: {},
+        [ErrorCode.GOAL_OBJECTIVE_EMPTY]: {},
+        [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: {},
+      },
+      description: 'Edit the objective of the current session goal in place',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      try {
+        const { session_id } = req.params;
+        const session = await resumeSessionById(core.accessor, session_id);
+        if (session === undefined) {
+          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
+        }
+        const { agentId } = await ensureMainAgentContext(session);
+        const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentId);
+        if (agent === undefined) {
+          throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+        }
+        const goal = await agent.accessor
+          .get(IAgentGoalService)
+          .editGoalObjective({ objective: req.body.objective });
+        reply.send(okEnvelope(goal, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.patch(
+    editGoalRoute.path,
+    editGoalRoute.options,
+    editGoalRoute.handler as Parameters<SessionRouteHost['patch']>[2],
   );
 
   const sessionWarningsRoute = defineRoute(

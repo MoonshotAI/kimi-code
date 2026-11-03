@@ -152,6 +152,11 @@ export class AgentSkillService implements IAgentSkillService {
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
     }
+    const status = this.loop.snapshot();
+    const steerable =
+      input.steerIfActive === true &&
+      status.state === 'running' &&
+      status.activePromptId !== undefined;
     const { id, queued } = this.loop.submit(
       {
         message: {
@@ -172,7 +177,7 @@ export class AgentSkillService implements IAgentSkillService {
       { steerIfActive: input.steerIfActive },
     );
     const handle = this.loop.promptHandle(id)!;
-    if (queued) return { prompt_id: id, created_at: handle.createdAt, state: 'queued' };
+    if (queued) return { prompt_id: id, created_at: handle.createdAt, state: 'queued', steered: false };
     await Promise.race([handle.launched, handle.completion]);
     const turn = await handle.launched;
     if (turn === undefined && handle.state !== 'blocked') {
@@ -184,6 +189,7 @@ export class AgentSkillService implements IAgentSkillService {
       prompt_id: id,
       created_at: handle.createdAt,
       state: handle.state === 'blocked' ? 'blocked' : 'running',
+      steered: steerable && turn?.id === status.activeTurnId,
     };
   }
 
