@@ -105,7 +105,11 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
         { details: { marketplaceId } },
       );
     }
-    if (expectedVersion !== undefined && entry.version !== expectedVersion) {
+    if (
+      expectedVersion !== undefined &&
+      entry.version !== undefined &&
+      entry.version !== expectedVersion
+    ) {
       throw catalogChanged(marketplaceId, 'version', expectedVersion, entry.version);
     }
     if (expectedSha256 !== undefined && !/^[A-Fa-f0-9]{64}$/.test(expectedSha256)) {
