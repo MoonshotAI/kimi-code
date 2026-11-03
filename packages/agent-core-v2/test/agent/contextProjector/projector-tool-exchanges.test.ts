@@ -4,7 +4,12 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { ILogService, type ILogger } from '#/_base/log/log';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentLoopProjector } from '#/agent/loop/projector';
+import { AgentLoopRequestObserver } from '#/agent/loop/requestObservation';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { ContentPart, MediaPart, Message } from '#human/llm/message';
 import { mediaUrlOf } from '#human/llm/protocol/kit/media';
@@ -106,11 +111,16 @@ describe('projector tool-exchange normalization', () => {
     disposables = new DisposableStore();
     warnings = [];
     telemetryRecords = [];
-    projector = new AgentLoopProjector(
+    const observer = new AgentLoopRequestObserver(
       createCapturingLog(warnings),
       recordingTelemetry(telemetryRecords),
+      {} as IEventDispatcher,
+      {} as ISessionUsageService,
+      {} as ISessionTokenCountingService,
+      {} as IAgentScopeContext,
       new AgentStateService(),
     );
+    projector = new AgentLoopProjector((anomalies) => observer.reportProjectionRepairs(anomalies));
   });
 
   afterEach(() => disposables.dispose());

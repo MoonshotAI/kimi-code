@@ -44,9 +44,22 @@ export async function sleepForRetry(delayMs: number, signal?: AbortSignal): Prom
 }
 
 export function retryErrorFields(error: unknown): RetryErrorFields {
+  const structured = typeof error === 'object' && error !== null
+    ? error as { kind?: unknown; name?: unknown; message?: unknown }
+    : undefined;
   return {
-    errorName: error instanceof Error ? error.name : typeof error,
-    errorMessage: error instanceof Error ? error.message : String(error),
+    errorName: error instanceof Error
+      ? error.name
+      : typeof structured?.kind === 'string'
+        ? structured.kind
+        : typeof structured?.name === 'string'
+          ? structured.name
+          : typeof error,
+    errorMessage: error instanceof Error
+      ? error.message
+      : typeof structured?.message === 'string'
+        ? structured.message
+        : String(error),
     statusCode: maybeStatusCode(error),
   };
 }

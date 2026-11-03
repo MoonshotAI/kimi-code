@@ -1,4 +1,4 @@
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -31,7 +31,7 @@ export class NotifyUserTool implements INotifyUserTool {
   constructor(
     @IFlagService private readonly flags: IFlagService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly context: IAgentLoopService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
@@ -56,7 +56,7 @@ export class NotifyUserTool implements INotifyUserTool {
       approvalRule: this.name,
       execute: async ({ turnId, toolCallId }) => {
         const displayed = notifyUserAvailable(this.flags, this.bootstrap);
-        const streak = notifyStreakBefore(this.context.get(), toolCallId);
+        const streak = notifyStreakBefore(this.context.history(), toolCallId);
         this.telemetry.track2('notify_user_sent', {
           turn_id: turnId,
           rounds_since_notify: streak.rounds,

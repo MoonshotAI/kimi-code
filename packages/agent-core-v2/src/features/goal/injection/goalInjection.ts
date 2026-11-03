@@ -1,7 +1,7 @@
 import { Service } from '#/_base/di/service';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import { isCompactionSummaryMessage } from '#/agent/contextMemory/compactionHandoff';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { GoalSnapshot } from '#/features/goal/types';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
@@ -34,7 +34,7 @@ export class GoalInjection extends Service {
   constructor(
     private readonly options: GoalInjectionOptions,
     injector: IAgentReminderService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly context: IAgentLoopService,
   ) {
     super();
     this._register(
@@ -51,7 +51,7 @@ export class GoalInjection extends Service {
     const waitForEnabled = this.options.isWaitForEnabled?.() === true;
     const disclosure = goalDisclosure(goal, waitForEnabled);
     const full =
-      goal.status !== 'active' || needsFullGoalReminder(injection, disclosure, this.context.get());
+      goal.status !== 'active' || needsFullGoalReminder(injection, disclosure, this.context.history());
     return {
       content: buildGoalReminder(goal, waitForEnabled, full),
       disclosure,

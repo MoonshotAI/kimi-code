@@ -1,4 +1,5 @@
 import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IConfigService } from '#/app/config/config';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
@@ -77,6 +78,7 @@ export class BashTool implements IBashTool {
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
   ) {}
@@ -128,8 +130,8 @@ export class BashTool implements IBashTool {
       },
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
-      execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
-        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration),
+      execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId, detach }) =>
+        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration, detach !== undefined),
     };
   }
 
@@ -177,6 +179,7 @@ export class BashTool implements IBashTool {
     onUpdate?: (update: ToolUpdate) => void,
     onForegroundTaskStart?: (taskId: string) => void,
     expectedGeneration?: string,
+    coreDetachedTool = false,
   ): Promise<ExecutableToolResult> {
     const validationError = this.validateRunRequest(args, signal);
     if (validationError !== undefined) return validationError;
@@ -214,6 +217,7 @@ export class BashTool implements IBashTool {
     let collectForegroundOutput = !startsInBackground;
     let foregroundOutputPersisted = false;
     let foregroundTaskId: string | undefined;
+    let detachScenario: 'foreground_detached' | 'foreground_detached_by_user' = 'foreground_detached_by_user';
     const onProcessOutput = startsInBackground
       ? undefined
       : (kind: 'stdout' | 'stderr', text: string): void => {
@@ -240,6 +244,21 @@ export class BashTool implements IBashTool {
           detachTimeoutMs: this.detachTimeoutMs(),
           autoBackgroundOnTimeout: this.allowBackground() && this.autoBackgroundOnTimeout(),
           signal: startsInBackground ? undefined : signal,
+          coreDetachedTool,
+          detachText: (viaTimeout) => this.backgroundStartedResult(
+            taskId,
+            proc,
+            description,
+            viaTimeout
+              ? { title: 'Command timed out and moved to background', brief: `Backgrounded ${taskId} after timeout` }
+              : { title: 'Task moved to background by the user', brief: `Backgrounded ${taskId} by the user` },
+            builder,
+            viaTimeout ? 'foreground_detached' : 'foreground_detached_by_user',
+          ).output,
+          onDetach: (viaTimeout) => {
+            detachScenario = viaTimeout ? 'foreground_detached' : 'foreground_detached_by_user';
+            collectForegroundOutput = false;
+          },
         },
       );
       foregroundTaskId = startsInBackground ? undefined : taskId;
@@ -255,41 +274,76 @@ export class BashTool implements IBashTool {
 
     if (!startsInBackground) onForegroundTaskStart?.(taskId);
 
-    if (startsInBackground) {
-      return this.backgroundStartedResult(taskId, proc, description, {
-        title: 'Background task started',
-        brief: `Started ${taskId}`,
-      });
-    }
-
     try {
-      const release = await this.tasks.waitForForegroundRelease(taskId);
-      if (release === 'detached' || release === 'timeout_detached') {
-        collectForegroundOutput = false;
-        const labels =
-          release === 'timeout_detached'
-            ? {
-                title: 'Command timed out and moved to background',
-                brief: `Backgrounded ${taskId} after timeout`,
-              }
-            : {
-                title: 'Task moved to background by the user',
-                brief: `Backgrounded ${taskId} by the user`,
-              };
-        return this.backgroundStartedResult(
-          taskId,
-          proc,
-          description,
-          labels,
-          builder,
-          release === 'timeout_detached' ? 'foreground_detached' : 'foreground_detached_by_user',
-        );
+      if (startsInBackground) {
+        const started = this.backgroundStartedResult(taskId, proc, description, {
+          title: 'Background task started',
+          brief: `Started ${taskId}`,
+        });
+        if (coreDetachedTool) {
+          const task = this.tasks.prepareCoreDetach(taskId, toolCallId);
+          if (task !== undefined) this.loop.detachTool(task, started.output);
+        } else {
+          this.tasks.detach(taskId, started.output);
+          return started;
+        }
       }
-
-      return await this.foregroundCompletionResult(taskId, proc, builder, foregroundTimeoutMs);
+      if (!coreDetachedTool) {
+        return await this.directForegroundResult(taskId, proc, description, builder, foregroundTimeoutMs, () => detachScenario);
+      }
+      return await this.completionResult(taskId, proc, builder, timeoutMs ?? foregroundTimeoutMs);
     } finally {
       collectForegroundOutput = false;
     }
+  }
+
+  private async directForegroundResult(
+    taskId: string,
+    proc: IHostProcess,
+    description: string,
+    builder: ToolOutputAccumulator,
+    foregroundTimeoutMs: number,
+    detachScenario: () => 'foreground_detached' | 'foreground_detached_by_user',
+  ): Promise<ExecutableToolResult> {
+    let notifyDetached: (() => void) | undefined;
+    const detached = new Promise<void>((resolve) => {
+      notifyDetached = resolve;
+    });
+    const subscription = this.tasks.onDidChangeTask((info) => {
+      if (info.taskId === taskId && info.detached === true) notifyDetached?.();
+    });
+    const labels = () => detachScenario() === 'foreground_detached'
+      ? { title: 'Command timed out and moved to background', brief: `Backgrounded ${taskId} after timeout` }
+      : { title: 'Task moved to background by the user', brief: `Backgrounded ${taskId} by the user` };
+    try {
+      const current = this.tasks.getTask(taskId);
+      if (current?.status === 'running' && current.detached === true) {
+        return this.backgroundStartedResult(taskId, proc, description, labels(), builder, detachScenario());
+      }
+      const outcome = await Promise.race([
+        this.tasks.wait(taskId, Number.POSITIVE_INFINITY).then(() => 'terminal' as const),
+        detached.then(() => 'detached' as const),
+      ]);
+      if (outcome === 'detached') {
+        return this.backgroundStartedResult(taskId, proc, description, labels(), builder, detachScenario());
+      }
+      return await this.completionResult(taskId, proc, builder, foregroundTimeoutMs);
+    } finally {
+      subscription.dispose();
+    }
+  }
+
+  private async completionResult(
+    taskId: string,
+    proc: IHostProcess,
+    builder: ToolOutputAccumulator,
+    timeoutMs: number,
+  ): Promise<ExecutableToolResult> {
+    const info = await this.tasks.wait(taskId, Number.POSITIVE_INFINITY);
+    if (info?.detached !== true) return this.foregroundCompletionResult(taskId, proc, builder, timeoutMs);
+    const output = new ToolOutputAccumulator();
+    output.write(await this.tasks.readOutput(taskId));
+    return this.foregroundCompletionResult(taskId, proc, output, timeoutMs);
   }
 
   private validateRunRequest(
@@ -383,7 +437,7 @@ export class BashTool implements IBashTool {
     labels: { title: string; brief: string },
     builder = new ToolOutputAccumulator(),
     scenario: 'background_started' | 'foreground_detached' | 'foreground_detached_by_user' = 'background_started',
-  ): ExecutableToolResult {
+  ): ExecutableToolResult & { readonly output: string } {
     const status = this.tasks.getTask(taskId)?.status ?? 'running';
     const detachedByUser = scenario === 'foreground_detached_by_user' ? 'detached_by_user: true\n' : '';
     const metadata =
@@ -400,6 +454,7 @@ export class BashTool implements IBashTool {
     const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
     const result: ExecutableToolResult & {
       readonly brief: string;
+      readonly output: string;
     } = {
       isError: false,
       output:

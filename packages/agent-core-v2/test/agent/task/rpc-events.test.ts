@@ -21,13 +21,13 @@ import {
 } from '#/agent/tools/agent/subagent-task';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import { QuestionBackgroundTask } from '#/agent/tools/ask-user-question/question-background-task';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IEventBus } from '#/app/event/eventBus';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ErrorCodes } from '#/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import type { WireRecord } from '#/wire/record';
 import {
   configServices,
   createTestAgent,
@@ -42,6 +42,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { executeTool, type TestExecutableToolContext } from '../../tools/fixtures/execute-tool';
 import {
   createAgentTaskPersistence,
+  restoreTaskHistory,
   type TaskServiceTestManager,
 } from './stubs';
 
@@ -154,7 +155,7 @@ interface FakeTaskAgent {
   emitEvent: ReturnType<typeof vi.fn>;
   emittedEvents: Array<{ type: string; info?: unknown }>;
   kimiConfig?: { task?: { maxRunningTasks?: number } };
-  context: { appendUserMessage: ReturnType<typeof vi.fn> };
+  readonly contextMessages: () => readonly TestContextMessage[];
   hooks?: { fireAndForgetTrigger: FireAndForgetTrigger };
 }
 
@@ -212,8 +213,7 @@ function createAgentTaskService(options: {
     emittedEvents.push(event as { type: string; info?: unknown });
   });
 
-  const context = ctx.get(IAgentContextMemoryService);
-  const appendHistorySpy = vi.spyOn(context, 'append');
+  const context = ctx.get(IAgentLoopService);
 
   const agent: FakeTaskAgent = {
     emittedEvents,
@@ -224,7 +224,10 @@ function createAgentTaskService(options: {
       options.maxRunningTasks === undefined
         ? undefined
         : { task: { maxRunningTasks: options.maxRunningTasks } },
-    context: { appendUserMessage: appendHistorySpy },
+    contextMessages: () => {
+      context.flushReminders();
+      return context.history() as unknown as readonly TestContextMessage[];
+    },
     hooks: options.hooks,
   };
 
@@ -254,8 +257,7 @@ async function cleanupSessionDir(
 }
 
 function firstAppendedContextMessage(agent: FakeTaskAgent): TestContextMessage {
-  const call = agent.context.appendUserMessage.mock.calls[0] as unknown as TestContextMessage[];
-  const message = call.at(-1);
+  const message = agent.contextMessages()[0];
   if (message === undefined) throw new Error('Expected an appended context message');
   return message;
 }
@@ -274,10 +276,8 @@ async function drainNotifications(ctx: TestAgentContext): Promise<void> {
 }
 
 function notificationMessageFor(agent: FakeTaskAgent, taskId: string): TestContextMessage {
-  for (const call of agent.context.appendUserMessage.mock.calls as unknown as TestContextMessage[][]) {
-    for (const message of call) {
-      if (message.origin?.kind === 'task' && message.origin.taskId === taskId) return message;
-    }
+  for (const message of agent.contextMessages()) {
+    if (message.origin?.kind === 'task' && message.origin.taskId === taskId) return message;
   }
   throw new Error(`Expected an appended notification message for ${taskId}`);
 }
@@ -335,20 +335,11 @@ describe('AgentTaskService — event emission', () => {
     vi.useRealTimers();
   });
 
-  it('emits task.started for process tasks', () => {
+  it('tracks process task creation without dispatching task.started', () => {
     const { agent, manager, records } = createAgentTaskService();
     const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'demo');
 
-    expect(agent.emittedEvents).toContainEqual(
-      expect.objectContaining({
-        type: 'task.started',
-        info: expect.objectContaining({
-          taskId,
-          kind: 'process',
-          status: 'running',
-        }),
-      }),
-    );
+    expect(agent.emittedEvents.filter((event) => event.type === 'task.started')).toEqual([]);
     expect(records).toContainEqual({
       event: 'background_task_created',
       properties: {
@@ -363,22 +354,13 @@ describe('AgentTaskService — event emission', () => {
     });
   });
 
-  it('emits task.started for agent tasks', () => {
+  it('tracks agent task creation without dispatching task.started', () => {
     const { agent, manager, records } = createAgentTaskService();
     const taskId = manager.registerTask(
       agentTask(new Promise(() => {}), 'agent task'),
     );
 
-    expect(agent.emittedEvents).toContainEqual(
-      expect.objectContaining({
-        type: 'task.started',
-        info: expect.objectContaining({
-          taskId,
-          kind: 'agent',
-          status: 'running',
-        }),
-      }),
-    );
+    expect(agent.emittedEvents.filter((event) => event.type === 'task.started')).toEqual([]);
     expect(records).toContainEqual({
       event: 'background_task_created',
       properties: {
@@ -393,22 +375,14 @@ describe('AgentTaskService — event emission', () => {
     });
   });
 
-  it('emits task.terminated and telemetry on natural exit', async () => {
+  it('tracks natural exit telemetry without dispatching task.terminated', async () => {
     const { agent, manager, records } = createAgentTaskService();
     const taskId = registerProcess(manager, immediateProcess(0), 'echo', 'done');
     records.length = 0;
 
     await manager.wait(taskId);
 
-    expect(agent.emittedEvents).toContainEqual(
-      expect.objectContaining({
-        type: 'task.terminated',
-        info: expect.objectContaining({
-          taskId,
-          status: 'completed',
-        }),
-      }),
-    );
+    expect(agent.emittedEvents.filter((event) => event.type === 'task.terminated')).toEqual([]);
     expect(records).toContainEqual({
       event: 'background_task_completed',
       properties: expect.objectContaining({
@@ -445,54 +419,36 @@ describe('AgentTaskService — event emission', () => {
     });
   });
 
-  it('emits task.terminated on stop', async () => {
+  it('stops a task without dispatching task.terminated', async () => {
     const { agent, manager } = createAgentTaskService();
     const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'long');
     agent.emittedEvents.length = 0;
 
     await manager.stop(taskId, 'user');
 
-    expect(agent.emittedEvents.filter((e) => e.type === 'task.terminated')).toEqual([
-      expect.objectContaining({
-        type: 'task.terminated',
-        info: expect.objectContaining({
-          taskId,
-          status: 'killed',
-        }),
-      }),
-    ]);
+    expect(manager.getTask(taskId)).toMatchObject({ status: 'killed' });
+    expect(agent.emittedEvents.filter((event) => event.type === 'task.terminated')).toEqual([]);
   });
 
-  it('emits task.terminated when a restored task is marked lost', async () => {
+  it('marks restored running history lost without dispatching task.terminated', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-reconcile-'));
     let fixture: TaskServiceFixture | undefined;
     try {
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(
-        persistedProcess({
-          taskId: 'bash-orphan00',
-          command: 'sleep 60',
-          description: 'orphan task',
-          endedAt: null,
-          exitCode: null,
-          status: 'running',
-        }),
-      );
       fixture = createAgentTaskService({ sessionDir });
       const { agent, manager } = fixture;
+      const running = persistedProcess({
+        taskId: 'bash-orphan00',
+        command: 'sleep 60',
+        description: 'orphan task',
+        endedAt: null,
+        exitCode: null,
+        status: 'running',
+      });
 
-      await manager.loadFromDisk();
-      await manager.reconcile();
+      await restoreTaskHistory(fixture.ctx, [running]);
 
-      expect(agent.emittedEvents).toContainEqual(
-        expect.objectContaining({
-          type: 'task.terminated',
-          info: expect.objectContaining({
-            taskId: 'bash-orphan00',
-            status: 'lost',
-          }),
-        }),
-      );
+      expect(manager.getTask(running.taskId)).toMatchObject({ status: 'lost', endedAt: null });
+      expect(agent.emittedEvents.filter((event) => event.type === 'task.terminated')).toEqual([]);
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }
@@ -719,7 +675,6 @@ describe('AgentTaskService — notification delivery', () => {
     expect(result.isError ?? false).toBe(false);
     expect(outputString(result)).toContain('status: killed');
     expect(notifiedCount(ctx)).toBe(0);
-    expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
     expect(ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
     expect(manager.getTask(taskId)).toMatchObject({
       status: 'killed',
@@ -746,19 +701,19 @@ describe('AgentTaskService — notification delivery', () => {
       );
       expect(result.isError ?? false).toBe(false);
 
+      const stopped = writerFixture.manager.getTask(taskId);
+      if (stopped === undefined) throw new Error('missing stopped task');
       readerFixture = createAgentTaskService({ sessionDir });
       const { agent, manager: reader } = readerFixture;
-      await reader.loadFromDisk();
+      await restoreTaskHistory(readerFixture.ctx, [stopped]);
       expect(reader.getTask(taskId)).toMatchObject({
         stopReason: 'operator cancelled',
         terminalNotificationSuppressed: true,
       });
 
-      await reader.reconcile();
       await new Promise((resolve) => setTimeout(resolve, 20));
 
-      expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
-      expect(readerFixture.ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
+        expect(readerFixture.ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
     } finally {
       if (readerFixture !== undefined) {
         await readerFixture.ctx.dispose();
@@ -791,7 +746,6 @@ describe('AgentTaskService — notification delivery', () => {
     const snapshot = await manager.getOutputSnapshot(taskId, 64 * 1024);
     expect(snapshot.preview).toBe(`${PARTIAL_OUTPUT_NOTICE}\n\n${STOPPED_AGENT_FINDING}`);
     expect(notifiedCount(ctx)).toBe(0);
-    expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
     expect(ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
   });
 
@@ -839,8 +793,10 @@ describe('AgentTaskService — notification delivery', () => {
         toolContext('task_stop_reload', { task_id: taskId }),
       );
 
+      const stopped = writerFixture.manager.getTask(taskId);
+      if (stopped === undefined) throw new Error('missing stopped task');
       readerFixture = createAgentTaskService({ sessionDir });
-      await readerFixture.manager.loadFromDisk();
+      await restoreTaskHistory(readerFixture.ctx, [stopped]);
       const output = outputString(
         await executeTool(
           new TaskOutputTool(readerFixture.manager),
@@ -864,17 +820,12 @@ describe('AgentTaskService — notification delivery', () => {
     let fixture: TaskServiceFixture | undefined;
     try {
       const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(persistedAgent());
       await persistence.appendTaskOutput('agent-done0000', 'restored subagent summary');
       fixture = createAgentTaskService({ sessionDir });
-      const { agent, manager } = fixture;
+      const { agent } = fixture;
 
-      await manager.loadFromDisk();
-      await manager.reconcile();
+      await restoreTaskHistory(fixture.ctx, [persistedAgent()]);
 
-      await vi.waitFor(() => {
-        expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      });
       const message = firstAppendedContextMessage(agent);
       expect(message.origin).toEqual({
         kind: 'task',
@@ -897,17 +848,12 @@ describe('AgentTaskService — notification delivery', () => {
     let fixture: TaskServiceFixture | undefined;
     try {
       const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(persistedProcess());
       await persistence.appendTaskOutput('bash-done0000', 'restored shell output');
       fixture = createAgentTaskService({ sessionDir });
-      const { agent, manager } = fixture;
+      const { agent } = fixture;
 
-      await manager.loadFromDisk();
-      await manager.reconcile();
+      await restoreTaskHistory(fixture.ctx, [persistedProcess()]);
 
-      await vi.waitFor(() => {
-        expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      });
       const message = firstAppendedContextMessage(agent);
       expect(message.origin).toEqual({
         kind: 'task',
@@ -932,17 +878,12 @@ describe('AgentTaskService — notification delivery', () => {
       const taskId = 'bash-large000';
       const largeOutput = `early-output-marker\n${'x'.repeat(8_000)}\nfinal output line`;
       const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(persistedProcess({ taskId }));
       await persistence.appendTaskOutput(taskId, largeOutput);
       fixture = createAgentTaskService({ sessionDir });
-      const { agent, manager } = fixture;
+      const { agent } = fixture;
 
-      await manager.loadFromDisk();
-      await manager.reconcile();
+      await restoreTaskHistory(fixture.ctx, [persistedProcess({ taskId })]);
 
-      await vi.waitFor(() => {
-        expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      });
       const message = firstAppendedContextMessage(agent);
       const text = message.content[0]!.text;
       expect(text).toContain('<output-file');
@@ -965,26 +906,27 @@ describe('AgentTaskService — notification delivery', () => {
         notificationId: 'task:agent-seen0000:completed',
       } as const;
       const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(persistedAgent({ taskId: 'agent-seen0000' }));
       await persistence.appendTaskOutput('agent-seen0000', 'already delivered summary');
       fixture = createAgentTaskService({ sessionDir });
-      const { agent, ctx, manager } = fixture;
-      const context = ctx.get(IAgentContextMemoryService);
-      context.append(
-        {
+      const { agent } = fixture;
+      const preceding = [{
+        type: 'context.append_message',
+        message: {
           role: 'user',
           content: [{ type: 'text', text: 'already delivered' }],
+          toolCalls: [],
           origin,
         },
+      } as unknown as WireRecord];
+
+      await restoreTaskHistory(
+        fixture.ctx,
+        [persistedAgent({ taskId: 'agent-seen0000' })],
+        'main',
+        preceding,
       );
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      agent.context.appendUserMessage.mockClear();
 
-      await manager.loadFromDisk();
-      await manager.reconcile();
-
-      expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
-    } finally {
+      } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }
   });
@@ -994,18 +936,14 @@ describe('AgentTaskService — notification delivery', () => {
     let fixture: TaskServiceFixture | undefined;
     try {
       const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(persistedAgent());
       await persistence.appendTaskOutput('agent-done0000', 'restored subagent summary');
       fixture = createAgentTaskService({ sessionDir });
       const { agent, ctx, manager } = fixture;
       ctx.appendUserTurn('start the background task');
-      agent.context.appendUserMessage.mockClear();
+      const preceding = await ctx.persistedWireRecords();
 
-      await manager.loadFromDisk();
-      await manager.reconcile();
-      await vi.waitFor(() => {
-        expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      });
+      await restoreTaskHistory(ctx, [persistedAgent()], 'main', preceding);
+      notificationMessageFor(agent, 'agent-done0000');
       vi.spyOn(manager, 'getOutputSnapshot').mockRejectedValueOnce(
         new Error('output unavailable'),
       );
@@ -1013,10 +951,10 @@ describe('AgentTaskService — notification delivery', () => {
       await ctx.restorePersisted();
       await ctx.get(IAgentConversationUndoService).undo(1);
 
-      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(2);
-      expect(ctx.context.get().some((message) => message.origin?.kind === 'user')).toBe(false);
+      expect(notifiedCount(ctx)).toBe(2);
+      expect(ctx.context.history().some((message) => message.origin?.kind === 'user')).toBe(false);
       expect(
-        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
+        ctx.context.history().filter((message) => message.origin?.kind === 'task'),
       ).toHaveLength(1);
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
@@ -1061,7 +999,7 @@ describe('AgentTaskService — notification delivery', () => {
       });
       expect(active.signal.aborted).toBe(false);
       expect(
-        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
+        ctx.context.history().filter((message) => message.origin?.kind === 'task'),
       ).toEqual([]);
 
       ctx.mockNextResponse({ type: 'text', text: 'notification acknowledged' });
@@ -1069,7 +1007,7 @@ describe('AgentTaskService — notification delivery', () => {
       release();
       await expect(active.result).resolves.toMatchObject({ type: 'completed' });
       expect(
-        ctx.context.get().filter((message) => message.origin?.kind === 'task'),
+        ctx.context.history().filter((message) => message.origin?.kind === 'task'),
       ).toEqual([
         expect.objectContaining({
           origin: expect.objectContaining({ taskId, status: 'completed' }),
@@ -1089,28 +1027,21 @@ describe('AgentTaskService — notification delivery', () => {
     let fixture: TaskServiceFixture | undefined;
     try {
       const fireAndForgetTrigger = vi.fn<FireAndForgetTrigger>(async () => []);
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(
-        persistedAgent({
-          taskId: 'agent-run00000',
-          description: 'interrupted task',
-          endedAt: null,
-          status: 'running',
-        }),
-      );
+      const running = persistedAgent({
+        taskId: 'agent-run00000',
+        description: 'interrupted task',
+        endedAt: null,
+        status: 'running',
+      });
       fixture = createAgentTaskService({
         sessionDir,
         hooks: { fireAndForgetTrigger },
       });
-      const { agent, manager } = fixture;
+      const { agent } = fixture;
 
-      await manager.loadFromDisk();
-      await manager.reconcile();
-      await manager.reconcile();
+      await restoreTaskHistory(fixture.ctx, [running]);
+      await restoreTaskHistory(fixture.ctx, [running]);
 
-      await vi.waitFor(() => {
-        expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      });
       const message = firstAppendedContextMessage(agent);
       expect(message.origin).toMatchObject({
         kind: 'injection',
@@ -1138,34 +1069,33 @@ describe('AgentTaskService — notification delivery', () => {
     }
   });
 
-  it('does not repeat a restored lost-task reminder when its marker is missing', async () => {
+  it('does not repeat a restored lost-task reminder already present in history', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-reminded-'));
     let fixture: TaskServiceFixture | undefined;
     try {
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(
-        persistedAgent({
-          taskId: 'agent-hist0000',
-          description: 'interrupted task',
-          status: 'lost',
-        }),
-      );
-      fixture = createAgentTaskService({ sessionDir });
-      const { agent, ctx, manager } = fixture;
-      ctx.appendSystemReminder(
-        '- agent-hist0000 "interrupted task" (subagent)',
-        { kind: 'injection', variant: 'task_resume_termination' },
-      );
-
-      await manager.loadFromDisk();
-      await manager.reconcile();
-
-      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      await vi.waitFor(async () => {
-        await expect(persistence.readTask('agent-hist0000')).resolves.toMatchObject({
-          resumeReminded: true,
-        });
+      const info = persistedAgent({
+        taskId: 'agent-hist0000',
+        description: 'interrupted task',
+        status: 'lost',
       });
+      fixture = createAgentTaskService({ sessionDir });
+      const { agent, ctx } = fixture;
+      const preceding = [{
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: '- agent-hist0000 "interrupted task" (subagent)' }],
+          toolCalls: [],
+          origin: { kind: 'injection', variant: 'task_resume_termination' },
+        },
+      } as unknown as WireRecord];
+
+      await restoreTaskHistory(ctx, [info], 'main', preceding);
+      await restoreTaskHistory(ctx, [info], 'main', preceding);
+
+        expect(ctx.contextData().history.filter(
+        (message) => message.origin?.kind === 'injection' && message.origin.variant === 'task_resume_termination',
+      )).toHaveLength(1);
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }
@@ -1175,82 +1105,67 @@ describe('AgentTaskService — notification delivery', () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-delivered-'));
     let fixture: TaskServiceFixture | undefined;
     try {
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(
-        persistedAgent({
-          taskId: 'agent-old00000',
-          description: 'interrupted task',
-          status: 'lost',
-        }),
-      );
+      const info = persistedAgent({
+        taskId: 'agent-old00000',
+        description: 'interrupted task',
+        status: 'lost',
+      });
       fixture = createAgentTaskService({ sessionDir });
-      const { agent, ctx, manager } = fixture;
-      ctx.get(IAgentContextMemoryService).append({
-        role: 'user',
-        content: [{ type: 'text', text: '<notification>interrupted task lost.</notification>' }],
-        origin: {
-          kind: 'task',
-          taskId: 'agent-old00000',
-          status: 'lost',
-          notificationId: 'task:agent-old00000:lost',
+      const { agent, ctx } = fixture;
+      const preceding = [{
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: '<notification>interrupted task lost.</notification>' }],
+          toolCalls: [],
+          origin: {
+            kind: 'task',
+            taskId: 'agent-old00000',
+            status: 'lost',
+            notificationId: 'task:agent-old00000:lost',
+          },
         },
-      });
+      } as unknown as WireRecord];
 
-      await manager.loadFromDisk();
-      await manager.reconcile();
+      await restoreTaskHistory(ctx, [info], 'main', preceding);
 
-      expect(agent.context.appendUserMessage).toHaveBeenCalledTimes(1);
-      expect(
-        ctx.contextData().history.filter(
-          (message) =>
-            message.origin?.kind === 'injection' &&
-            message.origin.variant === 'task_resume_termination',
-        ),
-      ).toEqual([]);
-      await vi.waitFor(async () => {
-        await expect(persistence.readTask('agent-old00000')).resolves.toMatchObject({
-          resumeReminded: true,
-        });
-      });
+        expect(ctx.contextData().history.filter(
+        (message) => message.origin?.kind === 'injection' && message.origin.variant === 'task_resume_termination',
+      )).toEqual([]);
+      expect(ctx.contextData().history.filter(
+        (message) => message.origin?.kind === 'task' && message.origin.taskId === info.taskId,
+      )).toHaveLength(1);
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }
   });
 
-  it('does not block restore when persisting a reminder marker fails', async () => {
+  it('restores a lost reminder without synthesizing task termination', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-marker-'));
     let fixture: TaskServiceFixture | undefined;
     try {
-      const persistence = createAgentTaskPersistence(sessionDir);
-      await persistence.writeTask(
-        persistedAgent({
-          taskId: 'agent-mark0000',
-          description: 'interrupted task',
-          status: 'lost',
-        }),
-      );
+      const running = persistedAgent({
+        taskId: 'agent-mark0000',
+        description: 'interrupted task',
+        endedAt: null,
+        status: 'running',
+      });
       fixture = createAgentTaskService({ sessionDir });
-      const { agent, manager } = fixture;
-      await manager.loadFromDisk();
-      const internalPersistence = (
-        manager as unknown as {
-          readonly persistence: Pick<ReturnType<typeof createAgentTaskPersistence>, 'writeTask'>;
-        }
-      ).persistence;
-      vi.spyOn(internalPersistence, 'writeTask').mockRejectedValueOnce(
-        new Error('marker write failed'),
-      );
+      const { agent, ctx, manager } = fixture;
 
-      await expect(manager.reconcile()).resolves.toEqual([]);
+      await restoreTaskHistory(ctx, [running]);
 
-      expect(manager.getTask('agent-mark0000')).toMatchObject({
+      expect(manager.getTask(running.taskId)).toMatchObject({
         status: 'lost',
-        resumeReminded: true,
+        endedAt: null,
       });
       expect(firstAppendedContextMessage(agent).origin).toMatchObject({
         kind: 'injection',
         variant: 'task_resume_termination',
       });
+      expect((await ctx.persistedWireRecords()).filter(
+        (record) => record.type === 'task.terminated',
+      )).toEqual([]);
     } finally {
       await cleanupSessionDir(sessionDir, fixture);
     }

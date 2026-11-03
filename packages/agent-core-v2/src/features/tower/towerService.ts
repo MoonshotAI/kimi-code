@@ -6,7 +6,6 @@ import { ILogService } from '#/_base/log/log';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
@@ -117,7 +116,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IFeatureManager featureManager: IFeatureManager,
     @IConfigService config: IConfigService,
     @IAgentReminderService reminder: IAgentReminderService,
-    @IAgentContextMemoryService context: IAgentContextMemoryService,
+    @IAgentLoopService context: IAgentLoopService,
     @IEventBus eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
     @IAgentLoopService private readonly loop: IAgentLoopService,

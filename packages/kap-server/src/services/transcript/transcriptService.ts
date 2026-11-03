@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   IAgentLifecycleService,
-  IAgentContextMemoryService,
+  IFlagService,
   IWireService,
   IBlobStore,
   ISessionIndex,
@@ -16,13 +16,15 @@ import {
   makeAgentScopeContext,
   followSessionLifecycles,
   getLiveSessionById,
-  isUndoAnchor,
+  isTowerFeatureAssembled,
   reduceContextTranscript,
   type ContextMessage,
   type IDisposable,
   type Scope,
   type SessionMeta,
 } from '@moonshot-ai/agent-core-v2';
+import { isUndoAnchorTurnPrompt } from '@moonshot-ai/agent-core-v2/agent/undo/turnUndo';
+import type { TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import {
   TranscriptStore,
   foldWireRecordFacts,
@@ -462,7 +464,7 @@ export class TranscriptService {
         ?.accessor.get(IAgentLifecycleService).handleOf(agentId);
       if (agent !== undefined) {
         const current = entry.store.ensureAgent(agentId).snapshot();
-        const retained = groupMessagesIntoSnapshot(agent.accessor.get(IAgentContextMemoryService).get());
+        const retained = groupMessagesIntoSnapshot(agent.accessor.get(IAgentLoopService).history());
         snapshot = { ...current, items: retained.items, attachments: retained.attachments, prompts: [] };
       }
     }
@@ -600,11 +602,11 @@ export class TranscriptService {
         anchorFloor = anchorStack.length;
         continue;
       }
+      if (record.type === 'turn.prompt' && isUndoAnchorTurnPrompt(record as unknown as TurnPrompt)) {
+        anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds), steerCount: matchedSteers.length });
+      }
       if (record.type === 'context.append_message') {
         const message = (record as { message?: ContextMessage }).message;
-        if (message !== undefined && isUndoAnchor(message)) {
-          anchorStack.push({ taskIdsSnapshot: new Set(taskOriginTurnTaskIds), steerCount: matchedSteers.length });
-        }
         if (message?.role === 'user') {
           const key = JSON.stringify(withoutUserPromptSubmitHookParts(message.content));
           const kind = message.origin?.kind ?? 'user';

@@ -15,6 +15,7 @@ const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
 export interface AssistantSealMeta {
   readonly usage?: TokenUsage;
   readonly llmTiming?: ContextMessageTiming;
+  readonly providerMessageId?: string;
 }
 
 export type LoopRecordedEvent =
@@ -108,10 +109,12 @@ function createLoopEventFoldWithState(
   let openStepUuid: string | null | undefined = initial === undefined ? undefined : null;
   let openHasToolCalls = initial?.openHasToolCalls ?? false;
   let openVacuous = initial?.openVacuous ?? true;
+  let openInterrupted = false;
   const pending = new Map<string, string>(
     initial?.pendingToolCalls.map((call) => [call.id, call.name]),
   );
   let deferred: { message: ContextMessage; time: number | undefined }[] = [];
+  let pendingSealMeta: AssistantSealMeta | undefined;
 
   const flushDeferred = (): void => {
     if (pending.size > 0 || deferred.length === 0) return;
@@ -121,12 +124,15 @@ function createLoopEventFoldWithState(
   const closePending = (time: number | undefined): void => {
     if (pending.size === 0) return;
     for (const toolCallId of pending.keys()) {
-      sink.pushToolMessage(interruptedToolMessage(toolCallId), time);
+      const hasRecordedResult = deferred.some(
+        (entry) => entry.message.role === 'tool' && entry.message.toolCallId === toolCallId,
+      );
+      if (!hasRecordedResult) sink.pushToolMessage(interruptedToolMessage(toolCallId), time);
     }
     pending.clear();
     flushDeferred();
   };
-  const settleOpen = (time: number | undefined, meta?: AssistantSealMeta): void => {
+  const settleOpen = (time: number | undefined, meta = pendingSealMeta): void => {
     if (openStepUuid === undefined) return;
     closePending(time);
     if (!openHasToolCalls && openVacuous) {
@@ -135,6 +141,7 @@ function createLoopEventFoldWithState(
       sink.sealOpenAssistant(meta);
     }
     openStepUuid = undefined;
+    pendingSealMeta = undefined;
   };
   const acceptsOpenStep = (stepUuid: string): boolean => {
     if (openStepUuid === undefined) return false;
@@ -156,15 +163,26 @@ function createLoopEventFoldWithState(
     loopEvent(event, time) {
       switch (event.type) {
         case 'step.begin': {
-          settleOpen(time);
+          if (openInterrupted && !openHasToolCalls && pendingSealMeta === undefined) {
+            closePending(time);
+            openStepUuid = undefined;
+            pendingSealMeta = undefined;
+          } else {
+            settleOpen(time);
+          }
           sink.openAssistant(time);
           openStepUuid = event.uuid;
           openHasToolCalls = false;
           openVacuous = true;
+          openInterrupted = false;
           return;
         }
         case 'step.end': {
-          if (event.finishReason === 'interrupted' || event.finishReason === 'error') return;
+          if (event.finishReason === 'interrupted' || event.finishReason === 'error') {
+            openInterrupted = true;
+            pendingSealMeta = stepEndSealMeta(event);
+            return;
+          }
           settleOpen(time, stepEndSealMeta(event));
           flushDeferred();
           return;
@@ -182,7 +200,8 @@ function createLoopEventFoldWithState(
             id: event.toolCallId,
             name: event.name,
             arguments: event.args === undefined ? null : JSON.stringify(event.args),
-            ...(event.extras !== undefined ? { extras: event.extras } : {}),
+            extras: event.extras,
+            rawId: undefined,
           };
           sink.appendOpenToolCall(call, event.display);
           pending.set(event.toolCallId, event.name);
@@ -212,15 +231,18 @@ function createLoopEventFoldWithState(
       }
     },
     settle(time) {
-      settleOpen(time);
+      if (openInterrupted && !openHasToolCalls && pendingSealMeta === undefined) closePending(time);
+      else settleOpen(time);
       flushDeferred();
     },
     reset() {
       openStepUuid = undefined;
       openHasToolCalls = false;
       openVacuous = true;
+      openInterrupted = false;
       pending.clear();
       deferred = [];
+      pendingSealMeta = undefined;
     },
   };
 }
@@ -256,6 +278,12 @@ export function foldLoopEvent(
   const bound = boundOf(state, mutable);
   bound.sink.setMutable(mutable);
   bound.fold.loopEvent(event, undefined);
+  return bind(bound, bound.sink.current());
+}
+
+export function foldSettle(state: readonly ContextMessage[]): readonly ContextMessage[] {
+  const bound = boundOf(state, false);
+  bound.fold.settle(undefined);
   return bind(bound, bound.sink.current());
 }
 
@@ -349,6 +377,7 @@ function createFoldSink(initial: readonly ContextMessage[], initialMutable: bool
         ...message,
         usage: meta?.usage,
         llmTiming: meta?.llmTiming,
+        providerMessageId: meta?.providerMessageId,
         partial: undefined,
       }));
       openIndex = -1;
@@ -413,6 +442,10 @@ function stepEndSealMeta(
     llmStreamDurationMs: event.llmStreamDurationMs,
   };
   const hasTiming = Object.values(timing).some((value) => value !== undefined);
-  if (event.usage === undefined && !hasTiming) return undefined;
-  return { usage: event.usage, llmTiming: hasTiming ? timing : undefined };
+  if (event.usage === undefined && !hasTiming && event.messageId === undefined) return undefined;
+  return {
+    usage: event.usage,
+    llmTiming: hasTiming ? timing : undefined,
+    providerMessageId: event.messageId,
+  };
 }

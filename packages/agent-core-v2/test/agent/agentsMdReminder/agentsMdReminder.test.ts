@@ -49,7 +49,6 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { AgentToolDedupeService } from '#/agent/toolDedupe/toolDedupeService';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderHarness } from '../../features/reminder/stubs';
 import { OrderedHookSlot } from '#/hooks';
@@ -61,7 +60,7 @@ import { extractBashTargetDirs } from '#/agent/agentsMdReminder/bashTargets';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../toolExecutor/stubs';
 import { runWillBeginStepHooks, stubLoopWithHooks, type StubLoop } from '../loop/stubs';
-import { stubContextMemory, type StubContextMemory } from '../contextMemory/stubs';
+import { appendContext, compactContext, stubContextMemory, type StubContextMemory } from '../contextMemory/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
 
@@ -176,7 +175,7 @@ function createHarness(
         }),
       );
       reg.defineInstance(IAgentLoopService, loop);
-      reg.defineInstance(IAgentContextMemoryService, context);
+      reg.defineInstance(IAgentLoopService, context);
       reg.defineInstance(ISessionContext, {
         _serviceBrand: undefined,
         sessionId: 'session-1',
@@ -474,7 +473,7 @@ describe('agentsMdReminder path-carrying tools', () => {
 
 describe('agentsMdReminder re-injection after context loss', () => {
   function compact(h: Harness): void {
-    h.context.applyCompaction({
+    compactContext(h.context,{
       summary: 'compaction summary',
       compactedCount: 1,
       tokensBefore: 100,
@@ -534,7 +533,7 @@ describe('agentsMdReminder re-injection after context loss', () => {
     await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
 
-    h.context.clear();
+    h.context.replaceHistory([], 'test');
     expect(agentsMdMessages(h)).toHaveLength(0);
 
     await fire(h, didCtx('Read', { path: join(subDir, 'other.ts') }));
@@ -564,8 +563,9 @@ describe('agentsMdReminder re-injection after context loss', () => {
     const subDir = join(workDir, 'packages', 'kap-server');
     const subAgentsMd = await writeAgentsMd(subDir);
     h.reminder.seedInjected([], workDir);
+    h.context.beginTurn();
 
-    h.context.append({
+    appendContext(h.context,{
       role: 'user',
       content: [{ type: 'text', text: 'prompt' }],
     });

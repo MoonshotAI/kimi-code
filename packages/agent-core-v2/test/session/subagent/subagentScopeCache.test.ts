@@ -13,11 +13,9 @@ import { Ledger } from '#/_base/lifecycle/ledger';
 import '#/agent/permissionMode/permissionModeService';
 import { ILogService } from '#/_base/log/log';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import '#/agent/contextMemory/contextMemoryService';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentLoopService, type LoopSnapshot } from '#/agent/loop/loop';
-import type { MachineEngine, MachineEngineAttachBundle } from '#/agent/loop/machine/engine';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
@@ -101,7 +99,6 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
-import type { AgentEventStore } from '#human/agent/slices';
 
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { stubProviderDiscovery } from '../../stubs';
@@ -165,71 +162,6 @@ const pluginServiceStub = {
   mcpServerEntries: async () => [],
   enabledHooks: async () => [],
 } as unknown as IPluginService;
-
-function stubAttachStore(): AgentEventStore {
-  return {
-    ref: { tree: 'test', branch: 'main' },
-    getState: () => ({
-      history: [],
-      queue: [],
-      notifications: [],
-      reminders: [],
-      turnIndex: { nextTurnId: 0 },
-    }),
-    subscribe: () => () => {},
-    dispatch: () => Promise.resolve({ kind: 'entry', seq: 0, ts: 0, type: 'noop', payload: null }),
-    registerSlice: () => Promise.resolve(() => {}),
-    reset: () => Promise.resolve(),
-    flush: () => Promise.resolve(),
-    close: () => Promise.resolve(),
-  } as unknown as AgentEventStore;
-}
-
-function stubAttachEngine(): MachineEngine {
-  return {
-    submit: () => {},
-    steer: () => {},
-    notify: () => {},
-    remind: () => {},
-    cancelQueueItem: () => {},
-    abort: () => {},
-    pause: () => {},
-    resume: () => {},
-    resetHistory: () => Promise.resolve(),
-    resetJournal: () => Promise.resolve(),
-    stop: () => {},
-    snapshot: () => ({
-      running: false,
-      aborting: false,
-      waitingForBackground: false,
-      paused: false,
-      queue: [],
-      queueLength: 0,
-      queueIds: [],
-      notificationCount: 0,
-      reminderCount: 0,
-      backgroundCount: 0,
-    }),
-    currentStep: () => 0,
-    lastFinish: () => undefined,
-    toolExtras: new Map(),
-    handleToolProgress: () => {},
-  };
-}
-
-function stubAttachBundle(): MachineEngineAttachBundle {
-  return {
-    store: stubAttachStore(),
-    request: { model: { provider: 'test', model: 'test' } },
-  } as unknown as MachineEngineAttachBundle;
-}
-
-interface SessionActorView {
-  getSnapshot(): {
-    children: Record<string, { getSnapshot(): { status: string } } | undefined>;
-    context: { agents: Record<string, unknown> };
-  };
-}
 
 function recordingAppendLog(initial: readonly WireRecord[] = []): {
   readonly appended: WireRecord[];
@@ -478,8 +410,7 @@ describe('SessionSubagentScopeCacheService', () => {
       cancel: () => true,
       settled: async () => {},
       tryAcquireQuiescence: () => ({ dispose: () => {} }),
-      buildAttachBundle: () => stubAttachBundle(),
-      attachEngine: () => stubAttachEngine(),
+      close: () => Promise.resolve(),
     } as unknown as IAgentLoopService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -879,14 +810,15 @@ describe('SessionSubagentScopeCacheService', () => {
     );
   });
 
-  it('eviction releases the evicted agent actor from the session machine', async () => {
+  it('eviction disposes only the evicted agent scope', async () => {
     cacheService('1');
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'agent-1' });
     await svc.create({ agentId: 'agent-2' });
-    const sessionActor = (svc as unknown as { sessionActor: SessionActorView }).sessionActor;
-    const evictedRef = sessionActor.getSnapshot().children['agent-1'];
-    expect(evictedRef).toBeDefined();
+    const evicted = svc.handleOf('agent-1')!;
+    const retained = svc.handleOf('agent-2')!;
+    const evictedDispose = vi.spyOn(evicted, 'dispose');
+    const retainedDispose = vi.spyOn(retained, 'dispose');
 
     completed('agent-1');
     completed('agent-2');
@@ -894,11 +826,9 @@ describe('SessionSubagentScopeCacheService', () => {
       expect(svc.handleOf('agent-1')).toBeUndefined();
     });
 
-    const snapshot = sessionActor.getSnapshot();
-    expect(snapshot.context.agents['agent-1']).toBeUndefined();
-    expect(snapshot.children['agent-1']).toBeUndefined();
-    expect(snapshot.children['agent-2']).toBeDefined();
-    expect(evictedRef?.getSnapshot().status).toBe('done');
+    expect(evictedDispose).toHaveBeenCalledOnce();
+    expect(retainedDispose).not.toHaveBeenCalled();
+    expect(svc.handleOf('agent-2')).toBe(retained);
   });
 });
 

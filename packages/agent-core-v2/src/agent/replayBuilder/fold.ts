@@ -25,6 +25,7 @@ import {
   isWireMetadataRecord,
   type WireRecord,
 } from '#/wire/record';
+import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 
 import type { AgentReplayRecord, AgentReplayRecordPayload } from './types';
 
@@ -90,10 +91,12 @@ export function foldWireRecords(
   decodePersistent?: (record: WireRecord) => WireRecord,
   matchingRecords?: readonly WireRecord[],
 ): WireReplayFold {
+  records = normalizeLegacyTurnSteerRecords(records);
+  const matching = normalizeLegacyTurnSteerRecords(matchingRecords ?? records);
   const turnIdByAppend = new Map<WireRecord, number>();
-  for (const match of matchWireTurnInputRecords(matchingRecords ?? records, true)) {
+  for (const match of matchWireTurnInputRecords(matching, true)) {
     if (match.turnId !== undefined) {
-      turnIdByAppend.set((matchingRecords ?? records)[match.appendIndex]!, match.turnId);
+      turnIdByAppend.set(matching[match.appendIndex]!, match.turnId);
     }
   }
   const fold = new WireReplayFoldState();

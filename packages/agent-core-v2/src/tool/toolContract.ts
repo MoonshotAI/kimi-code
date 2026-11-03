@@ -1,4 +1,4 @@
-import type { ContentPart, SystemMessage, ToolCall, ToolDescription as Tool, UserMessage } from '#human/llm/message';
+import type { ContentPart, SystemMessage, ToolDescription as Tool, UserMessage } from '#human/llm/message';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
@@ -14,20 +14,6 @@ export interface ToolResultSpill {
   readonly suffix?: string;
 }
 
-export type ToolDeliveryKind = 'steer';
-
-export interface ToolDeliveryMessage {
-  readonly role: 'user';
-  readonly content: readonly ContentPart[];
-  readonly toolCalls?: readonly ToolCall[];
-  readonly origin?: unknown;
-}
-
-export interface ToolDelivery {
-  readonly kind: ToolDeliveryKind;
-  readonly message: ToolDeliveryMessage;
-}
-
 export type ToolRemind = (message: SystemMessage | UserMessage) => void;
 
 export interface ExecutableToolSuccessResult {
@@ -37,7 +23,6 @@ export interface ExecutableToolSuccessResult {
   readonly stopTurnReason?: string;
   readonly truncated?: boolean | undefined;
   readonly note?: string;
-  readonly delivery?: ToolDelivery | undefined;
   readonly spill?: ToolResultSpill;
   readonly spillExempt?: true;
 }
@@ -49,7 +34,6 @@ export interface ExecutableToolErrorResult {
   readonly stopTurnReason?: string;
   readonly truncated?: boolean | undefined;
   readonly note?: string;
-  readonly delivery?: ToolDelivery | undefined;
   readonly spill?: ToolResultSpill;
   readonly spillExempt?: true;
 }
@@ -75,6 +59,7 @@ export interface ExecutableToolContext {
   readonly signal: AbortSignal;
   readonly steerSignal?: AbortSignal;
   readonly remind?: ToolRemind;
+  readonly detach?: (text: string) => void;
   readonly onUpdate?: ((update: ToolUpdate) => void) | undefined;
   readonly onForegroundTaskStart?: ((taskId: string) => void) | undefined;
 }

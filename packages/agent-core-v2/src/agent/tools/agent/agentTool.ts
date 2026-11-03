@@ -135,6 +135,7 @@ export class SubagentTool implements ISubagentTool {
     @IInstantiationService private readonly instantiationService: IInstantiationService,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
@@ -445,7 +446,7 @@ export class SubagentTool implements ISubagentTool {
 
   private async execution(
     args: SubagentToolInput,
-    { toolCallId, signal }: ExecutableToolContext,
+    { toolCallId, signal, detach }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
       signal.throwIfAborted();
@@ -504,6 +505,8 @@ export class SubagentTool implements ISubagentTool {
           detached: runInBackground,
           timeoutMs,
           signal: runInBackground ? undefined : signal,
+          coreDetachedTool: detach !== undefined,
+          detachText: () => formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, true),
         };
         taskId = this.tasks.registerTask(
           new SubagentTask(handle, args.description, controller),
@@ -548,20 +551,54 @@ export class SubagentTool implements ISubagentTool {
       }
 
       if (runInBackground) {
-        return {
-          output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, false),
-        };
+        const output = formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, false);
+        if (detach !== undefined) {
+          const task = this.tasks.prepareCoreDetach(taskId, toolCallId);
+          if (task !== undefined) this.loop.detachTool(task, output);
+        } else {
+          this.tasks.detach(taskId, output);
+          return { output };
+        }
       }
-
-      const release = await this.tasks.waitForForegroundRelease(taskId);
-      if (release === 'detached') {
-        return {
-          output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, true),
-        };
+      if (detach === undefined) {
+        return await this.directForegroundResult(taskId, handle, args.description, allowBackground, timeoutMs);
       }
+      await this.tasks.wait(taskId, Number.POSITIVE_INFINITY);
       return await this.formatForegroundResult(taskId, handle, timeoutMs);
     } catch (error) {
       return { output: `subagent error: ${launchErrorMessage(error, signal)}`, isError: true };
+    }
+  }
+
+  private async directForegroundResult(
+    taskId: string,
+    handle: SubagentHandle,
+    description: string,
+    allowBackground: boolean,
+    timeoutMs: number,
+  ): Promise<ExecutableToolResult> {
+    let notifyDetached: (() => void) | undefined;
+    const detached = new Promise<void>((resolve) => {
+      notifyDetached = resolve;
+    });
+    const subscription = this.tasks.onDidChangeTask((info) => {
+      if (info.taskId === taskId && info.detached === true) notifyDetached?.();
+    });
+    try {
+      const current = this.tasks.getTask(taskId);
+      if (current?.status === 'running' && current.detached === true) {
+        return { output: formatBackgroundAgentResult(taskId, handle, description, allowBackground, true) };
+      }
+      const outcome = await Promise.race([
+        this.tasks.wait(taskId, Number.POSITIVE_INFINITY).then(() => 'terminal' as const),
+        detached.then(() => 'detached' as const),
+      ]);
+      if (outcome === 'detached') {
+        return { output: formatBackgroundAgentResult(taskId, handle, description, allowBackground, true) };
+      }
+      return await this.formatForegroundResult(taskId, handle, timeoutMs);
+    } finally {
+      subscription.dispose();
     }
   }
 

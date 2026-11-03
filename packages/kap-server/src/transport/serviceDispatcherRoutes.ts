@@ -88,7 +88,7 @@ function makeHandler(
     let promptReservation: PromptIdReservation | undefined;
     try {
       promptReservation =
-        scopeKind === 'agent' && service === 'agentPromptService' && method === 'submit'
+        scopeKind === 'agent' && service === 'agentLoopService' && method === 'submit'
           ? reservePromptId(
               (req.params as Record<string, string>)['session_id'] ?? '',
               (arg as { promptId?: string } | undefined)?.promptId,
