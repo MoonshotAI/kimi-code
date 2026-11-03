@@ -476,6 +476,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
       configStore: { onDidWrite: () => ({ dispose: () => {} }) },
       plugins: {
         enabledMcpServers: async () => ({}),
+        mcpServerEntries: async () => [],
         onDidReload: () => ({ dispose: () => {} }),
         pluginAgentRoots: async () => [],
         pluginSkillRoots: async () => [],
