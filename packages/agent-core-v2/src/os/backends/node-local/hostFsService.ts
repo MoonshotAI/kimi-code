@@ -85,7 +85,7 @@ export class HostFileSystem implements IHostFileSystem {
 
   async readText(
     path: string,
-    options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
+    options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors; preserveBOM?: boolean },
   ): Promise<string> {
     try {
       if (options === undefined) {
@@ -93,7 +93,7 @@ export class HostFileSystem implements IHostFileSystem {
       }
       const encoding = options.encoding ?? 'utf-8';
       const errors = options.errors ?? 'strict';
-      return decodeTextWithErrors(await readFile(path), encoding, errors);
+      return decodeTextWithErrors(await readFile(path), encoding, errors, options.preserveBOM);
     } catch (error) {
       throw toHostFsError(error, { path, op: 'read' });
     }
