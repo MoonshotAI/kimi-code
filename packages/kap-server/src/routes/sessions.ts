@@ -1,6 +1,7 @@
 import {
   ErrorCodes,
   IAgentChangeNotifierService,
+  IAgentGoalService,
   IAgentContextMemoryService,
   IAgentProfileService,
   IAgentConversationUndoService,
@@ -26,6 +27,7 @@ import {
   IWorkspaceInstanceManager,
   IWorkspaceService,
   closeSessionById,
+  ensureMainAgent as ensureMainAgentContext,
   getLiveSessionById,
   programForSession,
   resolveSubagentModelPool,
@@ -833,9 +835,18 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const goal = await core.accessor
-          .get(ISessionLegacyService)
-          .editGoalObjective(session_id, req.body.objective);
+        const session = await resumeSessionById(core.accessor, session_id);
+        if (session === undefined) {
+          throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
+        }
+        const { agentId } = await ensureMainAgentContext(session);
+        const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentId);
+        if (agent === undefined) {
+          throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+        }
+        const goal = await agent.accessor
+          .get(IAgentGoalService)
+          .editGoalObjective({ objective: req.body.objective });
         reply.send(okEnvelope(goal, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);

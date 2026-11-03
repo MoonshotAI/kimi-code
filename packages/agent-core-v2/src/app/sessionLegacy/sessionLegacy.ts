@@ -19,7 +19,6 @@ export interface ISessionLegacyService {
   readonly _serviceBrand: undefined;
 
   goal(sessionId: string): Promise<GoalSnapshot | null>;
-  editGoalObjective(sessionId: string, objective: string): Promise<GoalSnapshot>;
 }
 
 export const ISessionLegacyService: ServiceIdentifier<ISessionLegacyService> =

@@ -51,11 +51,6 @@ export class SessionLegacyService implements ISessionLegacyService {
     const agent = await this.resolveMainAgent(sessionId);
     return agent.accessor.get(IAgentGoalService).getGoal().goal;
   }
-
-  async editGoalObjective(sessionId: string, objective: string): Promise<GoalSnapshot> {
-    const agent = await this.resolveMainAgent(sessionId);
-    return agent.accessor.get(IAgentGoalService).editGoalObjective({ objective });
-  }
 }
 
 registerScopedService(
