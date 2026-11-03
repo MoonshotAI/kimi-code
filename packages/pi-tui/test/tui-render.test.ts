@@ -1127,10 +1127,10 @@ describe("TUI steady-frame processed-line reuse", () => {
 });
 
 describe("TUI above-viewport in-place changes", () => {
-	// In-place mutations of rows already committed to scrollback must not
-	// trigger the destructive ESC[2J/ESC[3J full redraw — that clear is what
-	// yanks the user's scroll position mid-stream. Layout shifts keep the
-	// destructive baseline.
+	// Changes to rows already committed to scrollback must not trigger the
+	// destructive ESC[2J/ESC[3J full redraw while the visible tail stays
+	// unchanged — that clear is what yanks the user's scroll position
+	// mid-stream. Visible layout shifts keep the destructive baseline.
 	function makeLines(count: number): string[] {
 		return Array.from({ length: count }, (_, i) => `line ${i}`);
 	}
@@ -1204,6 +1204,33 @@ describe("TUI above-viewport in-place changes", () => {
 		tui.stop();
 	});
 
+	it("repaints appended lines when a row above the viewport changes", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = makeLines(30);
+		tui.start();
+		await terminal.waitForRender();
+		const initialRedraws = tui.fullRedraws;
+
+		const lines = makeLines(31);
+		lines[3] = "changed above viewport";
+		component.lines = lines;
+		terminal.clearWrites();
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.strictEqual(tui.fullRedraws, initialRedraws, "appending must not force a destructive redraw");
+		const writes = terminal.getWrites();
+		assert.ok(!writes.includes("\x1b[2J"), "must not clear the screen");
+		assert.ok(!writes.includes("\x1b[3J"), "must not clear scrollback");
+		const viewport = await terminal.flushAndGetViewport();
+		assert.ok(viewport[0]?.includes("line 21"), "viewport advances by one row");
+		assert.ok(viewport[9]?.includes("line 30"), "appended row is visible");
+		tui.stop();
+	});
+
 	it("repaints skipped rows that a Termux height increase re-exposes", async () => {
 		await withEnv({ TERMUX_VERSION: "1" }, async () => {
 			const terminal = new LoggingVirtualTerminal(40, 10);
@@ -1239,7 +1266,7 @@ describe("TUI above-viewport in-place changes", () => {
 		});
 	});
 
-	it("keeps the full redraw when the line count changes above the viewport", async () => {
+	it("skips the destructive redraw when an above-viewport fold preserves the visible tail", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
 		const tui: TUI = new TuiMainScreen(terminal);
 		const component = new TestComponent();
@@ -1248,16 +1275,22 @@ describe("TUI above-viewport in-place changes", () => {
 		tui.start();
 		await terminal.waitForRender();
 		const initialRedraws = tui.fullRedraws;
+		const viewportBefore = await terminal.flushAndGetViewport();
 
-		// Inserting a row above the viewport shifts every following line —
-		// that layout change must keep the destructive redraw baseline.
-		const lines = makeLines(30);
-		lines.splice(3, 0, "inserted above viewport");
-		component.lines = lines;
-		tui.requestRender();
-		await terminal.waitForRender();
+		const expanded = makeLines(30);
+		expanded.splice(3, 0, "inserted above viewport");
+		for (const lines of [expanded, makeLines(30)]) {
+			component.lines = lines;
+			terminal.clearWrites();
+			tui.requestRender();
+			await terminal.waitForRender();
 
-		assert.ok(tui.fullRedraws > initialRedraws, "layout shift above the viewport must full-redraw");
+			assert.strictEqual(tui.fullRedraws, initialRedraws, "offscreen line-count change must not full-redraw");
+			const writes = terminal.getWrites();
+			assert.ok(!writes.includes("\x1b[2J"), "must not clear the screen");
+			assert.ok(!writes.includes("\x1b[3J"), "must not clear scrollback");
+			assert.deepStrictEqual(await terminal.flushAndGetViewport(), viewportBefore, "viewport must stay untouched");
+		}
 		tui.stop();
 	});
 

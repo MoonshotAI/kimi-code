@@ -555,20 +555,26 @@ export class TuiMainScreen extends TuiBase implements TUI {
 
 		// Differential rendering can only touch what was actually visible.
 		// If the first changed line is above the previous viewport, a full
-		// redraw is normally needed — but an in-place mutation (same line
-		// count, no kitty images in the above-viewport range) of rows already
-		// committed to scrollback cannot change what the terminal shows, so
-		// repainting the whole buffer would only produce a destructive
-		// ESC[2J/ESC[3J clear per tick (e.g. a thinking/spinner line pushed
-		// above the viewport). Skip the paint, or clamp the range to
-		// the viewport when it spans the boundary; any layout shift or image
-		// involvement keeps the full redraw.
+		// redraw is normally needed. For an in-place change or a growing frame,
+		// repainting from the viewport top through the new tail is enough when
+		// no kitty images sit in the skipped range. A shrink above the viewport
+		// is also safe to skip when the complete visible tail is unchanged.
+		// These paths avoid a destructive ESC[2J/ESC[3J clear per tick (e.g. a
+		// thinking/spinner line pushed above the viewport). Visible shrinks or
+		// image involvement keep the full redraw.
 		if (firstChanged < prevViewportTop) {
 			const aboveEnd = Math.min(lastChanged, prevViewportTop - 1);
-			const inPlaceAboveViewport =
-				newLines.length === this.previousLines.length &&
+			const previousTailStart = this.previousLines.length - height;
+			const newTailStart = newLines.length - height;
+			const visibleTailUnchanged =
+				previousTailStart >= 0 &&
+				newTailStart >= 0 &&
+				newLines.slice(newTailStart).every((line, index) => line === this.previousLines[previousTailStart + index]);
+			const invisibleShrinkAboveViewport = newLines.length < this.previousLines.length && visibleTailUnchanged;
+			const canDiffAboveViewport =
+				newLines.length >= this.previousLines.length &&
 				!this.rangeHasKittyImages(firstChanged, aboveEnd, lineImageIds);
-			if (!inPlaceAboveViewport) {
+			if (!canDiffAboveViewport && !invisibleShrinkAboveViewport) {
 				logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
 				fullRender(true);
 				return;
@@ -579,13 +585,19 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				this.aboveViewportStaleTop === null
 					? firstChanged
 					: Math.min(this.aboveViewportStaleTop, firstChanged);
-			if (lastChanged < prevViewportTop) {
+			if (invisibleShrinkAboveViewport) {
+				const lineCountDelta = newLines.length - this.previousLines.length;
+				this.cursorRow = Math.max(0, newLines.length - 1);
+				this.hardwareCursorRow += lineCountDelta;
+				this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
+			}
+			if (lastChanged < prevViewportTop || invisibleShrinkAboveViewport) {
 				// Entirely above the viewport: scrollback keeps a stale frame
 				// of those rows (invisible from the live viewport), so only
 				// commit the caches and reposition the hardware cursor,
 				// mirroring the no-change path above.
 				this.positionHardwareCursor(cursorPos, newLines.length);
-				this.previousViewportTop = prevViewportTop;
+				this.previousViewportTop = invisibleShrinkAboveViewport ? newTailStart : prevViewportTop;
 				this.previousLines = newLines;
 				this.previousRawLines = rawLines;
 				this.previousLineImageIds = lineImageIds;
