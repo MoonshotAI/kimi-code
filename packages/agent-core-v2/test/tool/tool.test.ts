@@ -1683,8 +1683,10 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBeUndefined();
+    expect(result.isError).toBeUndefined();
     expect(result.output).toContain('status: completed');
     expect(result.output).toContain('stop_reason: repeat_breaker');
+    expect(result.output).toContain('Stuck: the same grep keeps returning nothing.');
   });
 
   it('settles a repeat-breaker completion with a stop code and a task reason', async () => {

@@ -647,6 +647,8 @@ describe('AgentTaskService — notification delivery', () => {
     const message = notificationMessageFor(agent, taskId);
     expect(message.origin).toMatchObject({ kind: 'task', taskId, status: 'failed' });
     const text = message.content[0]!.text;
+    expect(text).toContain('Which database?');
+    expect(text).toContain('The connected client does not support interactive questions.');
     expect(text).not.toContain('<answer>');
     expect(text).not.toContain('dismissed');
   });
@@ -770,8 +772,16 @@ describe('AgentTaskService — notification delivery', () => {
     expect(output).toContain('agent_id: agent-child');
     expect(output).toMatch(/^output_path: \S+$/m);
     expect(output).toContain(`${PARTIAL_OUTPUT_NOTICE}\n\n${STOPPED_AGENT_FINDING}`);
-
+    const again = outputString(
+      await executeTool(tool, toolContext('task_stop_agent_again', { task_id: taskId })),
+    );
+    expect(again).toContain('status: killed');
+    expect(again).not.toContain(STOPPED_AGENT_FINDING);
+    expect(notifiedCount(ctx)).toBe(0);
+    expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
+    expect(ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
   });
+
   it('TaskStopTool says when a stopped agent task wrote no text', async () => {
     const { manager } = createAgentTaskService();
     const taskId = registerStoppableAgent(manager, () => '   ');

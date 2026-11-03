@@ -996,6 +996,10 @@ describe('notifySubagentChanges', () => {
     h.agentCatalogChange.fire('workspace');
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('deploy');
+    expect(h.reminders[0]?.content).toContain('部署服务');
+    expect(h.reminders[0]?.content).toContain('reviewer');
+    expect(h.reminders[0]?.content).toContain('只做代码评审');
   });
 
   it('reports model description updates in the pool', async () => {
@@ -1015,6 +1019,7 @@ describe('notifySubagentChanges', () => {
     };
     await h.notifier.notifySubagentChanges();
     expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('k1');
   });
 
   it('reports default model changes in the pool', async () => {

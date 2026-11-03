@@ -561,8 +561,11 @@ describe('TowerTeardownTool', () => {
     const result = await run(ix.get(ITowerTeardownTool), { dry_run: true });
 
     expect(result.isError).toBeFalsy();
-
+    expect(
+      (await stat(join(repo, '.tower/worktrees', mission.worktree))).isDirectory(),
+    ).toBe(true);
   });
+
   it('keeps worktrees named in exclude', async () => {
     await initViaTool();
     await run(ix.get(ITowerPlanTool), {

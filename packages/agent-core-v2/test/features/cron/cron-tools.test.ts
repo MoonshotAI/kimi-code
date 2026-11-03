@@ -291,6 +291,22 @@ describe('CronCreateTool', () => {
     expect(output).toContain('exactly 5 fields');
   });
 
+  it('rejects a legal expression that has no fire inside the supported window', async () => {
+    const harness = createToolHarness();
+    const tool = new CronCreateTool(harness.cron, scopeContext);
+
+    const output = assertError(
+      await runTool<CronCreateInput>(tool, {
+        cron: '0 0 31 2 *',
+        prompt: 'never',
+        recurring: true,
+      }),
+    );
+
+    expect(output).toContain('0 0 31 2 *');
+    expect(harness.store.list()).toHaveLength(0);
+  });
+
   it('refuses to schedule past the session cap', async () => {
     const harness = createToolHarness();
     const tool = new CronCreateTool(harness.cron, scopeContext);
@@ -730,6 +746,8 @@ describe('renderCronFireXml', () => {
     const xml = renderCronFireXml(origin, 'body & " < stays raw');
 
     expect(xml).toContain('jobId="job&amp;&quot;id"');
+    expect(xml).toContain('cron="*/5 &amp; &quot; * * *"');
+    expect(xml).toContain('<prompt>\nbody & " < stays raw\n</prompt>');
   });
 
   it('preserves newlines in the prompt body', () => {

@@ -1019,6 +1019,9 @@ describe('TowerSpawnTool', () => {
 
     expect(result.isError).toBeUndefined();
     const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).toContain('M2');
+    expect(prompt).toContain('Build gemm respin');
+    expect(prompt).not.toContain('id="M1"');
   });
 
   it('briefs a respawned worker with the latest review round and the predecessor review-request', async () => {

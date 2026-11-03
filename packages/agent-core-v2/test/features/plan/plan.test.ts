@@ -532,6 +532,8 @@ describe('Plan service', () => {
       await ctx.untilTurnEnd();
       await expectPlanActive(false);
       const llmInput = ctx.llmCalls[1]!;
+      expect(toolResultText(llmInput.history)).toContain('# Plan');
+      expect(toolResultText(llmInput.history)).toContain('- Inspect');
       expect(toolResultText(llmInput.history)).toContain('Plan mode deactivated');
       expect(toolResultText(llmInput.history)).not.toContain('auto-approved');
     });
