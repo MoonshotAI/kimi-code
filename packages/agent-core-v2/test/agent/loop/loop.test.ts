@@ -105,17 +105,16 @@ describe('Agent loop', () => {
       [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [], "time": "<time>" }
       [wire] llm.request                 { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "<tools-hash>", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
-      [emit] thinking.delta              { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<think-1>" }
-      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<text-1>" }
-      [emit] thinking.delta              { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "" }
-      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<text-2>" }
+      [emit] thinking.delta              { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<think-1>", "block": 0 }
+      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<text-1>", "block": 1 }
+      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "<text-2>", "block": 1 }
       [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
       [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] token_counting.measured     { "agentId": "main", "length": 2, "tokens": 13, "time": "<time>" }
       [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "contextTokens": 13 }
       [emit] turn.step.completed         { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
-      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "think", "think": "<think-1>" } }, "time": "<time>" }
-      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "<text-1><text-2>" } }, "time": "<time>" }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "block": 0, "part": { "type": "think", "think": "<think-1>" }, "startedAt": "<time>" }, "time": "<time>" }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-3>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "block": 1, "part": { "type": "text", "text": "<text-1><text-2>" }, "startedAt": "<time>" }, "time": "<time>" }
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "end_turn", "usage": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
       [wire] agent.message.appended      { "message": { "message": { "role": "assistant", "content": [ { "type": "think", "think": "<think-1>" }, { "type": "text", "text": "<text-1><text-2>" } ], "toolCalls": [] }, "meta": { "model": { "provider": "agent-loop", "model": "agent-loop" }, "source": "llm", "usage": { "inputOther": 3, "output": 10, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finish": { "finishReason": "completed", "rawFinishReason": "stop" }, "messageId": "mock-1" } }, "time": "<time>", "kind": "event" }
       [wire] agent.turn.ended            { "turnId": 0, "outcome": "done", "time": "<time>", "kind": "event" }
@@ -201,13 +200,13 @@ describe('Agent loop', () => {
       [wire] tool_select.initialized     { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] llm.tools_snapshot          { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Read", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] llm.request                 { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "<tools-hash>", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
-      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "blocked" }
+      [emit] assistant.delta             { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "blocked", "block": 0 }
       [wire] usage.record                { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
       [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] token_counting.measured     { "agentId": "main", "length": 2, "tokens": 8, "time": "<time>" }
       [emit] agent.status.updated        { "time": "<time>", "agentId": "main", "contextTokens": 8 }
       [emit] turn.step.completed         { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "filtered", "providerFinishReason": "filtered", "rawFinishReason": "filtered" }
-      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "blocked" } }, "time": "<time>" }
+      [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "block": 0, "part": { "type": "text", "text": "blocked" }, "startedAt": "<time>" }, "time": "<time>" }
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "filtered", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "filtered", "rawFinishReason": "filtered" }, "time": "<time>" }
       [wire] agent.message.appended      { "message": { "message": { "role": "assistant", "content": [ { "type": "text", "text": "blocked" } ], "toolCalls": [] }, "meta": { "model": { "provider": "agent-loop", "model": "agent-loop" }, "source": "llm", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finish": { "finishReason": "filtered", "rawFinishReason": "filtered" }, "messageId": "mock-1" } }, "time": "<time>", "kind": "event" }
       [wire] agent.turn.ended            { "turnId": 0, "outcome": "done", "time": "<time>", "kind": "event" }
@@ -508,13 +507,13 @@ describe('Agent loop', () => {
       [wire] tool_select.initialized         { "agentId": "main", "tools": [ "Agent", "AgentSwarm", "AskUserQuestion", "Bash", "CreateGoal", "CronCreate", "CronDelete", "CronList", "Edit", "ExitPlanMode", "FetchURL", "GetGoal", "Glob", "Grep", "Lookup", "Read", "ReadMediaFile", "select_tools", "SetGoalBudget", "Skill", "TaskList", "TaskOutput", "TaskStop", "TodoList", "UpdateGoal", "WaitFor", "Write" ], "time": "<time>" }
       [wire] llm.tools_snapshot              { "agentId": "main", "hash": "<tools-hash>", "tools": [ "Lookup" ], "time": "<time>" }
       [wire] llm.request                     { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "<tools-hash>", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
-      [emit] assistant.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up." }
+      [emit] assistant.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "I will look it up.", "block": 0 }
       [emit] tool.call.delta                 { "time": "<time>", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "name": "Lookup", "argumentsPart": "{\\"query\\":\\"moon\\"}" }
       [wire] usage.record                    { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
       [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] token_counting.measured         { "agentId": "main", "length": 2, "tokens": 20, "time": "<time>" }
       [emit] agent.status.updated            { "time": "<time>", "agentId": "main", "contextTokens": 20 }
-      [wire] context.append_loop_event       { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "I will look it up." } }, "time": "<time>" }
+      [wire] context.append_loop_event       { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "block": 0, "part": { "type": "text", "text": "I will look it up." }, "startedAt": "<time>" }, "time": "<time>" }
       [emit] permission.approval.requested   { "time": "<time>", "id": "<approval-1>", "sessionId": "test-session", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "display": { "kind": "generic", "summary": "Approve Lookup", "detail": { "query": "moon" } }, "toolInput": { "query": "moon" } }
       [wire] interaction.request             { "agentId": "main", "id": "<approval-1>", "kind": "approval", "toolCallId": "call_lookup", "request": { "id": "<approval-1>", "sessionId": "test-session", "agentId": "main", "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "display": { "kind": "generic", "summary": "Approve Lookup", "detail": { "query": "moon" } } }, "time": "<time>" }
       [emit] requestApproval                 { "id": "<approval-1>", "turnId": 0, "toolCallId": "call_lookup", "toolName": "Lookup", "action": "Approve Lookup", "display": { "kind": "generic", "summary": "Approve Lookup", "detail": { "query": "moon" } } }
@@ -539,13 +538,13 @@ describe('Agent loop', () => {
       [emit] turn.step.started                   { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-4>" }
       [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-4>", "turnId": "0", "step": 2 }, "time": "<time>" }
       [wire] llm.request                         { "agentId": "main", "kind": "loop", "provider": "openai", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "<tools-hash>", "messageCount": 3, "turnStep": "0.2", "time": "<time>" }
-      [emit] assistant.delta                     { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "The lookup result is lookup-result." }
+      [emit] assistant.delta                     { "time": "<time>", "agentId": "main", "turnId": 0, "delta": "The lookup result is lookup-result.", "block": 0 }
       [wire] usage.record                        { "agentId": "main", "model": "mock-model", "usage": { "inputOther": 25, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "usageScope": "turn", "time": "<time>" }
       [emit] agent.status.updated                { "time": "<time>", "agentId": "main", "usage": { "byModel": { "mock-model": { "inputOther": 29, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 } }, "total": { "inputOther": 29, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 }, "currentTurn": { "inputOther": 29, "output": 28, "inputCacheRead": 0, "inputCacheCreation": 0 } } }
       [wire] token_counting.measured             { "agentId": "main", "length": 4, "tokens": 37, "time": "<time>" }
       [emit] agent.status.updated                { "time": "<time>", "agentId": "main", "contextTokens": 37 }
       [emit] turn.step.completed                 { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-4>", "usage": { "inputOther": 25, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "end_turn", "providerFinishReason": "completed", "rawFinishReason": "stop" }
-      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-5>", "turnId": "0", "step": 2, "stepUuid": "<uuid-4>", "part": { "type": "text", "text": "The lookup result is lookup-result." } }, "time": "<time>" }
+      [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "content.part", "uuid": "<uuid-5>", "turnId": "0", "step": 2, "stepUuid": "<uuid-4>", "block": 0, "part": { "type": "text", "text": "The lookup result is lookup-result." }, "startedAt": "<time>" }, "time": "<time>" }
       [wire] context.append_loop_event           { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-4>", "turnId": "0", "step": 2, "finishReason": "end_turn", "usage": { "inputOther": 25, "output": 12, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-2", "providerFinishReason": "completed", "rawFinishReason": "stop" }, "time": "<time>" }
       [wire] agent.message.appended              { "message": { "message": { "role": "assistant", "content": [ { "type": "text", "text": "I will look it up." } ], "toolCalls": [ { "type": "function", "id": "call_lookup", "name": "Lookup", "arguments": "{\\"query\\":\\"moon\\"}" } ] }, "meta": { "model": { "provider": "agent-loop", "model": "agent-loop" }, "source": "llm", "usage": { "inputOther": 4, "output": 16, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finish": { "finishReason": "tool_calls", "rawFinishReason": "tool_calls" }, "messageId": "mock-1" } }, "time": "<time>", "kind": "event" }
       [wire] agent.message.appended              { "message": { "message": { "role": "tool", "content": [ { "type": "text", "text": "lookup-result" } ], "toolCallId": "call_lookup" }, "meta": { "source": "tool" } }, "time": "<time>", "kind": "event" }
@@ -2158,6 +2157,34 @@ describe('interruption reminder', () => {
       toolCalls: [],
       partial: true,
     });
+  });
+
+  it('keeps the streamed block number and timing on salvaged content parts', async () => {
+    ctx.mockNextResponse(
+      { type: 'text', text: '  ' },
+      { type: 'think', think: 'why', encrypted: 'sig' },
+      { type: 'text', text: 'partial' },
+    );
+    const subscription = ctx.get(IEventBus).subscribe(AssistantDelta, (event) => {
+      if (event.block === 2) loop.cancel();
+    });
+    const turn = submitTurn(loop, 'Hello').turn;
+    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+    subscription.dispose();
+
+    const salvaged = ctx.allEvents.flatMap((entry) => {
+      if (entry.type !== '[wire]' || entry.event !== 'context.append_loop_event') return [];
+      const event = (entry.args as {
+        event?: { type?: string; block?: number; part?: { type: string }; startedAt?: number; durationMs?: number };
+      }).event;
+      return event?.type === 'content.part'
+        ? [[event.block, event.part?.type, typeof event.startedAt, (event.durationMs ?? -1) >= 0]]
+        : [];
+    });
+    expect(salvaged).toEqual([
+      [1, 'think', 'number', true],
+      [2, 'text', 'number', true],
+    ]);
   });
 
   it('records no partial content when the stream only produced whitespace', async () => {

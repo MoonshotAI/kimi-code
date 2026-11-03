@@ -23,6 +23,7 @@ import {
   type TurnInput,
   type TurnLlmEvent,
   type TurnOutput,
+  type TurnSignal,
 } from '#/agent/turn';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
@@ -103,7 +104,7 @@ function startTurnActor(
       input: {} as TurnInput,
       context: {} as HarnessContext,
       events: {} as TurnEvent,
-      emitted: {} as TurnLlmEvent,
+      emitted: {} as TurnLlmEvent | TurnSignal,
     },
     actors: { turn: createTurnMachine(requester, options) },
   }).createMachine({
@@ -122,7 +123,7 @@ function startTurnActor(
         },
         on: {
           '*': {
-            actions: emit(({ event }) => event as TurnLlmEvent),
+            actions: emit(({ event }) => event as TurnLlmEvent | TurnSignal),
           },
         },
       },
@@ -133,16 +134,19 @@ function startTurnActor(
   const recovering: RecoveringEvent[] = [];
   const sent: SentEvent[] = [];
   const failed: unknown[] = [];
+  const stream: string[] = [];
   const actor = createActor(harness, {
     input: { request: { model }, history: [], ...turnInput },
   });
+  actor.on('llm.streaming.part', (event) => stream.push(`part:${event.block ?? '-'}`));
+  actor.on('step.stream_reset', () => stream.push('reset'));
   actor.on('llm.retrying', (event) => retrying.push(event));
   actor.on('llm.recovering', (event) => recovering.push(event));
   actor.on('llm.sent', (event) => sent.push(event));
   actor.on('llm.failed.syntax', (event) => failed.push(event.error));
   actor.on('llm.failed.remote', (event) => failed.push(event.error));
   actor.start();
-  return { actor, retrying, recovering, sent, failed };
+  return { actor, retrying, recovering, sent, failed, stream };
 }
 
 function startRequestActor(requester: LlmRequester, signal: AbortSignal) {
@@ -804,5 +808,67 @@ describe('turn machine credential recovery', () => {
     await drain();
 
     expect(failed).toHaveLength(0);
+  });
+});
+
+describe('turn machine streamed blocks', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function scriptedRequester(script: readonly LlmEvent[]): LlmRequester {
+    return {
+      generate: (_config, _content, { onEvent }) => {
+        for (const event of script) onEvent?.(event as Parameters<NonNullable<typeof onEvent>>[0]);
+        return Promise.resolve();
+      },
+    };
+  }
+
+  it('numbers each streamed part by the content block it lands in', async () => {
+    const { actor, stream } = startTurnActor(
+      scriptedRequester([
+        { type: 'llm.streaming.part', part: { type: 'think', think: 'a' } },
+        { type: 'llm.streaming.part', part: { type: 'think', think: 'b', encrypted: 'sig' } },
+        { type: 'llm.streaming.part', part: { type: 'think', think: 'c' } },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'x' } },
+        { type: 'llm.streaming.part', part: { type: 'think', think: '' } },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'y' } },
+        { type: 'llm.done' },
+      ]),
+    );
+
+    await drain();
+
+    expect(stream).toEqual(['part:0', 'part:0', 'part:1', 'part:2', 'part:-', 'part:2']);
+    const output = actor.getSnapshot().context.turnOutput;
+    expect(output?.type).toBe('done');
+    const last = output?.produced.at(-1)?.message;
+    expect(last?.role === 'assistant' ? last.content : undefined).toEqual([
+      { type: 'think', think: 'ab', encrypted: 'sig' },
+      { type: 'think', think: 'c' },
+      { type: 'text', text: 'xy' },
+    ]);
+  });
+
+  it('signals a stream reset and restarts block numbers when the request retries an attempt', async () => {
+    const { actor, stream } = startTurnActor(
+      scriptedRequester([
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'lost' } },
+        { type: 'llm.request.retrying' },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'kept' } },
+        { type: 'llm.done' },
+      ]),
+    );
+
+    await drain();
+
+    expect(stream).toEqual(['part:0', 'reset', 'part:0']);
+    const last = actor.getSnapshot().context.turnOutput?.produced.at(-1)?.message;
+    expect(last?.role === 'assistant' ? last.content : undefined).toEqual([{ type: 'text', text: 'kept' }]);
   });
 });
