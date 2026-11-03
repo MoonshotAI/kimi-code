@@ -2359,7 +2359,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(flattenedUndo.items.filter((item) => item.kind === 'turn')).toEqual([]);
   });
 
-  it('counts context-only blocked prompts as undo anchors', () => {
+  it('does not count context-only blocked prompts as undo anchors', () => {
     const base = groupMessagesIntoSnapshot([
       { id: 'prompt-real', role: 'user', content: [{ type: 'text', text: 'real' }], toolCalls: [], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'failed' }], toolCalls: [] },
@@ -2377,8 +2377,8 @@ describe('foldWireRecordFacts (cold facts)', () => {
     const real = folded.items[0];
     if (real?.kind !== 'turn') throw new Error('expected turn');
     expect(real.triggerPromptId).toBe('prompt-real');
-    expect(real.state).toBe('failed');
-    expect(real.error).toBe('real failure');
+    expect(real.state).toBe('completed');
+    expect(real.error).toBeUndefined();
   });
 
   it('does not consume a pending identity boundary for a different context-only anchor', () => {
@@ -2398,7 +2398,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
     );
     const real = folded.items[0];
     if (real?.kind !== 'turn') throw new Error('expected turn');
-    expect(real.state).toBe('failed');
-    expect(real.error).toBe('real failure');
+    expect(real.state).toBe('completed');
+    expect(real.error).toBeUndefined();
   });
 });

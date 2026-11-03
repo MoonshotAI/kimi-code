@@ -6,7 +6,6 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2 } from '#/app/event/event2';
 import { LifecycleScope } from '#/app/scopes';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
   createMaxStepsExceededError,
@@ -129,7 +128,7 @@ function handleWith(
         cancel: () => true,
       },
     ],
-    [IAgentContextMemoryService, { get: () => messages }],
+    [IAgentLoopService, { get: () => messages }],
     [IEventBus, events.bus],
   ]);
   const handle: IAgentScopeHandle = {

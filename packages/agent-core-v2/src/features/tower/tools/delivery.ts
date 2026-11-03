@@ -72,21 +72,19 @@ function steerIntoRunningAgent(
       item.subject.length > STEER_SUBJECT_PREVIEW_MAX
         ? `${item.subject.slice(0, STEER_SUBJECT_PREVIEW_MAX)}…`
         : item.subject;
-    loop.submit(
-      {
-        message: {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `[tower inbox] new message from ${item.from}: "${subject}" — read it now with TowerInbox and act on it before continuing.`,
-            },
-          ],
-        },
-        meta: { origin: { kind: 'injection', variant: 'tower_inbox_steer' } as PromptOrigin },
+    loop.notify({
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `[tower inbox] new message from ${item.from}: "${subject}" — read it now with TowerInbox and act on it before continuing.`,
+          },
+        ],
+        origin: { kind: 'injection', variant: 'tower_inbox_steer' } as PromptOrigin,
       },
-      { steerIfActive: true },
-    );
+      turnScoped: false,
+    });
     return `\nnote: ${item.to} is mid-turn — the message was steered into its running turn; it sees the directive at its next step boundary.`;
   } catch {
     return '';

@@ -269,25 +269,25 @@ describe('goal tools', () => {
     expect(goals.getGoal().goal?.status).toBe('active');
   });
 
-  it('UpdateGoal complete returns the completion summary prompt and stops the turn', async () => {
+  it('UpdateGoal complete returns the completion summary prompt without forcing a turn stop', async () => {
     await goals.createGoal({ objective: 'ship it' });
     const execution = updateGoalTool.resolveExecution({ status: 'complete' });
     if (execution.isError === true) throw new Error('execution should not be an error');
     const result = await execution.execute({ turnId: 0, toolCallId: 'call_c', signal });
 
-    expect(result.stopTurn).toBe(true);
+    expect(result.stopTurn).toBeFalsy();
     expect(result.output).toContain('Goal completed successfully');
     expect(result.output).toContain('Worked');
     expect(result.output).toContain('Write a concise final message for the user');
   });
 
-  it('UpdateGoal blocked returns the blocked-reason prompt and stops the turn', async () => {
+  it('UpdateGoal blocked returns the blocked-reason prompt without forcing a turn stop', async () => {
     await goals.createGoal({ objective: 'ship it' });
     const execution = updateGoalTool.resolveExecution({ status: 'blocked' });
     if (execution.isError === true) throw new Error('execution should not be an error');
     const result = await execution.execute({ turnId: 0, toolCallId: 'call_b', signal });
 
-    expect(result.stopTurn).toBe(true);
+    expect(result.stopTurn).toBeFalsy();
     expect(result.output).toContain('Goal blocked.');
     expect(result.output).toContain('Worked');
     expect(result.output).toContain('concrete blocker');
@@ -347,7 +347,7 @@ describe('goal tools', () => {
 
       const outcome = results.find((result) => result.toolName === 'UpdateGoal')?.result;
       expect(outcome?.output).toContain(expectedOutput);
-      expect(outcome?.stopTurn).toBe(true);
+      expect(outcome?.stopTurn).toBeFalsy();
       expect(goals.getGoal().goal?.status ?? null).toBe(expectedCurrentStatus);
     },
   );
@@ -370,7 +370,7 @@ describe('goal tools', () => {
 
       const outcome = results.find((result) => result.toolName === 'UpdateGoal')?.result;
       expect(outcome?.output).toContain(expectedOutput);
-      expect(outcome?.stopTurn).toBe(true);
+      expect(outcome?.stopTurn).toBeFalsy();
       expect(goals.getGoal().goal?.status ?? null).toBe(expectedCurrentStatus);
     },
   );

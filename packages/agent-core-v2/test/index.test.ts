@@ -4,7 +4,7 @@ import {
   WIRE_MIN_READER_VERSION,
   WIRE_PROTOCOL_VERSION,
   EVENT2_REGISTRY,
-  IAgentContextMemoryService,
+  IAgentLoopService,
   IAgentGoalService,
   type ContextMessage,
   type WireRecord,
@@ -63,6 +63,7 @@ const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
   'usage.record',
   'context.append_message',
   'context.append_loop_event',
+  'context.spliced',
   'context.clear',
   'context.apply_compaction',
   'context.undo',
@@ -286,6 +287,7 @@ describe('conversation-time checkpoint registration', () => {
     'goalForkNotice',
     'turn',
     'fullCompaction.wireRanges',
+    'swarmReminderDelivered',
   ]);
   const CONTEXT_OWNER_STATE = 'contextMemory';
   const CONTEXT_EVENTS: readonly Event2Class[] = [
@@ -315,7 +317,7 @@ describe('conversation-time checkpoint registration', () => {
 });
 
 describe('AgentRecords persistence metadata', () => {
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let tokenCounting: TestAgentContext['tokenCounting'];
   let ctx: TestAgentContext;
   let expectResumeMatches: boolean;
@@ -325,7 +327,7 @@ describe('AgentRecords persistence metadata', () => {
     expectResumeMatches = true;
     persistence = new RecordingInMemoryWireRecordPersistence();
     ctx = createTestAgent({ persistence, autoConfigure: false });
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     tokenCounting = ctx.tokenCounting;
   });
 
@@ -363,7 +365,7 @@ describe('AgentRecords persistence metadata', () => {
       type: 'metadata',
       protocol_version: WIRE_PROTOCOL_VERSION,
     });
-    expect(ctx.context.get()).toHaveLength(1);
+    expect(ctx.context.history()).toHaveLength(1);
   });
 
   it('restores existing metadata records without rewriting them', async () => {
@@ -404,7 +406,7 @@ describe('AgentRecords persistence metadata', () => {
       if (record.type === 'context.append_message') break;
     }
     await ctx.restorePersisted();
-    expect(ctx.context.get()).toHaveLength(2);
+    expect(ctx.context.history()).toHaveLength(2);
   });
 
   it('rewrites migrated records to the current wire version after replay', async () => {
@@ -510,7 +512,7 @@ describe('AgentRecords persistence metadata', () => {
     );
 
     await expect(ctx.restorePersisted()).resolves.toBeUndefined();
-    expect(context.get()).toHaveLength(0);
+    expect(context.history()).toHaveLength(0);
     expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
       goalId: 'g1',
       objective: 'do work',
@@ -540,7 +542,7 @@ describe('AgentRecords persistence metadata', () => {
       'forked',
     ]);
     expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
-    const reminder = context.get().at(-1);
+    const reminder = context.history().at(-1);
     expect(reminder?.origin).toEqual({
       kind: 'injection',
       variant: 'goal_fork_cleared',
@@ -569,7 +571,7 @@ describe('AgentRecords persistence metadata', () => {
       goalId: 'fork-goal',
       objective: 'fork work',
     });
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(context.history().at(-1)?.origin).toEqual({
       kind: 'injection',
       variant: 'goal_fork_cleared',
     });
@@ -582,7 +584,7 @@ describe('AgentRecords persistence metadata', () => {
     );
 
     await expect(ctx.restorePersisted()).resolves.toBeUndefined();
-    expect(context.get()).toHaveLength(0);
+    expect(context.history()).toHaveLength(0);
   });
 
   it('keeps context size tracking live across runtime restore', async () => {
@@ -609,7 +611,7 @@ describe('AgentRecords persistence metadata', () => {
       },
     ]);
 
-    expect(context.get()).toHaveLength(1);
+    expect(context.history()).toHaveLength(1);
     const restored = tokenCounting.get();
     expect(restored.measured).toBe(0);
     expect(restored.size).toBe(restored.estimated);

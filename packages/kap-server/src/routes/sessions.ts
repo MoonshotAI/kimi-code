@@ -2,7 +2,6 @@ import {
   ErrorCodes,
   IAgentChangeNotifierService,
   IAgentGoalService,
-  IAgentContextMemoryService,
   IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
@@ -1003,7 +1002,7 @@ async function undoSessionAction(
     () => agent.accessor.get(IAgentConversationUndoService).undo(body.count),
     { retry: false },
   );
-  const history = agent.accessor.get(IAgentContextMemoryService).get();
+  const history = agent.accessor.get(IAgentLoopService).history();
   requestLog(req)?.info({ session_id: id, action: 'undo' }, 'session action completed');
   const summary = await core.accessor.get(ISessionIndex).get(id);
   reply.send(

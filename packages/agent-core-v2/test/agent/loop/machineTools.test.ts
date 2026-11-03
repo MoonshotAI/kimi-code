@@ -4,7 +4,7 @@ import type {
   IAgentToolExecutorService,
   ToolExecutionResult,
 } from '#/agent/toolExecutor/toolExecutor';
-import { createMachineTools } from '#/agent/loop/machine/tools';
+import { createCoreTools } from '#/agent/loop/toolAdapter';
 import type { ToolCall } from '#human/message';
 import type { ToolExecuteInput } from '#human/tool/executor';
 import type { ToolInfo } from '#/tool/toolContract';
@@ -43,12 +43,12 @@ const toolInfos: ToolInfo[] = [
   { name: 'Read', description: 'read a file', source: 'builtin' },
 ];
 
-describe('createMachineTools duplicate tool call ids', () => {
+describe('createCoreTools duplicate tool call ids', () => {
   it('runs one batch per unique id and settles the superseded pending entry', async () => {
     const { toolExecutor, batches } = createRecordingExecutor();
     const onBatchError = vi.fn();
     const onToolResult = vi.fn();
-    const tools = createMachineTools({
+    const tools = createCoreTools({
       toolExecutor,
       toolInfos: () => toolInfos,
       turnId: () => 1,
@@ -88,7 +88,7 @@ describe('createMachineTools duplicate tool call ids', () => {
       }),
     } as unknown as IAgentToolExecutorService;
     const onBatchError = vi.fn();
-    const tools = createMachineTools({
+    const tools = createCoreTools({
       toolExecutor,
       toolInfos: () => toolInfos,
       turnId: () => 1,

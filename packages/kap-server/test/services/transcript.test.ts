@@ -135,6 +135,7 @@ describe('AgentTranscriptProjector', () => {
       steer('retained cron'),
       append('user', 'retained cron', 'cron_job'),
       append('assistant', 'cron answer'),
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'second prompt' }], origin: { kind: 'user' }, trigger: 'normal' },
       append('user', 'second prompt', 'user'),
       steer('removed cron'),
       append('user', 'removed cron', 'cron_job'),
@@ -2767,6 +2768,7 @@ describe('AgentTranscriptProjector', () => {
         '<notification id="task:task_9:completed" category="task" type="task.completed" source_kind="background_task" source_id="task_9">\nTitle: Background agent completed\nSeverity: info\ninspect done.\n</notification>';
       const taskOrigin = { kind: 'task', taskId: 'task_9', status: 'completed', notificationId: 'n1' };
       const opening = [
+        { type: 'turn.prompt', turnId: 0, trigger: 'normal', input: [{ type: 'text', text: 'hi' }], origin: { kind: 'user' }, time: 999 },
         { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } }, time: 1000 },
         { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] }, time: 2000 },
       ];
@@ -4111,6 +4113,14 @@ describe('WireRecordCache', () => {
         t: number,
       ): Record<string, unknown>[] => [
         {
+          type: 'turn.prompt',
+          input: [{ type: 'text', text: prompt }],
+          origin: { kind: 'user' },
+          promptId: `msg_${ordinal}`,
+          turnId: ordinal,
+          time: t,
+        },
+        {
           type: 'context.append_message',
           message: {
             id: `msg_${ordinal}`,
@@ -4119,14 +4129,6 @@ describe('WireRecordCache', () => {
             toolCalls: [],
             origin: { kind: 'user' },
           },
-          time: t,
-        },
-        {
-          type: 'turn.prompt',
-          input: [{ type: 'text', text: prompt }],
-          origin: { kind: 'user' },
-          promptId: `msg_${ordinal}`,
-          turnId: ordinal,
           time: t + 1,
         },
         {

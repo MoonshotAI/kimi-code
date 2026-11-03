@@ -50,6 +50,8 @@ interface TurnPromptPayload {
   readonly origin?: unknown;
   readonly promptId?: unknown;
   readonly turnId?: unknown;
+  readonly trigger?: unknown;
+  readonly input?: readonly unknown[];
 }
 interface ContextUndoPayload {
   readonly count?: unknown;
@@ -74,6 +76,14 @@ function isUndoAnchorTurnOrigin(origin: unknown): boolean {
     (payload.kind === 'skill_activation' || payload.kind === 'plugin_command') &&
     payload.trigger === 'user-slash'
   );
+}
+
+function isUndoAnchorTurnPrompt(payload: TurnPromptPayload): boolean {
+  if (payload.trigger === 'continue') return false;
+  if (payload.trigger === undefined && payload.promptId === undefined && payload.input?.length === 0) {
+    return false;
+  }
+  return isUndoAnchorTurnOrigin(payload.origin);
 }
 
 function turnOriginKind(origin: unknown): TranscriptTurn['origin']['kind'] {
@@ -337,7 +347,6 @@ export function foldWireRecordFacts(
         ) {
           turnPromptIds.set(matchedTurnId, message.id);
         }
-        undoAnchors.push({ firstRawTurnId: matchedTurnId ?? nextTurnId });
         break;
       }
       case 'interaction.request': {
@@ -421,7 +430,10 @@ export function foldWireRecordFacts(
         const promptAt = recordTimeIso(record);
         if (promptAt !== undefined) turnPromptTimes.set(turnId, promptAt);
         if (typeof payload.promptId === 'string') turnPromptIds.set(turnId, payload.promptId);
-        if (isUndoAnchorTurnOrigin(payload.origin)) pendingUndoAnchorTurnIds.push(turnId);
+        if (isUndoAnchorTurnPrompt(payload)) {
+          pendingUndoAnchorTurnIds.push(turnId);
+          undoAnchors.push({ firstRawTurnId: turnId });
+        }
         break;
       }
       default:

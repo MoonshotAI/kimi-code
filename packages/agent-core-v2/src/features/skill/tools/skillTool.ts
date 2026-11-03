@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
+import type { ContextMessage, SkillActivationOrigin } from '#/agent/contextMemory/types';
+import { historyEntryFromContext } from '#/agent/loop/history';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { renderModelToolSkillPrompt } from '#/features/skill/prompt';
 import { IAgentSkillService } from '#/features/skill/skillService';
-import type { ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/tool/toolContract';
+import type { ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import { isInlineSkillType } from '#/features/skill/catalog/types';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -34,6 +36,7 @@ export class SkillTool implements ISkillTool {
     @ISessionSkillCatalog private readonly catalog: ISessionSkillCatalog,
     @IAgentSkillService private readonly skill: IAgentSkillService,
     @ISessionContext private readonly sessionContext: ISessionContext,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
   ) {}
 
   resolveExecution(args: SkillToolInput): ToolExecution {
@@ -47,7 +50,7 @@ export class SkillTool implements ISkillTool {
   }
 
   withInitialQueryDepth(initialQueryDepth: number): SkillTool {
-    const clone = new SkillTool(this.catalog, this.skill, this.sessionContext);
+    const clone = new SkillTool(this.catalog, this.skill, this.sessionContext, this.loop);
     clone.queryDepth = initialQueryDepth;
     return clone;
   }
@@ -56,6 +59,7 @@ export class SkillTool implements ISkillTool {
     return executeModelSkill(
       this.catalog,
       this.skill,
+      this.loop,
       args,
       this.queryDepth,
       this.sessionContext.sessionId,
@@ -66,6 +70,7 @@ export class SkillTool implements ISkillTool {
 export async function executeModelSkill(
   catalog: ISessionSkillCatalog,
   skillService: IAgentSkillService,
+  loop: IAgentLoopService,
   args: SkillToolInput,
   queryDepth: number,
   sessionId: string,
@@ -104,7 +109,7 @@ export async function executeModelSkill(
     skillSource: skill.source,
   };
   const skillContent = catalog.catalog.renderSkillPrompt(skill, skillArgs, { sessionId });
-  const message: ToolDeliveryMessage = {
+  const message: ContextMessage = {
     role: 'user',
     content: [
       {
@@ -119,13 +124,12 @@ export async function executeModelSkill(
         }),
       },
     ],
-    toolCalls: [],
     origin,
   };
   skillService.recordModelToolActivation(origin);
+  loop.remind(historyEntryFromContext(message));
   return {
     output: `Skill "${skill.name}" loaded inline. Follow its instructions.`,
-    delivery: { kind: 'steer', message },
   };
 }
 

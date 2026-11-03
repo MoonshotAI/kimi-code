@@ -25,6 +25,7 @@ export interface ToolExecutorExecuteOptions {
   readonly turnId: number;
   readonly trace?: LLMRequestTrace;
   readonly remind?: ToolRemind;
+  readonly detach?: (toolCallId: string, text: string) => void;
   readonly onToolCall?: (payload: ToolCallStartedPayload) => void;
 }
 

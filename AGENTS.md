@@ -47,7 +47,7 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 
 ## General Coding Rules
 
-- `packages/agent-core-v2`, `packages/kap-server`, and `packages/transcript` are comment-free zones: no comments of any kind — no line/block comments, no JSDoc (not even on exported symbols); the only exception is load-bearing lint-suppression directives (`oxlint-disable` / `eslint-disable`), while other tooling directives (`@ts-expect-error`, …) stay banned. Enforced by `scripts/check-no-comments.mjs` over `.ts`/`.tsx`/`.mts`/`.mjs` under `src/`/`test/`/`scripts/`, which runs as part of `pnpm lint`.
+- Unless the user explicitly asks, do not modify, add, or delete comments. This includes line comments, block comments, and JSDoc.
 - For optional object properties, pass `undefined` directly instead of using conditional spread.
   - YES: `{ user }`
   - NO: `{ ...(user ? { user } : undefined) }`
@@ -105,7 +105,7 @@ These rules apply to every pull request review, automated or human. The user pop
 - Report a class of issues in one pass: when a finding generalizes to several locations in the diff, list all of them at once instead of raising them across successive rounds.
 - No pure style or personal-preference findings. Every finding carries a severity: P0 blocking / P1 should-fix / P2 suggestion.
 - Re-reviews are incremental: review only what changed since the previous review; do not restate findings on unchanged code or re-raise resolved threads. Before treating a resolved thread as settled, verify the current code: suppress a finding only when the problem is actually fixed or the finding no longer holds.
-- Domain-specific rules keep their own canonical homes — changesets (`.agents/skills/gen-changesets/SKILL.md`), comment-free zones (General Coding Rules), PR text (`write-pr` skill); review against those, not ad-hoc taste.
+- Domain-specific rules keep their own canonical homes — changesets (`.agents/skills/gen-changesets/SKILL.md`), comments (General Coding Rules), PR text (`write-pr` skill); review against those, not ad-hoc taste.
 
 ### Enumerate changed behavior, not just bugs
 

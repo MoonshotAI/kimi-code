@@ -29,7 +29,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
 import { IWireService, type WireRestoreChains } from './wire';
 import { WireError, WireErrors } from './errors';
-import { HUMAN_AGENT_DOMAIN, humanEventType, isHumanRecordType } from './human';
+import { HUMAN_AGENT_DOMAIN, humanEventType, isHumanRecordType, normalizeLegacyTurnSteerRecords } from './human';
 import {
   type AgentJournalRef,
   type IAgentJournal,
@@ -87,6 +87,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
   private writeGeneration = 0;
   private lastReadLineCount = 0;
   private modeTwoEntries: WireLine[] = [];
+  private readonly reportedDiagnostics = new Set<string>();
 
   constructor(
     @IAgentScopeContext scopeContext: IAgentScopeContext,
@@ -177,9 +178,8 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     const tree = parseTree(entries, entries.at(-1)?.line ?? 0);
     this.treeSnapshot = tree;
     this.reportTreeDiagnostics(tree);
-    for (const { record } of activeChain(entries, tree)) {
-      yield record;
-    }
+    const records = activeChain(entries, tree).map(({ record }) => record);
+    for (const record of normalizeLegacyTurnSteerRecords(records)) yield record;
   }
 
   readRaw(): AsyncIterable<WireRecord> {
@@ -188,7 +188,11 @@ export class WireService extends Service implements IWireService, IAgentJournal 
 
   readHumanChain(): readonly WireLine[] {
     const tree = parseTree(this.modeTwoEntries, this.lines);
-    return activeChain(this.modeTwoEntries, tree);
+    return restorableChain(this.modeTwoEntries, tree);
+  }
+
+  readHumanJournal(): readonly WireLine[] {
+    return this.modeTwoEntries;
   }
 
   async *readRestorable(): AsyncIterable<WireRecord> {
@@ -196,9 +200,8 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     const tree = parseTree(entries, entries.at(-1)?.line ?? 0);
     this.treeSnapshot = tree;
     this.reportTreeDiagnostics(tree);
-    for (const { record } of restorableChain(entries, tree)) {
-      yield record;
-    }
+    const records = restorableChain(entries, tree).map(({ record }) => record);
+    for (const record of normalizeLegacyTurnSteerRecords(records)) yield record;
   }
 
   async readRestoreChains(): Promise<WireRestoreChains> {
@@ -207,7 +210,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     this.treeSnapshot = tree;
     this.reportTreeDiagnostics(tree);
     return {
-      restorable: restorableChain(entries, tree).map(({ record }) => record),
+      restorable: normalizeLegacyTurnSteerRecords(restorableChain(entries, tree).map(({ record }) => record)),
       journal: entries.map(({ record }) => record),
     };
   }
@@ -308,6 +311,9 @@ export class WireService extends Service implements IWireService, IAgentJournal 
 
   private reportTreeDiagnostics(tree: WireTree): void {
     for (const line of tree.diagnostics.malformedSwitchLines) {
+      const key = `line:${String(line)}`;
+      if (this.reportedDiagnostics.has(key)) continue;
+      this.reportedDiagnostics.add(key);
       onUnexpectedError(
         new WireError(
           WireErrors.codes.WIRE_UNKNOWN_RECORD,
@@ -317,6 +323,9 @@ export class WireService extends Service implements IWireService, IAgentJournal 
       );
     }
     for (const branch of tree.diagnostics.duplicateBranches) {
+      const key = `branch:${branch}`;
+      if (this.reportedDiagnostics.has(key)) continue;
+      this.reportedDiagnostics.add(key);
       onUnexpectedError(
         new WireError(
           WireErrors.codes.WIRE_UNKNOWN_RECORD,
@@ -743,7 +752,33 @@ function fromPersistentLoopEvent(event: unknown): unknown {
   return event;
 }
 
-function toPersistentWireRecord(record: WireRecord): WireRecord {
+function toPersistentHistoryMessage(message: Message): UnknownRecord {
+  const output = toPersistentContextMessage(message);
+  if (!Array.isArray(output['content'])) return output;
+  output['content'] = message.content.map((part, index) => {
+    const converted = (output['content'] as unknown[])[index];
+    return part.type === 'text' && part.contentType !== undefined && isUnknownRecord(converted)
+      ? { ...converted, contentType: part.contentType }
+      : converted;
+  });
+  return output;
+}
+
+function fromPersistentHistoryMessage(message: unknown): UnknownRecord {
+  const output = fromPersistentContextMessage(message);
+  if (!isUnknownRecord(message) || !Array.isArray(message['content']) || !Array.isArray(output['content'])) {
+    return output;
+  }
+  output['content'] = (output['content'] as unknown[]).map((part, index) => {
+    const source = (message['content'] as unknown[])[index];
+    return isUnknownRecord(source) && typeof source['contentType'] === 'string' && isUnknownRecord(part)
+      ? { ...part, contentType: source['contentType'] }
+      : part;
+  });
+  return output;
+}
+
+export function toPersistentWireRecord(record: WireRecord): WireRecord {
   const humanType = humanEventType(record.type, HUMAN_AGENT_DOMAIN);
   if (humanType !== undefined) {
     return historyRecordToPersistent(humanType, record) as WireRecord;
@@ -751,7 +786,7 @@ function toPersistentWireRecord(record: WireRecord): WireRecord {
   if (record.type === 'context.append_message') {
     return {
       ...record,
-      message: toPersistentContextMessage(record['message'] as Message),
+      message: toPersistentHistoryMessage(record['message'] as Message),
     };
   }
   if (record.type === 'context.append_loop_event') {
@@ -769,7 +804,7 @@ export function fromPersistentWireRecord(record: WireRecord): WireRecord {
     return historyRecordFromPersistent(humanType, record) as WireRecord;
   }
   if (record.type === 'context.append_message') {
-    return { ...record, message: fromPersistentContextMessage(record['message']) };
+    return { ...record, message: fromPersistentHistoryMessage(record['message']) };
   }
   if (record.type === 'context.append_loop_event') {
     return { ...record, event: fromPersistentLoopEvent(record['event']) };
