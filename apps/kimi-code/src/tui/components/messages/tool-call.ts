@@ -786,6 +786,15 @@ class ToolOutputMarkdown extends Markdown {
   }
 }
 
+class StableSpacer extends Spacer {
+  private cache: { width: number; lines: string[] } | undefined;
+
+  override render(width: number): string[] {
+    if (this.cache?.width !== width) this.cache = { width, lines: super.render(width) };
+    return this.cache.lines;
+  }
+}
+
 export class ToolCallComponent extends Container {
   private expanded = false;
   private toolCall: ToolCallBlockData;
@@ -916,7 +925,7 @@ export class ToolCallComponent extends Container {
     this.ui = ui;
     this.applySubagentReplay(toolCall.subagent);
 
-    this.addChild(new Spacer(1));
+    this.addChild(new StableSpacer(1));
     this.headerText =
       toolCall.name === 'NotifyUser'
         ? new NotifyUserHeader(this.buildHeader())

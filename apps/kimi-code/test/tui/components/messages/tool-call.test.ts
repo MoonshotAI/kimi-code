@@ -3374,3 +3374,34 @@ describe('ToolCallComponent hasHiddenContent while arguments stream', () => {
     bash.dispose();
   });
 });
+
+describe('ToolCallComponent render cache', () => {
+  const readCall = { id: 'call_cache', name: 'Read', args: { path: 'foo.ts' } };
+  const readResult = { tool_call_id: 'call_cache', output: 'content', is_error: false };
+
+  it('returns the same array when nothing changed between renders', () => {
+    const component = new ToolCallComponent(readCall, readResult);
+    const first = component.render(100);
+    expect(component.render(100)).toBe(first);
+    component.dispose();
+  });
+
+  it('renders the same text as a fresh card after a width change and back', () => {
+    const component = new ToolCallComponent(readCall, readResult);
+    const wide = component.render(100);
+    const narrow = component.render(20);
+    expect(narrow).toEqual(new ToolCallComponent(readCall, readResult).render(20));
+    expect(component.render(100)).toEqual(wide);
+    component.dispose();
+  });
+
+  it('re-renders when the result arrives', () => {
+    const component = new ToolCallComponent(readCall, undefined);
+    const pending = component.render(100);
+    component.setResult(readResult, { known: false });
+    const done = component.render(100);
+    expect(done).not.toBe(pending);
+    expect(done).toEqual(new ToolCallComponent(readCall, readResult).render(100));
+    component.dispose();
+  });
+});
