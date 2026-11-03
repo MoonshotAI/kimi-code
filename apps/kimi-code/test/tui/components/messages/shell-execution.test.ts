@@ -1,3 +1,4 @@
+import { Container } from '@moonshot-ai/pi-tui';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -226,5 +227,40 @@ describe('ShellExecutionComponent', () => {
       expect(rendered).toContain('line4');
       expect(rendered).toContain('line5');
     });
+  });
+});
+
+describe('ShellExecutionComponent render cache', () => {
+  const options = {
+    command: 'printf hello',
+    showCommand: true,
+    result: {
+      tool_call_id: 'call_shell',
+      output: ['line1', 'line2', 'line3', 'line4', 'line5'].join('\n'),
+      is_error: false,
+    },
+  };
+
+  it('returns the same array when nothing changed between renders', () => {
+    const component = new ShellExecutionComponent(options);
+    const first = component.render(80);
+    expect(component.render(80)).toBe(first);
+  });
+
+  it('matches a fresh component after a width change and back', () => {
+    const component = new ShellExecutionComponent(options);
+    const wide = component.render(80);
+    expect(component.render(12)).toEqual(Container.prototype.render.call(component, 12));
+    expect(component.render(80)).toEqual(wide);
+  });
+
+  it('drops the cached lines on invalidate', () => {
+    const component = new ShellExecutionComponent(options);
+    const first = component.render(80);
+    component.invalidate();
+    const second = component.render(80);
+    expect(second).not.toBe(first);
+    expect(second).toEqual(first);
+    expect(second).toEqual(Container.prototype.render.call(component, 80));
   });
 });

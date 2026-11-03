@@ -25,6 +25,10 @@ export interface ShellExecutionOptions {
 }
 
 export class ShellExecutionComponent extends Container {
+  private renderCache:
+    | { width: number; lines: string[]; childRefs: Component[]; childLines: string[][] }
+    | undefined;
+
   constructor(options: ShellExecutionOptions) {
     super();
 
@@ -35,6 +39,29 @@ export class ShellExecutionComponent extends Container {
     if (options.result !== undefined) {
       this.addResultPreview(options.result, options.expanded ?? false, options.expandHint ?? true);
     }
+  }
+
+  override invalidate(): void {
+    this.renderCache = undefined;
+    super.invalidate();
+  }
+
+  override render(width: number): string[] {
+    const cache = this.renderCache;
+    const childRefs = this.children;
+    const childLines = childRefs.map((child) => child.render(width));
+    if (
+      cache?.width === width &&
+      cache.childRefs.length === childRefs.length &&
+      cache.childRefs.every(
+        (child, index) => child === childRefs[index] && cache.childLines[index] === childLines[index],
+      )
+    ) {
+      return cache.lines;
+    }
+    const lines = childLines.flat();
+    this.renderCache = { width, lines, childRefs: [...childRefs], childLines };
+    return lines;
   }
 
   private addCommandPreview(command: string, previewLines: number | undefined): void {
