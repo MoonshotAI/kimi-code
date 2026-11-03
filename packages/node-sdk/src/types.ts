@@ -6,7 +6,7 @@ import type {
 import type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
 import type { RemoteEnvironmentEntry } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 
 import type { ResumeSessionResult } from '#/replay';
 import type { PermissionMode } from '#/permission';
@@ -120,10 +120,25 @@ export type {
   PluginGithubRef,
   PluginInfo,
   PluginMcpServerInfo,
+  PluginOrigin,
   PluginSource,
   PluginSummary,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
+export type {
+  MarketplaceLocation,
+  MarketplaceUpdateStatus,
+  PluginMarketplace,
+  PluginMarketplaceClassification,
+  PluginMarketplaceDistribution,
+  PluginMarketplaceEntry,
+  PluginMarketplaceLocale,
+  PluginMarketplaceLocalizedText,
+  PluginMarketplacePlatform,
+  PluginMarketplaceTier,
+  ReadPluginMarketplaceOptions,
+} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+export type { InstallPluginInput } from '@moonshot-ai/agent-core-v2/app/plugin/plugin';
 export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 export type { ToolInfo } from '#/tool';
 export type {
@@ -149,7 +164,7 @@ export type { KimiHostIdentity, OAuthRefreshOutcome };
 // hosts name them through `KimiHarnessOptions.uiCapabilities`, so the type is public here.
 export type { HostUiCapability };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
-export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
+export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/agent-core-v2';
 // Contributed commands are an agent-core-v2 seam; the type is re-exported
 // from the v2 engine (v1 sessions report an empty command set).
 export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
@@ -234,6 +249,10 @@ export interface UploadFileOptions {
   readonly expiresInSec?: number;
 }
 
+export interface EditGoalObjectiveInput {
+  readonly objective: string;
+}
+
 export interface CreateGoalInput {
   readonly objective: string;
   readonly replace?: boolean;
@@ -247,6 +266,14 @@ export type PromptInput = readonly PromptPart[];
 export interface PromptSkillActivation {
   readonly name: string;
   readonly args?: string;
+}
+
+export interface PromptSubmissionResult {
+  readonly promptId: string;
+  readonly createdAt: string;
+  readonly state: 'running' | 'queued' | 'blocked';
+  readonly turnId?: number;
+  readonly steered: boolean;
 }
 
 export interface KimiHarnessOptions {
@@ -375,7 +402,7 @@ export interface ForkSessionInput {
   readonly title?: string;
   readonly metadata?: JsonObject;
   /**
-   * Zero-based index of the user-visible turn to retain through. Omit it to
+   * Persistent engine turnId to retain through; gaps are allowed. Omit it to
    * preserve the existing full-session fork behavior.
    */
   readonly turnIndex?: number;
@@ -465,7 +492,7 @@ export interface SessionTodoItem {
 export interface TokenUsage {
   readonly inputOther: number;
   readonly output: number;
-  readonly inputCacheRead: number;
+  readonly inputCacheRead?: number;
   readonly inputCacheCreation: number;
 }
 

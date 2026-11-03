@@ -49,7 +49,9 @@ import type {
   PromptLaunchResult,
   PromptPayload,
   SteerPayload,
+  SteerResult,
 } from '#/agent/loop/loop';
+import { IAgentPromptChannel } from '#/agent/loop/promptChannel';
 import type { AgentCommandInfo } from '#/agent/command/agentCommand';
 import { IAgentCommandService } from '#/agent/command/agentCommand';
 import type { AgentContextData } from '#/agent/contextMemory/types';
@@ -362,7 +364,7 @@ type RpcPromise<T> = Promise<T> & {
 interface AgentRpcPassthroughAPI {
   prompt: (payload: PromptPayload) => Promisable<PromptLaunchResult | undefined>;
   promptWithSkills: (payload: PromptWithSkillsInput) => Promisable<PromptWithSkillsResult>;
-  steer: (payload: SteerPayload) => Promisable<PromptLaunchResult | undefined>;
+  steer: (payload: SteerPayload) => Promisable<SteerResult>;
   cancel: (payload: CancelPayload) => void;
   undoHistory: (payload: UndoHistoryPayload) => Promisable<number>;
   setPermission: (payload: SetPermissionPayload) => void;
@@ -582,12 +584,14 @@ function isFullHostFs(input: unknown): boolean {
     'writeText',
     'appendText',
     'readBytes',
+    'readFileHead',
     'writeBytes',
     'readLines',
     'createExclusive',
     'realpath',
     'stat',
     'readdir',
+    'walk',
     'mkdir',
     'remove',
   ];
@@ -2899,31 +2903,8 @@ async function submitPromptFacade(
 async function submitSteerPromptFacade(
   ctx: TestAgentContext,
   payload: SteerPayload,
-): Promise<PromptLaunchResult | undefined> {
-  const loop = ctx.get(IAgentLoopService);
-  if (ctx.get(IAgentScopeContext).agentId === MAIN_AGENT_ID) {
-    await applyPromptMetadataUpdate(
-      {
-        metadata: ctx.get(ISessionMetadata),
-        eventService: ctx.get(IEventService),
-        sessionId: ctx.get(ISessionContext).sessionId,
-      },
-      promptMetadataTextFromContentParts(payload.input),
-    );
-  }
-  const status = loop.snapshot();
-  const { id } = loop.submit(
-    {
-      message: { role: 'user', content: [...payload.input] },
-      meta: { origin: { kind: 'user' }, tracked: true },
-    },
-    { steerIfActive: true },
-  );
-  if (status.state === 'running' && status.activePromptId === undefined) return undefined;
-  const turn = await loop.promptHandle(id)?.launched;
-  if (turn === undefined) return undefined;
-  await turn.ready.catch(() => undefined);
-  return turn.id === undefined ? undefined : { turn_id: turn.id };
+): Promise<SteerResult> {
+  return ctx.get(IAgentPromptChannel).submitSteer(payload);
 }
 
 function drainPrompts(loop: IAgentLoopService): void {

@@ -1,7 +1,7 @@
 import { dirname } from 'pathe';
 
 import { type HostFileStat, type IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { isHostFsNotFound } from '#/os/interface/hostFsErrors';
+import { isHostFsNotDirectory, isHostFsNotFound } from '#/os/interface/hostFsErrors';
 import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
@@ -73,6 +73,7 @@ export class WriteTool implements IWriteTool {
       const workspace = this.workspaceConfig(view);
       const path = resolvePathAccessPath(args.path, {
         env,
+        shellPathBridge: view.shellPathBridge,
         workspace,
         operation: 'write',
       });
@@ -105,17 +106,18 @@ export class WriteTool implements IWriteTool {
   }
 
   private async execution(fs: IHostFileSystem, args: WriteInput, safePath: string, parent = dirname(safePath)): Promise<ExecutableToolResult> {
-    const parentError = await this.ensureParentDirectory(fs, parent);
-    if (parentError !== undefined) {
-      return { isError: true, output: parentError };
-    }
-
+    const mode = args.mode ?? 'overwrite';
+    const write = () => mode === 'append' ? fs.appendText(safePath, args.content) : fs.writeText(safePath, args.content);
     try {
-      const mode = args.mode ?? 'overwrite';
-      if (mode === 'append') {
-        await fs.appendText(safePath, args.content);
-      } else {
-        await fs.writeText(safePath, args.content);
+      try {
+        await write();
+      } catch (error) {
+        if (!isHostFsNotFound(error) && !isHostFsNotDirectory(error)) throw error;
+        const parentError = await this.ensureParentDirectory(fs, parent);
+        if (parentError !== undefined) {
+          return { isError: true, output: parentError };
+        }
+        await write();
       }
       const bytesWritten = Buffer.byteLength(args.content, 'utf8');
       return {

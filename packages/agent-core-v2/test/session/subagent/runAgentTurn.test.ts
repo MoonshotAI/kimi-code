@@ -20,7 +20,7 @@ import {
   TurnStepRetrying,
   TurnStepStarted,
 } from '#/agent/loop/turnEvents';
-import { ErrorCodes, isError2 } from '#/errors';
+import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 
 function makeTurn(result: TurnResult): Turn {
@@ -208,6 +208,43 @@ describe('runAgentTurn', () => {
     const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, { signal });
     const error = await rejection(run.completion);
     expect(isError2(error) && error.code).toBe(ErrorCodes.AGENT_MAX_TOKENS_EXCEEDED);
+  });
+
+  it('does not invent HTTP 429 when rebuilding a stream rate-limit failure', async () => {
+    const failure = new Error2(ErrorCodes.PROVIDER_RATE_LIMIT, 'backend stream failure', {
+      details: { requestId: 'req-stream' },
+    });
+    const { handle } = handleWith(makeTurn({ type: 'failed', steps: 1, error: failure }), [
+      assistant('partial work'),
+    ]);
+
+    const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, { signal });
+    const error = await rejection(run.completion);
+
+    expect(error).toMatchObject({
+      name: 'APIProviderRateLimitError',
+      message: 'backend stream failure',
+      statusCode: undefined,
+      requestId: 'req-stream',
+    });
+  });
+
+  it('passes through a real HTTP 429 rate-limit error unchanged', async () => {
+    const failure = Object.assign(
+      new Error2(ErrorCodes.PROVIDER_RATE_LIMIT, 'backend HTTP failure', {
+        details: { statusCode: 429, requestId: 'req-http' },
+      }),
+      { statusCode: 429 },
+    );
+    const { handle } = handleWith(makeTurn({ type: 'failed', steps: 1, error: failure }), [
+      assistant('partial work'),
+    ]);
+
+    const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, { signal });
+    const error = await rejection(run.completion);
+
+    expect(error).toBe(failure);
+    expect(error).toMatchObject({ statusCode: 429 });
   });
 });
 

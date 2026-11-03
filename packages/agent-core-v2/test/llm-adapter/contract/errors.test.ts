@@ -12,8 +12,12 @@ import {
   ChatProviderError,
   classifyApiError,
   createAbortError,
+  errorFromLlmMessage,
   isAbortError,
+  isImageFormatError,
+  isRecoverableRequestStructureError,
   isRetryableGenerateError,
+  llmMessageFromError,
   normalizeAPIStatusError,
   throwIfAbortError,
 } from '#/llm-adapter/contract/errors';
@@ -180,5 +184,158 @@ describe('classifyApiError', () => {
   it('falls back to other for unknown values', () => {
     expect(classifyApiError(new Error('boom')).kind).toBe('other');
     expect(classifyApiError('boom').kind).toBe('other');
+  });
+});
+
+describe('model error HTTP status source', () => {
+  it('uses normalized retryability instead of HTTP status when deciding whether to retry', () => {
+    const retryableClientError = new APIStatusError(
+      400,
+      'retry this',
+      null,
+      null,
+      undefined,
+      undefined,
+      true,
+    );
+    const deterministicServerError = new APIStatusError(
+      503,
+      'do not retry this',
+      null,
+      null,
+      undefined,
+      undefined,
+      false,
+    );
+
+    expect(isRetryableGenerateError(retryableClientError)).toBe(true);
+    expect(isRetryableGenerateError(deterministicServerError)).toBe(false);
+  });
+
+  it('keeps rate-limit semantics without synthesizing HTTP 429', () => {
+    const error = errorFromLlmMessage(
+      {
+        kind: 'rate_limit',
+        message: 'backend stream rate limit',
+        requestId: 'req-stream',
+        retryAfterMs: null,
+        headers: { 'x-trace-id': 'trace-stream' },
+        retryable: true,
+      },
+      { requestId: 'req-stream' },
+    );
+
+    expect(error).toBeInstanceOf(APIProviderRateLimitError);
+    expect(error).toMatchObject({
+      code: 'provider.rate_limit',
+      message: 'backend stream rate limit',
+      statusCode: undefined,
+      requestId: 'req-stream',
+      traceId: 'trace-stream',
+      diagnostics: { requestId: 'req-stream' },
+      retryable: true,
+    });
+    expect(isRetryableGenerateError(error)).toBe(true);
+    expect(llmMessageFromError(error)).toMatchObject({
+      kind: 'rate_limit',
+      message: 'backend stream rate limit',
+      statusCode: undefined,
+      headers: { 'x-trace-id': 'trace-stream' },
+      retryable: true,
+    });
+  });
+
+  it('keeps quota exhaustion non-retryable without synthesizing HTTP 429', () => {
+    const error = errorFromLlmMessage({
+      kind: 'quota_exhausted',
+      message: 'backend quota failure',
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+      retryable: false,
+    });
+
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(error).toMatchObject({ statusCode: undefined, retryable: false });
+    expect(isRetryableGenerateError(error)).toBe(false);
+  });
+
+  it('preserves explicit retryability for a status-less stream failure', () => {
+    const transient = errorFromLlmMessage({
+      kind: 'status',
+      message: 'backend stream 503',
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+      retryable: true,
+    });
+    const deterministic = errorFromLlmMessage({
+      kind: 'status',
+      message: 'backend stream 400',
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+      retryable: false,
+    });
+
+    expect(transient).toBeInstanceOf(APIStatusError);
+    expect(isRetryableGenerateError(transient)).toBe(true);
+    expect(isRetryableGenerateError(deterministic)).toBe(false);
+    expect(llmMessageFromError(transient)).toMatchObject({
+      kind: 'status',
+      statusCode: undefined,
+      retryable: true,
+    });
+  });
+
+  it('preserves a real model HTTP status', () => {
+    const error = errorFromLlmMessage({
+      kind: 'status',
+      message: 'backend HTTP 503',
+      statusCode: 503,
+      requestId: 'req-http',
+      retryAfterMs: null,
+      headers: { 'x-trace-id': 'trace-http' },
+      retryable: true,
+    });
+
+    expect(error).toMatchObject({
+      message: 'backend HTTP 503',
+      statusCode: 503,
+      traceId: 'trace-http',
+      retryable: true,
+    });
+    expect(isRetryableGenerateError(error)).toBe(true);
+    expect(llmMessageFromError(error)).toMatchObject({
+      headers: { 'x-trace-id': 'trace-http' },
+      retryable: true,
+    });
+  });
+
+  it('preserves a provider error code in the sixth constructor argument', () => {
+    const error = new APIStatusError(
+      403,
+      'Forbidden',
+      null,
+      null,
+      { requestId: 'req-diagnostics' },
+      'provider.auth_error',
+    );
+
+    expect(error).toMatchObject({
+      code: 'provider.auth_error',
+      statusCode: 403,
+      traceId: null,
+      diagnostics: { requestId: 'req-diagnostics' },
+    });
+    expect(isRetryableGenerateError(error)).toBe(false);
+  });
+
+  it('does not apply message recovery patterns without a real HTTP status', () => {
+    const structural = new APIStatusError(undefined, 'tool_use followed by tool_result');
+    const image = new APIStatusError(undefined, 'unsupported image format');
+
+    expect(isRecoverableRequestStructureError(structural)).toBe(false);
+    expect(isImageFormatError(image)).toBe(false);
   });
 });
