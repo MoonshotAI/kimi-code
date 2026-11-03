@@ -154,12 +154,14 @@ function createTestFs(kaos: FakeKaos): IHostFileSystem {
     writeText: () => notImplemented('writeText'),
     appendText: () => notImplemented('appendText'),
     readBytes: () => notImplemented('readBytes'),
+    readFileHead: () => notImplemented('readFileHead'),
     writeBytes: () => notImplemented('writeBytes'),
     readLines: () => notImplemented('readLines'),
     createExclusive: () => notImplemented('createExclusive'),
     stat: (path) => kaos.stat(path),
     lstat: (path) => kaos.stat(path),
     readdir: () => notImplemented('readdir'),
+    walk: () => notImplemented('walk'),
     mkdir: () => notImplemented('mkdir'),
     remove: () => notImplemented('remove'),
     realpath: () => notImplemented('realpath'),
@@ -1381,14 +1383,14 @@ describe('GrepTool', () => {
     );
   });
 
-  it('drops incomplete trailing stdout lines after buffer truncation', async () => {
+  it('drops incomplete trailing stdout lines after cap-initiated termination', async () => {
     const maxOutputBytes = 10 * 1024 * 1024;
     const completeLine = '/workspace/src/a.ts:1:hit';
     const displayedCompleteLine = 'src/a.ts:1:hit';
     const partialLine = '/workspace/src/partial.ts:2:hit';
     const stdout = `${completeLine}\n${partialLine}${'x'.repeat(maxOutputBytes)}`;
     const tool = new GrepTool(
-      createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout)) }),
+      createFakeKaos({ exec: vi.fn().mockResolvedValue(processWithOutput(stdout, '', -1)) }),
       { workspaceDir: '/workspace', additionalDirs: [] },
     );
 

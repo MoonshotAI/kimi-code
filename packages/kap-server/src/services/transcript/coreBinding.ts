@@ -3,7 +3,6 @@ import {
   IAgentConversationUndoParticipantRegistry,
   IAgentLoopService,
   IAgentScopeContext,
-  IAgentTaskService,
   IEventBus,
   INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
@@ -19,7 +18,6 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentDescriptor, TranscriptChangeEvent, TranscriptStore } from '@moonshot-ai/transcript';
 
-import { legacyApprovalsOf } from '../legacyStatus/legacyActivity';
 import {
   AgentTranscriptProjector,
   type ProjectorBusEvent,
@@ -100,12 +98,6 @@ export function bindSessionTranscript(
           const turn = agentHandle.accessor.get(IAgentLoopService)?.snapshot().turn;
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
         },
-        activitySnapshot: () =>
-          agents.handleOf(agentId)?.accessor.get(IAgentLoopService)?.snapshot() ?? {},
-        pendingApprovals: () => {
-          const agentHandle = agents.handleOf(agentId);
-          return agentHandle === undefined ? [] : legacyApprovalsOf(agentHandle);
-        },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
         maxOrdinal: () => {
           let max = -1;
@@ -118,25 +110,6 @@ export function bindSessionTranscript(
         resolvePlanRevisionKey: (key) =>
           agents.handleOf(agentId)?.accessor.get(IAgentScopeContext).scope(key) ?? key,
       });
-      const agentHandle = agents.handleOf(agentId);
-      if (agentHandle !== undefined) {
-        const tasks = agentHandle.accessor.get(IAgentTaskService)?.list() ?? [];
-        for (const info of tasks) {
-          if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
-            applyOps(
-              agentId,
-              projector.seedSubagentTask({
-                taskId: info.taskId,
-                agentId: info.agentId,
-                description: info.description,
-                status: info.status,
-                detached: info.detached ?? false,
-                startedAt: info.startedAt,
-              }),
-            );
-          }
-        }
-      }
       projectors.set(agentId, projector);
     }
     return projector;

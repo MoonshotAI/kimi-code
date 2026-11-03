@@ -3,7 +3,12 @@ import path from 'node:path';
 
 import { Error2, ErrorCodes } from '#/errors';
 
-import type { PluginCapabilityState, PluginGithubMetadata, PluginSource } from './types';
+import type {
+  PluginCapabilityState,
+  PluginGithubMetadata,
+  PluginOrigin,
+  PluginSource,
+} from './types';
 
 const INSTALLED_REL = path.join('plugins', 'installed.json');
 
@@ -11,6 +16,8 @@ export interface InstalledRecord {
   readonly id: string;
   readonly root: string;
   readonly source: PluginSource;
+  readonly origin?: PluginOrigin;
+  readonly catalogId?: string;
   readonly enabled: boolean;
   readonly installedAt: string;
   readonly updatedAt?: string;

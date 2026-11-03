@@ -10,7 +10,6 @@ import {
   IConfigService,
   IEventService,
   IMcpOAuthService,
-  IOAuthService,
   IProviderDiscoveryService,
   ISessionIndex,
   ISessionIndexMirror,
@@ -19,6 +18,10 @@ import {
   IPluginService,
   IEnvironmentService,
   IWorkspaceService,
+  IAgentLifecycleService,
+  IAgentEnvironmentBindingService,
+  ISessionContext,
+  MAIN_AGENT_ID,
   NOTIFY_USER_UI_CAPABILITY,
   PluginChanged,
   logSeed,
@@ -32,7 +35,6 @@ import {
 import {
   createKimiDefaultHeaders,
   KIMI_CODE_PROVIDER_NAME,
-  kimiRegionProfile,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
 import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
@@ -208,7 +210,13 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     {
       homeDir,
       configPath,
-      env: opts.env,
+      env:
+        opts.pluginMarketplaceUrl === undefined
+          ? opts.env
+          : {
+              ...(opts.env ?? process.env),
+              KIMI_CODE_PLUGIN_MARKETPLACE_URL: opts.pluginMarketplaceUrl,
+            },
       clientIdentity: opts.hostIdentity,
       args: {
         requestHeaders: createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity }),
@@ -220,11 +228,20 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
-  const remoteEnvironmentProvider = await core.accessor.get(IEnvironmentService).addProvider(
+  const environments = core.accessor.get(IEnvironmentService);
+  const remoteEnvironmentProvider = await environments.addProvider(
     new RemoteEnvironmentProviderFactory({
       clientVersion: serverVersion,
     }),
   );
+  const legacyAcpBindingSubscription = core.accessor.get(ISessionManager).onDidCreateSession?.((event) => {
+    const main = event.handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+    if (main === undefined) return;
+    const binding = main.accessor.get(IAgentEnvironmentBindingService);
+    const current = binding.current;
+    if (current.environmentId !== `acp:${event.sessionId}` || environments.current(current.environmentId) !== undefined) return;
+    binding.bind('local', current.cwd ?? event.handle.accessor.get(ISessionContext).cwd);
+  });
 
   const readManagedOAuth = (): { key?: string; oauthHost?: string } | undefined =>
     core.accessor
@@ -365,6 +382,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await core.accessor.get(ISessionIndexMirror).drain();
       await core.accessor.get(IMcpOAuthService).shutdown();
       const appendLogStore = core.accessor.get(IAppendLogStore);
+      legacyAcpBindingSubscription?.dispose();
       await remoteEnvironmentProvider.dispose();
       core.dispose();
       await appendLogStore.drainRetirements();
@@ -475,16 +493,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     debugEndpoints,
     enableShutdown,
     guiStore,
-    pluginMarketplaceUrl: (() => {
-      const configured = opts.pluginMarketplaceUrl ?? process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'];
-      if (configured !== undefined) return () => configured;
-      return async () =>
-        `${kimiRegionProfile(await core.accessor.get(IOAuthService).getRegionAsync()).cdnBase}/plugins/marketplace.json`;
-    })(),
-    pluginMarketplaceIsDefault:
-      opts.pluginMarketplaceUrl === undefined &&
-      (process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] === undefined ||
-        process.env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1'),
     remoteControl: {
       service: remoteControlManager,
       devices: remoteControlDevices,

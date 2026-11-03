@@ -629,8 +629,8 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `POST /api/v1/sessions/{session_id}:{action}` | Session actions: `fork` / `compact` / `undo` / `abort` / `btw` / `archive` / `restore` |
 | `GET /api/v1/sessions/{session_id}/children` | List child sessions |
 | `POST /api/v1/sessions/{session_id}/children` | Create a child session (fork with a tag) |
-| `GET /api/v1/sessions/{session_id}/status` | Realtime status rollup |
 | `GET /api/v1/sessions/{session_id}/goal` | Current goal snapshot (`null` when none) |
+| `PATCH /api/v1/sessions/{session_id}/goal` | Edit the current goal's objective in place |
 | `GET /api/v1/sessions/{session_id}/warnings` | Session-level warnings |
 | `GET /api/v1/sessions/{session_id}/environment` | Read the main agent's environment binding |
 | `GET /api/v1/sessions/{session_id}/environments` | List the environments registered for the session workspace |
@@ -773,16 +773,18 @@ Session actions are dispatched through one route: the path tail is parsed as `{s
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. Forking is rejected while any of the session's agents has an active turn.
+Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. The source keeps running. If a turn is active, the fork retains the last completed turn before it and the active turn's user prompt as a prompt-only `cancelled` turn; active assistant output, tool activity, queued input, and later events are excluded.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `title` | body | string | Title for the fork (at least 1 character). Default `Fork: <source title>` |
 | `metadata` | body | object | Custom metadata for the fork |
+| `turn_index` | body | integer | Persistent engine `turnId` to fork through, including that turn. Gaps are allowed. Must be a non-negative safe integer and already complete |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40901`: the session has an active turn and cannot be forked
+- `40001`: `turn_index` is invalid, does not exist, or selects the active turn
+- `40901`: another session history operation is in progress
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
@@ -805,7 +807,7 @@ Rewinds the main agent's conversation by `count` turns and reconciles the derive
 | `count` | body | integer | Number of turns to undo; positive integer. Default `1` |
 | `page_size` | body | integer | Size of the returned history window, 1–100. Default `50` |
 
-On success, `data` is `{ messages, status }`: `messages` is a `{ items, has_more }` page of the remaining context messages, newest first, and `status` is the same rollup as `GET /api/v1/sessions/{session_id}/status`.
+On success, `data` is `{ messages }`: a `{ items, has_more }` page of the remaining context messages, newest first.
 
 - `40901`: a turn is active or a compaction is running — wait for it to finish, then retry
 - `40911`: that many turns cannot be undone (a compaction boundary or lost checkpoints); `data` carries `{ reason, requestedCount, undoableCount }`
@@ -868,7 +870,7 @@ On success, `data` is `{ items, has_more }` where each item is [the session obje
 
 #### `POST /api/v1/sessions/{session_id}/children`
 
-Creates a child session: a fork of this session recorded as its child, so it shows up under `GET /api/v1/sessions/{session_id}/children`. The same active-turn restriction as `:fork` applies.
+Creates a child session: a fork of this session recorded as its child, so it shows up under `GET /api/v1/sessions/{session_id}/children`. Running sources use the same completed-turn boundary and prompt-only `cancelled` active turn as `:fork`; child creation does not accept a historical `turn_index`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -878,19 +880,7 @@ Creates a child session: a fork of this session recorded as its child, so it sho
 
 On success, `data` is [the session object](#the-session-object) of the new session, and the server broadcasts `event.session.created`.
 
-- `40901`: the session has an active turn and cannot be forked
-
-#### `GET /api/v1/sessions/{session_id}/status`
-
-Realtime status rollup of the main agent; reading it resumes the session if it is cold.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-
-On success, `data` is `{ busy, model?, thinking_level, permission, plan_mode, swarm_mode, context_tokens, max_context_tokens?, context_usage? }`: `busy` reports an active turn, `model` / `thinking_level` / `permission` are the effective agent settings, `plan_mode` / `swarm_mode` are the mode flags, and `context_tokens` with `max_context_tokens` and `context_usage` (0–1) describe context-window consumption.
-
-- `40401`: session not found
+- `40901`: another session history operation is in progress
 
 #### `GET /api/v1/sessions/{session_id}/goal`
 
@@ -903,6 +893,23 @@ Reads the session's current goal snapshot, or `null` when no goal is active. Not
 On success, `data` is `null` or `{ goalId, objective, completionCriterion?, status, turnsUsed, tokensUsed, wallClockMs, budget, terminalReason? }`, where `status` is `active` / `paused` / `blocked` / `complete` and `budget` reports the token, turn, and wall-clock budgets together with the remaining amounts and per-budget reached flags (each nullable when no such budget is set).
 
 - `40401`: session not found
+
+#### `PATCH /api/v1/sessions/{session_id}/goal`
+
+Replaces the objective of the current goal without changing its `goalId`, status, progress, or budget. Works on active, paused, and blocked goals. A running turn is not interrupted; the agent receives the new objective on its next turn. Connected clients are notified through the `goal.updated` event.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `objective` | body | string | **Required.** New objective; surrounding whitespace is trimmed |
+
+On success, `data` is the updated goal snapshot, in the same camelCase shape as `GET /api/v1/sessions/{session_id}/goal`.
+
+- `40401`: session not found
+- `40914`: no current goal
+- `40915`: the goal is complete
+- `40917`: the objective is empty
+- `40918`: the objective exceeds 4000 characters
 
 #### `GET /api/v1/sessions/{session_id}/warnings`
 
@@ -973,7 +980,7 @@ Downloads a prompt media file (an image or other attachment referenced by the se
 
 ### Messages and transcript
 
-The `messages` endpoints page the main agent's flattened message history, while the `transcript` endpoints serve the structured per-agent transcript — turns, tasks, interactions, attachments — that the WebSocket [Transcript protocol](#transcript-protocol) streams live. Use these endpoints for history paging and catch-up, and the WebSocket subscription for the live tail.
+The `messages` endpoints page the main agent's flattened message history, while the `transcript` endpoints serve the structured per-agent transcript — turns, interactions, attachments — that the WebSocket [Transcript protocol](#transcript-protocol) streams live. Use these endpoints for history paging and catch-up, and the WebSocket subscription for the live tail.
 
 | Method and path | Description |
 | --- | --- |
@@ -1017,7 +1024,7 @@ On success, `data` is the message object in the item shape documented under `GET
 
 #### `GET /api/v1/sessions/{session_id}/transcript`
 
-Returns one page of an agent's structured transcript: turns (with their steps and frames) plus the markers and task references between them. Live sessions answer from the in-memory store (the requested agent's persisted history is backfilled first); cold sessions rebuild the agent from the persisted wire records. This is the history half of the transcript surface — the live streaming half is the [Transcript protocol](#transcript-protocol) subscription.
+Returns one page of an agent's structured transcript: turns (with their steps and frames) plus the markers between them. Live sessions answer from the in-memory store (the requested agent's persisted history is backfilled first); cold sessions rebuild the agent from the persisted wire records. This is the history half of the transcript surface — the live streaming half is the [Transcript protocol](#transcript-protocol) subscription.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1027,7 +1034,7 @@ Returns one page of an agent's structured transcript: turns (with their steps an
 | `after_turn` | query | string | Only turns newer than this turn id; mutually exclusive with `before_turn` |
 | `page_size` | query | integer | 1–100 turns. Default `20` |
 
-The page unit is the turn: without a cursor the newest page is returned, and `has_more` reports that older turns remain. On success, `data` is `{ agent_id, items, has_more, tasks, interactions, attachments, todos, meta, agents, pending_interactions, seq? }` — `items` is the paged turn slice, `tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` are global agent state that ships unpaginated with every response, and `seq` is the agent's op-batch watermark for resuming the stream (live sessions only).
+The page unit is the turn: without a cursor the newest page is returned, and `has_more` reports that older turns remain. On success, `data` is `{ agent_id, items, has_more, interactions, attachments, agents, pending_interactions, seq? }` — `items` is the paged turn slice, `interactions` / `attachments` / `agents` / `pending_interactions` are global agent state that ships unpaginated with every response, and `seq` is the agent's op-batch watermark for resuming the stream (live sessions only). Tasks, the agent's status and settings, context usage, the goal, and the todo list are not part of the transcript; they arrive as the WebSocket `task`, `agent`, `usage`, `goal`, and `todo` frames (see [Events](#events)).
 
 - `40001`: validation failure — `before_turn` combined with `after_turn`, or a non-plain `agent_id`
 - `40401`: session not found
@@ -1290,79 +1297,6 @@ On success the envelope `code` is `40909` (`question dismissed`) rather than `0`
 - `40405`: no pending question with that id
 - `40902`: the question was already resolved; `data` carries `{ resolved: false }`
 
-### Background tasks
-
-Background tasks are the session's asynchronous units — background shells, subagents, and long-running tool tasks. The registry is live-only: a session not loaded in this server process reports an empty list.
-
-| Method and path | Description |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/tasks` | List background tasks |
-| `GET /api/v1/sessions/{session_id}/tasks/{task_id}` | Read a task (optional output preview) |
-| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel` | Cancel a task |
-| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach` | Move a foreground task to the background |
-
-#### `GET /api/v1/sessions/{session_id}/tasks`
-
-Lists the session's background tasks.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `status` | query | string | Keep only one status: `running` / `completed` / `failed` / `cancelled` |
-
-On success, `data` is `{ items }` where each item is a task object `{ id, session_id, kind, description, status, created_at, started_at?, completed_at?, command?, model?, thinking_effort?, agent_id?, subagent_type?, parent_tool_call_id?, output_preview?, output_bytes? }`. `kind` is `bash` / `subagent` / `tool`; `command` is set for `bash` tasks, the model and agent fields for `subagent` tasks, and the output fields only when a task is read with `with_output`. Timed-out and lost tasks report `failed`; killed tasks report `cancelled`.
-
-- `40001`: validation failure — an unknown `status`
-- `40401`: session not found
-
-#### `GET /api/v1/sessions/{session_id}/tasks/{task_id}`
-
-Reads one background task, optionally with a tail of its output.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `task_id` | path | string | **Required.** Task id |
-| `with_output` | query | boolean | Include an output tail in the response. Default `false` |
-| `output_bytes` | query | integer | Size of the requested output tail in bytes, minimum `0`. Default `32768` |
-
-On success, `data` is the task object documented under `GET /api/v1/sessions/{session_id}/tasks` above; with `with_output=true` and non-empty output, `output_preview` carries the tail text and `output_bytes` its byte length.
-
-- `40001`: validation failure
-- `40401`: session not found
-- `40406`: no task with that id (a cold session has no live tasks at all)
-
-#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel`
-
-Cancels a running task. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` / `detach` as the supported actions — a bare task id or an unknown action fails `40001`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `task_id` | path | string | **Required.** Task id |
-
-On success, `data` is `{ cancelled: true }`.
-
-- `40001`: missing or unknown action suffix
-- `40401`: session not found
-- `40406`: no task with that id
-- `40904`: the task already finished; `data` carries `{ cancelled: false }` and `details.current_status` the terminal status
-
-#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach`
-
-Moves a running foreground task to the background without stopping it: the tool call waiting on the task returns immediately with a background-task result, the turn continues, and the task keeps running under the background task registry (its output is persisted, and its completion arrives as a task notification). Already-background or finished tasks are an idempotent no-op. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` / `detach` as the supported actions — a bare task id or an unknown action fails `40001`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `task_id` | path | string | **Required.** Task id |
-
-On success, `data` is `{ detached, status }`: `detached` is `true` when the call moved a running foreground task to the background and `false` for the idempotent no-op; `status` is the task's status after the call.
-
-- `40001`: missing or unknown action suffix
-- `40401`: session not found
-- `40406`: no task with that id
-
 ### Skills, tools, and MCP
 
 These endpoints expose the skill catalogs a session or workspace sees, the effective agent's tool list, and its MCP servers. Skill activation and MCP restart use the `:{action}` convention; activation is the REST analogue of the `/<skill>` slash command.
@@ -1458,7 +1392,9 @@ Capabilities are built-in features with layered readiness — detection steps pl
 | `GET /api/v1/capabilities/{capability_id}` | Read one capability's status |
 | `POST /api/v1/capabilities/{capability_id}:install` | Start a capability install (background; poll GET for progress) |
 | `GET /api/v1/plugins` | List installed plugins |
-| `POST /api/v1/plugins` | Install a plugin from a local path, zip URL, or GitHub repo |
+| `GET /api/v1/plugins/{plugin_id}` | Read an installed plugin and its declared capabilities |
+| `POST /api/v1/plugins` | Install a custom plugin or a marketplace entry at an expected version |
+| `POST /api/v1/plugins/preview` | Inspect a marketplace entry's capabilities without installing it |
 | `GET /api/v1/plugins/marketplace` | Marketplace catalog merged with live install state |
 | `POST /api/v1/plugins/{plugin_id}:{action}` | Plugin actions: `enable` / `disable` / `remove` |
 
@@ -1499,28 +1435,48 @@ On success, `data` is the capability status object documented under `GET /api/v1
 
 Lists installed plugins.
 
-On success, `data` is `{ plugins }` where each item is `{ id, displayName, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`: `state` is `ok` / `error` (load failures also set `hasErrors`), `source` is `local-path` / `zip-url` / `github`, and `github` carries the provenance `{ owner, repo, ref, installedSha? }` with `ref` `{ kind: branch|tag|sha, value }` for GitHub-sourced plugins.
+On success, `data` is `{ plugins }` where each item is `{ id, displayName, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`: `state` is `ok` / `error` (load failures also set `hasErrors`), `source` is `local-path` / `zip-url` / `github`, and `github` carries the provenance `{ owner, repo, ref, installedSha? }` with `ref` `{ kind: branch|tag|sha, value }` for GitHub-sourced plugins. Each item also includes `origin` (`marketplace` / `custom` / `unknown`), optional `catalogId`, and `installedAt` (ISO timestamp).
 
 #### `POST /api/v1/plugins`
 
-Installs a plugin and returns its summary.
+Installs a plugin and returns its summary. The request body has two forms:
 
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `source` | body | string | **Required.** Where to install from: an absolute local path, an `http(s)` URL to a zip archive, or a GitHub URL — `https://github.com/<owner>/<repo>`, optionally pinned with `/tree/<branch-or-sha>`, `/releases/tag/<tag>`, or `/commit/<sha>` |
+- Custom install: `{ "source": "<absolute local path, http(s) ZIP URL, or GitHub URL>" }`. GitHub URLs may pin a ref with `/tree/<branch-or-sha>`, `/releases/tag/<tag>`, or `/commit/<sha>`.
+- Marketplace install: `{ "marketplaceId": "<catalog entry id>", "expectedVersion": "<version shown to the user>", "expectedSha256": "<sha256sum shown to the user>" }`. The daemon resolves `source`, `sha256sum`, and the expected plugin ID from the same catalog snapshot, verifies the archive before extraction, and checks the manifest ID. For ZIP entries that declare `sha256sum`, `expectedSha256` is required and must match the catalog. Custom entries without a version may omit `expectedVersion`; local-directory and GitHub entries do not require `expectedSha256`.
 
 On success, `data` is the plugin summary documented under `GET /api/v1/plugins` above.
 
 - `40001`: validation failure — for example `source` is neither a URL nor an absolute path, or the plugin failed to load
 - `40409`: the local path does not exist
+- `40934`: the catalog entry changed after the version shown to the user; refresh the catalog and retry
 
 #### `GET /api/v1/plugins/marketplace`
 
-Lists the plugin marketplace catalog merged with live install state. The catalog is fetched per request (10-second timeout) from the configured marketplace URL; with the default catalog, built-in capabilities missing from the catalog are merged in as rows (with `capabilityId` set) and rows whose capability is unsupported on this platform are dropped.
+Lists the plugin marketplace catalog merged with live install state. The default catalog URL is derived from the current managed `baseURL` as `${baseURL}/plugins/marketplace`; built-in capability rows are no longer injected. An entry remains visible when `platforms` includes the daemon platform or contains only `cloud`; a `cloud` entry for another local platform is filtered. Cloud-only entries cannot be installed locally. The legacy `kimi-webbridge` entry is not emitted, and Computer Use exposes only the wiring plugin for the current platform.
 
-On success, `data` is `{ entries }` where each item is `{ id, tier, displayName, description?, homepage?, keywords?, version?, source, installed?, updateAvailable?, capabilityId? }`: `tier` is `official` / `curated` / `third-party`, `installed` is `{ version?, enabled }` when the plugin is installed, and `updateAvailable` marks rows whose catalog version is newer than the installed one. An entry's `source` feeds the `source` field of `POST /api/v1/plugins`.
+On success, `data` is `{ entries }` where each item includes `id`, `tier`, `classification`, `displayName`, `description?`, `cliDescription?`, `homepage?`, `keywords?`, `version?`, `source`, `iconUrl?`, `sha256sum?`, `filename?`, `locale?`, `defaultLocale?`, `platforms?`, `distribution?`, `billing?`, `installed?`, `updateAvailable?`, and `capabilityId?`. `distribution.category` is `official` or `third_party`; `platforms` uses `darwin` / `win32` / `linux` / `cloud`. Marketplace installs use `marketplaceId`, `expectedVersion` when available, and `expectedSha256` for digest-bearing ZIPs rather than passing `source` directly; custom installs pass `source`. Capability rows are marked only by the daemon: `kimi-browser-extension` maps to the `kimi-webbridge` capability, and `kimi-cu` / `kimi-cu-win` maps to `kimi-cu`.
+
+`defaultLocale` declares the language of the top-level `description` and `cliDescription`; `locale` holds per-language `shortDescription`, `longDescription`, and `cliDescription` translations.
 
 - `50001`: the marketplace is unreachable or returned an invalid catalog
+
+#### `GET /api/v1/plugins/{plugin_id}`
+
+Reads an installed plugin's details and capabilities. `skills` contains the discovered Skill invocation names with optional display names and descriptions. `mcpServers` contains the declared MCP servers with their names, runtime names, enabled states, transports, non-secret connection settings, and optional display names, descriptions, and icon URLs. Both lists reflect the plugin's actual files and manifest. `interface.skillOverrides` and `interface.mcpOverrides` override display information only; they do not change invocation names or runtime configuration.
+
+On success, `data` is the plugin summary documented under `GET /api/v1/plugins`, plus `root`, `updatedAt?`, `manifestKind?`, `manifestPath?`, `skills`, `mcpServers`, `shadowedManifestPath?`, and `diagnostics`. The optional `locale` query parameter, such as `en-US` or `zh-CN`, selects translations from `interface.locales` and affects capability display text only. Fields without a matching translation fall back to the default `interface`.
+
+- `40419`: no installed plugin with that id
+
+#### `POST /api/v1/plugins/preview`
+
+Inspects a marketplace entry without installing it. The body is `{ "marketplaceId": "<catalog entry id>", "expectedVersion": "<version shown to the user>", "expectedSha256": "<sha256sum shown to the user>", "locale": "<optional locale>" }`. `expectedSha256` is required and must match the current catalog. The daemon downloads the archive into a temporary directory, verifies its SHA-256 before extraction, validates the manifest ID, and discovers its Skills and MCP servers. It does not write an installation record, install a runtime, or retain the extracted plugin.
+
+On success, `data` is `{ "skills": [{ "name": "<skill name>", "description": "<optional description>" }], "mcpServers": [{ "name": "<manifest name>", "runtimeName": "<runtime name>", "enabled": true, "transport": "stdio" }] }`. Both entry types can also include `displayName` and `description` from overrides, and MCP entries can include `iconUrl`. `locale` follows the same selection rules as installed plugin details. MCP entries use the same shape as `GET /api/v1/plugins/{plugin_id}`; the example shows only the common fields.
+
+- `40001`: the request, archive, SHA-256, or manifest is invalid
+- `40419`: no marketplace entry with that id
+- `40934`: the catalog entry changed after the version shown to the user; refresh the catalog and retry
 
 #### `POST /api/v1/plugins/{plugin_id}:enable`
 
@@ -2465,18 +2421,22 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 
 | Frame | payload | Description |
 | --- | --- | --- |
-| `subscribe` | `{ session_ids, cursors?, agent_filter? }` | Subscribe to session events; with `cursors` (per-session `{seq, epoch}`) the server replays missed durable events |
-| `unsubscribe` | `{ session_ids }` | Drop session subscriptions |
-| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to transcript streams (the only transcript channel); `transcript` sets per-agent grades |
-| `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids` means the whole session |
-| `client_hello` | `{ client_id }` | Handshake frame; the remaining fields are legacy compatibility |
+| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to a session (the only session subscription): its transcript streams and interactions; `transcript` sets per-agent grades |
+| `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids`, or detaching the last agent, drops the whole session subscription |
+| `client_hello` | `{ client_id }` | Handshake frame; other fields are ignored |
+| `task.watch` | flat: `{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | Stream one task's output to this connection, no session subscription needed; `agent_id` is the agent that owns the task (the `agent_id` of its `task` frame), `since_offset` resumes after output the client already has, and `tail_bytes` caps the size of the first chunk |
+| `task.unwatch` | flat: `{ request_id, session_id, agent_id, task_id }` | Stop streaming that task's output |
+| `task.stop` | flat: `{ request_id, session_id, agent_id, task_id }` | Stop a task; an ended task just replies with its state |
+| `task.background` | flat: `{ request_id, session_id, agent_id, task_id }` | Stop the starting tool call from waiting so the task keeps running in the background; a task already in the background or ended just replies with its state, and a task its caller cannot stop waiting for, such as an AgentSwarm member, fails with `40933` |
+
+`task.watch`, `task.unwatch`, `task.stop`, and `task.background` are flat: their fields sit next to `type` instead of under `payload`, `request_id` replaces `id`, and the reply is `{ "type": "response", "request_id", "code", "msg"?, "task"? }` instead of an ack; a frame without a readable `request_id` closes the socket with code 1008. On success, `task.watch`, `task.stop`, and `task.background` carry the task's current state in `task` (the `task` frame shape below, without `type`, `session_id`, `agent_id`, and `event_created_at`). Requests for the same task are handled one at a time in arrival order, so a `task.unwatch` sent while a `task.watch` is still pending takes effect after it; different tasks, and other control frames, never wait on each other. A successful `task.watch` replies with code 0, then sends the last `tail_bytes` of output (32 KiB by default, at most 1 MiB; only the part after `since_offset` when it falls inside that window) as one `task.output` frame, with empty `text` when there is nothing to send, followed by live output; ended tasks can be watched too. Errors: `40001` malformed frame (including an out-of-range `tail_bytes`), `40401` session not found, `40406` the agent has no such task, `40933` the task cannot be moved to the background (its reply still carries the task state), `50001` internal error, `50003` output unreadable.
 
 ### Events
 
 Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
 
 - **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
-- **Session events**: sent only to connections subscribed to that session, subject to `agent_filter`. Main families:
+- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2` — `transcript.reset` / `transcript.ops` (see [Transcript protocol](#transcript-protocol)), `task.list`, `task`, `agent`, `usage`, `goal`, `todo`, and `interaction`. `task.output` goes only to connections watching that task with `task.watch`.
 
 | Family | Main events |
 | --- | --- |
@@ -2492,9 +2452,18 @@ Three global lifecycle events keep a cross-workspace overview fresh without poll
 
 Events also split into durable and volatile: durable events carry a strictly increasing `seq`, are journaled, and can be replayed; volatile events (the `*.delta` family, `tool.progress`, `shell.*`, and similar) are marked `volatile: true` and never replayed. When consuming a volatile text stream, compare `offset` (the cumulative character offset within the turn) against your locally accumulated text: below the local length means a duplicate frame; above means a gap that needs snapshot recovery.
 
+Each agent's running tasks — shell commands in the foreground and background, subagents (swarm members included), and other asynchronous work — are synced by two flat frames, `task.list` and `task`, never replayed like `interaction`. When a connection starts receiving an agent's tasks (an agent whose grade in `subscribe_v2` is not `off` and that it was not receiving yet), it first gets `{ type: "task.list", session_id, agent_id, tasks }`, where `tasks` is every task the agent is running right now and replaces the client's list; after that it gets `{ type: "task", session_id, agent_id, event_created_at, ...task state }` on every change. An agent that joins the session later starts directly with `task` frames. The task state is `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`, and every frame carries the full state. `detached` means the tool call that started the task no longer waits for it, so it runs in the background; `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`, with the reason in `state_reason`; `child_agent_id` is a subagent task's agent id; `swarm_index` is a swarm member's position in its swarm; `command` is a shell task's command. When a task ends, its last `task` frame (`status: "ended"`) is sent and it no longer appears in `task.list`: the outcome of an ended task lives in the session history (tool results and task notifications), and `task.watch` on it replies with its exact final state. Tasks are independent of the transcript: a `reset` op inside `transcript.ops` after an undo does not touch tasks. Task output streams separately as `{ type: "task.output", session_id, agent_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
+
+An agent's own state is synced by four more flat frames, each carrying the full value and replacing the client copy; like the task frames they are never replayed. When a connection starts receiving an agent (the same rule as `task.list`), it first gets the current `agent`, `usage` (when the agent has a model context), `goal` (main agent only), and `todo` frames, and after that each frame again whenever its value changes; an agent that joins the session later announces itself with the same frames. Subscribing to a session creates its main agent if it does not exist yet, so the main agent's frames always follow the subscription. All four are `{ type, session_id, agent_id, event_created_at, ... }`:
+
+- `agent`: `{ status: "idle" | "running", model?, thinking?, permission_mode?, plan_mode, swarm_mode, tower_mode }`. `status` follows the agent's turns, and the frame for a turn's start or end is sent after the `transcript.ops` batch of that same turn change. The three mode fields are booleans.
+- `usage`: `{ context_tokens, max_context_tokens? }`. Only the latest value matters, so while the context grows the server sends it at most a few times per second.
+- `goal`: `{ goal? }`, where `goal` is omitted when the session has none, or is `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`.
+- `todo`: `{ items: [{ title, status: "pending" | "in_progress" | "done" }] }`, read from the agent's todo store, so it follows undo and survives a restart.
+
 ### Reconnect and recovery
 
-After reconnecting, pass each session's last applied `{seq, epoch}` in `subscribe`'s `cursors`; the server replays the gap. If you fall more than the buffer (1000 events) behind, or the cursor is no longer valid, you get `resync_required` instead. In that case, call `GET /api/v1/sessions/{session_id}/snapshot` for a full snapshot (with `as_of_seq` and `epoch`), then subscribe again with the fresh cursor.
+Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: pass `transcript_since` to resume the transcript streams, or omit it to start from a fresh `transcript.reset`; pending interactions are resent after the ack, and every agent's `task.list`, `agent`, `usage`, `goal`, and `todo` frames are sent again. Task output watches are dropped as well: send `task.watch` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
 
 ### Transcript protocol
 

@@ -27,7 +27,6 @@ import {
   type TurnStepStarted,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
-import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import type { PluginCommandActivated } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
 import type { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
@@ -39,17 +38,8 @@ import type {
   PromptSteered,
   PromptSubmitted,
 } from '@moonshot-ai/agent-core-v2/agent/prompt/promptEvents';
-import type {
-  ShellCompleted,
-  ShellOutput,
-  ShellStarted,
-} from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommandService';
 import type { SkillActivated } from '@moonshot-ai/agent-core-v2/features/skill/skillOps';
-import type {
-  TaskNotified,
-  TaskStarted,
-  TaskTerminatedNotice,
-} from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
+import type { TaskNotified } from '@moonshot-ai/agent-core-v2/agent/task/taskOps';
 import type {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
@@ -61,19 +51,11 @@ import type {
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import type { AgentStatusUpdated } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
 import type { PlanRevision } from '@moonshot-ai/agent-core-v2/features/plan/planOps';
-import type { SubagentSuspended } from '@moonshot-ai/agent-core-v2/features/swarm/session/sessionSwarmService';
-import type {
-  SubagentCancelled,
-  SubagentCompleted,
-  SubagentFailed,
-  SubagentSpawned,
-  SubagentStarted,
-} from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
+import type { SubagentSpawned } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 import {
   projectTranscriptUserOrigin,
   projectTranscriptUserTurnOrigin,
   type AgentRef,
-  type AgentUsageMeta,
   type StepHeader,
   type StepUsage,
   type TextFrame,
@@ -85,8 +67,6 @@ import {
   type TranscriptMarker,
   type TranscriptOperation,
   type TranscriptPrompt,
-  type TranscriptTask,
-  type TranscriptTodo,
   turnId as exportTurnKey,
   turnOrdinal,
   type TranscriptUsage,
@@ -96,8 +76,6 @@ import {
   type TurnState,
 } from '@moonshot-ai/transcript';
 
-import { toLegacyPhase, type LegacyActivityApproval } from '../legacyStatus/legacyStatus';
-import { LegacyActivityTracker, phaseFromDomainEvent } from '../legacyStatus/legacyActivity';
 import { interactionOutcome } from '../../protocol/interaction-wire';
 import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts, projectToolResultOutput } from '../messages/messageProjection';
@@ -137,18 +115,8 @@ export type ProjectorBusEvent =
   | ({ readonly type: 'tool.result' } & ToolResultEvent)
   | ({ readonly type: 'permission.approval.requested' } & PermissionApprovalRequested)
   | ({ readonly type: 'permission.approval.resolved' } & PermissionApprovalResolved)
-  | ({ readonly type: 'task.started' } & TaskStarted)
-  | ({ readonly type: 'task.terminated' } & TaskTerminatedNotice)
   | ({ readonly type: 'task.notified' } & TaskNotified)
-  | ({ readonly type: 'shell.started' } & ShellStarted)
-  | ({ readonly type: 'shell.output' } & ShellOutput)
-  | ({ readonly type: 'shell.completed' } & ShellCompleted)
   | ({ readonly type: 'subagent.spawned' } & SubagentSpawned)
-  | ({ readonly type: 'subagent.started' } & SubagentStarted)
-  | ({ readonly type: 'subagent.completed' } & SubagentCompleted)
-  | ({ readonly type: 'subagent.failed' } & SubagentFailed)
-  | ({ readonly type: 'subagent.cancelled' } & SubagentCancelled)
-  | ({ readonly type: 'subagent.suspended' } & SubagentSuspended)
   | ({ readonly type: 'goal.updated' } & GoalUpdated)
   | ({ readonly type: 'agent.status.updated' } & AgentStatusUpdated)
   | PromptQueuedEvent
@@ -197,8 +165,8 @@ export function allocateExportTurn(
       return { turnId: candidate, ordinal, highWater: Math.max(highWater, ordinal) };
     }
   }
-  if (existing === undefined && wireId > highWater) {
-    return { turnId: candidate, ordinal: wireId, highWater: wireId };
+  if (existing === undefined) {
+    return { turnId: candidate, ordinal: wireId, highWater: Math.max(highWater, wireId) };
   }
   const ordinal = Math.max(highWater, wireId) + 1;
   return { turnId: exportTurnKey(ordinal), ordinal, highWater: ordinal };
@@ -216,8 +184,6 @@ export interface ProjectorLookups {
   readonly maxOrdinal?: ProjectorMaxOrdinalLookup;
   readonly prompt?: ProjectorPromptLookup;
   readonly resolvePlanRevisionKey?: ProjectorPlanRevisionKey;
-  readonly activitySnapshot?: () => AgentActivitySnapshot;
-  readonly pendingApprovals?: () => readonly LegacyActivityApproval[];
 }
 
 interface OpenTextFrame {
@@ -252,34 +218,6 @@ export class AgentTranscriptProjector {
   private openText: OpenTextFrame | undefined;
   private openThinking: OpenTextFrame | undefined;
   private readonly toolFrames = new Map<string, ToolFrameRecord>();
-  private readonly tasks = new Map<string, TranscriptTask>();
-  private readonly shellTasks = new Map<string, string>();
-  private readonly subagentTaskIds = new Map<string, string>();
-  private activityTracker: LegacyActivityTracker | undefined;
-
-  seedSubagentTask(info: {
-    readonly taskId: string;
-    readonly agentId: string;
-    readonly description: string;
-    readonly status: string;
-    readonly detached: boolean;
-    readonly startedAt: number;
-  }): TranscriptOperation[] {
-    if (info.status !== 'running') return [];
-    this.subagentTaskIds.set(info.agentId, info.taskId);
-    const task = this.upsertTask(info.taskId, (prev) => ({
-      taskId: info.taskId,
-      kind: 'subagent',
-      state: 'running',
-      detached: info.detached,
-      description: info.description,
-      agentId: info.agentId,
-      outputTail: prev?.outputTail ?? '',
-      startedAt: prev?.startedAt ?? epochMsToIso(info.startedAt),
-      endedAt: prev?.endedAt,
-    }));
-    return [{ op: 'task.upsert', task }];
-  }
 
   seedActiveTurn(info: { turnId: number; promptId?: string }): void {
     this.ensureHighWater();
@@ -352,7 +290,6 @@ export class AgentTranscriptProjector {
   private readonly prompts = new Map<string, TranscriptPrompt>();
   private readonly stepUsageByTurn = new Map<string, StepUsage[]>();
   private markerSeq = 0;
-  private planModeActive = false;
 
   constructor(
     readonly agentId: string,
@@ -361,21 +298,7 @@ export class AgentTranscriptProjector {
   ) {}
 
   map(event: ProjectorBusEvent): TranscriptOperation[] {
-    const ops = this.mapEvent(event);
-    const phase = this.phaseFor(event);
-    if (phase === undefined) return ops;
-    return [...ops, { op: 'meta.merge', meta: { agent: { phase } } }];
-  }
-
-  private phaseFor(event: ProjectorBusEvent): ReturnType<typeof toLegacyPhase> {
-    if (this.lookups?.activitySnapshot === undefined || this.lookups.pendingApprovals === undefined) {
-      return undefined;
-    }
-    this.activityTracker ??= new LegacyActivityTracker(
-      this.lookups.activitySnapshot,
-      this.lookups.pendingApprovals,
-    );
-    return phaseFromDomainEvent(this.activityTracker, event);
+    return this.mapEvent(event);
   }
 
   private mapEvent(event: ProjectorBusEvent): TranscriptOperation[] {
@@ -411,29 +334,12 @@ export class AgentTranscriptProjector {
       case 'permission.approval.requested':
       case 'permission.approval.resolved':
         return [];
-      case 'task.started':
-      case 'task.terminated':
-        return this.onTaskLifecycle(event);
       case 'task.notified':
         return this.onTaskNotified(event);
-      case 'shell.started':
-        return this.onShellStarted(event);
-      case 'shell.output':
-        return this.onShellOutput(event);
-      case 'shell.completed':
-        return this.onShellCompleted(event);
       case 'subagent.spawned':
         return this.onSubagentSpawned(event);
-      case 'subagent.started':
-      case 'subagent.completed':
-      case 'subagent.failed':
-      case 'subagent.cancelled':
-      case 'subagent.suspended':
-        return this.onSubagentRun(event);
       case 'goal.updated':
         return this.onGoalUpdated(event);
-      case 'agent.status.updated':
-        return this.onAgentStatusUpdated(event);
       case 'prompt.queued':
         return this.onPromptQueued(event);
       case 'prompt.submitted':
@@ -568,7 +474,6 @@ export class AgentTranscriptProjector {
     this.openText = undefined;
     this.openThinking = undefined;
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
-    ops.push({ op: 'meta.merge', meta: { activity: 'turn' } });
     return ops;
   }
 
@@ -689,7 +594,6 @@ export class AgentTranscriptProjector {
       usage: this.takeTurnUsage(turnId),
     };
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
-    ops.push({ op: 'meta.merge', meta: { activity: 'idle' } });
     this.currentStep = undefined;
     this.pendingTaskNotifications = [];
     if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
@@ -706,12 +610,15 @@ export class AgentTranscriptProjector {
     if (usages === undefined || usages.length === 0) return undefined;
     let inputOther = 0;
     let output = 0;
-    let inputCacheRead = 0;
+    let inputCacheRead: number | undefined = 0;
     let inputCacheCreation = 0;
     for (const usage of usages) {
       inputOther += usage.inputOther;
       output += usage.output;
-      inputCacheRead += usage.inputCacheRead;
+      inputCacheRead =
+        inputCacheRead === undefined || usage.inputCacheRead === undefined
+          ? undefined
+          : inputCacheRead + usage.inputCacheRead;
       inputCacheCreation += usage.inputCacheCreation;
     }
     return {
@@ -1044,7 +951,6 @@ export class AgentTranscriptProjector {
       input,
       inputText: this.toolFrames.get(event.toolCallId)?.frame.inputText,
       display: event.display,
-      todoId: event.name === TODO_LIST_TOOL_NAME && todoWriteItems(input) !== undefined ? TODO_ENTITY_ID : undefined,
     };
     this.toolFrames.set(event.toolCallId, { turnId, stepId: step.stepId, frame });
     ops.push({ op: 'frame.upsert', turnId, stepId: step.stepId, frame });
@@ -1067,17 +973,7 @@ export class AgentTranscriptProjector {
       error: isError && typeof output === 'string' ? output : undefined,
     };
     this.toolFrames.set(event.toolCallId, { ...hit, frame });
-    const ops: TranscriptOperation[] = [
-      { op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame },
-    ];
-    if (!isError && frame.name === TODO_LIST_TOOL_NAME) {
-      const items = todoWriteItems(frame.input);
-      if (items !== undefined) {
-        const todo: TranscriptTodo = { todoId: TODO_ENTITY_ID, items, updatedAt: nowIso() };
-        ops.push({ op: 'todo.upsert', todo });
-      }
-    }
-    return ops;
+    return [{ op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame }];
   }
 
   private adoptToolFrame(toolCallId: string): ToolFrameRecord | undefined {
@@ -1114,372 +1010,35 @@ export class AgentTranscriptProjector {
     return [];
   }
 
-  private onTaskLifecycle(event: {
-    type: 'task.started' | 'task.terminated';
-    info: {
-      taskId: string;
-      kind: string;
-      description: string;
-      status: TranscriptTask['state'];
-      detached?: boolean;
-      agentId?: string;
-      startedAt: number;
-      endedAt: number | null;
-    };
-  }): TranscriptOperation[] {
-    const { info } = event;
-    const task = this.upsertTask(info.taskId, (prev) => ({
-      taskId: info.taskId,
-      kind: mapTaskKind(info.kind),
-      state: info.status,
-      detached: info.detached ?? prev?.detached ?? true,
-      description: info.description,
-      agentId: info.agentId ?? prev?.agentId,
-      outputTail: prev?.outputTail ?? '',
-      startedAt: prev?.startedAt ?? epochMsToIso(info.startedAt),
-      endedAt: info.endedAt === null ? prev?.endedAt : epochMsToIso(info.endedAt),
-      resultSummary: prev?.resultSummary,
-      usage: prev?.usage,
-      error: prev?.error,
-      stateReason: prev?.stateReason,
-      model: prev?.model,
-      thinkingEffort: prev?.thinkingEffort,
-    }));
-    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
-    if (event.type === 'task.started') {
-      if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
-        this.subagentTaskIds.set(info.agentId, info.taskId);
-      }
-      ops.push({
-        op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: `ref-${info.taskId}`, taskId: info.taskId, at: nowIso() },
-      });
-    }
-    return ops;
-  }
-
-  private onShellStarted(event: { commandId: string; taskId: string }): TranscriptOperation[] {
-    this.shellTasks.set(event.commandId, event.taskId);
-    const task = this.upsertTask(event.taskId, (prev) => ({
-      taskId: event.taskId,
-      kind: 'shell',
-      state: 'running',
-      detached: prev?.detached ?? false,
-      description: prev?.description,
-      agentId: prev?.agentId,
-      outputTail: prev?.outputTail ?? '',
-      startedAt: prev?.startedAt ?? nowIso(),
-      endedAt: prev?.endedAt,
-    }));
-    return [
-      { op: 'task.upsert', task },
-      {
-        op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: `ref-${event.taskId}`, taskId: event.taskId, at: nowIso() },
-      },
-    ];
-  }
-
-  private shellTaskId(event: { commandId: string; taskId?: string }): string {
-    const taskId = this.shellTasks.get(event.commandId) ?? event.taskId ?? `shell-${event.commandId}`;
-    this.shellTasks.set(event.commandId, taskId);
-    return taskId;
-  }
-
-  private onShellOutput(event: {
-    commandId: string;
-    taskId?: string;
-    update: { kind: string; text?: string };
-  }): TranscriptOperation[] {
-    const taskId = this.shellTaskId(event);
-    const text = event.update.text;
-    if (typeof text !== 'string' || text.length === 0) return [];
-    const ops: TranscriptOperation[] = [];
-    let task = this.tasks.get(taskId);
-    if (task === undefined) {
-      task = this.upsertTask(taskId, (prev) => ({
-        taskId,
-        kind: 'shell',
-        state: 'running',
-        detached: prev?.detached ?? false,
-        description: prev?.description,
-        agentId: prev?.agentId,
-        outputTail: prev?.outputTail ?? '',
-        startedAt: prev?.startedAt ?? nowIso(),
-        endedAt: prev?.endedAt,
-      }));
-      ops.push(
-        { op: 'task.upsert', task },
-        {
-          op: 'taskref.upsert',
-          item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: nowIso() },
-        },
-      );
-    }
-    const offset = task.outputTail.length;
-    this.tasks.set(taskId, { ...task, outputTail: task.outputTail + text });
-    ops.push({ op: 'append', target: { type: 'task', taskId }, offset, text });
-    return ops;
-  }
-
-  private onShellCompleted(event: {
-    commandId: string;
-    taskId?: string;
-    isError: boolean;
-  }): TranscriptOperation[] {
-    const taskId = this.shellTaskId(event);
-    const hadTask = this.tasks.has(taskId);
-    const task = this.upsertTask(taskId, (prev) => ({
-      taskId,
-      kind: prev?.kind ?? 'shell',
-      state: event.isError ? 'failed' : 'completed',
-      detached: prev?.detached ?? false,
-      description: prev?.description,
-      agentId: prev?.agentId,
-      outputTail: prev?.outputTail ?? '',
-      startedAt: prev?.startedAt ?? nowIso(),
-      endedAt: nowIso(),
-    }));
-    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
-    if (!hadTask) {
-      ops.push({
-        op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: nowIso() },
-      });
-    }
-    return ops;
-  }
-
-  private upsertTask(
-    taskId: string,
-    build: (prev: TranscriptTask | undefined) => TranscriptTask,
-  ): TranscriptTask {
-    const task = build(this.tasks.get(taskId));
-    this.tasks.set(taskId, task);
-    return task;
-  }
-
   private onSubagentSpawned(event: {
     subagentId: string;
-    subagentName: string;
     parentToolCallId: string;
-    description?: string;
     swarmIndex?: number;
-    runInBackground: boolean;
-    taskId?: string;
-    model?: string;
-    thinkingEffort?: string;
   }): TranscriptOperation[] {
-    const taskKey = event.taskId ?? event.subagentId;
-    if (event.taskId !== undefined) {
-      this.subagentTaskIds.set(event.subagentId, event.taskId);
-    } else {
-      this.subagentTaskIds.delete(event.subagentId);
-    }
-    const task = this.upsertTask(taskKey, (prev) => {
-      const newGeneration = prev !== undefined && prev.state !== 'running';
-      return {
-        taskId: taskKey,
-        kind: 'subagent',
-        state: 'running',
-        detached: event.runInBackground,
-        description: event.description ?? prev?.description,
-        agentId: event.subagentId,
-        outputTail: prev?.outputTail ?? '',
-        startedAt: newGeneration ? nowIso() : (prev?.startedAt ?? nowIso()),
-        endedAt: newGeneration ? undefined : prev?.endedAt,
-        model: event.model ?? prev?.model,
-        thinkingEffort: event.thinkingEffort ?? prev?.thinkingEffort,
-      };
-    });
-    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     const hit =
       this.toolFrames.get(event.parentToolCallId) ?? this.adoptToolFrame(event.parentToolCallId);
-    if (hit !== undefined) {
-      const ref: AgentRef = {
-        agentId: event.subagentId,
-        role: event.swarmIndex !== undefined ? 'member' : 'child',
-      };
-      const frame: ToolCallFrame = {
-        ...hit.frame,
-        agentRefs: [...(hit.frame.agentRefs ?? []), ref],
-      };
-      this.toolFrames.set(event.parentToolCallId, { ...hit, frame });
-      ops.push({ op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame });
-    }
-    return ops;
-  }
-
-  private onSubagentRun(event: {
-    type: 'subagent.started' | 'subagent.completed' | 'subagent.failed' | 'subagent.cancelled' | 'subagent.suspended';
-    subagentId: string;
-    resultSummary?: string;
-    usage?: StepUsage;
-    error?: string;
-    reason?: string;
-  }): TranscriptOperation[] {
-    const terminal =
-      event.type === 'subagent.completed' ||
-      event.type === 'subagent.failed' ||
-      event.type === 'subagent.cancelled';
-    const state: TranscriptTask['state'] =
-      event.type === 'subagent.completed'
-        ? 'completed'
-        : event.type === 'subagent.failed'
-          ? 'failed'
-          : event.type === 'subagent.cancelled'
-            ? 'killed'
-            : 'running';
-    const build = (taskId: string) => (prev: TranscriptTask | undefined): TranscriptTask => {
-      const newGeneration = !terminal && prev !== undefined && prev.state !== 'running';
-      return {
-        taskId,
-        kind: 'subagent',
-        state,
-        detached: prev?.detached ?? true,
-        description: prev?.description,
-        agentId: event.subagentId,
-        outputTail: prev?.outputTail ?? '',
-        startedAt: newGeneration ? nowIso() : (prev?.startedAt ?? nowIso()),
-        endedAt: terminal ? nowIso() : newGeneration ? undefined : prev?.endedAt,
-        resultSummary: newGeneration ? undefined : (event.resultSummary ?? prev?.resultSummary),
-        usage: newGeneration ? undefined : (event.usage ?? prev?.usage),
-        error: newGeneration ? undefined : (event.error ?? prev?.error),
-        stateReason: event.reason ?? (newGeneration ? undefined : prev?.stateReason),
-        model: prev?.model,
-        thinkingEffort: prev?.thinkingEffort,
-      };
+    if (hit === undefined) return [];
+    const ref: AgentRef = {
+      agentId: event.subagentId,
+      role: event.swarmIndex !== undefined ? 'member' : 'child',
     };
-    const taskKey = this.subagentTaskIds.get(event.subagentId) ?? event.subagentId;
-    const task = this.upsertTask(taskKey, build(taskKey));
-    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
-    if (taskKey !== event.subagentId && this.tasks.has(event.subagentId)) {
-      const agentTask = this.upsertTask(event.subagentId, build(event.subagentId));
-      ops.push({ op: 'task.upsert', task: agentTask });
-    }
-    return ops;
+    const frame: ToolCallFrame = {
+      ...hit.frame,
+      agentRefs: [...(hit.frame.agentRefs ?? []), ref],
+    };
+    this.toolFrames.set(event.parentToolCallId, { ...hit, frame });
+    return [{ op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame }];
   }
 
-  private onGoalUpdated(event: {
-    readonly type: string;
-    snapshot: {
-      objective: string;
-      status: 'active' | 'paused' | 'blocked' | 'complete';
-      completionCriterion?: string;
-      tokensUsed: number;
-      budget: { tokenBudget: number | null };
-    } | null;
-  }): TranscriptOperation[] {
-    const ops: TranscriptOperation[] = [];
-    const snapshot = event.snapshot;
-    if (snapshot === null) {
-      ops.push({ op: 'meta.merge', meta: { goal: null } });
-    } else {
-      ops.push({
-        op: 'meta.merge',
-        meta: {
-          goal: {
-            objective: snapshot.objective,
-            status: snapshot.status,
-            completionCriterion: snapshot.completionCriterion,
-            budgetUsed: snapshot.tokensUsed,
-            budgetLimit: snapshot.budget.tokenBudget ?? undefined,
-          },
-        },
-      });
-    }
-    ops.push(this.markerOp('goal', restOf(event)));
-    return ops;
-  }
-
-  private onAgentStatusUpdated(event: {
-    planMode?: boolean;
-    swarmMode?: boolean;
-    towerMode?: boolean;
-    model?: string;
-    thinkingEffort?: string;
-    usage?: AgentUsageMeta;
-    contextTokens?: number;
-    maxContextTokens?: number;
-    contextUsage?: number;
-    permission?: 'manual' | 'yolo' | 'auto';
-  }): TranscriptOperation[] {
-    const ops: TranscriptOperation[] = [];
-    const modes: {
-      plan?: Record<string, never> | null;
-      swarm?: Record<string, never> | null;
-      tower?: Record<string, never> | null;
-    } = {};
-    if (event.planMode === true) {
-      modes.plan = {};
-      this.planModeActive = true;
-    } else if (event.planMode === false) {
-      modes.plan = null;
-      this.planModeActive = false;
-    }
-    if (event.swarmMode === true) modes.swarm = {};
-    else if (event.swarmMode === false) modes.swarm = null;
-    if (event.towerMode === true) modes.tower = {};
-    else if (event.towerMode === false) modes.tower = null;
-    if (modes.plan !== undefined || modes.swarm !== undefined || modes.tower !== undefined) {
-      ops.push({ op: 'meta.merge', meta: { modes } });
-    }
-    const agent: {
-      model?: string;
-      thinkingEffort?: string;
-      usage?: AgentUsageMeta;
-      contextTokens?: number;
-      maxContextTokens?: number;
-      contextUsage?: number;
-      permission?: 'manual' | 'yolo' | 'auto';
-    } = {};
-    let hasStatusSlice = false;
-    if (event.model !== undefined) {
-      agent.model = event.model;
-      hasStatusSlice = true;
-    }
-    if (event.thinkingEffort !== undefined) {
-      agent.thinkingEffort = event.thinkingEffort;
-      hasStatusSlice = true;
-    }
-    if (event.usage !== undefined) {
-      agent.usage = event.usage;
-      hasStatusSlice = true;
-    }
-    if (event.contextTokens !== undefined) {
-      agent.contextTokens = event.contextTokens;
-      hasStatusSlice = true;
-    }
-    if (event.maxContextTokens !== undefined) {
-      agent.maxContextTokens = event.maxContextTokens;
-      hasStatusSlice = true;
-    }
-    if (event.contextUsage !== undefined) {
-      agent.contextUsage = event.contextUsage;
-      hasStatusSlice = true;
-    }
-    if (event.permission !== undefined) {
-      agent.permission = event.permission;
-      hasStatusSlice = true;
-    }
-    if (hasStatusSlice) {
-      ops.push({ op: 'meta.merge', meta: { agent } });
-    }
-    return ops;
+  private onGoalUpdated(event: { readonly type: string }): TranscriptOperation[] {
+    return [this.markerOp('goal', restOf(event))];
   }
 
   private onPlanRevision(event: PlanRevisionEvent): TranscriptOperation[] {
     const path = this.lookups?.resolvePlanRevisionKey?.(event.key) ?? event.key;
     const { key: _key, ...rest } = restOf(event);
     const payload = { ...rest, path };
-    const ops: TranscriptOperation[] = [this.markerOp('plan.revision', payload)];
-    if (this.planModeActive) {
-      ops.push({
-        op: 'meta.merge',
-        meta: { modes: { plan: { reviewPath: path, version: event.version } } },
-      });
-    }
-    return ops;
+    return [this.markerOp('plan.revision', payload)];
   }
 
   private markerOp(marker: string, payload: unknown): TranscriptOperation {
@@ -1806,35 +1365,6 @@ function mapTurnEndState(reason: 'completed' | 'cancelled' | 'failed' | 'blocked
     case 'blocked':
       return 'failed';
   }
-}
-
-function mapTaskKind(kind: string): TranscriptTask['kind'] {
-  switch (kind) {
-    case 'process':
-      return 'shell';
-    case 'agent':
-      return 'subagent';
-    default:
-      return 'other';
-  }
-}
-
-
-const TODO_LIST_TOOL_NAME = 'TodoList';
-const TODO_ENTITY_ID = 'todo';
-
-function todoWriteItems(input: unknown): TranscriptTodo['items'] | undefined {
-  const todos = (input as { todos?: unknown } | undefined)?.todos;
-  if (!Array.isArray(todos)) return undefined;
-  const items: { title: string; status: 'pending' | 'in_progress' | 'done' }[] = [];
-  for (const entry of todos) {
-    const title = (entry as { title?: unknown } | undefined)?.title;
-    const status = (entry as { status?: unknown } | undefined)?.status;
-    if (typeof title !== 'string') return undefined;
-    if (status !== 'pending' && status !== 'in_progress' && status !== 'done') return undefined;
-    items.push({ title, status });
-  }
-  return items;
 }
 
 function parseToolArgs(args: unknown): unknown {

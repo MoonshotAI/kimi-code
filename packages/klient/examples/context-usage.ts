@@ -36,7 +36,7 @@ import { join } from 'node:path';
 import { EXAMPLE_CLIENT_IDENTITY } from './identity.js';
 
 
-import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
+import { bootstrap, grandTotal, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 import { createKlient } from '@moonshot-ai/klient/memory';
 
 const SEEDED_MODEL_ID = 'klient-example-model';
@@ -44,13 +44,12 @@ const SEEDED_MODEL_ID = 'klient-example-model';
 interface TokenUsage {
   inputOther: number;
   output: number;
-  inputCacheRead: number;
+  inputCacheRead?: number;
   inputCacheCreation: number;
 }
 
 function usageTotal(usage: TokenUsage | undefined): number | undefined {
-  if (usage === undefined) return undefined;
-  return usage.inputOther + usage.output + usage.inputCacheRead + usage.inputCacheCreation;
+  return usage === undefined ? undefined : grandTotal(usage);
 }
 
 const tick = (ms: number): Promise<void> =>

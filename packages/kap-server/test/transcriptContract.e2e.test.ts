@@ -9,12 +9,14 @@ import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
   IAgentPlanService,
+  IAgentTaskService,
   IConfigService,
   closeSessionById,
   MAIN_AGENT_ID,
   getLiveSessionById,
   interactions,
   resumeSessionById,
+  type AgentTask,
   type ApprovalRequest,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -156,9 +158,7 @@ interface TxSnapshot {
   tasks: any[];
   interactions: any[];
   attachments: any[];
-  todos: any[];
   prompts: { promptId: string; status: string }[];
-  meta: { activity?: string; agent?: unknown; goal?: unknown; modes?: unknown };
 }
 
 const getTranscript = (server: RunningServer, base: string, sid: string): Promise<TxSnapshot> =>
@@ -194,6 +194,9 @@ async function until(label: string, fn: () => Promise<boolean> | boolean, timeou
 interface TranscriptChannel {
   readonly frames: any[];
   readonly ops: any[];
+  readonly tasks: any[];
+  readonly agents: any[];
+  readonly todos: any[];
   reset(): any;
   close(): void;
 }
@@ -209,6 +212,9 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/ws`, [`kimi-code.bearer.${bearerToken(server)}`]);
   const frames: any[] = [];
   const ops: any[] = [];
+  const tasks: any[] = [];
+  const agents: any[] = [];
+  const todos: any[] = [];
   let resetFrame: any;
   ws.on('message', (data) => {
     let frame: any;
@@ -223,6 +229,9 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
       resetFrame = frame;
     }
     if (frame.type === 'transcript.ops' && payload?.agent_id === 'main') ops.push(...(payload.ops ?? []));
+    if (frame.type === 'task') tasks.push(frame);
+    if (frame.type === 'agent' && frame.agent_id === 'main') agents.push(frame);
+    if (frame.type === 'todo' && frame.agent_id === 'main') todos.push(frame);
   });
   await new Promise<void>((resolve, reject) => {
     ws.once('open', () => {
@@ -235,8 +244,54 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
   return {
     frames,
     ops,
+    tasks,
+    agents,
+    todos,
     reset: () => resetFrame?.payload,
     close: () => ws.close(),
+  };
+}
+
+interface FrameSocket {
+  send(frame: unknown): void;
+  next(match: (frame: any) => boolean): Promise<any>;
+  close(): Promise<void>;
+}
+
+async function openFrameSocket(server: RunningServer): Promise<FrameSocket> {
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/ws`, [`kimi-code.bearer.${bearerToken(server)}`]);
+  const frames: any[] = [];
+  ws.on('message', (data) => {
+    try {
+      frames.push(JSON.parse(rawToString(data)));
+    } catch {
+    }
+  });
+  const closed = new Promise<void>((resolve) => {
+    ws.once('close', () => resolve());
+  });
+  await new Promise<void>((resolve, reject) => {
+    ws.once('open', () => {
+      resolve();
+    });
+    ws.once('error', reject);
+  });
+  return {
+    send: (frame) => ws.send(JSON.stringify(frame)),
+    next: async (match) => {
+      let found: any;
+      await until('ws frame', () => {
+        const index = frames.findIndex(match);
+        if (index < 0) return false;
+        found = frames.splice(index, 1)[0];
+        return true;
+      }, 10000, 20);
+      return found;
+    },
+    close: async () => {
+      ws.close();
+      await closed;
+    },
   };
 }
 
@@ -290,7 +345,7 @@ describe('transcript contract e2e', () => {
     const markers = hits
       .map((hit) => /"content":"([^"]{0,60})/.exec(hit)?.[1] ?? hit.slice(0, 60))
       .slice(0, 8);
-    return `${JSON.stringify({ meta: tx.meta, prompts: tx.prompts, turns, interactions: tx.interactions })}\nllm hits (${hits.length}): ${JSON.stringify(markers)}`;
+    return `${JSON.stringify({ prompts: tx.prompts, turns, interactions: tx.interactions })}\nllm hits (${hits.length}): ${JSON.stringify(markers)}`;
   }
 
   const idleOrDump = async (server: RunningServer, base: string, sid: string): Promise<void> => {
@@ -311,20 +366,19 @@ describe('transcript contract e2e', () => {
     await until('turn running + prompt tracked', async () => {
       const tx = await getTranscript(server!, base, sid);
       return (
-        tx.meta.activity === 'turn' &&
         tx.prompts.some((p) => p.status === 'running') &&
         tx.items.some((i) => i.kind === 'turn' && i.state === 'running')
       );
     });
     const mid = await getTranscript(server!, base, sid);
-    expect(mid.meta.activity).toBe('turn');
     expect(mid.prompts.length).toBeGreaterThan(0);
     expect(mid.prompts[0]!.promptId.length).toBeGreaterThan(0);
 
     await idle(server!, base, sid);
 
     const end = await getTranscript(server!, base, sid);
-    expect(end.meta.activity).toBe('idle');
+    expect(end).not.toHaveProperty('meta');
+    expect(end).not.toHaveProperty('todos');
     const turn = end.items.find((i) => i.kind === 'turn');
     expect(turn).toMatchObject({ state: 'completed' });
     expect(typeof turn.endedAt).toBe('string');
@@ -333,15 +387,25 @@ describe('transcript contract e2e', () => {
     const promptStatuses = end.prompts.map((p) => p.status);
     expect(promptStatuses.every((s) => s === 'completed')).toBe(true);
 
-    const reset = channel.reset();
-    expect(reset.snapshot.meta.activity).toBe('turn');
+    expect(channel.agents[0]).toMatchObject({ type: 'agent', session_id: sid, status: 'running', model: 'stub' });
+    await until('agent idle frame', () => channel.agents.at(-1)?.status === 'idle');
+    const turnEndedAt = channel.frames.findIndex(
+      (frame) =>
+        frame.type === 'transcript.ops' &&
+        frame.payload?.agent_id === 'main' &&
+        (frame.payload.ops ?? []).some((op: any) => op.op === 'turn.upsert' && op.turn?.state === 'completed'),
+    );
+    const idleAt = channel.frames.findIndex(
+      (frame) => frame.type === 'agent' && frame.agent_id === 'main' && frame.status === 'idle',
+    );
+    expect(turnEndedAt).toBeGreaterThanOrEqual(0);
+    expect(idleAt).toBeGreaterThan(turnEndedAt);
     const opTypes = new Set(channel.ops.map((o: any) => o.op));
     expect(opTypes.has('turn.upsert')).toBe(true);
     expect(opTypes.has('step.upsert')).toBe(true);
     expect(opTypes.has('frame.upsert') || opTypes.has('append')).toBe(true);
     expect(opTypes.has('prompt.upsert')).toBe(true);
-    const activityMerges = channel.ops.filter((o: any) => o.op === 'meta.merge' && o.meta?.activity !== undefined);
-    expect(activityMerges.map((o: any) => o.meta.activity)).toContain('idle');
+    expect(opTypes.has('meta.merge')).toBe(false);
     channel.close();
   });
 
@@ -438,7 +502,6 @@ describe('transcript contract e2e', () => {
     expect(approval).toBeDefined();
     expect(approval.toolCallId).toBe('call_1');
     expect((approval.request as any)?.toolName).toBe('Bash');
-    expect(mid.meta.agent).toBeDefined();
 
     await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approval.interactionId)}`, {
       method: 'POST',
@@ -448,7 +511,6 @@ describe('transcript contract e2e', () => {
 
     const end = await getTranscript(server!, base, sid);
     expect(end.interactions.every((x: any) => x.state !== 'pending')).toBe(true);
-    expect(end.meta.activity).toBe('idle');
     const toolFrame = end.items
       .filter((i) => i.kind === 'turn')
       .flatMap((t: any) => t.steps)
@@ -519,7 +581,7 @@ describe('transcript contract e2e', () => {
     expect(String(toolFrame.output)).toContain(output);
   });
 
-  it('S4: a background subagent produces task entities and a task-origin notification turn', async () => {
+  it('S4: a background subagent streams task events and a task-origin notification turn', async () => {
     await boot([
       {
         match: (body) => body.includes('spawn-bg') && !body.includes('"role":"tool"'),
@@ -530,32 +592,27 @@ describe('transcript contract e2e', () => {
     ]);
     const sid = await createSession(server!, base);
     await submitPrompt(server!, base, sid, 'spawn-bg one background agent');
+    const channel = await subscribeTranscript(server!, sid);
 
-    await until('background task running', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return tx.tasks.some((t: any) => t.kind === 'subagent' && t.state === 'running');
+    await until('background task running', () =>
+      channel.tasks.some((t) => t.kind === 'subagent' && t.status === 'running'),
+    );
+    const task = channel.tasks.find((t) => t.kind === 'subagent');
+    expect(task).toMatchObject({
+      session_id: sid,
+      agent_id: MAIN_AGENT_ID,
+      status: 'running',
+      phase: 'working',
+      detached: true,
     });
-    const mid = await getTranscript(server!, base, sid);
-    const task = mid.tasks.find((t: any) => t.kind === 'subagent');
-    expect(task).toMatchObject({ state: 'running', detached: true });
-    expect(typeof task.agentId).toBe('string');
+    expect(typeof task.child_agent_id).toBe('string');
 
-    await until('task completed', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return tx.tasks.some((t: any) => t.taskId === task.taskId && t.state === 'completed');
-    }, 45000).catch(async (error) => {
-      const tx = await getTranscript(server!, base, sid);
-      const opsData = await rest<{ batches: { seq: number; ops: any[] }[] }>(
-        server!,
-        base,
-        `/api/v1/sessions/${encodeURIComponent(sid)}/transcript/ops?agent_id=main&since_seq=0`,
-      );
-      const taskOps = opsData.batches.flatMap((b) =>
-        b.ops
-          .filter((o: any) => o.op === 'task.upsert')
-          .map((o: any) => `${b.seq}:${o.task.taskId}:${o.task.state}`),
-      );
-      throw new Error(`${(error as Error).message}\ntasks: ${JSON.stringify(tx.tasks)}\ntaskOps: ${JSON.stringify(taskOps)}`, { cause: error });
+    await until(
+      'task completed',
+      () => channel.tasks.some((t) => t.task_id === task.task_id && t.outcome === 'completed'),
+      45000,
+    ).catch((error: unknown) => {
+      throw new Error(`${(error as Error).message}\ntasks: ${JSON.stringify(channel.tasks)}`, { cause: error });
     });
     await until('notification turn exists', async () => {
       const tx = await getTranscript(server!, base, sid);
@@ -566,8 +623,10 @@ describe('transcript contract e2e', () => {
     const taskTurn = end.items.find((i: any) => i.kind === 'turn' && i.origin?.kind === 'task');
     expect(taskTurn).toBeDefined();
     expect(JSON.stringify(taskTurn)).toContain('notification');
+    expect(end).not.toHaveProperty('tasks');
+    expect(channel.ops.some((op) => op.op === 'task.upsert')).toBe(false);
     await idleOrDump(server!, base, sid);
-    expect((await getTranscript(server!, base, sid)).meta.activity).toBe('idle');
+    channel.close();
   });
 
   it('S5: late attach backfills liveness and the prompt queue from the live loop', async () => {
@@ -576,14 +635,13 @@ describe('transcript contract e2e', () => {
     await submitPrompt(server!, base, sid, 'take your time');
 
     const tx = await getTranscript(server!, base, sid);
-    expect(tx.meta.activity).toBe('turn');
     expect(tx.items.some((i: any) => i.kind === 'turn' && i.state === 'running')).toBe(true);
     expect(tx.prompts.some((p) => p.status === 'running')).toBe(true);
 
     const channel = await subscribeTranscript(server!, sid);
-    expect(channel.reset().snapshot.meta.activity).toBe('turn');
+    expect(channel.agents[0]).toMatchObject({ status: 'running' });
     await idle(server!, base, sid);
-    expect((await getTranscript(server!, base, sid)).meta.activity).toBe('idle');
+    await until('agent idle frame', () => channel.agents.at(-1)?.status === 'idle');
     channel.close();
   });
 
@@ -600,22 +658,112 @@ describe('transcript contract e2e', () => {
     const channel = await subscribeTranscript(server!, sid);
     const reset = channel.reset().snapshot;
 
-    expect(reset.meta).toEqual(snapshot.meta);
+    expect(reset).not.toHaveProperty('meta');
+    expect(reset).not.toHaveProperty('todos');
+    expect(reset).not.toHaveProperty('tasks');
+    expect(snapshot).not.toHaveProperty('tasks');
     const byId = (xs: any[], key: string): Record<string, unknown> =>
       Object.fromEntries(xs.map((x) => [x[key], x]));
-    expect(Object.keys(byId(reset.tasks ?? [], 'taskId')).toSorted()).toEqual(
-      Object.keys(byId(snapshot.tasks, 'taskId')).toSorted(),
-    );
     expect(Object.keys(byId(reset.interactions ?? [], 'interactionId')).toSorted()).toEqual(
       Object.keys(byId(snapshot.interactions, 'interactionId')).toSorted(),
     );
     expect(Object.keys(byId(reset.prompts ?? [], 'promptId')).toSorted()).toEqual(
       Object.keys(byId(snapshot.prompts, 'promptId')).toSorted(),
     );
-    expect(Object.keys(byId(reset.todos ?? [], 'todoId')).toSorted()).toEqual(
-      Object.keys(byId(snapshot.todos, 'todoId')).toSorted(),
-    );
     channel.close();
+  });
+
+  it('S10: a fresh session sends main agent frames on subscribe and a TodoList write reaches subscribers as a todo frame', async () => {
+    const todos = '{"todos":[{"title":"write tests","status":"in_progress"},{"title":"ship","status":"pending"}]}';
+    await boot([
+      { match: (body) => !body.includes('call_todo'), respond: () => sseToolCall('call_todo', 'TodoList', todos) },
+      { match: () => true, respond: () => sseText('planned') },
+    ]);
+    const sid = await createSession(server!, base);
+    const channel = await subscribeTranscript(server!, sid);
+    await until('main agent frames', () => channel.agents.length > 0 && channel.todos.length > 0);
+    expect(channel.agents[0]).toMatchObject({ type: 'agent', session_id: sid, status: 'idle' });
+    expect(channel.todos[0]).toMatchObject({ type: 'todo', session_id: sid, items: [] });
+    await submitPrompt(server!, base, sid, 'plan the work');
+    await idleOrDump(server!, base, sid);
+    await until('todo frame', () => (channel.todos.at(-1)?.items.length ?? 0) > 0);
+    expect(channel.todos.at(-1)!.items).toEqual([
+      { title: 'write tests', status: 'in_progress' },
+      { title: 'ship', status: 'pending' },
+    ]);
+    channel.close();
+  });
+
+  it('S9: task.watch streams a running task output and resumes from since_offset', async () => {
+    const sid = await createSession(server!, base);
+    const agents = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(IAgentLifecycleService);
+    if (agents.handleOf(MAIN_AGENT_ID) === undefined) await agents.create({ agentId: MAIN_AGENT_ID });
+    let sink: Parameters<AgentTask['start']>[0] | undefined;
+    const taskId = agents.handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentTaskService).registerTask({
+      idPrefix: 'bash',
+      kind: 'process',
+      description: 'npm run dev',
+      start: (s) => {
+        sink = s;
+        s.appendOutput('  VITE ready\n');
+      },
+      toInfo: (base) => ({ ...base, kind: 'process', command: 'npm run dev', pid: 0, exitCode: null }),
+    });
+    const isOutput = (frame: any): boolean => frame.type === 'task.output';
+
+    const first = await openFrameSocket(server!);
+    first.send({ type: 'task.watch', request_id: 'r1', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: taskId });
+    expect(await first.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r1', code: 0 });
+    expect(await first.next(isOutput)).toMatchObject({
+      agent_id: MAIN_AGENT_ID,
+      task_id: taskId,
+      offset: 0,
+      text: '  VITE ready\n',
+    });
+    sink!.appendOutput('  ➜  Local: http://localhost:5173/\n');
+    expect(await first.next(isOutput)).toMatchObject({ offset: 13, text: '  ➜  Local: http://localhost:5173/\n' });
+    await first.close();
+
+    sink!.appendOutput('4:42:10 PM [vite] hmr update /src/App.vue\n');
+    const since = 13 + Buffer.byteLength('  ➜  Local: http://localhost:5173/\n', 'utf-8');
+    const second = await openFrameSocket(server!);
+    second.send({
+      type: 'task.watch',
+      request_id: 'r2',
+      session_id: sid,
+      agent_id: MAIN_AGENT_ID,
+      task_id: taskId,
+      since_offset: since,
+    });
+    expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r2', code: 0 });
+    expect(await second.next(isOutput)).toMatchObject({
+      offset: since,
+      text: '4:42:10 PM [vite] hmr update /src/App.vue\n',
+    });
+    second.send({ type: 'task.watch', request_id: 'r3', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: 'bash-00000000' });
+    expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r3', code: 40406 });
+
+    const child = await agents.create({ agentId: 'agent-s9-child' });
+    const childTaskId = agents.handleOf(child.agentId)!.accessor.get(IAgentTaskService).registerTask({
+      idPrefix: 'bash',
+      kind: 'process',
+      description: 'pnpm test --watch',
+      start: (s) => {
+        s.appendOutput(' RUN  v3.2.4\n');
+      },
+      toInfo: (base) => ({ ...base, kind: 'process', command: 'pnpm test --watch', pid: 0, exitCode: null }),
+    });
+    second.send({ type: 'task.watch', request_id: 'r4', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: childTaskId });
+    expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r4', code: 40406 });
+    second.send({ type: 'task.watch', request_id: 'r5', session_id: sid, agent_id: child.agentId, task_id: childTaskId });
+    expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r5', code: 0 });
+    expect(await second.next(isOutput)).toMatchObject({
+      agent_id: child.agentId,
+      task_id: childTaskId,
+      offset: 0,
+      text: ' RUN  v3.2.4\n',
+    });
+    await second.close();
   });
 
   it('S7: a foreground subagent resumes with its prior context after a server restart', async () => {

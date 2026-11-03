@@ -250,19 +250,26 @@ describe('Session skills', () => {
     }
   });
 
-  it('forwards the steerIfActive option and the skill args to the RPC input', async () => {
-    const promptWithSkills = vi.fn(async () => {});
+  it('forwards the steerIfActive option and returns the skill submission identity', async () => {
+    const submission = {
+      promptId: 'prompt-skill-1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      state: 'queued',
+      steered: false,
+    } as const;
+    const promptWithSkills = vi.fn(async () => submission);
     const session = new Session({
       id: 'ses_skill_steer_option',
       workDir: '/tmp/work',
       rpc: { promptWithSkills } as unknown as SDKRpcClientBase,
     });
 
-    await session.promptWithSkills(
+    const result = await session.promptWithSkills(
       '/review src/app.ts',
       [{ name: 'review', args: 'src/app.ts' }],
       { steerIfActive: true },
     );
+    expect(result).toEqual(submission);
     expect(promptWithSkills).toHaveBeenLastCalledWith({
       sessionId: 'ses_skill_steer_option',
       input: [{ type: 'text', text: '/review src/app.ts' }],

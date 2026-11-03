@@ -355,6 +355,7 @@ interface GoalUpdatePayload {
   _name: 'goal.update';
   agentId: string;
   goalId?: string;
+  objective?: string;
   status?: 'active' | 'paused' | 'blocked' | 'complete';
   reason?: string;
   turnsUsed?: number;
@@ -727,7 +728,6 @@ interface TaskTerminatedPayload {
   agentId: string;
   /** AgentTaskInfo */
   info: AgentTaskInfoByKind[AgentTaskKind];
-  outputTail?: string;
 }
 
 /**

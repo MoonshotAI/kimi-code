@@ -245,11 +245,13 @@ export function projectContext(
           // resetting to 0 — so guard against a false drop here too.
           if ('usage' in ev && ev.usage !== undefined) {
             const fill =
-              ev.usage.inputCacheRead +
-              ev.usage.inputCacheCreation +
-              ev.usage.inputOther +
-              ev.usage.output;
-            if (fill > 0) contextTokens = fill;
+              ev.usage.inputCacheRead === undefined
+                ? undefined
+                : ev.usage.inputCacheRead +
+                  ev.usage.inputCacheCreation +
+                  ev.usage.inputOther +
+                  ev.usage.output;
+            if (fill !== undefined && fill > 0) contextTokens = fill;
           }
         }
         break;
@@ -504,6 +506,7 @@ export function projectContext(
           const prev: GoalSnapshot = goal;
           goal = {
             ...prev,
+            objective: rec.objective ?? prev.objective,
             status: rec.status ?? prev.status,
             actor: rec.actor ?? prev.actor,
             reason: rec.reason ?? prev.reason,

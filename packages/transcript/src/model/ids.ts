@@ -2,12 +2,10 @@ export type TurnId = string;
 export type StepId = string;
 export type FrameId = string;
 export type MarkerId = string;
-export type TaskRefId = string;
 export type TaskId = string;
 export type AgentId = string;
 export type InteractionId = string;
 export type AttachmentId = string;
-export type TodoId = string;
 export type PromptId = string;
 export type ItemId = string;
 

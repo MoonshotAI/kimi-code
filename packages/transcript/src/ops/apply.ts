@@ -1,13 +1,10 @@
-import type { AttachmentId, InteractionId, PromptId, TaskId, TodoId, TurnId } from '../model/ids';
+import type { AttachmentId, InteractionId, PromptId, TurnId } from '../model/ids';
 import { turnOrdinal } from '../model/ids';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem } from '../model/item';
-import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
 import type { TranscriptPrompt } from '../model/prompt';
-import type { TranscriptTask } from '../model/task';
-import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 import type {
   AppendOp,
@@ -18,24 +15,18 @@ import type {
 
 export interface AgentState {
   readonly items: readonly TranscriptItem[];
-  readonly tasks: ReadonlyMap<TaskId, TranscriptTask>;
   readonly interactions: ReadonlyMap<InteractionId, TranscriptInteraction>;
   readonly attachments: ReadonlyMap<AttachmentId, TranscriptAttachment>;
-  readonly todos: ReadonlyMap<TodoId, TranscriptTodo>;
   readonly prompts: ReadonlyMap<PromptId, TranscriptPrompt>;
-  readonly meta: TranscriptMeta;
   readonly pendingInteractions: ReadonlySet<InteractionId>;
   readonly hasMoreOlder: boolean;
 }
 
 export const EMPTY_AGENT_STATE: AgentState = {
   items: [],
-  tasks: new Map(),
   interactions: new Map(),
   attachments: new Map(),
-  todos: new Map(),
   prompts: new Map(),
-  meta: {},
   pendingInteractions: new Set(),
   hasMoreOlder: false,
 };
@@ -60,20 +51,12 @@ export function applyOperation(state: AgentState, op: TranscriptOperation): Appl
       return applyAppend(state, op);
     case 'marker.upsert':
       return applyItemUpsert(state, op.item, op.item.markerId, op.beforeTurn);
-    case 'taskref.upsert':
-      return applyItemUpsert(state, op.item, op.item.refId, op.beforeTurn);
-    case 'task.upsert':
-      return applyTaskUpsert(state, op.task);
     case 'interaction.upsert':
       return applyInteractionUpsert(state, op.interaction);
     case 'attachment.upsert':
       return applyAttachmentUpsert(state, op.attachment);
-    case 'todo.upsert':
-      return applyTodoUpsert(state, op.todo);
     case 'prompt.upsert':
       return applyPromptUpsert(state, op.prompt);
-    case 'meta.merge':
-      return applyMetaMerge(state, op.meta);
     case 'items.remove':
       return applyItemsRemove(state, op.ids);
   }
@@ -87,16 +70,13 @@ function applyReset(state: AgentState, op: Extract<TranscriptOperation, { op: 'r
   return {
     state: {
       items: op.snapshot.items,
-      tasks: new Map(op.snapshot.tasks.map((task) => [task.taskId, task])),
       interactions: new Map(
         op.snapshot.interactions.map((interaction) => [interaction.interactionId, interaction]),
       ),
       attachments: new Map(
         op.snapshot.attachments.map((attachment) => [attachment.attachmentId, attachment]),
       ),
-      todos: new Map(op.snapshot.todos.map((todo) => [todo.todoId, todo])),
       prompts: new Map(op.snapshot.prompts.map((prompt) => [prompt.promptId, prompt])),
-      meta: op.snapshot.meta,
       pendingInteractions: pending,
       hasMoreOlder: op.snapshot.hasMoreOlder ?? false,
     },
@@ -290,7 +270,6 @@ function frameEquals(a: TranscriptFrame, b: TranscriptFrame): boolean {
       a.progress === b.progress &&
       a.taskId === b.taskId &&
       a.approvalId === b.approvalId &&
-      a.todoId === b.todoId &&
       a.agentRefs === b.agentRefs
     );
   }
@@ -301,7 +280,6 @@ function frameEquals(a: TranscriptFrame, b: TranscriptFrame): boolean {
 }
 
 function applyAppend(state: AgentState, op: AppendOp): ApplyResult {
-  if (op.target.type === 'task') return applyTaskAppend(state, op);
   const { turnId, stepId, frameId } = op.target;
   const turn = getTurn(state, turnId);
   const step = turn?.steps.find((entry) => entry.stepId === stepId);
@@ -325,22 +303,6 @@ function applyAppend(state: AgentState, op: AppendOp): ApplyResult {
     state: { ...state, items: replaceTurn(state.items, turnId, () => nextTurn) },
     changed: true,
   };
-}
-
-function applyTaskAppend(state: AgentState, op: AppendOp): ApplyResult {
-  if (op.target.type !== 'task') throw new Error('unreachable');
-  const taskId = op.target.taskId;
-  const task = state.tasks.get(taskId);
-  const current = task?.outputTail ?? '';
-  const merged = appendAtOffset(current, op.offset, op.text);
-  if (merged.gap) return { state, changed: false, gap: merged.gap };
-  if (!merged.changed) return { state, changed: false };
-  const nextTask: TranscriptTask = task
-    ? { ...task, outputTail: merged.text }
-    : { taskId, kind: 'other', state: 'running', detached: false, outputTail: merged.text };
-  const tasks = new Map(state.tasks);
-  tasks.set(taskId, nextTask);
-  return { state: { ...state, tasks }, changed: true };
 }
 
 export function appendAtOffset(
@@ -401,8 +363,6 @@ function itemIdOf(item: TranscriptItem): string {
       return item.turnId;
     case 'marker':
       return item.markerId;
-    case 'taskref':
-      return item.refId;
   }
 }
 
@@ -440,14 +400,6 @@ function applyItemsRemove(state: AgentState, ids: readonly string[]): ApplyResul
     pending = nextPending;
   }
   return { state: { ...state, items, interactions, pendingInteractions: pending }, changed: true };
-}
-
-function applyTaskUpsert(state: AgentState, task: TranscriptTask): ApplyResult {
-  const current = state.tasks.get(task.taskId);
-  if (current && taskEquals(current, task)) return { state, changed: false };
-  const tasks = new Map(state.tasks);
-  tasks.set(task.taskId, task);
-  return { state: { ...state, tasks }, changed: true };
 }
 
 function applyInteractionUpsert(
@@ -504,18 +456,6 @@ function attachmentEquals(a: TranscriptAttachment, b: TranscriptAttachment): boo
   );
 }
 
-function applyTodoUpsert(state: AgentState, todo: TranscriptTodo): ApplyResult {
-  const current = state.todos.get(todo.todoId);
-  if (current && todoEquals(current, todo)) return { state, changed: false };
-  const todos = new Map(state.todos);
-  todos.set(todo.todoId, todo);
-  return { state: { ...state, todos }, changed: true };
-}
-
-function todoEquals(a: TranscriptTodo, b: TranscriptTodo): boolean {
-  return a.items === b.items && a.updatedAt === b.updatedAt;
-}
-
 function applyPromptUpsert(state: AgentState, prompt: TranscriptPrompt): ApplyResult {
   const current = state.prompts.get(prompt.promptId);
   if (current && promptEquals(current, prompt)) return { state, changed: false };
@@ -533,55 +473,4 @@ function promptEquals(a: TranscriptPrompt, b: TranscriptPrompt): boolean {
     a.finishedAt === b.finishedAt &&
     a.steeredAt === b.steeredAt
   );
-}
-
-function taskEquals(a: TranscriptTask, b: TranscriptTask): boolean {
-  return (
-    a.kind === b.kind &&
-    a.state === b.state &&
-    a.detached === b.detached &&
-    a.description === b.description &&
-    a.agentId === b.agentId &&
-    a.outputTail === b.outputTail &&
-    a.startedAt === b.startedAt &&
-    a.endedAt === b.endedAt &&
-    a.resultSummary === b.resultSummary &&
-    a.error === b.error &&
-    a.stateReason === b.stateReason &&
-    a.usage === b.usage
-  );
-}
-
-function applyMetaMerge(state: AgentState, meta: TranscriptMetaMerge): ApplyResult {
-  const modes =
-    meta.modes !== undefined
-      ? {
-          plan: meta.modes.plan === null ? undefined : (meta.modes.plan ?? state.meta.modes?.plan),
-          swarm: meta.modes.swarm === null ? undefined : (meta.modes.swarm ?? state.meta.modes?.swarm),
-          tower: meta.modes.tower === null ? undefined : (meta.modes.tower ?? state.meta.modes?.tower),
-        }
-      : state.meta.modes;
-  const agent =
-    meta.agent !== undefined ? { ...state.meta.agent, ...meta.agent } : state.meta.agent;
-  const next: TranscriptMeta = {
-    goal: meta.goal === null ? undefined : (meta.goal ?? state.meta.goal),
-    activity: meta.activity ?? state.meta.activity,
-    modes:
-      modes !== undefined &&
-      modes.plan === undefined &&
-      modes.swarm === undefined &&
-      modes.tower === undefined
-        ? undefined
-        : modes,
-    agent,
-  };
-  if (
-    next.goal === state.meta.goal &&
-    next.activity === state.meta.activity &&
-    next.modes === state.meta.modes &&
-    next.agent === state.meta.agent
-  ) {
-    return { state, changed: false };
-  }
-  return { state: { ...state, meta: next }, changed: true };
 }

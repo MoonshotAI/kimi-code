@@ -13,9 +13,7 @@ import type { TranscriptInteraction } from '#/model/interaction';
 import type { TranscriptItem } from '#/model/item';
 
 function itemLabel(item: TranscriptItem): string {
-  if (item.kind === 'turn') return item.turnId;
-  if (item.kind === 'marker') return item.markerId;
-  return item.refId;
+  return item.kind === 'turn' ? item.turnId : item.markerId;
 }
 
 const turn1: TurnUpsertOp = {
@@ -181,28 +179,16 @@ describe('AgentTranscript', () => {
     expect(tx.listPendingInteractions()).toEqual([]);
   });
 
-  it('upserts attachment and todo entities idempotently', () => {
+  it('upserts attachment entities idempotently', () => {
     const tx = new AgentTranscript('main');
     const attachment = {
       attachmentId: 'att_1',
       mediaType: 'image/png',
       source: { kind: 'url' as const, url: 'https://example.com/a.png' },
     };
-    const todo = { todoId: 'todo', items: [{ title: 'x', status: 'pending' as const }] };
-    const first = tx.apply([
-      { op: 'attachment.upsert', attachment },
-      { op: 'todo.upsert', todo },
-    ]);
-    expect(first.accepted).toHaveLength(2);
-    const second = tx.apply([
-      { op: 'attachment.upsert', attachment },
-      { op: 'todo.upsert', todo },
-    ]);
-    expect(second.accepted).toHaveLength(0);
+    expect(tx.apply([{ op: 'attachment.upsert', attachment }]).accepted).toHaveLength(1);
+    expect(tx.apply([{ op: 'attachment.upsert', attachment }]).accepted).toHaveLength(0);
     expect(tx.getAttachment('att_1')?.mediaType).toBe('image/png');
-    expect(tx.getTodo('todo')?.items).toHaveLength(1);
-    tx.apply([{ op: 'todo.upsert', todo: { ...todo, items: [] } }]);
-    expect(tx.getTodo('todo')?.items).toHaveLength(0);
   });
 
   it('upserts prompt queue entities by id, idempotently', () => {
@@ -303,27 +289,6 @@ describe('AgentTranscript', () => {
     expect(frame?.kind === 'tool' && frame.progress).toEqual({ kind: 'progress', percent: 50 });
   });
 
-  it('task upserts carry resultSummary/error/stateReason/usage', () => {
-    const tx = new AgentTranscript('main');
-    tx.apply([
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'subagent', state: 'running', detached: false, outputTail: '' } },
-    ]);
-    const done = tx.apply([
-      {
-        op: 'task.upsert',
-        task: {
-          taskId: 'task1', kind: 'subagent', state: 'completed', detached: false, outputTail: '',
-          resultSummary: 'scanned 12 files',
-          usage: { inputOther: 100, output: 40, inputCacheRead: 10, inputCacheCreation: 5 },
-        },
-      },
-    ]);
-    expect(done.accepted).toHaveLength(1);
-    const task = tx.getTask('task1');
-    expect(task?.resultSummary).toBe('scanned 12 files');
-    expect(task?.usage?.inputOther).toBe(100);
-  });
-
   it('items.remove clears anchored interactions and their pending entries', () => {
     const tx = new AgentTranscript('main');
     tx.apply([
@@ -389,62 +354,6 @@ describe('AgentTranscript', () => {
     expect(seen).toEqual(['turn.upsert']);
   });
 
-  it('task upsert + append keeps output tail globally, detached flips freely', () => {
-    const tx = new AgentTranscript('main');
-    tx.apply([
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: false, outputTail: '' } },
-      { op: 'append', target: { type: 'task', taskId: 'task1' }, offset: 0, text: 'line1\n' },
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: true, outputTail: 'line1\n' } },
-    ]);
-    const task = tx.getTask('task1');
-    expect(task?.detached).toBe(true);
-    expect(task?.outputTail).toBe('line1\n');
-  });
-
-  it('meta.merge merges goal/modes shallowly', () => {
-    const tx = new AgentTranscript('main');
-    tx.apply([
-      { op: 'meta.merge', meta: { goal: { objective: 'ship it', status: 'active' } } },
-      { op: 'meta.merge', meta: { modes: { plan: { reviewPath: '/p' } } } },
-    ]);
-    expect(tx.getMeta().goal?.status).toBe('active');
-    expect(tx.getMeta().modes?.plan?.reviewPath).toBe('/p');
-  });
-
-  it('meta.merge clears a mode badge on null and keeps absent keys', () => {
-    const tx = new AgentTranscript('main');
-    tx.apply([{ op: 'meta.merge', meta: { modes: { plan: {}, swarm: {}, tower: {} } } }]);
-    tx.apply([{ op: 'meta.merge', meta: { modes: { plan: null } } }]);
-    expect(tx.getMeta().modes).toEqual({ swarm: {}, tower: {} });
-    tx.apply([{ op: 'meta.merge', meta: { modes: { swarm: null } } }]);
-    expect(tx.getMeta().modes).toEqual({ tower: {} });
-    tx.apply([{ op: 'meta.merge', meta: { modes: { tower: null } } }]);
-    expect(tx.getMeta().modes).toBeUndefined();
-  });
-
-  it('meta.merge shallow-merges the agent status key one level deep', () => {
-    const tx = new AgentTranscript('main');
-    tx.apply([
-      { op: 'meta.merge', meta: { agent: { model: 'k2', permission: 'auto' } } },
-      { op: 'meta.merge', meta: { agent: { contextTokens: 1234 } } },
-    ]);
-    expect(tx.getMeta().agent).toEqual({ model: 'k2', permission: 'auto', contextTokens: 1234 });
-
-    tx.apply([
-      { op: 'meta.merge', meta: { agent: { model: 'k3', phase: { kind: 'idle' } } } },
-    ]);
-    expect(tx.getMeta().agent).toEqual({
-      model: 'k3',
-      permission: 'auto',
-      contextTokens: 1234,
-      phase: { kind: 'idle' },
-    });
-
-    tx.apply([{ op: 'meta.merge', meta: { activity: 'turn' } }]);
-    expect(tx.getMeta().agent?.model).toBe('k3');
-    expect(tx.getMeta().activity).toBe('turn');
-  });
-
   it('snapshot immutability: later applies do not mutate earlier reads', () => {
     const tx = new AgentTranscript('main');
     tx.apply(toolFrame('running'));
@@ -477,12 +386,12 @@ describe('AgentTranscript', () => {
         turn: { kind: 'turn', turnId: 't1', ordinal: 1, state: 'completed', origin: { kind: 'user' } },
       },
       {
-        op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: 'r1', taskId: 'bash-1' },
+        op: 'marker.upsert',
+        item: { kind: 'marker', markerId: 'm2', marker: 'notice' },
         beforeTurn: 2,
       },
     ]);
-    expect(tx.getItems().map(itemLabel)).toEqual(['t0', 'm1', 't1', 'r1', 't2']);
+    expect(tx.getItems().map(itemLabel)).toEqual(['t0', 'm1', 't1', 'm2', 't2']);
   });
 
   it('anchors a standalone item before the very first turn; re-applies stay in place', () => {

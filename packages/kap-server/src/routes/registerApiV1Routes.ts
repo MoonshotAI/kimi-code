@@ -37,7 +37,6 @@ import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionsRoutes } from './sessions';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSkillsRoutes } from './skills';
-import { registerTasksRoutes } from './tasks';
 import { registerToolsRoutes } from './tools';
 import { registerTranscriptRoutes } from './transcript';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
@@ -68,8 +67,6 @@ export interface RegisterApiV1RoutesOptions {
   readonly connectionRegistry: IConnectionRegistry;
   readonly transcriptService: TranscriptService;
   readonly sessionRating: SessionRatingHost;
-  readonly pluginMarketplaceUrl: () => string | Promise<string>;
-  readonly pluginMarketplaceIsDefault: boolean;
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
   readonly webTitle?: string;
@@ -147,16 +144,12 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerCapabilitiesRoutes>[0],
         core,
       );
-      registerPluginsRoutes(apiV1 as unknown as Parameters<typeof registerPluginsRoutes>[0], core, {
-        marketplaceUrl: opts.pluginMarketplaceUrl,
-        marketplaceIsDefault: opts.pluginMarketplaceIsDefault,
-      });
+      registerPluginsRoutes(apiV1 as unknown as Parameters<typeof registerPluginsRoutes>[0], core);
       registerMessagesRoutes(
         apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0],
         core,
       );
       registerSearchRoutes(apiV1 as unknown as Parameters<typeof registerSearchRoutes>[0], core);
-      registerTasksRoutes(apiV1 as unknown as Parameters<typeof registerTasksRoutes>[0], core);
       registerInteractionsRoutes(
         apiV1 as unknown as Parameters<typeof registerInteractionsRoutes>[0],
         core,
