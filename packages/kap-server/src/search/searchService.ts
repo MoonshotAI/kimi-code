@@ -19,7 +19,7 @@ import {
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { normalizeLiteral, tokenize } from '@moonshot-ai/minidb';
-import type { TranscriptStore } from '@moonshot-ai/transcript';
+import type { ConversationStep, ConversationTurn } from '../protocol/conversation';
 
 import {
   GlobalSearchError,
@@ -102,15 +102,14 @@ export interface IGlobalSearchService {
     lifecycle: CoreLifecycleReport;
   }>;
   lifecycleReport(): CoreLifecycleReport;
-  setLiveTranscriptSource(source: LiveTranscriptSource): void;
+  setLiveConversationSource(source: LiveConversationSource): void;
 }
 
 export const IGlobalSearchService = createDecorator<IGlobalSearchService>('globalSearch');
 
-export interface LiveTranscriptSource {
-  forSessionLive(sessionId: string): TranscriptStore | undefined;
-  whenReady(sessionId: string): Promise<void>;
-  ensureAgentHistory(sessionId: string, agentId: string): Promise<void>;
+export interface LiveConversationSource {
+  liveAgentIds(sessionId: string): readonly string[] | undefined;
+  liveTurns(sessionId: string, agentId: string): Promise<readonly ConversationTurn[] | undefined>;
 }
 
 function normalizeQuery(input: GlobalSearchQuery, maxQueryTerms: number): NormalizedQuery {
@@ -233,7 +232,7 @@ export class GlobalSearchService implements IGlobalSearchService {
   private summaries = new Map<string, SessionSummary>();
   private disposed = false;
   private reindexing = false;
-  private liveSource: LiveTranscriptSource | null = null;
+  private liveSource: LiveConversationSource | null = null;
   private syncQueued = false;
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRefreshError: { at: number; message: string } | null = null;
@@ -249,7 +248,7 @@ export class GlobalSearchService implements IGlobalSearchService {
     this.requestSync();
   }
 
-  setLiveTranscriptSource(source: LiveTranscriptSource): void {
+  setLiveConversationSource(source: LiveConversationSource): void {
     this.liveSource = source;
   }
 
@@ -423,9 +422,9 @@ export class GlobalSearchService implements IGlobalSearchService {
       throw new GlobalSearchError('index_unavailable', GLOBAL_SEARCH_DISABLED_DETAIL);
     }
     const sessionId = q.container?.sessionId;
-    const liveStore = sessionId !== undefined ? this.liveSource?.forSessionLive(sessionId) : undefined;
-    if (liveStore !== undefined && sessionId !== undefined) {
-      return this.searchLive(q, sessionId, liveStore, input.pageToken);
+    const liveAgentIds = sessionId !== undefined ? this.liveSource?.liveAgentIds(sessionId) : undefined;
+    if (liveAgentIds !== undefined && sessionId !== undefined) {
+      return this.searchLive(q, sessionId, liveAgentIds, input.pageToken);
     }
     return this.searchIndex(q, input.pageToken);
   }
@@ -433,23 +432,12 @@ export class GlobalSearchService implements IGlobalSearchService {
   private async searchLive(
     q: NormalizedQuery,
     sessionId: string,
-    store: TranscriptStore,
+    liveAgentIds: readonly string[],
     pageToken: string | undefined,
   ): Promise<GlobalSearchPage> {
     const page = decodePageToken(q, 'live', pageToken, undefined);
-    const source = this.liveSource;
-    if (source === null) {
-      throw new GlobalSearchError('index_unavailable', 'live transcript source is not wired');
-    }
-    await source.whenReady(sessionId);
-    const agentIds =
-      q.container?.agentId !== undefined
-        ? [q.container.agentId]
-        : store.agents().map((agent) => agent.agentId);
-    for (const agentId of agentIds) {
-      await source.ensureAgentHistory(sessionId, agentId);
-    }
-    const docs = await this.collectLiveDocs(sessionId, store, agentIds);
+    const agentIds = q.container?.agentId !== undefined ? [q.container.agentId] : liveAgentIds;
+    const docs = await this.collectLiveDocs(sessionId, agentIds);
     const budget = {
       deadlineAt: Date.now() + this.queryDeadlineMs,
       textCharsLeft: this.queryTextBudgetChars,
@@ -484,7 +472,6 @@ export class GlobalSearchService implements IGlobalSearchService {
 
   private async collectLiveDocs(
     sessionId: string,
-    store: TranscriptStore,
     agentIds: readonly string[],
   ): Promise<{ key: string; value: MessageDoc | TitleDoc }[]> {
     const summary = await this.sessionIndex.get(sessionId);
@@ -498,51 +485,36 @@ export class GlobalSearchService implements IGlobalSearchService {
     };
     const docs: { key: string; value: MessageDoc | TitleDoc }[] = [];
     for (const agentId of agentIds) {
-      const transcript = store.getAgent(agentId);
-      if (transcript === undefined) continue;
-      for (const item of transcript.snapshot().items) {
-        if (item.kind !== 'turn') continue;
-        const turnTime = parseTime(item.startedAt);
-        const prompt = item.prompt?.trim() ?? '';
-        if (prompt.length > 0) {
+      const turns = (await this.liveSource?.liveTurns(sessionId, agentId)) ?? [];
+      for (const turn of turns) {
+        for (const item of turn.items) {
+          let entry: { key: string; role: 'user' | 'assistant'; text: string; step?: ConversationStep };
+          if (item.type === 'user_message' && item.placement === 'opener') {
+            const text = item.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
+            entry = { key: `u/${turn.turn_id}`, role: 'user', text };
+          } else if (item.type === 'assistant_message') {
+            const step = turn.steps.find((candidate) => candidate.index === item.step_index);
+            entry = { key: `a/${item.item_id}`, role: 'assistant', text: item.text, step };
+          } else {
+            continue;
+          }
+          const text = entry.text.trim();
+          if (text.length === 0) continue;
           docs.push({
-            key: `${sessionId}/${agentId}/live/u/t${item.ordinal}`,
+            key: `${sessionId}/${agentId}/live/${entry.key}`,
             value: {
               kind: 'message',
               sessionId,
               workspaceId,
               sessionTitle,
               agentId,
-              role: 'user',
-              text: prompt.length > MAX_DOC_TEXT_CHARS ? prompt.slice(0, MAX_DOC_TEXT_CHARS) : prompt,
-              time: turnTime,
-              turn: item.ordinal,
-              stepId: undefined,
+              role: entry.role,
+              text: text.length > MAX_DOC_TEXT_CHARS ? text.slice(0, MAX_DOC_TEXT_CHARS) : text,
+              time: parseTime(entry.step?.ended_at ?? entry.step?.started_at ?? turn.started_at),
+              turn: turn.ordinal,
+              stepId: entry.step === undefined ? undefined : `t${turn.ordinal}.${entry.step.index}`,
             },
           });
-        }
-        for (const step of item.steps) {
-          const stepTime = parseTime(step.endedAt ?? step.startedAt ?? item.startedAt);
-          for (const frame of step.frames) {
-            if (frame.kind !== 'text' || frame.role !== 'assistant') continue;
-            const text = frame.text.trim();
-            if (text.length === 0) continue;
-            docs.push({
-              key: `${sessionId}/${agentId}/live/a/${frame.frameId}`,
-              value: {
-                kind: 'message',
-                sessionId,
-                workspaceId,
-                sessionTitle,
-                agentId,
-                role: 'assistant',
-                text: text.length > MAX_DOC_TEXT_CHARS ? text.slice(0, MAX_DOC_TEXT_CHARS) : text,
-                time: stepTime,
-                turn: item.ordinal,
-                stepId: step.stepId,
-              },
-            });
-          }
         }
       }
     }

@@ -46,7 +46,7 @@ import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/inte
 import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
 import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
-import type { AgentTranscriptSnapshot } from '@moonshot-ai/transcript';
+import type { ConversationItem, ConversationTurnsPage } from '../src/protocol/conversation';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { EnvironmentSetBinding } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBindingOps';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
@@ -1633,6 +1633,13 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(messages.body.code).toBe(40930);
     const message = await getJson<unknown>(`/api/v1/sessions/${parentId}/messages/msg_incompatible`);
     expect(message.body.code).toBe(40930);
+    const rating = await postJson<unknown>(`/api/v1/sessions/${parentId}/rating`, { op: 'evaluate', turn_id: 't0' });
+    expect(rating.body.code).toBe(40930);
+    const turns = await getJson<unknown>(`/api/v1/sessions/${parentId}/agents/${MAIN_AGENT_ID}/turns`);
+    expect(turns.body.code).toBe(40930);
+    expect(turns.body.msg).toContain('Upgrade Kimi Code');
+    const plans = await getJson<unknown>(`/api/v1/sessions/${parentId}/agents/${MAIN_AGENT_ID}/plans`);
+    expect(plans.body.code).toBe(40930);
     const sliced = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
       turn_index: 999,
     });
@@ -1771,17 +1778,20 @@ describe('server-v2 /api/v1/sessions', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'answer after second steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IWireService).flush();
-    const path = `/api/v1/sessions/${id}/transcript?agent_id=main`;
-    const before = await getJson<AgentTranscriptSnapshot>(path);
+    const path = `/api/v1/sessions/${id}/agents/main/turns`;
+    const itemText = (item: ConversationItem): string =>
+      item.type === 'user_message'
+        ? item.content.map((part) => (part.type === 'text' ? part.text : '')).join('')
+        : 'text' in item ? item.text : '';
+    const before = await getJson<ConversationTurnsPage>(path);
     expect(before.body.code).toBe(0);
-    expect(before.body.data.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
+    expect(before.body.data.turns).toHaveLength(1);
     const undone = await postJson(`/api/v1/sessions/${id}:undo`, { count });
     expect(undone.body.code).toBe(code);
-    const after = await getJson<AgentTranscriptSnapshot>(path);
-    const turns = after.body.data.items.filter((item) => item.kind === 'turn');
-    expect(turns.map((turn) => turn.prompt)).toEqual(prompts);
-    expect(turns.flatMap((turn) => turn.steps).flatMap((step) => step.frames).filter((frame) => frame.kind === 'text').map((frame) => frame.text)).toEqual(texts);
-    expect(after.body.data.prompts).toEqual([]);
+    const after = await getJson<ConversationTurnsPage>(path);
+    const turns = after.body.data.turns;
+    expect(turns.map((turn) => itemText(turn.items[0]!))).toEqual(prompts);
+    expect(turns.flatMap((turn) => turn.items.slice(1)).map(itemText)).toEqual(texts);
   });
 
   it('forks an undo-branched wire self-contained and replays it equivalently', async () => {
@@ -2061,15 +2071,6 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const listed = await getJson<SessionWire>(`/api/v1/sessions/${forkedId}`);
     expect(listed.body.code).toBe(0);
-
-    const transcript = await getJson<{
-      items: { kind: string; marker?: string; payload?: { path?: string } }[];
-    }>(`/api/v1/sessions/${forkedId}/transcript?agent_id=main`);
-    expect(transcript.body.code).toBe(0);
-    const revisionMarker = transcript.body.data.items.find(
-      (item) => item.kind === 'marker' && item.marker === 'plan.revision',
-    );
-    expect(revisionMarker?.payload?.path).toContain(forkedId);
 
     const resumed = await resumeSessionById((server as RunningServer).core.accessor, forkedId);
     expect(resumed).toBeDefined();

@@ -9,9 +9,12 @@ import {
   type IDisposable,
 } from '@moonshot-ai/agent-core-v2';
 
+import { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+
 import type {
   AgentEventMessage,
   AgentFeedMessage,
+  AgentRetryState,
   GoalEventMessage,
   GoalState,
   TodoEventMessage,
@@ -28,7 +31,18 @@ import {
 
 export const USAGE_FRAME_INTERVAL_MS = 250;
 
-const STATE_EVENT_TYPES = ['turn.started', 'turn.ended', 'agent.status.updated', 'goal.updated'] as const;
+const STATE_EVENT_TYPES = [
+  'turn.started',
+  'turn.ended',
+  'turn.step.started',
+  'turn.step.retrying',
+  'compaction.started',
+  'compaction.completed',
+  'compaction.cancelled',
+  'compaction.blocked',
+  'agent.status.updated',
+  'goal.updated',
+] as const;
 
 export type AgentFeedSend = (agentId: string, message: AgentFeedMessage) => void;
 
@@ -85,6 +99,7 @@ export class SessionAgentFeed implements IDisposable {
 
 class AgentWatch implements IDisposable {
   private running: boolean;
+  private retry?: AgentRetryState;
   private flushQueued = false;
   private disposed = false;
   private lastAgent?: string;
@@ -146,6 +161,17 @@ class AgentWatch implements IDisposable {
   private onEvent(event: Event2<unknown>): void {
     if (event.type === 'turn.started') this.running = true;
     else if (event.type === 'turn.ended') this.running = false;
+    if (event instanceof TurnStepRetrying) {
+      this.retry = {
+        attempt: event.nextAttempt,
+        max_attempts: event.maxAttempts,
+        delay_ms: Math.max(0, Math.round(event.delayMs)),
+        error_message: event.errorMessage,
+        status_code: event.statusCode,
+      };
+    } else if (event.type === 'turn.started' || event.type === 'turn.ended' || event.type === 'turn.step.started') {
+      this.retry = undefined;
+    }
     this.schedule();
   }
 
@@ -210,7 +236,7 @@ class AgentWatch implements IDisposable {
     return {
       type: 'agent',
       ...this.frameFields(),
-      ...readAgentState(this.handle, this.running),
+      ...readAgentState(this.handle, this.running, this.retry),
     };
   }
 

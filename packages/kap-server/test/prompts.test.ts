@@ -554,52 +554,6 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(projected.metadata).toEqual(metadata);
   });
 
-  it('backfills active skill activation metadata on the first transcript connection', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
-    const session = getLiveSessionById(server!.core.accessor, id)!;
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const metadata = [{ display_text: 'Save button', kimi_code_composer: { version: 1 } }];
-    const loop = agent.accessor.get(IAgentLoopService);
-    const handle = {
-      id: 'active-skill',
-      userMessageId: 'active-skill',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      message: { role: 'user', content: [{ type: 'text', text: 'User activated the skill' }], toolCalls: [], origin: { kind: 'skill_activation', activationId: 'act-1', skillName: 'update-config', trigger: 'user-slash', clientMetadata: metadata } },
-    };
-    const listing = vi.spyOn(loop, 'snapshot').mockReturnValue({ ...loop.snapshot(), activePromptId: 'active-skill', queue: [] });
-    const lookup = vi.spyOn(loop, 'promptHandle').mockImplementation((promptId) => (promptId === 'active-skill' ? handle : undefined) as never);
-    try {
-      const result = await call<{ prompts: unknown[] }>('GET', `/api/v1/sessions/${id}/transcript?agent_id=main`);
-      expect(result.body.code).toBe(0);
-      expect(result.body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'active-skill', status: 'running', clientMetadata: metadata }));
-    } finally {
-      lookup.mockRestore();
-      listing.mockRestore();
-    }
-  });
-
-  it('backfills queued prompt metadata on the first transcript connection', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
-    const session = getLiveSessionById(server!.core.accessor, id)!;
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
-    const metadata = [{ display_text: 'Save button', kimi_code_composer: { version: 1 } }];
-    const loop = agent.accessor.get(IAgentLoopService);
-    const origin = { kind: 'user', clientMetadata: metadata };
-    const listing = vi.spyOn(loop, 'snapshot').mockReturnValue({
-      ...loop.snapshot(),
-      queue: [{ message: { role: 'user', content: [{ type: 'text', text: 'browser wire' }] }, meta: { promptId: 'queued-example', userMessageId: 'queued-example', tracked: true, createdAt: '2026-01-01T00:00:00.000Z', origin } }],
-    });
-    try {
-      const result = await call<{ prompts: unknown[] }>('GET', `/api/v1/sessions/${id}/transcript?agent_id=main`);
-      expect(result.body.code).toBe(0);
-      expect(result.body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'queued-example', status: 'queued', clientMetadata: metadata }));
-    } finally {
-      listing.mockRestore();
-    }
-  });
-
   it('honors a client-chosen prompt_id on submit', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
@@ -664,10 +618,10 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(saved?.origin).toMatchObject({ clientMetadata: [metadata] });
     expect(await session!.accessor.get(ISessionMetadata).read()).toMatchObject({ title: metadata.display_text, lastPrompt: metadata.display_text });
     expect(JSON.stringify(saved?.content)).not.toContain('ref-example');
-    const transcript = await call<{ items: { kind: string; origin?: { payload?: { clientMetadata?: unknown } } }[] }>('GET', `/api/v1/sessions/${id}/transcript?agent_id=main&page_size=20`);
-    expect(transcript.body.code).toBe(0);
-    const turn = transcript.body.data.items.find((item) => item.kind === 'turn');
-    expect(turn?.origin?.payload?.clientMetadata).toEqual([metadata]);
+    const page = await call<{ turns: { items: { type: string; origin?: { clientMetadata?: unknown } }[] }[] }>('GET', `/api/v1/sessions/${id}/agents/main/turns`);
+    expect(page.body.code).toBe(0);
+    const opener = page.body.data.turns[0]?.items[0];
+    expect(opener).toMatchObject({ type: 'user_message', origin: { clientMetadata: [metadata] } });
   });
 
   it('updates session metadata for a bundled prompt routed to a non-main agent', async () => {

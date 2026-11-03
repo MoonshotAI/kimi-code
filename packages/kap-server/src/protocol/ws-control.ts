@@ -1,8 +1,16 @@
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
-import { transcriptGradeSpecSchema, transcriptSeqSchema } from '@moonshot-ai/transcript';
 
+import {
+  itemDeltaMessageSchema,
+  itemMessageSchema,
+  itemRemovedMessageSchema,
+  noticeMessageSchema,
+  turnMessageSchema,
+  turnsMessageSchema,
+  turnsRemovedMessageSchema,
+} from './conversation';
 import { pushEventSchema } from './events-zod';
 import { interactionEventMessageSchema } from './interaction';
 import {
@@ -84,8 +92,7 @@ export const clientHelloAckMessageSchema = wsAckEnvelopeSchema(clientHelloAckPay
 
 export const subscribeV2PayloadSchema = z.object({
   session_id: z.string().min(1),
-  transcript: transcriptGradeSpecSchema,
-  transcript_since: z.record(z.string(), transcriptSeqSchema).optional(),
+  agent_ids: z.array(z.string().min(1)).min(1).optional(),
 });
 
 export const subscribeV2MessageSchema = z.object({
@@ -225,7 +232,7 @@ export const clientControlOperations = [
     messageSchema: subscribeV2MessageSchema,
     ackSchema: subscribeV2AckMessageSchema,
     description:
-      "Attach or update this connection's per-agent transcript grade stream for one session.",
+      'Start receiving agents of one session (agent_ids defaults to the main agent). Every newly added agent first gets a turns frame with its latest page, then turn, item and notice frames.',
   },
   {
     type: 'unsubscribe_v2',
@@ -234,7 +241,7 @@ export const clientControlOperations = [
     messageSchema: unsubscribeV2MessageSchema,
     ackSchema: unsubscribeV2AckMessageSchema,
     description:
-      "Detach this connection's transcript grade stream for one session, optionally per agent.",
+      'Stop receiving agents of one session; without agent_ids the whole session is dropped.',
   },
   {
     type: 'abort',
@@ -362,7 +369,7 @@ export const agentEventOperation = {
   kind: 'event',
   messageSchema: agentEventMessageSchema,
   description:
-    'Status, model, thinking effort, permission mode and plan / swarm / tower mode switches of one subscribed agent, sent when a connection starts receiving that agent and on every change; it replaces the client copy.',
+    'Status (with the running turn and prompt), compaction and request retry state, model, thinking effort, permission mode and plan / swarm / tower mode switches of one subscribed agent, sent when a connection starts receiving that agent and on every change; it replaces the client copy.',
 } as const satisfies WsOperationDefinition;
 
 export const usageEventOperation = {
@@ -392,6 +399,62 @@ export const todoEventOperation = {
     'Todo list of one subscribed agent, sent when a connection starts receiving that agent and on every change, including undo; it replaces the client list.',
 } as const satisfies WsOperationDefinition;
 
+export const conversationEventOperations = [
+  {
+    type: 'turns',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: turnsMessageSchema,
+    description:
+      'Latest page of turns of an agent, sent when a connection starts receiving that agent; older pages come from GET /sessions/{session_id}/agents/{agent_id}/turns.',
+  },
+  {
+    type: 'turn',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: turnMessageSchema,
+    description:
+      'turn.started, turn.updated or turn.ended with the full turn header; it replaces the client copy of the header.',
+  },
+  {
+    type: 'item',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: itemMessageSchema,
+    description:
+      'item.started, item.updated or item.ended with the full item; it replaces the client copy of the item with the same item_id.',
+  },
+  {
+    type: 'item.delta',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: itemDeltaMessageSchema,
+    description: 'Text appended to a running assistant_message or reasoning item.',
+  },
+  {
+    type: 'item.removed',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: itemRemovedMessageSchema,
+    description:
+      'A running item that will not be finished, for example after a request retry restarts the step.',
+  },
+  {
+    type: 'turns.removed',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: turnsRemovedMessageSchema,
+    description: 'Turns that left the conversation, for example after undo or clear.',
+  },
+  {
+    type: 'notice',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: noticeMessageSchema,
+    description: 'Live warning or error raised by an agent; not part of the turn history.',
+  },
+] as const satisfies readonly WsOperationDefinition[];
+
 export const wsOperations = [
   ...clientControlOperations,
   ...serverSystemOperations,
@@ -404,6 +467,7 @@ export const wsOperations = [
   usageEventOperation,
   goalEventOperation,
   todoEventOperation,
+  ...conversationEventOperations,
 ] as const satisfies readonly WsOperationDefinition[];
 
 export function getClientControlOperation(

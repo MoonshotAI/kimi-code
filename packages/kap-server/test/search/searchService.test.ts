@@ -15,7 +15,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2';
 import { DATABASE_SECTION } from '@moonshot-ai/agent-core-v2';
 import { MiniDb } from '@moonshot-ai/minidb';
-import { TranscriptStore, type TranscriptOperation } from '@moonshot-ai/transcript';
+import type { ConversationTurn } from '../../src/protocol/conversation';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SearchIndexCore, type SyncSessionInput } from '../../src/search/indexCore';
@@ -24,7 +24,7 @@ import {
   GlobalSearchService,
   InlineSearchBackend,
   drainGlobalSearchDisposals,
-  type LiveTranscriptSource,
+  type LiveConversationSource,
   type SearchBackend,
 } from '../../src/search/searchService';
 import {
@@ -2007,89 +2007,62 @@ describe('GlobalSearchService', () => {
       };
     }
 
+    type LiveSession = Map<string, ConversationTurn[]>;
+
     interface LiveSourceCalls {
-      whenReady: string[];
-      ensureAgentHistory: [string, string][];
+      liveTurns: [string, string][];
     }
 
     function fakeLiveSource(
-      stores: Map<string, TranscriptStore>,
+      sessions: Map<string, LiveSession>,
       calls?: LiveSourceCalls,
-    ): LiveTranscriptSource {
+    ): LiveConversationSource {
       return {
-        forSessionLive: (sessionId) => stores.get(sessionId),
-        whenReady: async (sessionId) => {
-          calls?.whenReady.push(sessionId);
+        liveAgentIds: (sessionId) => {
+          const session = sessions.get(sessionId);
+          return session === undefined ? undefined : [...session.keys()];
         },
-        ensureAgentHistory: async (sessionId, agentId) => {
-          calls?.ensureAgentHistory.push([sessionId, agentId]);
+        liveTurns: async (sessionId, agentId) => {
+          calls?.liveTurns.push([sessionId, agentId]);
+          return sessions.get(sessionId)?.get(agentId);
         },
       };
     }
 
-    function makeLiveStore(sessionId: string): TranscriptStore {
-      const store = new TranscriptStore(sessionId);
-      store.ensureAgent('main', { agentId: 'main', type: 'main' });
-      store.getAgent('main')!.apply([
-        {
-          op: 'turn.upsert',
-          turn: {
-            kind: 'turn',
-            turnId: 't0',
-            ordinal: 0,
-            state: 'completed',
-            origin: { kind: 'user' },
-            prompt: '帮我看看苹果怎么挑',
-            startedAt: new Date(T1).toISOString(),
+    function liveSession(...agentIds: readonly string[]): LiveSession {
+      return new Map(agentIds.map((agentId) => [agentId, []]));
+    }
+
+    function makeLiveStore(): LiveSession {
+      const session = liveSession('main');
+      session.get('main')!.push({
+        turn_id: 't0',
+        ordinal: 0,
+        turn_number: 0,
+        kind: 'agent',
+        status: 'ended',
+        outcome: 'completed',
+        started_at: new Date(T1).toISOString(),
+        steps: [{ step_id: 'step-uuid-1', index: 1, started_at: new Date(T2).toISOString() }],
+        items: [
+          {
+            type: 'user_message',
+            item_id: 'p1',
+            status: 'ended',
+            placement: 'opener',
+            prompt_ids: ['p1'],
+            content: [{ type: 'text', text: '帮我看看苹果怎么挑' }],
           },
-        },
-        {
-          op: 'step.upsert',
-          turnId: 't0',
-          step: {
-            kind: 'step',
-            stepId: 't0.1',
-            turnId: 't0',
-            ordinal: 1,
-            state: 'completed',
-            startedAt: new Date(T2).toISOString(),
-          },
-        },
-        {
-          op: 'frame.upsert',
-          turnId: 't0',
-          stepId: 't0.1',
-          frame: { kind: 'thinking', frameId: 't0.1.f1', text: '苹果 thinking 不可见' },
-        },
-        {
-          op: 'frame.upsert',
-          turnId: 't0',
-          stepId: 't0.1',
-          frame: {
-            kind: 'tool',
-            frameId: 't0.1.f2',
-            toolCallId: 'call-1',
-            name: 'Read',
-            state: 'done',
-          },
-        },
-        {
-          op: 'frame.upsert',
-          turnId: 't0',
-          stepId: 't0.1',
-          frame: {
-            kind: 'text',
-            frameId: 't0.1.f3',
-            role: 'assistant',
-            text: '苹果要挑红富士。',
-          },
-        },
-      ]);
-      return store;
+          { type: 'reasoning', item_id: 'step-uuid-1:0', status: 'ended', step_index: 1, text: '苹果 thinking 不可见' },
+          { type: 'tool_call', item_id: 'call-1', status: 'ended', step_index: 1, name: 'Read' },
+          { type: 'assistant_message', item_id: 'step-uuid-1:2', status: 'ended', step_index: 1, text: '苹果要挑红富士。' },
+        ],
+      });
+      return session;
     }
 
     function addLiveTurn(
-      store: TranscriptStore,
+      session: LiveSession,
       agentId: string,
       turn: {
         ordinal: number;
@@ -2100,64 +2073,47 @@ describe('GlobalSearchService', () => {
           stepId: string;
           startedAt?: number;
           endedAt?: number;
-          state?: 'running' | 'completed';
           texts?: readonly string[];
         }[];
       },
     ): void {
-      const turnId = `t${turn.ordinal}`;
-      const ops: TranscriptOperation[] = [
-        {
-          op: 'turn.upsert',
-          turn: {
-            kind: 'turn',
-            turnId,
-            ordinal: turn.ordinal,
-            state: turn.state ?? 'completed',
-            origin: { kind: 'user' },
-            prompt: turn.prompt,
-            startedAt: new Date(turn.startedAt).toISOString(),
-          },
-        },
-      ];
-      for (const step of turn.steps ?? []) {
-        ops.push({
-          op: 'step.upsert',
-          turnId,
-          step: {
-            kind: 'step',
-            stepId: step.stepId,
-            turnId,
-            ordinal: Number(step.stepId.split('.')[1] ?? 0),
-            state: step.state ?? 'completed',
-            startedAt:
-              step.startedAt !== undefined ? new Date(step.startedAt).toISOString() : undefined,
-            endedAt: step.endedAt !== undefined ? new Date(step.endedAt).toISOString() : undefined,
-          },
-        });
-        (step.texts ?? []).forEach((text, i) => {
-          ops.push({
-            op: 'frame.upsert',
-            turnId,
-            stepId: step.stepId,
-            frame: {
-              kind: 'text',
-              frameId: `${step.stepId}.f${i}`,
-              role: 'assistant',
-              text,
-            },
-          });
+      const iso = (ms: number | undefined): string | undefined =>
+        ms === undefined ? undefined : new Date(ms).toISOString();
+      const items: ConversationTurn['items'] = [];
+      if (turn.prompt !== undefined) {
+        items.push({
+          type: 'user_message',
+          item_id: `p${turn.ordinal}`,
+          status: 'ended',
+          placement: 'opener',
+          prompt_ids: [`p${turn.ordinal}`],
+          content: [{ type: 'text', text: turn.prompt }],
         });
       }
-      store.getAgent(agentId)!.apply(ops);
+      const steps = (turn.steps ?? []).map((step) => {
+        const index = Number(step.stepId.split('.')[1] ?? 0);
+        (step.texts ?? []).forEach((text, i) => {
+          items.push({ type: 'assistant_message', item_id: `${step.stepId}:${i}`, status: 'ended', step_index: index, text });
+        });
+        return { step_id: step.stepId, index, started_at: iso(step.startedAt), ended_at: iso(step.endedAt) };
+      });
+      session.get(agentId)!.push({
+        turn_id: `t${turn.ordinal}`,
+        ordinal: turn.ordinal,
+        kind: 'agent',
+        status: turn.state === 'running' ? 'running' : 'ended',
+        started_at: iso(turn.startedAt),
+        steps,
+        items,
+      });
     }
 
-    it('serves container-scoped literal queries from the live transcript store', async () => {
+    it('serves container-scoped literal queries from the live conversation', async () => {
       const s1 = summary('s1', '苹果标题', T1);
-      const stores = new Map([['s1', makeLiveStore('s1')]]);
-      const calls: LiveSourceCalls = { whenReady: [], ensureAgentHistory: [] };
+      const stores = new Map([['s1', makeLiveStore()]]);
+      const calls: LiveSourceCalls = { liveTurns: [] };
       const service = track(makeService(home!, gettableIndex([s1])));
-      service.setLiveTranscriptSource(fakeLiveSource(stores, calls));
+      service.setLiveConversationSource(fakeLiveSource(stores, calls));
 
       const page = await service.search({
         query: '苹果',
@@ -2171,8 +2127,7 @@ describe('GlobalSearchService', () => {
         totalSessions: 1,
         documents: 3,
       });
-      expect(calls.whenReady).toEqual(['s1']);
-      expect(calls.ensureAgentHistory).toEqual([['s1', 'main']]);
+      expect(calls.liveTurns).toEqual([['s1', 'main']]);
 
       const user = page.items.find((h) => h.role === 'user');
       expect(user).toBeDefined();
@@ -2206,7 +2161,7 @@ describe('GlobalSearchService', () => {
     it('accepts single-character literal queries on the live route', async () => {
       const s1 = summary('s1', '苹果标题', T1);
       const service = track(makeService(home!, gettableIndex([s1])));
-      service.setLiveTranscriptSource(fakeLiveSource(new Map([['s1', makeLiveStore('s1')]])));
+      service.setLiveConversationSource(fakeLiveSource(new Map([['s1', makeLiveStore()]])));
 
       const page = await service.search({
         query: '苹',
@@ -2236,7 +2191,7 @@ describe('GlobalSearchService', () => {
       expect(unwired.source).toBe('index');
       expect(unwired.items.length).toBe(1);
 
-      service.setLiveTranscriptSource(fakeLiveSource(new Map()));
+      service.setLiveConversationSource(fakeLiveSource(new Map()));
       const notLive = await service.search({
         query: '苹果',
         mode: 'literal',
@@ -2248,12 +2203,11 @@ describe('GlobalSearchService', () => {
 
     it('serves terms queries from the live store and orders hits by tf score', async () => {
       const s1 = summary('s1', '无关标题', T1);
-      const store = new TranscriptStore('s1');
-      store.ensureAgent('main', { agentId: 'main', type: 'main' });
+      const store = liveSession('main');
       addLiveTurn(store, 'main', { ordinal: 0, startedAt: T1, prompt: '苹果怎么挑' });
       addLiveTurn(store, 'main', { ordinal: 1, startedAt: T2, prompt: '苹果苹果都要' });
       const service = track(makeService(home!, gettableIndex([s1])));
-      service.setLiveTranscriptSource(fakeLiveSource(new Map([['s1', store]])));
+      service.setLiveConversationSource(fakeLiveSource(new Map([['s1', store]])));
 
       const page = await service.search({ query: '苹果', container: { sessionId: 's1' } });
       expect(page.source).toBe('live');
@@ -2274,10 +2228,10 @@ describe('GlobalSearchService', () => {
         stepBeginLine('u1', 1, T1 + 100),
         assistantStepLine('苹果要挑红富士。', 'u1', T2),
       ]);
-      const stores = new Map([['s1', makeLiveStore('s1')]]);
+      const stores = new Map([['s1', makeLiveStore()]]);
       const service = track(makeService(home!, gettableIndex([s1])));
       await service.reindex();
-      service.setLiveTranscriptSource(fakeLiveSource(stores));
+      service.setLiveConversationSource(fakeLiveSource(stores));
 
       const query = { query: '苹果', container: { sessionId: 's1' } };
       const live = await service.search(query);
@@ -2310,9 +2264,7 @@ describe('GlobalSearchService', () => {
 
     it('applies role, time, agent and sort filters on the live route', async () => {
       const s1 = summary('s1', '', T1);
-      const store = new TranscriptStore('s1');
-      store.ensureAgent('main', { agentId: 'main', type: 'main' });
-      store.ensureAgent('sub', { agentId: 'sub', type: 'sub' });
+      const store = liveSession('main', 'sub');
       addLiveTurn(store, 'main', {
         ordinal: 0,
         startedAt: T1,
@@ -2321,7 +2273,7 @@ describe('GlobalSearchService', () => {
       });
       addLiveTurn(store, 'sub', { ordinal: 0, startedAt: T3, prompt: '苹果 subagent prompt' });
       const service = track(makeService(home!, gettableIndex([s1])));
-      service.setLiveTranscriptSource(fakeLiveSource(new Map([['s1', store]])));
+      service.setLiveConversationSource(fakeLiveSource(new Map([['s1', store]])));
 
       const base = { query: '苹果', container: { sessionId: 's1' } };
       const users = await service.search({ ...base, role: 'user' });
@@ -2351,11 +2303,10 @@ describe('GlobalSearchService', () => {
 
     it('hits the session title doc on the live route (terms mode)', async () => {
       const s1 = summary('s1', '苹果标题', T1);
-      const store = new TranscriptStore('s1');
-      store.ensureAgent('main', { agentId: 'main', type: 'main' });
+      const store = liveSession('main');
       addLiveTurn(store, 'main', { ordinal: 0, startedAt: T1, prompt: '随便聊聊' });
       const service = track(makeService(home!, gettableIndex([s1])));
-      service.setLiveTranscriptSource(fakeLiveSource(new Map([['s1', store]])));
+      service.setLiveConversationSource(fakeLiveSource(new Map([['s1', store]])));
 
       const page = await service.search({ query: '苹果', container: { sessionId: 's1' } });
       expect(page.source).toBe('live');
@@ -2369,43 +2320,38 @@ describe('GlobalSearchService', () => {
 
     it('scopes container.agentId queries to that agent only', async () => {
       const s1 = summary('s1', '', T1);
-      const store = new TranscriptStore('s1');
-      store.ensureAgent('main', { agentId: 'main', type: 'main' });
-      store.ensureAgent('sub', { agentId: 'sub', type: 'sub' });
+      const store = liveSession('main', 'sub');
       addLiveTurn(store, 'main', { ordinal: 0, startedAt: T1, prompt: '苹果 from main' });
       addLiveTurn(store, 'sub', { ordinal: 0, startedAt: T2, prompt: '苹果 from sub' });
-      const calls: LiveSourceCalls = { whenReady: [], ensureAgentHistory: [] };
+      const calls: LiveSourceCalls = { liveTurns: [] };
       const service = track(makeService(home!, gettableIndex([s1])));
-      service.setLiveTranscriptSource(fakeLiveSource(new Map([['s1', store]]), calls));
+      service.setLiveConversationSource(fakeLiveSource(new Map([['s1', store]]), calls));
 
       const page = await service.search({
         query: '苹果',
         container: { sessionId: 's1', agentId: 'sub' },
       });
       expect(page.source).toBe('live');
-      expect(calls.whenReady).toEqual(['s1']);
-      expect(calls.ensureAgentHistory).toEqual([['s1', 'sub']]);
+      expect(calls.liveTurns).toEqual([['s1', 'sub']]);
       expect(page.indexState.documents).toBe(1);
       expect(page.items.length).toBe(1);
       expect(page.items[0]!.agentId).toBe('sub');
     });
 
-    it('handles an empty roster, prompt-less turns and empty text frames', async () => {
+    it('handles an empty roster, prompt-less turns and empty text items', async () => {
       const s1 = summary('s1', '', T1);
-      const calls: LiveSourceCalls = { whenReady: [], ensureAgentHistory: [] };
+      const calls: LiveSourceCalls = { liveTurns: [] };
       const service = track(makeService(home!, gettableIndex([s1])));
-      const stores = new Map([['s1', new TranscriptStore('s1')]]);
-      service.setLiveTranscriptSource(fakeLiveSource(stores, calls));
+      const stores = new Map([['s1', liveSession()]]);
+      service.setLiveConversationSource(fakeLiveSource(stores, calls));
 
       const empty = await service.search({ query: '苹果', container: { sessionId: 's1' } });
       expect(empty.source).toBe('live');
       expect(empty.items).toEqual([]);
       expect(empty.indexState.documents).toBe(0);
-      expect(calls.whenReady).toEqual(['s1']);
-      expect(calls.ensureAgentHistory).toEqual([]);
+      expect(calls.liveTurns).toEqual([]);
 
-      const store = new TranscriptStore('s1');
-      store.ensureAgent('main', { agentId: 'main', type: 'main' });
+      const store = liveSession('main');
       addLiveTurn(store, 'main', {
         ordinal: 0,
         startedAt: T1,
@@ -2425,33 +2371,30 @@ describe('GlobalSearchService', () => {
       const service = track(makeService(home!, gettableIndex([s1])));
       await service.reindex();
 
-      const store = makeLiveStore('s1');
-      service.setLiveTranscriptSource({
-        forSessionLive: (sessionId) => (sessionId === 's1' ? store : undefined),
-        whenReady: async () => {
-          throw new Error('backfill boom');
+      service.setLiveConversationSource({
+        liveAgentIds: (sessionId) => (sessionId === 's1' ? ['main'] : undefined),
+        liveTurns: async () => {
+          throw new Error('live read boom');
         },
-        ensureAgentHistory: async () => {},
       });
 
       await expect(
         service.search({ query: '苹果', container: { sessionId: 's1' } }),
-      ).rejects.toThrow('backfill boom');
+      ).rejects.toThrow('live read boom');
     });
 
     it('searches the partial text of an in-flight turn', async () => {
       const s1 = summary('s1', '', T1);
-      const store = new TranscriptStore('s1');
-      store.ensureAgent('main', { agentId: 'main', type: 'main' });
+      const store = liveSession('main');
       addLiveTurn(store, 'main', {
         ordinal: 0,
         startedAt: T1,
         state: 'running',
         prompt: '苹果 running prompt',
-        steps: [{ stepId: 't0.1', startedAt: T2, state: 'running', texts: ['苹果 partial answer'] }],
+        steps: [{ stepId: 't0.1', startedAt: T2, texts: ['苹果 partial answer'] }],
       });
       const service = track(makeService(home!, gettableIndex([s1])));
-      service.setLiveTranscriptSource(fakeLiveSource(new Map([['s1', store]])));
+      service.setLiveConversationSource(fakeLiveSource(new Map([['s1', store]])));
 
       const page = await service.search({ query: '苹果', container: { sessionId: 's1' } });
       expect(page.source).toBe('live');
@@ -2464,9 +2407,9 @@ describe('GlobalSearchService', () => {
 
     it('matches nothing for a query that tokenizes to zero terms', async () => {
       const s1 = summary('s1', '', T1);
-      const stores = new Map([['s1', makeLiveStore('s1')]]);
+      const stores = new Map([['s1', makeLiveStore()]]);
       const service = track(makeService(home!, gettableIndex([s1])));
-      service.setLiveTranscriptSource(fakeLiveSource(stores));
+      service.setLiveConversationSource(fakeLiveSource(stores));
 
       const page = await service.search({ query: '+++', container: { sessionId: 's1' } });
       expect(page.source).toBe('live');
@@ -2480,10 +2423,10 @@ describe('GlobalSearchService', () => {
         userLine('苹果 index one', T1),
         assistantLine('苹果 index two', T2),
       ]);
-      const stores = new Map([['s1', makeLiveStore('s1')]]);
+      const stores = new Map([['s1', makeLiveStore()]]);
       const service = track(makeService(home!, gettableIndex([s1])));
       await service.reindex();
-      service.setLiveTranscriptSource(fakeLiveSource(stores));
+      service.setLiveConversationSource(fakeLiveSource(stores));
 
       const query = {
         query: '苹果',
@@ -2503,7 +2446,7 @@ describe('GlobalSearchService', () => {
       const indexPage = await service.search(query);
       expect(indexPage.source).toBe('index');
       expect(indexPage.hasMore).toBe(true);
-      stores.set('s1', makeLiveStore('s1'));
+      stores.set('s1', makeLiveStore());
       await expect(
         service.search({ ...query, pageToken: indexPage.pageToken }),
       ).rejects.toMatchObject({ reason: 'invalid_page_token' });
@@ -2517,10 +2460,10 @@ describe('GlobalSearchService', () => {
         stepBeginLine('u1', 1, T1 + 100),
         assistantStepLine('苹果要挑红富士。', 'u1', T2),
       ]);
-      const stores = new Map([['s1', makeLiveStore('s1')]]);
+      const stores = new Map([['s1', makeLiveStore()]]);
       const service = track(makeService(home!, gettableIndex([s1])));
       await service.reindex();
-      service.setLiveTranscriptSource(fakeLiveSource(stores));
+      service.setLiveConversationSource(fakeLiveSource(stores));
 
       const query = { query: '苹果', mode: 'literal' as const, container: { sessionId: 's1' } };
       const live = await service.search(query);

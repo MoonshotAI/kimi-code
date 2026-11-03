@@ -1,9 +1,9 @@
-import { unsubscribeV2PayloadSchema, WS_PROTOCOL_VERSION } from '../../../protocol/ws-control';
+import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2';
 import {
-  detachGrades,
-  transcriptSubscribeV2PayloadSchema,
-  type TranscriptGradeSpec,
-} from '@moonshot-ai/transcript';
+  subscribeV2PayloadSchema,
+  unsubscribeV2PayloadSchema,
+  WS_PROTOCOL_VERSION,
+} from '../../../protocol/ws-control';
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 
@@ -71,7 +71,7 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private closed = false;
   private gotClientHello = false;
-  readonly subscriptions = new Map<string, TranscriptGradeSpec>();
+  readonly subscriptions = new Set<string>();
   private controlQueue: Promise<void> = Promise.resolve();
 
   private outbound: unknown[] = [];
@@ -128,7 +128,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   get subscriptionSessionIds(): readonly string[] {
-    return Array.from(this.subscriptions.keys()).toSorted();
+    return Array.from(this.subscriptions).toSorted();
   }
 
   send(frame: BroadcastFrame, delivery: BroadcastDelivery = 'subscription'): void {
@@ -194,15 +194,14 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   private async onSubscribeV2(frame: InboundFrame): Promise<void> {
-    const parsed = transcriptSubscribeV2PayloadSchema.safeParse(frame.payload ?? {});
+    const parsed = subscribeV2PayloadSchema.safeParse(frame.payload ?? {});
     if (!parsed.success) {
       this.sendImmediateFrame(buildAck(frame.id ?? '', 1, 'invalid subscribe_v2 payload', {}));
       return;
     }
     const sid = parsed.data.session_id;
-    const grades = parsed.data.transcript;
-    const ok = await this.broadcaster.subscribe(sid, this, grades, parsed.data.transcript_since);
-    if (ok) this.subscriptions.set(sid, grades);
+    const ok = await this.broadcaster.subscribe(sid, this, parsed.data.agent_ids ?? [MAIN_AGENT_ID]);
+    if (ok) this.subscriptions.add(sid);
     this.sendImmediateFrame(
       buildAck(frame.id ?? '', 0, 'success', {
         accepted: ok ? [sid] : [],
@@ -219,18 +218,9 @@ export class WsConnectionV1 implements BroadcastTarget {
       return;
     }
     const sid = parsed.data.session_id;
-    const agentIds = parsed.data.agent_ids;
-
-    const existing = this.subscriptions.get(sid);
-    if (existing !== undefined) {
-      const next = agentIds === undefined ? undefined : detachGrades(existing, agentIds);
-      if (next === undefined) {
-        this.subscriptions.delete(sid);
-        this.broadcaster.unsubscribe(sid, this);
-      } else {
-        this.subscriptions.set(sid, next);
-        this.broadcaster.updateTranscriptGrades(sid, this, next);
-      }
+    if (this.subscriptions.has(sid)) {
+      this.broadcaster.unsubscribe(sid, this, parsed.data.agent_ids);
+      if (!this.broadcaster.isSubscribed(sid, this)) this.subscriptions.delete(sid);
     }
 
     this.sendImmediateFrame(
@@ -342,7 +332,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.outbound = [];
     this.taskRequests.dispose();
     this.broadcaster.removeGlobalTarget(this);
-    for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);
+    for (const sid of this.subscriptions) this.broadcaster.unsubscribe(sid, this);
   }
 }
 

@@ -1,4 +1,4 @@
-import { resumeSessionById, type Scope } from '@moonshot-ai/agent-core-v2';
+import { MAIN_AGENT_ID, getLiveSessionById, resumeSessionById, type Scope } from '@moonshot-ai/agent-core-v2';
 import type { SessionRatingHost } from '@moonshot-ai/kimi-code-product/session-rating/node';
 import { z } from 'zod';
 
@@ -9,7 +9,7 @@ import {
   sessionRatingRequestSchema,
   sessionRatingResultSchema,
 } from '../protocol/rest-session-rating';
-import type { TranscriptService } from '../services/transcript/transcriptService';
+import type { ConversationService } from '../services/conversation/conversationService';
 
 interface SessionRatingRouteHost {
   post(
@@ -25,7 +25,7 @@ interface SessionRatingRouteHost {
 export function registerSessionRatingRoutes(
   app: SessionRatingRouteHost,
   sessionRating: SessionRatingHost,
-  transcripts: TranscriptService,
+  conversations: ConversationService,
   core: Scope,
 ): void {
   const route = defineRoute(
@@ -49,13 +49,10 @@ export function registerSessionRatingRoutes(
       const { session_id } = req.params;
       const request = req.body;
       if (request.op === 'evaluate') {
-        const store = transcripts.forSessionLive(session_id);
-        const items = store === undefined
-          ? (await transcripts.readColdSnapshot(session_id))?.items
-          : store.getAgent('main')?.getItems();
-        const latest = items?.findLast((item) => item.kind === 'turn');
-        const completed = latest?.turnId === request.turn_id && latest.state !== 'running';
-        if (completed && store === undefined) {
+        const turns = await conversations.turnsWithoutLoading(session_id, MAIN_AGENT_ID);
+        const latest = turns?.findLast((turn) => turn.kind === 'agent');
+        const completed = latest?.turn_id === request.turn_id && latest.status === 'ended';
+        if (completed && getLiveSessionById(core.accessor, session_id) === undefined) {
           await resumeSessionById(core.accessor, session_id);
           await sessionRating.whenReady(session_id);
         }

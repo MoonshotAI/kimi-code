@@ -348,15 +348,15 @@ export class DaemonClient {
   }
 
   /**
-   * Send `subscribe_v2` for the session's transcript stream and await its
-   * ack. Throws when the server reports the session as not found.
+   * Send `subscribe_v2` for the session's main agent and await its ack.
+   * Throws when the server reports the session as not found.
    */
   async subscribe(sid: string): Promise<void> {
     const ws = this._requireWs();
     if (this._subscribed.has(sid)) return;
     const id = `sub-${ulid()}`;
     const ack = await ws.sendAndAwaitAck(
-      { type: 'subscribe_v2', id, payload: { session_id: sid, transcript: { '*': 'turn' } } },
+      { type: 'subscribe_v2', id, payload: { session_id: sid } },
       this._controlAckTimeoutMs,
     );
     if (ack.code !== 0) {

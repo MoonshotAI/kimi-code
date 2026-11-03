@@ -8,8 +8,21 @@ const agentFrameFields = {
   event_created_at: isoDateTimeSchema,
 };
 
+export const agentRetryStateSchema = z.object({
+  attempt: z.number().int().positive(),
+  max_attempts: z.number().int().positive(),
+  delay_ms: z.number().nonnegative(),
+  error_message: z.string(),
+  status_code: z.number().int().optional(),
+});
+export type AgentRetryState = z.infer<typeof agentRetryStateSchema>;
+
 export const agentStateSchema = z.object({
   status: z.enum(['idle', 'running']),
+  turn_number: z.number().int().nonnegative().optional(),
+  prompt_id: z.string().optional(),
+  compacting: z.enum(['manual', 'auto']).optional(),
+  retry: agentRetryStateSchema.optional(),
   model: z.string().optional(),
   thinking: z.string().optional(),
   permission_mode: z.enum(['manual', 'yolo', 'auto']).optional(),

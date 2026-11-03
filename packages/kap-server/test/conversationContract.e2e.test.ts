@@ -49,6 +49,44 @@ function sseText(text: string): string {
   );
 }
 
+function sseTextChunks(...parts: readonly string[]): string {
+  return sseLines(
+    ...parts.map((text) =>
+      JSON.stringify({
+        id: 'chatcmpl-mock',
+        object: 'chat.completion.chunk',
+        created: 1,
+        model: 'mock',
+        choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }],
+      }),
+    ),
+    JSON.stringify({
+      id: 'chatcmpl-mock',
+      object: 'chat.completion.chunk',
+      created: 1,
+      model: 'mock',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
+    }),
+  );
+}
+
+function sseThinkingThenText(thinking: string, text: string): string {
+  const chunk = (delta: Record<string, unknown>, finishReason: string | null = null): string =>
+    JSON.stringify({
+      id: 'chatcmpl-mock',
+      object: 'chat.completion.chunk',
+      created: 1,
+      model: 'mock',
+      choices: [{ index: 0, delta, finish_reason: finishReason }],
+    });
+  return sseLines(
+    chunk({ role: 'assistant', reasoning_content: thinking }),
+    chunk({ content: text }),
+    chunk({}, 'stop'),
+  );
+}
+
 function sseToolCall(id: string, name: string, args: string): string {
   return sseLines(
     JSON.stringify({
@@ -153,16 +191,67 @@ async function rest<T>(server: RunningServer, base: string, path: string, init?:
   return envelope.data;
 }
 
-interface TxSnapshot {
-  items: any[];
-  tasks: any[];
-  interactions: any[];
-  attachments: any[];
-  prompts: { promptId: string; status: string }[];
+interface TurnsPage {
+  agent_id: string;
+  turns: any[];
+  has_more: boolean;
 }
 
-const getTranscript = (server: RunningServer, base: string, sid: string): Promise<TxSnapshot> =>
-  rest<TxSnapshot>(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}/transcript?agent_id=main`);
+const getTurns = (server: RunningServer, base: string, sid: string, agentId = MAIN_AGENT_ID): Promise<TurnsPage> =>
+  rest<TurnsPage>(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}/agents/${agentId}/turns`);
+
+const textOf = (item: any): string =>
+  item.type === 'user_message'
+    ? item.content.map((part: any) => (part.type === 'text' ? part.text : '')).join('')
+    : String(item.text ?? '');
+
+const toolItems = (page: TurnsPage, name?: string): any[] =>
+  page.turns.flatMap((turn) => turn.items).filter((item: any) => item.type === 'tool_call' && (name === undefined || item.name === name));
+
+function replayFrames(frames: readonly any[]): any[] {
+  let turns: any[] = [];
+  const turnOf = (turnId: string): any => turns.find((turn) => turn.turn_id === turnId);
+  for (const frame of frames) {
+    switch (frame.type) {
+      case 'turns':
+        turns = structuredClone(frame.turns);
+        break;
+      case 'turn.started':
+      case 'turn.updated':
+      case 'turn.ended': {
+        const existing = turnOf(frame.turn.turn_id);
+        if (existing === undefined) turns.push({ ...frame.turn, items: [] });
+        else Object.assign(existing, frame.turn);
+        turns.sort((a, b) => a.ordinal - b.ordinal);
+        break;
+      }
+      case 'item.started':
+      case 'item.updated':
+      case 'item.ended': {
+        const turn = turnOf(frame.turn_id);
+        if (turn === undefined) break;
+        const index = turn.items.findIndex((item: any) => item.item_id === frame.item.item_id);
+        if (index === -1) turn.items.push(structuredClone(frame.item));
+        else turn.items[index] = structuredClone(frame.item);
+        break;
+      }
+      case 'item.delta': {
+        const item = turnOf(frame.turn_id)?.items.find((candidate: any) => candidate.item_id === frame.item_id);
+        if (item !== undefined) item.text += frame.delta;
+        break;
+      }
+      case 'item.removed': {
+        const turn = turnOf(frame.turn_id);
+        if (turn !== undefined) turn.items = turn.items.filter((item: any) => item.item_id !== frame.item_id);
+        break;
+      }
+      case 'turns.removed':
+        turns = turns.filter((turn) => !frame.turn_ids.includes(turn.turn_id));
+        break;
+    }
+  }
+  return turns;
+}
 
 const getSessionFacts = (server: RunningServer, base: string, sid: string): Promise<{ busy: boolean; pending_interaction?: string }> =>
   rest(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}`);
@@ -191,15 +280,30 @@ async function until(label: string, fn: () => Promise<boolean> | boolean, timeou
   }
 }
 
-interface TranscriptChannel {
+interface ConversationChannel {
   readonly frames: any[];
-  readonly ops: any[];
+  readonly conversation: any[];
   readonly tasks: any[];
   readonly agents: any[];
   readonly todos: any[];
-  reset(): any;
+  snapshot(): any;
+  turns(): any[];
   close(): void;
 }
+
+const CONVERSATION_FRAME_TYPES = new Set([
+  'turns',
+  'turn.started',
+  'turn.updated',
+  'turn.ended',
+  'item.started',
+  'item.updated',
+  'item.ended',
+  'item.delta',
+  'item.removed',
+  'turns.removed',
+  'notice',
+]);
 
 function rawToString(data: RawData): string {
   if (typeof data === 'string') return data;
@@ -208,14 +312,13 @@ function rawToString(data: RawData): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
-async function subscribeTranscript(server: RunningServer, sid: string): Promise<TranscriptChannel> {
+async function subscribeConversation(server: RunningServer, sid: string): Promise<ConversationChannel> {
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/ws`, [`kimi-code.bearer.${bearerToken(server)}`]);
   const frames: any[] = [];
-  const ops: any[] = [];
+  const conversation: any[] = [];
   const tasks: any[] = [];
   const agents: any[] = [];
   const todos: any[] = [];
-  let resetFrame: any;
   ws.on('message', (data) => {
     let frame: any;
     try {
@@ -224,14 +327,10 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
       return;
     }
     frames.push(frame);
-    const payload = frame.payload as { agent_id?: string; ops?: any[] } | undefined;
-    if (frame.type === 'transcript.reset' && payload?.agent_id === 'main' && resetFrame === undefined) {
-      resetFrame = frame;
-    }
-    if (frame.type === 'transcript.ops' && payload?.agent_id === 'main') ops.push(...(payload.ops ?? []));
+    if (CONVERSATION_FRAME_TYPES.has(frame.type) && frame.agent_id === MAIN_AGENT_ID) conversation.push(frame);
     if (frame.type === 'task') tasks.push(frame);
-    if (frame.type === 'agent' && frame.agent_id === 'main') agents.push(frame);
-    if (frame.type === 'todo' && frame.agent_id === 'main') todos.push(frame);
+    if (frame.type === 'agent' && frame.agent_id === MAIN_AGENT_ID) agents.push(frame);
+    if (frame.type === 'todo' && frame.agent_id === MAIN_AGENT_ID) todos.push(frame);
   });
   await new Promise<void>((resolve, reject) => {
     ws.once('open', () => {
@@ -239,15 +338,16 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
     });
     ws.once('error', reject);
   });
-  ws.send(JSON.stringify({ type: 'subscribe_v2', id: 'sub-1', payload: { session_id: sid, transcript: { '*': 'delta' } } }));
-  await until('transcript.reset', () => resetFrame !== undefined, 15000);
+  ws.send(JSON.stringify({ type: 'subscribe_v2', id: 'sub-1', payload: { session_id: sid } }));
+  await until('turns frame', () => conversation.some((frame) => frame.type === 'turns'), 15000);
   return {
     frames,
-    ops,
+    conversation,
     tasks,
     agents,
     todos,
-    reset: () => resetFrame?.payload,
+    snapshot: () => conversation.find((frame) => frame.type === 'turns'),
+    turns: () => replayFrames(conversation),
     close: () => ws.close(),
   };
 }
@@ -296,14 +396,14 @@ async function openFrameSocket(server: RunningServer): Promise<FrameSocket> {
 }
 
 
-describe('transcript contract e2e', () => {
+describe('conversation contract e2e', () => {
   let home: string | undefined;
   let server: RunningServer | undefined;
   let llm: MockLlm | undefined;
   let base: string;
 
   beforeAll(async () => {
-    home = await mkdtemp(join(tmpdir(), 'kimi-transcript-contract-'));
+    home = await mkdtemp(join(tmpdir(), 'kimi-conversation-contract-'));
     server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     base = `http://127.0.0.1:${server.port}`;
   });
@@ -329,112 +429,100 @@ describe('transcript contract e2e', () => {
   const idle = (server: RunningServer, base: string, sid: string) =>
     until('session idle', async () => !(await getSessionFacts(server, base, sid)).busy);
 
-  function dumpState(tx: TxSnapshot, hits: string[]): string {
-    const turns = tx.items
-      .filter((i) => i.kind === 'turn')
-      .map((t: any) => ({
-        id: t.turnId,
-        state: t.state,
-        origin: t.origin?.kind,
-        steps: t.steps.map((s: any) => ({
-          ordinal: s.ordinal,
-          state: s.state,
-          frames: s.frames.map((f: any) => `${f.kind}:${f.role ?? ''}:${f.name ?? ''}:${f.state ?? ''}`),
-        })),
-      }));
+  function dumpState(page: TurnsPage, hits: string[]): string {
+    const turns = page.turns.map((turn) => ({
+      id: turn.turn_id,
+      status: `${turn.status}/${turn.outcome ?? ''}`,
+      items: turn.items.map((item: any) => `${item.type}:${item.name ?? ''}:${item.status}`),
+    }));
     const markers = hits
       .map((hit) => /"content":"([^"]{0,60})/.exec(hit)?.[1] ?? hit.slice(0, 60))
       .slice(0, 8);
-    return `${JSON.stringify({ prompts: tx.prompts, turns, interactions: tx.interactions })}\nllm hits (${hits.length}): ${JSON.stringify(markers)}`;
+    return `${JSON.stringify(turns)}\nllm hits (${hits.length}): ${JSON.stringify(markers)}`;
   }
 
   const idleOrDump = async (server: RunningServer, base: string, sid: string): Promise<void> => {
     try {
       await idle(server, base, sid);
     } catch (error) {
-      const tx = await getTranscript(server, base, sid);
-      throw new Error(`${(error as Error).message}\ntranscript at timeout: ${dumpState(tx, llm?.hits ?? [])}`, { cause: error });
+      const page = await getTurns(server, base, sid);
+      throw new Error(`${(error as Error).message}\nturns at timeout: ${dumpState(page, llm?.hits ?? [])}`, { cause: error });
     }
   };
 
-  it('S1: turn lifecycle produces activity, prompts and turn frames on both channels', async () => {
-    await boot([{ match: () => true, respond: () => sseText('hello world'), delayMs: 3000 }]);
+  it('S1: a turn streams items whose live ids match the final ones and both channels agree', async () => {
+    await boot([{ match: () => true, respond: () => sseTextChunks('hello ', 'world'), delayMs: 1500 }]);
     const sid = await createSession(server!, base);
-    await submitPrompt(server!, base, sid, 'say hello');
-    const channel = await subscribeTranscript(server!, sid);
-
-    await until('turn running + prompt tracked', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return (
-        tx.prompts.some((p) => p.status === 'running') &&
-        tx.items.some((i) => i.kind === 'turn' && i.state === 'running')
-      );
-    });
-    const mid = await getTranscript(server!, base, sid);
-    expect(mid.prompts.length).toBeGreaterThan(0);
-    expect(mid.prompts[0]!.promptId.length).toBeGreaterThan(0);
+    const channel = await subscribeConversation(server!, sid);
+    expect(channel.snapshot()).toMatchObject({ type: 'turns', session_id: sid, agent_id: MAIN_AGENT_ID, turns: [], has_more: false });
+    const { prompt_id } = await submitPrompt(server!, base, sid, 'say hello');
 
     await idle(server!, base, sid);
+    await until('turn.ended frame', () => channel.conversation.some((frame) => frame.type === 'turn.ended'));
 
-    const end = await getTranscript(server!, base, sid);
-    expect(end).not.toHaveProperty('meta');
-    expect(end).not.toHaveProperty('todos');
-    const turn = end.items.find((i) => i.kind === 'turn');
-    expect(turn).toMatchObject({ state: 'completed' });
-    expect(typeof turn.endedAt).toBe('string');
-    const frameKinds = turn.steps.flatMap((s: any) => s.frames).map((f: any) => f.kind);
-    expect(frameKinds).toContain('text');
-    const promptStatuses = end.prompts.map((p) => p.status);
-    expect(promptStatuses.every((s) => s === 'completed')).toBe(true);
+    const end = await getTurns(server!, base, sid);
+    expect(end.turns).toHaveLength(1);
+    const [turn] = end.turns;
+    expect(turn).toMatchObject({ turn_id: 't0', ordinal: 0, turn_number: 0, kind: 'agent', status: 'ended', outcome: 'completed' });
+    expect(typeof turn.ended_at).toBe('string');
+    expect(turn.items[0]).toMatchObject({ type: 'user_message', placement: 'opener', prompt_ids: [prompt_id] });
+    expect(textOf(turn.items[0])).toBe('say hello');
+    const answer = turn.items.find((item: any) => item.type === 'assistant_message');
+    expect(answer).toMatchObject({ status: 'ended', text: 'hello world' });
+    expect(channel.conversation.some((frame) => frame.type === 'item.started' && frame.item.item_id === answer.item_id)).toBe(true);
+    expect(channel.turns()).toEqual(end.turns);
 
-    expect(channel.agents[0]).toMatchObject({ type: 'agent', session_id: sid, status: 'running', model: 'stub' });
+    expect(channel.agents.some((frame) => frame.status === 'running' && frame.turn_number === 0 && frame.prompt_id === prompt_id)).toBe(true);
     await until('agent idle frame', () => channel.agents.at(-1)?.status === 'idle');
-    const turnEndedAt = channel.frames.findIndex(
-      (frame) =>
-        frame.type === 'transcript.ops' &&
-        frame.payload?.agent_id === 'main' &&
-        (frame.payload.ops ?? []).some((op: any) => op.op === 'turn.upsert' && op.turn?.state === 'completed'),
-    );
+    const turnEndedAt = channel.frames.findIndex((frame) => frame.type === 'turn.ended' && frame.agent_id === MAIN_AGENT_ID);
     const idleAt = channel.frames.findIndex(
-      (frame) => frame.type === 'agent' && frame.agent_id === 'main' && frame.status === 'idle',
+      (frame, index) => index > 0 && frame.type === 'agent' && frame.agent_id === MAIN_AGENT_ID && frame.status === 'idle' && channel.frames.slice(0, index).some((f) => f.type === 'agent' && f.status === 'running'),
     );
     expect(turnEndedAt).toBeGreaterThanOrEqual(0);
     expect(idleAt).toBeGreaterThan(turnEndedAt);
-    const opTypes = new Set(channel.ops.map((o: any) => o.op));
-    expect(opTypes.has('turn.upsert')).toBe(true);
-    expect(opTypes.has('step.upsert')).toBe(true);
-    expect(opTypes.has('frame.upsert') || opTypes.has('append')).toBe(true);
-    expect(opTypes.has('prompt.upsert')).toBe(true);
-    expect(opTypes.has('meta.merge')).toBe(false);
     channel.close();
   });
 
-  it('S2: a prompt submitted mid-turn is tracked as queued through settlement', async () => {
+  it('S1b: reasoning ends as soon as the answer starts and carries its timing', async () => {
+    await boot([{ match: () => true, respond: () => sseThinkingThenText('weighing options', 'final answer') }]);
+    const sid = await createSession(server!, base);
+    const channel = await subscribeConversation(server!, sid);
+    await submitPrompt(server!, base, sid, 'think first');
+    await idle(server!, base, sid);
+    await until('turn.ended frame', () => channel.conversation.some((frame) => frame.type === 'turn.ended'));
+
+    const end = await getTurns(server!, base, sid);
+    const reasoning = end.turns[0].items.find((item: any) => item.type === 'reasoning');
+    const answer = end.turns[0].items.find((item: any) => item.type === 'assistant_message');
+    expect(reasoning).toMatchObject({ status: 'ended', text: 'weighing options', started_at: expect.any(String), duration_ms: expect.any(Number) });
+    const reasoningEnded = channel.conversation.findIndex((frame) => frame.type === 'item.ended' && frame.item.item_id === reasoning.item_id);
+    const answerStarted = channel.conversation.findIndex((frame) => frame.type === 'item.started' && frame.item.item_id === answer.item_id);
+    expect(answerStarted).toBeGreaterThan(-1);
+    expect(reasoningEnded).toBeGreaterThan(-1);
+    expect(reasoningEnded).toBeLessThan(answerStarted);
+    expect(channel.turns()).toEqual(end.turns);
+    channel.close();
+  });
+
+  it('S2: a prompt submitted mid-turn runs as its own turn after the first', async () => {
     await boot([
       { match: (body) => body.includes('first prompt'), respond: () => sseText('first done'), delayMs: 2500 },
       { match: () => true, respond: () => sseText('second done') },
     ]);
     const sid = await createSession(server!, base);
-    await submitPrompt(server!, base, sid, 'first prompt');
-    await until('first prompt running', async () =>
-      (await getTranscript(server!, base, sid)).prompts.some((p) => p.status === 'running'),
-    );
+    const first = await submitPrompt(server!, base, sid, 'first prompt');
+    await until('first turn running', async () => (await getTurns(server!, base, sid)).turns.some((turn) => turn.status === 'running'));
+    const second = await submitPrompt(server!, base, sid, 'second prompt');
 
-    await submitPrompt(server!, base, sid, 'second prompt');
-    await until('second prompt queued', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return tx.prompts.some((p) => p.status === 'queued') && tx.prompts.some((p) => p.status === 'running');
-    });
-    const mid = await getTranscript(server!, base, sid);
-    expect(mid.prompts.map((p) => p.status).toSorted()).toEqual(['queued', 'running']);
-
-    await until('both settled', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return tx.prompts.length > 0 && tx.prompts.every((p) => p.status === 'completed');
+    await until('both turns ended', async () => {
+      const page = await getTurns(server!, base, sid);
+      return page.turns.length === 2 && page.turns.every((turn) => turn.status === 'ended');
     }, 45000);
+    const end = await getTurns(server!, base, sid);
+    expect(end.turns.map((turn) => turn.items[0].prompt_ids)).toEqual([[first.prompt_id], [second.prompt_id]]);
   });
 
-  it('undo rebuilds a steered turn consistently over REST and WebSocket', async () => {
+  it('undo removes a steered turn consistently over REST and WebSocket', async () => {
     await boot([
       { match: (body) => body.includes('steered request'), respond: () => sseText('answer after steer') },
       { match: (body) => body.includes('original request'), respond: () => sseText('answer before steer'), delayMs: 1500 },
@@ -442,82 +530,82 @@ describe('transcript contract e2e', () => {
     const sid = await createSession(server!, base);
     await submitPrompt(server!, base, sid, 'original request');
     await until('original request reaches model', () => llm!.hits.length > 0);
-    const channel = await subscribeTranscript(server!, sid);
+    const channel = await subscribeConversation(server!, sid);
     try {
       const steer = await submitPrompt(server!, base, sid, 'steered request');
       await rest(server!, base, `/api/v1/sessions/${sid}/prompts/${steer.prompt_id}:steer`, { method: 'POST', body: {} });
       await idle(server!, base, sid);
-      const before = await getTranscript(server!, base, sid);
-      expect(JSON.stringify(before.items)).toContain('answer after steer');
-      expect(before.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
-      expect(before.prompts.some((prompt) => prompt.promptId === steer.prompt_id)).toBe(true);
+      const before = await getTurns(server!, base, sid);
+      expect(before.turns).toHaveLength(1);
+      expect(JSON.stringify(before.turns)).toContain('answer after steer');
+      const steerItem = before.turns[0].items.find((item: any) => item.type === 'user_message' && item.placement === 'steer');
+      expect(steerItem?.prompt_ids).toContain(steer.prompt_id);
+      await until('steer reaches subscriber', () => JSON.stringify(channel.turns()).includes('answer after steer'));
+      expect(channel.turns()).toEqual(before.turns);
+
       await rest(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { count: 1 } });
-      const after = await getTranscript(server!, base, sid);
-      expect(after.items.filter((item) => item.kind === 'turn')).toEqual([]);
-      expect(JSON.stringify(after.items)).not.toContain('original request');
-      expect(JSON.stringify(after.items)).not.toContain('answer before steer');
-      expect(JSON.stringify(after.items)).not.toContain('steered request');
-      expect(JSON.stringify(after.items)).not.toContain('answer after steer');
-      expect(after.prompts).toEqual([]);
-      await until('undo reset reaches subscriber', () => channel.ops.some((op) => op.op === 'reset'));
-      expect(channel.ops.find((op) => op.op === 'reset').snapshot.items).toEqual(after.items);
-      const reconnected = await subscribeTranscript(server!, sid);
+      expect((await getTurns(server!, base, sid)).turns).toEqual([]);
+      await until('turns.removed reaches subscriber', () => channel.conversation.some((frame) => frame.type === 'turns.removed'));
+      expect(channel.turns()).toEqual([]);
+      const reconnected = await subscribeConversation(server!, sid);
       try {
-        expect((await getTranscript(server!, base, sid)).items).toEqual(after.items);
-        expect(reconnected.reset().snapshot.prompts).toEqual([]);
+        expect(reconnected.snapshot().turns).toEqual([]);
       } finally {
         reconnected.close();
       }
+
       await submitPrompt(server!, base, sid, 'steered request');
       await idle(server!, base, sid);
-      const resent = await getTranscript(server!, base, sid);
-      expect(resent.items.filter((item) => item.kind === 'turn').map((turn) => turn.prompt)).toEqual(['steered request']);
-      expect(resent.prompts.some((prompt) => prompt.promptId === steer.prompt_id)).toBe(false);
+      const resent = await getTurns(server!, base, sid);
+      expect(resent.turns.map((turn) => textOf(turn.items[0]))).toEqual(['steered request']);
+      await until('resent turn reaches subscriber', () => channel.turns().length === 1 && channel.turns()[0].status === 'ended');
+      expect(channel.turns()).toEqual(resent.turns);
+
       await closeSessionById(server!.core.accessor, sid);
-      const reopened = await getTranscript(server!, base, sid);
-      expect(reopened.items.filter((item) => item.kind === 'turn').map((turn) => turn.prompt)).toEqual(['steered request']);
+      const reopened = await getTurns(server!, base, sid);
+      expect(reopened.turns).toEqual(resent.turns);
       await rest(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { count: 1 } });
-      const empty = await getTranscript(server!, base, sid);
-      expect(empty.items.filter((item) => item.kind === 'turn')).toEqual([]);
-      expect(empty.prompts).toEqual([]);
+      expect((await getTurns(server!, base, sid)).turns).toEqual([]);
     } finally {
       channel.close();
     }
   }, 30000);
 
-  it('S3: a pending approval appears as an interaction with tool linkage, then resolves', async () => {
+  it('S3: a pending approval rides on the tool item, then resolves', async () => {
     await boot([
       { match: (body) => !body.includes('echo contract-hi'), respond: () => sseToolCall('call_1', 'Bash', '{"command":"echo contract-hi"}') },
       { match: () => true, respond: () => sseText('tool done') },
     ]);
     const sid = await createSession(server!, base);
+    const channel = await subscribeConversation(server!, sid);
     await submitPrompt(server!, base, sid, 'run the echo', 'manual');
 
-    await until('approval pending', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return tx.interactions.some((x: any) => x.interactionKind === 'approval' && x.state === 'pending');
-    });
-    const mid = await getTranscript(server!, base, sid);
-    const approval = mid.interactions.find((x: any) => x.interactionKind === 'approval' && x.state === 'pending');
-    expect(approval).toBeDefined();
-    expect(approval.toolCallId).toBe('call_1');
-    expect((approval.request as any)?.toolName).toBe('Bash');
+    const pendingApproval = () =>
+      interactions
+        .findAll({ kind: 'approval', resolved: false, tags: { sessionId: sid } })
+        .find((item) => (item.payload as ApprovalRequest).toolName === 'Bash');
+    await until('approval pending', async () => pendingApproval() !== undefined);
+    await until('live tool item', () => channel.turns().some((turn) => turn.items.some((item: any) => item.item_id === 'call_1')));
+    const approval = pendingApproval()!;
 
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approval.interactionId)}`, {
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approval.id)}`, {
       method: 'POST',
       body: { kind: 'approval', decision: 'approved' },
     });
     await idle(server!, base, sid);
 
-    const end = await getTranscript(server!, base, sid);
-    expect(end.interactions.every((x: any) => x.state !== 'pending')).toBe(true);
-    const toolFrame = end.items
-      .filter((i) => i.kind === 'turn')
-      .flatMap((t: any) => t.steps)
-      .flatMap((s: any) => s.frames)
-      .find((f: any) => f.kind === 'tool' && f.name === 'Bash');
-    expect(toolFrame).toMatchObject({ state: 'done' });
-    expect(String(toolFrame.output)).toContain('contract-hi');
+    const end = await getTurns(server!, base, sid);
+    const [tool] = toolItems(end, 'Bash');
+    expect(tool).toMatchObject({
+      item_id: 'call_1',
+      status: 'ended',
+      input: { command: 'echo contract-hi' },
+      interaction: { interaction_id: approval.id, kind: 'approval', status: 'ended', response: { decision: 'approved' } },
+    });
+    expect(String(tool.output)).toContain('contract-hi');
+    await until('turn ended on the channel', () => channel.turns()[0]?.status === 'ended');
+    expect(channel.turns()).toEqual(end.turns);
+    channel.close();
   });
 
   it.each([
@@ -560,8 +648,6 @@ describe('transcript contract e2e', () => {
       path: planPath,
     });
     expect((await getSessionFacts(server!, base, sid)).pending_interaction).toBe('approval');
-    const mid = await getTranscript(server!, base, sid);
-    expect(mid.interactions.some((x: any) => x.interactionId === approvalId && x.state === 'pending')).toBe(true);
     expect(await planService.status()).not.toBeNull();
 
     await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approvalId)}`, {
@@ -571,14 +657,25 @@ describe('transcript contract e2e', () => {
     await idleOrDump(server!, base, sid);
 
     expect((await planService.status()) !== null).toBe(staysInPlan);
-    const end = await getTranscript(server!, base, sid);
-    expect(end.interactions.every((x: any) => x.state !== 'pending')).toBe(true);
-    const toolFrame = end.items
-      .filter((i) => i.kind === 'turn')
-      .flatMap((t: any) => t.steps)
-      .flatMap((s: any) => s.frames)
-      .find((f: any) => f.kind === 'tool' && f.name === 'ExitPlanMode');
-    expect(String(toolFrame.output)).toContain(output);
+    const end = await getTurns(server!, base, sid);
+    const [tool] = toolItems(end, 'ExitPlanMode');
+    expect(tool.interaction).toMatchObject({ interaction_id: approvalId, status: 'ended' });
+    expect(String(tool.output)).toContain(output);
+    const plans = await rest<{ agent_id: string; plans: any[] }>(
+      server!,
+      base,
+      `/api/v1/sessions/${encodeURIComponent(sid)}/agents/${MAIN_AGENT_ID}/plans`,
+    );
+    expect(plans.plans).toEqual([
+      expect.objectContaining({
+        tool_call_id: 'call_exit_plan',
+        turn_id: end.turns[0].turn_id,
+        source: 'interaction',
+        plan: '# Plan\n\n- Change the greeting\n- Add a test',
+        path: planPath,
+        review: expect.objectContaining({ state: _label === 'approved' ? 'approved' : _label === 'revised' ? 'rejected' : 'cancelled' }),
+      }),
+    ]);
   });
 
   it('S4: a background subagent streams task events and a task-origin notification turn', async () => {
@@ -592,7 +689,7 @@ describe('transcript contract e2e', () => {
     ]);
     const sid = await createSession(server!, base);
     await submitPrompt(server!, base, sid, 'spawn-bg one background agent');
-    const channel = await subscribeTranscript(server!, sid);
+    const channel = await subscribeConversation(server!, sid);
 
     await until('background task running', () =>
       channel.tasks.some((t) => t.kind === 'subagent' && t.status === 'running'),
@@ -615,37 +712,39 @@ describe('transcript contract e2e', () => {
       throw new Error(`${(error as Error).message}\ntasks: ${JSON.stringify(channel.tasks)}`, { cause: error });
     });
     await until('notification turn exists', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return tx.items.some((i: any) => i.kind === 'turn' && i.origin?.kind === 'task');
+      const page = await getTurns(server!, base, sid);
+      return page.turns.some((turn) => turn.items[0]?.type === 'notification');
     }, 45000);
-
-    const end = await getTranscript(server!, base, sid);
-    const taskTurn = end.items.find((i: any) => i.kind === 'turn' && i.origin?.kind === 'task');
-    expect(taskTurn).toBeDefined();
-    expect(JSON.stringify(taskTurn)).toContain('notification');
-    expect(end).not.toHaveProperty('tasks');
-    expect(channel.ops.some((op) => op.op === 'task.upsert')).toBe(false);
     await idleOrDump(server!, base, sid);
+
+    const end = await getTurns(server!, base, sid);
+    const notificationTurn = end.turns.find((turn) => turn.items[0]?.type === 'notification');
+    expect(notificationTurn.items[0]).toMatchObject({ type: 'notification', origin: { kind: 'task' } });
+    expect(notificationTurn.items[0].text).toContain('<notification');
+    const [agentTool] = toolItems(end, 'Agent');
+    expect(agentTool.agent_refs).toEqual([expect.objectContaining({ agent_id: task.child_agent_id, run_in_background: true })]);
+    await until('notification turn ended on the channel', () => channel.turns().length === end.turns.length && channel.turns().every((turn) => turn.status === 'ended'));
+    expect(channel.turns()).toEqual(end.turns);
     channel.close();
   });
 
-  it('S5: late attach backfills liveness and the prompt queue from the live loop', async () => {
+  it('S5: subscribing to a running turn shows what the step has streamed so far', async () => {
     await boot([{ match: () => true, respond: () => sseText('slow answer'), delayMs: 4000 }]);
     const sid = await createSession(server!, base);
     await submitPrompt(server!, base, sid, 'take your time');
+    await until('turn running', async () => (await getTurns(server!, base, sid)).turns.some((turn) => turn.status === 'running'));
 
-    const tx = await getTranscript(server!, base, sid);
-    expect(tx.items.some((i: any) => i.kind === 'turn' && i.state === 'running')).toBe(true);
-    expect(tx.prompts.some((p) => p.status === 'running')).toBe(true);
-
-    const channel = await subscribeTranscript(server!, sid);
-    expect(channel.agents[0]).toMatchObject({ status: 'running' });
+    const channel = await subscribeConversation(server!, sid);
+    expect(channel.snapshot().turns).toEqual([expect.objectContaining({ status: 'running', turn_number: 0 })]);
+    expect(channel.agents[0]).toMatchObject({ status: 'running', turn_number: 0 });
     await idle(server!, base, sid);
     await until('agent idle frame', () => channel.agents.at(-1)?.status === 'idle');
+    await until('turn ended on the channel', () => channel.turns()[0]?.status === 'ended');
+    expect(channel.turns()).toEqual((await getTurns(server!, base, sid)).turns);
     channel.close();
   });
 
-  it('S6: REST snapshot and WS reset agree on every global entity', async () => {
+  it('S6: the REST page and the WS turns frame agree', async () => {
     await boot([
       { match: (body) => !body.includes('echo s6'), respond: () => sseToolCall('call_s6', 'Bash', '{"command":"echo s6"}') },
       { match: () => true, respond: () => sseText('s6 done') },
@@ -654,22 +753,11 @@ describe('transcript contract e2e', () => {
     await submitPrompt(server!, base, sid, 'run echo for s6');
     await idle(server!, base, sid);
 
-    const snapshot = await getTranscript(server!, base, sid);
-    const channel = await subscribeTranscript(server!, sid);
-    const reset = channel.reset().snapshot;
-
-    expect(reset).not.toHaveProperty('meta');
-    expect(reset).not.toHaveProperty('todos');
-    expect(reset).not.toHaveProperty('tasks');
-    expect(snapshot).not.toHaveProperty('tasks');
-    const byId = (xs: any[], key: string): Record<string, unknown> =>
-      Object.fromEntries(xs.map((x) => [x[key], x]));
-    expect(Object.keys(byId(reset.interactions ?? [], 'interactionId')).toSorted()).toEqual(
-      Object.keys(byId(snapshot.interactions, 'interactionId')).toSorted(),
-    );
-    expect(Object.keys(byId(reset.prompts ?? [], 'promptId')).toSorted()).toEqual(
-      Object.keys(byId(snapshot.prompts, 'promptId')).toSorted(),
-    );
+    const page = await getTurns(server!, base, sid);
+    const channel = await subscribeConversation(server!, sid);
+    expect(channel.snapshot().turns).toEqual(page.turns);
+    expect(channel.snapshot().has_more).toBe(page.has_more);
+    expect(toolItems(page, 'Bash')).toEqual([expect.objectContaining({ item_id: 'call_s6', status: 'ended' })]);
     channel.close();
   });
 
@@ -680,7 +768,7 @@ describe('transcript contract e2e', () => {
       { match: () => true, respond: () => sseText('planned') },
     ]);
     const sid = await createSession(server!, base);
-    const channel = await subscribeTranscript(server!, sid);
+    const channel = await subscribeConversation(server!, sid);
     await until('main agent frames', () => channel.agents.length > 0 && channel.todos.length > 0);
     expect(channel.agents[0]).toMatchObject({ type: 'agent', session_id: sid, status: 'idle' });
     expect(channel.todos[0]).toMatchObject({ type: 'todo', session_id: sid, items: [] });
@@ -834,14 +922,15 @@ describe('transcript contract e2e', () => {
     expect(resumedChildRequest).toContain('ok, remembered');
     expect(agents.handleOf(childAgentId!)).toBeDefined();
 
-    const end = await getTranscript(server, base, sid);
-    const agentFrames = end.items
-      .filter((i) => i.kind === 'turn')
-      .flatMap((t: any) => t.steps)
-      .flatMap((s: any) => s.frames)
-      .filter((f: any) => f.kind === 'tool' && f.name === 'Agent');
-    expect(agentFrames).toHaveLength(2);
-    expect(String(agentFrames[1].output)).toContain(`agent_id: ${childAgentId}`);
-    expect(String(agentFrames[1].output)).toContain('the token is quartz-7731');
+    const end = await getTurns(server, base, sid);
+    const agentTools = toolItems(end, 'Agent');
+    expect(agentTools).toHaveLength(2);
+    expect(String(agentTools[1].output)).toContain(`agent_id: ${childAgentId}`);
+    expect(String(agentTools[1].output)).toContain('the token is quartz-7731');
+    const child = await getTurns(server, base, sid, childAgentId);
+    expect(child.turns.map((turn) => textOf(turn.items[0]))).toEqual([
+      'remember the token quartz-7731 and reply with ok',
+      'recall the token',
+    ]);
   }, 60000);
 }, 90000);
