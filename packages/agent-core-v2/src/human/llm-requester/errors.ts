@@ -58,10 +58,11 @@ export type LlmStatusErrorKind =
   | 'image_format';
 
 export interface LlmStatusErrorInfo {
-  readonly statusCode: number;
+  readonly statusCode?: number;
   readonly requestId: string | null;
   readonly retryAfterMs: number | null;
   readonly headers: Record<string, string> | null;
+  readonly retryable: boolean;
 }
 
 export type LlmErrorMessage<T extends LlmErrorKind = LlmErrorKind> =
@@ -75,8 +76,9 @@ export type LlmErrorMessage<T extends LlmErrorKind = LlmErrorKind> =
             readonly message: string;
             readonly finishReason: FinishReason | null;
             readonly rawFinishReason: string | null;
+            readonly retryable: boolean;
           }
-        : { readonly kind: T; readonly message: string };
+        : { readonly kind: T; readonly message: string; readonly retryable: boolean };
 
 export type LlmRemoteErrorMessage = LlmErrorMessage<LlmRemoteErrorKind>;
 
@@ -111,9 +113,13 @@ function abortErrorMessage(error: unknown): string {
 
 export function toLlmErrorMessage(error: unknown): LlmRemoteErrorMessage {
   if (isAbortError(error)) {
-    return { kind: 'abort', message: abortErrorMessage(error) };
+    return { kind: 'abort', message: abortErrorMessage(error), retryable: false };
   }
-  return { kind: 'unknown', message: error instanceof Error ? error.message : String(error) };
+  return {
+    kind: 'unknown',
+    message: error instanceof Error ? error.message : String(error),
+    retryable: false,
+  };
 }
 
 const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
@@ -121,12 +127,12 @@ const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
 
 export function toLlmTransportErrorMessage(message: string): LlmRemoteErrorMessage {
   if (TIMEOUT_RE.test(message)) {
-    return { kind: 'timeout', message };
+    return { kind: 'timeout', message, retryable: true };
   }
   if (NETWORK_RE.test(message)) {
-    return { kind: 'connection', message };
+    return { kind: 'connection', message, retryable: true };
   }
-  return { kind: 'provider', message: `Error: ${message}` };
+  return { kind: 'provider', message: `Error: ${message}`, retryable: true };
 }
 
 const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
@@ -208,12 +214,15 @@ The provider rejected the configured thinking effort. Non-Kimi providers receive
 }
 
 export interface LlmStatusErrorInput {
-  readonly statusCode: number;
+  readonly statusCode?: number;
   readonly message: string;
   readonly requestId?: string | null;
   readonly retryAfterMs?: number | null;
   readonly headers?: Record<string, string> | null;
+  readonly retryable?: boolean;
 }
+
+const RETRYABLE_HTTP_STATUS_CODES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
 
 export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteErrorMessage {
   const info: LlmStatusErrorInfo = {
@@ -221,31 +230,31 @@ export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteEr
     requestId: input.requestId ?? null,
     retryAfterMs: input.retryAfterMs ?? null,
     headers: input.headers ?? null,
+    retryable:
+      input.retryable ??
+      (input.statusCode !== undefined && RETRYABLE_HTTP_STATUS_CODES.has(input.statusCode)),
   };
-  const message = sanitizeStatusErrorMessage(input.message);
   if (input.statusCode === 429) {
-    return { kind: 'rate_limit', message, ...info };
+    return { kind: 'rate_limit', message: input.message, ...info };
   }
-  if (isContextOverflowStatusError(input.statusCode, input.message)) {
-    return { kind: 'context_overflow', message, ...info };
+  if (input.statusCode !== undefined) {
+    if (isContextOverflowStatusError(input.statusCode, input.message)) {
+      return { kind: 'context_overflow', message: input.message, ...info };
+    }
+    if (isRequestTooLargeStatusError(input.statusCode, input.message)) {
+      return { kind: 'request_too_large', message: input.message, ...info };
+    }
+    if (isProviderOverloadStatusError(input.statusCode, input.message)) {
+      return { kind: 'overloaded', message: input.message, ...info };
+    }
+    if (isRequestStructureStatusError(input.statusCode, input.message)) {
+      return { kind: 'request_structure', message: input.message, ...info };
+    }
+    if (isImageFormatStatusError(input.statusCode, input.message)) {
+      return { kind: 'image_format', message: input.message, ...info };
+    }
   }
-  if (isRequestTooLargeStatusError(input.statusCode, input.message)) {
-    return { kind: 'request_too_large', message, ...info };
-  }
-  if (isProviderOverloadStatusError(input.statusCode, input.message)) {
-    return { kind: 'overloaded', message, ...info };
-  }
-  if (isRequestStructureStatusError(input.statusCode, input.message)) {
-    return { kind: 'request_structure', message, ...info };
-  }
-  if (isImageFormatStatusError(input.statusCode, input.message)) {
-    return { kind: 'image_format', message, ...info };
-  }
-  return {
-    kind: 'status',
-    message: appendThinkingEffortConfigHint(input.statusCode, message),
-    ...info,
-  };
+  return { kind: 'status', message: input.message, ...info };
 }
 
 export function parseRetryAfterMs(headers: unknown): number | null {

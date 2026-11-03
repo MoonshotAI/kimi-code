@@ -57,7 +57,6 @@ import {
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
   sessionAbortResponseSchema,
-  sessionStatusResponseSchema,
   sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
   takeoverSessionResponseSchema,
@@ -776,35 +775,6 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     createChildRoute.handler as Parameters<SessionRouteHost['post']>[2],
   );
 
-  const statusRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/sessions/{session_id}/status',
-      params: sessionIdParamSchema,
-      success: { data: sessionStatusResponseSchema },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-      },
-      description: 'Get realtime session status (best-effort in this slice)',
-      tags: ['sessions'],
-    },
-    async (req, reply) => {
-      try {
-        const { session_id } = req.params;
-        const status = await core.accessor.get(ISessionLegacyService).status(session_id);
-        reply.send(okEnvelope(status, req.id));
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      }
-    },
-  );
-  app.get(
-    statusRoute.path,
-    statusRoute.options,
-    statusRoute.handler as Parameters<SessionRouteHost['get']>[2],
-  );
-
   const goalRoute = defineRoute(
     {
       method: 'GET',
@@ -985,16 +955,11 @@ async function undoSessionAction(
   );
   const history = agent.accessor.get(IAgentContextMemoryService).get();
   requestLog(req)?.info({ session_id: id, action: 'undo' }, 'session action completed');
-  const legacy = core.accessor.get(ISessionLegacyService);
-  const [summary, status] = await Promise.all([
-    core.accessor.get(ISessionIndex).get(id),
-    legacy.status(id),
-  ]);
+  const summary = await core.accessor.get(ISessionIndex).get(id);
   reply.send(
     okEnvelope(
       {
         messages: pageUndoMessages(id, summary?.createdAt ?? 0, history, body.page_size),
-        status,
       },
       req.id,
     ),

@@ -1,4 +1,4 @@
-import type { AgentId, AttachmentId, FrameId, InteractionId, TaskId, TodoId } from './ids';
+import type { AgentId, AttachmentId, FrameId, InteractionId, TaskId } from './ids';
 
 export type { InteractionKind, InteractionState } from './interaction';
 
@@ -81,7 +81,6 @@ export interface ToolCallFrame {
   readonly progress?: ToolFrameProgress;
   readonly taskId?: TaskId;
   readonly approvalId?: InteractionId;
-  readonly todoId?: TodoId;
   readonly agentRefs?: readonly AgentRef[];
 }
 
