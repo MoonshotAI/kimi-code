@@ -59,6 +59,10 @@ export class TranscriptView extends VStack {
   }
 
   withAnchoredScroll(toggle: () => void): void {
+    if (this.scrollView.isFollowingEnd) {
+      toggle();
+      return;
+    }
     const scrollTop = this.scrollView.scrollTop;
     toggle();
     this.scrollView.scrollTo(scrollTop, { disableFollow: true });

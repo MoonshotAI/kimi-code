@@ -24,6 +24,8 @@ import { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import { MoonLoader } from '#/tui/components/chrome/moon-loader';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
 import { StatusMessageComponent } from '#/tui/components/messages/status-message';
+import { ThinkingComponent } from '#/tui/components/messages/thinking';
+import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import * as userMessages from '#/tui/components/messages/user-message';
 import { ActivityPaneComponent } from '#/tui/components/panes/activity-pane';
@@ -149,6 +151,44 @@ function pillLines(state: ReturnType<typeof createTUIState>): string[] {
   const root = (state.ui as TuiAltScreen).getLayoutRoot() as VStack;
   const transcript = root.children[0] as VStack;
   return transcript.children[0]!.render(state.ui.terminal.columns);
+}
+
+function groupTranscript(state: ReturnType<typeof createTUIState>): void {
+  const view = state.transcriptView;
+  if (view === undefined) throw new Error('transcript view missing');
+  state.transcriptContainer.setPresentationOptions({ fullscreen: true, groupTools: 'auto', groupThinking: true });
+  state.transcriptContainer.setHost({
+    withScrollAnchor: (toggle) => {
+      view.withAnchoredScroll(toggle);
+    },
+    withBottomAnchor: (toggle, removedLines) => {
+      view.withBottomAnchor(toggle, removedLines);
+    },
+    viewportRows: () => view.viewportRows,
+    track: () => {},
+  });
+}
+
+function addReadGroup(state: ReturnType<typeof createTUIState>): void {
+  const thinking = new ThinkingComponent('reasoning', true, 'finalized');
+  thinking.finalize({ known: true, ms: 3000 });
+  state.transcriptContainer.addChild(thinking);
+  for (let i = 0; i < 6; i++) {
+    state.transcriptContainer.addChild(
+      new ToolCallComponent(
+        { id: `read-${i}`, name: 'Read', args: { path: `/work/file-${i}.ts` } },
+        { tool_call_id: `read-${i}`, output: 'content', is_error: false },
+        undefined,
+        '/work',
+      ),
+    );
+  }
+}
+
+async function clickRow(vt: VirtualTerminal, row: number): Promise<void> {
+  vt.sendInput(`\u001B[<0;5;${row + 1}M`);
+  vt.sendInput(`\u001B[<0;5;${row + 1}m`);
+  await vt.waitForRender();
 }
 
 describe('fullscreen layout', () => {
@@ -364,6 +404,50 @@ describe('fullscreen layout', () => {
     await vt.flush();
 
     expect(alt.viewportTop).toBe(before - 5);
+    alt.stop();
+  });
+
+  it('keeps following the transcript end after a click expands a group', async () => {
+    const { state, vt } = await mountFullscreen();
+    groupTranscript(state);
+    state.transcriptContainer.addChild(new Text('body\n'.repeat(40), 0, 0));
+    addReadGroup(state);
+    const alt = state.ui as TuiAltScreen;
+    alt.renderNow();
+    await vt.flush();
+    const title = screenRows(vt).findIndex((row) => row.includes('read 6 files'));
+    expect(title).toBeGreaterThan(0);
+
+    await clickRow(vt, title);
+    state.transcriptContainer.addChild(new Text('final answer', 0, 0));
+    alt.renderNow();
+    await vt.flush();
+
+    const rows = screenRows(vt);
+    expect(rows.some((row) => row.includes('final answer'))).toBe(true);
+    expect(rows.some((row) => row.includes('Jump to bottom'))).toBe(false);
+    expect(rows.some((row) => row.includes('Read file-5.ts'))).toBe(true);
+    alt.stop();
+  });
+
+  it('keeps a clicked group title in place when the transcript is scrolled up', async () => {
+    const { state, vt } = await mountFullscreen();
+    groupTranscript(state);
+    state.transcriptContainer.addChild(new Text('top\n'.repeat(5), 0, 0));
+    addReadGroup(state);
+    state.transcriptContainer.addChild(new Text('body\n'.repeat(40), 0, 0));
+    const alt = state.ui as TuiAltScreen;
+    alt.renderNow();
+    alt.scrollToTop();
+    await vt.waitForRender();
+    const title = screenRows(vt).findIndex((row) => row.includes('read 6 files'));
+    expect(title).toBeGreaterThan(0);
+
+    await clickRow(vt, title);
+
+    const rows = screenRows(vt);
+    expect(rows[title]).toContain('read 6 files');
+    expect(rows.slice(title + 1).some((row) => row.includes('Read file-0.ts'))).toBe(true);
     alt.stop();
   });
 
