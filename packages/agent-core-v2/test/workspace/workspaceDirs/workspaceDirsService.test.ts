@@ -1,5 +1,5 @@
 import { mkdtempSync } from 'node:fs';
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -19,6 +19,8 @@ import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { WorkspaceStateService } from '#/workspace/state/workspaceStateService';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { WorkspaceDirsService } from '#/workspace/workspaceDirs/workspaceDirsService';
+import { WorkspaceEnvironmentDirsService } from '#/workspace/workspaceEnvironmentDirs/workspaceEnvironmentDirsService';
+import type { IEnvironmentService } from '#/app/environment/environment';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 
@@ -456,5 +458,100 @@ describe('WorkspaceDirsService (registry source)', () => {
     await expect(dirs.ready).rejects.toThrow(
       `workspace.additional_dir must exist and be a directory: ${join(dirA, 'missing')}`,
     );
+  });
+  function createEnvironmentDirs(
+    cwd: string,
+    workspaceId: string,
+    remoteDirs: readonly string[] = ['/srv/app', '/srv/next'],
+  ): { readonly service: WorkspaceEnvironmentDirsService; readonly connected: string[] } {
+    const connected: string[] = [];
+    const environments = {
+      acquireWhenReady: async ({ environmentId }: { readonly environmentId: string }) => {
+        connected.push(environmentId);
+        return {
+          environment: { fs: { stat: async (path: string) => ({ isDirectory: remoteDirs.includes(path) }) } },
+          dispose: () => {},
+        };
+      },
+    } as unknown as IEnvironmentService;
+    const service = disposables.add(
+      new WorkspaceEnvironmentDirsService(
+        {
+          _serviceBrand: undefined,
+          workspaceId,
+          cwd,
+          source: 'local',
+          meta: { id: workspaceId, root: cwd, name: 'test', kind: 'implicit', createdAt: 0, lastOpenedAt: 0 },
+          persistenceScope: `sessions/${workspaceId}`,
+        },
+        workspaces,
+        persistence,
+        environments,
+        noopLog,
+      ),
+    );
+    return { service, connected };
+  }
+
+  async function projectEntry(id: string): Promise<Record<string, unknown> | undefined> {
+    const file = JSON.parse(await readFile(join(homeDir, 'projects.json'), 'utf8')) as {
+      readonly projects: Record<string, Record<string, unknown>>;
+    };
+    return file.projects[id];
+  }
+
+  it('keeps a session-only environment mount in memory and out of the projects file', async () => {
+    const workspace = await workspaces.createOrTouch(dirA);
+    const { service, connected } = createEnvironmentDirs(dirA, workspace.id);
+    await service.ready;
+
+    await expect(service.add({ environmentId: 'devbox', path: '/srv/app/' })).resolves.toEqual({ environmentId: 'devbox', path: '/srv/app' });
+
+    expect(service.dirs).toEqual([{ environmentId: 'devbox', path: '/srv/app' }]);
+    expect(connected).toEqual(['devbox']);
+    expect(await projectEntry(workspace.id)).not.toHaveProperty('environment_dirs');
+  });
+
+  it('remembers an environment mount in the workspace record for every view', async () => {
+    const workspace = await workspaces.createOrTouch(dirA);
+    const { service } = createEnvironmentDirs(dirA, workspace.id);
+    const other = createEnvironmentDirs(dirA, workspace.id).service;
+    await Promise.all([service.ready, other.ready]);
+
+    await service.add({ environmentId: 'devbox', path: '/srv/app', persist: true });
+
+    expect((await workspaces.get(workspace.id))?.environmentDirs).toEqual([{ environmentId: 'devbox', path: '/srv/app' }]);
+    expect(await projectEntry(workspace.id)).toMatchObject({ environment_dirs: [{ environment_id: 'devbox', path: '/srv/app' }] });
+    await vi.waitFor(() => {
+      expect(other.dirs).toEqual([{ environmentId: 'devbox', path: '/srv/app' }]);
+    });
+
+    await workspaces.update(workspace.id, { name: 'renamed' });
+    expect((await workspaces.get(workspace.id))?.environmentDirs).toEqual([{ environmentId: 'devbox', path: '/srv/app' }]);
+  });
+
+  it('promotes a session-only mount when the same directory is remembered', async () => {
+    const workspace = await workspaces.createOrTouch(dirA);
+    const { service } = createEnvironmentDirs(dirA, workspace.id);
+    await service.ready;
+
+    await service.add({ environmentId: 'devbox', path: '/srv/app' });
+    await service.add({ environmentId: 'devbox', path: '/srv/app', persist: true });
+
+    expect(service.dirs).toEqual([{ environmentId: 'devbox', path: '/srv/app' }]);
+    expect((await workspaces.get(workspace.id))?.environmentDirs).toEqual([{ environmentId: 'devbox', path: '/srv/app' }]);
+  });
+
+  it('rejects a second directory for a mounted environment and directories that do not exist', async () => {
+    const workspace = await workspaces.createOrTouch(dirA);
+    const { service, connected } = createEnvironmentDirs(dirA, workspace.id);
+    await service.ready;
+    await service.add({ environmentId: 'devbox', path: '/srv/app' });
+
+    await expect(service.add({ environmentId: 'devbox', path: '/srv/next' })).rejects.toMatchObject({ code: 'environment.conflict' });
+    await expect(service.add({ environmentId: 'staging', path: '/srv/missing' })).rejects.toMatchObject({ code: 'environment.invalid_cwd' });
+    await expect(service.add({ environmentId: 'local', path: 'relative' })).rejects.toMatchObject({ code: 'environment.invalid_cwd' });
+    expect(service.dirs).toEqual([{ environmentId: 'devbox', path: '/srv/app' }]);
+    expect(connected).toEqual(['devbox', 'staging']);
   });
 });

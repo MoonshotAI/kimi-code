@@ -114,6 +114,7 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
     return {
       id,
       workdirs: { root, reload: async () => {}, dispose: () => {} },
+      environmentDirs: behavior,
       mcpConfig: { ...behavior, servers: () => ({}) },
       mcp: behavior,
       trust: { ...behavior, isTrusted: () => false },

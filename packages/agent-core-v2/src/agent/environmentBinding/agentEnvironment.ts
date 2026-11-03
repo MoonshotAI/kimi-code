@@ -15,6 +15,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
 import {
   workspaceContextAdditionalDirsKey,
 } from '#/session/workspaceContext/workspaceContextService';
@@ -112,6 +113,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   readonly onDidChange = this.changeEmitter.event;
   private readonly bindingSubscription: IDisposable;
   private readonly registrySubscription: IDisposable;
+  private readonly environmentDirsSubscription: IDisposable | undefined;
 
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -122,8 +124,10 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     @ISessionStateService private readonly sessionState: ISessionStateService,
     @IFlagService private readonly flags?: IFlagService,
     @IEnvironmentDeclarationService private readonly declarations?: IEnvironmentDeclarationService,
+    @ISessionWorkdir private readonly workdir?: ISessionWorkdir,
   ) {
     this.bindingSubscription = this.binding.onDidChange(() => this.changeEmitter.fire());
+    this.environmentDirsSubscription = this.workdir?.environmentDirs.onDidChange(() => this.changeEmitter.fire());
     this.registrySubscription = this.resolver.onDidChange((change) => {
       if (change.environmentId !== this.binding.current.environmentId) return;
       if (change.current !== undefined && change.current !== this.resolver.current(change.environmentId)) return;
@@ -135,19 +139,18 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   targets(): readonly EnvironmentTarget[] {
     const current = this.binding.current;
     const primary: EnvironmentTarget = { environmentId: current.environmentId, primary: true, cwd: current.cwd };
-    if (this.declarations === undefined || this.flags?.enabled(MULTI_ENVIRONMENT_FLAG_ID) !== true) return [primary];
-    const declared = new Map(
-      this.declarations.snapshot().entries.map((declaration) => [declaration.id, declaration.entry.defaultCwd]),
-    );
+    if (this.declarations === undefined || this.workdir === undefined || this.flags?.enabled(MULTI_ENVIRONMENT_FLAG_ID) !== true) return [primary];
+    const declared = new Set(this.declarations.snapshot().entries.map((declaration) => declaration.id));
     if (current.environmentId !== LOCAL_ENVIRONMENT_ID && !declared.has(current.environmentId)) return [primary];
-    const secondary = [LOCAL_ENVIRONMENT_ID, ...declared.keys()]
-      .filter((environmentId) => environmentId !== current.environmentId && this.resolver.current(environmentId) !== undefined)
-      .toSorted((left, right) => left.localeCompare(right))
-      .map((environmentId): EnvironmentTarget => ({
-        environmentId,
-        primary: false,
-        cwd: environmentId === LOCAL_ENVIRONMENT_ID ? this.session.cwd : declared.get(environmentId),
-      }));
+    const secondary = this.workdir.environmentDirs.dirs
+      .filter(
+        (dir) =>
+          dir.environmentId !== current.environmentId &&
+          (dir.environmentId === LOCAL_ENVIRONMENT_ID || declared.has(dir.environmentId)) &&
+          this.resolver.current(dir.environmentId) !== undefined,
+      )
+      .toSorted((left, right) => left.environmentId.localeCompare(right.environmentId))
+      .map((dir): EnvironmentTarget => ({ environmentId: dir.environmentId, primary: false, cwd: dir.path }));
     return [primary, ...secondary];
   }
 
@@ -223,6 +226,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   dispose(): void {
     this.registrySubscription?.dispose();
     this.bindingSubscription.dispose();
+    this.environmentDirsSubscription?.dispose();
     this.changeEmitter.dispose();
   }
 

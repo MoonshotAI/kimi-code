@@ -249,8 +249,13 @@ export class Session {
       id: this.id,
       path: normalized,
       persist: options?.persist ?? true,
+      environmentId: options?.environmentId,
     });
-    this.summary = { ...this.requireSummary(), additionalDirs: result.additionalDirs };
+    this.summary = {
+      ...this.requireSummary(),
+      additionalDirs: result.additionalDirs,
+      environmentDirs: result.environmentDirs,
+    };
     return result;
   }
 

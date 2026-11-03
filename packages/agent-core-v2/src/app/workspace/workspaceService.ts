@@ -228,6 +228,7 @@ export class WorkspaceService implements IWorkspaceService {
           ...existing,
           ...(patch.name !== undefined ? { name: patch.name } : {}),
           additionalDirs,
+          environmentDirs: patch.environmentDirs ?? existing.environmentDirs,
         };
         return {
           workspaces: catalog.workspaces.map((ws) => (ws.id === id ? updated! : ws)),

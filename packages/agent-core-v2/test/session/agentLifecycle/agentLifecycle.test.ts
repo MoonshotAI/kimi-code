@@ -318,6 +318,7 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       environmentId: 'local',
       fs: undefined,
+      environmentDirs: { dirs: [], onDidChange: Event.None },
     } as unknown as ISessionWorkdir);
     ix.stub(IWorkspaceInstanceManager, {
       _serviceBrand: undefined,
@@ -1150,6 +1151,7 @@ describe('AgentLifecycleService', () => {
       environmentId: 'remote',
       cwd: '/remote/work',
       fs: undefined,
+      environmentDirs: { dirs: [], onDidChange: Event.None },
     } as unknown as ISessionWorkdir);
 
     const svc = ix.get(IAgentLifecycleService);
@@ -1174,6 +1176,7 @@ describe('AgentLifecycleService', () => {
       environmentId: 'remote',
       cwd: '/remote/work',
       fs: undefined,
+      environmentDirs: { dirs: [], onDidChange: Event.None },
     } as unknown as ISessionWorkdir);
 
     const svc = ix.get(IAgentLifecycleService);

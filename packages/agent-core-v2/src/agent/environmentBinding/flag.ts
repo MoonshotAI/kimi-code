@@ -7,7 +7,7 @@ export const multiEnvironmentFlag: FlagDefinitionInput = {
   id: MULTI_ENVIRONMENT_FLAG_ID,
   title: 'Multi-environment sessions',
   description:
-    'Let file and shell tools target any registered environment per call through an environment argument; remote environments connect on first use.',
+    'Let file and shell tools target environments mounted on the workspace with /add-dir per call through an environment argument; remote environments connect on first use.',
   env: MULTI_ENVIRONMENT_FLAG_ENV,
   default: false,
   surface: 'core',

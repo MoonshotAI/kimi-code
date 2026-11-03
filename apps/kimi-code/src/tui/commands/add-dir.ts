@@ -1,9 +1,15 @@
+import type { SessionEnvironmentDir } from '@moonshot-ai/kimi-code-sdk';
+
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import type { SlashCommandHost } from './dispatch';
+import { isExperimentalFlagEnabled } from './experimental-flags';
 import { slashBusyMessage, slashCommandBusyReason } from './resolve';
 
 type AddDirChoice = 'session' | 'remember' | 'cancel';
+
+const MULTI_ENVIRONMENT_FLAG = 'multi_environment';
+const CANCEL_ENVIRONMENT = '';
 
 export async function handleAddDirCommand(host: SlashCommandHost, args: string): Promise<void> {
   const input = args.trim();
@@ -14,11 +20,12 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
     // directories live in appState and will be passed to the lazy-created
     // session; reflect them instead of reporting an empty list.
     const additionalDirs = session?.summary?.additionalDirs ?? host.state.appState.additionalDirs;
-    if (additionalDirs.length === 0) {
+    const environmentDirs = session?.summary?.environmentDirs ?? [];
+    if (additionalDirs.length === 0 && environmentDirs.length === 0) {
       host.showStatus('No additional directories configured.');
       return;
     }
-    host.showStatus(formatAdditionalDirsStatus(additionalDirs));
+    host.showStatus(formatAdditionalDirsStatus(additionalDirs, environmentDirs));
     return;
   }
 
@@ -39,9 +46,64 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
     }
   }
 
+  const sessionId = session.id;
+  const environments = await otherEnvironments(session);
+  if (environments === undefined) {
+    showPersistChoice(host, sessionId, input, undefined);
+    return;
+  }
   host.mountEditorReplacement(
     new ChoicePickerComponent({
-      title: `Add directory to workspace: ${input}`,
+      title: `Add directory: ${input}`,
+      hint: '↑↓ navigate · Enter confirm · Esc cancel',
+      options: [
+        { value: environments.primary, label: `${environments.primary} (this session's environment)` },
+        ...environments.others.map((environmentId) => ({ value: environmentId, label: environmentId })),
+        { value: CANCEL_ENVIRONMENT, label: 'Cancel' },
+      ],
+      onSelect: (value) => {
+        if (value === CANCEL_ENVIRONMENT) {
+          host.restoreEditor();
+          host.showStatus(`Did not add ${input} as a working directory.`);
+          return;
+        }
+        showPersistChoice(host, sessionId, input, value === environments.primary ? undefined : value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+        host.showStatus(`Did not add ${input} as a working directory.`);
+      },
+    }),
+  );
+}
+
+async function otherEnvironments(
+  session: NonNullable<SlashCommandHost['session']>,
+): Promise<{ readonly primary: string; readonly others: readonly string[] } | undefined> {
+  if (!isExperimentalFlagEnabled(MULTI_ENVIRONMENT_FLAG)) return undefined;
+  try {
+    const [binding, { environments }] = await Promise.all([session.getEnvironment(), session.listEnvironments()]);
+    const others = environments
+      .map((environment) => environment.environmentId)
+      .filter((environmentId) => environmentId !== binding.environmentId);
+    return others.length === 0 ? undefined : { primary: binding.environmentId, others };
+  } catch {
+    return undefined;
+  }
+}
+
+function showPersistChoice(
+  host: SlashCommandHost,
+  sessionId: string,
+  input: string,
+  environmentId: string | undefined,
+): void {
+  host.mountEditorReplacement(
+    new ChoicePickerComponent({
+      title:
+        environmentId === undefined
+          ? `Add directory to workspace: ${input}`
+          : `Mount directory on ${environmentId}: ${input}`,
       hint: '↑↓ navigate · Enter confirm · Esc cancel',
       options: [
         {
@@ -58,7 +120,7 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
         },
       ],
       onSelect: (value) => {
-        void handleAddDirChoice(host, session.id, input, value as AddDirChoice);
+        void handleAddDirChoice(host, sessionId, input, value as AddDirChoice, environmentId);
       },
       onCancel: () => {
         host.restoreEditor();
@@ -68,8 +130,16 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
   );
 }
 
-function formatAdditionalDirsStatus(additionalDirs: readonly string[]): string {
-  return ['Additional directories:', ...additionalDirs.map((dir) => `  ${dir}`)].join('\n');
+function formatAdditionalDirsStatus(
+  additionalDirs: readonly string[],
+  environmentDirs: readonly SessionEnvironmentDir[],
+): string {
+  return [
+    ...(additionalDirs.length === 0 ? [] : ['Additional directories:', ...additionalDirs.map((dir) => `  ${dir}`)]),
+    ...(environmentDirs.length === 0
+      ? []
+      : ['Environment directories:', ...environmentDirs.map((dir) => `  ${dir.environmentId}: ${dir.path}`)]),
+  ].join('\n');
 }
 
 async function handleAddDirChoice(
@@ -77,6 +147,7 @@ async function handleAddDirChoice(
   sessionId: string,
   path: string,
   choice: AddDirChoice,
+  environmentId: string | undefined,
 ): Promise<void> {
   host.restoreEditor();
 
@@ -92,6 +163,16 @@ async function handleAddDirChoice(
   }
 
   try {
+    if (environmentId !== undefined) {
+      await session.addAdditionalDir(path, { persist: choice === 'remember', environmentId });
+      host.showStatus(
+        choice === 'remember'
+          ? `Mounted directory on ${environmentId}:\n  ${path}\n  Remembered in the workspace registry`
+          : `Mounted directory on ${environmentId}:\n  ${path}\n  For this session only`,
+        'success',
+      );
+      return;
+    }
     const result = await session.addAdditionalDir(path, { persist: choice === 'remember' });
     host.setAppState({ additionalDirs: result.additionalDirs });
     host.refreshSlashCommandAutocomplete();

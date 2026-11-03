@@ -1311,6 +1311,7 @@ export class AgentTestContext {
               cwd: this.cwd,
               fs: undefined as never,
               acquireEnvironmentWorkdir: () => Promise.reject(new Error('environment workdirs are not available in the agent harness')),
+              environmentDirs: { dirs: [], onDidChange: Event.None as Event<void> },
             });
             reg.defineInstance(
               IWorkspaceStateService,

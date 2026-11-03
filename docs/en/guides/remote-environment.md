@@ -99,16 +99,20 @@ The footer shows the active environment's identity before the working directory;
 
 ## Multiple environments in one session
 
-The experimental multi-environment feature lets `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, and `ReadMediaFile` choose a configured environment for each call. It is disabled by default. Enable it in `config.toml` alongside your [environment declarations](#declaring-environments):
+The experimental multi-environment feature lets `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, and `ReadMediaFile` choose an environment mounted on the workspace for each call. It is disabled by default. Enable it in `config.toml` alongside your [environment declarations](#declaring-environments):
 
 ```toml
 [experimental]
 multi_environment = true
 ```
 
-You can instead set `KIMI_CODE_EXPERIMENTAL_MULTI_ENVIRONMENT=true` for one process. When at least two environments are available, these tools gain an optional `environment` argument. Omitting it uses the session's primary environment; an unknown id fails the call rather than running it elsewhere. This enables the model to select environments — it does not add a manual environment selector to the TUI.
+You can instead set `KIMI_CODE_EXPERIMENTAL_MULTI_ENVIRONMENT=true` for one process.
 
-All configured environments are candidates. The first call to another environment connects it lazily and uses its `defaultCwd`, or the working directory reported by the target when `defaultCwd` is unset. The primary keeps its existing working directory and additional directories. For example, a local session can inspect a remote checkout with `Read` using `environment = "dev-box"`, then run its tests with `Bash` in the same environment.
+Declaring an environment does not make it available to a workspace. To use another environment, mount one of its directories on the workspace first: in the TUI, run `/add-dir <path>`. When the feature is enabled and other environments are configured, you first choose which environment the path belongs to. Choosing the session's own environment adds an ordinary additional directory; choosing another environment mounts the path as that environment's working directory for this workspace. As with additional directories, the mount can apply to this session only or be remembered in the workspace registry, so every later session in the workspace — including print-mode runs — uses it.
+
+The path must be absolute on the target environment. Mounting connects to the environment once to confirm the directory exists. Each environment can mount one directory per workspace. `/add-dir list` shows mounted environment directories alongside additional directories. There is no command to remove a remembered mount yet; delete it from the workspace's `environment_dirs` in `~/.kimi-code/projects.json`.
+
+When at least one other environment is mounted, these tools gain an optional `environment` argument. Omitting it uses the session's primary environment; an unknown id fails the call rather than running it elsewhere. The model chooses the environment through this argument. When the primary environment is remote, the local host must be mounted too before tools can target it. A mount whose environment is no longer declared in `[environments]` is ignored. Apart from the check at mount time, an environment still connects lazily on its first use. The primary keeps its existing working directory and additional directories. For example, after `/add-dir /srv/app` mounts that path on `dev-box`, a local session can inspect the checkout with `Read` using `environment = "dev-box"`, then run its tests with `Bash` in the same environment.
 
 Approval prompts show the environment for each call, and "allow for this session" approvals are remembered separately per environment. Tools outside the list above keep using the primary environment or the local host as described elsewhere on this page.
 

@@ -288,6 +288,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
           this.modelProviders,
           this.environments,
           input.acquireWorkdir,
+          input.environmentDirs,
           input.onDispose,
         ),
       },

@@ -44,7 +44,7 @@ export class AgentEnvironmentRosterService extends Disposable implements IAgentE
     @ISessionEnvironmentMounts mounts: ISessionEnvironmentMounts,
   ) {
     super();
-    const mounted = new Map<string, { readonly cwd: string; readonly mount: Promise<EnvironmentMount> }>();
+    const mounted = new Map<string, { readonly target: EnvironmentTarget; readonly cwd: string; readonly mount: Promise<EnvironmentMount> }>();
     const connectedCwd = (handle: EnvironmentAccess): string | undefined => {
       try {
         return handle.workspaceRoots().workDir;
@@ -65,17 +65,11 @@ export class AgentEnvironmentRosterService extends Disposable implements IAgentE
       if (pending === undefined && handle.isAvailable()) {
         const cwd = connectedCwd(handle);
         if (cwd !== undefined) {
-          pending = { cwd, mount: mounts.mount(target.environmentId, cwd) };
+          pending = { target, cwd, mount: mounts.mount(target.environmentId, cwd) };
           mounted.set(target.environmentId, pending);
         }
       }
-      if (pending === undefined) {
-        return entry(target, [
-          target.cwd === undefined
-            ? `- ${label}: not connected yet; working directory resolved on first use`
-            : `- ${label}: working directory ${target.cwd}; not connected yet`,
-        ]);
-      }
+      if (pending === undefined) return entry(target, [`- ${label}: working directory ${target.cwd}; not connected yet`]);
       const mount = await pending.mount;
       if (mount.status === 'failed') {
         return entry(target, [`- ${label}: working directory ${pending.cwd}; its AGENTS.md files and skills could not be loaded: ${mount.error}`]);
@@ -90,7 +84,7 @@ export class AgentEnvironmentRosterService extends Disposable implements IAgentE
       reminder.register<RosterDisclosure>(ENVIRONMENT_ROSTER_REMINDER_VARIANT, async ({ lastInjection, lastDisclosure }) => {
         const targets = environment.targets();
         for (const [environmentId, pending] of mounted) {
-          if (targets.some((target) => target.environmentId === environmentId)) continue;
+          if (targets.some((target) => target.environmentId === environmentId && target.cwd === pending.target.cwd)) continue;
           mounted.delete(environmentId);
           mounts.unmount(environmentId, pending.mount);
         }
