@@ -1,4 +1,10 @@
-import { visibleWidth, type Component, type TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import {
+  ANIMATION_FRAME_INTERVAL_MS,
+  AnimationFrameScheduler,
+  visibleWidth,
+  type Component,
+  type TuiMouseEvent,
+} from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -57,7 +63,14 @@ function thought(ms = 3000): ThinkingComponent {
 
 function makeContainer(presentation = options()) {
   const requestRender = vi.fn();
-  const container = new TranscriptContainer(0, 0, requestRender);
+  const frames = new AnimationFrameScheduler();
+  const container = new TranscriptContainer(0, 0, {
+    requestRender,
+    requestAnimationFrame: (callback) => frames.requestAnimationFrame(callback),
+    cancelAnimationFrame: (handle) => {
+      frames.cancelAnimationFrame(handle);
+    },
+  });
   container.setPresentationOptions(presentation);
   return { container, requestRender };
 }
@@ -576,7 +589,7 @@ describe('TranscriptGroupComponent', () => {
     for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(70);
   });
 
-  it('sweeps a highlight with fake time and stops its timer after fading', () => {
+  it('sweeps a highlight with fake time and stops requesting frames after the hold and fade', () => {
     chalk.level = 3;
     vi.useFakeTimers();
     vi.setSystemTime(100_000);
@@ -590,9 +603,9 @@ describe('TranscriptGroupComponent', () => {
     expect(plain(initial)).toContain('● Thought for 3s');
     expect(plain(initial)).not.toContain('⠋');
     requestRender.mockClear();
-    vi.advanceTimersByTime(100);
+    vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS);
     const next = container.render(80);
-    expect(requestRender).toHaveBeenCalled();
+    expect(requestRender).toHaveBeenCalledTimes(1);
     expect(next).not.toEqual(initial);
 
     container.setTurnActive(false);
@@ -601,7 +614,57 @@ describe('TranscriptGroupComponent', () => {
       vi.advanceTimersByTime(50);
       container.render(80);
     }
+    requestRender.mockClear();
+    vi.advanceTimersByTime(1_000);
+    expect(requestRender).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+    container.clear();
+  });
+
+  function sweepFrames(container: TranscriptContainer, requestRender: ReturnType<typeof vi.fn>) {
+    const frames: { readonly renders: number; readonly drawn: string }[] = [];
+    for (let frame = 0; frame < 24; frame++) {
+      requestRender.mockClear();
+      vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 2);
+      const typed = container.render(100).join('\n');
+      vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 4);
+      expect(container.render(100).join('\n')).toBe(typed);
+      vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 4);
+      container.invalidate();
+      frames.push({ renders: requestRender.mock.calls.length, drawn: container.render(100).join('\n') });
+    }
+    expect(frames.every((frame) => frame.renders <= 1)).toBe(true);
+    expect(new Set(frames.map((frame) => frame.drawn)).size).toBeGreaterThan(3);
+    for (const [index, frame] of frames.entries()) {
+      if (index > 0 && frame.renders === 0) expect(frame.drawn).toBe(frames[index - 1]?.drawn);
+    }
+    return frames;
+  }
+
+  it('moves the highlight only on animation frames and skips renders while it waits off the title', () => {
+    chalk.level = 3;
+    vi.useFakeTimers();
+    const { container, requestRender } = makeContainer();
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.setTurnActive(true);
+    container.render(100);
+
+    const frames = sweepFrames(container, requestRender);
+    expect(frames.slice(1).some((frame) => frame.renders === 0)).toBe(true);
+    container.clear();
+  });
+
+  it('keeps redrawing while the highlight crosses the wrapped lines of an opened command title', () => {
+    chalk.level = 3;
+    vi.useFakeTimers();
+    const { container, requestRender } = makeContainer();
+    const bash = tool('Bash', { command: 'echo first\necho a second line' });
+    container.addChild(bash);
+    container.setTurnActive(true);
+    container.toggleGroup(bash);
+    expect(plain(container.render(100))).toContain('echo a second line');
+
+    sweepFrames(container, requestRender);
     container.clear();
   });
 

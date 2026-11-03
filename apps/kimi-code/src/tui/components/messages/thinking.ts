@@ -11,13 +11,12 @@ import {
   ANSI_ESCAPE_PATTERN,
   MESSAGE_INDENT,
   THINKING_PREVIEW_LINES,
-  TRANSCRIPT_GROUP_FRAME_INTERVAL_MS,
 } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { Elapsed } from '#/tui/types';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
-import { elapsedSuffix, TitleSweep } from './running-title';
+import { elapsedSuffix, shownSeconds, TitleSweep } from './running-title';
 
 const LIVE_LABEL = 'Thinking';
 const FINALIZED_FOLD_HINT_ROWS = 1;
@@ -34,7 +33,8 @@ export class ThinkingComponent implements Component {
   private previewHidesLines = false;
   private readonly ui: TUI | undefined;
   private readonly sweep = new TitleSweep();
-  private frameInterval: ReturnType<typeof setInterval> | undefined;
+  private frameRequest: number | undefined;
+  private shownAnimation: string | undefined;
   private elapsed: Elapsed | undefined;
   private projectionVersion = 0;
   // Hold a single Text instance so pi-tui's (text, width) → lines cache
@@ -142,12 +142,10 @@ export class ThinkingComponent implements Component {
         !this.expanded && this.previewHidesLines
           ? streamed.slice(streamed.length - THINKING_PREVIEW_LINES)
           : streamed;
-      const now = Date.now();
-      this.sweep.advance(now, visibleWidth(STATUS_BULLET + LIVE_LABEL), true);
       const title =
         this.sweep.paint(STATUS_BULLET, 0) +
         this.sweep.paint(LIVE_LABEL, visibleWidth(STATUS_BULLET)) +
-        elapsedSuffix(this.startedAtMs, now);
+        elapsedSuffix(this.startedAtMs, Date.now());
       rendered = [
         '',
         truncateToWidth(title, width, '…'),
@@ -195,17 +193,26 @@ export class ThinkingComponent implements Component {
   }
 
   private startFrames(): void {
-    if (this.ui === undefined || this.frameInterval !== undefined) return;
-    this.frameInterval = setInterval(() => {
-      this.markRenderDirty();
-      this.ui?.requestRender();
-    }, TRANSCRIPT_GROUP_FRAME_INTERVAL_MS);
+    if (this.ui === undefined || this.frameRequest !== undefined) return;
+    this.sweep.start(performance.now());
+    this.frameRequest = this.ui.requestAnimationFrame(this.onFrame);
   }
 
+  private readonly onFrame = (time: number): void => {
+    this.sweep.advance(time, visibleWidth(STATUS_BULLET + LIVE_LABEL), true);
+    const shown = `${this.sweep.frameKey}|${String(shownSeconds(this.startedAtMs, Date.now()))}`;
+    if (shown !== this.shownAnimation) {
+      this.shownAnimation = shown;
+      this.markRenderDirty();
+      this.ui?.requestRender();
+    }
+    this.frameRequest = this.ui?.requestAnimationFrame(this.onFrame);
+  };
+
   private stopFrames(): void {
-    if (this.frameInterval === undefined) return;
-    clearInterval(this.frameInterval);
-    this.frameInterval = undefined;
+    if (this.frameRequest === undefined) return;
+    this.ui?.cancelAnimationFrame(this.frameRequest);
+    this.frameRequest = undefined;
   }
 }
 

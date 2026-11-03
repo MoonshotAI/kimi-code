@@ -1,5 +1,6 @@
 import type {
   Component,
+  TUI,
   TuiMouseDispatchResult,
   TuiMouseEvent,
   TuiMouseEventResult,
@@ -87,7 +88,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   constructor(
     leftPad: number,
     rightPad: number,
-    private readonly renderRequest?: () => void,
+    private readonly ui: Pick<TUI, 'requestRender' | 'requestAnimationFrame' | 'cancelAnimationFrame'>,
   ) {
     this.gutter = new GutterContainer(leftPad, rightPad);
     this.gutter.setUnhandledClick((index) => this.toggleViewIndex(index));
@@ -108,14 +109,14 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   setPresentationOptions(options: TranscriptPresentationOptions): void {
     if (samePresentation(this.options, options)) return;
     this.options = options;
-    this.renderRequest?.();
+    this.ui.requestRender();
   }
 
   setTurnActive(active: boolean): void {
     if (this.turnActive === active) return;
     this.turnActive = active;
     this.projectionCache = undefined;
-    this.renderRequest?.();
+    this.ui.requestRender();
   }
 
   addChild(child: Component): void {
@@ -211,7 +212,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     }
     this.projectionCache = undefined;
     this.host?.track('transcript_group_toggle', { expanded });
-    this.renderRequest?.();
+    this.ui.requestRender();
   }
 
   toggleRow(item: LogicalTranscriptItem): boolean {
@@ -220,7 +221,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     this.withScrollAnchor(() => {
       display.setExpanded(!isExpandedComponent(display));
     });
-    this.renderRequest?.();
+    this.ui.requestRender();
     return true;
   }
 
@@ -257,7 +258,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     if (transcriptGroupingActive(this.options)) {
       this.host?.track('transcript_expand_all', { expanded: this.globalExpanded });
     }
-    this.renderRequest?.();
+    this.ui.requestRender();
     return this.globalExpanded;
   }
 
@@ -277,7 +278,15 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   }
 
   requestRender(): void {
-    this.renderRequest?.();
+    this.ui.requestRender();
+  }
+
+  requestAnimationFrame(callback: (time: number) => void): number {
+    return this.ui.requestAnimationFrame(callback);
+  }
+
+  cancelAnimationFrame(handle: number): void {
+    this.ui.cancelAnimationFrame(handle);
   }
 
   private ensureProjection(): ProjectionCache {
@@ -402,7 +411,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
       this.keepMergedGroupExpanded(component, cache.projections);
     }
     this.projectionCache = undefined;
-    this.renderRequest?.();
+    this.ui.requestRender();
     return { handled: true };
   }
 

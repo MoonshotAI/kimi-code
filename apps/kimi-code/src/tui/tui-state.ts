@@ -152,13 +152,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     ui.requestRender(true);
   });
 
-  const transcriptContainer = new TranscriptContainer(
-    CHROME_GUTTER,
-    CHROME_GUTTER,
-    () => {
-      ui.requestRender();
-    },
-  );
+  const transcriptContainer = new TranscriptContainer(CHROME_GUTTER, CHROME_GUTTER, ui);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   // Docked panels carry their own gutter, so their fullscreen slot is a
   // layout node rather than a GutterContainer (which the layout treats as one

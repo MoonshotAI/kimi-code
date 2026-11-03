@@ -1,9 +1,8 @@
-import { visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
+import { ANIMATION_FRAME_INTERVAL_MS, AnimationFrameScheduler, visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
-import { TRANSCRIPT_GROUP_FRAME_INTERVAL_MS } from '#/tui/constant/rendering';
 
 const defaultChalkLevel = chalk.level;
 
@@ -12,6 +11,19 @@ function strip(text: string): string {
 }
 
 const longThinking = ['line1', 'line2', 'line3', 'line4', 'line5', 'line6', 'line7'].join('\n');
+
+function frameUi() {
+  const frames = new AnimationFrameScheduler();
+  const requestRender = vi.fn();
+  const ui = {
+    requestRender,
+    requestAnimationFrame: (callback: (time: number) => void) => frames.requestAnimationFrame(callback),
+    cancelAnimationFrame: (handle: number) => {
+      frames.cancelAnimationFrame(handle);
+    },
+  } as unknown as TUI;
+  return { ui, requestRender };
+}
 
 describe('ThinkingComponent', () => {
   afterEach(() => {
@@ -60,18 +72,19 @@ describe('ThinkingComponent', () => {
     expect(strip(component.render(80)[1] ?? '')).toBe('● Thinking · 2s');
   });
 
-  it('sweeps the live title on a frame timer that stops on finalize', () => {
+  it('sweeps the live title only on animation frames and stops requesting frames on finalize', () => {
     chalk.level = 3;
     vi.useFakeTimers();
     vi.setSystemTime(100_000);
-    const requestRender = vi.fn();
-    const component = new ThinkingComponent('step', true, 'live', {
-      requestRender,
-    } as unknown as TUI);
+    const { ui, requestRender } = frameUi();
+    const component = new ThinkingComponent('step', true, 'live', ui);
     const initial = component.render(80)[1];
 
-    vi.advanceTimersByTime(TRANSCRIPT_GROUP_FRAME_INTERVAL_MS * 4);
-    expect(requestRender).toHaveBeenCalled();
+    vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 2);
+    expect(component.render(80)[1]).toBe(initial);
+    expect(requestRender).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS / 2);
+    expect(requestRender).toHaveBeenCalledTimes(1);
     const swept = component.render(80)[1];
     expect(swept).not.toBe(initial);
     expect(strip(swept ?? '')).toBe('● Thinking');
@@ -79,7 +92,7 @@ describe('ThinkingComponent', () => {
     component.finalize({ known: true, ms: 1_000 });
     expect(vi.getTimerCount()).toBe(0);
     requestRender.mockClear();
-    vi.advanceTimersByTime(TRANSCRIPT_GROUP_FRAME_INTERVAL_MS * 4);
+    vi.advanceTimersByTime(ANIMATION_FRAME_INTERVAL_MS * 4);
     expect(requestRender).not.toHaveBeenCalled();
     const finalizedOnly = new ThinkingComponent('step', true, 'finalized');
     finalizedOnly.finalize({ known: true, ms: 1_000 });
@@ -87,11 +100,9 @@ describe('ThinkingComponent', () => {
     expect(component.render(80).map((line) => strip(line).trimEnd())).toEqual(['', '● step']);
   });
 
-  it('stops the frame timer on dispose', () => {
+  it('stops requesting animation frames on dispose', () => {
     vi.useFakeTimers();
-    const component = new ThinkingComponent('step', true, 'live', {
-      requestRender: vi.fn(),
-    } as unknown as TUI);
+    const component = new ThinkingComponent('step', true, 'live', frameUi().ui);
     expect(vi.getTimerCount()).toBe(1);
 
     component.dispose();

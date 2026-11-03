@@ -1,27 +1,36 @@
-import type { TUI } from '@moonshot-ai/pi-tui';
-import { afterEach, describe, expect, it } from 'vitest';
+import { AnimationFrameScheduler, type TUI } from '@moonshot-ai/pi-tui';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { MoonLoader } from '#/tui/components/chrome/moon-loader';
+import { MoonLoader, type SpinnerStyle } from '#/tui/components/chrome/moon-loader';
 
-// MoonLoader starts a real setInterval in its constructor, so every loader
+// MoonLoader requests animation frames from its constructor, so every loader
 // created in these tests must be stopped to avoid leaving live timers behind.
 const loaders: MoonLoader[] = [];
 
-function createLoader(): MoonLoader {
-  const ui = { requestRender() {} } as unknown as TUI;
-  const loader = new MoonLoader(ui, 'moon');
+function createLoader(style: SpinnerStyle = 'moon') {
+  const frames = new AnimationFrameScheduler();
+  const requestRender = vi.fn();
+  const ui = {
+    requestRender,
+    requestAnimationFrame: (callback: (time: number) => void) => frames.requestAnimationFrame(callback),
+    cancelAnimationFrame: (handle: number) => {
+      frames.cancelAnimationFrame(handle);
+    },
+  } as unknown as TUI;
+  const loader = new MoonLoader(ui, style);
   loaders.push(loader);
-  return loader;
+  return { loader, requestRender };
 }
 
 afterEach(() => {
   for (const loader of loaders) loader.stop();
   loaders.length = 0;
+  vi.useRealTimers();
 });
 
 describe('MoonLoader', () => {
   it('keeps the tip out of renderInline so it does not squeeze against the swarm progress bar', () => {
-    const loader = createLoader();
+    const { loader } = createLoader();
     loader.setTip(' · Tip: ctrl+s: steer mid-turn');
     loader.setAvailableWidth(80);
 
@@ -32,11 +41,34 @@ describe('MoonLoader', () => {
   });
 
   it('still shows the tip on its own row when width allows', () => {
-    const loader = createLoader();
+    const { loader } = createLoader();
     loader.setTip(' · Tip: ctrl+s: steer mid-turn');
     loader.setAvailableWidth(80);
 
     const row = loader.render(80).join('\n');
     expect(row).toContain('Tip: ctrl+s: steer mid-turn');
+  });
+
+  it.each([
+    ['moon', ['🌑', '🌒', '🌓']],
+    ['braille', ['⠋', '⠙', '⠹']],
+  ] as const)('shows the next %s frame every 120 ms and stops requesting frames after stop()', (style, [first, second, third]) => {
+    vi.useFakeTimers();
+    const { loader, requestRender } = createLoader(style);
+    expect(loader.renderInline()).toBe(first);
+
+    vi.advanceTimersByTime(119);
+    expect(loader.renderInline()).toBe(first);
+    vi.advanceTimersByTime(1);
+    expect(loader.renderInline()).toBe(second);
+    vi.advanceTimersByTime(120);
+    expect(loader.renderInline()).toBe(third);
+
+    loader.stop();
+    requestRender.mockClear();
+    vi.advanceTimersByTime(1_000);
+    expect(loader.renderInline()).toBe(third);
+    expect(requestRender).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

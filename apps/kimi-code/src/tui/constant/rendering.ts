@@ -91,7 +91,6 @@ export const MAX_FINAL_OUTPUT_LABEL_CODE_UNITS = 2_000;
 export const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 export const BRAILLE_SPINNER_INTERVAL_MS = 80;
 
-export const TRANSCRIPT_GROUP_FRAME_INTERVAL_MS = 50;
 export const TRANSCRIPT_GROUP_SWEEP_COLUMNS_PER_SECOND = 42;
 export const TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH = 6;
 export const TRANSCRIPT_GROUP_SWEEP_RESTART_GAP_COLUMNS = 14;
@@ -102,4 +101,3 @@ export const FOREGROUND_BASH_HINT_DELAY_MS = 10_000;
 export const DETACH_HINT_TEXT = 'Press Ctrl+B to run in background';
 
 export const MOON_SPINNER_FRAMES = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'];
-export const MOON_SPINNER_INTERVAL_MS = 120;

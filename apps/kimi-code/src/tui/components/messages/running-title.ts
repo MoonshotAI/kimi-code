@@ -10,19 +10,33 @@ import {
 import { currentTheme } from '#/tui/theme';
 import { colorDistance, mixColors } from '#/tui/theme/color-mix';
 
-const MAX_FRAME_STEP_MS = 100;
+const MAX_FRAME_STEP_MS = 240;
 
 export class TitleSweep {
   private position = -TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH;
   private lastFrame: number | undefined;
   private level = 0;
+  // A wrapped detail title paints more characters than the columns passed to advance, so the
+  // gap check uses the widest text painted so far.
+  private paintedColumns = 0;
 
   get intensity(): number {
     return this.level;
   }
 
   get frameKey(): string {
-    return this.level === 0 ? 'static' : `${this.position.toFixed(3)}:${this.level.toFixed(4)}`;
+    if (this.level === 0) return 'static';
+    if (
+      this.position <= -TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH ||
+      this.position >= this.paintedColumns - 1 + TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH
+    ) {
+      return 'gap';
+    }
+    return `${this.position.toFixed(3)}:${this.level.toFixed(4)}`;
+  }
+
+  start(now: number): void {
+    this.lastFrame = now;
   }
 
   advance(now: number, columns: number, on: boolean): void {
@@ -38,13 +52,15 @@ export class TitleSweep {
   }
 
   paint(text: string, offset: number): string {
+    const characters = Array.from(text);
+    this.paintedColumns = Math.max(this.paintedColumns, offset + characters.length);
     if (this.level === 0) return currentTheme.fg('textDim', text);
     const dim = currentTheme.color('textDim');
     const strong = currentTheme.color('textStrong');
     const background = currentTheme.terminalBackground();
     const bandTarget = colorDistance(dim, background) > colorDistance(dim, strong) ? background : strong;
     const band = mixColors(dim, bandTarget, 0.45);
-    return Array.from(text).map((character, index) => {
+    return characters.map((character, index) => {
       const distance = Math.abs(index + offset - this.position);
       const amount = Math.max(0, 1 - distance / TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH);
       const eased = amount * amount * (3 - 2 * amount);

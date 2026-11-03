@@ -7,7 +7,7 @@ import {
 } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
-import { TRANSCRIPT_GROUP_FRAME_INTERVAL_MS, TRANSCRIPT_GROUP_HOLD_MS } from '#/tui/constant/rendering';
+import { TRANSCRIPT_GROUP_HOLD_MS } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import { mixColors } from '#/tui/theme/color-mix';
@@ -31,6 +31,8 @@ export interface TranscriptGroupInteraction {
   toggleRow(item: LogicalTranscriptItem): boolean;
   viewportRows(): number | undefined;
   requestRender(): void;
+  requestAnimationFrame(callback: (time: number) => void): number;
+  cancelAnimationFrame(handle: number): void;
 }
 
 type GroupTitle =
@@ -101,22 +103,24 @@ export class TranscriptGroupComponent implements Component {
   private model: TranscriptGroupModel;
   private readonly header = new TruncatedHeaderLine('');
   private frame: Frame | undefined;
-  private interval: ReturnType<typeof setInterval> | undefined;
+  private frameRequest: number | undefined;
   private disposed = false;
   private readonly sweep = new TitleSweep();
   private lastActiveAt: number | undefined;
+  private shownAnimation: string | undefined;
 
   constructor(
     model: TranscriptGroupModel,
     private readonly interaction: TranscriptGroupInteraction,
   ) {
     this.model = model;
-    this.syncTimer();
+    this.syncFrames();
   }
 
   setModel(model: TranscriptGroupModel): void {
+    if (this.model.active) this.lastActiveAt = Date.now();
     this.model = model;
-    this.syncTimer();
+    this.syncFrames();
   }
 
   invalidate(): void {
@@ -127,7 +131,7 @@ export class TranscriptGroupComponent implements Component {
 
   dispose(): void {
     this.disposed = true;
-    this.stopTimer();
+    this.stopFrames();
     this.frame = undefined;
   }
 
@@ -153,10 +157,7 @@ export class TranscriptGroupComponent implements Component {
       return previous.lines;
     }
 
-    const titleText = shape.title.kind === 'summary'
-      ? this.model.summary.fragments.join(', ')
-      : itemText(shape.title.item);
-    this.advance(now, visibleWidth(`${MARKER} ${titleText}`));
+    const titleText = titleTextOf(shape, this.model.summary);
     const animationKey = this.sweep.frameKey;
     const tail = shape.body.kind === 'tail' ? shape.body.items : [];
     const key: FrameKey = {
@@ -316,11 +317,6 @@ export class TranscriptGroupComponent implements Component {
     );
   }
 
-  private advance(now: number, columns: number): void {
-    if (this.model.active) this.lastActiveAt = now;
-    this.sweep.advance(now, columns, this.model.active || this.holding(now));
-  }
-
   private holding(now: number): boolean {
     return this.lastActiveAt !== undefined && now - this.lastActiveAt < TRANSCRIPT_GROUP_HOLD_MS;
   }
@@ -335,26 +331,39 @@ export class TranscriptGroupComponent implements Component {
     }
   }
 
-  private syncTimer(): void {
-    if (this.needsClock(Date.now()) && !this.disposed) {
-      if (this.interval !== undefined) return;
-      this.interval = setInterval(() => {
-        if (!this.needsClock(Date.now())) {
-          this.stopTimer();
-          return;
-        }
-        this.interaction.requestRender();
-      }, TRANSCRIPT_GROUP_FRAME_INTERVAL_MS);
+  private syncFrames(): void {
+    if (this.disposed || !this.needsClock(Date.now())) {
+      this.stopFrames();
       return;
     }
-    this.stopTimer();
+    if (this.frameRequest !== undefined) return;
+    this.sweep.start(performance.now());
+    this.frameRequest = this.interaction.requestAnimationFrame(this.onFrame);
   }
 
-  private stopTimer(): void {
-    if (this.interval === undefined) return;
-    clearInterval(this.interval);
-    this.interval = undefined;
+  private readonly onFrame = (time: number): void => {
+    this.frameRequest = undefined;
+    const now = Date.now();
+    const columns = visibleWidth(`${MARKER} ${titleTextOf(shapeOf(this.model), this.model.summary)}`);
+    this.sweep.advance(time, columns, this.model.active || this.holding(now));
+    const seconds = this.model.members.map((item) => elapsedSeconds(item.status, now)).join(',');
+    const shown = `${this.sweep.frameKey}|${seconds}`;
+    if (shown !== this.shownAnimation) {
+      this.shownAnimation = shown;
+      this.interaction.requestRender();
+    }
+    if (this.needsClock(now)) this.frameRequest = this.interaction.requestAnimationFrame(this.onFrame);
+  };
+
+  private stopFrames(): void {
+    if (this.frameRequest === undefined) return;
+    this.interaction.cancelAnimationFrame(this.frameRequest);
+    this.frameRequest = undefined;
   }
+}
+
+function titleTextOf(shape: GroupShape, summary: GroupSummary): string {
+  return shape.title.kind === 'summary' ? summary.fragments.join(', ') : itemText(shape.title.item);
 }
 
 function shapeOf(model: TranscriptGroupModel): GroupShape {
