@@ -17,6 +17,7 @@ import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
+import { MoonLoader } from '#/tui/components/chrome/moon-loader';
 import type { FooterGitBinding } from '#/tui/components/chrome/footer';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import { maybeShowModelMigrationPrompt } from '#/tui/controllers/model-migration';
@@ -3549,6 +3550,31 @@ describe('KimiTUI startup', () => {
 
     expect(driver.terminalFocusTrackingDispose).toBeUndefined();
     expect(onExit).toHaveBeenCalledWith(0);
+  });
+
+  it('removes the startup progress row once ready and keeps the failure row', async () => {
+    const startDriver = (initMainTui: () => Promise<boolean>): MigrateExitDriver => {
+      const driver = makeDriver(makeHarness(), makeStartupInput()) as unknown as MigrateExitDriver;
+      vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
+      vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+      vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
+      vi.spyOn(driver, 'initMainTui').mockImplementation(initMainTui);
+      vi.spyOn(driver as unknown as { finishStartup(): Promise<void> }, 'finishStartup').mockResolvedValue();
+      return driver;
+    };
+    const transcriptText = (driver: MigrateExitDriver): string =>
+      driver.state.transcriptContainer.children.flatMap((child) => child.render(80)).join('\n');
+
+    const ready = startDriver(async () => false);
+    await ready.start();
+    expect(ready.state.transcriptContainer.children.some((child) => child instanceof MoonLoader)).toBe(false);
+    expect(transcriptText(ready)).not.toContain('Ready.');
+
+    const failed = startDriver(async () => {
+      throw new Error('startup boom');
+    });
+    await expect(failed.start()).rejects.toThrow('startup boom');
+    expect(transcriptText(failed)).toContain('Startup failed.');
   });
 
   it('disposes terminal tracking when post-migration startup fails', async () => {
