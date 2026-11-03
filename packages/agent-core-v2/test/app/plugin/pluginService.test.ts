@@ -304,11 +304,13 @@ describe('PluginService (plugin boundary)', () => {
     const artifactFetch = vi.fn(async () => new Response(buffer)) as unknown as typeof fetch;
     const catalogFetch = vi.fn();
     vi.stubGlobal('fetch', catalogFetch);
+    const marketplaceSource = 'https://marketplace.example.test/catalog?token=secret&signature=xyz';
     const resolved: MarketplacePluginInstall = {
       source: 'https://marketplace.example.test/resolved-demo.zip',
       version: '2.0.0',
       sha256sum: createHash('sha256').update(buffer).digest('hex'),
       catalogId: 'resolved-demo',
+      marketplaceSource,
       origin: 'marketplace',
       expectedPluginId: 'resolved-demo',
       fetchImpl: artifactFetch,
@@ -334,6 +336,13 @@ describe('PluginService (plugin boundary)', () => {
       expect(artifactFetch).toHaveBeenCalledTimes(1);
       expect(catalogFetch).not.toHaveBeenCalled();
       expect(reloads).toEqual([{ added: [], removed: [], errors: [] }]);
+      const installed = JSON.parse(
+        await readFile(path.join(home, 'plugins', 'installed.json'), 'utf8'),
+      ) as InstalledFile;
+      expect(installed.plugins[0]?.marketplaceSource).toBe(
+        `sha256:${createHash('sha256').update(marketplaceSource).digest('hex')}`,
+      );
+      expect(installed.plugins[0]?.originalSource).toBe(resolved.source);
     } finally {
       host.dispose();
     }

@@ -18,7 +18,7 @@ import { IProviderService } from '#/llm-adapter/provider/provider';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 
-import { PluginAvailabilityStore } from './availability';
+import { PluginAvailabilityStore, pluginAvailabilitySourceKey } from './availability';
 import { PluginManager } from './manager';
 import {
   pluginClientForIdentity,
@@ -149,7 +149,9 @@ export class PluginService extends Service implements IPluginService {
                 id: resolved.expectedPluginId,
                 origin: 'marketplace' as const,
                 catalogId: resolved.catalogId,
-                marketplaceSource: resolved.marketplaceSource,
+                marketplaceSource: resolved.marketplaceSource === undefined
+                  ? undefined
+                  : pluginAvailabilitySourceKey(resolved.marketplaceSource),
               };
               if (!this.availability.supports(installation, this.client, this.platform)) {
                 throw new Error2(
@@ -163,7 +165,9 @@ export class PluginService extends Service implements IPluginService {
                 expectedPluginId: resolved.expectedPluginId,
                 origin: resolved.origin,
                 catalogId: resolved.catalogId,
-                marketplaceSource: resolved.marketplaceSource,
+                marketplaceSource: resolved.marketplaceSource === undefined
+                  ? undefined
+                  : pluginAvailabilitySourceKey(resolved.marketplaceSource),
                 migrateFrom: input.migrateFrom,
                 requiredSkill: resolvedInstall?.requiredSkill,
                 fetchImpl: resolved.fetchImpl,

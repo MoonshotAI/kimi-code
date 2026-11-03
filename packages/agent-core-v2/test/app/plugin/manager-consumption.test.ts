@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -1067,9 +1068,9 @@ describe('PluginManager consumption plane', () => {
       await readFile(path.join(home, 'plugins', 'availability.json'), 'utf8'),
     ) as { sources: Record<string, unknown> };
     expect(Object.keys(persisted.sources).toSorted()).toEqual([
-      'https://marketplace.test/first',
-      'https://marketplace.test/second',
-    ]);
+      `sha256:${createHash('sha256').update('https://marketplace.test/first').digest('hex')}`,
+      `sha256:${createHash('sha256').update('https://marketplace.test/second').digest('hex')}`,
+    ].toSorted());
   });
 
   it('propagates availability persistence failures', async () => {
@@ -1080,5 +1081,55 @@ describe('PluginManager consumption plane', () => {
       source: 'https://marketplace.test/default',
       plugins: [{ id: 'demo', displayName: 'Demo', source: 'https://cdn.example.test/demo.zip' }],
     })).rejects.toThrow();
+  });
+
+  it('hashes authenticated provenance and migrates plaintext availability entries', async () => {
+    const home = await makeKimiHome();
+    await mkdir(path.join(home, 'plugins'), { recursive: true });
+    const marketplaceSource = 'https://marketplace.test/catalog?token=legacy-secret';
+    const artifactSource = 'https://cdn.example.test/plugin.zip?signature=legacy-signature';
+    await writeFile(
+      path.join(home, 'plugins', 'availability.json'),
+      JSON.stringify({
+        version: 1,
+        sources: {
+          [marketplaceSource]: {
+            demo: { clients: ['desktop'], artifactSource, checkedAt: '2026-01-01T00:00:00.000Z' },
+          },
+        },
+      }),
+      'utf8',
+    );
+    const availability = new PluginAvailabilityStore(home);
+    await availability.refresh();
+    const record = {
+      id: 'demo',
+      origin: 'marketplace' as const,
+      catalogId: 'demo',
+      marketplaceSource,
+      originalSource: artifactSource,
+    };
+    expect(availability.supports(record, 'desktop', process.platform)).toBe(true);
+    expect(availability.supports(record, 'cli', process.platform)).toBe(false);
+
+    await availability.update({
+      source: marketplaceSource,
+      plugins: [{ id: 'demo', displayName: 'Demo', source: artifactSource, clients: ['desktop', 'cli'] }],
+    });
+    const text = await readFile(path.join(home, 'plugins', 'availability.json'), 'utf8');
+    expect(text).not.toContain('legacy-secret');
+    expect(text).not.toContain('legacy-signature');
+    expect(text).not.toContain('marketplace.test');
+    expect(text).not.toContain('cdn.example.test');
+    const persisted = JSON.parse(text) as {
+      sources: Record<string, { demo: { artifactSourceKey: string; artifactSource?: string } }>;
+    };
+    const sourceKey = `sha256:${createHash('sha256').update(marketplaceSource).digest('hex')}`;
+    expect(Object.keys(persisted.sources)).toEqual([sourceKey]);
+    expect(persisted.sources[sourceKey]?.demo.artifactSourceKey).toBe(
+      `sha256:${createHash('sha256').update(artifactSource).digest('hex')}`,
+    );
+    expect(persisted.sources[sourceKey]?.demo.artifactSource).toBeUndefined();
+    expect(availability.supports(record, 'cli', process.platform)).toBe(true);
   });
 });

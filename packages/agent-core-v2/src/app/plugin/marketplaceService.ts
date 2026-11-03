@@ -15,7 +15,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes, PluginErrors } from '#/errors';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 
-import { PluginAvailabilityStore } from './availability';
+import { PluginAvailabilityStore, pluginAvailabilitySourceKey } from './availability';
 import {
   isMissingMarketplaceTokenError,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
@@ -147,7 +147,7 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
       version: entry.version,
       sha256sum: sourceKind === 'zip-url' ? entry.sha256sum : undefined,
       catalogId: entry.id,
-      marketplaceSource: marketplace.source,
+      marketplaceSource: pluginAvailabilitySourceKey(marketplace.source),
       origin: 'marketplace',
       expectedPluginId: entry.id,
       fetchImpl: this.artifactFetch(context),

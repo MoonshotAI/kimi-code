@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import lockfile from 'proper-lockfile';
@@ -15,7 +15,7 @@ import type { PluginRecord } from './types';
 export interface PluginAvailabilityEntry {
   readonly clients?: readonly PluginClient[];
   readonly platforms?: readonly PluginMarketplacePlatform[];
-  readonly artifactSource?: string;
+  readonly artifactSourceKey?: string;
   readonly checkedAt: string;
 }
 
@@ -31,8 +31,10 @@ type AvailabilityRecord = Pick<
 
 const EMPTY: PluginAvailabilityFile = { version: 1, sources: {} };
 
-function normalizeSource(source: string): string {
-  return source.trim();
+export function pluginAvailabilitySourceKey(source: string): string {
+  const normalized = source.trim();
+  if (/^sha256:[a-f0-9]{64}$/.test(normalized)) return normalized;
+  return `sha256:${createHash('sha256').update(normalized).digest('hex')}`;
 }
 
 function availabilityValue(entry: PluginAvailabilityEntry): string {
@@ -51,10 +53,21 @@ function catalogEntries(
     {
       clients: entry.clients,
       platforms: entry.platforms,
-      artifactSource: entry.source,
+      artifactSourceKey: pluginAvailabilitySourceKey(entry.source),
       checkedAt,
     },
   ]));
+}
+
+function migrateAvailabilityEntry(
+  entry: PluginAvailabilityEntry & { readonly artifactSource?: string },
+): PluginAvailabilityEntry {
+  const { artifactSource, ...rest } = entry;
+  return {
+    ...rest,
+    artifactSourceKey: entry.artifactSourceKey ??
+      (artifactSource === undefined ? undefined : pluginAvailabilitySourceKey(artifactSource)),
+  };
 }
 
 async function readAvailability(kimiHomeDir: string): Promise<PluginAvailabilityFile> {
@@ -64,7 +77,16 @@ async function readAvailability(kimiHomeDir: string): Promise<PluginAvailability
     if (parsed.version !== 1 || typeof parsed.sources !== 'object' || parsed.sources === null) {
       return EMPTY;
     }
-    return parsed;
+    return {
+      version: 1,
+      sources: Object.fromEntries(Object.entries(parsed.sources).map(([source, entries]) => [
+        pluginAvailabilitySourceKey(source),
+        Object.fromEntries(Object.entries(entries).map(([id, entry]) => [
+          id,
+          migrateAvailabilityEntry(entry),
+        ])),
+      ])),
+    };
   } catch {
     return EMPTY;
   }
@@ -83,7 +105,7 @@ export class PluginAvailabilityStore {
   }
 
   async update(marketplace: PluginMarketplace): Promise<boolean> {
-    const source = normalizeSource(marketplace.source);
+    const source = pluginAvailabilitySourceKey(marketplace.source);
     const checkedAt = new Date().toISOString();
     const incoming = catalogEntries(marketplace, checkedAt);
     await mkdir(path.dirname(this.filePath), { recursive: true });
@@ -126,15 +148,18 @@ export class PluginAvailabilityStore {
     const catalogId = record.catalogId ?? (record.origin === 'unknown' ? record.id : undefined);
     if (catalogId === undefined) return undefined;
     if (record.marketplaceSource !== undefined) {
-      return this.current.sources[normalizeSource(record.marketplaceSource)]?.[catalogId];
+      return this.current.sources[pluginAvailabilitySourceKey(record.marketplaceSource)]?.[catalogId];
     }
     const matches = Object.values(this.current.sources)
       .map((entries) => entries[catalogId])
       .filter((entry): entry is PluginAvailabilityEntry => entry !== undefined);
     if (matches.length === 1) return matches[0];
     if (matches.length === 0) return undefined;
+    const originalSourceKey = record.originalSource === undefined
+      ? undefined
+      : pluginAvailabilitySourceKey(record.originalSource);
     const provenanceMatches = matches.filter(
-      (entry) => entry.artifactSource !== undefined && entry.artifactSource === record.originalSource,
+      (entry) => entry.artifactSourceKey !== undefined && entry.artifactSourceKey === originalSourceKey,
     );
     if (provenanceMatches.length === 1) return provenanceMatches[0];
     return { clients: [], platforms: [], checkedAt: '' };
