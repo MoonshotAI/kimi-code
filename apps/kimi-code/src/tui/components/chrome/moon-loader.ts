@@ -1,12 +1,10 @@
 import { Text, visibleWidth } from '@moonshot-ai/pi-tui';
 import type { TUI } from '@moonshot-ai/pi-tui';
 
-import { BRAILLE_SPINNER_FRAMES, MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
+import { BRAILLE_SPINNER_FRAMES, MOON_LOADER_FRAME_MS, MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import { currentTheme } from '#/tui/theme';
 
 export type SpinnerStyle = 'moon' | 'braille';
-
-const FRAME_MS = 120;
 
 export class MoonLoader extends Text {
   private currentFrame = 0;
@@ -88,7 +86,7 @@ export class MoonLoader extends Text {
   }
 
   private readonly onFrame = (time: number): void => {
-    const frame = Math.floor(Math.max(0, time - this.startedAt) / FRAME_MS) % this.frames.length;
+    const frame = Math.floor(Math.max(0, time - this.startedAt) / MOON_LOADER_FRAME_MS) % this.frames.length;
     if (frame !== this.currentFrame) {
       this.currentFrame = frame;
       this.updateDisplay();

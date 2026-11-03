@@ -101,3 +101,4 @@ export const FOREGROUND_BASH_HINT_DELAY_MS = 10_000;
 export const DETACH_HINT_TEXT = 'Press Ctrl+B to run in background';
 
 export const MOON_SPINNER_FRAMES = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'];
+export const MOON_LOADER_FRAME_MS = 120;
