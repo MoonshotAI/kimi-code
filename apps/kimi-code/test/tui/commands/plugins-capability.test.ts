@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   log,
@@ -18,6 +22,7 @@ const {
   installMarketplaceEntryFromPanel,
   installPluginFromSource,
   isDefaultMarketplaceCatalog,
+  loadMarketplaceCatalog,
   pollCapabilityInstall,
   removePlugin,
 } = __pluginsCommandInternals;
@@ -62,12 +67,15 @@ function fakeHost(overrides: {
   const getCapability =
     overrides.capabilityStatus ??
     (() => Promise.resolve({ state: 'ready', steps: [], install: { running: false } }));
+  const reloadPlugins = vi.fn(async () => undefined);
+  const refreshPluginCommands = vi.fn(async () => undefined);
   const host = {
     session: undefined,
     harness: {
       listPlugins: () => Promise.resolve(installed),
       installPlugin,
       removePlugin: () => Promise.resolve(),
+      reloadPlugins,
       getCapability,
       installCapability,
       listCapabilities: () => Promise.resolve([]),
@@ -86,6 +94,7 @@ function fakeHost(overrides: {
       notices.push({ title, detail });
       transcriptEntries.push(new NoticeMessageComponent(title, detail));
     },
+    refreshPluginCommands,
     restoreEditor: () => undefined,
     state: {
       appState: { workDir: '/workspace' },
@@ -103,6 +112,8 @@ function fakeHost(overrides: {
     transcriptEntries,
     installCapability,
     installPlugin,
+    reloadPlugins,
+    refreshPluginCommands,
   };
 }
 
@@ -169,6 +180,7 @@ describe('plugins command capability surface', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     resetCapabilitiesCache();
   });
 
@@ -190,6 +202,45 @@ describe('plugins command capability surface', () => {
     expect(installedPluginForMarketplaceEntry('demo', [custom], undefined, true)).toBeUndefined();
     expect(installedPluginForMarketplaceEntry('demo', [marketplace], undefined, true)).toBe(marketplace);
     expect(installedPluginForMarketplaceEntry('demo', [legacy], undefined, true)).toBe(legacy);
+  });
+
+  it('refreshes plugin slash commands after marketplace availability reloads', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'plugins-command-marketplace-'));
+    try {
+      const { host, reloadPlugins, refreshPluginCommands } = fakeHost({});
+      const setInstalled = vi.fn();
+      const panel = {
+        setInstalled,
+        setMarketplace: vi.fn(),
+        setMarketplaceCatalogVersions: vi.fn(),
+        setMarketplaceError: vi.fn(),
+      } as never;
+      vi.stubEnv('KIMI_CODE_HOME', home);
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        plugins: [{
+          id: 'demo',
+          displayName: 'Demo',
+          version: '1.0.0',
+          source: 'https://cdn.example.test/demo.zip',
+          clients: ['desktop'],
+        }],
+      }), { status: 200 })));
+
+      await loadMarketplaceCatalog(host, panel, 'https://marketplace.test/catalog');
+
+      expect(reloadPlugins).toHaveBeenCalledOnce();
+      expect(refreshPluginCommands).toHaveBeenCalledOnce();
+      expect(setInstalled).toHaveBeenCalledOnce();
+      expect(refreshPluginCommands.mock.invocationCallOrder[0]).toBeGreaterThan(
+        reloadPlugins.mock.invocationCallOrder[0]!,
+      );
+
+      await loadMarketplaceCatalog(host, panel, 'https://marketplace.test/catalog');
+      expect(reloadPlugins).toHaveBeenCalledOnce();
+      expect(refreshPluginCommands).toHaveBeenCalledOnce();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('installs ordinary marketplace entries by id, expected version and digest', async () => {

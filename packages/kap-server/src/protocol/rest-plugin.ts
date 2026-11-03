@@ -13,6 +13,9 @@ export const pluginGithubMetadataSchema = z.object({
 export const pluginSummarySchema = z.object({
   id: z.string(),
   displayName: z.string(),
+  description: z.string().optional(),
+  shortDescription: z.string().optional(),
+  longDescription: z.string().optional(),
   version: z.string().optional(),
   enabled: z.boolean(),
   state: z.enum(['ok', 'error']),
@@ -104,6 +107,7 @@ export const installPluginRequestSchema = z.union([
 export type InstallPluginRequest = z.infer<typeof installPluginRequestSchema>;
 
 export const pluginMarketplaceLocalizedTextSchema = z.object({
+  displayName: z.string().optional(),
   cliDescription: z.string().optional(),
   longDescription: z.string().optional(),
   shortDescription: z.string().optional(),
@@ -128,6 +132,8 @@ export const pluginMarketplaceEntrySchema = z.object({
   tier: z.enum(['official', 'curated', 'third-party']),
   displayName: z.string(),
   description: z.string().optional(),
+  shortDescription: z.string().optional(),
+  longDescription: z.string().optional(),
   homepage: z.string().optional(),
   keywords: z.array(z.string()).optional(),
   version: z.string().optional(),
