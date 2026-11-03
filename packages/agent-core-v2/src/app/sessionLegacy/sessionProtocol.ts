@@ -71,20 +71,6 @@ export const updateSessionProfileRequestSchema = z.object({
 });
 export type UpdateSessionProfileRequest = z.infer<typeof updateSessionProfileRequestSchema>;
 
-export const sessionStatusResponseSchema = z.object({
-  busy: z.boolean(),
-  model: z.string().optional(),
-  thinking_level: z.string(),
-  permission: z.string(),
-  plan_mode: z.boolean(),
-  swarm_mode: z.boolean(),
-  tower_mode: z.boolean().optional(),
-  context_tokens: z.number().int().nonnegative(),
-  max_context_tokens: z.number().int().nonnegative().optional(),
-  context_usage: z.number().min(0).max(1).optional(),
-});
-export type SessionStatusResponse = z.infer<typeof sessionStatusResponseSchema>;
-
 export interface SessionUsage {
   input_tokens: number;
   output_tokens: number;

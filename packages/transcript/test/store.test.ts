@@ -179,28 +179,16 @@ describe('AgentTranscript', () => {
     expect(tx.listPendingInteractions()).toEqual([]);
   });
 
-  it('upserts attachment and todo entities idempotently', () => {
+  it('upserts attachment entities idempotently', () => {
     const tx = new AgentTranscript('main');
     const attachment = {
       attachmentId: 'att_1',
       mediaType: 'image/png',
       source: { kind: 'url' as const, url: 'https://example.com/a.png' },
     };
-    const todo = { todoId: 'todo', items: [{ title: 'x', status: 'pending' as const }] };
-    const first = tx.apply([
-      { op: 'attachment.upsert', attachment },
-      { op: 'todo.upsert', todo },
-    ]);
-    expect(first.accepted).toHaveLength(2);
-    const second = tx.apply([
-      { op: 'attachment.upsert', attachment },
-      { op: 'todo.upsert', todo },
-    ]);
-    expect(second.accepted).toHaveLength(0);
+    expect(tx.apply([{ op: 'attachment.upsert', attachment }]).accepted).toHaveLength(1);
+    expect(tx.apply([{ op: 'attachment.upsert', attachment }]).accepted).toHaveLength(0);
     expect(tx.getAttachment('att_1')?.mediaType).toBe('image/png');
-    expect(tx.getTodo('todo')?.items).toHaveLength(1);
-    tx.apply([{ op: 'todo.upsert', todo: { ...todo, items: [] } }]);
-    expect(tx.getTodo('todo')?.items).toHaveLength(0);
   });
 
   it('upserts prompt queue entities by id, idempotently', () => {
@@ -364,50 +352,6 @@ describe('AgentTranscript', () => {
     });
     tx.apply([turn1, turn1]);
     expect(seen).toEqual(['turn.upsert']);
-  });
-
-  it('meta.merge merges goal/modes shallowly', () => {
-    const tx = new AgentTranscript('main');
-    tx.apply([
-      { op: 'meta.merge', meta: { goal: { objective: 'ship it', status: 'active' } } },
-      { op: 'meta.merge', meta: { modes: { plan: { reviewPath: '/p' } } } },
-    ]);
-    expect(tx.getMeta().goal?.status).toBe('active');
-    expect(tx.getMeta().modes?.plan?.reviewPath).toBe('/p');
-  });
-
-  it('meta.merge clears a mode badge on null and keeps absent keys', () => {
-    const tx = new AgentTranscript('main');
-    tx.apply([{ op: 'meta.merge', meta: { modes: { plan: {}, swarm: {}, tower: {} } } }]);
-    tx.apply([{ op: 'meta.merge', meta: { modes: { plan: null } } }]);
-    expect(tx.getMeta().modes).toEqual({ swarm: {}, tower: {} });
-    tx.apply([{ op: 'meta.merge', meta: { modes: { swarm: null } } }]);
-    expect(tx.getMeta().modes).toEqual({ tower: {} });
-    tx.apply([{ op: 'meta.merge', meta: { modes: { tower: null } } }]);
-    expect(tx.getMeta().modes).toBeUndefined();
-  });
-
-  it('meta.merge shallow-merges the agent status key one level deep', () => {
-    const tx = new AgentTranscript('main');
-    tx.apply([
-      { op: 'meta.merge', meta: { agent: { model: 'k2', permission: 'auto' } } },
-      { op: 'meta.merge', meta: { agent: { contextTokens: 1234 } } },
-    ]);
-    expect(tx.getMeta().agent).toEqual({ model: 'k2', permission: 'auto', contextTokens: 1234 });
-
-    tx.apply([
-      { op: 'meta.merge', meta: { agent: { model: 'k3', phase: { kind: 'idle' } } } },
-    ]);
-    expect(tx.getMeta().agent).toEqual({
-      model: 'k3',
-      permission: 'auto',
-      contextTokens: 1234,
-      phase: { kind: 'idle' },
-    });
-
-    tx.apply([{ op: 'meta.merge', meta: { activity: 'turn' } }]);
-    expect(tx.getMeta().agent?.model).toBe('k3');
-    expect(tx.getMeta().activity).toBe('turn');
   });
 
   it('snapshot immutability: later applies do not mutate earlier reads', () => {

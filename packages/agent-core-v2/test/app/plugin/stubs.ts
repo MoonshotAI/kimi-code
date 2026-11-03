@@ -28,6 +28,7 @@ export function stubPluginService(options: StubPluginServiceOptions): IPluginSer
     getPluginInfo: async () => {
       throw new Error('getPluginInfo is not used by this stub');
     },
+    previewPlugin: async () => ({ skills: [], mcpServers: [] }),
     listPluginCommands: async () => [],
     checkUpdates: async () => [],
     pluginSkillRoots: async () => [],

@@ -462,6 +462,7 @@ describe('same-turn MCP tool replacement', () => {
     const authenticating = createControlledPromise<void>();
     const authorized = createControlledPromise<void>();
     vi.spyOn(oauthService, 'beginAuthorization').mockResolvedValue({
+      waitId: 'tool-select-auth-wait',
       authorizationUrl: new URL('https://example.test/authorize'),
       complete: async () => {
         authenticating.resolve();

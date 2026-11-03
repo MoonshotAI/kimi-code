@@ -197,6 +197,32 @@ describe("Webview model metadata", () => {
   });
 });
 
+describe("Webview model catalog refresh", () => {
+  it("shows new models without changing the current selection or defaults", () => {
+    useSettingsStore.setState({
+      currentModel: "reasoning",
+      thinkingEffort: "low",
+      defaultThinking: true,
+      defaultThinkingEffort: "low",
+    });
+    const models = [
+      ...MODELS,
+      { id: "new", name: "New", provider: "managed:kimi-code", capabilities: [] },
+    ];
+
+    useSettingsStore.getState().setModels(models);
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      models,
+      currentModel: "reasoning",
+      thinkingEffort: "low",
+      defaultModel: "plain",
+      defaultThinking: true,
+      defaultThinkingEffort: "low",
+    });
+  });
+});
+
 describe("Webview MCP update bridge", () => {
   it("sends a lossless structured MCP edit request to the extension host", async () => {
     const posted: unknown[] = [];

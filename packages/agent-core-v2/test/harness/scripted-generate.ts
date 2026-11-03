@@ -622,7 +622,10 @@ export function aRequesterFromModelEvents(requester: ModelEventRequester): LlmRe
             control.onEvent?.({ type: 'llm.streaming.part', part: event.part });
             break;
           case 'usage':
-            control.onEvent?.({ type: 'llm.streaming.usage', usage: event.usage });
+            control.onEvent?.({
+              type: 'llm.streaming.usage',
+              usage: event.usage,
+            });
             break;
           case 'finish': {
             if (!sawPart) {

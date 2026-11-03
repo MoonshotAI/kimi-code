@@ -130,7 +130,7 @@ export function createHistoryAccumulator(meta?: AssistantMetaInput): HistoryAccu
       usage = {
         inputOther: value.inputOther ?? usage?.inputOther ?? 0,
         output: value.output ?? usage?.output ?? 0,
-        inputCacheRead: value.inputCacheRead ?? usage?.inputCacheRead ?? 0,
+        inputCacheRead: value.inputCacheRead ?? usage?.inputCacheRead,
         inputCacheCreation: value.inputCacheCreation ?? usage?.inputCacheCreation ?? 0,
         raw: value.raw !== undefined ? { ...usage?.raw, ...value.raw } : usage?.raw,
       };

@@ -31,6 +31,40 @@ describe('QueuePaneComponent', () => {
     expect(output).toContain('ctrl-s to steer immediately');
   });
 
+  it('renders a model switch as a compaction command rather than a prompt', () => {
+    const component = inlinePane({
+      isCompacting: false,
+      isStreaming: true,
+      canSteerImmediately: true,
+      availableModels: {
+        'model-b': {
+          provider: 'custom',
+          model: 'upstream-b',
+          displayName: 'Model B',
+          maxContextSize: 100,
+        },
+      },
+      messages: [
+        {
+          text: '/model model-b',
+          mode: 'model-switch',
+          alias: 'model-b',
+          thinking: 'low',
+          persist: 'session',
+          queuedAfterCompactionSerial: 0,
+        },
+        { text: 'after switch' },
+      ],
+    });
+
+    const output = stripAnsi(component.render(120).join('\n'));
+
+    expect(output).toContain('Compact, then switch to Model B with thinking low');
+    expect(output).not.toContain('❯ /model model-b');
+    expect(output).not.toContain('ctrl-s to steer immediately');
+    expect(output).toContain('will send after current task');
+  });
+
   it('renders compaction hint when waiting for compaction', () => {
     const component = inlinePane({
       isCompacting: true,
