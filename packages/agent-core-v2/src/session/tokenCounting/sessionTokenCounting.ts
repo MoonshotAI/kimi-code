@@ -5,9 +5,8 @@ import type {
   TokenCountingRequest,
   TokenCountingStrategy,
 } from '#/agent/tokenCounting/tokenCounting';
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ToolDescription as Tool } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm/usage';
+import type { Message, ToolDescription as Tool } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm-requester/usage';
 
 export interface TokenCountingRebaseInput {
   readonly length: number;

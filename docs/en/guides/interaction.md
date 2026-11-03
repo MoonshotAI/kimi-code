@@ -48,6 +48,7 @@ Type `@` to trigger file-path completion; the selected path is inserted in relat
 - **Where it works**: both git and non-git directories; hidden paths are included, `.git` is excluded
 - **Folder suggestions**: end with `/`, so you can keep completing paths inside them
 - **Fallback**: while the fast search helper is still downloading, Kimi Code falls back to a basic filesystem scan
+- **Remote sessions**: when the session is bound to a [remote environment](../guides/remote-environment.md), completion candidates are served from the target's filesystem. Paths you type into a prompt also resolve on the target — the agent cannot read your local files by path, while pasted images and videos are unaffected (they travel as binary attachments)
 
 > `@` references and slash commands are two separate mechanisms: `@` gives the agent file context, while `/` invokes built-in features or Skills.
 
@@ -68,19 +69,19 @@ Approvals are not triggered for regular tool calls in Ask When Needed mode, nor 
 
 **Ask When Needed mode** (formerly YOLO), enabled with `/yolo`, auto-approves regular tool calls, making it suitable for batch tasks you know are safe. It still asks before sensitive actions — accessing sensitive files such as `.env` or SSH keys, running dangerous commands such as `shutdown` or `rm -rf`, or exiting Plan mode — and the agent can still ask you questions.
 
-**Never Ask mode** (formerly Auto), enabled with `/auto`, is the fully unattended mode: every tool approval is handled automatically, including sensitive files and plan exits, and the agent never asks you questions — it decides everything on its own. The built-in dangerous-command guard asks for your confirmation before commands such as `shutdown`, `reboot`, or `rm -rf` in Always Ask and Ask When Needed mode; in Never Ask mode these commands run without interruption.
+**Never Ask mode** (formerly Auto), enabled with `/auto`, is the fully unattended mode: every tool approval is handled automatically, including sensitive files, and the agent never asks you questions — it decides everything on its own. The one exception is Plan mode: a plan still waits for your review before the agent carries it out. The built-in dangerous-command guard asks for your confirmation before commands such as `shutdown`, `reboot`, or `rm -rf` in Always Ask and Ask When Needed mode; in Never Ask mode these commands run without interruption.
 
 
 ## Mode switching
 
 ### Plan mode
 
-In Plan mode the agent first outputs an action plan and waits for your approval before modifying any files — useful for complex or high-risk tasks.
+In Plan mode the agent first outputs an action plan and waits for your approval before modifying any files — useful for complex or high-risk tasks. Only you can turn Plan mode on; the agent never enters it on its own, even when you ask it to in chat.
 
 - Toggle: `Shift-Tab` or `/plan`
 - Clear the current plan: `/plan clear` (only while idle)
 
-After producing a plan the agent pauses for your review — you can approve it, reject it, or ask for revisions. Exiting Plan mode requires your confirmation even if Ask When Needed mode is also active. Never Ask mode is the exception: plan exits are approved automatically and marked as "Auto-approved" in the transcript.
+After producing a plan the agent pauses for your review — you can approve it, reject it, or ask for revisions. Exiting Plan mode always requires your confirmation, in every permission mode, including Never Ask.
 
 ### Shell mode
 
@@ -132,7 +133,7 @@ The input box remains usable while the agent is thinking or calling tools, and s
 - **`Esc` / `Ctrl-C`**: interrupt the current turn
 - **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output and compaction summaries
 
-When the agent is waiting for background tasks through `WaitFor`, sending a message with `Enter` (or `Ctrl-S`) steers it in and ends that wait early; messages already queued when the wait starts are steered in as well. If the queue holds a shell command or a skill, the queue and new input stay queued until the turn ends instead. Background tasks keep running and existing tool results are preserved. If other foreground tools remain in the same batch, the agent processes your message after they return.
+When the agent is waiting for background tasks through `WaitFor`, sending a message with `Enter` steers it in and ends that wait early; messages already queued when the wait starts are steered in automatically as well. If the queue holds a shell command or a skill, automatic steering is skipped and the queue and new input stay queued until the turn ends. Press `Ctrl-S` to manually steer non-shell inputs from the editor and the queue. Background tasks keep running and existing tool results are preserved. If other foreground tools remain in the same batch, the agent processes your message after they return.
 
 ## External editor
 

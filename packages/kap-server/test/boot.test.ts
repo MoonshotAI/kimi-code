@@ -18,7 +18,11 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
-import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
+import {
+  listenWithPortRetry,
+  type RunningServer,
+  startServer,
+} from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authedFetch } from './helpers/auth';
 
@@ -149,6 +153,21 @@ describe('server-v2 boot', () => {
     });
     const overridden = server.core.accessor.get(IHostRequestHeaders);
     expect(overridden.headers['User-Agent']).toBe('custom-host/9.9');
+  });
+
+  it('rejects invalid idle reclaim config before registering an instance', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-idle-reclaim-'));
+    await expect(
+      startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: home,
+        logLevel: 'silent',
+        env: { KIMI_CODE_SESSION_IDLE_RECLAIM_MS: 'nope' },
+      }),
+    ).rejects.toThrow(/KIMI_CODE_SESSION_IDLE_RECLAIM_MS.*non-negative integer/);
+    expect(await listLiveServerInstances(home)).toEqual([]);
   });
 
   it('seeds explicit skill dirs into the core scope when skillDirs is provided', async () => {

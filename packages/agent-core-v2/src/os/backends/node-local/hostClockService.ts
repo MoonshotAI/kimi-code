@@ -1,5 +1,3 @@
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IHostClock } from '#/os/interface/hostClock';
 
 export class HostClockService implements IHostClock {
@@ -13,11 +11,3 @@ export class HostClockService implements IHostClock {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   }
 }
-
-registerScopedService(
-  LifecycleScope.App,
-  IHostClock,
-  HostClockService,
-  ScopeActivation.OnScopeCreated,
-  'hostClock',
-);

@@ -21,14 +21,14 @@ kimi <subcommand> [options]
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式不会打开 TUI |
 | `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用，默认 `text` |
 | `--yolo` | `-y` | 以 "Ask When Needed" 模式启动：常规修改和命令自动完成；高危操作、提问和计划仍会问你 |
-| `--auto` | | 以 "Never Ask" 模式启动：完全不打断，所有操作和判断自动完成 |
+| `--auto` | | 以 "Never Ask" 模式启动：所有操作和判断自动完成，只有 Plan 模式下的计划会等你审阅 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
 | `--agent <name>` | | 以指定 Agent 作为 main agent 启动新会话。不能与 `--session`/`--continue` 同时使用 |
 | `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent 并为新会话选中它。不可重复传入，也不能与 `--agent`、`--session` 或 `--continue` 同时使用 |
 | `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
 
-`-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
+`-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。隐藏标志 `--environment <id>` 让新会话绑定到已配置的远程环境，`--environment-cwd <path>` 覆盖该环境的工作目录（详见 [远程环境](../guides/remote-environment.md#kimi-environment-与-environment-cwd)）。
 
 ::: warning 注意
 `--yolo` 会跳过普通工具调用的人工确认，包括文件写入和 Shell 命令执行，请只在受信任的工作目录下使用。Plan 模式的退出审批不会被 `--yolo` 跳过；Plan 模式下的 `Bash` 按普通放行规则处理。
@@ -42,6 +42,10 @@ kimi <subcommand> [options]
 - `--yolo` 和 `--auto` 互斥——两种权限模式互斥
 - `--prompt` 不能与 `--yolo`、`--auto` 或 `--plan` 同时使用——非交互模式固定使用 `auto` 权限
 - `--output-format` 只能与 `--prompt` 一起使用
+- `--environment` 不能与 `--session`/`--continue` 组合——环境在会话创建时绑定，恢复会话时会自动还原已绑定的环境
+- `--environment-cwd` 必须与 `--environment` 一起使用；两者都只在创建会话时生效，不能与 `--session`/`--continue` 组合
+
+非交互模式下没人能审阅计划，所以新会话不应用 `default_plan_mode`。恢复已经处于 Plan 模式的会话时照常运行，会话仍在 Plan 模式中，但计划无法在非交互模式下批准，会等你下次用 `kimi -r` 打开会话时审阅。
 
 恢复会话时，可以通过 `--auto`、`--yolo` 或 `--plan` 覆盖原会话保存的权限或计划模式。例如，`kimi --continue --auto` 会恢复最近会话并切换到 "Never Ask" 模式。
 
@@ -133,7 +137,7 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`import-sessions`（导入 Claude Code 和 Codex 会话）、`upgrade`（检查更新）、`provider`（管理供应商）。
 
 ### `kimi login`
 
@@ -195,6 +199,19 @@ kimi web --port 58628    # 指定绑定端口
 #### `kimi web rotate-token`
 
 生成新的持久化 bearer token（写入 `~/.kimi-code/server.token`），旧 token 立即失效。token 是整个 home 目录共享的，所有运行中的实例会在下一次鉴权校验时自动换用新 token，无需重启。
+
+### `kimi app`
+
+打开 Kimi Code 桌面端，在当前目录或指定目录中开始新会话：
+
+```sh
+kimi app
+kimi app ~/project
+```
+
+需要先安装支持从 CLI 打开工作区的桌面端版本。相对路径以当前目录为基准解析。目标工作区已存在时，会打开新草稿，不恢复之前的会话。
+
+如果系统报告无法打开应用，命令会提示运行 `kimi install-desktop` 打开下载页面，不会自动下载或安装桌面端。
 
 ### `kimi install-desktop`
 
@@ -270,6 +287,20 @@ kimi migrate
 ```
 
 完整迁移说明见[从 kimi-cli 迁移](../guides/migration.md)。
+
+### `kimi import-sessions`
+
+把最近的 Claude Code 和 Codex 会话导入为普通的 Kimi Code 会话。命令会打开一个交互式页面：选择最近 15 天（默认）或最近 30 天，然后查看进度和汇总。在 TUI 中用 `/import-sessions` 打开的是同一个页面。
+
+```sh
+kimi import-sessions
+```
+
+- 每次最多导入最新的 100 个会话；已导入过的会话会被跳过。
+- 没有提问的会话、子代理会话，以及 `codex exec` 等非交互运行不会列出。原项目目录已不存在的会话、仍在写入的会话，以及经过 fork 或从之前消息重新开始的 Codex 会话会被跳过，并在汇总中说明。
+- 默认从 `~/.claude` 和 `~/.codex` 读取会话；设置 `CLAUDE_CONFIG_DIR` 或 `CODEX_HOME` 可改为其他位置。原始会话文件不会被修改。
+
+导入后的会话包含哪些内容，见[从 Claude Code 和 Codex 导入会话](../guides/sessions.md#从-claude-code-和-codex-导入会话)。
 
 ### `kimi upgrade`
 

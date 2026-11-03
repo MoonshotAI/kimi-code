@@ -13,6 +13,12 @@ export const TowerSpawnToolInputSchema = z
     kind: z
       .enum(['worker', 'reviewer'])
       .describe('workers execute a mission in their worktree; reviewers review one branch'),
+    model: z
+      .string()
+      .optional()
+      .describe(
+        'Model for this new spawn: one of the aliases listed under "Available models" in this tool description, or "primary" for your current model and thinking level. Pass this only when the user explicitly requests a model; when omitted, Tower keeps its worker/reviewer defaults.',
+      ),
     mission_id: z
       .string()
       .optional()

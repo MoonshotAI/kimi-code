@@ -27,11 +27,13 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 73 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 73 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
 //     workspaceDirs.fileDirs               src/workspace/workspaceDirs/workspaceDirsService.ts
+//     workspaceDirs.primaryByWorkspace     src/workspace/workspaceDirs/workspaceDirsService.ts
+//     workspaceDirs.registryDirs           src/workspace/workspaceDirs/workspaceDirsService.ts
 //     workspaceInstructions.current        src/workspace/workspaceInstructions/workspaceInstructionsService.ts
 //     workspaceSkillCatalog.contributions  src/features/skill/workspace/workspaceSkillCatalogService.ts
 //     workspaceSkillCatalog.merged         src/features/skill/workspace/workspaceSkillCatalogService.ts
@@ -51,8 +53,10 @@
 //     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     changeNotifier.snapshot                         src/agent/changeNotifier/changeNotifierOps.ts
 //     contextMemory                                   src/agent/contextMemory/contextOps.ts
-//     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
+//     contextProjector.lastRepairSignature            src/agent/loop/projector.ts
+//     environmentBinding                              src/agent/environmentBinding/environmentBindingOps.ts
 //     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
 //     fileHistory                                     src/features/fileHistory/fileHistoryOps.ts
 //     fullCompaction                                  src/agent/fullCompaction/compactionOps.ts
@@ -63,16 +67,17 @@
 //     fullCompaction.observedMaxContextTokensByModel  src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.wireRanges                       src/agent/fullCompaction/compactionOps.ts
 //     interruptionReminder                            src/agent/interruptionReminder/interruptionReminderOps.ts
-//     llm.requestTrace                                src/agent/llmRequester/llmRequestOps.ts
-//     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.lastConfigLogSignature             src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.mediaDegradedTurns                 src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.mediaStrippedTurns                 src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.turnConfigs                        src/agent/llmRequester/llmRequesterService.ts
+//     llm.requestTrace                                src/agent/loop/llmRequestOps.ts
+//     llmRequester.emittedThinkingEffortWarnings      src/agent/loop/requester.ts
+//     llmRequester.lastConfigLogSignature             src/agent/loop/requester.ts
+//     llmRequester.lastMeasuredRequest                src/agent/loop/requester.ts
+//     llmRequester.mediaRecovery                      src/agent/loop/requester.ts
+//     llmRequester.turnConfigs                        src/agent/loop/requester.ts
 //     loop.disposing                                  src/agent/loop/loopService.ts
-//     loop.lastRequestTraceId                         src/agent/loop/loopService.ts
+//     loop.lastRequestId                              src/agent/loop/loopService.ts
 //     mcp.discovery                                   src/agent/mcp/mcpDiscoveryOps.ts
 //     mcp.discoveryWritesReady                        src/agent/mcp/mcpService.ts
+//     mcp.failures                                    src/agent/mcp/mcpFailureOps.ts
 //     mcp.mcpToolsByServer                            src/agent/mcp/mcpService.ts
 //     media.budgetDropped                             src/agent/media/mediaResolverService.ts
 //     media.registeredKey                             src/agent/media/mediaToolsRegistrar.ts
@@ -91,8 +96,6 @@
 //     profile.emittedPluginBudgetWarnings             src/agent/profile/profileService.ts
 //     profile.emittedThinkingEffortWarnings           src/agent/profile/profileService.ts
 //     profile.emittedToolPatternWarnings              src/agent/profile/profileService.ts
-//     runtime.binding                                 src/agent/runtimeBinding/runtimeBindingService.ts
-//     runtimeBinding                                  src/agent/runtimeBinding/runtimeBindingOps.ts
 //     shellCommand.tasks                              src/agent/shellCommand/shellCommandService.ts
 //     swarm                                           src/features/swarm/swarmOps.ts
 //     task                                            src/agent/task/taskOps.ts
@@ -114,9 +117,8 @@
 //     toolDedupe.turnRepeatCount                      src/agent/toolDedupe/toolDedupeService.ts
 //     toolExecutor.dupTypeTurnId                      src/agent/toolExecutor/toolExecutorService.ts
 //     toolExecutor.toolCallDupTypes                   src/agent/toolExecutor/toolExecutorService.ts
-//     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
+//     toolSelect                                      src/agent/toolSelect/toolSelectOps.ts
 //     tower                                           src/features/tower/towerOps.ts
-//     tower.base                                      src/features/tower/towerOps.ts
 //     tower.owner                                     src/features/tower/towerOps.ts
 //     turn                                            src/agent/loop/turnOps.ts
 //     userTool                                        src/agent/userTool/userToolOps.ts
@@ -388,6 +390,8 @@ export interface WorkspaceStateSnapshot {
   // src/workspace/workspaceDirs/workspaceDirsService.ts
   'workspaceDirs.ephemeralDirs': readonly string[];
   'workspaceDirs.fileDirs': readonly string[];
+  'workspaceDirs.primaryByWorkspace': Readonly<Record<string, string>>;
+  'workspaceDirs.registryDirs': readonly string[];
   // src/workspace/workspaceInstructions/workspaceInstructionsService.ts
   'workspaceInstructions.current': /* WorkspaceInstructionsSnapshot — packages/agent-core-v2/src/workspace/workspaceInstructions/workspaceInstructions.ts */ {
     readonly agentsMd: string | undefined;
@@ -687,6 +691,8 @@ export interface SessionStateSnapshot {
     readonly archived: boolean;
     readonly archivedAt?: number;
     readonly cwd?: string;
+    readonly environmentId?: string;
+    readonly environmentCwd?: string;
     readonly forkedFrom?: string;
     readonly agents?: Readonly<Record<string, /* AgentMeta — packages/agent-core-v2/src/session/sessionMetadata/sessionMetadata.ts */ {
       readonly homedir?: string;
@@ -716,18 +722,30 @@ export interface AgentStateSnapshot {
   'agentsMdReminder.cwd': string | undefined;
   'agentsMdReminder.known': Set<string>;
   'agentsMdReminder.seeded': boolean;
+  // src/agent/changeNotifier/changeNotifierOps.ts
+  // replayable · durable · undoable — folds: ContextClear, ContextApplyCompaction, ChangeNotifierSnapshotEvent
+  'changeNotifier.snapshot': /* ChangeNotifierSnapshotState — packages/agent-core-v2/src/agent/changeNotifier/changeNotifierOps.ts */ {
+    readonly agentsMdHash?: string;
+    readonly agentsMdFiles?: Readonly<Record<string, string>>;
+    readonly skillsHash?: string;
+    readonly subagentNames?: readonly string[];
+    readonly modelPool?: /* SubagentModelPoolSnapshot — packages/agent-core-v2/src/agent/changeNotifier/changeNotifier.ts */ {
+      readonly defaultModel?: string;
+      readonly models: Readonly<Record<string, string>>;
+    };
+    readonly workspacePrimaryByWorkspace?: Readonly<Record<string, string>>;
+    readonly workspaceAdditionalDirs?: readonly string[];
+  };
   // src/agent/contextMemory/contextOps.ts
   // replayable · durable · undoable — folds: ContextAppendMessage, ContextAppendLoopEvent, ContextClear, ContextApplyCompaction
-  'contextMemory': (/* ContextMessage — packages/agent-core-v2/src/agent/contextMemory/types.ts */ /* Message — packages/agent-core-v2/src/llm-adapter/contract/message.ts */ {
-    readonly role: /* Role — packages/agent-core-v2/src/human/llm/message.ts */ 'user' | 'system' | 'assistant' | 'tool';
-    readonly name?: string;
-    readonly content: (/* ContentPart — packages/agent-core-v2/src/human/llm/message.ts */ /* TextPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+  'contextMemory': (/* ContextMessage — packages/agent-core-v2/src/agent/contextMemory/types.ts */ (/* SystemMessage — packages/agent-core-v2/src/human/llm/message.ts */ {
+    readonly role: 'system';
+    content: (/* ContentPart — packages/agent-core-v2/src/human/llm/message.ts */ /* TextPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'text';
       text: string;
-      meta?: /* TextPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        source?: string;
-        contentType?: string;
-        activationId?: string;
+      contentType?: string;
+      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        readonly kind?: string;
         [key: string]: unknown;
       };
     } | /* ThinkPart — packages/agent-core-v2/src/human/llm/message.ts */ {
@@ -737,6 +755,11 @@ export interface AgentStateSnapshot {
       detailsIndex?: number;
       hidden?: boolean;
       reasoningKey?: string;
+      contentType?: string;
+      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        readonly kind?: string;
+        [key: string]: unknown;
+      };
     } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'image_url';
       imageUrl: {
@@ -758,18 +781,7 @@ export interface AgentStateSnapshot {
         name?: string;
       };
     })[];
-    readonly toolCalls: /* ToolCall — packages/agent-core-v2/src/human/llm/message.ts */ {
-      type: 'function';
-      id: string;
-      name: string;
-      arguments: string | null;
-      extras?: Record<string, unknown>;
-      rawId?: string;
-      _streamIndex?: string | number;
-    }[];
-    readonly toolCallId?: string;
-    readonly partial?: boolean;
-    readonly tools?: readonly /* ToolDescription — packages/agent-core-v2/src/human/llm/message.ts */ {
+    readonly tools?: /* ToolDescription — packages/agent-core-v2/src/human/llm/message.ts */ {
       name: string;
       description: string;
       parameters: Record<string, unknown>;
@@ -778,6 +790,7 @@ export interface AgentStateSnapshot {
   } & {
     readonly id?: string;
     readonly providerMessageId?: string;
+    readonly name?: string;
     readonly origin?: /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'user';
       readonly inTurn?: true;
@@ -859,6 +872,7 @@ export interface AgentStateSnapshot {
       readonly trigger?: string;
     };
     readonly isError?: boolean;
+    readonly partial?: boolean;
     toolCallDisplays?: Record<string, /* ToolInputDisplay — packages/agent-core-v2/src/tool/toolInputDisplay.ts */ {
       kind: 'command';
       command: string;
@@ -931,10 +945,10 @@ export interface AgentStateSnapshot {
       detail?: unknown;
     }>;
     readonly note?: string;
-    readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm/usage.ts */ {
+    readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
       inputOther: number;
       output: number;
-      inputCacheRead: number;
+      inputCacheRead?: number;
       inputCacheCreation: number;
       raw?: Record<string, unknown>;
     };
@@ -943,9 +957,662 @@ export interface AgentStateSnapshot {
       readonly llmStreamDurationMs?: number;
     };
     readonly durationMs?: number;
-  })[];
-  // src/agent/contextProjector/contextProjectorService.ts
-  'contextProjector.lastRepairSignature': string | null;
+  }) | (/* UserMessage — packages/agent-core-v2/src/human/llm/message.ts */ {
+    readonly role: 'user';
+    content: (/* ContentPart — packages/agent-core-v2/src/human/llm/message.ts */ /* TextPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'text';
+      text: string;
+      contentType?: string;
+      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        readonly kind?: string;
+        [key: string]: unknown;
+      };
+    } | /* ThinkPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'think';
+      think: string;
+      encrypted?: string;
+      detailsIndex?: number;
+      hidden?: boolean;
+      reasoningKey?: string;
+      contentType?: string;
+      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        readonly kind?: string;
+        [key: string]: unknown;
+      };
+    } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'image_url';
+      imageUrl: {
+        url: string;
+        id?: string;
+        name?: string;
+      };
+    } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'audio_url';
+      audioUrl: {
+        url: string;
+        id?: string;
+      };
+    } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'video_url';
+      videoUrl: {
+        url: string;
+        id?: string;
+        name?: string;
+      };
+    })[];
+  } & {
+    readonly id?: string;
+    readonly providerMessageId?: string;
+    readonly name?: string;
+    readonly origin?: /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'user';
+      readonly inTurn?: true;
+      readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
+      readonly skillActivations?: readonly /* BundledSkillActivation — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly activationId: string;
+        readonly skillName: string;
+        readonly skillArgs?: string;
+        readonly skillType?: string;
+        readonly skillPath?: string;
+        readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
+      }[];
+      readonly attachments?: readonly /* PromptFileAttachment — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly name: string;
+        readonly mediaType: string;
+        readonly size: number;
+        readonly path: string;
+      }[];
+    } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'skill_activation';
+      readonly inTurn?: true;
+      readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
+      readonly activationId: string;
+      readonly skillName: string;
+      readonly skillArgs?: string;
+      readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
+      readonly skillType?: string;
+      readonly skillPath?: string;
+      readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
+      readonly attachments?: readonly /* PromptFileAttachment — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly name: string;
+        readonly mediaType: string;
+        readonly size: number;
+        readonly path: string;
+      }[];
+    } | /* PluginCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'plugin_command';
+      readonly inTurn?: true;
+      readonly activationId: string;
+      readonly pluginId: string;
+      readonly commandName: string;
+      readonly commandArgs?: string;
+      readonly trigger: 'user-slash';
+    } | /* InjectionOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'injection';
+      readonly variant: string;
+      readonly ownerPromptId?: string;
+      readonly disclosure?: unknown;
+    } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'shell_command';
+      readonly phase: 'input' | 'output';
+      readonly isError?: boolean;
+    } | /* CompactionSummaryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'compaction_summary';
+    } | /* SystemTriggerOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'system_trigger';
+      readonly name: string;
+    } | /* TaskOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'task';
+      readonly taskId: string;
+      readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
+      readonly notificationId: string;
+    } | /* CronJobOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'cron_job';
+      readonly jobId: string;
+      readonly cron: string;
+      readonly recurring: boolean;
+      readonly coalescedCount: number;
+      readonly stale: boolean;
+    } | /* CronMissedOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'cron_missed';
+      readonly count: number;
+    } | /* HookResultOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'hook_result';
+      readonly event: string;
+      readonly blocked?: boolean;
+    } | /* RetryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'retry';
+      readonly trigger?: string;
+    };
+    readonly isError?: boolean;
+    readonly partial?: boolean;
+    toolCallDisplays?: Record<string, /* ToolInputDisplay — packages/agent-core-v2/src/tool/toolInputDisplay.ts */ {
+      kind: 'command';
+      command: string;
+      cwd?: string;
+      description?: string;
+      language?: 'bash';
+    } | {
+      kind: 'file_io';
+      operation: 'read' | 'write' | 'edit' | 'glob' | 'grep';
+      path: string;
+      detail?: string;
+      content?: string;
+      before?: string;
+      after?: string;
+    } | {
+      kind: 'diff';
+      path: string;
+      before: string;
+      after: string;
+      hunks?: number;
+    } | {
+      kind: 'search';
+      query: string;
+      scope?: string;
+    } | {
+      kind: 'url_fetch';
+      url: string;
+      method?: string;
+    } | {
+      kind: 'agent_call';
+      agent_name: string;
+      prompt: string;
+      background?: boolean;
+    } | {
+      kind: 'skill_call';
+      skill_name: string;
+      args?: string;
+    } | {
+      kind: 'todo_list';
+      items: {
+        title: string;
+        status: string;
+      }[];
+    } | {
+      kind: 'task';
+      task_id: string;
+      status: string;
+      description: string;
+      task_kind?: string;
+    } | {
+      kind: 'task_stop';
+      task_id: string;
+      task_description: string;
+    } | {
+      kind: 'plan_review';
+      plan: string;
+      path?: string;
+      options?: readonly {
+        label: string;
+        description: string;
+      }[];
+    } | {
+      kind: 'goal_start';
+      objective: string;
+      completionCriterion?: string;
+      mode: 'manual' | 'yolo';
+    } | {
+      kind: 'generic';
+      summary: string;
+      detail?: unknown;
+    }>;
+    readonly note?: string;
+    readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
+      inputOther: number;
+      output: number;
+      inputCacheRead?: number;
+      inputCacheCreation: number;
+      raw?: Record<string, unknown>;
+    };
+    readonly llmTiming?: /* ContextMessageTiming — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly llmFirstTokenLatencyMs?: number;
+      readonly llmStreamDurationMs?: number;
+    };
+    readonly durationMs?: number;
+  }) | (/* AssistantMessage — packages/agent-core-v2/src/human/llm/message.ts */ {
+    readonly role: 'assistant';
+    content: (/* ContentPart — packages/agent-core-v2/src/human/llm/message.ts */ /* TextPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'text';
+      text: string;
+      contentType?: string;
+      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        readonly kind?: string;
+        [key: string]: unknown;
+      };
+    } | /* ThinkPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'think';
+      think: string;
+      encrypted?: string;
+      detailsIndex?: number;
+      hidden?: boolean;
+      reasoningKey?: string;
+      contentType?: string;
+      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        readonly kind?: string;
+        [key: string]: unknown;
+      };
+    } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'image_url';
+      imageUrl: {
+        url: string;
+        id?: string;
+        name?: string;
+      };
+    } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'audio_url';
+      audioUrl: {
+        url: string;
+        id?: string;
+      };
+    } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'video_url';
+      videoUrl: {
+        url: string;
+        id?: string;
+        name?: string;
+      };
+    })[];
+    toolCalls: /* ToolCall — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'function';
+      id: string;
+      name: string;
+      arguments: string | null;
+      extras?: Record<string, unknown>;
+      rawId?: string;
+      _streamIndex?: string | number;
+    }[];
+  } & {
+    readonly id?: string;
+    readonly providerMessageId?: string;
+    readonly name?: string;
+    readonly origin?: /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'user';
+      readonly inTurn?: true;
+      readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
+      readonly skillActivations?: readonly /* BundledSkillActivation — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly activationId: string;
+        readonly skillName: string;
+        readonly skillArgs?: string;
+        readonly skillType?: string;
+        readonly skillPath?: string;
+        readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
+      }[];
+      readonly attachments?: readonly /* PromptFileAttachment — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly name: string;
+        readonly mediaType: string;
+        readonly size: number;
+        readonly path: string;
+      }[];
+    } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'skill_activation';
+      readonly inTurn?: true;
+      readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
+      readonly activationId: string;
+      readonly skillName: string;
+      readonly skillArgs?: string;
+      readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
+      readonly skillType?: string;
+      readonly skillPath?: string;
+      readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
+      readonly attachments?: readonly /* PromptFileAttachment — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly name: string;
+        readonly mediaType: string;
+        readonly size: number;
+        readonly path: string;
+      }[];
+    } | /* PluginCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'plugin_command';
+      readonly inTurn?: true;
+      readonly activationId: string;
+      readonly pluginId: string;
+      readonly commandName: string;
+      readonly commandArgs?: string;
+      readonly trigger: 'user-slash';
+    } | /* InjectionOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'injection';
+      readonly variant: string;
+      readonly ownerPromptId?: string;
+      readonly disclosure?: unknown;
+    } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'shell_command';
+      readonly phase: 'input' | 'output';
+      readonly isError?: boolean;
+    } | /* CompactionSummaryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'compaction_summary';
+    } | /* SystemTriggerOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'system_trigger';
+      readonly name: string;
+    } | /* TaskOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'task';
+      readonly taskId: string;
+      readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
+      readonly notificationId: string;
+    } | /* CronJobOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'cron_job';
+      readonly jobId: string;
+      readonly cron: string;
+      readonly recurring: boolean;
+      readonly coalescedCount: number;
+      readonly stale: boolean;
+    } | /* CronMissedOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'cron_missed';
+      readonly count: number;
+    } | /* HookResultOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'hook_result';
+      readonly event: string;
+      readonly blocked?: boolean;
+    } | /* RetryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'retry';
+      readonly trigger?: string;
+    };
+    readonly isError?: boolean;
+    readonly partial?: boolean;
+    toolCallDisplays?: Record<string, /* ToolInputDisplay — packages/agent-core-v2/src/tool/toolInputDisplay.ts */ {
+      kind: 'command';
+      command: string;
+      cwd?: string;
+      description?: string;
+      language?: 'bash';
+    } | {
+      kind: 'file_io';
+      operation: 'read' | 'write' | 'edit' | 'glob' | 'grep';
+      path: string;
+      detail?: string;
+      content?: string;
+      before?: string;
+      after?: string;
+    } | {
+      kind: 'diff';
+      path: string;
+      before: string;
+      after: string;
+      hunks?: number;
+    } | {
+      kind: 'search';
+      query: string;
+      scope?: string;
+    } | {
+      kind: 'url_fetch';
+      url: string;
+      method?: string;
+    } | {
+      kind: 'agent_call';
+      agent_name: string;
+      prompt: string;
+      background?: boolean;
+    } | {
+      kind: 'skill_call';
+      skill_name: string;
+      args?: string;
+    } | {
+      kind: 'todo_list';
+      items: {
+        title: string;
+        status: string;
+      }[];
+    } | {
+      kind: 'task';
+      task_id: string;
+      status: string;
+      description: string;
+      task_kind?: string;
+    } | {
+      kind: 'task_stop';
+      task_id: string;
+      task_description: string;
+    } | {
+      kind: 'plan_review';
+      plan: string;
+      path?: string;
+      options?: readonly {
+        label: string;
+        description: string;
+      }[];
+    } | {
+      kind: 'goal_start';
+      objective: string;
+      completionCriterion?: string;
+      mode: 'manual' | 'yolo';
+    } | {
+      kind: 'generic';
+      summary: string;
+      detail?: unknown;
+    }>;
+    readonly note?: string;
+    readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
+      inputOther: number;
+      output: number;
+      inputCacheRead?: number;
+      inputCacheCreation: number;
+      raw?: Record<string, unknown>;
+    };
+    readonly llmTiming?: /* ContextMessageTiming — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly llmFirstTokenLatencyMs?: number;
+      readonly llmStreamDurationMs?: number;
+    };
+    readonly durationMs?: number;
+  }) | (/* ToolMessage — packages/agent-core-v2/src/human/llm/message.ts */ {
+    readonly role: 'tool';
+    content: (/* ContentPart — packages/agent-core-v2/src/human/llm/message.ts */ /* TextPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'text';
+      text: string;
+      contentType?: string;
+      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        readonly kind?: string;
+        [key: string]: unknown;
+      };
+    } | /* ThinkPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'think';
+      think: string;
+      encrypted?: string;
+      detailsIndex?: number;
+      hidden?: boolean;
+      reasoningKey?: string;
+      contentType?: string;
+      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+        readonly kind?: string;
+        [key: string]: unknown;
+      };
+    } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'image_url';
+      imageUrl: {
+        url: string;
+        id?: string;
+        name?: string;
+      };
+    } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'audio_url';
+      audioUrl: {
+        url: string;
+        id?: string;
+      };
+    } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
+      type: 'video_url';
+      videoUrl: {
+        url: string;
+        id?: string;
+        name?: string;
+      };
+    })[];
+    readonly toolCallId: string;
+  } & {
+    readonly id?: string;
+    readonly providerMessageId?: string;
+    readonly name?: string;
+    readonly origin?: /* UserPromptOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'user';
+      readonly inTurn?: true;
+      readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
+      readonly skillActivations?: readonly /* BundledSkillActivation — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly activationId: string;
+        readonly skillName: string;
+        readonly skillArgs?: string;
+        readonly skillType?: string;
+        readonly skillPath?: string;
+        readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
+      }[];
+      readonly attachments?: readonly /* PromptFileAttachment — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly name: string;
+        readonly mediaType: string;
+        readonly size: number;
+        readonly path: string;
+      }[];
+    } | /* SkillActivationOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'skill_activation';
+      readonly inTurn?: true;
+      readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
+      readonly activationId: string;
+      readonly skillName: string;
+      readonly skillArgs?: string;
+      readonly trigger: 'user-slash' | 'model-tool' | 'nested-skill';
+      readonly skillType?: string;
+      readonly skillPath?: string;
+      readonly skillSource?: 'project' | 'user' | 'extra' | 'builtin';
+      readonly attachments?: readonly /* PromptFileAttachment — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+        readonly name: string;
+        readonly mediaType: string;
+        readonly size: number;
+        readonly path: string;
+      }[];
+    } | /* PluginCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'plugin_command';
+      readonly inTurn?: true;
+      readonly activationId: string;
+      readonly pluginId: string;
+      readonly commandName: string;
+      readonly commandArgs?: string;
+      readonly trigger: 'user-slash';
+    } | /* InjectionOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'injection';
+      readonly variant: string;
+      readonly ownerPromptId?: string;
+      readonly disclosure?: unknown;
+    } | /* ShellCommandOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'shell_command';
+      readonly phase: 'input' | 'output';
+      readonly isError?: boolean;
+    } | /* CompactionSummaryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'compaction_summary';
+    } | /* SystemTriggerOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'system_trigger';
+      readonly name: string;
+    } | /* TaskOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'task';
+      readonly taskId: string;
+      readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
+      readonly notificationId: string;
+    } | /* CronJobOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'cron_job';
+      readonly jobId: string;
+      readonly cron: string;
+      readonly recurring: boolean;
+      readonly coalescedCount: number;
+      readonly stale: boolean;
+    } | /* CronMissedOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'cron_missed';
+      readonly count: number;
+    } | /* HookResultOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'hook_result';
+      readonly event: string;
+      readonly blocked?: boolean;
+    } | /* RetryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'retry';
+      readonly trigger?: string;
+    };
+    readonly isError?: boolean;
+    readonly partial?: boolean;
+    toolCallDisplays?: Record<string, /* ToolInputDisplay — packages/agent-core-v2/src/tool/toolInputDisplay.ts */ {
+      kind: 'command';
+      command: string;
+      cwd?: string;
+      description?: string;
+      language?: 'bash';
+    } | {
+      kind: 'file_io';
+      operation: 'read' | 'write' | 'edit' | 'glob' | 'grep';
+      path: string;
+      detail?: string;
+      content?: string;
+      before?: string;
+      after?: string;
+    } | {
+      kind: 'diff';
+      path: string;
+      before: string;
+      after: string;
+      hunks?: number;
+    } | {
+      kind: 'search';
+      query: string;
+      scope?: string;
+    } | {
+      kind: 'url_fetch';
+      url: string;
+      method?: string;
+    } | {
+      kind: 'agent_call';
+      agent_name: string;
+      prompt: string;
+      background?: boolean;
+    } | {
+      kind: 'skill_call';
+      skill_name: string;
+      args?: string;
+    } | {
+      kind: 'todo_list';
+      items: {
+        title: string;
+        status: string;
+      }[];
+    } | {
+      kind: 'task';
+      task_id: string;
+      status: string;
+      description: string;
+      task_kind?: string;
+    } | {
+      kind: 'task_stop';
+      task_id: string;
+      task_description: string;
+    } | {
+      kind: 'plan_review';
+      plan: string;
+      path?: string;
+      options?: readonly {
+        label: string;
+        description: string;
+      }[];
+    } | {
+      kind: 'goal_start';
+      objective: string;
+      completionCriterion?: string;
+      mode: 'manual' | 'yolo';
+    } | {
+      kind: 'generic';
+      summary: string;
+      detail?: unknown;
+    }>;
+    readonly note?: string;
+    readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
+      inputOther: number;
+      output: number;
+      inputCacheRead?: number;
+      inputCacheCreation: number;
+      raw?: Record<string, unknown>;
+    };
+    readonly llmTiming?: /* ContextMessageTiming — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly llmFirstTokenLatencyMs?: number;
+      readonly llmStreamDurationMs?: number;
+    };
+    readonly durationMs?: number;
+  }))[];
+  // src/agent/environmentBinding/environmentBindingOps.ts
+  // replayable · durable — folds: EnvironmentSetBinding
+  'environmentBinding': /* EnvironmentBinding — packages/agent-core-v2/src/environment/environment.ts */ {
+    readonly environmentId: string;
+    readonly cwd?: string;
+  } | undefined;
   // src/agent/fullCompaction/compactionOps.ts
   // replayable · durable — folds: FullCompactionBegin, FullCompactionCancel, FullCompactionComplete
   'fullCompaction': /* CompactionState — packages/agent-core-v2/src/agent/fullCompaction/compactionOps.ts */ {
@@ -965,19 +1632,48 @@ export interface AgentStateSnapshot {
   // src/agent/interruptionReminder/interruptionReminderOps.ts
   // replayable · durable — folds: InterruptionReminderRecorded
   'interruptionReminder': null;
-  // src/agent/llmRequester/llmRequestOps.ts
+  // src/agent/loop/llmRequestOps.ts
   // replayable · durable — folds: LlmToolsSnapshot, LlmRequest
-  'llm.requestTrace': /* LlmRequestTraceState — packages/agent-core-v2/src/agent/llmRequester/llmRequestOps.ts */ {
+  'llm.requestTrace': /* LlmRequestTraceState — packages/agent-core-v2/src/agent/loop/llmRequestOps.ts */ {
     readonly seenToolsHashes: readonly string[];
   };
-  // src/agent/llmRequester/llmRequesterService.ts
+  // src/agent/loop/loopService.ts
+  'loop.disposing': boolean;
+  'loop.lastRequestId': string | undefined;
+  // src/agent/loop/projector.ts
+  'contextProjector.lastRepairSignature': string | null;
+  // src/agent/loop/requester.ts
   'llmRequester.emittedThinkingEffortWarnings': Set<string>;
   'llmRequester.lastConfigLogSignature': string | undefined;
-  'llmRequester.mediaDegradedTurns': Set<number>;
-  'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand": undefined;
-  }>;
-  'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
+  'llmRequester.lastMeasuredRequest': /* MeasuredRequest — packages/agent-core-v2/src/agent/loop/requester.ts */ {
+    readonly modelAlias: string;
+    readonly contextRevision: number;
+    readonly inputTokens: number;
+    readonly startedAt: number;
+    readonly finishedAt: number;
+    readonly thinkingEffort: /* ThinkingEffort — packages/agent-core-v2/src/human/llm-requester/thinking.ts */ 'off' | 'on' | (string & {});
+    readonly requestKind?: string;
+    readonly turnId?: number;
+    readonly step?: number;
+    readonly traceId?: string;
+    readonly usage: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
+      inputOther: number;
+      output: number;
+      inputCacheRead?: number;
+      inputCacheCreation: number;
+      raw?: Record<string, unknown>;
+    };
+    readonly systemPromptHash: string;
+    readonly toolsHash: string;
+    readonly messageCount: number;
+    readonly historyHash: string;
+  } | undefined;
+  'llmRequester.mediaRecovery': /* MediaRecovery — packages/agent-core-v2/src/agent/loop/requester.ts */ {
+    readonly modelAlias: string;
+    readonly contextRevision: number;
+    readonly ledger: unknown;
+  } | undefined;
+  'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/loop/requester.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {
       readonly modelAlias: string;
       readonly modelCapabilities: /* ModelCapability — packages/agent-core-v2/src/llm-adapter/contract/capability.ts */ {
@@ -992,29 +1688,32 @@ export interface AgentStateSnapshot {
       };
       readonly maxOutputSize: number | undefined;
       readonly alwaysThinking: boolean | undefined;
-      readonly thinkingLevel: /* ThinkingEffort — packages/agent-core-v2/src/human/llm/thinking.ts */ 'off' | 'on' | (string & {});
+      readonly thinkingLevel: /* ThinkingEffort — packages/agent-core-v2/src/human/llm-requester/thinking.ts */ 'off' | 'on' | (string & {});
       readonly reservedContextSize: number | undefined;
       readonly compactionTriggerRatio: number | undefined;
       readonly compactionMaxAttempts: number | undefined;
     };
-    readonly params: /* ModelRequestParams — packages/agent-core-v2/src/llm-adapter/model/model-requester.ts */ {
+    readonly params: /* ModelRequestParams — packages/agent-core-v2/src/llm-adapter/model/generate.ts */ {
       readonly cacheKey?: string;
-      readonly sampling?: /* SamplingOptions — packages/agent-core-v2/src/llm-adapter/model/model-requester.ts */ {
+      readonly sampling?: /* LlmSampling — packages/agent-core-v2/src/human/llm/request.ts */ {
         readonly temperature?: number;
         readonly topP?: number;
+        readonly topK?: number;
+        readonly stop?: readonly string[];
+        readonly seed?: number;
+        readonly presencePenalty?: number;
+        readonly frequencyPenalty?: number;
       };
       readonly thinkingEffort?: 'off' | 'on' | (string & {});
       readonly thinkingKeep?: string;
       readonly maxCompletionTokens?: number;
       readonly usedContextTokens?: number;
       readonly maxContextTokens?: number;
-      readonly onTraceId?: (traceId: string | null) => void;
+      readonly stream?: boolean;
+      readonly onRequestId?: (requestId: string | undefined) => void;
     };
     readonly systemPrompt: string;
   }>;
-  // src/agent/loop/loopService.ts
-  'loop.disposing': boolean;
-  'loop.lastRequestTraceId': string | undefined;
   // src/agent/loop/turnOps.ts
   // replayable · durable — folds: ContextAppendLoopEvent, TurnPrompt, TurnSteer, ContextUndo, ContextApplyCompaction, ContextClear, TurnCancel, TurnEnded
   'turn': /* TurnModelState — packages/agent-core-v2/src/agent/loop/turnOps.ts */ {
@@ -1032,6 +1731,11 @@ export interface AgentStateSnapshot {
   'mcp.discovery': /* McpDiscoveryState — packages/agent-core-v2/src/agent/mcp/mcpDiscoveryOps.ts */ {
     readonly seen: readonly string[];
   };
+  // src/agent/mcp/mcpFailureOps.ts
+  // replayable · durable — folds: McpServerFailed, McpServerFailureResolved
+  'mcp.failures': /* McpFailureState — packages/agent-core-v2/src/agent/mcp/mcpFailureOps.ts */ {
+    readonly open: readonly string[];
+  };
   // src/agent/mcp/mcpService.ts
   'mcp.discoveryWritesReady': boolean;
   'mcp.mcpToolsByServer': Map<string, string[]>;
@@ -1040,10 +1744,9 @@ export interface AgentStateSnapshot {
   'media.resolved': Map<string, /* ContentPart — packages/agent-core-v2/src/human/llm/message.ts */ /* TextPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'text';
     text: string;
-    meta?: /* TextPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-      source?: string;
-      contentType?: string;
-      activationId?: string;
+    contentType?: string;
+    meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+      readonly kind?: string;
       [key: string]: unknown;
     };
   } | /* ThinkPart — packages/agent-core-v2/src/human/llm/message.ts */ {
@@ -1053,6 +1756,11 @@ export interface AgentStateSnapshot {
     detailsIndex?: number;
     hidden?: boolean;
     reasoningKey?: string;
+    contentType?: string;
+    meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
+      readonly kind?: string;
+      [key: string]: unknown;
+    };
   } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'image_url';
     imageUrl: {
@@ -1125,17 +1833,6 @@ export interface AgentStateSnapshot {
   'profile.emittedPluginBudgetWarnings': Set<string>;
   'profile.emittedThinkingEffortWarnings': Set<string>;
   'profile.emittedToolPatternWarnings': Set<string>;
-  // src/agent/runtimeBinding/runtimeBindingOps.ts
-  // replayable · durable — folds: RuntimeSetBinding
-  'runtimeBinding': /* RuntimeBinding — packages/agent-core-v2/src/runtime/runtime.ts */ {
-    readonly workspaceId: string;
-    readonly runtimeId: string;
-  } | undefined;
-  // src/agent/runtimeBinding/runtimeBindingService.ts
-  'runtime.binding': /* RuntimeBinding — packages/agent-core-v2/src/runtime/runtime.ts */ {
-    readonly workspaceId: string;
-    readonly runtimeId: string;
-  };
   // src/agent/shellCommand/shellCommandService.ts
   'shellCommand.tasks': Map<string, string>;
   // src/agent/task/taskOps.ts
@@ -1162,6 +1859,9 @@ export interface AgentStateSnapshot {
     readonly model?: string;
     readonly thinkingEffort?: string;
     readonly stopCode?: string;
+    readonly swarmIndex?: number;
+    readonly stateReason?: string;
+    readonly resultSummary?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1214,6 +1914,9 @@ export interface AgentStateSnapshot {
     readonly model?: string;
     readonly thinkingEffort?: string;
     readonly stopCode?: string;
+    readonly swarmIndex?: number;
+    readonly stateReason?: string;
+    readonly resultSummary?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1262,8 +1965,44 @@ export interface AgentStateSnapshot {
   // src/agent/toolExecutor/toolExecutorService.ts
   'toolExecutor.dupTypeTurnId': number | undefined;
   'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
-  // src/agent/toolSelect/toolSelectService.ts
-  'toolSelect.pendingLoaded': Set<string>;
+  // src/agent/toolSelect/toolSelectOps.ts
+  // replayable · durable — folds: ToolSelectInitialized, ToolSelectToolsChanged
+  'toolSelect': /* ToolSelectModelState — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+    readonly initial: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly parameters: Record<string, unknown>;
+      readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+      readonly disclosure?: 'deferred' | 'inline';
+      readonly origin: 'initial' | 'runtime';
+    }[] | undefined;
+    readonly current: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly parameters: Record<string, unknown>;
+      readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+      readonly disclosure?: 'deferred' | 'inline';
+      readonly origin: 'initial' | 'runtime';
+    }[];
+    readonly changes: readonly /* ToolSelectChange — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+      readonly added: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+        readonly name: string;
+        readonly description: string;
+        readonly parameters: Record<string, unknown>;
+        readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+        readonly disclosure?: 'deferred' | 'inline';
+        readonly origin: 'initial' | 'runtime';
+      }[];
+      readonly removed: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+        readonly name: string;
+        readonly description: string;
+        readonly parameters: Record<string, unknown>;
+        readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+        readonly disclosure?: 'deferred' | 'inline';
+        readonly origin: 'initial' | 'runtime';
+      }[];
+    }[];
+  };
   // src/agent/userTool/userToolOps.ts
   // replayable · durable — folds: ToolsRegisterUserTool, ToolsUnregisterUserTool
   'userTool': /* UserToolModelState — packages/agent-core-v2/src/agent/userTool/userToolOps.ts */ Map<string, /* UserToolRegistration — packages/agent-core-v2/src/agent/userTool/userTool.ts */ {
@@ -1287,6 +2026,7 @@ export interface AgentStateSnapshot {
         readonly size?: number;
         readonly oversize?: boolean;
         readonly mtimeMs?: number;
+        readonly environmentId?: string;
       }>>;
     }[];
     readonly tracked: readonly string[];
@@ -1302,12 +2042,10 @@ export interface AgentStateSnapshot {
   };
   // src/features/swarm/swarmOps.ts
   // replayable · durable — folds: SwarmModeEnter, SwarmModeExit
-  'swarm': 'tool' | 'task' | 'manual' | null;
+  'swarm': 'task' | 'manual' | 'tool' | null;
   // src/features/tower/towerOps.ts
   // replayable · durable — folds: TowerModeEnter, TowerModeExit
   'tower': boolean;
-  // replayable · durable — folds: TowerModeEnter, TowerModeExit
-  'tower.base': string | null;
   // replayable · durable — folds: TowerModeEnter, TowerModeExit
   'tower.owner': string | undefined;
 }

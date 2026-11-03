@@ -24,7 +24,7 @@ export interface TranscriptUsage {
 export interface StepUsage {
   readonly inputOther: number;
   readonly output: number;
-  readonly inputCacheRead: number;
+  readonly inputCacheRead?: number;
   readonly inputCacheCreation: number;
 }
 
@@ -63,6 +63,7 @@ export interface TranscriptTurn {
   readonly usage?: TranscriptUsage;
   readonly durationMs?: number;
   readonly error?: string;
+  readonly wedged?: boolean;
 }
 
 export interface TranscriptStep {

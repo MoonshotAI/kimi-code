@@ -47,6 +47,7 @@ export interface IOAuthService {
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined;
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined>;
   getRegion(): KimiRegion;
+  getRegionAsync(): Promise<KimiRegion>;
 }
 
 export const IOAuthService: ServiceIdentifier<IOAuthService> =

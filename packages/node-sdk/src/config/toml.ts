@@ -8,7 +8,6 @@ import { ErrorCodes, KimiError } from '#/errors';
 import { atomicWrite } from '#/utils/fs';
 
 import { applyEnvModelConfig, stripEnvModelConfig } from './env-model';
-import { applySecondaryModelConfig, stripSecondaryModelConfig } from './secondary-model';
 import {
   KimiConfigSchema,
   formatConfigValidationError,
@@ -41,7 +40,7 @@ function camelToSnake(str: string): string {
 }
 
 const DEFAULT_CONFIG_FILE_TEXT = `# ~/.kimi-code/config.toml
-# Runtime settings for Kimi Code.
+# Environment settings for Kimi Code.
 # This file starts empty so built-in defaults can apply.
 # Login will populate managed Kimi provider and model entries.
 `;
@@ -87,7 +86,7 @@ export function loadRuntimeConfig(
   filePath: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): KimiConfig {
-  return applySecondaryModelConfig(applyEnvModelConfig(readConfigFile(filePath), env), env);
+  return applyEnvModelConfig(readConfigFile(filePath), env);
 }
 
 export interface RuntimeConfigLoadResult {
@@ -166,7 +165,6 @@ export function loadRuntimeConfigSafe(
       `Ignoring KIMI_MODEL_* environment overrides: ${describeUnknownError(error)}`,
     );
   }
-  config = applySecondaryModelConfig(config, env);
 
   return { config, fileWarnings, envWarnings, fileError };
 }
@@ -279,6 +277,8 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
       result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'experimental' && isPlainObject(value)) {
       result[targetKey] = cloneRecord(value);
+    } else if (targetKey === 'environments' && isPlainObject(value)) {
+      result[targetKey] = transformRecord(value, transformPlainObject);
     } else if (targetKey === 'subagent' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
     } else if (targetKey === 'secondaryModel' && isPlainObject(value)) {
@@ -333,6 +333,9 @@ function transformModelData(data: Record<string, unknown>): Record<string, unkno
   const out = transformPlainObject(data);
   if (isPlainObject(out['overrides'])) {
     out['overrides'] = transformPlainObject(out['overrides']);
+  }
+  if (isPlainObject(out['upgrade'])) {
+    out['upgrade'] = transformPlainObject(out['upgrade']);
   }
   return out;
 }
@@ -416,7 +419,7 @@ function transformLoopControlData(data: Record<string, unknown>): Record<string,
 }
 
 export async function writeConfigFile(filePath: string, config: KimiConfig): Promise<void> {
-  const validated = validateConfig(stripSecondaryModelConfig(stripEnvModelConfig(config)));
+  const validated = validateConfig(stripEnvModelConfig(config));
   await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
   await atomicWrite(filePath, `${stringifyToml(configToTomlData(validated))}\n`);
 }
@@ -442,6 +445,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
     'extraSkillDirs',
     'extraAgentDirs',
     'telemetry',
+    'disableFeedbackSurvey',
   ];
   for (const key of scalarFields) {
     setDefined(out, camelToSnake(key), config[key]);
@@ -528,12 +532,15 @@ const PROVIDER_CREDENTIAL_FIELDS = ['apiKey', 'oauth', 'apiKeyEnv'] as const;
 
 function modelToToml(model: ModelAlias, rawModel: unknown): Record<string, unknown> {
   const out = cloneRecord(rawModel);
+  if (!Object.hasOwn(model, 'upgrade')) delete out['upgrade'];
   for (const [key, value] of Object.entries(model)) {
     if (key === 'capabilities' && Array.isArray(value)) {
       out[camelToSnake(key)] = [...value];
     } else if (key === 'overrides' && isPlainObject(value)) {
       const rawOverrides = isPlainObject(rawModel) ? rawModel['overrides'] : undefined;
       out['overrides'] = modelOverridesToToml(value, rawOverrides);
+    } else if (key === 'upgrade') {
+      out['upgrade'] = isPlainObject(value) ? modelOverridesToToml(value, undefined) : undefined;
     } else {
       setDefined(out, camelToSnake(key), value);
     }
@@ -657,11 +664,7 @@ function secondaryModelToToml(
 ): Record<string, unknown> {
   const out = cloneRecord(rawSecondaryModel);
   for (const [key, value] of Object.entries(secondaryModel)) {
-    if (key === 'capabilities' && Array.isArray(value)) {
-      out[camelToSnake(key)] = [...value];
-    } else {
-      setDefined(out, camelToSnake(key), value);
-    }
+    setDefined(out, camelToSnake(key), value);
   }
   return out;
 }

@@ -15,7 +15,7 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
-import { STATE_FILE, TowerStore } from '#/features/tower/protocol/index';
+import { STATE_FILE, TowerProtocolError, TowerStore } from '#/features/tower/protocol/index';
 import type { TowerState } from '#/features/tower/protocol/index';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
@@ -34,6 +34,7 @@ import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   SECONDARY_MODEL_SECTION,
   SUBAGENT_SECTION,
+  type SecondaryModelConfig,
 } from '#/session/subagent/configSection';
 import {
   ISessionSubagentService,
@@ -71,16 +72,17 @@ describe('TowerSpawnTool', () => {
   let store: TowerStore;
 
   let towerActive: boolean;
+  let branchLeaseError: string | undefined;
   let gate: { readonly ok: true } | { readonly ok: false; readonly reason: string };
+  let acquire: Mock<() => typeof gate>;
   let release: Mock<() => void>;
   let createAgent: Mock<IAgentLifecycleService['create']>;
   let runAgent: Mock<ISessionSubagentService['run']>;
   let registerTask: Mock<IAgentTaskService['registerTask']>;
   let taskInfoLookup: (taskId: string) => AgentTaskInfo | undefined;
   let completion: Deferred<{ readonly summary: string }>;
-  let secondaryModel:
-    | { readonly model: string; readonly defaultEffort?: string; readonly force?: boolean }
-    | undefined;
+  let callerModelAlias: string | undefined;
+  let secondaryModel: SecondaryModelConfig | undefined;
   let subagentTimeoutMs: number | undefined;
   let thinkingEnabled: boolean | undefined;
   let modelMeta: Record<string, Partial<Model>>;
@@ -104,9 +106,12 @@ describe('TowerSpawnTool', () => {
     await store.plan([{ title: 'Build gemm', scope: ['src/**'] }]);
 
     towerActive = true;
+    branchLeaseError = undefined;
     gate = { ok: true };
+    acquire = vi.fn(() => gate);
     release = vi.fn();
     completion = deferred();
+    callerModelAlias = 'kimi-code';
     secondaryModel = undefined;
     subagentTimeoutMs = undefined;
     thinkingEnabled = undefined;
@@ -132,14 +137,16 @@ describe('TowerSpawnTool', () => {
       get isActive() {
         return towerActive;
       },
-      get requestedBase() {
-        return undefined;
-      },
       enter: () => Promise.resolve({ entered: true as const }),
       exit: () => {},
+      isBranchLeased: () => branchLeaseError !== undefined,
+      withBranchLease: async <T>(_branch: string, execute: () => Promise<T>) => {
+        if (branchLeaseError !== undefined) throw new TowerProtocolError(branchLeaseError);
+        return execute();
+      },
     } as unknown as IAgentTowerService);
     ix.stub(ITowerRateLimitService, {
-      acquire: () => gate,
+      acquire,
       release,
     } as unknown as ITowerRateLimitService);
     ix.stub(ISessionContext, { cwd: repo, sessionId: 'session-spawn-test' } as unknown as ISessionContext);
@@ -186,7 +193,7 @@ describe('TowerSpawnTool', () => {
     ix.stub(ISessionSubagentService, { run: runAgent } as unknown as ISessionSubagentService);
     ix.stub(IAgentTaskService, { registerTask, getTask: (taskId: string) => taskInfoLookup(taskId) } as unknown as IAgentTaskService);
     ix.stub(IAgentProfileService, {
-      data: () => ({ profileName: 'agent', modelAlias: 'kimi-code', thinkingLevel: 'off' }),
+      data: () => ({ profileName: 'agent', modelAlias: callerModelAlias, thinkingLevel: 'off' }),
     } as unknown as IAgentProfileService);
     ix.stub(IConfigService, {
       get: ((domain: string) =>
@@ -224,6 +231,59 @@ describe('TowerSpawnTool', () => {
     mission_id: 'M1',
   };
 
+  function argsFor(kind: 'worker' | 'reviewer', model?: string): TowerSpawnToolInput {
+    return kind === 'worker'
+      ? { ...WORKER_ARGS, model }
+      : { name: 'reviewer-a', kind, review_target: 'feat/build-gemm', model };
+  }
+
+  async function expectNoWorkerSpawnSideEffects(): Promise<void> {
+    expect(acquire).not.toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
+    const state = await store.load();
+    expect(state.roster.agents).toEqual([]);
+    const mission = state.missions.find((candidate) => candidate.id === 'M1');
+    expect(mission?.status).toBe('planned');
+    expect(mission?.owner).toBeUndefined();
+    await expect(git(repo, 'rev-parse', '--verify', 'refs/heads/feat/build-gemm')).rejects.toThrow();
+  }
+
+  it('updates the advertised model schema and descriptions with the current pool config', () => {
+    const tool = ix.get(ITowerSpawnTool);
+    const properties = () =>
+      tool.parameters['properties'] as Record<string, { type?: string; enum?: unknown }>;
+
+    expect(properties()).not.toHaveProperty('model');
+    expect(tool.description).not.toContain('Available models');
+
+    secondaryModel = {
+      defaultModel: 'cheap/fast',
+      models: { 'cheap/fast': 'fast and cheap', 'smart/slow': 'careful and thorough' },
+    };
+
+    expect(properties()['model']?.type).toBe('string');
+    expect(properties()['model']?.enum).toBeUndefined();
+    expect(tool.description).toContain('Available models (pass via model):');
+    expect(tool.description).toContain('- cheap/fast [default]: fast and cheap');
+    expect(tool.description).toContain('- smart/slow: careful and thorough');
+    expect(tool.description).toContain('- primary (= kimi-code): your current model and thinking level');
+    expect(tool.description).toContain(
+      'The [default] marker is the worker pool default, not the reviewer default.',
+    );
+
+    secondaryModel = undefined;
+    expect(properties()).not.toHaveProperty('model');
+    expect(tool.description).not.toContain('Available models');
+
+    secondaryModel = { model: 'cheap/fast' };
+    expect(properties()['model']?.type).toBe('string');
+    expect(tool.description).toContain('- cheap/fast [default]');
+    expect(tool.description).toContain('- primary (= kimi-code): your current model and thinking level');
+  });
+
   it('refuses when tower mode is not active', async () => {
     towerActive = false;
 
@@ -235,6 +295,44 @@ describe('TowerSpawnTool', () => {
     });
     expect(createAgent).not.toHaveBeenCalled();
   });
+
+  it('respects a branch lease before worktree or agent side effects', async () => {
+    branchLeaseError = 'branch feat/build-gemm is leased by a merge';
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('leased by a merge');
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
+    await expect(git(repo, 'rev-parse', '--verify', 'refs/heads/feat/build-gemm')).rejects.toThrow();
+  });
+
+  it.each(['merged', 'abandoned'] as const)(
+    'refuses a %s mission before any worktree, agent, task, or roster side effect',
+    async (status) => {
+      const state = await store.load();
+      state.missions.find((mission) => mission.id === 'M1')!.status = status;
+      await writeFile(store.abs(STATE_FILE), `${JSON.stringify(state, null, 2)}\n`);
+
+      const result = await execute(WORKER_ARGS);
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain(`mission M1 is ${status}`);
+      expect(result.output).toContain('terminal missions cannot spawn workers');
+      expect(createAgent).not.toHaveBeenCalled();
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(registerTask).not.toHaveBeenCalled();
+      expect(release).not.toHaveBeenCalled();
+      const after = await store.load();
+      expect(after.roster.agents).toHaveLength(0);
+      const mission = after.missions.find((candidate) => candidate.id === 'M1');
+      expect(mission?.status).toBe(status);
+      expect(mission?.owner).toBeUndefined();
+      await expect(git(repo, 'rev-parse', '--verify', 'refs/heads/feat/build-gemm')).rejects.toThrow();
+    },
+  );
 
   it('records the death of a worker whose task settled before roster registration finished', async () => {
     taskInfoLookup = () => ({
@@ -296,6 +394,25 @@ describe('TowerSpawnTool', () => {
     expect(mission?.status).toBe('planned');
     expect(mission?.owner).toBeUndefined();
     expect(state.roster.agents).toHaveLength(0);
+  });
+
+  it('aborts the launched run without a partial roster or mission claim when spawn persistence fails', async () => {
+    const forced = vi
+      .spyOn(TowerStore.prototype, 'registerSpawnedAgent')
+      .mockRejectedValueOnce(new TowerProtocolError('forced post-launch failure'));
+    try {
+      const result = await execute(WORKER_ARGS);
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('forced post-launch failure');
+      expect(runAgent.mock.calls[0]?.[2]?.signal.aborted).toBe(true);
+      const state = await store.load();
+      expect(state.roster.agents.some((agent) => agent.agentId === 'agent-7')).toBe(false);
+      expect(state.missions[0]?.status).toBe('planned');
+      expect(state.missions[0]?.owner).toBeUndefined();
+    } finally {
+      forced.mockRestore();
+    }
   });
 
   it('spawns a detached tower-worker, registers the roster entry, and releases the slot on settle', async () => {
@@ -412,6 +529,54 @@ describe('TowerSpawnTool', () => {
     });
   });
 
+  it.each(['worker', 'reviewer'] as const)(
+    'binds a %s to an explicitly selected pool alias and reports the actual model',
+    async (kind) => {
+      secondaryModel = {
+        defaultModel: 'cheap/fast',
+        defaultEffort: 'low',
+        models: { 'cheap/fast': 'fast and cheap', 'smart/slow': 'careful and thorough' },
+      };
+
+      const result = await execute(argsFor(kind, 'smart/slow'));
+
+      expect(result.isError).toBeUndefined();
+      expect(result.output).toContain('model: smart/slow');
+      expect(createAgent).toHaveBeenCalledWith({
+        binding: { profile: 'tower-worker', model: 'smart/slow', thinking: 'low' },
+        labels: { parentAgentId: 'main' },
+      });
+      const task = registerTask.mock.calls[0]?.[0] as SubagentTask;
+      expect(task.model).toBe('smart/slow');
+      const activityLog = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+      expect(activityLog).toMatch(/spawn .*model=smart\/slow/);
+    },
+  );
+
+  it.each(['worker', 'reviewer'] as const)(
+    'binds a %s to primary when explicitly requested and reports the actual model',
+    async (kind) => {
+      secondaryModel = {
+        defaultModel: 'cheap/fast',
+        defaultEffort: 'low',
+        models: { 'cheap/fast': 'fast and cheap', 'smart/slow': 'careful and thorough' },
+      };
+
+      const result = await execute(argsFor(kind, 'primary'));
+
+      expect(result.isError).toBeUndefined();
+      expect(result.output).toContain('model: kimi-code');
+      expect(createAgent).toHaveBeenCalledWith({
+        binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
+        labels: { parentAgentId: 'main' },
+      });
+      const task = registerTask.mock.calls[0]?.[0] as SubagentTask;
+      expect(task.model).toBe('kimi-code');
+      const activityLog = await readFile(join(repo, '.tower/comms/log/activity.log'), 'utf8');
+      expect(activityLog).toMatch(/spawn .*model=kimi-code/);
+    },
+  );
+
   it('carries the configured secondary model into the registered task info', async () => {
     secondaryModel = { model: 'cheap/fast' };
 
@@ -510,19 +675,73 @@ describe('TowerSpawnTool', () => {
     });
   });
 
-  it('binds reviewers to the forced secondary model when it is configured', async () => {
-    secondaryModel = { model: 'cheap/fast', force: true };
-
-    const result = await execute({
-      name: 'reviewer-a',
-      kind: 'reviewer',
-      review_target: 'feat/build-gemm',
-    });
+  it('accepts an explicit primary choice without a secondary pool', async () => {
+    const result = await execute({ ...WORKER_ARGS, model: 'primary' });
 
     expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('model: cheap/fast');
     expect(createAgent).toHaveBeenCalledWith({
-      binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
+      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
+      labels: { parentAgentId: 'main' },
+    });
+  });
+
+  it('rejects a catalog-resolvable alias outside the secondary pool before any spawn side effect', async () => {
+    secondaryModel = {
+      defaultModel: 'cheap/fast',
+      models: { 'cheap/fast': 'fast and cheap', 'smart/slow': 'careful and thorough' },
+    };
+    modelMeta['other/valid'] = { displayName: 'Other valid model' };
+
+    const result = await execute({ ...WORKER_ARGS, model: 'other/valid' });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain(
+      'Invalid model "other/valid". Available models: cheap/fast, smart/slow, primary.',
+    );
+    await expectNoWorkerSpawnSideEffects();
+  });
+
+  it('rejects a non-primary explicit model without a secondary pool before any spawn side effect', async () => {
+    const result = await execute({ ...WORKER_ARGS, model: 'cheap/fast' });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('no [secondary_model] pool is configured');
+    await expectNoWorkerSpawnSideEffects();
+  });
+
+  it('accepts an explicit primary choice for workers when a secondary model is configured', async () => {
+    secondaryModel = { model: 'cheap/fast' };
+
+    const result = await execute({ ...WORKER_ARGS, model: 'primary' });
+
+    expect(result.isError).toBeUndefined();
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
+      labels: { parentAgentId: 'main' },
+    });
+  });
+
+  it('rejects an explicit model when the caller has no model alias instead of ignoring it', async () => {
+    callerModelAlias = undefined;
+    secondaryModel = {
+      defaultModel: 'cheap/fast',
+      models: { 'cheap/fast': 'fast and cheap', 'smart/slow': 'careful and thorough' },
+    };
+
+    const result = await execute({ ...WORKER_ARGS, model: 'smart/slow' });
+
+    expect(result).toEqual({ output: 'Caller agent has no model bound', isError: true });
+    await expectNoWorkerSpawnSideEffects();
+  });
+
+  it('keeps the legacy unbound-caller path when model is omitted', async () => {
+    callerModelAlias = undefined;
+
+    const result = await execute(WORKER_ARGS);
+
+    expect(result.isError).toBeUndefined();
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: undefined, thinking: undefined },
       labels: { parentAgentId: 'main' },
     });
   });
@@ -536,6 +755,13 @@ describe('TowerSpawnTool', () => {
 
     expect(result.isError).toBeUndefined();
     expect(result.output).toContain('review_target: feat/build-gemm');
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
+      labels: { parentAgentId: 'main' },
+    });
+    expect(result.output).toContain('A reviewer is one-shot');
+    expect(result.output).toContain('spawn a fresh reviewer only if the mission still needs one');
+    expect(result.output).not.toContain('Agent(resume=');
     const state = await store.load();
     const entry = state.roster.agents.find((agent) => agent.name === 'reviewer-a');
     expect(entry).toMatchObject({
@@ -587,6 +813,29 @@ describe('TowerSpawnTool', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('already registered');
     expect(result.output).toContain('Agent(resume="agent-old", run_in_background=true');
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not recommend resuming a duplicate reviewer', async () => {
+    await store.registerAgent({
+      name: 'reviewer-a',
+      agentId: 'agent-reviewer-old',
+      kind: 'reviewer',
+      reviewTarget: 'feat/build-gemm',
+      reviewMissionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+
+    const result = await execute({
+      name: 'reviewer-a',
+      kind: 'reviewer',
+      review_target: 'feat/build-gemm',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('a reviewer is one-shot');
+    expect(result.output).toContain('spawn a fresh reviewer with a new name');
+    expect(result.output).not.toContain('Agent(resume=');
     expect(createAgent).not.toHaveBeenCalled();
   });
 
@@ -715,10 +964,11 @@ describe('TowerSpawnTool', () => {
       'call TowerInbox once and incorporate anything new into the delivery',
     );
     expect(prompt).toContain(
-      'the store refuses status="completed" while unread messages wait in your inbox',
+      'TowerComplete refuses while unread messages wait in your inbox',
     );
     expect(prompt).toContain('Re-read your mission too (TowerMission(id="M1") with no patch fields)');
-    expect(prompt).toContain('split them into chunks and check TowerInbox between chunks');
+    expect(prompt).toContain('Call TowerComplete(report=what you changed and why');
+    expect(prompt).not.toContain('Mark the mission completed: TowerMission');
   });
 
   it('briefs the survey worker to read the inbox before completing', async () => {
@@ -732,6 +982,8 @@ describe('TowerSpawnTool', () => {
     const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
     expect(prompt).toContain('# When the survey is done');
     expect(prompt).toContain('Call TowerInbox once and fold anything new into your summary');
+    expect(prompt).toContain('Call TowerComplete(report=the full survey result)');
+    expect(prompt).not.toContain('subject="survey-summary"');
   });
 
   it('briefs the reviewer with the mission text and the worker self-report', async () => {
@@ -766,6 +1018,8 @@ describe('TowerSpawnTool', () => {
     expect(prompt).toContain("# The author's own account");
     expect(prompt).toContain('Rewrote the intro; tone kept friendly, internals left out.');
     expect(prompt).toContain('1. Intent');
+    expect(prompt).toContain('Standard review-result notifications are stored automatically');
+    expect(prompt).not.toContain('Notify the author with TowerSend');
   });
 
   it('falls back to the generic checklist when the review target owns no mission', async () => {

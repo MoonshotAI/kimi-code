@@ -70,7 +70,7 @@ describe('facade routing', () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);
 
-    channel.result = { id: 'w1', root: '/x', name: 'n', createdAt: 1, lastOpenedAt: 2 };
+    channel.result = { id: 'w1', root: '/x', name: 'n', kind: 'implicit', additionalDirs: [], createdAt: 1, lastOpenedAt: 2 };
     await klient.global.workspaces.createOrTouch({ root: '/x', name: 'n' });
     expect(channel.calls[0]).toMatchObject({
       service: 'workspaceService',
@@ -142,6 +142,45 @@ describe('facade routing', () => {
       { scope: {}, service: 'capabilityService', method: 'listCapabilities', args: [] },
       { scope: {}, service: 'capabilityService', method: 'getCapability', args: ['kimi-cu'] },
       { scope: {}, service: 'capabilityService', method: 'installCapability', args: ['kimi-cu'] },
+    ]);
+  });
+
+  it('routes custom and marketplace plugin installs through the same contract', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    channel.result = {
+      id: 'demo',
+      displayName: 'Demo',
+      enabled: true,
+      state: 'ok',
+      skillCount: 0,
+      mcpServerCount: 0,
+      enabledMcpServerCount: 0,
+      hookCount: 0,
+      commandCount: 0,
+      hasErrors: false,
+      source: 'zip-url',
+      origin: 'marketplace',
+      catalogId: 'demo',
+      installedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    await klient.global.plugins.install('/tmp/demo');
+    await klient.global.plugins.install({ marketplaceId: 'demo', expectedVersion: '1.0.0' });
+
+    expect(channel.calls).toEqual([
+      {
+        scope: {},
+        service: 'pluginService',
+        method: 'installPlugin',
+        args: [{ source: '/tmp/demo' }],
+      },
+      {
+        scope: {},
+        service: 'pluginService',
+        method: 'installPlugin',
+        args: [{ marketplaceId: 'demo', expectedVersion: '1.0.0' }],
+      },
     ]);
   });
 
@@ -241,6 +280,44 @@ describe('agent skill routing', () => {
       ],
     });
   });
+
+  it.each([{ steerIfActive: true }, { steerIfActive: false }, { steerIfActive: undefined }])(
+    'promptWithSkills keeps steerIfActive $steerIfActive and the skill args on the wire',
+    async ({ steerIfActive }) => {
+      const channel = new FakeChannel();
+      const klient = createKlientFromChannel(channel);
+      const agent = klient.session('s1').agent('main');
+
+      channel.result = {
+        prompt_id: 'p1',
+        created_at: '2026-01-01T00:00:00.000Z',
+        state: 'queued',
+      };
+      await expect(
+        agent.promptWithSkills({
+          input: [{ type: 'text', text: 'Review this change.' }],
+          skills: [{ name: 'review', args: 'src/app.ts' }],
+          steerIfActive,
+        }),
+      ).resolves.toEqual({
+        prompt_id: 'p1',
+        created_at: '2026-01-01T00:00:00.000Z',
+        state: 'queued',
+      });
+      expect(channel.calls[0]).toEqual({
+        scope: { sessionId: 's1', agentId: 'main' },
+        service: 'agentSkillService',
+        method: 'promptWithSkills',
+        args: [
+          {
+            input: [{ type: 'text', text: 'Review this change.' }],
+            skills: [{ name: 'review', args: 'src/app.ts' }],
+            steerIfActive,
+          },
+        ],
+      });
+    },
+  );
 });
 
 describe('session skills routing', () => {
@@ -307,7 +384,13 @@ describe('session skills routing', () => {
     const scope = { sessionId: 's1', agentId: 'main' };
 
     channel.results.set('agentPromptService.submit', { turn_id: 1 });
-    channel.results.set('agentPromptService.submitSteer', { turn_id: 1 });
+    channel.results.set('agentPromptService.submitSteer', {
+      turn_id: 1,
+      prompt_id: 'prompt-steer-1',
+      created_at: '2026-01-01T00:00:00.000Z',
+      state: 'running',
+      steered: true,
+    });
     channel.results.set('agentCommandService.list', []);
     await agent.prompt({ input: [{ type: 'text', text: 'hi' }] });
     await agent.steer({ input: [{ type: 'text', text: 'steer' }] });
@@ -346,13 +429,105 @@ describe('session skills routing', () => {
     const agent = klient.session('s1').agent('main');
     const scope = { sessionId: 's1', agentId: 'main' };
 
-    channel.results.set('agentContextMemoryService.get', [{ role: 'user' }]);
+    channel.results.set('agentContextMemoryService.get', [
+      { role: 'system', content: [{ type: 'text', text: 'rules' }] },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'hello' },
+          { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } },
+          { type: 'audio_url', audioUrl: { url: 'ms://audio-1', id: 'audio-1' } },
+          { type: 'video_url', videoUrl: { url: 'media://video-1', name: 'clip.mp4' } },
+        ],
+      },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: 'bare' },
+          {
+            type: 'think',
+            think: 'full',
+            encrypted: 'encrypted',
+            detailsIndex: 0,
+            hidden: false,
+            reasoningKey: '',
+          },
+        ],
+        toolCalls: [],
+      },
+      { role: 'tool', content: [{ type: 'text', text: 'done' }], toolCallId: 'call-1' },
+    ]);
     channel.results.set('agentTokenCountingService.statusSize', 42);
-    await expect(agent.getContext()).resolves.toEqual({
-      history: [{ role: 'user' }],
+    await expect(agent.getContext()).resolves.toStrictEqual({
+      history: [
+        { role: 'system', content: [{ type: 'text', text: 'rules' }], toolCalls: [] },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'hello' },
+            { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } },
+            { type: 'audio_url', audioUrl: { url: 'ms://audio-1', id: 'audio-1' } },
+            { type: 'video_url', videoUrl: { url: 'media://video-1', name: 'clip.mp4' } },
+          ],
+          toolCalls: [],
+        },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'think', think: 'bare' },
+            {
+              type: 'think',
+              think: 'full',
+              encrypted: 'encrypted',
+              detailsIndex: 0,
+              hidden: false,
+              reasoningKey: '',
+            },
+          ],
+          toolCalls: [],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'done' }],
+          toolCalls: [],
+          toolCallId: 'call-1',
+        },
+      ],
       tokenCount: 42,
     });
     expect(channel.calls).toEqual([
+      { scope, service: 'agentContextMemoryService', method: 'get', args: [] },
+      { scope, service: 'agentTokenCountingService', method: 'statusSize', args: [] },
+    ]);
+
+    const envelope = {
+      id: 'message-1',
+      providerMessageId: 'provider-1',
+      name: 'named',
+      origin: { kind: 'user' },
+      isError: false,
+      partial: false,
+      toolCallDisplays: {},
+      note: '',
+      usage: { inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 },
+      llmTiming: { llmFirstTokenLatencyMs: 5, llmStreamDurationMs: 6 },
+      durationMs: 0,
+    };
+    channel.results.set('agentContextMemoryService.get', [
+      { role: 'user', content: [{ type: 'text', text: 'hello' }], ...envelope },
+    ]);
+    await expect(agent.getContext()).resolves.toStrictEqual({
+      history: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'hello' }],
+          toolCalls: [],
+          ...envelope,
+        },
+      ],
+      tokenCount: 42,
+    });
+    expect(channel.calls.slice(2)).toEqual([
       { scope, service: 'agentContextMemoryService', method: 'get', args: [] },
       { scope, service: 'agentTokenCountingService', method: 'statusSize', args: [] },
     ]);
@@ -366,7 +541,7 @@ describe('agent mcp / compaction routing', () => {
     const agent = klient.session('s1').agent('main');
 
     const entries = [
-      { name: 'mock', transport: 'stdio', status: 'pending', toolCount: 0 },
+      { name: 'mock', transport: 'stdio', status: 'failed', toolCount: 0, nextRetryAt: 123456 },
     ];
     channel.results.set('agentMcpService.list', entries);
     await expect(agent.getMcpServers()).resolves.toEqual(entries);

@@ -31,7 +31,7 @@ import {
 } from '../../harness';
 
 function message(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
+  return { role: 'user', content: [{ type: 'text', text }], origin: { kind: 'user' } };
 }
 
 function bundledMessage(skillName: string, user: string, extra: readonly ContentPart[] = [], marked = false): ContextMessage {
@@ -46,7 +46,6 @@ function bundledMessage(skillName: string, user: string, extra: readonly Content
       { type: 'text', text: user },
       ...extra,
     ],
-    toolCalls: [],
     origin: { kind: 'user', skillActivations: [{ activationId: `act-${skillName}`, skillName }] },
   };
 }
@@ -392,6 +391,55 @@ describe('prompt queue', () => {
     expect(materialized[1]?.promptIds).toEqual([three.id]);
   });
 
+  it('returns the prompt identity and delivery state for an accepted steer', async () => {
+    setup();
+    const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'active' });
+    ctx.mockNextResponse({ type: 'text', text: 'merged' });
+    await enqueue(loop, { message: message('active') });
+    await hold.started;
+
+    const result = await ctx.rpc.steer({ input: [{ type: 'text', text: 'steer' }] });
+
+    try {
+      expect(result).toMatchObject({
+        prompt_id: expect.any(String),
+        state: 'running',
+        steered: true,
+        turn_id: 0,
+      });
+    } finally {
+      hold.release();
+      await loop.settled();
+    }
+  });
+
+  it('returns a queued identity instead of waiting for an untracked active turn', async () => {
+    setup();
+    const hold = holdNextStep();
+    ctx.mockNextResponse({ type: 'text', text: 'continuation' });
+    loop.submit({
+      message: { role: 'user', content: message('continuation').content },
+      meta: { origin: { kind: 'user' }, tracked: false },
+    });
+    await hold.started;
+
+    const result = await ctx.rpc.steer({ input: [{ type: 'text', text: 'queued steer' }] });
+
+    try {
+      expect(result).toMatchObject({
+        prompt_id: expect.any(String),
+        state: 'queued',
+        steered: false,
+      });
+      expect(result).not.toHaveProperty('turn_id');
+    } finally {
+      loop.cancel();
+      hold.release();
+      await loop.settled();
+    }
+  });
+
   it('does not publish turn.steer when an unconsumed steer seeds the next turn after cancel', async () => {
     setup();
     const hold = holdNextStep();
@@ -408,6 +456,54 @@ describe('prompt queue', () => {
     await loop.settled();
 
     expect(steerEvents).toHaveLength(0);
+    const materializedStops = ctx
+      .get(IAgentContextMemoryService)
+      .get()
+      .filter(
+        (entry) =>
+          entry.role === 'user' &&
+          entry.content.some((part) => part.type === 'text' && part.text === 'stop'),
+      );
+    expect(materializedStops).toHaveLength(1);
+  });
+
+  it('mirrors a drained steer when cancellation wins before the next gate', async () => {
+    setup();
+    let releaseFinish!: () => void;
+    let markFinishing!: () => void;
+    const finishing = new Promise<void>((resolve) => { markFinishing = resolve; });
+    const finishGate = new Promise<void>((resolve) => { releaseFinish = resolve; });
+    let armed = true;
+    loop.hooks.onDidFinishStep.register('test-hold-finish-step', async (_hookCtx, next) => {
+      if (armed) {
+        armed = false;
+        markFinishing();
+        await finishGate;
+      }
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'active' });
+    const steerEvents: TurnSteer[] = [];
+    ctx.get(IEventBus).subscribe(TurnSteer, (event) => steerEvents.push(event));
+
+    await enqueue(loop, { message: message('active') });
+    await finishing;
+    const { id } = loop.submit(
+      {
+        message: { role: 'user', content: message('stop').content },
+        meta: { origin: { kind: 'user' }, tracked: true },
+      },
+      { steerIfActive: true },
+    );
+    await vi.waitFor(() => {
+      expect(loop.snapshot().notificationCount).toBe(0);
+    });
+    loop.cancel();
+    releaseFinish();
+    await loop.settled();
+
+    expect(steerEvents).toHaveLength(1);
+    expect(steerEvents[0]?.promptIds).toEqual([id]);
     const materializedStops = ctx
       .get(IAgentContextMemoryService)
       .get()
@@ -468,6 +564,23 @@ describe('prompt queue', () => {
     const handle = await enqueue(loop, { message: message('blocked') });
     await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
     expect(completed.map((event) => [event.promptId, event.reason])).toEqual([[handle.id, 'blocked']]);
+  });
+
+  it('returns the prompt identity when a steer is blocked by the prompt hook', async () => {
+    setup();
+    loop.hooks.onBeforeSubmitPrompt.register('block', async (hookCtx, next) => {
+      hookCtx.block = true;
+      await next();
+    });
+
+    const result = await ctx.rpc.steer({ input: [{ type: 'text', text: 'blocked steer' }] });
+
+    expect(result).toMatchObject({
+      prompt_id: expect.any(String),
+      state: 'blocked',
+      steered: false,
+    });
+    expect(result).not.toHaveProperty('turn_id');
   });
 
   it('exposes the in-flight gate item in the queue snapshot', async () => {
@@ -577,14 +690,13 @@ describe('prompt queue', () => {
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'seen' });
     vi.spyOn(ctx.get(IAgentProfileService), 'getModelProviderType').mockReturnValue(undefined);
-    const avifUrl = `data:image/avif;base64,${Buffer.from([1, 2, 3]).toString('base64')}`;
+    const url = `data:image/avif;base64,${Buffer.from([1, 2, 3]).toString('base64')}`;
 
     await enqueue(loop, {
       id: 'prompt-img',
       message: {
         role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
-        toolCalls: [],
+        content: [{ type: 'image_url', imageUrl: { url } }],
         origin: { kind: 'user' },
       },
     });
@@ -605,7 +717,7 @@ describe('prompt queue', () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'seen' });
-    const heicUrl = `data:image/heic;base64,${Buffer.from([
+    const url = `data:image/heic;base64,${Buffer.from([
       0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63,
     ]).toString('base64')}`;
 
@@ -613,15 +725,14 @@ describe('prompt queue', () => {
       id: 'prompt-heic',
       message: {
         role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: heicUrl } }],
-        toolCalls: [],
+        content: [{ type: 'image_url', imageUrl: { url } }],
         origin: { kind: 'user' },
       },
     });
     await hold.started;
 
     const parts = ctx.context.get()[0]!.content;
-    expect(parts).toEqual([{ type: 'image_url', imageUrl: { url: heicUrl } }]);
+    expect(parts).toEqual([{ type: 'image_url', imageUrl: { url } }]);
 
     hold.release();
     await loop.settled();
@@ -636,13 +747,12 @@ describe('prompt queue', () => {
 
     await enqueue(loop, { message: message('active') });
     await hold.started;
-    const avifUrl = `data:image/avif;base64,${Buffer.from([4, 5, 6]).toString('base64')}`;
+    const url = `data:image/avif;base64,${Buffer.from([4, 5, 6]).toString('base64')}`;
     const queued = await enqueue(loop, {
       id: 'prompt-steer-img',
       message: {
         role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
-        toolCalls: [],
+        content: [{ type: 'image_url', imageUrl: { url } }],
         origin: { kind: 'user' },
       },
     });
@@ -681,7 +791,6 @@ describe('prompt queue', () => {
       message: {
         role: 'user',
         content: [{ type: 'image_url', imageUrl: { url: 'kimi-file://file_1' } }],
-        toolCalls: [],
         origin: { kind: 'user' },
       },
     });
@@ -848,7 +957,6 @@ describe('prompt queue', () => {
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'one' }],
-        toolCalls: [],
         origin: {
           kind: 'user',
           attachments: [{ name: 'a.txt', mediaType: 'text/plain', size: 1, path: '/data/a.txt' }],
@@ -859,7 +967,6 @@ describe('prompt queue', () => {
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'two' }],
-        toolCalls: [],
         origin: {
           kind: 'user',
           attachments: [{ name: 'b.txt', mediaType: 'text/plain', size: 2, path: '/data/b.txt' }],

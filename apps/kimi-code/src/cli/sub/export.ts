@@ -27,7 +27,7 @@ import type { Command } from 'commander';
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from '#/cli/telemetry';
 import { detectInstallSource } from '#/cli/update/source';
-import { createKimiCodeHostIdentity } from '#/cli/version';
+import { createKimiCodeHostIdentity } from '#/cli/host-identity';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
 
 interface WritableLike {

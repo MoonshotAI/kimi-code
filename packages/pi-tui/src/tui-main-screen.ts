@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
 import { SEGMENT_RESET, type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
-import { asciiVisibleWidth, normalizeTerminalOutput, sliceByColumn, visibleWidth } from "./utils.ts";
+import { asciiVisibleWidthWithinLimit, normalizeTerminalOutput, sliceByColumn, visibleWidth } from "./utils.ts";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
@@ -279,7 +279,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		};
 
 		// Render all components to get new lines
-		let newLines = this.render(width);
+		// Resolve fake cursors before compositing so overlays and line slicing see plain SGR codes
+		let newLines = this.resolveFakeCursors(this.render(width));
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.hasOverlayEntries) {
@@ -317,7 +318,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			if (isImageLine(line)) {
 				imageIds = extractKittyImageIds(line);
 			} else {
-				const lineWidth = asciiVisibleWidth(line, width) ?? visibleWidth(line);
+				const lineWidth = asciiVisibleWidthWithinLimit(line, width) ?? visibleWidth(line);
 				if (lineWidth > width) {
 					line = sliceByColumn(line, 0, width, true);
 				}

@@ -1,12 +1,16 @@
 import { CLI_COMMAND_NAME } from '#/constant/app';
 import { registerMigrateCommand, type MigrateCommandOptions } from '#/migration/index';
+import { registerImportSessionsCommand } from '#/session-import/index';
 import { Command, InvalidArgumentError, Option } from 'commander';
 
+import { EXEC_SERVER_COMMAND } from './exec-server';
 import type { CLIOptions } from './options';
+import type { InstallIntent, UpdateChannel } from './update/types';
 import { registerAcpCommand } from './sub/acp';
 import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
 import { registerForkCommand } from './sub/fork';
+import { registerAppCommand } from './sub/app';
 import { registerInstallDesktopCommand } from './sub/install-desktop';
 import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
@@ -18,7 +22,13 @@ export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = (options: MigrateCommandOptions) => void;
 export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
 export type UpgradeCommandHandler = (yes: boolean) => void | Promise<void>;
-export type UpdateDownloadHandler = (version: string, manual: boolean) => void;
+export type UpdateDownloadHandler = (
+  version: string,
+  manual: boolean,
+  intent: InstallIntent,
+  channel: UpdateChannel,
+) => void;
+export type ExecServerCommandHandler = (listen: string) => void;
 
 export function createProgram(
   version: string,
@@ -27,6 +37,7 @@ export function createProgram(
   onPluginNodeRunner: PluginNodeRunnerHandler = () => {},
   onUpgrade: UpgradeCommandHandler = () => {},
   onUpdateDownload: UpdateDownloadHandler = () => {},
+  onExecServer: ExecServerCommandHandler = () => {},
 ): Command {
   const program = new Command(CLI_COMMAND_NAME)
     .description('The Starting Point for Next-Gen Agents')
@@ -53,7 +64,7 @@ export function createProgram(
     .option('-c, --continue', 'Continue the previous session for the working directory.', false)
     .addOption(new Option('-C').hideHelp().default(false))
     .option('-y, --yolo', 'Start in Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask.', false)
-    .option('--auto', 'Start in Never Ask mode: never interrupts you; everything runs and is decided automatically.', false)
+    .option('--auto', 'Start in Never Ask mode: everything runs and is decided automatically; only plans in Plan mode wait for your review.', false)
     .addOption(
       new Option(
         '-m, --model <model>',
@@ -117,6 +128,18 @@ export function createProgram(
     )
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
+    .addOption(
+      // The [environments] config layer resolves the id and default cwd.
+      // Hidden from help output.
+      new Option('--environment <id>', 'Bind the new session to the configured environment <id>.')
+        .hideHelp(),
+    )
+    .addOption(
+      new Option(
+        '--environment-cwd <path>',
+        'Set the working directory on the environment selected by --environment.',
+      ).hideHelp(),
+    )
     .option('--plan', 'Start in plan mode.', false);
 
   registerExportCommand(program);
@@ -129,7 +152,9 @@ export function createProgram(
   registerDoctorCommand(program);
   registerVisCommand(program);
   registerInstallDesktopCommand(program);
+  registerAppCommand(program);
   registerMigrateCommand(program, onMigrate);
+  registerImportSessionsCommand(program);
   program
     .command('upgrade')
     .alias('update')
@@ -155,8 +180,30 @@ export function createProgram(
     .command('__update_download', { hidden: true })
     .argument('<version>')
     .option('--manual', 'the stage answers an explicit user-initiated upgrade')
-    .action((targetVersion: string, options: { manual?: boolean }) => {
-      onUpdateDownload(targetVersion, options.manual === true);
+    .option('--switch-channel', 'the stage changes the selected update channel')
+    .option('--channel <channel>', 'the selected update channel')
+    .action((targetVersion: string, options: { manual?: boolean; switchChannel?: boolean; channel?: UpdateChannel }) => {
+      onUpdateDownload(
+        targetVersion,
+        options.manual === true,
+        options.switchChannel === true ? 'switch-channel' : 'upgrade',
+        options.channel ?? 'stable',
+      );
+    });
+
+  // Remote-executor entry (remote-environment spec §6). The exact argv shapes
+  // `exec-server` and `exec-server --listen stdio` are pre-dispatched in
+  // `src/main.ts` before this program is even loaded; this hidden command owns
+  // every other spelling (`--listen=stdio`, unsupported transports, excess
+  // args) so they still route to the executor or fail with a clean stderr
+  // error. `--listen` defaults to stdio, the only supported transport, so a
+  // bare invocation reaching this program agrees with the light path.
+  program
+    .command(EXEC_SERVER_COMMAND, { hidden: true })
+    .option('--listen <transport>', 'Transport to listen on. Only "stdio" is supported.', 'stdio')
+    .allowExcessArguments(false)
+    .action((options: { listen: string }) => {
+      onExecServer(options.listen);
     });
 
   program.argument('[args...]').action((args: string[]) => {
@@ -184,6 +231,8 @@ export function createProgram(
       agent: raw['agent'] as string | undefined,
       agentFiles: raw['agentFile'] as string[],
       addDirs: raw['addDir'] as string[],
+      environment: raw['environment'] as string | undefined,
+      environmentCwd: raw['environmentCwd'] as string | undefined,
     };
 
     onMain(opts);

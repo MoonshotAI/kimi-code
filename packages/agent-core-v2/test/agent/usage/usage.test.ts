@@ -184,6 +184,7 @@ describe('SessionUsageService (wire-backed)', () => {
         agent,
         model: 'model-a',
         usage: a1,
+        usageReported: true,
         source: { type: 'turn', turnId: 7, step: 2 },
         firstRecord: true,
       },
@@ -335,7 +336,7 @@ describe('AgentCacheProbeService', () => {
     return track2;
   }
 
-  it('probes the first turn request of a forked agent', async () => {
+  it('probes the first turn request of a forked agent using response usage', async () => {
     const track2 = stubProbeDeps('main');
     disposables.add(ix.createInstance(AgentCacheProbeService));
 
@@ -351,6 +352,26 @@ describe('AgentCacheProbeService', () => {
       input_cache_read: 3,
       input_cache_creation: 4,
       output_tokens: 2,
+      cache_hit_rate: 3 / 8,
+    });
+  });
+
+  it('reports unknown cache usage when response usage is missing', async () => {
+    const track2 = stubProbeDeps('main');
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    await svc.record(agent, 'model-a', undefined, { type: 'turn', turnId: 1 });
+
+    expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
+      source: 'fork',
+      turn_id: 1,
+      provider_type: 'kimi',
+      protocol: 'anthropic',
+      input_tokens: undefined,
+      input_cache_read: undefined,
+      input_cache_creation: undefined,
+      output_tokens: undefined,
+      cache_hit_rate: undefined,
     });
   });
 
@@ -398,6 +419,7 @@ describe('AgentCacheProbeService', () => {
       input_cache_read: 300,
       input_cache_creation: 400,
       output_tokens: 200,
+      cache_hit_rate: 300 / 800,
     });
   });
 });

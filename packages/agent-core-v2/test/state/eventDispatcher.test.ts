@@ -69,6 +69,7 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     lineCount: () => journal.length,
     lastContextClearLine: () => undefined,
     journalPath: () => undefined,
+    externallyModified: () => false,
   };
 }
 
@@ -100,6 +101,8 @@ interface CounterSet extends z.infer<typeof CounterSet.schema> {}
 
 class FailingEvent extends Event2<Record<string, never>> {
   static override readonly type = 'state.test.failing';
+  static override readonly durable = true;
+  static override readonly schema = z.object({});
 }
 
 class PingEvent extends Event2<Record<string, never>> {
@@ -179,6 +182,20 @@ const checkpointedKey = defineState(
     ctx.clearCheckpoints();
   });
 
+const mutableKey = defineState('state.test.mutable', (): CheckpointedState => ({ items: [] }))
+  .replayable({ schema: z.object({ items: z.array(z.string()) }), mutableReplay: true })
+  .undoable({
+    onUndo: (s, count) => {
+      s.items = s.items.slice(0, Math.max(0, s.items.length - count));
+    },
+  })
+  .on(ItemAdd, (s, e) => {
+    s.items.push(e.item);
+  })
+  .on(FailingEvent, (s) => {
+    s.items.push('mutable-before-failure');
+  });
+
 let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let dispatcher: IEventDispatcher;
@@ -199,6 +216,7 @@ beforeEach(() => {
   dispatcher = ix.get(IEventDispatcher);
   agentState = ix.get(IAgentStateService);
   agentState.contributeState(counterKey);
+  agentState.contributeState(mutableKey);
   agentState.contributeState(otherKey);
   agentState.contributeState(checkpointedKey);
 });
@@ -420,6 +438,59 @@ describe('EventDispatcherService', () => {
     expect(replayedState.get(checkpointedKey).items).toEqual(['x', 'y']);
     expect(seen).toEqual([]);
     expect(replayJournal).toEqual(records);
+  });
+
+  it('keeps live dispatch immediate and includes it in mutable replay', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const replay = new ItemAdd({ item: 'replay' }).serialize();
+    const wire = stubWireJournal(journal);
+    wire.readRestoreChains = async () => {
+      await gate;
+      return { restorable: [replay], journal: [replay] };
+    };
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.set(IEventBus, new SyncDescriptor(EventBusService));
+    ix2.set(IAgentBlobService, noopBlob);
+    ix2.set(IWireService, wire);
+    ix2.set(IAgentStateService, new AgentStateService());
+    ix2.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+    const restoringDispatcher = ix2.get(IEventDispatcher);
+    const restoringState = ix2.get(IAgentStateService);
+    restoringState.contributeState(counterKey);
+    restoringState.contributeState(mutableKey);
+    restoringState.contributeState(otherKey);
+    restoringState.contributeState(checkpointedKey);
+    const restoring = restoringDispatcher.restore();
+    const live = restoringDispatcher.dispatch(new ItemAdd({ item: 'live' }));
+    let settled = false;
+    void live.then(() => {
+      settled = true;
+    });
+    await live;
+    expect(settled).toBe(true);
+    expect(restoringState.get(mutableKey).items).toEqual(['live']);
+
+    release();
+    await restoring;
+    expect(restoringState.get(mutableKey).items).toEqual(['live', 'replay']);
+  });
+
+  it('discards mutable replay state when a later fold fails and can restore again', async () => {
+    const initial = agentState.get(mutableKey);
+    journal.push(new ItemAdd({ item: 'a' }).serialize(), new FailingEvent({}).serialize());
+
+    await expect(dispatcher.restore()).rejects.toThrow('fold failure');
+    expect(agentState.get(mutableKey)).toBe(initial);
+    expect(agentState.get(mutableKey).items).toEqual([]);
+
+    journal.length = 0;
+    journal.push(new ItemAdd({ item: 'b' }).serialize());
+    await dispatcher.restore();
+    expect(agentState.get(mutableKey).items).toEqual(['b']);
+    expect(Object.isFrozen(agentState.get(mutableKey))).toBe(true);
   });
 
   it('freezes replayed and undo-restored state after restore while leaving untouched keys unfrozen', async () => {

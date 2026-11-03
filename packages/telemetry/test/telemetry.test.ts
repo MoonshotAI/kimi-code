@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -39,6 +39,7 @@ import type {
   TelemetryEvent,
   TelemetryProperties,
   TelemetryTransport,
+  TelemetryRegionResolution,
 } from '../src/types';
 
 const tempDirs: string[] = [];
@@ -78,9 +79,14 @@ class RecordingTransport implements TelemetryTransport {
   }
 }
 
-function makeSink(transport: TelemetryTransport, flushThreshold = 10): EventSink {
+function makeSink(
+  transport: TelemetryTransport,
+  flushThreshold = 10,
+  resolveRegion?: () => TelemetryRegionResolution,
+): EventSink {
   return new EventSink({
     transport,
+    resolveRegion,
     context: {
       appName: 'kimi-code-cli',
       version: '1.2.3',
@@ -489,7 +495,7 @@ describe('SystemMetricsCollector', () => {
 describe('EventSink', () => {
   it('enriches context without mutating the original event', () => {
     const transport = new RecordingTransport();
-    const sink = makeSink(transport);
+    const sink = makeSink(transport, 10, () => ({ region: 'global', source: 'local-signals' }));
     const event: TelemetryEvent = {
       event_id: 'e1',
       device_id: 'dev',
@@ -510,16 +516,34 @@ describe('EventSink', () => {
       ui_mode: 'shell',
       model: 'kimi-k2',
       terminal: 'test-terminal',
+      region: 'global',
+      region_source: 'local-signals',
     });
   });
 
-  it('delegates retry of disk events to its transport', async () => {
+  it('delegates retry and requeues a failed flush', async () => {
     const transport = new RecordingTransport();
     const sink = makeSink(transport);
 
     await sink.retryDiskEvents();
-
     expect(transport.retryCount).toBe(1);
+
+    let failures = 0;
+    transport.send = async (events) => {
+      if (failures++ === 0) throw new Error('disk full');
+      transport.sent.push([...events]);
+    };
+    sink.accept({
+      event_id: 'e1',
+      device_id: 'dev',
+      session_id: 'ses',
+      event: 'test',
+      timestamp: 1,
+      properties: {},
+    });
+    await expect(sink.flush()).rejects.toThrow('disk full');
+    await sink.flush();
+    expect(transport.sent[0]?.[0]?.event).toBe('test');
   });
 
   it('applies a reconciled model only to events accepted after setModel', () => {
@@ -724,6 +748,17 @@ describe('AsyncTransport', () => {
     await transport.send([sampleEvent('dropped')]);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(() => statSync(join(homeDir, 'telemetry'))).toThrow();
+
+    const blockedHome = await tempHome();
+    writeFileSync(join(blockedHome, 'telemetry'), 'not a directory', 'utf-8');
+    const failingTransport = new AsyncTransport({
+      homeDir: blockedHome,
+      deviceId: 'dev',
+      endpoint: 'https://cn.test/events',
+      fetchImpl: vi.fn(async () => new Response('', { status: 500 })) as unknown as typeof fetch,
+      retryBackoffsMs: [],
+    });
+    await expect(failingTransport.send([sampleEvent('spooled')])).rejects.toThrow();
   });
 
   it('retries anonymously on 401 with a token', async () => {
@@ -832,26 +867,37 @@ describe('AsyncTransport', () => {
     expect(() => statSync(join(homeDir, 'telemetry'))).toThrow();
   });
 
-  it('retries disk events through the outbound pipeline and deletes the file on success', async () => {
+  it('keeps regionless disk files while the endpoint is absent and resends them once it returns', async () => {
     const homeDir = await tempHome();
     const telemetryDir = join(homeDir, 'telemetry');
     mkdirSync(telemetryDir, { recursive: true });
     const file = join(telemetryDir, 'failed_retry.jsonl');
     writeFileSync(file, `${JSON.stringify(sampleEvent('from_disk'))}\n`);
+    const expired = join(telemetryDir, 'failed_expired.jsonl');
+    writeFileSync(expired, `${JSON.stringify(sampleEvent('old'))}\n`);
+    const expiredSec = (Date.now() - DISK_EVENT_MAX_AGE_MS - 1) / 1000;
+    utimesSync(expired, expiredSec, expiredSec);
     const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    let endpoint: string | undefined;
     const transport = new AsyncTransport({
       homeDir,
       deviceId: 'dev',
-      endpoint: 'https://mock.test/events',
+      endpoint: () => endpoint,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
     await transport.retryDiskEvents();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(() => statSync(expired)).toThrow();
+    expect(readFileSync(file, 'utf-8')).toContain('from_disk');
 
+    endpoint = 'https://cn.test/events';
+    await transport.retryDiskEvents();
     const init = requestInitFrom(fetchImpl);
     const payload = JSON.parse(init.body as string) as { events: Array<{ event: string }> };
-    expect(payload.events[0]?.['event']).toBe('kfc_from_disk');
+    expect(payload.events.map((event) => event.event)).toEqual(['kfc_from_disk']);
     expect(() => statSync(file)).toThrow();
+    expect(readdirSync(telemetryDir)).toHaveLength(0);
   });
 
   it('removes expired and corrupted disk files', async () => {

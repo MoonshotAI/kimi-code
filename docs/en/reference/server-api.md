@@ -62,15 +62,17 @@ Error codes are grouped by band:
 | Band | Meaning | Examples |
 | --- | --- | --- |
 | `0` | Success | |
-| `400xx` | Bad request | `40001` validation failed (`details` lists each field), `40003` provider is OAuth-managed |
+| `400xx` | Bad request | `40001` validation failed (`details` lists each field), `40003` provider is OAuth-managed, `40006` duplicate workspace source folder |
 | `401xx` | Auth and readiness | `40101` unauthorized, `40110` no provider configured, `40113` model not resolved |
 | `404xx` | Not found | `40401` session, `40408` MCP server, `40409` file path |
-| `409xx` | State conflict | `40901` session busy, `40902` approval already resolved, `40922` page conditions mismatch `page_token` |
+| `409xx` | State conflict | `40901` session busy, `40902` approval already resolved, `40922` page conditions mismatch `page_token`, `40931` session occupied by another client, `40932` session updated by another client |
 | `410xx` | Expired | `41001` approval timed out, `41002` question timed out, `41003` temporary file expired |
 | `413xx` | Size or boundary exceeded | `41302` file read over 10 MB, `41304` path escapes the session directory |
 | `429xx` | Rate limited | `42901` auth-failure ban, `42902` too many fs watches |
 | `500xx` | Server internal error | `50001` uncaught exception, `50003` persistence failure |
 | `6xxxx` / `7xxxx` / `8xxxx` | Tool runtime / LLM provider / MCP passthrough errors; `msg` carries the upstream text | |
+
+`40931` and `40932` only appear when the same session is open in multiple clients. `40931` means another Kimi Code process is writing to the session right now; wait for it to go idle, then retry. If that process is known to be gone and the lock was left behind, call `POST /api/v1/sessions/{session_id}:takeover` and retry. When the session was updated by another client, prompt submission, skill activation, and compaction reload it on the server, push a fresh transcript to subscribers, and run the request again, so callers never see `40932` from them. Only undo returns `40932`: the server has already reloaded the session and nothing was undone; let the user review the refreshed history before undoing again.
 
 ### Pagination
 
@@ -165,7 +167,7 @@ On success, `data` carries:
 | Field | Type | Description |
 | --- | --- | --- |
 | `server_version` | string | Server version |
-| `capabilities` | object | Capability map — `websocket`, `file_upload`, `fs_query`, `mcp`, `tasks`, `terminal`, all always `true` |
+| `capabilities` | object | Capability map — `websocket`, `file_upload`, `fs_query`, `mcp`, `tasks`, all always `true` |
 | `server_id` | string | Unique id of this server instance |
 | `started_at` | string | Boot time, ISO 8601 |
 | `open_in_apps` | array | Host apps usable as `open-in` targets (`finder` / `cursor` / `vscode` / `iterm` / `terminal`); currently always empty |
@@ -237,6 +239,8 @@ On success, `data` is `{ cancelled, status }`: `cancelled` is `true` only when a
 
 Logs out the managed provider: discards the stored OAuth credential, aborts any pending login flow, and removes the managed provider from the configuration. OAuth-managed providers reject manual edit and delete (see `PUT` / `DELETE /api/v1/providers/{provider_id}` below), so log out first to remove one.
 
+For the default Kimi provider (`managed:kimi-code`), logout also tears down this machine's Remote Control and clears cached Remote Control cloud sessions. When no tunnel is running or another process hosts it, logout first deactivates this machine's device and holds the machine lock so no process on this machine can start Remote Control again until the credential is discarded; a cleanup failure aborts the logout. When this server hosts the tunnel, the credential is discarded first and the tunnel is torn down right after the response is flushed, so a logout sent through the Remote Control link still receives its response. Logging out any other provider leaves Remote Control untouched.
+
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `provider` | body | string | Managed provider name. Default `managed:kimi-code` |
@@ -265,9 +269,68 @@ On success, `data` is `{ kind: "ok", userInfo }` or `{ kind: "error", message, s
 
 #### `GET /api/v1/oauth/region`
 
-Resolves which Kimi region this client belongs to. The answer is derived locally, not probed over the network: an OAuth host pinned by environment or config wins first, then the configured OAuth key, then the region marker file in the home directory; the default is `mainland-cn`.
+Resolves which Kimi region this client belongs to without probing over the network. An OAuth host pinned by environment or config wins first, then the configured OAuth key, then the install-channel marker in `<home>/region`.
+
+When the client is logged out and none of those inputs decides, it infers the region from the device time zone and locale. A successful inference is cached in `<home>/region.json` and invalidated when the login state changes; raw signal values are not uploaded. Missing or conflicting signals fall back to `mainland-cn` for the current process without persisting that fallback, so the next start tries again. Set `KIMI_CODE_REGION_MARKER=off` to disable both the install-channel marker and local inference.
 
 On success, `data` is `{ region }` with `region` one of `mainland-cn` / `global`.
+
+### Remote Control
+
+These endpoints manage the machine-wide Remote Control tunnel (see the [Remote Control guide](../guides/remote-control.md)) and the account's device registry. The tunnel state is per machine; the device registry is per account and lives in the cloud, so device endpoints require a Kimi login and proxy the relay with a server-side session — OAuth credentials never reach the caller.
+
+#### `GET /api/v1/remote-control`
+
+Returns the current tunnel status. When the tunnel is off but another live process on this machine holds the single-instance lock, `data.conflict` carries that holder; the lock is re-inspected on every read, so a dead holder clears both `conflict` and the stored `error`.
+
+On success, `data` is `{ enabled, state, url?, device_id?, device_name?, error?, conflict? }` with `state` one of `off` / `starting` / `on` / `stopping` and `conflict` as `{ pid, local_origin, device_id, url, started_at }`.
+
+#### `POST /api/v1/remote-control`
+
+Starts or stops the tunnel.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `enabled` | body | boolean | `true` to start the tunnel, `false` to stop it |
+
+On success, `data` is the same status object as `GET /api/v1/remote-control`. Starting while another live process on this machine holds the single-instance lock fails with `REMOTE_CONTROL_ALREADY_RUNNING` (40928), with the lock holder in `details` in the same shape as `conflict`.
+
+#### `GET /api/v1/remote-control/devices`
+
+Lists the account's Remote Control devices from the cloud registry.
+
+On success, `data` is `{ devices, max_devices? }`. Each device is `{ device_id, alias, status, platform, client_version, local_base_url, created_at, updated_at, last_remote_access_at }` with `status` one of `online` / `offline`.
+
+#### `PATCH /api/v1/remote-control/devices/{id}`
+
+Renames a device.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `id` | path | string | Device identifier |
+| `alias` | body | string | New display name, trimmed; 1–50 characters |
+
+Blank or over-long aliases fail with `VALIDATION_FAILED` before reaching the cloud. On success, `data` is `{ ok: true }`.
+
+#### `POST /api/v1/remote-control/devices/{id}/deactivate`
+
+Takes a device offline in the cloud registry. Offline devices stay listed and do not consume the plan's device quota; a device comes back the next time it turns on Remote Control. When the target is this machine, the local tunnel is stopped first (an in-flight start is cancelled); the request then holds the machine lock while deactivating, so a concurrent enable cannot re-register the device behind a successful response. A holder that does not stop in time fails the request with `INTERNAL_ERROR` instead of reporting success.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `id` | path | string | Device identifier |
+
+On success, `data` is `{ ok: true }`.
+
+#### `DELETE /api/v1/remote-control/devices/{id}`
+
+Removes a device from the cloud registry: it disappears from the device list and its tunnel, if still connected, is disconnected. Deactivating keeps an offline device listed; deleting removes it entirely. When the target is this machine, the local tunnel is stopped first and the machine lock is held while deleting, so the device cannot re-register behind a successful response.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `id` | path | string | Device identifier |
+
+On success, `data` is `{ ok: true }`.
 
 ### Config
 
@@ -305,6 +368,7 @@ On success, `data` is the config object; its fields mirror the top-level domains
 | `experimental` | object | Experimental flag id → enabled |
 | `telemetry` | boolean | Whether anonymous telemetry is enabled |
 | `auto_session_title` | boolean | Whether clients may automatically generate session titles |
+| `disable_feedback_survey` | boolean | Whether the session rating prompt is turned off |
 | `raw` | object | Raw parsed `config.toml` content, unmodeled fields included |
 
 #### `POST /api/v1/config`
@@ -338,6 +402,7 @@ The body is a partial config object — any subset of the response domains above
 | `experimental` | body | object | Experimental flag id → enabled |
 | `telemetry` | body | boolean | Whether anonymous telemetry is enabled |
 | `auto_session_title` | body | boolean | Whether clients may automatically generate session titles |
+| `disable_feedback_survey` | body | boolean | Whether the session rating prompt is turned off |
 
 On success, `data` is the full updated config in the same shape as `GET /api/v1/config`.
 
@@ -363,7 +428,7 @@ These endpoints manage the two halves of model configuration — the [providers]
 
 Lists every configured model alias across all providers.
 
-On success, `data.items` is an array of `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort? }`: `model` is the alias id (`provider_id/model` for provider-managed aliases, otherwise the bare key), `provider` the owning provider id, `max_context_size` the context window in tokens, and `capabilities` / `support_efforts` / `default_effort` describe capability flags and Thinking-mode effort support.
+On success, `data.items` is an array of `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort?, upgrade? }`: `model` is the alias id (`provider_id/model` for provider-managed aliases, otherwise the bare key), `provider` the owning provider id, `max_context_size` the context window in tokens, and `capabilities` / `support_efforts` / `default_effort` describe capability flags and Thinking-mode effort support. For custom-registry models, `upgrade` may contain `{ model, migration_markdown, retirement_at? }` to guide users toward a replacement model; placeholders in `migration_markdown` are already replaced with the model ids.
 
 #### `POST /api/v1/models/{model_id}:set_default`
 
@@ -471,13 +536,13 @@ On success the server answers 204 with no body — the status line itself report
 
 #### `POST /api/v1/providers/{provider_id}:refresh`
 
-Re-discovers one provider's model metadata from its upstream source and rewrites the provider's aliases. Providers with a static model source are reported `unchanged` without any network call. When at least one provider's aliases change, the server broadcasts the global `event.model_catalog.changed` event.
+Re-discovers one provider's model metadata from its upstream source and rewrites the provider's aliases. Providers with a static model source are reported `unchanged` without any network call. When at least one provider's aliases or managed model metadata changes, the server broadcasts the global `event.model_catalog.changed` event.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `provider_id` | path | string | **Required.** Provider id |
 
-On success, `data` is a refresh report: `changed` is an array of `{ provider_id, provider_name, added, removed }` (added/removed alias counts), `unchanged` is an array of provider ids with no diff, and `failed` is an array of `{ provider, reason }`.
+On success, `data` is a refresh report: `changed` is an array of `{ provider_id, provider_name, added, removed }` (added/removed alias counts), `unchanged` is an array of provider ids with no diff, and `failed` is an array of `{ provider, reason }`. When a refresh finds that the registry dropped the current default model and that model had declared an `upgrade` replacement, `data` also carries an optional `retired_default`: `{ from, to, from_display_name }` — the default model has been redirected to `to`, open sessions still bound to `from` have been moved to `to` as well, and `from_display_name` is the dropped model's display name for notices. The same field appears on the `event.model_catalog.changed` event.
 
 - `40001`: malformed or unsupported action suffix in the path
 - `40412`: provider not found
@@ -564,11 +629,11 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `POST /api/v1/sessions/{session_id}:{action}` | Session actions: `fork` / `compact` / `undo` / `abort` / `btw` / `archive` / `restore` |
 | `GET /api/v1/sessions/{session_id}/children` | List child sessions |
 | `POST /api/v1/sessions/{session_id}/children` | Create a child session (fork with a tag) |
-| `GET /api/v1/sessions/{session_id}/status` | Realtime status rollup |
 | `GET /api/v1/sessions/{session_id}/goal` | Current goal snapshot (`null` when none) |
+| `PATCH /api/v1/sessions/{session_id}/goal` | Edit the current goal's objective in place |
 | `GET /api/v1/sessions/{session_id}/warnings` | Session-level warnings |
-| `GET /api/v1/sessions/{session_id}/runtime` | Read the main agent's runtime binding |
-| `POST /api/v1/sessions/{session_id}/runtime` | Switch the main agent's runtime binding |
+| `GET /api/v1/sessions/{session_id}/environment` | Read the main agent's environment binding |
+| `GET /api/v1/sessions/{session_id}/environments` | List the environments registered for the session workspace |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream, not enveloped) |
 | `GET /api/v1/sessions/{session_id}/snapshot` | Full snapshot for client rebuilds (with `as_of_seq` and `epoch`) |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | Download prompt media by file id (binary) |
@@ -708,16 +773,18 @@ Session actions are dispatched through one route: the path tail is parsed as `{s
 
 #### `POST /api/v1/sessions/{session_id}:fork`
 
-Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. Forking is rejected while any of the session's agents has an active turn.
+Copies the session — its transcript, agent state, and files — into a new session in the same workspace, and broadcasts `event.session.created`. The source keeps running. If a turn is active, the fork retains the last completed turn before it and the active turn's user prompt as a prompt-only `cancelled` turn; active assistant output, tool activity, queued input, and later events are excluded.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `title` | body | string | Title for the fork (at least 1 character). Default `Fork: <source title>` |
 | `metadata` | body | object | Custom metadata for the fork |
+| `turn_index` | body | integer | Persistent engine `turnId` to fork through, including that turn. Gaps are allowed. Must be a non-negative safe integer and already complete |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40901`: the session has an active turn and cannot be forked
+- `40001`: `turn_index` is invalid, does not exist, or selects the active turn
+- `40901`: another session history operation is in progress
 
 #### `POST /api/v1/sessions/{session_id}:compact`
 
@@ -740,7 +807,7 @@ Rewinds the main agent's conversation by `count` turns and reconciles the derive
 | `count` | body | integer | Number of turns to undo; positive integer. Default `1` |
 | `page_size` | body | integer | Size of the returned history window, 1–100. Default `50` |
 
-On success, `data` is `{ messages, status }`: `messages` is a `{ items, has_more }` page of the remaining context messages, newest first, and `status` is the same rollup as `GET /api/v1/sessions/{session_id}/status`.
+On success, `data` is `{ messages }`: a `{ items, has_more }` page of the remaining context messages, newest first.
 
 - `40901`: a turn is active or a compaction is running — wait for it to finish, then retry
 - `40911`: that many turns cannot be undone (a compaction boundary or lost checkpoints); `data` carries `{ reason, requestedCount, undoableCount }`
@@ -769,6 +836,22 @@ Un-archives the session and resumes it.
 
 On success, `data` is [the session object](#the-session-object) with `archived: false`.
 
+#### `POST /api/v1/sessions/{session_id}:reload`
+
+Reloads the session with the latest on-disk configuration: re-reads `config.toml` and plugins, reloads the workspace skill and subagent catalogs, then closes and resumes the session from disk. The main agent is also notified of external changes to AGENTS.md files, skills, and subagent profiles or models via system reminders.
+
+On success, `data` is [the session object](#the-session-object).
+
+- `40901`: the session has an active turn and cannot be reloaded
+
+#### `POST /api/v1/sessions/{session_id}:takeover`
+
+Removes the lock another Kimi Code process holds on the session, so a request that failed with `40931` can be retried. Use it only when that process is gone and left its lock behind: if it is still running, both processes write to the session until it goes idle, and the session history can interleave.
+
+On success, `data` is `{ taken_over: true }`.
+
+- `40401`: session not found
+
 #### `GET /api/v1/sessions/{session_id}/children`
 
 Lists the session's children — the sessions created through `POST /api/v1/sessions/{session_id}/children`. Cursor pagination follows [Pagination](#pagination).
@@ -787,7 +870,7 @@ On success, `data` is `{ items, has_more }` where each item is [the session obje
 
 #### `POST /api/v1/sessions/{session_id}/children`
 
-Creates a child session: a fork of this session recorded as its child, so it shows up under `GET /api/v1/sessions/{session_id}/children`. The same active-turn restriction as `:fork` applies.
+Creates a child session: a fork of this session recorded as its child, so it shows up under `GET /api/v1/sessions/{session_id}/children`. Running sources use the same completed-turn boundary and prompt-only `cancelled` active turn as `:fork`; child creation does not accept a historical `turn_index`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -797,19 +880,7 @@ Creates a child session: a fork of this session recorded as its child, so it sho
 
 On success, `data` is [the session object](#the-session-object) of the new session, and the server broadcasts `event.session.created`.
 
-- `40901`: the session has an active turn and cannot be forked
-
-#### `GET /api/v1/sessions/{session_id}/status`
-
-Realtime status rollup of the main agent; reading it resumes the session if it is cold.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-
-On success, `data` is `{ busy, model?, thinking_level, permission, plan_mode, swarm_mode, context_tokens, max_context_tokens?, context_usage? }`: `busy` reports an active turn, `model` / `thinking_level` / `permission` are the effective agent settings, `plan_mode` / `swarm_mode` are the mode flags, and `context_tokens` with `max_context_tokens` and `context_usage` (0–1) describe context-window consumption.
-
-- `40401`: session not found
+- `40901`: another session history operation is in progress
 
 #### `GET /api/v1/sessions/{session_id}/goal`
 
@@ -823,6 +894,23 @@ On success, `data` is `null` or `{ goalId, objective, completionCriterion?, stat
 
 - `40401`: session not found
 
+#### `PATCH /api/v1/sessions/{session_id}/goal`
+
+Replaces the objective of the current goal without changing its `goalId`, status, progress, or budget. Works on active, paused, and blocked goals. A running turn is not interrupted; the agent receives the new objective on its next turn. Connected clients are notified through the `goal.updated` event.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `objective` | body | string | **Required.** New objective; surrounding whitespace is trimmed |
+
+On success, `data` is the updated goal snapshot, in the same camelCase shape as `GET /api/v1/sessions/{session_id}/goal`.
+
+- `40401`: session not found
+- `40914`: no current goal
+- `40915`: the goal is complete
+- `40917`: the objective is empty
+- `40918`: the objective exceeds 4000 characters
+
 #### `GET /api/v1/sessions/{session_id}/warnings`
 
 Reads session-level warnings. The current producer is the oversized `AGENTS.md` check (`agents-md-oversized`), so the list is empty for most sessions.
@@ -835,31 +923,29 @@ On success, `data` is `{ warnings }`, each entry `{ code, message, severity }` w
 
 - `40401`: session not found
 
-#### `GET /api/v1/sessions/{session_id}/runtime`
+#### `GET /api/v1/sessions/{session_id}/environment`
 
-Reads the main agent's runtime binding — which runtime the session's agent loop runs on.
+Reads the main agent's environment binding — which environment the session's agent loop runs on.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ workspace_id, runtime_id }`.
+On success, `data` is `{ workspace_id, environment_id, cwd? }`; `cwd` is the working directory on the bound environment, present when the binding carries one.
 
 - `40401`: session not found
 
-#### `POST /api/v1/sessions/{session_id}/runtime`
+#### `GET /api/v1/sessions/{session_id}/environments`
 
-Switches the main agent's runtime binding.
+Lists the environments available to the session.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `runtime_id` | body | string | **Required.** Target runtime id |
 
-On success, `data` is the new binding `{ workspace_id, runtime_id }`.
+On success, `data` is `{ environments }`. Each `environments` entry is `{ environment_id, type, status, connect_error? }` with `type` one of `local` / `ssh` / `docker` / `command` and `status` one of `pending` / `connecting` / `ready` / `disconnected` / `disposed`; `pending` means no live connection and no observed failure (never connected), and `connect_error` carries the recorded failure reason for a `disconnected` entry.
 
-- `40420`: no runtime with that `runtime_id`
-- `40926`: the runtime exists but is unavailable
+- `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}/export`
 
@@ -894,7 +980,7 @@ Downloads a prompt media file (an image or other attachment referenced by the se
 
 ### Messages and transcript
 
-The `messages` endpoints page the main agent's flattened message history, while the `transcript` endpoints serve the structured per-agent transcript — turns, tasks, interactions, attachments — that the WebSocket [Transcript protocol](#transcript-protocol) streams live. Use these endpoints for history paging and catch-up, and the WebSocket subscription for the live tail.
+The `messages` endpoints page the main agent's flattened message history, while the `transcript` endpoints serve the structured per-agent transcript — turns, interactions, attachments — that the WebSocket [Transcript protocol](#transcript-protocol) streams live. Use these endpoints for history paging and catch-up, and the WebSocket subscription for the live tail.
 
 | Method and path | Description |
 | --- | --- |
@@ -938,7 +1024,7 @@ On success, `data` is the message object in the item shape documented under `GET
 
 #### `GET /api/v1/sessions/{session_id}/transcript`
 
-Returns one page of an agent's structured transcript: turns (with their steps and frames) plus the markers and task references between them. Live sessions answer from the in-memory store (the requested agent's persisted history is backfilled first); cold sessions rebuild the agent from the persisted wire records. This is the history half of the transcript surface — the live streaming half is the [Transcript protocol](#transcript-protocol) subscription.
+Returns one page of an agent's structured transcript: turns (with their steps and frames) plus the markers between them. Live sessions answer from the in-memory store (the requested agent's persisted history is backfilled first); cold sessions rebuild the agent from the persisted wire records. This is the history half of the transcript surface — the live streaming half is the [Transcript protocol](#transcript-protocol) subscription.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -948,7 +1034,7 @@ Returns one page of an agent's structured transcript: turns (with their steps an
 | `after_turn` | query | string | Only turns newer than this turn id; mutually exclusive with `before_turn` |
 | `page_size` | query | integer | 1–100 turns. Default `20` |
 
-The page unit is the turn: without a cursor the newest page is returned, and `has_more` reports that older turns remain. On success, `data` is `{ agent_id, items, has_more, tasks, interactions, attachments, todos, meta, agents, pending_interactions, seq? }` — `items` is the paged turn slice, `tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` are global agent state that ships unpaginated with every response, and `seq` is the agent's op-batch watermark for resuming the stream (live sessions only).
+The page unit is the turn: without a cursor the newest page is returned, and `has_more` reports that older turns remain. On success, `data` is `{ agent_id, items, has_more, interactions, attachments, agents, pending_interactions, seq? }` — `items` is the paged turn slice, `interactions` / `attachments` / `agents` / `pending_interactions` are global agent state that ships unpaginated with every response, and `seq` is the agent's op-batch watermark for resuming the stream (live sessions only). Tasks, the agent's status and settings, context usage, the goal, and the todo list are not part of the transcript; they arrive as the WebSocket `task`, `agent`, `usage`, `goal`, and `todo` frames (see [Events](#events)).
 
 - `40001`: validation failure — `before_turn` combined with `after_turn`, or a non-plain `agent_id`
 - `40401`: session not found
@@ -1211,79 +1297,6 @@ On success the envelope `code` is `40909` (`question dismissed`) rather than `0`
 - `40405`: no pending question with that id
 - `40902`: the question was already resolved; `data` carries `{ resolved: false }`
 
-### Background tasks
-
-Background tasks are the session's asynchronous units — background shells, subagents, and long-running tool tasks. The registry is live-only: a session not loaded in this server process reports an empty list.
-
-| Method and path | Description |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/tasks` | List background tasks |
-| `GET /api/v1/sessions/{session_id}/tasks/{task_id}` | Read a task (optional output preview) |
-| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel` | Cancel a task |
-| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach` | Move a foreground task to the background |
-
-#### `GET /api/v1/sessions/{session_id}/tasks`
-
-Lists the session's background tasks.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `status` | query | string | Keep only one status: `running` / `completed` / `failed` / `cancelled` |
-
-On success, `data` is `{ items }` where each item is a task object `{ id, session_id, kind, description, status, created_at, started_at?, completed_at?, command?, model?, thinking_effort?, agent_id?, subagent_type?, parent_tool_call_id?, output_preview?, output_bytes? }`. `kind` is `bash` / `subagent` / `tool`; `command` is set for `bash` tasks, the model and agent fields for `subagent` tasks, and the output fields only when a task is read with `with_output`. Timed-out and lost tasks report `failed`; killed tasks report `cancelled`.
-
-- `40001`: validation failure — an unknown `status`
-- `40401`: session not found
-
-#### `GET /api/v1/sessions/{session_id}/tasks/{task_id}`
-
-Reads one background task, optionally with a tail of its output.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `task_id` | path | string | **Required.** Task id |
-| `with_output` | query | boolean | Include an output tail in the response. Default `false` |
-| `output_bytes` | query | integer | Size of the requested output tail in bytes, minimum `0`. Default `32768` |
-
-On success, `data` is the task object documented under `GET /api/v1/sessions/{session_id}/tasks` above; with `with_output=true` and non-empty output, `output_preview` carries the tail text and `output_bytes` its byte length.
-
-- `40001`: validation failure
-- `40401`: session not found
-- `40406`: no task with that id (a cold session has no live tasks at all)
-
-#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel`
-
-Cancels a running task. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` / `detach` as the supported actions — a bare task id or an unknown action fails `40001`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `task_id` | path | string | **Required.** Task id |
-
-On success, `data` is `{ cancelled: true }`.
-
-- `40001`: missing or unknown action suffix
-- `40401`: session not found
-- `40406`: no task with that id
-- `40904`: the task already finished; `data` carries `{ cancelled: false }` and `details.current_status` the terminal status
-
-#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach`
-
-Moves a running foreground task to the background without stopping it: the tool call waiting on the task returns immediately with a background-task result, the turn continues, and the task keeps running under the background task registry (its output is persisted, and its completion arrives as a task notification). Already-background or finished tasks are an idempotent no-op. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` / `detach` as the supported actions — a bare task id or an unknown action fails `40001`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `task_id` | path | string | **Required.** Task id |
-
-On success, `data` is `{ detached, status }`: `detached` is `true` when the call moved a running foreground task to the background and `false` for the idempotent no-op; `status` is the task's status after the call.
-
-- `40001`: missing or unknown action suffix
-- `40401`: session not found
-- `40406`: no task with that id
-
 ### Skills, tools, and MCP
 
 These endpoints expose the skill catalogs a session or workspace sees, the effective agent's tool list, and its MCP servers. Skill activation and MCP restart use the `:{action}` convention; activation is the REST analogue of the `/<skill>` slash command.
@@ -1379,7 +1392,9 @@ Capabilities are built-in features with layered readiness — detection steps pl
 | `GET /api/v1/capabilities/{capability_id}` | Read one capability's status |
 | `POST /api/v1/capabilities/{capability_id}:install` | Start a capability install (background; poll GET for progress) |
 | `GET /api/v1/plugins` | List installed plugins |
-| `POST /api/v1/plugins` | Install a plugin from a local path, zip URL, or GitHub repo |
+| `GET /api/v1/plugins/{plugin_id}` | Read an installed plugin and its declared capabilities |
+| `POST /api/v1/plugins` | Install a custom plugin or a marketplace entry at an expected version |
+| `POST /api/v1/plugins/preview` | Inspect a marketplace entry's capabilities without installing it |
 | `GET /api/v1/plugins/marketplace` | Marketplace catalog merged with live install state |
 | `POST /api/v1/plugins/{plugin_id}:{action}` | Plugin actions: `enable` / `disable` / `remove` |
 
@@ -1420,28 +1435,48 @@ On success, `data` is the capability status object documented under `GET /api/v1
 
 Lists installed plugins.
 
-On success, `data` is `{ plugins }` where each item is `{ id, displayName, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`: `state` is `ok` / `error` (load failures also set `hasErrors`), `source` is `local-path` / `zip-url` / `github`, and `github` carries the provenance `{ owner, repo, ref, installedSha? }` with `ref` `{ kind: branch|tag|sha, value }` for GitHub-sourced plugins.
+On success, `data` is `{ plugins }` where each item is `{ id, displayName, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`: `state` is `ok` / `error` (load failures also set `hasErrors`), `source` is `local-path` / `zip-url` / `github`, and `github` carries the provenance `{ owner, repo, ref, installedSha? }` with `ref` `{ kind: branch|tag|sha, value }` for GitHub-sourced plugins. Each item also includes `origin` (`marketplace` / `custom` / `unknown`), optional `catalogId`, and `installedAt` (ISO timestamp).
 
 #### `POST /api/v1/plugins`
 
-Installs a plugin and returns its summary.
+Installs a plugin and returns its summary. The request body has two forms:
 
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `source` | body | string | **Required.** Where to install from: an absolute local path, an `http(s)` URL to a zip archive, or a GitHub URL — `https://github.com/<owner>/<repo>`, optionally pinned with `/tree/<branch-or-sha>`, `/releases/tag/<tag>`, or `/commit/<sha>` |
+- Custom install: `{ "source": "<absolute local path, http(s) ZIP URL, or GitHub URL>" }`. GitHub URLs may pin a ref with `/tree/<branch-or-sha>`, `/releases/tag/<tag>`, or `/commit/<sha>`.
+- Marketplace install: `{ "marketplaceId": "<catalog entry id>", "expectedVersion": "<version shown to the user>", "expectedSha256": "<sha256sum shown to the user>" }`. The daemon resolves `source`, `sha256sum`, and the expected plugin ID from the same catalog snapshot, verifies the archive before extraction, and checks the manifest ID. For ZIP entries that declare `sha256sum`, `expectedSha256` is required and must match the catalog. Custom entries without a version may omit `expectedVersion`; local-directory and GitHub entries do not require `expectedSha256`.
 
 On success, `data` is the plugin summary documented under `GET /api/v1/plugins` above.
 
 - `40001`: validation failure — for example `source` is neither a URL nor an absolute path, or the plugin failed to load
 - `40409`: the local path does not exist
+- `40934`: the catalog entry changed after the version shown to the user; refresh the catalog and retry
 
 #### `GET /api/v1/plugins/marketplace`
 
-Lists the plugin marketplace catalog merged with live install state. The catalog is fetched per request (10-second timeout) from the configured marketplace URL; with the default catalog, built-in capabilities missing from the catalog are merged in as rows (with `capabilityId` set) and rows whose capability is unsupported on this platform are dropped.
+Lists the plugin marketplace catalog merged with live install state. The default catalog URL is derived from the current managed `baseURL` as `${baseURL}/plugins/marketplace`; built-in capability rows are no longer injected. An entry remains visible when `platforms` includes the daemon platform or contains only `cloud`; a `cloud` entry for another local platform is filtered. Cloud-only entries cannot be installed locally. The legacy `kimi-webbridge` entry is not emitted, and Computer Use exposes only the wiring plugin for the current platform.
 
-On success, `data` is `{ entries }` where each item is `{ id, tier, displayName, description?, homepage?, keywords?, version?, source, installed?, updateAvailable?, capabilityId? }`: `tier` is `official` / `curated` / `third-party`, `installed` is `{ version?, enabled }` when the plugin is installed, and `updateAvailable` marks rows whose catalog version is newer than the installed one. An entry's `source` feeds the `source` field of `POST /api/v1/plugins`.
+On success, `data` is `{ entries }` where each item includes `id`, `tier`, `classification`, `displayName`, `description?`, `cliDescription?`, `homepage?`, `keywords?`, `version?`, `source`, `iconUrl?`, `sha256sum?`, `filename?`, `locale?`, `defaultLocale?`, `platforms?`, `distribution?`, `billing?`, `installed?`, `updateAvailable?`, and `capabilityId?`. `distribution.category` is `official` or `third_party`; `platforms` uses `darwin` / `win32` / `linux` / `cloud`. Marketplace installs use `marketplaceId`, `expectedVersion` when available, and `expectedSha256` for digest-bearing ZIPs rather than passing `source` directly; custom installs pass `source`. Capability rows are marked only by the daemon: `kimi-browser-extension` maps to the `kimi-webbridge` capability, and `kimi-cu` / `kimi-cu-win` maps to `kimi-cu`.
+
+`defaultLocale` declares the language of the top-level `description` and `cliDescription`; `locale` holds per-language `shortDescription`, `longDescription`, and `cliDescription` translations.
 
 - `50001`: the marketplace is unreachable or returned an invalid catalog
+
+#### `GET /api/v1/plugins/{plugin_id}`
+
+Reads an installed plugin's details and capabilities. `skills` contains the discovered Skill invocation names with optional display names and descriptions. `mcpServers` contains the declared MCP servers with their names, runtime names, enabled states, transports, non-secret connection settings, and optional display names, descriptions, and icon URLs. Both lists reflect the plugin's actual files and manifest. `interface.skillOverrides` and `interface.mcpOverrides` override display information only; they do not change invocation names or runtime configuration.
+
+On success, `data` is the plugin summary documented under `GET /api/v1/plugins`, plus `root`, `updatedAt?`, `manifestKind?`, `manifestPath?`, `skills`, `mcpServers`, `shadowedManifestPath?`, and `diagnostics`. The optional `locale` query parameter, such as `en-US` or `zh-CN`, selects translations from `interface.locales` and affects capability display text only. Fields without a matching translation fall back to the default `interface`.
+
+- `40419`: no installed plugin with that id
+
+#### `POST /api/v1/plugins/preview`
+
+Inspects a marketplace entry without installing it. The body is `{ "marketplaceId": "<catalog entry id>", "expectedVersion": "<version shown to the user>", "expectedSha256": "<sha256sum shown to the user>", "locale": "<optional locale>" }`. `expectedSha256` is required and must match the current catalog. The daemon downloads the archive into a temporary directory, verifies its SHA-256 before extraction, validates the manifest ID, and discovers its Skills and MCP servers. It does not write an installation record, install a runtime, or retain the extracted plugin.
+
+On success, `data` is `{ "skills": [{ "name": "<skill name>", "description": "<optional description>" }], "mcpServers": [{ "name": "<manifest name>", "runtimeName": "<runtime name>", "enabled": true, "transport": "stdio" }] }`. Both entry types can also include `displayName` and `description` from overrides, and MCP entries can include `iconUrl`. `locale` follows the same selection rules as installed plugin details. MCP entries use the same shape as `GET /api/v1/plugins/{plugin_id}`; the example shows only the common fields.
+
+- `40001`: the request, archive, SHA-256, or manifest is invalid
+- `40419`: no marketplace entry with that id
+- `40934`: the catalog entry changed after the version shown to the user; refresh the catalog and retry
 
 #### `POST /api/v1/plugins/{plugin_id}:enable`
 
@@ -1482,101 +1517,33 @@ On success, `data` is `{ ok: true }`.
 - `40001`: missing or unknown action suffix
 - `40419`: no installed plugin with that id
 
-### Terminals
-
-PTY terminal endpoints; mounted only on loopback binds (a non-loopback bind skips them unless `--allow-remote-terminals` is passed). Terminal input, output, and resize flow over WebSocket `terminal_*` frames — the REST surface manages the terminal lifecycle only.
-
-| Method and path | Description |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/terminals` | List terminals |
-| `POST /api/v1/sessions/{session_id}/terminals` | Create a terminal |
-| `GET /api/v1/sessions/{session_id}/terminals/{terminal_id}` | Read a terminal |
-| `POST /api/v1/sessions/{session_id}/terminals/{terminal_id}:close` | Close a terminal |
-
-#### `GET /api/v1/sessions/{session_id}/terminals`
-
-Lists the session's terminals. Reading the list resumes the session when it is cold.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-
-On success, `data` is `{ items }` where each item is a terminal object `{ id, session_id, cwd, shell, cols, rows, status, created_at, exited_at?, exit_code? }`: `status` is `running` / `exited`, and an exited terminal carries `exited_at` plus `exit_code` (`null` when the process reported none, for example after a signal). Scrollback is not part of the object — output replays and streams over the WebSocket.
-
-- `40401`: session not found
-
-#### `POST /api/v1/sessions/{session_id}/terminals`
-
-Creates a PTY terminal for the session.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `runtime_id` | body | string | Runtime to spawn in. Default `local` |
-| `cwd` | body | string | Working directory, relative to the session workspace (an absolute path fails validation). Default the workspace root |
-| `shell` | body | string | Shell executable. Default the runtime's shell |
-| `cols` | body | integer | Terminal width, positive. Default `80` |
-| `rows` | body | integer | Terminal height, positive. Default `24` |
-
-On success, `data` is the terminal object documented under `GET /api/v1/sessions/{session_id}/terminals` above.
-
-- `40001`: validation failure (`details` lists each field)
-- `40401`: session not found
-- `41304`: `cwd` resolves outside the session workspace
-
-#### `GET /api/v1/sessions/{session_id}/terminals/{terminal_id}`
-
-Reads one terminal.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `terminal_id` | path | string | **Required.** Terminal id |
-
-On success, `data` is the terminal object documented under `GET /api/v1/sessions/{session_id}/terminals` above.
-
-- `40401`: session not found
-- `40414`: no terminal with that id
-
-#### `POST /api/v1/sessions/{session_id}/terminals/{terminal_id}:close`
-
-Closes a terminal, killing its process. The endpoint dispatches through `POST /api/v1/sessions/{session_id}/terminals/{tail}` with `close` as the only action — a bare id or an unknown action fails `40001`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `terminal_id` | path | string | **Required.** Terminal id |
-
-On success, `data` is `{ closed: true }`.
-
-- `40001`: missing or unknown action suffix
-- `40401`: session not found
-- `40414`: no terminal with that id
-
 ### Workspaces
 
-Workspaces are the registered project directories sessions live in. These endpoints manage the registry — list, register, rename, unregister — plus the per-workspace trust state that gates project-level MCP config. Every endpoint that returns a workspace uses the wire shape documented once under [The workspace object](#the-workspace-object).
+Workspaces are the registered project directories sessions live in. These endpoints manage the registry — list, register, rename and update source folders, unregister — plus the per-workspace trust state that gates project-level MCP config. Every endpoint that returns a workspace uses the wire shape documented once under [The workspace object](#the-workspace-object).
 
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/workspaces` | List registered workspaces |
-| `POST /api/v1/workspaces` | Register a workspace (idempotent on the root path) |
-| `PATCH /api/v1/workspaces/{workspace_id}` | Rename |
+| `POST /api/v1/workspaces` | Register a workspace (fresh entry per call; retries deduped via `idempotency_key`) |
+| `PATCH /api/v1/workspaces/{workspace_id}` | Rename or replace source folders |
+| `POST /api/v1/workspaces/{workspace_id}/primary` | Promote a source folder to the primary directory |
+| `GET /api/v1/workspaces/project-config-dirs` | Read a project's local.toml additional dirs without mutating anything |
 | `DELETE /api/v1/workspaces/{workspace_id}` | Unregister (keeps on-disk content) |
 | `GET /api/v1/workspaces/{workspace_id}/trust` | Read the trust state |
 | `POST /api/v1/workspaces/{workspace_id}/trust` | Grant trust |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | Revoke trust |
-| `POST /api/v1/workspaces/{workspace_id}/add-dir` | Add an additional directory |
 
 #### The workspace object
 
-Every endpoint that returns a workspace uses this wire shape. Registration and rename broadcast the global `event.workspace.created` / `event.workspace.updated` events.
+Every endpoint that returns a workspace uses this wire shape. Registration and update broadcast the global `event.workspace.created` / `event.workspace.updated` events.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `id` | string | Workspace id, a `wd_<slug>_<hash12>` string derived from the root path |
-| `root` | string | Absolute path of the project directory |
-| `name` | string | Display name, 1–100 characters; defaults to the root's base name |
+| `id` | string | Workspace id: `wd_<slug>_<hash12>` for implicit registration (CLI/VS Code entering a directory), `wm_<uuid>` when created via `POST /api/v1/workspaces` |
+| `root` | string | Absolute path of the primary directory |
+| `name` | string | Display name, 1–100 characters; defaults to the primary directory's base name |
+| `kind` | string | Workspace kind: `managed` (explicitly created, `wm_` id; sessions do not merge the project `local.toml`) or `implicit` (registered by directory, `wd_` id; sessions merge the project `local.toml` for legacy compatibility) |
+| `additional_dirs` | string[] | Registry-managed extra source folders as absolute paths (excludes project `local.toml` and ephemeral sources) |
 | `created_at` | string | Registration time, ISO 8601 |
 | `last_opened_at` | string | Last time the workspace was opened or re-registered, ISO 8601 |
 | `session_count` | integer | Number of sessions in the workspace |
@@ -1589,31 +1556,64 @@ On success, `data` is `{ items }` where each item is [the workspace object](#the
 
 #### `POST /api/v1/workspaces`
 
-Registers a workspace and returns it. Registration is idempotent on the root path: registering an already-registered root returns the existing workspace with only `last_opened_at` refreshed (the stored name is kept), broadcasting `event.workspace.updated` instead of `event.workspace.created`.
+Registers a new workspace and returns it. Every call creates a fresh entry (`wm_<uuid>` id) — even when the same path is already another workspace's primary directory, entries are never folded and no warning is issued. Clients retrying a submission (network retry, double click) should send the same `idempotency_key`; the server dedupes on the key and returns the entry created by the first call.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `root` | body | string | **Required.** Absolute path of an existing directory |
-| `name` | body | string | Display name, 1–100 characters. Default the root's base name |
+| `root` | body | string | **Required.** Absolute path of an existing directory, used as the primary directory |
+| `name` | body | string | Display name, 1–100 characters. Default the primary directory's base name |
+| `additional_dirs` | body | string[] | Extra source folders. Each item resolves like `add-dir` (absolute, relative to the primary directory, or `~` expansion), must exist and be a directory, and must not duplicate the primary directory or another item; at most 64 items |
+| `idempotency_key` | body | string | Client-generated idempotency key, 1–200 characters. Retries with the same key return the workspace created by the first call |
 
 On success, `data` is [the workspace object](#the-workspace-object).
 
-- `40001`: `root` is missing or not an absolute path (`details` lists the field)
-- `40409`: `root` does not exist or is not a directory
+- `40001`: `root` is missing or not an absolute path, or another request validation failure (`details` lists the field)
+- `40006`: `additional_dirs` contains duplicates or the primary directory itself. `msg` is `Duplicate source folder: <actual path>`; `details` is `[{ "path": "additional_dirs.N", "directory": "<resolved absolute path>" }]`, where `path` locates the request field and `directory` is the duplicate directory
+- `40409`: `root` or a path in `additional_dirs` does not exist or is not a directory
 
 #### `PATCH /api/v1/workspaces/{workspace_id}`
 
-Renames a workspace — the display name only; the root path never changes.
+Updates a workspace's display name and/or source folders. `additional_dirs` uses whole-list replace semantics — submit the full edited list; omitting the field keeps the current list; the primary directory never changes. At least one of `name` or `additional_dirs` is required.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **Required.** Workspace id |
-| `name` | body | string | **Required.** New display name, 1–100 characters |
+| `name` | body | string | New display name, 1–100 characters |
+| `additional_dirs` | body | string[] | Full replacement list of extra source folders, resolved and validated like `POST /api/v1/workspaces` |
 
 On success, `data` is [the workspace object](#the-workspace-object).
 
-- `40001`: validation failure (`details` lists each field)
+- `40001`: both fields are missing, or another request validation failure (`details` lists each field)
+- `40006`: duplicate entries or an entry equal to the primary directory; `msg`, `details.path`, and `details.directory` have the same meaning as for `POST /api/v1/workspaces`
+- `40409`: a path in `additional_dirs` does not exist or is not a directory
 - `40410`: workspace not found
+
+#### `POST /api/v1/workspaces/{workspace_id}/primary`
+
+Promotes a source folder in the workspace's dir set to the primary directory. The swap is atomic: the path becomes the new `root` and the previous primary moves into `additional_dirs`; the workspace id and session bucket are unchanged, and all sessions are kept. After the swap, additional directories coming from the previous primary's `local.toml` are no longer merged (`local.toml` follows the primary directory).
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `workspace_id` | path | string | **Required.** Workspace id |
+| `path` | body | string | **Required.** Directory to promote, resolved like `add-dir`; must be in the current dir set (`root` ∪ `additional_dirs`) |
+
+On success, `data` is [the workspace object](#the-workspace-object).
+
+- `40001`: `path` is not in the dir set
+- `40409`: `path` does not exist or is not a directory
+- `40410`: workspace not found
+
+#### `GET /api/v1/workspaces/project-config-dirs`
+
+Reads `workspace.additional_dir` from a project's `local.toml`, read-only: entries are resolved to absolute paths, deduplicated, and the `root` itself is dropped. Neither the registry nor `local.toml` is modified; a missing `local.toml` yields an empty array, while malformed TOML or a configured directory that no longer exists causes the request to fail instead of returning an empty array. Clients can use this to merge legacy project config into a create/edit workspace form, taking effect on save.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `root` | query | string | **Required.** Absolute path of the project primary directory |
+
+On success, `data` is `{ additional_dirs: string[] }`.
+
+- `40001`: `root` is missing or empty
 
 #### `DELETE /api/v1/workspaces/{workspace_id}`
 
@@ -1653,38 +1653,23 @@ On success, `data` is `{ trusted: true }`.
 
 #### `POST /api/v1/workspaces/{workspace_id}/untrust`
 
-Revokes workspace trust, unloading its project-level MCP config.
+Revokes the persisted workspace trust record. Unless a process or config override keeps the workspace trusted, its project-level MCP config unloads.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **Required.** Workspace id |
 
-On success, `data` is `{ trusted: false }`.
+On success, `data` is `{ trusted }`, containing the effective trust state after revocation. It is normally `{ trusted: false }`, but remains `true` when `KIMI_CODE_TRUST_WORKSPACE` or [`[workspace] require_trust = false`](../configuration/config-files.md#workspace-trust) applies.
 
-- `40410`: workspace not found
-
-#### `POST /api/v1/workspaces/{workspace_id}/add-dir`
-
-Adds an additional directory to the workspace, with the same semantics as the CLI `--add-dir` flag and the TUI `/add-dir` command. The path accepts absolute paths, relative paths (resolved against the workspace root), and `~` expansion.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `workspace_id` | path | string | **Required.** Workspace id |
-| `path` | body | string | **Required.** Directory to add |
-| `persist` | body | boolean | Defaults to `true`: appends to `workspace.additional_dir` in `<project root>/.kimi-code/local.toml`. With `false`, the directory only joins the in-memory ephemeral set shared by all sessions of the workspace |
-
-On success, `data` is `{ project_root, config_path, additional_dirs, persisted }`, where `additional_dirs` lists every additional directory (existing ones included) and `persisted` reports whether this call wrote to disk.
-
-- `40001`: validation failure (`details` lists each field), or an engine-side config validation error such as a corrupted project local config
-- `40409`: `path` does not exist or is not a directory
 - `40410`: workspace not found
 
 ### File system
 
-In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{action}` with JSON bodies; actions are `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`. Every action body also accepts an optional `runtime_id` (string, default `local`) selecting the runtime that executes the operation; `open`, `open-in`, and `reveal` only work on the `local` runtime. In addition:
+In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{action}` with JSON bodies; actions are `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `git_status:batch` / `pull_request` / `pull_request:batch` / `diff` / `open` / `open-in` / `reveal`. Actions run on the environment the session was created on; `open`, `open-in`, and `reveal` only work for sessions on the `local` environment. In addition:
 
 | Method and path | Description |
 | --- | --- |
+| `POST /api/v1/workspace/fs:list` | Session-less workspace directory listing |
 | `POST /api/v1/workspace/fs:search` | Session-less workspace search (the body carries the workspace reference) |
 | `POST /api/v1/workspace/fs:suggest` | Session-less file-completion candidates (for `@` file mentions) |
 | `GET /api/v1/sessions/{session_id}/fs/{path}:download` | Download a session file (binary, see below) |
@@ -1706,6 +1691,7 @@ Lists the entries of a session workspace directory, optionally recursing into su
 | `show_hidden` | body | boolean | Include dotfiles. Default `false` |
 | `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
 | `exclude_globs` | body | string[] | Additional globs to skip |
+| `allow_ignored_globs` | body | string[] | Globs to show even when gitignored (e.g. `.tmp`). Ignored ancestor directories of a match are kept so the match stays reachable. Allowing dot-paths also requires `show_hidden: true` |
 | `sort` | body | string | `type_first` (default) / `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
 | `include_git_status` | body | boolean | Attach each entry's git status. Default `false` |
 
@@ -1844,27 +1830,76 @@ On success, `data` is `{ files, files_scanned, truncated, elapsed_ms }` where ea
 
 #### `POST /api/v1/sessions/{session_id}/fs:git_status`
 
-Reads the git status of the session workspace, optionally restricted to a set of paths.
+Reads git status, optionally restricted to a set of paths. When `root` is provided, entry paths are relative to that directory; when omitted, status covers the whole Git worktree and entry paths are relative to the repository root.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `paths` | body | string[] | Restrict the status to these paths; omitted means the whole workspace |
+| `root` | body | string | Workspace directory to scope to. When omitted, status covers the whole Git worktree; a relative value is resolved from the session work directory |
+| `paths` | body | string[] | Restrict the status to these paths. Relative paths are resolved from `root` when provided, otherwise from the session work directory |
+| `include_pull_request` | body | boolean | Include the associated pull request. Default `true` |
 
 On success, `data` is `{ branch, ahead, behind, entries, additions, deletions, pullRequest }` where `entries` maps each changed path to its status (`clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted`) and `pullRequest` is `{ number, state, url }` (`state` is `open` / `merged` / `closed` / `draft`) or `null`.
 
 - `40001`: body validation failure
 - `40401`: session not found
 - `40908`: git is unavailable (not a repository, or no git binary)
+- `41304`: path escapes the session workspace
 
-#### `POST /api/v1/sessions/{session_id}/fs:diff`
+#### `POST /api/v1/sessions/{session_id}/fs:git_status:batch`
 
-Returns the unified git diff of one file in the session workspace.
+Reads git status for several workspace directories in one call. A failing directory folds into `errors` instead of failing the whole request.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `path` | body | string | **Required.** File to diff, relative to the session work directory |
+| `roots` | body | string[] | **Required.** Workspace directories to inspect, 1–32 entries |
+| `include_pull_request` | body | boolean | Include the associated pull request in each result. Default `true` |
+
+On success, `data` is `{ results, errors }`. `results` maps each successful root to the same status object as `fs:git_status`; `errors` maps each failed root to its `{ code, msg }` error, using the same error codes as the single-directory action.
+
+- `40001`: body validation failure
+- `40401`: session not found
+
+#### `POST /api/v1/sessions/{session_id}/fs:pull_request`
+
+Reads the pull request associated with a session workspace directory.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `root` | body | string | Workspace directory to inspect. Defaults to the session work directory; a relative value is resolved from it |
+
+On success, `data` is `{ number, state, url }` (`state` is `open` / `merged` / `closed` / `draft`) or `null` when no pull request is found.
+
+- `40001`: body validation failure
+- `40401`: session not found
+- `40908`: git is unavailable (not a repository, or no git binary)
+- `41304`: path escapes the session workspace
+
+#### `POST /api/v1/sessions/{session_id}/fs:pull_request:batch`
+
+Reads pull requests for several workspace directories in one call. A failing directory folds into `errors` instead of failing the whole request.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `roots` | body | string[] | **Required.** Workspace directories to inspect, 1–32 entries |
+
+On success, `data` is `{ results, errors }`. `results` maps each successful root to the same pull request object as `fs:pull_request`, or `null`; `errors` maps each failed root to its `{ code, msg }` error.
+
+- `40001`: body validation failure
+- `40401`: session not found
+
+#### `POST /api/v1/sessions/{session_id}/fs:diff`
+
+Returns the unified git diff of one file in a session workspace directory.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `path` | body | string | **Required.** File to diff, relative to `root` |
+| `root` | body | string | Workspace directory to inspect. Defaults to the session work directory; a relative value is resolved from it |
 
 On success, `data` is `{ path, diff, truncated }` where `diff` is the unified diff text and `truncated` reports an over-long diff cut short.
 
@@ -1875,7 +1910,7 @@ On success, `data` is `{ path, diff, truncated }` where `diff` is the unified di
 
 #### `POST /api/v1/sessions/{session_id}/fs:open`
 
-Opens a session file with the host operating system's default handler. Local runtime only.
+Opens a session file with the host operating system's default handler. Local environment only.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1892,7 +1927,7 @@ On success, `data` is `{ opened: true }`.
 
 #### `POST /api/v1/sessions/{session_id}/fs:open-in`
 
-Opens a session file or directory in a specific host application. Local runtime only.
+Opens a session file or directory in a specific host application. Local environment only.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1911,7 +1946,7 @@ On success, `data` is `{ opened: true }`.
 
 #### `POST /api/v1/sessions/{session_id}/fs:reveal`
 
-Reveals a session file in the host operating system's file manager. Local runtime only.
+Reveals a session file in the host operating system's file manager. Local environment only.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1933,12 +1968,37 @@ Downloads a file from the session workspace; `{path}` is the workspace-relative 
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `path` | path | string | **Required.** Workspace-relative file path plus the `:download` suffix |
-| `runtime_id` | query | string | Runtime to read from. Default `local` |
+| `allow_external_symlinks` | query | string | `true` to download through symlinks outside the workspace. Default `false` |
 
 - `40001`: missing or empty path
 - `40401`: session not found
 - `40409`: path not found
 - `41304`: path escapes the session workspace
+
+#### `POST /api/v1/workspace/fs:list`
+
+The session-less form of `fs:list`: the workspace travels in the body instead of the URL.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `workspace` | body | string | **Required.** Registered workspace id or absolute root (registered on the spot) |
+| `path` | body | string | Directory to list, relative to the workspace root. Default `.` |
+| `depth` | body | integer | Recursion depth, 1–10. Default `1` |
+| `limit` | body | integer | Maximum entries, 1–1000. Default `200` |
+| `show_hidden` | body | boolean | Include dotfiles. Default `false` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
+| `exclude_globs` | body | string[] | Additional globs to skip |
+| `allow_ignored_globs` | body | string[] | Globs to show even when gitignored |
+| `allow_external_symlinks` | body | boolean | Follow symlinked directories whose targets are outside the workspace. Default `false` |
+| `sort` | body | string | `type_first` (default) / `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
+
+On success, `data` has the same shape as `fs:list`.
+
+- `40001`: body validation failure
+- `40409`: path not found or not a directory
+- `40410`: workspace not found and not a usable absolute path
+- `40411`: permission denied by the host filesystem
+- `41304`: path escapes the workspace through a symlink and `allow_external_symlinks` is not enabled
 
 #### `POST /api/v1/workspace/fs:search`
 
@@ -1952,7 +2012,6 @@ The session-less form of `fs:search`: the workspace travels in the body instead 
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
 | `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
-| `runtime_id` | body | string | Runtime to search on. Default `local` |
 
 On success, `data` is `{ items, truncated }` with the same hit shape and ordering as `fs:search`.
 
@@ -1972,7 +2031,6 @@ Suggests file and directory completion candidates in a workspace without a sessi
 | `show_hidden` | body | boolean | Include dotfiles. Default `false` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
-| `runtime_id` | body | string | Runtime to complete on. Default `local` |
 
 On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }`, the same hit shape as `fs:search`.
 
@@ -2363,18 +2421,22 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 
 | Frame | payload | Description |
 | --- | --- | --- |
-| `subscribe` | `{ session_ids, cursors?, agent_filter? }` | Subscribe to session events; with `cursors` (per-session `{seq, epoch}`) the server replays missed durable events |
-| `unsubscribe` | `{ session_ids }` | Drop session subscriptions |
-| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to transcript streams (the only transcript channel); `transcript` sets per-agent grades |
-| `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids` means the whole session |
-| `client_hello` | `{ client_id }` | Handshake frame; the remaining fields are legacy compatibility |
+| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to a session (the only session subscription): its transcript streams and interactions; `transcript` sets per-agent grades |
+| `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids`, or detaching the last agent, drops the whole session subscription |
+| `client_hello` | `{ client_id }` | Handshake frame; other fields are ignored |
+| `task.watch` | flat: `{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | Stream one task's output to this connection, no session subscription needed; `agent_id` is the agent that owns the task (the `agent_id` of its `task` frame), `since_offset` resumes after output the client already has, and `tail_bytes` caps the size of the first chunk |
+| `task.unwatch` | flat: `{ request_id, session_id, agent_id, task_id }` | Stop streaming that task's output |
+| `task.stop` | flat: `{ request_id, session_id, agent_id, task_id }` | Stop a task; an ended task just replies with its state |
+| `task.background` | flat: `{ request_id, session_id, agent_id, task_id }` | Stop the starting tool call from waiting so the task keeps running in the background; a task already in the background or ended just replies with its state, and a task its caller cannot stop waiting for, such as an AgentSwarm member, fails with `40933` |
+
+`task.watch`, `task.unwatch`, `task.stop`, and `task.background` are flat: their fields sit next to `type` instead of under `payload`, `request_id` replaces `id`, and the reply is `{ "type": "response", "request_id", "code", "msg"?, "task"? }` instead of an ack; a frame without a readable `request_id` closes the socket with code 1008. On success, `task.watch`, `task.stop`, and `task.background` carry the task's current state in `task` (the `task` frame shape below, without `type`, `session_id`, `agent_id`, and `event_created_at`). Requests for the same task are handled one at a time in arrival order, so a `task.unwatch` sent while a `task.watch` is still pending takes effect after it; different tasks, and other control frames, never wait on each other. A successful `task.watch` replies with code 0, then sends the last `tail_bytes` of output (32 KiB by default, at most 1 MiB; only the part after `since_offset` when it falls inside that window) as one `task.output` frame, with empty `text` when there is nothing to send, followed by live output; ended tasks can be watched too. Errors: `40001` malformed frame (including an out-of-range `tail_bytes`), `40401` session not found, `40406` the agent has no such task, `40933` the task cannot be moved to the background (its reply still carries the task state), `50001` internal error, `50003` output unreadable.
 
 ### Events
 
 Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
 
 - **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
-- **Session events**: sent only to connections subscribed to that session, subject to `agent_filter`. Main families:
+- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2` — `transcript.reset` / `transcript.ops` (see [Transcript protocol](#transcript-protocol)), `task.list`, `task`, `agent`, `usage`, `goal`, `todo`, and `interaction`. `task.output` goes only to connections watching that task with `task.watch`.
 
 | Family | Main events |
 | --- | --- |
@@ -2390,9 +2452,18 @@ Three global lifecycle events keep a cross-workspace overview fresh without poll
 
 Events also split into durable and volatile: durable events carry a strictly increasing `seq`, are journaled, and can be replayed; volatile events (the `*.delta` family, `tool.progress`, `shell.*`, and similar) are marked `volatile: true` and never replayed. When consuming a volatile text stream, compare `offset` (the cumulative character offset within the turn) against your locally accumulated text: below the local length means a duplicate frame; above means a gap that needs snapshot recovery.
 
+Each agent's running tasks — shell commands in the foreground and background, subagents (swarm members included), and other asynchronous work — are synced by two flat frames, `task.list` and `task`, never replayed like `interaction`. When a connection starts receiving an agent's tasks (an agent whose grade in `subscribe_v2` is not `off` and that it was not receiving yet), it first gets `{ type: "task.list", session_id, agent_id, tasks }`, where `tasks` is every task the agent is running right now and replaces the client's list; after that it gets `{ type: "task", session_id, agent_id, event_created_at, ...task state }` on every change. An agent that joins the session later starts directly with `task` frames. The task state is `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`, and every frame carries the full state. `detached` means the tool call that started the task no longer waits for it, so it runs in the background; `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`, with the reason in `state_reason`; `child_agent_id` is a subagent task's agent id; `swarm_index` is a swarm member's position in its swarm; `command` is a shell task's command. When a task ends, its last `task` frame (`status: "ended"`) is sent and it no longer appears in `task.list`: the outcome of an ended task lives in the session history (tool results and task notifications), and `task.watch` on it replies with its exact final state. Tasks are independent of the transcript: a `reset` op inside `transcript.ops` after an undo does not touch tasks. Task output streams separately as `{ type: "task.output", session_id, agent_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
+
+An agent's own state is synced by four more flat frames, each carrying the full value and replacing the client copy; like the task frames they are never replayed. When a connection starts receiving an agent (the same rule as `task.list`), it first gets the current `agent`, `usage` (when the agent has a model context), `goal` (main agent only), and `todo` frames, and after that each frame again whenever its value changes; an agent that joins the session later announces itself with the same frames. Subscribing to a session creates its main agent if it does not exist yet, so the main agent's frames always follow the subscription. All four are `{ type, session_id, agent_id, event_created_at, ... }`:
+
+- `agent`: `{ status: "idle" | "running", model?, thinking?, permission_mode?, plan_mode, swarm_mode, tower_mode }`. `status` follows the agent's turns, and the frame for a turn's start or end is sent after the `transcript.ops` batch of that same turn change. The three mode fields are booleans.
+- `usage`: `{ context_tokens, max_context_tokens? }`. Only the latest value matters, so while the context grows the server sends it at most a few times per second.
+- `goal`: `{ goal? }`, where `goal` is omitted when the session has none, or is `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`.
+- `todo`: `{ items: [{ title, status: "pending" | "in_progress" | "done" }] }`, read from the agent's todo store, so it follows undo and survives a restart.
+
 ### Reconnect and recovery
 
-After reconnecting, pass each session's last applied `{seq, epoch}` in `subscribe`'s `cursors`; the server replays the gap. If you fall more than the buffer (1000 events) behind, or the cursor is no longer valid, you get `resync_required` instead. In that case, call `GET /api/v1/sessions/{session_id}/snapshot` for a full snapshot (with `as_of_seq` and `epoch`), then subscribe again with the fresh cursor.
+Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: pass `transcript_since` to resume the transcript streams, or omit it to start from a fresh `transcript.reset`; pending interactions are resent after the ack, and every agent's `task.list`, `agent`, `usage`, `goal`, and `todo` frames are sent again. Task output watches are dropped as well: send `task.watch` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
 
 ### Transcript protocol
 

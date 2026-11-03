@@ -38,7 +38,7 @@ export const ALL_TIPS: readonly ToolbarTip[] = [
   { text: 'shift+enter: newline' },
   { text: 'ctrl+c: cancel' },
   { text: '/theme to switch the terminal UI theme' },
-  { text: '/auto when you want Kimi to handle approvals and keep going unattended' },
+  { text: '/auto when you want Kimi to handle approvals and keep going; only plans in Plan mode wait for you' },
   { text: '/yolo to skip most approvals for trusted batch work, only use it in repos you trust' },
   { text: '/help: show commands' },
   { text: '/compact compresses context when it gets long', priority: 2 },

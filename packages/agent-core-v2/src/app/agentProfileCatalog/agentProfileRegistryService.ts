@@ -16,13 +16,13 @@ import type {
 } from './agentProfileRegistry';
 import { IAgentProfileRegistry as IAgentProfileRegistryDecorator } from './agentProfileRegistry';
 
-function encodeKey(sourceId: string, workspaceKey: string | undefined): string {
-  return JSON.stringify([sourceId, workspaceKey ?? null]);
+function encodeKey(sourceId: string, workspaceKey: string | undefined, contextKey: string | undefined): string {
+  return JSON.stringify([sourceId, workspaceKey ?? null, contextKey ?? null]);
 }
 
 function decodeKey(key: string): AgentProfileRegistryChange {
-  const [sourceId, workspaceKey] = JSON.parse(key) as [string, string | null];
-  return { sourceId, workspaceKey: workspaceKey ?? undefined };
+  const [sourceId, workspaceKey, contextKey] = JSON.parse(key) as [string, string | null, string | null];
+  return { sourceId, workspaceKey: workspaceKey ?? undefined, contextKey: contextKey ?? undefined };
 }
 
 export class AgentProfileRegistryService
@@ -55,10 +55,11 @@ export class AgentProfileRegistryService
   entries(): readonly AgentProfileRegistration[] {
     const entries = new Map<string, AgentProfileRegistration>();
     for (const record of this.folded.values()) {
-      entries.set(encodeKey(record.sourceId, record.workspaceKey), {
+      entries.set(encodeKey(record.sourceId, record.workspaceKey, record.contextKey), {
         sourceId: record.sourceId,
         priority: record.priority ?? 0,
         workspaceKey: record.workspaceKey,
+        contextKey: record.contextKey,
         contribution: record.contribution,
       });
     }
@@ -67,7 +68,7 @@ export class AgentProfileRegistryService
   }
 
   register(registration: AgentProfileRegistration): IDisposable {
-    const key = encodeKey(registration.sourceId, registration.workspaceKey);
+    const key = encodeKey(registration.sourceId, registration.workspaceKey, registration.contextKey);
     this.direct.set(key, registration);
     this.onDidChangeEmitter.fire(decodeKey(key));
     let active = true;
@@ -85,7 +86,7 @@ export class AgentProfileRegistryService
     const previous = this.folded;
     const affected = new Set<string>();
     for (const record of [...change.removed, ...change.added]) {
-      affected.add(encodeKey(record.sourceId, record.workspaceKey));
+      affected.add(encodeKey(record.sourceId, record.workspaceKey, record.contextKey));
     }
     this.refold();
     for (const key of affected) {
@@ -98,7 +99,7 @@ export class AgentProfileRegistryService
   private refold(): void {
     const next = new Map<string, AgentProfileContributionRecord>();
     for (const record of this.view.records) {
-      next.set(encodeKey(record.value.sourceId, record.value.workspaceKey), record.value);
+      next.set(encodeKey(record.value.sourceId, record.value.workspaceKey, record.value.contextKey), record.value);
     }
     this.folded = next;
   }

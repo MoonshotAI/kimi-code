@@ -202,7 +202,7 @@ describe('Agent resume', () => {
       expect(ctx.llmInputs()).toMatchInlineSnapshot(`
         call 1:
           system: <system-prompt>
-          tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, EnterPlanMode, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
+          tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
           messages:
             user: text "Run lookup"
             assistant: []  calls call_open:Lookup { "query": "moon" }
@@ -381,6 +381,38 @@ describe('Agent resume', () => {
     });
   });
 
+  it('offers the same tools on the first request after resume as before it', async () => {
+    const persistence = new RecordingAgentPersistence([]);
+    const live = testAgent({ persistence, autoConfigure: false });
+    live.configure({
+      modelCapabilities: {
+        image_in: true,
+        video_in: false,
+        audio_in: false,
+        thinking: false,
+        tool_use: true,
+        max_context_tokens: 0,
+      },
+    });
+    live.mockNextResponse({ type: 'text', text: 'Response before resume.' });
+    await live.rpc.prompt({ input: [{ type: 'text', text: 'Prompt before resume' }] });
+    await live.untilTurnEnd();
+    const liveTools = live.llmCalls.at(-1)!.tools.map((tool) => tool.name);
+    expect(liveTools).toContain('ReadMediaFile');
+
+    const resumed = testAgent({
+      persistence: new RecordingAgentPersistence(persistence.records as unknown as WireRecord[]),
+      autoConfigure: false,
+      initialConfig: live.kimiConfig,
+    });
+    await resumed.restorePersisted();
+    resumed.mockNextResponse({ type: 'text', text: 'Response after resume.' });
+    await resumed.rpc.prompt({ input: [{ type: 'text', text: 'Prompt after resume' }] });
+    await resumed.untilTurnEnd();
+
+    expect(resumed.llmCalls[0]!.tools.map((tool) => tool.name)).toEqual(liveTools);
+  });
+
   it('restores a cancelled queued-turn gap before allocating the next turn', async () => {
     const persistence = new RecordingAgentPersistence([
       resumeConfigRecord(),
@@ -520,7 +552,7 @@ describe('Agent resume', () => {
     expect(ctx.llmInputs()).toMatchInlineSnapshot(`
       call 1:
         system: <system-prompt>
-        tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, EnterPlanMode, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
+        tools: Agent, AgentSwarm, AskUserQuestion, Bash, CreateGoal, CronCreate, CronDelete, CronList, Edit, ExitPlanMode, FetchURL, GetGoal, Glob, Grep, Read, SetGoalBudget, Skill, TaskList, TaskOutput, TaskStop, TodoList, UpdateGoal, WaitFor, Write
         messages:
           user: text "Historical prompt before skill"
           assistant: []  calls call_resume_write:Write { "path": "result.txt" }, call_resume_skill:Skill { "skill": "review" }
@@ -562,7 +594,9 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    const toolCall = ctx.context.get()[0]?.toolCalls[0] as
+    const message = ctx.context.get()[0];
+    if (message?.role !== 'assistant') throw new Error('expected assistant message');
+    const toolCall = message.toolCalls[0] as
       | { name?: string; arguments?: string | null; function?: unknown }
       | undefined;
     expect(toolCall).toMatchObject({

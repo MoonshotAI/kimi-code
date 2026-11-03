@@ -2,16 +2,88 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
+    branches: ['release/*']
+  workflow_dispatch:
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+concurrency:
+  group: release-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
+  version:
+    if: github.repository_owner == 'MoonshotAI' && startsWith(github.ref, 'refs/heads/release/')
+    concurrency:
+      group: release-version-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: changesets/action@v1
+        id: version
+        with:
+          version: pnpm run version:release
+          commit: 'ci: release packages'
+          title: 'ci: release packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check version PR
+        if: steps.version.outputs.pullRequestNumber != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_BRANCH: changeset-release/${{ github.ref_name }}
+        run: gh workflow run ci.yml --ref "$VERSION_BRANCH"
+
+  candidate:
+    if: github.repository_owner == 'MoonshotAI' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+      checks: read
+    outputs:
+      publish: ${{ steps.trigger.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Wait for merged version commit CI
+        id: trigger
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-trigger.mjs
+
+  vscode:
+    needs: candidate
+    if: needs.candidate.outputs.publish == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/vscode-publish.yml
+    secrets:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+
   release:
     name: Release
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'MoonshotAI'
+    needs: candidate
+    if: needs.candidate.outputs.publish == 'true'
     outputs:
       packages_published: ${{ steps.changesets.outputs.published }}
       kimi_native_release: ${{ steps.kimi-release.outputs.should_publish }}
@@ -71,16 +143,6 @@ jobs:
         env:
           CHANGESETS_PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.publishedPackages }}
 
-  deploy-docs:
-    name: Deploy docs
-    needs: release
-    if: needs.release.outputs.packages_published == 'true'
-    uses: ./.github/workflows/docs-deploy.yml
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-
   native-artifacts:
     name: Native release artifact
     needs: release
@@ -132,3 +194,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release.outputs.kimi_release_tag }}
         run: gh release upload "$RELEASE_TAG" dist-native-release/* --clobber
+
+  deploy-docs:
+    needs: publish-native-assets
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Deploy existing main documentation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run docs-deploy.yml --ref main

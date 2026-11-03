@@ -13,7 +13,7 @@ import {
   type TestInstantiationService,
 } from '#/_base/di/test';
 import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
-import { emptyUsage } from '#human/llm/usage';
+import { emptyUsage } from '#human/llm-requester/usage';
 import { buildContextCompactionShape } from '#/agent/contextMemory/compactionHandoff';
 import {
   IAgentContextMemoryService,
@@ -50,6 +50,8 @@ import { IExternalHooksRunnerService } from '#/features/externalHooks/app/extern
 import { ExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunnerService';
 import { makeHookRunner } from './runner-stub';
 import type { AgentTaskInfo } from '#/agent/task/task';
+import type { FullCompactionTask } from '#/agent/fullCompaction/fullCompaction';
+import type { CompactionResult } from '#/agent/fullCompaction/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
@@ -82,6 +84,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IModelService } from '#/llm-adapter/model/model';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { registerLogServices } from '../../_base/log/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
@@ -120,6 +123,7 @@ function stubContextMemory(): IAgentContextMemoryService & {
   return {
     _serviceBrand: undefined,
     get: () => [...messages],
+    prefixRevision: () => 0,
     append: (...inserted) => {
       messages.push(...inserted);
     },
@@ -148,13 +152,14 @@ function stubHookRunner(partial: unknown): IExternalHooksRunnerService {
   const p = partial as Partial<
     Pick<
       IExternalHooksRunnerService,
-      'trigger' | 'triggerBlock' | 'fireAndForgetTrigger' | 'hasHooksFor'
+      'trigger' | 'triggerBlock' | 'fireAndForgetTrigger' | 'hasHooksFor' | 'onDidHookError'
     >
   >;
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     onDidReload: Event.None,
+    onDidHookError: Event.None,
     hasHooksFor: () => false,
     ...p,
   } as IExternalHooksRunnerService;
@@ -266,6 +271,19 @@ function registerAgentEventBus(reg: ServiceRegistration): void {
   );
   reg.define(ISessionEventBus, EventBusService);
   reg.define(IEventBus, AgentEventBusView);
+}
+
+function registerHookTestServices(reg: ServiceRegistration): void {
+  registerStateServices(reg);
+  reg.defineInstance(IBootstrapService, stubBootstrap());
+  reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+  reg.definePartialInstance(IConfigService, {});
+  reg.definePartialInstance(IPluginService, {});
+  reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
+  registerAgentEventBus(reg);
+  reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+  reg.definePartialInstance(IAgentPermissionGate, {});
+  reg.definePartialInstance(IAgentTaskService, {});
 }
 
 function activateAgentEventBus(ix: TestInstantiationService): IEventBus {
@@ -638,6 +656,7 @@ describe('IExternalHooksRunnerService integration', () => {
         strict: true,
         additionalServices: (reg) => {
           registerStateServices(reg);
+          registerLogServices(reg);
           reg.defineInstance(IBootstrapService, stubBootstrap());
           reg.defineInstance(ISessionContext, stubSessionContext());
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
@@ -890,7 +909,7 @@ describe('IExternalHooksRunnerService integration', () => {
     expect(unmatched).toHaveLength(0);
   });
 
-  it('runs session external hooks from lifecycle callbacks', async () => {
+  it('runs session external hooks from lifecycle callbacks and skips idle reclaim and reload', async () => {
     const disposables = new DisposableStore();
     let ix: TestInstantiationService | undefined;
     try {
@@ -903,6 +922,7 @@ describe('IExternalHooksRunnerService integration', () => {
         strict: true,
         additionalServices: (reg) => {
           registerStateServices(reg);
+          registerLogServices(reg);
           reg.defineInstance(ISessionContext, {
             _serviceBrand: undefined,
             sessionId: 'session-1',
@@ -948,7 +968,9 @@ describe('IExternalHooksRunnerService integration', () => {
 
       await lifecycle.fireDidCreate('startup');
       await lifecycle.fireDidCreate('resume');
+      await lifecycle.fireDidCreate('reclaimed');
       await lifecycle.fireDidCreate('fork');
+      await lifecycle.fireWillClose('reclaim');
       await lifecycle.fireWillClose('exit');
       await lifecycle.fireWillClose('archive');
 
@@ -1112,6 +1134,7 @@ describe('IExternalHooksRunnerService integration', () => {
         strict: true,
         additionalServices: (reg) => {
           registerStateServices(reg);
+          registerLogServices(reg);
           reg.defineInstance(ISessionContext, stubSessionContext());
           reg.definePartialInstance(ISessionManager, lifecycle.service);
           reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));
@@ -1166,18 +1189,31 @@ describe('IExternalHooksRunnerService integration', () => {
       const fired: Array<{
         event: string;
         matcherValue?: unknown;
+        cwd?: string;
         inputData?: unknown;
       }> = [];
       const hookEngine = {
-        trigger: async () => [],
-        triggerBlock: async () => undefined,
-        fireAndForgetTrigger: async (
+        trigger: async (
           event: string,
-          args: { matcherValue?: unknown; inputData?: unknown },
+          args: { matcherValue?: unknown; cwd?: string; inputData?: unknown },
         ) => {
           fired.push({
             event,
             matcherValue: args.matcherValue,
+            cwd: args.cwd,
+            inputData: args.inputData,
+          });
+          return [];
+        },
+        triggerBlock: async () => undefined,
+        fireAndForgetTrigger: async (
+          event: string,
+          args: { matcherValue?: unknown; cwd?: string; inputData?: unknown },
+        ) => {
+          fired.push({
+            event,
+            matcherValue: args.matcherValue,
+            cwd: args.cwd,
             inputData: args.inputData,
           });
           return [];
@@ -1189,7 +1225,7 @@ describe('IExternalHooksRunnerService integration', () => {
         additionalServices: (reg) => {
           registerStateServices(reg);
           registerTestAgentWireServices(reg, 'wire/external-hooks');
-          reg.defineInstance(IBootstrapService, stubBootstrap());
+          reg.defineInstance(IBootstrapService, { ...stubBootstrap(), cwd: '/launch-dir' });
           reg.defineInstance(ISessionContext, stubSessionContext());
           reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));
           reg.definePartialInstance(IConfigService, {});
@@ -1227,7 +1263,13 @@ describe('IExternalHooksRunnerService integration', () => {
           prompt: 'user text',
         }),
       );
-      const queuedContent = [{ type: 'text' as const, text: 'later' }];
+      const queuedContent = [
+        { type: 'text' as const, text: 'later' },
+        {
+          type: 'image_url' as const,
+          imageUrl: { url: 'https://example.com/queued.png', name: 'queued.png' },
+        },
+      ];
       eventBus.publish(
         new PromptQueued({
           agentId: 'main',
@@ -1249,11 +1291,25 @@ describe('IExternalHooksRunnerService integration', () => {
         }),
       );
       await flushMicrotasks();
+      const submittedContent = [
+        { type: 'text' as const, text: 'submit' },
+        {
+          type: 'image_url' as const,
+          imageUrl: { url: 'https://example.com/submitted.png', name: 'submitted.png' },
+        },
+      ];
+      await ix.get(IAgentLoopService).hooks.onBeforeSubmitPrompt.run({
+        promptMessage: { role: 'user', content: submittedContent, origin: { kind: 'user' } },
+        isSteer: false,
+        hookParts: [],
+        block: false,
+      });
 
       expect(fired).toEqual([
         {
           event: 'TurnStarted',
           matcherValue: 'system_trigger',
+          cwd: '/tmp',
           inputData: {
             sessionTitle: 'My Session',
             turnId: 3,
@@ -1265,6 +1321,7 @@ describe('IExternalHooksRunnerService integration', () => {
         {
           event: 'TurnStarted',
           matcherValue: 'user',
+          cwd: '/tmp',
           inputData: {
             sessionTitle: 'My Session',
             turnId: 4,
@@ -1276,16 +1333,24 @@ describe('IExternalHooksRunnerService integration', () => {
         {
           event: 'UserPromptQueued',
           matcherValue: queuedContent,
+          cwd: '/tmp',
           inputData: {
             sessionTitle: 'My Session',
             promptId: 'p1',
-            prompt: queuedContent,
+            prompt: [
+              { type: 'text', text: 'later' },
+              {
+                type: 'image_url',
+                imageUrl: { url: 'https://example.com/queued.png', name: 'queued.png' },
+              },
+            ],
             queueLength: 2,
           },
         },
         {
           event: 'TaskStarted',
           matcherValue: 'process',
+          cwd: '/tmp',
           inputData: {
             sessionTitle: 'My Session',
             taskId: 'task-1',
@@ -1294,6 +1359,22 @@ describe('IExternalHooksRunnerService integration', () => {
             status: 'running',
             detached: undefined,
             startedAt: 123,
+          },
+        },
+        {
+          event: 'UserPromptSubmit',
+          matcherValue: submittedContent,
+          cwd: '/tmp',
+          inputData: {
+            sessionTitle: 'My Session',
+            prompt: [
+              { type: 'text', text: 'submit' },
+              {
+                type: 'image_url',
+                imageUrl: { url: 'https://example.com/submitted.png', name: 'submitted.png' },
+              },
+            ],
+            isSteer: false,
           },
         },
       ]);
@@ -1446,6 +1527,98 @@ describe('IExternalHooksRunnerService integration', () => {
       ix?.dispose();
       disposables.dispose();
       vi.useRealTimers();
+    }
+  });
+
+  it('runs every agent-scope hook trigger with the session local cwd', async () => {
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const loop = stubLoopWithHooks();
+      const seen: Array<{ event: string; cwd: unknown }> = [];
+      const hookEngine = {
+        trigger: async (event: string, args: { cwd?: unknown }) => {
+          seen.push({ event, cwd: args.cwd });
+          return [];
+        },
+        triggerBlock: async (event: string, args: { cwd?: unknown }) => {
+          seen.push({ event, cwd: args.cwd });
+          return undefined;
+        },
+        fireAndForgetTrigger: async (event: string, args: { cwd?: unknown }) => {
+          seen.push({ event, cwd: args.cwd });
+          return [];
+        },
+      };
+      const compactionHooks = createHooks<{ onWillCompact: FullCompactionTask }, 'onWillCompact'>([
+        'onWillCompact',
+      ]);
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerTestAgentWireServices(reg, 'wire/external-hooks-cwd');
+          registerHookTestServices(reg);
+          reg.defineInstance(ISessionContext, {
+            _serviceBrand: undefined,
+            sessionId: 'session-1',
+            workspaceId: 'workspace-1',
+            sessionDir: '/tmp/session-1',
+            metaScope: 'sessions/workspace-1/session-1',
+            cwd: '/local/session-cwd',
+            scope: (subKey?: string) =>
+              subKey === undefined || subKey === ''
+                ? 'sessions/workspace-1/session-1'
+                : `sessions/workspace-1/session-1/${subKey}`,
+          });
+          reg.defineInstance(IAgentLoopService, loop);
+          reg.definePartialInstance(IAgentFullCompactionService, { hooks: compactionHooks });
+        },
+      });
+      activateAgentEventBus(ix);
+      ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
+      ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
+      ix.get(IAgentExternalHooksService);
+      const eventBus = ix.get(IEventBus);
+
+      eventBus.publish(
+        new PermissionApprovalRequested({
+          sessionId: 'session-1',
+          agentId: 'main',
+          turnId: 1,
+          toolCallId: 'call-bash',
+          toolName: 'Bash',
+          action: 'Run command',
+          toolInput: { command: 'pwd' },
+          display: { kind: 'command' as const, command: 'pwd' },
+        }),
+      );
+      await loop.hooks.onBeforeSubmitPrompt.run({
+        promptMessage: { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        isSteer: false,
+        hookParts: [],
+        block: false,
+      });
+      await loop.hooks.onDidFinishStep.run(makeAfterStep(new AbortController().signal));
+      await compactionHooks.onWillCompact.run({
+        abortController: new AbortController(),
+        promise: Promise.resolve({ tokensAfter: 0 } as unknown as CompactionResult),
+        trigger: 'auto',
+        tokenCount: 1,
+      });
+      await flushMicrotasks();
+
+      expect(seen.map((call) => call.event).toSorted()).toEqual([
+        'PermissionRequest',
+        'PostCompact',
+        'PreCompact',
+        'Stop',
+        'UserPromptSubmit',
+      ]);
+      expect(seen.every((call) => call.cwd === '/local/session-cwd')).toBe(true);
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
     }
   });
 });

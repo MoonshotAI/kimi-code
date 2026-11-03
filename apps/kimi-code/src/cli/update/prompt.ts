@@ -12,7 +12,7 @@ import {
   UPDATE_PROMPT_WARNING,
 } from '#/constant/update';
 
-import { type InstallSource, type UpdateTarget } from './types';
+import { type ActionableUpdatePlan, type InstallSource } from './types';
 
 export const CHANGELOG_URL = 'https://moonshotai.github.io/kimi-code/en/release-notes/changelog.html';
 
@@ -25,7 +25,7 @@ export interface InstallPromptChoice {
 
 export interface InstallPromptOptions {
   readonly currentVersion: string;
-  readonly target: UpdateTarget;
+  readonly plan: ActionableUpdatePlan;
   readonly installCommand: string;
   readonly installSource: InstallSource;
   readonly input?: NodeJS.ReadStream;
@@ -35,9 +35,18 @@ export interface InstallPromptOptions {
 const INSTALL_HINT = 'Install update now';
 const SKIP_HINT = 'Continue with current version';
 
-export function createInstallPromptChoices(target: UpdateTarget): readonly InstallPromptChoice[] {
+
+export function createInstallPromptChoices(
+  plan: ActionableUpdatePlan,
+): readonly InstallPromptChoice[] {
+  if (plan.kind === 'switch-channel') {
+    return [
+      { value: 'install', label: `Switch to ${plan.target.channel} now (${plan.target.version})` },
+      { value: 'skip', label: `Stay on ${plan.sourceChannel}` },
+    ];
+  }
   return [
-    { value: 'install', label: `${INSTALL_HINT} (${target.version})` },
+    { value: 'install', label: `${INSTALL_HINT} (${plan.target.version})` },
     { value: 'skip', label: SKIP_HINT },
   ];
 }
@@ -65,15 +74,26 @@ function renderInstallPrompt(
 ): readonly string[] {
   const label = chalk.hex(UPDATE_PROMPT_TEXT_DIM).bold;
   const currentVersion = chalk.hex(UPDATE_PROMPT_WARNING).bold(options.currentVersion);
-  const targetVersion = chalk.hex(UPDATE_PROMPT_SUCCESS).bold(options.target.version);
+  const targetVersion = chalk.hex(UPDATE_PROMPT_SUCCESS).bold(options.plan.target.version);
   const sourceLabel = chalk.hex(UPDATE_PROMPT_PRIMARY).bold(options.installSource);
   const command = chalk.hex(UPDATE_PROMPT_PRIMARY)(options.installCommand);
   const changelogText = chalk.hex(UPDATE_PROMPT_PRIMARY).underline(`View changelog: ${CHANGELOG_URL}`);
+  const switching = options.plan.kind === 'switch-channel';
+  const channelSwitch = switching
+    ? `${options.plan.sourceChannel} -> ${options.plan.target.channel}`
+    : null;
   const lines = [
-    chalk.hex(UPDATE_PROMPT_PRIMARY).bold('Kimi Code Update Available'),
-    chalk.hex(UPDATE_PROMPT_MUTED)(`${PRODUCT_NAME} has a newer release ready.`),
+    chalk.hex(UPDATE_PROMPT_PRIMARY).bold(
+      switching ? 'Switch Kimi Code Release Channel' : 'Kimi Code Update Available',
+    ),
+    chalk.hex(UPDATE_PROMPT_MUTED)(
+      switching
+        ? 'Install the current version from the selected release channel.'
+        : `${PRODUCT_NAME} has a newer release ready.`,
+    ),
     `]8;;${CHANGELOG_URL}\\${changelogText}]8;;\\`,
     '',
+    ...(channelSwitch === null ? [] : [`${label('Channel')}  ${channelSwitch}`]),
     `${label('Current')}  ${currentVersion}`,
     `${label('Target ')}  ${targetVersion}`,
     `${label('Source ')}  ${sourceLabel}`,
@@ -125,7 +145,7 @@ export async function promptForInstallChoice(
 ): Promise<InstallPromptChoiceValue> {
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
-  const choices = createInstallPromptChoices(options.target);
+  const choices = createInstallPromptChoices(options.plan);
   let selectedIndex = getDefaultInstallPromptSelection(choices);
 
   return new Promise<InstallPromptChoiceValue>((resolve) => {

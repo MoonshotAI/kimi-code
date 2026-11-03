@@ -164,13 +164,13 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
 
   it("opens one visible turn when replay contains a user prompt", () => {
     const events = replay([
-      record(message("user", [{ type: "text", text: "Fix the test" }], { origin: { kind: "user" } })),
+      { type: "message", message: message("user", [{ type: "text", text: "Fix the test" }], { origin: { kind: "user" } }), time: 1, turnId: 7 },
     ]);
 
     expect(events.filter((event) => event.type !== "StatusUpdate")).toEqual([
       {
         type: "TurnBegin",
-        payload: { user_input: [{ type: "text", text: "Fix the test" }] },
+        payload: { user_input: [{ type: "text", text: "Fix the test" }], turnIndex: 7 },
         _sessionId: "session-1",
       },
       {
@@ -459,6 +459,64 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
     expect(events).toContainEqual({
       type: "TurnBegin",
       payload: { user_input: [{ type: "text", text: "/skill:review focus on errors" }] },
+      _sessionId: "session-1",
+    });
+  });
+
+  it.each([
+    { input: "/skill:review src/app.ts", skills: [{ skillName: "review", skillArgs: "src/app.ts" }] },
+    { input: "Review /skill:review src/app.ts", skills: [{ skillName: "review", skillArgs: "" }] },
+    {
+      input: "/skill:review /skill:security src/app.ts",
+      skills: [{ skillName: "review", skillArgs: "" }, { skillName: "security", skillArgs: "" }],
+    },
+    { input: "/skill:review /skill:review src/app.ts", skills: [{ skillName: "review", skillArgs: "" }] },
+  ].flatMap((fixture) => [
+    { ...fixture, format: "marked" },
+    { ...fixture, format: "legacy" },
+  ]))("restores bundled skill input and media without expanded instructions ($input, $format)", ({ input, skills, format }) => {
+    const skillActivations = skills.map((skill, index) => ({
+      ...skill,
+      activationId: `activation-${index + 1}`,
+      trigger: "user-slash" as const,
+    }));
+    const content: ContentPart[] = skillActivations.map((activation) => ({
+      type: "text",
+      text: `<skill name="${activation.skillName}">Skill instructions.</skill>`,
+      meta: format === "marked"
+        ? { source: "skill activation", activationId: activation.activationId }
+        : undefined,
+    }));
+    content.push(
+      { type: "text", text: input },
+      { type: "image_url", imageUrl: { url: "file:///workspace/a.png", id: "image-1" } },
+      { type: "video_url", videoUrl: { url: "file:///workspace/a.mp4", id: "video-1" } },
+    );
+    const origin = { kind: "user" as const, skillActivations };
+    const events = replay([record(message("user", content, { origin }))]);
+
+    expect(events).toContainEqual({
+      type: "TurnBegin",
+      payload: {
+        user_input: [
+          { type: "text", text: input },
+          { type: "image_url", image_url: { url: "file:///workspace/a.png", id: "image-1" } },
+          { type: "video_url", video_url: { url: "file:///workspace/a.mp4", id: "video-1" } },
+        ],
+      },
+      _sessionId: "session-1",
+    });
+  });
+
+  it("keeps user-authored skill XML without activation metadata", () => {
+    const input = '<skill name="review">Keep this quoted text.</skill>';
+    const events = replay([
+      record(message("user", [{ type: "text", text: input }], { origin: { kind: "user" } })),
+    ]);
+
+    expect(events).toContainEqual({
+      type: "TurnBegin",
+      payload: { user_input: [{ type: "text", text: input }] },
       _sessionId: "session-1",
     });
   });

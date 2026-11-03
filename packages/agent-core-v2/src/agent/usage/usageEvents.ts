@@ -2,6 +2,7 @@
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { AgentEvent2 } from '#/app/event/event2';
+import type { TowerExitReason } from '#/features/tower/tower';
 
 import type { UsageStatus } from './usage';
 
@@ -10,6 +11,7 @@ export interface AgentStatusUpdatedPayload {
   usage?: UsageStatus;
   swarmMode?: boolean;
   towerMode?: boolean;
+  towerExitReason?: TowerExitReason;
   planMode?: boolean;
   model?: string;
   thinkingEffort?: string;
@@ -87,6 +89,7 @@ export interface AgentStatusUpdatedEvent {
   readonly planMode?: boolean;
   readonly swarmMode?: boolean;
   readonly towerMode?: boolean;
+  readonly towerExitReason?: TowerExitReason;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
   readonly phase?: AgentPhase;

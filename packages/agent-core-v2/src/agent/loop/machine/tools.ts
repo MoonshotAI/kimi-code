@@ -8,6 +8,7 @@ import { toErrorMessage } from '#/_base/errors/errorMessage';
 import type {
   ToolDelivery,
   ToolInfo,
+  ToolRemind,
   ToolResult as AgentToolResult,
   ToolUpdate as AgentToolUpdate,
 } from '#/tool/toolContract';
@@ -36,6 +37,7 @@ export interface CreateMachineToolsOptions {
   readonly turnId: () => number;
   readonly steerSignal?: () => AbortSignal | undefined;
   readonly trace?: () => LLMRequestTrace | undefined;
+  readonly remind?: ToolRemind;
   readonly onToolCall?: (payload: ToolCallStartedPayload) => void;
   readonly onToolResult?: (toolCallId: string, result: AgentToolResult, durationMs: number) => void;
   readonly onBatchError?: (error: unknown) => void;
@@ -126,6 +128,7 @@ export function createMachineTools(options: CreateMachineToolsOptions): MachineT
         steerSignal: options.steerSignal?.(),
         turnId: options.turnId(),
         trace: options.trace?.(),
+        remind: options.remind,
         onToolCall: options.onToolCall,
       });
       for await (const result of stream) {

@@ -22,6 +22,7 @@ import { UserMessageComponent } from '../components/messages/user-message';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import type { TranscriptEntry } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
+import { isSessionOccupiedError, isSessionStaleError } from '../utils/session-lock-errors';
 import { getTranscriptComponentEntry } from '../utils/transcript-component-metadata';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { SlashCommandHost } from './dispatch';
@@ -102,12 +103,18 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
       showUndoLimitStatus(host, formatUndoLimitMessage(limit.requestedCount, limit));
       return false;
     }
+    if (isSessionOccupiedError(error)) {
+      host.showError(formatErrorMessage(error));
+      return false;
+    }
+    if (isSessionStaleError(error)) {
+      host.showStatus('Loaded updates from another client. Review and run /undo again.', 'warning');
+      return false;
+    }
     const message = formatErrorMessage(error);
     host.showError(`Failed to undo: ${message}`);
     return false;
   }
-  host.noteContextCut?.();
-  await refreshTodoPanel(host);
 
   const children = host.state.transcriptContainer.children;
   const lastUserComponentIndex = findUndoAnchorComponentIndex(children, count);
@@ -156,21 +163,6 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
 
   host.state.ui.requestRender();
   return true;
-}
-
-async function refreshTodoPanel(host: SlashCommandHost): Promise<void> {
-  const session = host.session;
-  if (session === undefined) return;
-  try {
-    const todos = await session.getTodos();
-    if (todos.length > 0 && todos.every((todo) => todo.status === 'done')) {
-      host.streamingUI.setTodoList([]);
-      return;
-    }
-    host.streamingUI.setTodoList(todos);
-  } catch {
-    return;
-  }
 }
 
 async function showUndoSelector(host: SlashCommandHost): Promise<void> {

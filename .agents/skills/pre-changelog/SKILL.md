@@ -13,6 +13,8 @@ This skill reuses `sync-changelog`'s strip / classify / translate rules. Read `s
 
 ### 1. Locate the release PR
 
+Select the PR targeting the intended `release/*` branch, not the legacy main version PR. Report its latest head CI link and result alongside the preview.
+
 ```bash
 gh pr list --state open --search "ci: release packages in:title" \
   --json number,title,url,headRefName,baseRefName

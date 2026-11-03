@@ -2,17 +2,13 @@ import type {
   AgentId,
   FrameId,
   StepId,
-  TaskId,
   TurnId,
 } from '../model/ids';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
-import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
-import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
+import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TranscriptPrompt } from '../model/prompt';
-import type { TranscriptTask } from '../model/task';
-import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 
 export type TurnHeader = Omit<TranscriptTurn, 'steps'>;
@@ -42,9 +38,12 @@ export interface FrameUpsertOp {
   readonly frame: TranscriptFrame;
 }
 
-export type AppendTarget =
-  | { readonly type: 'frame'; readonly turnId: TurnId; readonly stepId: StepId; readonly frameId: FrameId }
-  | { readonly type: 'task'; readonly taskId: TaskId };
+export interface AppendTarget {
+  readonly type: 'frame';
+  readonly turnId: TurnId;
+  readonly stepId: StepId;
+  readonly frameId: FrameId;
+}
 
 export interface AppendOp {
   readonly op: 'append';
@@ -59,17 +58,6 @@ export interface MarkerUpsertOp {
   readonly beforeTurn?: number;
 }
 
-export interface TaskRefUpsertOp {
-  readonly op: 'taskref.upsert';
-  readonly item: TranscriptTaskRef;
-  readonly beforeTurn?: number;
-}
-
-export interface TaskUpsertOp {
-  readonly op: 'task.upsert';
-  readonly task: TranscriptTask;
-}
-
 export interface InteractionUpsertOp {
   readonly op: 'interaction.upsert';
   readonly interaction: TranscriptInteraction;
@@ -80,19 +68,9 @@ export interface AttachmentUpsertOp {
   readonly attachment: TranscriptAttachment;
 }
 
-export interface TodoUpsertOp {
-  readonly op: 'todo.upsert';
-  readonly todo: TranscriptTodo;
-}
-
 export interface PromptUpsertOp {
   readonly op: 'prompt.upsert';
   readonly prompt: TranscriptPrompt;
-}
-
-export interface MetaMergeOp {
-  readonly op: 'meta.merge';
-  readonly meta: TranscriptMetaMerge;
 }
 
 export interface ItemsRemoveOp {
@@ -107,13 +85,9 @@ export type TranscriptOperation =
   | FrameUpsertOp
   | AppendOp
   | MarkerUpsertOp
-  | TaskRefUpsertOp
-  | TaskUpsertOp
   | InteractionUpsertOp
   | AttachmentUpsertOp
-  | TodoUpsertOp
   | PromptUpsertOp
-  | MetaMergeOp
   | ItemsRemoveOp;
 
 export interface TranscriptOpBatch {
@@ -123,12 +97,9 @@ export interface TranscriptOpBatch {
 
 export interface AgentTranscriptSnapshot {
   readonly items: readonly TranscriptItem[];
-  readonly tasks: readonly TranscriptTask[];
   readonly interactions: readonly TranscriptInteraction[];
   readonly attachments: readonly TranscriptAttachment[];
-  readonly todos: readonly TranscriptTodo[];
   readonly prompts: readonly TranscriptPrompt[];
-  readonly meta: TranscriptMeta;
   readonly hasMoreOlder?: boolean;
 }
 

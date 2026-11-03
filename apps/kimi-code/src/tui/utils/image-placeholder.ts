@@ -40,7 +40,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -58,6 +58,7 @@ import { MEDIA_FILE_REF_MIN_REMAINING_MS } from '../constant/media';
 import type {
   ImageAttachment,
   ImageAttachmentStore,
+  MediaAttachment,
   VideoAttachment,
 } from './image-attachment-store';
 
@@ -81,6 +82,8 @@ export interface ExtractionResult {
    * snapshots to rebuild the image parts as inline data URLs.
    */
   imageSnapshots: ImageResendSnapshot[];
+  mediaSnapshots?: readonly MediaAttachment[];
+  mediaGeneration?: number;
 }
 
 export interface ImageResendSnapshot {
@@ -91,8 +94,8 @@ export interface ImageResendSnapshot {
   /**
    * Pre-compression original captured at extraction, so a new-session resend
    * can still persist it and author the compression caption after the image
-   * store (and its attachments) was cleared. Absent for untouched pastes and
-   * for originals already persisted and released.
+   * store (and its attachments) was cleared. Previously persisted originals
+   * are recovered from the local resend copy; absent for untouched pastes.
    */
   readonly original?: {
     readonly bytes: Uint8Array;
@@ -110,6 +113,7 @@ export function extractMediaAttachments(
   const imageAttachmentIds: number[] = [];
   const videoAttachmentIds: number[] = [];
   const imageSnapshots: ImageResendSnapshot[] = [];
+  const mediaSnapshots: MediaAttachment[] = [];
   let cursor = 0;
   let hasMedia = false;
 
@@ -123,6 +127,7 @@ export function extractMediaAttachments(
     const attachment = store.get(id);
     if (attachment === undefined) continue; // stale / user-typed — leave as text
     if (attachment.kind !== kind) continue;
+    mediaSnapshots.push(attachment);
     const before = text.slice(cursor, match.index);
     pushText(parts, before);
     if (attachment.kind === 'video') {
@@ -135,16 +140,17 @@ export function extractMediaAttachments(
       videoAttachmentIds.push(id);
     } else {
       const original = attachment.original;
+      const originalBytes = original?.bytes ?? readOriginalImageBytes(original?.path);
       imageSnapshots.push({
         bytes: attachment.bytes,
         mime: attachment.mime,
         width: attachment.width,
         height: attachment.height,
         original:
-          original?.bytes === undefined
+          original === undefined || originalBytes === undefined
             ? undefined
             : {
-                bytes: original.bytes,
+                bytes: originalBytes,
                 width: original.width,
                 height: original.height,
                 mime: original.mime,
@@ -185,6 +191,8 @@ export function extractMediaAttachments(
     imageAttachmentIds,
     videoAttachmentIds,
     imageSnapshots,
+    mediaSnapshots: mediaSnapshots.length > 0 ? mediaSnapshots : undefined,
+    mediaGeneration: store.generation,
   };
 }
 
@@ -288,6 +296,7 @@ export function refreshExpiringImageFileRefs(
 export function makeExtractionResendable(
   extraction: ExtractionResult,
   originalsDir?: string,
+  originalReferences?: ReadonlyMap<number, string>,
 ): ExtractionResult {
   if (extraction.imageSnapshots.length === 0) return extraction;
 
@@ -301,7 +310,7 @@ export function makeExtractionResendable(
     const snapshot = extraction.imageSnapshots[imageIndex++];
     const original = snapshot?.original;
     if (snapshot !== undefined && original !== undefined) {
-      parts.push({
+      const caption: PromptPart = {
         type: 'text',
         text: buildImageCompressionCaption({
           original: {
@@ -316,9 +325,17 @@ export function makeExtractionResendable(
             byteLength: snapshot.bytes.length,
             mimeType: snapshot.mime,
           },
-          originalPath: persistOriginalImageSync(original.bytes, original.mime, originalsDir),
+          originalPath: originalReferences === undefined
+            ? persistOriginalImageSync(original.bytes, original.mime, originalsDir)
+            : originalReferences.get(imageIndex - 1),
         }),
-      });
+      };
+      const previous = parts.at(-1);
+      if (previous?.type === 'text' && previous.text.startsWith(CAPTION_OPENING)) {
+        parts[parts.length - 1] = caption;
+      } else {
+        parts.push(caption);
+      }
     }
     if (snapshot === undefined || !part.imageUrl.url.startsWith('kimi-file://')) {
       parts.push(part);
@@ -350,6 +367,7 @@ export interface MediaTagRewriteResult {
   imageAttachmentIds: number[];
   videoAttachmentIds: number[];
   stagingPaths: string[];
+  cachedVideos: VideoAttachment[];
 }
 
 /**
@@ -378,10 +396,12 @@ export function rewriteMediaPlaceholders(
   text: string,
   store: ImageAttachmentStore,
   style: MediaReferenceStyle = 'tag',
+  mediaSnapshots?: readonly MediaAttachment[],
 ): MediaTagRewriteResult {
   const imageAttachmentIds: number[] = [];
   const videoAttachmentIds: number[] = [];
   const stagingPaths: string[] = [];
+  const cachedVideos: VideoAttachment[] = [];
   let cursor = 0;
   let out = '';
 
@@ -393,8 +413,10 @@ export function rewriteMediaPlaceholders(
       if (kind !== 'image' && kind !== 'video') continue;
       if (idStr === undefined) continue;
       const id = Number.parseInt(idStr, 10);
-      const attachment = store.get(id);
-      if (attachment === undefined) continue; // stale / user-typed — leave as text
+      const attachment = mediaSnapshots === undefined
+        ? store.get(id)
+        : mediaSnapshots.find((snapshot) => snapshot.id === id);
+      if (attachment === undefined) continue;
       if (attachment.kind !== kind) continue;
       out += text.slice(cursor, match.index);
       if (attachment.kind === 'video') {
@@ -404,7 +426,8 @@ export function rewriteMediaPlaceholders(
           style === 'plain'
             ? formatMediaReference('video', path)
             : buildMediaPathTag('video', path);
-        videoAttachmentIds.push(id);
+        cachedVideos.push(attachment);
+        if (store.get(id) === attachment) videoAttachmentIds.push(id);
       } else {
         const path = materializeImageToCache(attachment);
         stagingPaths.push(path);
@@ -412,12 +435,12 @@ export function rewriteMediaPlaceholders(
           style === 'plain'
             ? formatMediaReference('image', path)
             : buildMediaPathTag('image', path);
-        imageAttachmentIds.push(id);
+        if (store.get(id) === attachment) imageAttachmentIds.push(id);
       }
       cursor = match.index + literal.length;
     }
 
-    const hasMedia = imageAttachmentIds.length + videoAttachmentIds.length > 0;
+    const hasMedia = stagingPaths.length > 0;
     store.retainFileIds(imageAttachmentIds);
     return {
       text: hasMedia ? out + text.slice(cursor) : text,
@@ -425,11 +448,28 @@ export function rewriteMediaPlaceholders(
       imageAttachmentIds,
       videoAttachmentIds,
       stagingPaths,
+      cachedVideos,
     };
   } catch (error) {
     cleanupStagingPaths(stagingPaths);
     throw error;
   }
+}
+
+export function omitExpiredVideoFileRefs(
+  parts: readonly PromptPart[],
+  cachedVideos: readonly VideoAttachment[],
+): PromptPart[] {
+  const expiredUrls = new Set(
+    cachedVideos.flatMap((attachment) =>
+      attachment.fileId !== undefined &&
+      attachment.fileExpiresAt !== undefined &&
+      attachment.fileExpiresAt - Date.now() <= MEDIA_FILE_REF_MIN_REMAINING_MS
+        ? [buildDaemonFileUrl(attachment.fileId)]
+        : [],
+    ),
+  );
+  return parts.filter((part) => part.type !== 'video_url' || !expiredUrls.has(part.videoUrl.url));
 }
 
 function cleanupStagingPaths(paths: readonly string[]): void {
@@ -567,26 +607,72 @@ export function originalsDirForSession(session: Session | undefined): string | u
   return sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir);
 }
 
-/**
- * Author a compression caption before every referenced image whose paste-time
- * compression shrank the bytes, persisting not-yet-persisted originals into
- * `originalsDir` (the session's media-originals dir; the shared temp-dir
- * fallback when undefined) so the caption points at a real readback path.
- *
- * Extraction deliberately does not do this: it can run before the session
- * exists (first submit creates it lazily), and the original belongs with the
- * session — owned by it, cleaned up with it, immune to OS temp reaping. The
- * dispatch paths call this once the session is known. Synchronous because
- * those paths cannot await; the write is a single small file, same as the
- * cache copies extraction itself stages. Idempotent: an image already
- * preceded by a compression caption gets it refreshed in place, so a
- * re-resolved part list never grows a duplicate.
- */
+function readOriginalImageBytes(path: string | undefined): Uint8Array | undefined {
+  if (path === undefined) return undefined;
+  try {
+    return readFileSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Register originals in the session before any caption advertises a readback reference. */
+export function resolveSessionOriginalCaptions(
+  parts: readonly PromptPart[],
+  imageAttachmentIds: readonly number[],
+  store: ImageAttachmentStore,
+  session: Session,
+): PromptPart[] | Promise<PromptPart[]> {
+  const images = parts.filter((part) => part.type === 'image_url');
+  const originals = imageAttachmentIds.flatMap((id, index) => {
+    const attachment = store.get(id);
+    const part = images[index];
+    if (attachment?.kind !== 'image' || attachment.original === undefined || part === undefined) return [];
+    if (!imagePartMatchesAttachment(part, attachment)) return [];
+    const original = attachment.original;
+    const bytes = original.attachment?.sessionId === session.id
+      ? undefined
+      : original.bytes ?? readOriginalImageBytes(original.path);
+    return [{ attachment, original, bytes }];
+  });
+  if (originals.length === 0) return [...parts];
+  const dir = originalsDirForSession(session);
+  const resolved = resolveOriginalCaptions(parts, imageAttachmentIds, store, dir, new Map());
+  return Promise.all(originals.map(async ({ attachment, original, bytes }) => {
+    if (original.attachment?.sessionId !== session.id) {
+      if (bytes === undefined) throw new Error('The original pasted image is no longer available.');
+      const reference = await session.attachFile(bytes, {
+        name: `original.${imageExtensionForMime(original.mime)}`,
+        mimeType: original.mime,
+      });
+      original.attachment = { sessionId: session.id, reference };
+    }
+    return [attachment.id, original.attachment.reference] as const;
+  })).then((references) => resolveOriginalCaptions(resolved, imageAttachmentIds, store, dir, new Map(references)));
+}
+
+export async function makeSessionExtractionResendable(
+  extraction: ExtractionResult,
+  session: Session,
+): Promise<ExtractionResult> {
+  const references = new Map<number, string>();
+  for (const [index, snapshot] of extraction.imageSnapshots.entries()) {
+    if (snapshot.original === undefined) continue;
+    references.set(index, await session.attachFile(snapshot.original.bytes, {
+      name: `original.${imageExtensionForMime(snapshot.original.mime)}`,
+      mimeType: snapshot.original.mime,
+    }));
+  }
+  return makeExtractionResendable(extraction, originalsDirForSession(session), references);
+}
+
+/** Persist a local resend copy and render captions, preferring explicit session references. */
 export function resolveOriginalCaptions(
   parts: readonly PromptPart[],
   imageAttachmentIds: readonly number[],
   store: ImageAttachmentStore,
   originalsDir: string | undefined,
+  originalReferences?: ReadonlyMap<number, string>,
 ): PromptPart[] {
   let imageIndex = 0;
   let changed = false;
@@ -632,7 +718,7 @@ export function resolveOriginalCaptions(
         byteLength: attachment.bytes.length,
         mimeType: attachment.mime,
       },
-      originalPath: original.path,
+      originalPath: originalReferences === undefined ? original.path : originalReferences.get(attachment.id),
     });
     const previous = out.at(-1);
     if (previous?.type === 'text' && previous.text.startsWith(CAPTION_OPENING)) {

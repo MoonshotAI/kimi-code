@@ -1,6 +1,14 @@
 import { rm } from 'node:fs/promises';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  ensureMainAgent,
+  getLiveSessionById,
+  IAgentLifecycleService,
+  IEventBus,
+} from '@moonshot-ai/agent-core-v2';
+import { TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 
 import { defineKlientConformance } from './helpers/conformance.js';
 import { createKlient } from '../src/transports/memory/index.js';
@@ -58,16 +66,51 @@ describe('memory dispatcher specifics', () => {
     await rm(homeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
   });
 
-  it('delivers wire-cloned payloads (no live object identity)', async () => {
+  it('delivers wire-cloned payloads including observable turn prompts', async () => {
     const { homeDir, app } = await makeEngine();
-    const klient = createKlient({ scope: app });
-    const list = await klient.global.workspaces.list();
-    // Mutating the result must not affect what a second call returns.
-    (list as unknown[]).push({ id: 'polluted' });
-    const again = await klient.global.workspaces.list();
-    expect(again.some((w) => w.id === 'polluted')).toBe(false);
-    app.dispose();
-    await rm(homeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+    const klient = createKlient({ scope: app, validate: false });
+    try {
+      const list = await klient.global.workspaces.list();
+      // Mutating the result must not affect what a second call returns.
+      (list as unknown[]).push({ id: 'polluted' });
+      const again = await klient.global.workspaces.list();
+      expect(again.some((w) => w.id === 'polluted')).toBe(false);
+
+      const created = await klient.global.sessions.create({ workDir: process.cwd() });
+      const session = getLiveSessionById(app.accessor, created.id);
+      if (session === undefined) throw new Error('expected live session');
+      await ensureMainAgent(session);
+      const main = session.accessor.get(IAgentLifecycleService).handleOf('main');
+      if (main === undefined) throw new Error('expected main agent');
+      const seen: unknown[] = [];
+      const direct: unknown[] = [];
+      session.accessor.get(ISessionEventBus).subscribe((event) => direct.push(event));
+      createMemoryDispatcher(app).listen(
+        { sessionId: created.id, agentId: 'main' },
+        { kind: 'stream', name: 'events' },
+        (event) => seen.push(event),
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      main.accessor.get(IEventBus).publish(new TurnPrompt({
+        agentId: 'main',
+        turnId: 1,
+        input: [{ type: 'text', text: '<notification>internal only</notification>' }],
+        origin: { kind: 'task', taskId: 'task_1', status: 'completed', notificationId: 'task:task_1:completed' },
+      }));
+      await vi.waitFor(() => {
+        expect(direct).toHaveLength(1);
+      }, { timeout: 1000 });
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({
+        type: 'turn.prompt',
+        turnId: 1,
+        input: [{ type: 'text', text: '<notification>internal only</notification>' }],
+      });
+    } finally {
+      await klient.close();
+      app.dispose();
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
+    }
   });
 
   it('does not respond to interactions owned by another session', async () => {

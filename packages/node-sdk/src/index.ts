@@ -1,5 +1,6 @@
+import type { KimiHarnessEnvironmentOptions } from '#/kimi-harness';
 export { KimiHarness } from '#/kimi-harness';
-export type { KimiHarnessRuntimeOptions } from '#/kimi-harness';
+export type { KimiHarnessEnvironmentOptions, KimiHarnessRuntimeOptions } from '#/kimi-harness';
 export { Session } from '#/session';
 export { KimiAuthFacade } from '#/auth';
 export {
@@ -17,9 +18,9 @@ export {
   type ValidateKimiConfigTomlInput,
 } from '#/config-rpc';
 export { SDKRpcClientBase } from '#/rpc';
+export type { ConfigSectionChange } from '#/rpc';
 export { KimiForCodingProvider } from '#/kimi-code-model-provider';
 export type { KimiForCodingProviderOptions } from '#/kimi-code-model-provider';
-export { removeProviderFromConfig } from '#/v2/config-mapper';
 
 export {
   applyCatalogProvider,
@@ -64,6 +65,17 @@ export {
   redact,
   resolveGlobalLogPath,
 } from '#/logging/index';
+export {
+  computeUpdateStatus,
+  isMissingMarketplaceTokenError,
+  isTrustedPluginMarketplaceUrl,
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+  parsePluginMarketplace,
+  PLUGIN_MARKETPLACE_CLASSIFICATIONS,
+  PLUGIN_MARKETPLACE_TIERS,
+  readPluginMarketplace,
+  withLatestVersions,
+} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
 export { resolveKimiHome } from '@moonshot-ai/agent-core-v2';
 export type { LogContext, LogLevel, LogPayload, Logger } from '#/logging/index';
 

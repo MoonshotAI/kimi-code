@@ -8,6 +8,7 @@ import {
   type AskUserQuestionInput,
 } from '#/agent/tools/ask-user-question/ask-user-question';
 import { AskUserQuestionTool } from '#/agent/tools/ask-user-question/askUserQuestionTool';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -56,6 +57,7 @@ function input(
 function makeTool(
   options: {
     readonly activeTaskTools?: ReadonlySet<string>;
+    readonly nonInteractive?: boolean;
     readonly request?: (
       req: QuestionRequest,
       requestOptions?: { readonly agentId?: string; readonly detached?: boolean },
@@ -101,6 +103,9 @@ function makeTool(
       reg.definePartialInstance(IAgentScopeContext, { agentId: 'main' });
       reg.definePartialInstance(IAgentToolPolicyService, {
         isToolActive: (name: string) => activeTaskTools.has(name),
+      });
+      reg.definePartialInstance(IBootstrapService, {
+        args: { requestHeaders: {}, nonInteractive: options.nonInteractive },
       });
       reg.define(IAskUserQuestionTool, AskUserQuestionTool);
     },
@@ -348,7 +353,7 @@ describe('AskUserQuestionTool', () => {
     );
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
-      trace_id: undefined,
+      request_id: undefined,
     });
   });
 
@@ -404,7 +409,7 @@ describe('AskUserQuestionTool', () => {
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
       method: 'number_key',
-      trace_id: undefined,
+      request_id: undefined,
     });
   });
 
@@ -416,13 +421,13 @@ describe('AskUserQuestionTool', () => {
       toolCallId: 'call_question',
       args: input(),
       signal,
-      trace: { traceId: 'trace-q-1' },
+      trace: { requestId: 'trace-q-1' },
     });
 
     expect(result).toMatchObject({ isError: false });
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
-      trace_id: 'trace-q-1',
+      request_id: 'trace-q-1',
     });
   });
 
@@ -441,7 +446,7 @@ describe('AskUserQuestionTool', () => {
     expect(result).toMatchObject({ isError: false });
     expect(result.output).toContain('dismissed');
     expect(result.output).toContain('answers');
-    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', { trace_id: undefined });
+    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', { request_id: undefined });
   });
 
   it('resolves dismissed when the waiting question is aborted', async () => {
@@ -463,6 +468,25 @@ describe('AskUserQuestionTool', () => {
       answers: {},
       note: 'User dismissed the question without answering.',
     });
+  });
+
+  it('answers at once without asking anyone when the host is non-interactive', async () => {
+    const { tool, request, registerTask } = makeTool({ nonInteractive: true });
+
+    for (const background of [false, true]) {
+      const result = await executeTool(tool, {
+        turnId: 0,
+        toolCallId: `call_non_interactive_${String(background)}`,
+        args: { ...input(), background },
+        signal,
+      });
+      expect(result).toMatchObject({
+        isError: true,
+        output: 'Nobody can answer questions in a non-interactive run.',
+      });
+    }
+    expect(request).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
   });
 
   describe('background mode', () => {

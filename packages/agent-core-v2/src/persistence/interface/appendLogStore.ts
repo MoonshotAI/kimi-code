@@ -54,6 +54,8 @@ export interface IAppendLogStore {
   close(): Promise<void>;
   acquire(scope: string, key: string): IDisposable;
   drainRetirements(): Promise<void>;
+  externallyModified(scope: string, key: string): boolean;
+  bindWriteGuard(scope: string, key: string, guard: () => boolean): IDisposable;
 }
 
 export const IAppendLogStore: ServiceIdentifier<IAppendLogStore> =

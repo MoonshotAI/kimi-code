@@ -1,5 +1,25 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.22.0
+
+### Minor Changes
+
+- [#4347](https://github.com/MoonshotAI/kimi-code/pull/4347) [`b3c6e0a`](https://github.com/MoonshotAI/kimi-code/commit/b3c6e0a75a3b1716a360a75eed7194be9b97c176) Thanks [@Grapedge](https://github.com/Grapedge)! - Expose agent IDs in approval and question requests.
+
+## 0.21.1
+
+### Patch Changes
+
+- [#4242](https://github.com/MoonshotAI/kimi-code/pull/4242) [`c1459a6`](https://github.com/MoonshotAI/kimi-code/commit/c1459a61845056832b85a0a220ee11a2bc5132f8) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Run hooks such as `PreToolUse` and `Stop` in the session's project directory, as documented, instead of the directory the server was started from.
+
+## 0.21.0
+
+### Minor Changes
+
+- [#4184](https://github.com/MoonshotAI/kimi-code/pull/4184) [`cbd7540`](https://github.com/MoonshotAI/kimi-code/commit/cbd754049a114ee36d1b27675c82819e4963c692) Thanks [@7Sageer](https://github.com/7Sageer)! - Remove the `kaos` / `persistenceKaos` session options and the `createSessionWithKaos` / `resumeSessionWithKaos` client methods, which were already ignored at runtime.
+
+- [#4156](https://github.com/MoonshotAI/kimi-code/pull/4156) [`e5b4b88`](https://github.com/MoonshotAI/kimi-code/commit/e5b4b88ba93d5a27aa9a36cf847eed4f1aa39c48) Thanks [@Grapedge](https://github.com/Grapedge)! - Add cumulative main-agent user-turn counts to session recovery snapshots.
+
 ## 0.20.0
 
 ### Minor Changes

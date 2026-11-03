@@ -8,6 +8,7 @@ export interface McpServerStatusPayload {
   readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'removed';
   readonly toolCount: number;
   readonly error?: string;
+  readonly nextRetryAt?: number;
 }
 
 export interface McpServerStatusEventPayload {

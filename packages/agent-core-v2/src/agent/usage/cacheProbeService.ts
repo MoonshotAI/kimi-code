@@ -3,11 +3,10 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { inputTotal } from '#human/llm/usage';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 
-import { IAgentCacheProbeService } from './cacheProbe';
+import { cacheProbeUsage, IAgentCacheProbeService } from './cacheProbe';
 import { type UsageRecordedContext } from './usage';
 
 export class AgentCacheProbeService extends Service implements IAgentCacheProbeService {
@@ -42,10 +41,7 @@ export class AgentCacheProbeService extends Service implements IAgentCacheProbeS
       turn_id: e.source.turnId,
       provider_type: providerType,
       protocol,
-      input_tokens: inputTotal(e.usage),
-      input_cache_read: e.usage.inputCacheRead,
-      input_cache_creation: e.usage.inputCacheCreation,
-      output_tokens: e.usage.output,
+      ...cacheProbeUsage(e.usageReported ? e.usage : undefined),
     });
   }
 }

@@ -7,6 +7,11 @@ import {
 } from '#/_base/errors/unexpectedError';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
+import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
+import {
+  ChangeNotifierSnapshotEvent,
+  changeNotifierSnapshotKey,
+} from '#/agent/changeNotifier/changeNotifierOps';
 import { ContextApplyCompaction } from '#/agent/contextMemory/contextEvents';
 import { isPromptOwnedInjection, isUndoAnchor } from '#/agent/contextMemory/conversationTime';
 import { userPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
@@ -23,16 +28,26 @@ import { ContextUndone } from '#/agent/undo/undoService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import { ErrorCodes } from '#/errors';
+import { APIRequestTooLargeError, APIStatusError } from '#/llm-adapter/contract/errors';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ToolsUpdateStore } from '#/features/todo/todoOps';
 import type { TodoItem } from '#/features/todo/todoItem';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import type { DurableAgentRuntimeParticipant } from '#/state/eventDispatcher';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import type { WireRecord } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
 
-import { createTestAgent, execEnvServices, telemetryServices, InMemoryWireRecordPersistence, type TestAgentContext } from '../../harness';
+import {
+  createTestAgent,
+  execEnvServices,
+  telemetryServices,
+  InMemoryWireRecordPersistence,
+  requesterFromGenerateFn,
+  type TestAgentOptions,
+  type TestAgentContext,
+} from '../../harness';
 import { submitPromptTurn } from '../loop/stubs';
 import { createFakeHostFs } from '../../tools/fixtures/fake-exec';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -50,9 +65,10 @@ describe('AgentConversationUndoService', () => {
     }
   });
 
-  async function setup() {
+  async function setup(options: TestAgentOptions = {}) {
     records = [];
     ctx = createTestAgent(
+      options,
       telemetryServices(recordingTelemetry(records)),
       execEnvServices({ hostFs: createFakeHostFs({ mkdir: async () => {} }) }),
     );
@@ -89,7 +105,6 @@ describe('AgentConversationUndoService', () => {
         ctx.context.append({
           role: 'user',
           content: [{ type: 'text', text: 'restored notification' }],
-          toolCalls: [],
           origin: { kind: 'task', taskId: 'task-1', status: 'completed', notificationId: 'notification-1' },
         });
         restored = true;
@@ -331,6 +346,150 @@ describe('AgentConversationUndoService', () => {
     }
   });
 
+  it('rolls change-notifier beliefs back with the undone turn', async () => {
+    await setup();
+    ctx.get(IAgentChangeNotifierService);
+    const dispatcher = ctx.get(IEventDispatcher);
+    ctx.appendTurnExchange('u1', 'a1');
+    await dispatcher.dispatch(
+      new ChangeNotifierSnapshotEvent({
+        agentId: 'main',
+        agentsMdHash: null,
+        skillsHash: null,
+        subagentNames: ['default'],
+      }),
+    );
+    ctx.appendTurnExchange('u2', 'a2');
+    await dispatcher.dispatch(
+      new ChangeNotifierSnapshotEvent({
+        agentId: 'main',
+        agentsMdHash: null,
+        skillsHash: null,
+        subagentNames: ['default', 'deploy'],
+      }),
+    );
+    expect(ctx.agentState.get(changeNotifierSnapshotKey).subagentNames).toEqual([
+      'default',
+      'deploy',
+    ]);
+
+    await ctx.get(IAgentConversationUndoService).undo(1);
+
+    expect(ctx.agentState.get(changeNotifierSnapshotKey).subagentNames).toEqual(['default']);
+  });
+
+  it('resets change-notifier beliefs on context clear', async () => {
+    await setup();
+    ctx.get(IAgentChangeNotifierService);
+    const dispatcher = ctx.get(IEventDispatcher);
+    ctx.appendTurnExchange('u1', 'a1');
+    await dispatcher.dispatch(
+      new ChangeNotifierSnapshotEvent({
+        agentId: 'main',
+        agentsMdHash: null,
+        skillsHash: null,
+        subagentNames: ['default'],
+      }),
+    );
+    expect(ctx.agentState.get(changeNotifierSnapshotKey).subagentNames).toEqual(['default']);
+
+    ctx.get(IAgentContextMemoryService).clear();
+    await ctx.get(IWireService).flush();
+
+    expect(ctx.agentState.get(changeNotifierSnapshotKey)).toEqual({});
+  });
+
+  it('resets change-notifier beliefs on compaction', async () => {
+    await setup();
+    ctx.get(IAgentChangeNotifierService);
+    const dispatcher = ctx.get(IEventDispatcher);
+    ctx.appendTurnExchange('u1', 'a1');
+    await dispatcher.dispatch(
+      new ChangeNotifierSnapshotEvent({
+        agentId: 'main',
+        agentsMdHash: null,
+        skillsHash: null,
+        subagentNames: ['default'],
+      }),
+    );
+    expect(ctx.agentState.get(changeNotifierSnapshotKey).subagentNames).toEqual(['default']);
+
+    await dispatcher.dispatch(
+      new ContextApplyCompaction({ agentId: 'main', summary: 'summary', compactedCount: 1 }),
+    );
+
+    expect(ctx.agentState.get(changeNotifierSnapshotKey)).toEqual({});
+  });
+
+  it.each(['degraded', 'stripped'] as const)(
+    'restores visible media after undoing the turn that triggered %s recovery',
+    async (mode) => {
+      const imageCounts: number[] = [];
+      await setup({
+        generate: requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
+          const images = history
+            .flatMap((message) => message.content)
+            .filter((part) => part.type === 'image_url');
+          imageCounts.push(images.length);
+          if (mode === 'degraded' && images.length > 3) {
+            throw new APIRequestTooLargeError(413, 'Request Entity Too Large');
+          }
+          if (
+            mode === 'stripped' &&
+            images.some((part) => part.imageUrl.url.endsWith('/1-0.png'))
+          ) {
+            throw new APIStatusError(400, 'unsupported image format');
+          }
+          return {
+            id: 'media-response',
+            message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
+            usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        }),
+      });
+      ctx.configure({
+        modelCapabilities: {
+          image_in: true, video_in: false, audio_in: false,
+          thinking: false, tool_use: true, max_context_tokens: 128_000,
+        },
+      });
+      const runTurn = async (count: number) => {
+        const { turn } = submitPromptTurn(ctx.get(IAgentLoopService), {
+          message: {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'describe the images' },
+              ...Array.from({ length: count }, (_, index) => ({
+                type: 'image_url' as const,
+                imageUrl: {
+                  url: `https://example.test/${imageCounts.length}-${index}.png`,
+                },
+              })),
+            ],
+          },
+          meta: { origin: { kind: 'user' } },
+        });
+        await expect(turn.result).resolves.toMatchObject({ type: 'completed' });
+        return turn.id;
+      };
+      const revision = ctx.context.prefixRevision();
+      const originalCount = mode === 'degraded' ? 3 : 1;
+      const recoveredCount = mode === 'degraded' ? 2 : 0;
+      expect(await runTurn(originalCount)).toBe(0);
+      expect(await runTurn(1)).toBe(1);
+      expect(imageCounts).toEqual([originalCount, originalCount + 1, recoveredCount]);
+      expect(ctx.context.prefixRevision()).toBe(revision);
+
+      await ctx.get(IAgentConversationUndoService).undo(1);
+      expect(await runTurn(0)).toBe(2);
+
+      expect(imageCounts).toEqual([originalCount, originalCount + 1, recoveredCount, originalCount]);
+      expect(ctx.context.prefixRevision()).toBeGreaterThan(revision);
+    },
+  );
+
   it('keeps machine and wire turn ids aligned across undo, a continued turn, and a restart', async () => {
     await setup();
     const undo = ctx.get(IAgentConversationUndoService);
@@ -432,7 +591,6 @@ describe('AgentConversationUndoService', () => {
       {
         role: 'user',
         content: [{ type: 'text', text: 'u2' }],
-        toolCalls: [],
         origin: { kind: 'user' },
       },
       {
@@ -630,7 +788,6 @@ describe('AgentConversationUndoService', () => {
         userPromptSubmitHookPart('<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>'),
         { type: 'text', text: 'u2' },
       ],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     ctx.appendTurnExchange('u3', 'a3');
@@ -672,7 +829,7 @@ describe('AgentConversationUndoService', () => {
       paused: false,
       hasPendingRequests: true,
       turn: undefined,
-      activeTraceId: undefined,
+      activeRequestId: undefined,
     });
 
     try {

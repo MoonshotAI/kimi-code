@@ -2,7 +2,8 @@
  * In-process dispatcher — resolves a wire triple `(service, method, args)`
  * against a live engine scope and mirrors kap-server's dispatcher semantics
  * (reflection call, non-function members are property reads, `main` agent
- * auto-materialized via `ensureMainAgent`). Scope routing resolves workspace
+ * auto-materialized via `ensureMainAgent`, other registered agents lazily
+ * rebuilt via `getOrRestoreAgent`). Scope routing resolves workspace
  * instances through `IWorkspaceInstanceManager` and live sessions through the
  * App `SessionManager`, matching the server's `resolveScope`. Every argument,
  * result, and event payload passes
@@ -22,6 +23,7 @@ import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManage
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
+import { getOrRestoreAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/getOrRestoreAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
 import {
   INTERACTION_TAG_AGENT_ID,
@@ -31,7 +33,22 @@ import {
   type InteractionRequest,
 } from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facade';
-import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import { IAgentLoopService, type PromptPayload, type SteerPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import { IAgentPromptChannel } from '@moonshot-ai/agent-core-v2/agent/loop/promptChannel';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
+import {
+  generateModel,
+  type ModelRequestInput,
+  type ModelRequestParams,
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
+import { streamWithCredentialRecovery } from '@moonshot-ai/agent-core-v2/llm-adapter/model/credential-recovery';
+import {
+  fromCorePart,
+  toCorePart,
+  type ContentPart as LegacyContentPart,
+} from '@moonshot-ai/agent-core-v2/human/message';
+import type { ContentPart as CoreContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { ITelemetryService } from '@moonshot-ai/agent-core-v2/app/telemetry/telemetry';
 import type {
@@ -65,6 +82,43 @@ export interface ScopeLike {
 export function wireClone<T>(value: T): T {
   if (value === undefined) return value;
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function isCoreMediaPart(
+  part: unknown,
+): part is Extract<CoreContentPart, { type: 'image_url' | 'audio_url' | 'video_url' }> {
+  if (typeof part !== 'object' || part === null || !('type' in part) || !('source' in part)) {
+    return false;
+  }
+  if (part.type !== 'image_url' && part.type !== 'audio_url' && part.type !== 'video_url') {
+    return false;
+  }
+  const source = part.source;
+  if (typeof source !== 'object' || source === null || !('kind' in source)) return false;
+  return (
+    source.kind === 'url' ||
+    source.kind === 'inline' ||
+    source.kind === 'file' ||
+    source.kind === 'store'
+  );
+}
+
+function projectToolResultOutput(output: unknown): unknown {
+  if (!Array.isArray(output)) return output;
+  return output.map((part) => (isCoreMediaPart(part) ? fromCorePart(part) : part));
+}
+
+function projectAgentEvent(event: unknown): unknown {
+  if (
+    typeof event !== 'object' ||
+    event === null ||
+    !('type' in event) ||
+    event.type !== 'tool.result' ||
+    !('output' in event)
+  ) {
+    return event;
+  }
+  return { ...event, output: projectToolResultOutput(event.output) };
 }
 
 /**
@@ -176,11 +230,32 @@ function questionServiceView(sessionId: string): Record<string, unknown> {
  * kernel into a per-agent DI service: the view forwards to the agent's
  * `IAgentSkillService` resolved straight from the agent scope handle.
  */
+type LegacyPromptPayload = Omit<PromptPayload, 'input'> & {
+  readonly input: readonly LegacyContentPart[];
+};
+type LegacySteerPayload = Omit<SteerPayload, 'input'> & {
+  readonly input: readonly LegacyContentPart[];
+};
+type LegacyPromptWithSkillsInput = Omit<PromptWithSkillsInput, 'input'> & {
+  readonly input: readonly LegacyContentPart[];
+};
+
+function agentPromptServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+  const prompt = agent.accessor.get(IAgentPromptChannel);
+  return {
+    submit: (input: LegacyPromptPayload) =>
+      prompt.submit({ ...input, input: input.input.map(toCorePart) }),
+    submitSteer: (input: LegacySteerPayload) =>
+      prompt.submitSteer({ ...input, input: input.input.map(toCorePart) }),
+  };
+}
+
 function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
   const skill = agent.accessor.get(IAgentSkillService);
   return {
     activate: (input: SkillActivationInput) => skill.activate(input),
-    promptWithSkills: (input: PromptWithSkillsInput) => skill.promptWithSkills(input),
+    promptWithSkills: (input: LegacyPromptWithSkillsInput) =>
+      skill.promptWithSkills({ ...input, input: input.input.map(toCorePart) }),
     recordModelToolActivation: (origin: SkillActivationOrigin) => {
       skill.recordModelToolActivation(origin);
     },
@@ -195,7 +270,7 @@ function agentLoopServiceView(agent: IAgentScopeHandle): Record<string, unknown>
       if (snapshot.state === 'running') {
         agent.accessor.get(ITelemetryService).track2('cancel', {
           from: 'streaming',
-          trace_id: snapshot.activeTraceId,
+          request_id: snapshot.activeRequestId,
         });
       }
       loop.cancel(turnId === undefined ? undefined : { turnId });
@@ -289,11 +364,15 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
   /** Mirrors kap-server's `resolveScope`, incl. main-agent materialization. */
   async function resolveScope(scope: ScopeRef): Promise<ResolvedScope> {
     if (scope.workspaceId !== undefined) {
-      const workspace = await root.accessor
+      const lease = await root.accessor
         .get(IWorkspaceInstanceManager)
-        .getOrCreate({ workspaceId: scope.workspaceId });
-      void workspace.program;
-      return { kind: 'workspace', like: root };
+        .acquire({ workspaceId: scope.workspaceId });
+      try {
+        void lease.instance.program;
+        return { kind: 'workspace', like: root };
+      } finally {
+        lease.dispose();
+      }
     }
     if (scope.sessionId === undefined) return { kind: 'core', like: root };
     const session = root.accessor.get(ISessionManager).get(scope.sessionId) ?? getLiveSessionById(root.accessor, scope.sessionId);
@@ -311,7 +390,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       }
       return { kind: 'agent', like: handle };
     }
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf(scope.agentId);
+    const agent = await getOrRestoreAgent(session, scope.agentId);
     if (agent === undefined) {
       throw new RPCError(NOT_FOUND, `agent not found: ${scope.agentId}`);
     }
@@ -341,6 +420,12 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }
       return view;
+    }
+    if (service === 'agentPromptService') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      return agentPromptServiceView(resolved.like as IAgentScopeHandle);
     }
     if (service === 'agentSkillService') {
       if (resolved.kind !== 'agent') {
@@ -405,7 +490,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     if (resolved.kind === 'agent' && name === 'events') {
       const bus = resolved.like.accessor.get(IEventBus);
       return bus.subscribe((event) => {
-        handler(wireClone(event));
+        handler(wireClone(projectAgentEvent(event)));
       });
     }
     throw new RPCError(REQUEST_INVALID, `unknown event stream: ${name} (${resolved.kind})`);
@@ -500,9 +585,8 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     },
 
     stream(scope, service, method, args): AsyncIterable<unknown> {
-      // Special case: modelResolver.generate routes to IModelCatalog.generate
-      // (which owns credential recovery); the dispatcher only supplies the
-      // abort signal so client cancellation still reaches the request.
+      // Special case: direct generate initializes one core request here;
+      // credential recovery and client cancellation stay at this boundary.
       if (service === 'modelResolver' && method === 'generate') {
         return {
           [Symbol.asyncIterator]() {
@@ -513,22 +597,21 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
             const ensureStarted = (): Promise<void> => {
               started ??= (async () => {
                 const resolved = await resolveScope(scope);
-                const catalog = resolveService(resolved, 'modelResolver');
                 const [modelId, input, params] = args;
-                const iterable = (
-                  catalog as {
-                    generate(
-                      id: string,
-                      input: unknown,
-                      signal: AbortSignal,
-                      params: unknown,
-                    ): AsyncIterable<unknown>;
-                  }
-                ).generate(
-                  modelId as string,
-                  wireClone(input),
+                const model = resolved.like.accessor.get(IModelCatalog).get(modelId as string);
+                const request = resolved.like.accessor
+                  .get(IProtocolAdapterRegistry)
+                  .request(model, wireClone(params) as ModelRequestParams | undefined);
+                const iterable = streamWithCredentialRecovery(
+                  model.credentialProvider,
+                  () =>
+                    generateModel(
+                      request,
+                      wireClone(input) as ModelRequestInput,
+                      controller.signal,
+                      wireClone(params) as ModelRequestParams | undefined,
+                    ),
                   controller.signal,
-                  wireClone(params),
                 );
                 source = iterable[Symbol.asyncIterator]();
               })();

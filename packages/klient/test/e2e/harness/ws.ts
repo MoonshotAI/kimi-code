@@ -5,9 +5,9 @@
  * via `id` correlation.
  *
  * Frame shape is the union of WS.md §2 envelopes:
- *   - `event` envelope     : `{type, seq, session_id, timestamp, payload}`
+ *   - `event` envelope     : `{type, session_id, timestamp, payload}`
  *   - `ack`                : `{type:'ack', id, code, msg, payload}`
- *   - `server_hello`/`ping`/`resync_required`/`error`: each carries `timestamp`
+ *   - `server_hello`/`ping`/`error`: each carries `timestamp`
  *
  * We don't Zod-validate frames here — preserving forward-compat ("unknown
  * fields pass through") and avoiding double-work since the server emits the
@@ -20,7 +20,6 @@ import { recordReportEvent } from './report.js';
 /** Wire frame shape — kept loose because the server adds new event types. */
 export interface AnyFrame {
   readonly type: string;
-  readonly seq?: number;
   readonly session_id?: string;
   readonly timestamp?: string;
   readonly id?: string;
@@ -187,15 +186,15 @@ export class WsClient {
     try {
       const raw = typeof data === 'string' ? data : String(data);
       frame = JSON.parse(raw) as AnyFrame;
-    } catch (err) {
-      this.opts.logger('warn', 'ws: dropped non-JSON frame', { err: String(err) });
+    } catch (error) {
+      this.opts.logger('warn', 'ws: dropped non-JSON frame', { err: String(error) });
       recordReportEvent(
         {
           kind: 'ws',
           direction: 'in',
           url: this.opts.url,
           message: 'dropped non-JSON frame',
-          error: errorForReport(err),
+          error: errorForReport(error),
         },
         { reportDir: this.opts.reportDir },
       );
@@ -215,8 +214,8 @@ export class WsClient {
     for (const sub of this._subscribers) {
       try {
         sub(frame);
-      } catch (err) {
-        this.opts.logger('warn', 'ws: subscriber threw', { err: String(err) });
+      } catch (error) {
+        this.opts.logger('warn', 'ws: subscriber threw', { err: String(error) });
       }
     }
 
@@ -227,8 +226,8 @@ export class WsClient {
       let matches = false;
       try {
         matches = w.match(frame);
-      } catch (err) {
-        this.opts.logger('warn', 'ws: waiter predicate threw', { err: String(err) });
+      } catch (error) {
+        this.opts.logger('warn', 'ws: waiter predicate threw', { err: String(error) });
       }
       if (matches) {
         this._waiters.splice(i, 1);

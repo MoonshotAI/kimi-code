@@ -29,11 +29,18 @@ export class TowerInboxTool implements ITowerInboxTool {
           const store = newTowerStore(this.sessionContext);
           const state = await store.load();
           const caller = callerName(this.scopeContext.agentId, store, state);
-          const items = await store.readInbox(caller, args.limit ?? DEFAULT_LIMIT);
-          await store.markInboxRead(caller, items[0]?.sentAt);
+          const limit = args.limit ?? DEFAULT_LIMIT;
+          const items =
+            args.include_read === true
+              ? await store.readInbox(caller, limit)
+              : await store.readUnreadInbox(caller, limit);
           if (items.length === 0) {
-            return { output: `inbox empty for ${caller}` };
+            return { output: `inbox empty for ${caller}; 0 unread message(s) remaining` };
           }
+          const remaining = await store.ackInbox(
+            caller,
+            items.map((item) => item.messageId),
+          );
           const sections = items.map((item) =>
             [
               `file: ${item.file}`,
@@ -52,6 +59,8 @@ export class TowerInboxTool implements ITowerInboxTool {
               `${String(items.length)} message(s) for ${caller} (newest first):`,
               '',
               sections.join('\n\n---\n\n'),
+              '',
+              `${String(remaining)} unread message(s) remaining`,
             ].join('\n'),
           };
         }),

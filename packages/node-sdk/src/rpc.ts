@@ -1,10 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
-import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { AgentContextData } from '#/context';
-import { ErrorCodes, makeErrorPayload } from '#/errors';
+import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
 import type {
   ApprovalHandler,
   Event,
@@ -24,7 +23,7 @@ import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
-  AgentRuntimeBinding,
+  AgentEnvironmentBinding,
   AppMcpServerInspection,
   BackgroundTaskInfo,
   ConfigDiagnostics,
@@ -32,6 +31,7 @@ import type {
   ExportSessionInput,
   ExportSessionResult,
   CreateGoalInput,
+  EditGoalObjectiveInput,
   FileMeta,
   ForkSessionInput,
   GenerateSessionTitleInput,
@@ -39,6 +39,7 @@ import type {
   ImportCustomRegistryOptions,
   ImportCustomRegistryResult,
   GetCronTasksResult,
+  InstallPluginInput,
   GlobalMcpServerAuthStatus,
   McpManagedServerInfo,
   McpServerConfig,
@@ -63,11 +64,16 @@ import type {
   SessionUsage,
   PromptInput,
   PromptSkillActivation,
+  PromptSubmissionResult,
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
+  RefreshProviderModelsOptions,
+  RefreshProviderModelsResponse,
   SessionSummary,
   SessionSummaryPage,
+  SessionEnvironmentsInfo,
+  SessionEnvironmentState,
   SkillSummary,
   PluginCommandDef,
   SuggestFilesInput,
@@ -75,6 +81,7 @@ import type {
   Unsubscribe,
   UploadFileOptions,
   WorkspaceTrustInfo,
+  WorkspaceTrustInfoOptions,
 } from '#/types';
 
 const MAIN_AGENT_ID = 'main';
@@ -87,6 +94,7 @@ export interface SessionPromptRpcInput {
 
 export interface SessionPromptWithSkillsRpcInput extends SessionPromptRpcInput {
   readonly skills: readonly PromptSkillActivation[];
+  readonly steerIfActive?: boolean;
 }
 
 export interface SessionIdRpcInput {
@@ -152,10 +160,6 @@ export interface RunCommandRpcInput extends SessionIdRpcInput {
   readonly args?: string | undefined;
 }
 
-export interface SwitchSessionRuntimeRpcInput extends SessionIdRpcInput {
-  readonly runtimeId: string;
-}
-
 export interface ReconnectMcpServerRpcInput extends SessionIdRpcInput {
   readonly name: string;
   readonly config?: McpServerConfig;
@@ -167,11 +171,22 @@ export interface SessionWarningInfo {
   readonly severity: 'info' | 'warning' | 'error';
 }
 
+export interface ConfigSectionChange {
+  readonly domain: string;
+  readonly source: 'load' | 'reload' | 'set';
+  readonly value: unknown;
+  readonly previousValue: unknown;
+}
+
 export abstract class SDKRpcClientBase {
   private readonly interactiveAgentScope = new AsyncLocalStorage<string>();
   private readonly eventListeners = new Set<(event: Event) => void>();
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
   private readonly questionHandlers = new Map<string, QuestionHandler>();
+  private readonly staleReloadHandlers = new Map<
+    string,
+    (summary: ResumedSessionSummary) => Promise<void>
+  >();
 
   get interactiveAgentId(): string {
     return this.interactiveAgentScope.getStore() ?? MAIN_AGENT_ID;
@@ -183,27 +198,7 @@ export abstract class SDKRpcClientBase {
 
   abstract createSession(input: CreateSessionOptions): Promise<SessionSummary>;
 
-  async createSessionWithKaos(
-    input: CreateSessionOptions,
-    kaos: Kaos,
-    persistenceKaos?: Kaos,
-  ): Promise<SessionSummary> {
-    void kaos;
-    void persistenceKaos;
-    return this.createSession(input);
-  }
-
   abstract resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary>;
-
-  async resumeSessionWithKaos(
-    input: ResumeSessionInput,
-    kaos: Kaos,
-    persistenceKaos?: Kaos,
-  ): Promise<ResumedSessionSummary> {
-    void kaos;
-    void persistenceKaos;
-    return this.resumeSession(input);
-  }
 
   abstract reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary>;
 
@@ -219,7 +214,17 @@ export abstract class SDKRpcClientBase {
 
   abstract listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]>;
 
-  abstract getWorkspaceTrustInfo(workDir: string): Promise<WorkspaceTrustInfo>;
+  async getWorkspaceAdditionalDirs(_workDir: string): Promise<readonly string[]> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Workspace additional directories are not implemented for this engine',
+    );
+  }
+
+  abstract getWorkspaceTrustInfo(
+    workDir: string,
+    options?: WorkspaceTrustInfoOptions,
+  ): Promise<WorkspaceTrustInfo>;
 
   abstract trustWorkspace(workDir: string): Promise<void>;
 
@@ -233,23 +238,29 @@ export abstract class SDKRpcClientBase {
 
   abstract getConfigDiagnostics(): Promise<ConfigDiagnostics>;
 
+  abstract onConfigSectionChanged(listener: (change: ConfigSectionChange) => void): Unsubscribe;
+
   abstract getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]>;
 
   abstract setConfig(input: KimiConfigPatch): Promise<KimiConfig>;
 
   abstract removeProvider(providerId: string): Promise<KimiConfig>;
 
-  abstract supportsAtomicSectionReplace(): boolean;
-
   abstract importCustomRegistry(
     options: ImportCustomRegistryOptions,
   ): Promise<ImportCustomRegistryResult>;
 
-  abstract replaceConfigSections(sections: Record<string, unknown>): Promise<void>;
+  abstract refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse>;
 
   abstract uploadFile(data: Uint8Array, options: UploadFileOptions): Promise<FileMeta>;
 
   abstract deleteFile(fileId: string): Promise<void>;
+
+  async attachFile(_input: { sessionId: string; data: Uint8Array; options: Pick<UploadFileOptions, 'name' | 'mimeType'> }): Promise<string> {
+    throw new Error('Session attachments are unavailable on this engine.');
+  }
 
   abstract listGlobalMcpServers(options?: {
     readonly cwd?: string;
@@ -328,7 +339,7 @@ export abstract class SDKRpcClientBase {
 
   abstract prompt(input: SessionPromptRpcInput): Promise<void>;
 
-  abstract promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void>;
+  abstract promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<PromptSubmissionResult>;
 
   abstract runShellCommand(input: {
     sessionId: string;
@@ -338,7 +349,7 @@ export abstract class SDKRpcClientBase {
 
   abstract cancelShellCommand(input: { sessionId: string; commandId: string }): Promise<void>;
 
-  abstract steer(input: SessionPromptRpcInput): Promise<void>;
+  abstract steer(input: SessionPromptRpcInput): Promise<PromptSubmissionResult>;
 
   abstract generateAgentsMd(input: SessionIdRpcInput): Promise<void>;
 
@@ -370,6 +381,13 @@ export abstract class SDKRpcClientBase {
 
   abstract setTowerMode(input: SetSessionTowerModeRpcInput): Promise<void>;
 
+  async getTowerStatus(_input: SessionIdRpcInput): Promise<string> {
+    throw new KimiError(
+      ErrorCodes.NOT_IMPLEMENTED,
+      'Tower status is not implemented for this engine',
+    );
+  }
+
   abstract getPlan(input: SessionIdRpcInput): Promise<SessionPlan>;
 
   abstract clearPlan(input: SessionIdRpcInput): Promise<void>;
@@ -381,6 +399,8 @@ export abstract class SDKRpcClientBase {
   abstract getTodos(input: SessionIdRpcInput): Promise<readonly SessionTodoItem[]>;
 
   abstract undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void>;
+
+  abstract takeOverSessionLock(input: SessionIdRpcInput): Promise<void>;
 
   abstract getContext(input: SessionIdRpcInput): Promise<AgentContextData>;
 
@@ -423,6 +443,8 @@ export abstract class SDKRpcClientBase {
 
   abstract getGoal(input: SessionIdRpcInput): Promise<GoalToolResult>;
 
+  abstract editGoalObjective(input: SessionIdRpcInput & EditGoalObjectiveInput): Promise<GoalSnapshot>;
+
   abstract pauseGoal(input: SessionIdRpcInput): Promise<GoalSnapshot>;
 
   abstract resumeGoal(input: SessionIdRpcInput): Promise<GoalSnapshot>;
@@ -447,7 +469,7 @@ export abstract class SDKRpcClientBase {
 
   abstract listPlugins(): Promise<readonly PluginSummary[]>;
 
-  abstract installPlugin(source: string): Promise<PluginSummary>;
+  abstract installPlugin(input: string | InstallPluginInput): Promise<PluginSummary>;
 
   abstract setPluginEnabled(id: string, enabled: boolean): Promise<void>;
 
@@ -467,9 +489,15 @@ export abstract class SDKRpcClientBase {
 
   abstract runCommand(input: RunCommandRpcInput): Promise<void>;
 
-  abstract getRuntime(input: SessionIdRpcInput): Promise<AgentRuntimeBinding>;
+  async resolveSessionEnvironment(options: Pick<CreateSessionOptions, 'workDir' | 'environmentId' | 'environmentCwd'>): Promise<AgentEnvironmentBinding> {
+    throw new Error(`Environment resolution is unavailable on this engine for ${options.workDir}.`);
+  }
 
-  abstract switchRuntime(input: SwitchSessionRuntimeRpcInput): Promise<AgentRuntimeBinding>;
+  abstract getEnvironment(input: SessionIdRpcInput): Promise<AgentEnvironmentBinding>;
+
+  abstract listEnvironments(input: SessionIdRpcInput): Promise<SessionEnvironmentsInfo>;
+
+  abstract getEnvironmentState(input: SessionIdRpcInput): Promise<SessionEnvironmentState>;
 
   onEvent(listener: (event: Event) => void): Unsubscribe {
     this.eventListeners.add(listener);
@@ -500,9 +528,28 @@ export abstract class SDKRpcClientBase {
     this.questionHandlers.set(sessionId, handler);
   }
 
+  setStaleReloadHandler(
+    sessionId: string,
+    handler: ((summary: ResumedSessionSummary) => Promise<void>) | undefined,
+  ): void {
+    if (handler === undefined) {
+      this.staleReloadHandlers.delete(sessionId);
+      return;
+    }
+    this.staleReloadHandlers.set(sessionId, handler);
+  }
+
   clearSessionHandlers(sessionId: string): void {
     this.approvalHandlers.delete(sessionId);
     this.questionHandlers.delete(sessionId);
+    this.staleReloadHandlers.delete(sessionId);
+  }
+
+  protected async notifyStaleReload(
+    sessionId: string,
+    summary: ResumedSessionSummary,
+  ): Promise<void> {
+    await this.staleReloadHandlers.get(sessionId)?.(summary);
   }
 
   async requestApproval(

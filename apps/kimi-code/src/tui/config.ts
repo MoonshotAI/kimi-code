@@ -35,7 +35,7 @@ export const UpgradePreferencesSchema = z.object({
   autoInstall: z.boolean(),
 });
 
-export const STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'cwd', 'git', 'tips'] as const;
+export const STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'environment', 'cwd', 'git', 'tips'] as const;
 export type StatusLineItem = (typeof STATUS_LINE_ITEMS)[number];
 
 export const StatusLineFileConfigSchema = z.object({
@@ -75,6 +75,7 @@ export const TuiConfigFileSchema = z.object({
   disable_paste_burst: z.boolean().optional(),
   cache_expiry_hint: z.boolean().optional(),
   disable_feedback_survey: z.boolean().optional(),
+  auto_session_title: z.boolean().optional(),
   editor: z
     .object({
       command: z.string().optional(),
@@ -110,6 +111,9 @@ export const TuiConfigSchema = z.object({
    * fixtures from before this field existed still typecheck. */
   cacheExpiryHint: z.boolean().optional(),
   disableFeedbackSurvey: z.boolean().optional(),
+  /** Present in every normalized config; optional only so hand-built test
+   * fixtures from before this field existed still typecheck. */
+  autoSessionTitle: z.boolean().optional(),
   editorCommand: z.string().nullable(),
   notifications: NotificationsConfigSchema,
   upgrade: UpgradePreferencesSchema,
@@ -141,7 +145,7 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   renderLatex: true,
   disablePasteBurst: false,
   cacheExpiryHint: true,
-  disableFeedbackSurvey: false,
+  autoSessionTitle: true,
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
@@ -223,8 +227,37 @@ export async function saveTuiConfig(
   config: TuiConfig,
   filePath: string = getTuiConfigPath(),
 ): Promise<void> {
+  let legacyValue = config.disableFeedbackSurvey;
+  if (legacyValue === undefined && existsSync(filePath)) {
+    const source = await readFile(filePath, 'utf-8');
+    try {
+      const value = parseToml(source)['disable_feedback_survey'];
+      if (typeof value === 'boolean') legacyValue = value;
+    } catch {
+      legacyValue = undefined;
+    }
+  }
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, renderTuiConfig(config), 'utf-8');
+  await writeFile(filePath, renderTuiConfig({
+    ...config,
+    disableFeedbackSurvey: legacyValue,
+  }), 'utf-8');
+}
+
+export async function removeLegacySurveySetting(filePath: string = getTuiConfigPath()): Promise<void> {
+  const lines = (await readFile(filePath, 'utf-8')).split('\n');
+  let inTable = false;
+  let removed = false;
+  const kept = lines.filter((line) => {
+    if (/^\s*\[/.test(line)) inTable = true;
+    if (!inTable && /^\s*["']?disable_feedback_survey["']?\s*=/.test(line)) {
+      removed = true;
+      return false;
+    }
+    return true;
+  });
+  if (!removed) return;
+  await writeFile(filePath, kept.join('\n'), 'utf-8');
 }
 
 export function normalizeTuiConfig(
@@ -271,8 +304,8 @@ export function normalizeTuiConfig(
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     cacheExpiryHint: config.cache_expiry_hint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
-    disableFeedbackSurvey:
-      config.disable_feedback_survey ?? DEFAULT_TUI_CONFIG.disableFeedbackSurvey,
+    disableFeedbackSurvey: config.disable_feedback_survey,
+    autoSessionTitle: config.auto_session_title ?? DEFAULT_TUI_CONFIG.autoSessionTitle,
     editorCommand: command === undefined || command.length === 0 ? null : command,
     notifications: {
       enabled: config.notifications?.enabled ?? DEFAULT_NOTIFICATIONS_CONFIG.enabled,
@@ -337,7 +370,7 @@ ${tuiModeLine}
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit
-disable_feedback_survey = ${String(config.disableFeedbackSurvey === true)} # true hides the occasional session rating prompt
+${config.disableFeedbackSurvey === undefined ? '' : `disable_feedback_survey = ${String(config.disableFeedbackSurvey)}\n`}auto_session_title = ${String(config.autoSessionTitle !== false)} # false stops the TUI from auto-generating a session title after the first turn
 
 [editor]
 command = "${escapeTomlBasicString(config.editorCommand ?? '')}" # Empty uses $VISUAL / $EDITOR
