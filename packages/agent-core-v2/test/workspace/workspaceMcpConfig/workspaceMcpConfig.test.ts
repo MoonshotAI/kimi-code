@@ -551,6 +551,92 @@ describe('WorkspaceMcpConfigService', () => {
     expect(invalidate).not.toHaveBeenCalled();
   });
 
+  it('revokes the retained OAuth identity when a disabled plugin is reenabled with a new URL', async () => {
+    const previousUrl = 'https://mcp.example.test/mcp-a';
+    const nextUrl = 'https://mcp.example.test/mcp-b';
+    const previous = { transport: 'http', url: previousUrl, auth: 'oauth' } as const;
+    const next = { transport: 'http', url: nextUrl, auth: 'oauth' } as const;
+    pluginServers = { alpha: previous };
+    const service = createService();
+    await service.ready;
+
+    pluginServers = { alpha: { ...previous, enabled: false } };
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+    pluginServers = { alpha: { ...next, enabled: false } };
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+    expect(invalidate).not.toHaveBeenCalled();
+
+    pluginServers = { alpha: next };
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+
+    expect(invalidate).toHaveBeenCalledWith(service, 'alpha', previousUrl);
+    expect(invalidate).not.toHaveBeenCalledWith(service, 'alpha', nextUrl);
+  });
+
+  it('revokes the retained OAuth identity when a disabled plugin is removed after a URL change', async () => {
+    const previousUrl = 'https://mcp.example.test/mcp-a';
+    const nextUrl = 'https://mcp.example.test/mcp-b';
+    pluginServers = { alpha: { transport: 'http', url: previousUrl, auth: 'oauth' } };
+    const service = createService();
+    await service.ready;
+
+    pluginServers = {
+      alpha: { transport: 'http', url: previousUrl, auth: 'oauth', enabled: false },
+    };
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+    pluginServers = {
+      alpha: { transport: 'http', url: nextUrl, auth: 'oauth', enabled: false },
+    };
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+    expect(invalidate).not.toHaveBeenCalled();
+
+    pluginServers = {};
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+
+    expect(invalidate).toHaveBeenCalledWith(service, 'alpha', previousUrl);
+    expect(invalidate).not.toHaveBeenCalledWith(service, 'alpha', nextUrl);
+  });
+
+  it('retains the disabled plugin OAuth identity while a same-named file server uses it', async () => {
+    const url = 'https://mcp.example.test/mcp';
+    const config: McpServerConfig = { transport: 'http', url, auth: 'oauth' };
+    await writeProjectConfig({ alpha: config });
+    pluginServers = { alpha: config };
+    const service = createService();
+    await service.ready;
+
+    pluginServers = { alpha: { ...config, enabled: false } };
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+    pluginServers = {};
+    await pluginReloads.fireAsyncConcurrent(
+      { added: [], removed: [], errors: [] },
+      new AbortController().signal,
+    );
+
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
   it('warns and continues removing the plugin server when authorization cleanup fails', async () => {
     const error = new Error('close failed');
     const log = stubLog();

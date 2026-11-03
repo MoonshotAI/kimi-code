@@ -12,6 +12,7 @@ import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
 import { IMcpConfigStore } from '#/app/mcpConfig/configStore';
 import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
 import { IPluginService } from '#/app/plugin/plugin';
+import type { PluginMcpServerEntry } from '#/app/plugin/types';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { mcpOAuthStoreKey } from '#/mcpCore/oauth/store';
@@ -35,6 +36,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   private mutationTail: Promise<void> = Promise.resolve();
   private fileServers = new Map<string, McpServerConfig>();
   private pluginServers = new Map<string, McpServerConfig>();
+  private disabledOAuthServers = new Map<string, McpServerConfig>();
   private current: Readonly<Record<string, McpServerConfig>> = {};
   private untrustedOAuthServers: Readonly<Record<string, McpServerConfig>> | undefined;
   private initializationComplete = false;
@@ -120,7 +122,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   private async initialize(publish = false, preserveOAuthCredentials = false): Promise<void> {
     await this.config.ready;
     const trusted = await this.trust.get();
-    const [fileServers, pluginServers] = await Promise.all([
+    const [fileServers, pluginServers, entries] = await Promise.all([
       loadMcpServers({
         fs: this.fs,
         cwd: this.workspace.cwd,
@@ -128,8 +130,14 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
         includeProject: trusted,
       }),
       this.plugins.enabledMcpServers(),
+      this.plugins.mcpServerEntries(),
     ]);
     this.fileServers = new Map(Object.entries(fileServers));
+    this.disabledOAuthServers = retainedDisabledOAuthServers(
+      entries,
+      this.pluginServers,
+      this.disabledOAuthServers,
+    );
     this.pluginServers = new Map(Object.entries(pluginServers));
     this.initializationComplete = true;
     if (publish) {
@@ -246,11 +254,38 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
         this.plugins.enabledMcpServers(),
         this.plugins.mcpServerEntries(),
       ]);
-      const preserved = new Set(
-        entries.filter((entry) => entry.config.enabled === false).map((entry) => entry.name),
+      const previousDisabled = this.disabledOAuthServers;
+      const retained = retainedDisabledOAuthServers(
+        entries,
+        this.pluginServers,
+        previousDisabled,
       );
+      this.disabledOAuthServers = retained;
       this.pluginServers = new Map(Object.entries(fresh));
-      await this.publishIfChanged(false, preserved);
+      for (const [name, previous] of previousDisabled) {
+        if (retained.has(name) || !('url' in previous)) continue;
+        const next = entries.find((entry) => entry.name === name)?.config;
+        if (
+          next !== undefined &&
+          'url' in next &&
+          mcpOAuthStoreKey(name, previous.url) === mcpOAuthStoreKey(name, next.url)
+        ) {
+          continue;
+        }
+        const identityStillConfigured = [
+          this.current[name],
+          this.untrustedOAuthServers?.[name],
+        ].some(
+          (config) =>
+            config !== undefined &&
+            'url' in config &&
+            mcpOAuthStoreKey(name, previous.url) === mcpOAuthStoreKey(name, config.url),
+        );
+        if (identityStillConfigured) continue;
+        await this.cancelAuthorization(name, previous);
+        await this.invalidateAuthorization(name, previous);
+      }
+      await this.publishIfChanged(false, new Set(retained.keys()));
     });
   }
 
@@ -300,9 +335,11 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     const retained = this.untrustedOAuthServers ?? {};
     this.oauth.setConfigurationSource(
       this,
-      [...Object.entries(this.current), ...Object.entries(retained)].flatMap(([name, config]) =>
-        'url' in config ? [[name, config.url] as const] : [],
-      ),
+      [
+        ...Object.entries(this.current),
+        ...Object.entries(retained),
+        ...this.disabledOAuthServers,
+      ].flatMap(([name, config]) => ('url' in config ? [[name, config.url] as const] : [])),
     );
   }
 
@@ -329,6 +366,21 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
       this.log.warn('mcp oauth credential cleanup failed', { name, error });
     }
   }
+}
+
+function retainedDisabledOAuthServers(
+  entries: readonly PluginMcpServerEntry[],
+  previousPlugins: ReadonlyMap<string, McpServerConfig>,
+  previousDisabled: ReadonlyMap<string, McpServerConfig>,
+): Map<string, McpServerConfig> {
+  const retained = new Map<string, McpServerConfig>();
+  for (const entry of entries) {
+    if (entry.config.enabled !== false) continue;
+    const previous = previousPlugins.get(entry.name) ?? previousDisabled.get(entry.name);
+    const config = previous ?? entry.config;
+    if ('url' in config) retained.set(entry.name, config);
+  }
+  return retained;
 }
 
 function toMcpTunables(section: McpSection | undefined): McpTunables {
