@@ -2589,6 +2589,7 @@ function configService(readConfig: () => KimiConfig): IConfigService {
     onDidChangeConfiguration: () => ({ dispose: () => { } }),
     onDidSectionChange: sectionEmitter.event,
     get: <T>(domain: string) => valueFor(domain) as T,
+    assertValid: () => { },
     inspect: (domain: string) => {
       const value = (effectiveConfig() as Record<string, unknown>)[domain];
       return {

@@ -432,7 +432,7 @@ disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 ```
 
 ::: warning Note
-Like the `tools` / `disallowedTools` fields of an agent file, this section shapes the tools shown to the model and is enforced again before execution. [Permission rules](#permission) remain a separate control for operations that require approval.
+Like the `tools` / `disallowedTools` fields of an agent file, this section shapes the tools shown to the model and is enforced again before execution. If `config.toml` cannot be read or this section is invalid, tool policy checks fail instead of treating the section as unrestricted; fix the configuration to restore tool use. [Permission rules](#permission) remain a separate control for operations that require approval.
 :::
 
 ## `read`

@@ -58,6 +58,7 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
   }
 
   isToolDenied(name: string, source: ToolSource = isMcpToolName(name) ? 'mcp' : 'builtin'): boolean {
+    this.config.assertValid(TOOLS_SECTION);
     const deniedBy = (list: readonly string[] | undefined): boolean =>
       list !== undefined && !isToolActive({ disallowedTools: list }, name, source);
     return (
@@ -81,6 +82,7 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
   }
 
   isToolActiveForDisclosure(name: string, source: ToolSource = 'builtin'): boolean {
+    this.config.assertValid(TOOLS_SECTION);
     const profile = this.profile.data();
     return isToolActiveComposed(
       {
@@ -99,6 +101,7 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
     name: string,
     source: ToolSource = 'builtin',
   ): boolean {
+    this.config.assertValid(TOOLS_SECTION);
     return isToolActiveComposed(
       {
         workspaceDisabledTools: this.toolPolicyGate.disabledTools,

@@ -431,7 +431,7 @@ disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 ```
 
 ::: warning 注意
-与 Agent 文件中的 `tools` / `disallowedTools` 一样，本节不仅决定模型能"看到"哪些工具，还会在执行前再次强制检查。[权限规则](#permission)仍是独立的控制层，用于决定哪些操作需要审批。
+与 Agent 文件中的 `tools` / `disallowedTools` 一样，本节不仅决定模型能"看到"哪些工具，还会在执行前再次强制检查。`config.toml` 无法读取或本节配置无效时，工具策略检查会报错，不会将本节视为未配置限制；修复配置后才能恢复工具调用。[权限规则](#permission)仍是独立的控制层，用于决定哪些操作需要审批。
 :::
 
 ## `read`
