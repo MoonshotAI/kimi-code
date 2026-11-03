@@ -356,6 +356,7 @@ export class PluginsPanelComponent extends Container implements Focusable {
   private selectedIndex = 0;
   private market: MarketState = { status: 'idle' };
   private installing: string | undefined;
+  private catalogVersions = new Map<string, string | undefined>();
 
   constructor(opts: PluginsPanelOptions) {
     super();
@@ -388,6 +389,15 @@ export class PluginsPanelComponent extends Container implements Focusable {
 
   setMarketplace(entries: readonly PluginMarketplaceEntry[], source: string): void {
     this.market = { status: 'loaded', entries, source };
+  }
+
+  setMarketplaceCatalogVersions(entries: readonly PluginMarketplaceEntry[]): void {
+    this.catalogVersions = new Map(entries.map((entry) => [entry.id, entry.version]));
+  }
+
+  expectedMarketplaceVersion(entry: PluginMarketplaceEntry): string | undefined {
+    if (this.catalogVersions.has(entry.id)) return this.catalogVersions.get(entry.id);
+    return entry.version;
   }
 
   setMarketplaceError(message: string): void {

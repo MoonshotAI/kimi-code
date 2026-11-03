@@ -334,6 +334,7 @@ async function loadMarketplaceCatalog(
       source,
     });
     panel.setMarketplace(catalog.plugins, catalog.source);
+    panel.setMarketplaceCatalogVersions(catalog.plugins);
     host.state.ui.requestRender();
     try {
       const enriched = await withMarketplaceLatestVersions(catalog);
@@ -596,7 +597,12 @@ async function installMarketplaceEntryFromPanel(
     panel,
     entry.displayName,
     isOfficialPluginSource(entry.source),
-    () => installPluginFromMarketplace(host, entry, marketplaceSource),
+    () => installPluginFromMarketplace(
+      host,
+      entry,
+      panel.expectedMarketplaceVersion(entry),
+      marketplaceSource,
+    ),
   );
 }
 
@@ -759,6 +765,7 @@ async function installPluginFromSource(
 async function installPluginFromMarketplace(
   host: SlashCommandHost,
   entry: PluginMarketplaceEntry,
+  expectedVersion: string | undefined,
   marketplaceSource?: string,
 ): Promise<void> {
   const session = await resolvePluginApi(host);
@@ -770,7 +777,7 @@ async function installPluginFromMarketplace(
       : undefined;
   const summary = await session.installPlugin({
     marketplaceId: entry.id,
-    expectedVersion: entry.version,
+    expectedVersion,
     expectedSha256: entry.sha256sum,
     migrateFrom,
     marketplaceSource,

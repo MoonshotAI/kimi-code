@@ -152,6 +152,20 @@ function makeMarketplaceEntry(
 }
 
 describe('plugins selector dialogs', () => {
+  it('keeps raw catalog versions for installation after display enrichment', () => {
+    const { panel } = makePanel({});
+    const raw = { ...makeMarketplaceEntry('demo', desktopPlatforms), version: undefined };
+    panel.setMarketplaceCatalogVersions([raw]);
+    const enriched = { ...raw, version: '7.0.0' };
+    panel.setMarketplace([enriched], '/tmp/marketplace.json');
+
+    expect(panel.expectedMarketplaceVersion(enriched)).toBeUndefined();
+
+    const versioned = makeMarketplaceEntry('versioned', desktopPlatforms);
+    panel.setMarketplaceCatalogVersions([versioned]);
+    expect(panel.expectedMarketplaceVersion({ ...versioned, version: '8.0.0' })).toBe('1.0.0');
+  });
+
   it('trusts only built-in Kimi CDN plugin paths', () => {
     expect(pluginTrustLabel({
       id: 'kimi-datasource',

@@ -366,6 +366,14 @@ describe('loadPluginMarketplace', () => {
     });
   });
 
+  it('accepts Node runtime platform names in custom catalogs', async () => {
+    const file = await writeCatalog([catalogEntry({ platforms: ['darwin', 'win32', 'linux'] })]);
+
+    const marketplace = await loadPluginMarketplace({ workDir: '/tmp/work', source: file });
+
+    expect(marketplace.plugins[0]?.platforms).toEqual(['darwin', 'win32', 'linux']);
+  });
+
   it('accepts file URLs and preserves catalog order and weights', async () => {
     const file = await writeCatalog([
       catalogEntry({ id: 'first', distribution: { category: 'third_party', weight: 1 } }),

@@ -304,12 +304,12 @@ function parsePlatforms(
     throw new TypeError(`Plugin marketplace entry ${id} "platforms" must be a non-empty array.`);
   }
   const platforms = value.map((platform) => {
-    if (platform === 'macos') return 'darwin' as const;
-    if (platform === 'windows') return 'win32' as const;
+    if (platform === 'macos' || platform === 'darwin') return 'darwin' as const;
+    if (platform === 'windows' || platform === 'win32') return 'win32' as const;
     if (platform === 'linux') return 'linux' as const;
     if (platform === 'cloud') return 'cloud' as const;
     throw new Error(
-      `Plugin marketplace entry ${id} "platforms" must contain only: ${PLUGIN_MARKETPLACE_PLATFORMS.join(', ')}.`,
+      `Plugin marketplace entry ${id} "platforms" must contain only: ${[...PLUGIN_MARKETPLACE_PLATFORMS, 'darwin', 'win32'].join(', ')}.`,
     );
   });
   return [...new Set(platforms)];

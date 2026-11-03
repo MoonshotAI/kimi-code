@@ -902,18 +902,18 @@ describe('server-v2 /api/v1 plugins', () => {
     await call('POST', '/api/v1/plugins/local-plugin:remove');
   });
 
-  it('allows a display version when the raw catalog omits its version', async () => {
+  it('rejects an expected version when the raw catalog omits its version', async () => {
     const source = await makePluginDir('local-plugin', '1.0.0');
     catalog = { plugins: [{ id: 'local-plugin', source }] };
 
-    const installed = await call<{ id: string; origin: string }>('POST', '/api/v1/plugins', {
+    const installed = await call('POST', '/api/v1/plugins', {
       marketplaceId: 'local-plugin',
       expectedVersion: '1.0.0',
     });
 
-    expect(installed.body.code).toBe(0);
-    expect(installed.body.data).toMatchObject({ id: 'local-plugin', origin: 'marketplace' });
-    await call('POST', '/api/v1/plugins/local-plugin:remove');
+    expect(installed.body.code).toBe(40934);
+    expect(installed.body.msg).toContain('refresh the catalog');
+    expect((await call('GET', '/api/v1/plugins/local-plugin')).body.code).toBe(40419);
   });
 
   it('installs a GitHub marketplace entry without requiring an archive digest', async () => {

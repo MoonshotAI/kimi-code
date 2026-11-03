@@ -122,7 +122,9 @@ function installedPlugin(id: string, version = '1.0.0'): PluginSummary {
   };
 }
 
-function fakePanel() {
+function fakePanel(
+  expectedVersion?: (entry: { version?: string }) => string | undefined,
+) {
   const lines: (string | undefined)[] = [];
   return {
     panel: {
@@ -132,6 +134,7 @@ function fakePanel() {
       clearInstalling: () => {
         lines.push(undefined);
       },
+      expectedMarketplaceVersion: expectedVersion ?? ((entry: { version?: string }) => entry.version),
     } as never,
     lines,
   };
@@ -209,6 +212,31 @@ describe('plugins command capability surface', () => {
       {
         id: 'demo',
         displayName: 'Demo',
+        source: 'https://code.kimi.com/kimi-code/plugins/official/demo.zip',
+      } as never,
+      false,
+    );
+
+    expect(installPlugin).toHaveBeenCalledWith({
+      marketplaceId: 'demo',
+      expectedVersion: undefined,
+      expectedSha256: undefined,
+      migrateFrom: undefined,
+      marketplaceSource: undefined,
+    });
+  });
+
+  it('uses the raw catalog version instead of an enriched display version', async () => {
+    const { host, installPlugin } = fakeHost({});
+    const { panel } = fakePanel(() => undefined);
+
+    await installMarketplaceEntryFromPanel(
+      host,
+      panel,
+      {
+        id: 'demo',
+        displayName: 'Demo',
+        version: '7.0.0',
         source: 'https://code.kimi.com/kimi-code/plugins/official/demo.zip',
       } as never,
       false,
