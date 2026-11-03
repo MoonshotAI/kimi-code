@@ -1,4 +1,4 @@
-import { Disposable, toDisposable } from '#/_base/di/lifecycle';
+import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 import { LifecycleScope } from '#/app/scopes';
@@ -59,6 +59,11 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
       `Session "${sessionId}" was updated by another client; reload it before continuing`,
       { details: { sessionId } },
     );
+  }
+
+  retain(): IDisposable {
+    const lease = this.sessionLocks.lease(this.ctx.sessionId);
+    return toDisposable(() => lease.release());
   }
 
   private schedule(): void {

@@ -37,6 +37,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
 import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
@@ -1212,6 +1213,17 @@ describe('Agent loop', () => {
     loop.resumeQueue();
     expect(loop.snapshot().queuePaused).toBe(false);
     begin.mockRestore();
+  });
+
+  it('keeps the session lock while prompts wait in the queue', () => {
+    const locks = ctx.get(ISessionLockService);
+    loop.pauseQueue();
+    const waiting = submitTracked(loop, 'waiting');
+    locks.release('test-session');
+    expect(locks.held('test-session')).toBe(true);
+
+    expect(loop.cancel({ promptId: waiting })).toBe(true);
+    expect(locks.held('test-session')).toBe(false);
   });
 
   it('refuses to steer prompts that start Plan mode or a goal, or prompts queued behind them', async () => {

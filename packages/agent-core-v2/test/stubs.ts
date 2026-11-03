@@ -1,3 +1,4 @@
+import { toDisposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import type { IOAuthService } from '#/app/auth/auth';
 import {
@@ -177,5 +178,9 @@ export function stubSessionRunGate(
   return {
     _serviceBrand: undefined,
     begin: () => locks.hold(sessionId),
+    retain: () => {
+      const lease = locks.lease(sessionId);
+      return toDisposable(() => lease.release());
+    },
   };
 }

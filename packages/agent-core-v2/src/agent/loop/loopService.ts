@@ -178,6 +178,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly cancelOnLaunch = new Map<string, unknown>();
   private readonly onDidChangeQueueEmitter = this._register(new Emitter<void>());
   readonly onDidChangeQueue = this.onDidChangeQueueEmitter.event;
+  private queueLock: IDisposable | undefined;
   private activeRequestTrace: LLMRequestTrace | undefined;
   private engine: MachineEngine | undefined;
 
@@ -212,6 +213,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await next();
     });
     this._register(toDisposable(() => this.disarmTurnWatch()));
+    this._register(this.onDidChangeQueue(() => this.syncQueueLock()));
+    this._register(toDisposable(() => this.queueLock?.dispose()));
+  }
+
+  private syncQueueLock(): void {
+    const waiting = this.snapshot().queue.length > 0;
+    if (waiting && this.queueLock === undefined) this.queueLock = this.runGate.retain();
+    if (!waiting && this.queueLock !== undefined) {
+      this.queueLock.dispose();
+      this.queueLock = undefined;
+    }
   }
 
   private get lastRequestId(): string | undefined {
