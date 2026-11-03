@@ -9,6 +9,7 @@ import {
 import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { TitleSweep } from '#/tui/components/messages/running-title';
 import { SkillActivationComponent } from '#/tui/components/messages/skill-activation';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
@@ -620,6 +621,28 @@ describe('TranscriptGroupComponent', () => {
     expect(requestRender).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
     container.clear();
+  });
+
+  it('fades the highlight in and out by elapsed time whatever the animation frame length', () => {
+    const turnEndsAt = 1_200;
+    const intensityAt = (time: number, frameMs: number): number => {
+      // Every frame length also gets a frame when the turn ends and one at the sampled time, so the
+      // three runs turn off at the same moment and are read at the same moment.
+      const frames = new Set([time]);
+      for (let frame = frameMs; frame < time; frame += frameMs) frames.add(frame);
+      if (turnEndsAt < time) frames.add(turnEndsAt);
+      const sweep = new TitleSweep();
+      sweep.start(0);
+      for (const frame of [...frames].toSorted((left, right) => left - right)) {
+        sweep.advance(frame, 20, frame <= turnEndsAt);
+      }
+      return sweep.intensity;
+    };
+
+    for (let time = 20; time <= 2 * turnEndsAt; time += 20) {
+      const levels = [120, 50, 33].map((frameMs) => intensityAt(time, frameMs));
+      expect(Math.max(...levels) - Math.min(...levels), `${String(time)} ms`).toBeLessThanOrEqual(0.02);
+    }
   });
 
   function sweepFrames(container: TranscriptContainer, requestRender: ReturnType<typeof vi.fn>) {

@@ -1,7 +1,7 @@
 import chalk from 'chalk';
 
 import {
-  TRANSCRIPT_GROUP_FADE_MS,
+  TRANSCRIPT_GROUP_FADE_HALF_LIFE_MS,
   TRANSCRIPT_GROUP_SWEEP_COLUMNS_PER_SECOND,
   TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH,
   TRANSCRIPT_GROUP_SWEEP_RESTART_GAP_COLUMNS,
@@ -43,7 +43,7 @@ export class TitleSweep {
     const elapsed = this.lastFrame === undefined ? 0 : Math.min(MAX_FRAME_STEP_MS, Math.max(0, now - this.lastFrame));
     this.lastFrame = now;
     const target = on ? 1 : 0;
-    this.level += (target - this.level) * Math.min(1, elapsed / TRANSCRIPT_GROUP_FADE_MS);
+    this.level = target + (this.level - target) * 0.5 ** (elapsed / TRANSCRIPT_GROUP_FADE_HALF_LIFE_MS);
     if (this.level < 0.01 && target === 0) this.level = 0;
     this.position += elapsed * TRANSCRIPT_GROUP_SWEEP_COLUMNS_PER_SECOND / 1000;
     if (this.position > columns + TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH + TRANSCRIPT_GROUP_SWEEP_RESTART_GAP_COLUMNS) {
