@@ -1435,7 +1435,7 @@ On success, `data` is the capability status object documented under `GET /api/v1
 
 Lists installed plugins.
 
-On success, `data` is `{ plugins }` where each item is `{ id, displayName, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`: `state` is `ok` / `error` (load failures also set `hasErrors`), `source` is `local-path` / `zip-url` / `github`, and `github` carries the provenance `{ owner, repo, ref, installedSha? }` with `ref` `{ kind: branch|tag|sha, value }` for GitHub-sourced plugins. Each item also includes `origin` (`marketplace` / `custom` / `unknown`), optional `catalogId`, and `installedAt` (ISO timestamp).
+On success, `data` is `{ plugins }` where each item is `{ id, displayName, description?, shortDescription?, longDescription?, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`: `state` is `ok` / `error` (load failures also set `hasErrors`), `source` is `local-path` / `zip-url` / `github`, and `github` carries the provenance `{ owner, repo, ref, installedSha? }` with `ref` `{ kind: branch|tag|sha, value }` for GitHub-sourced plugins. Each item also includes `origin` (`marketplace` / `custom` / `unknown`), optional `catalogId`, and `installedAt` (ISO timestamp).
 
 #### `POST /api/v1/plugins`
 
@@ -1456,9 +1456,9 @@ Lists the plugin marketplace catalog merged with live install state. The default
 
 Installed records and managed files remain shared under the daemon's home directory. Entries unavailable to the current host are also hidden from its installed list and runtime capabilities. The daemon caches the last successful availability configuration in `plugins/availability.json`; after a successful catalog refresh, changed client rules hide or restore existing installations without reinstalling or deleting them.
 
-On success, `data` is `{ entries }` where each item includes `id`, `tier`, `classification`, `displayName`, `description?`, `cliDescription?`, `homepage?`, `keywords?`, `version?`, `source`, `iconUrl?`, `sha256sum?`, `filename?`, `locale?`, `defaultLocale?`, `platforms?`, `distribution?`, `billing?`, `installed?`, `updateAvailable?`, and `capabilityId?`. `distribution.category` is `official` or `third_party`; `platforms` uses `darwin` / `win32` / `linux` / `cloud`. Marketplace installs use `marketplaceId`, `expectedVersion` when available, and `expectedSha256` for digest-bearing ZIPs rather than passing `source` directly; custom installs pass `source`. Capability rows are marked only by the daemon: `kimi-browser-extension` maps to the `kimi-webbridge` capability, and `kimi-cu` / `kimi-cu-win` maps to `kimi-cu`.
+On success, `data` is `{ entries }` where each item includes `id`, `tier`, `classification`, `displayName`, `description?`, `shortDescription?`, `longDescription?`, `cliDescription?`, `homepage?`, `keywords?`, `version?`, `source`, `iconUrl?`, `sha256sum?`, `filename?`, `locale?`, `defaultLocale?`, `platforms?`, `distribution?`, `billing?`, `installed?`, `updateAvailable?`, and `capabilityId?`. `distribution.category` is `official` or `third_party`; `platforms` uses `darwin` / `win32` / `linux` / `cloud`. Marketplace installs use `marketplaceId`, `expectedVersion` when available, and `expectedSha256` for digest-bearing ZIPs rather than passing `source` directly; custom installs pass `source`. Capability rows are marked only by the daemon: `kimi-browser-extension` maps to the `kimi-webbridge` capability, and `kimi-cu` / `kimi-cu-win` maps to `kimi-cu`.
 
-`defaultLocale` declares the language of the top-level `description` and `cliDescription`; `locale` holds per-language `shortDescription`, `longDescription`, and `cliDescription` translations.
+`defaultLocale` declares the language of the top-level `description` and `cliDescription`; `locale` holds per-language `displayName`, `shortDescription`, `longDescription`, and `cliDescription` translations.
 
 - `50001`: the marketplace is unreachable or returned an invalid catalog
 

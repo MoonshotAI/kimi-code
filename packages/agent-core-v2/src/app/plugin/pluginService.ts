@@ -256,11 +256,19 @@ export class PluginService extends Service implements IPluginService {
   }
 
   reconcileAvailability(marketplace: PluginMarketplace): Promise<void> {
-    return this.runSerializedOperation(async () => {
+    return this.runNotifiedMutation(async () => {
       const changed = await this.availability.update(marketplace);
-      if (!changed) return;
+      if (!changed) {
+        return {
+          result: undefined,
+          notification: {
+            summary: { added: [], removed: [], errors: [] },
+            delivery: Promise.resolve(),
+          },
+        };
+      }
       const notification = await this.reloadAndNotify();
-      await notification.delivery;
+      return { result: undefined, notification };
     });
   }
 

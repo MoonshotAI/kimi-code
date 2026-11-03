@@ -1,5 +1,7 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import lockfile from 'proper-lockfile';
 
 import {
   marketplaceEntryInstallableOnHost,
@@ -13,6 +15,7 @@ import type { PluginRecord } from './types';
 export interface PluginAvailabilityEntry {
   readonly clients?: readonly PluginClient[];
   readonly platforms?: readonly PluginMarketplacePlatform[];
+  readonly artifactSource?: string;
   readonly checkedAt: string;
 }
 
@@ -21,7 +24,10 @@ export interface PluginAvailabilityFile {
   readonly sources: Readonly<Record<string, Readonly<Record<string, PluginAvailabilityEntry>>>>;
 }
 
-type AvailabilityRecord = Pick<PluginRecord, 'id' | 'origin' | 'catalogId' | 'marketplaceSource'>;
+type AvailabilityRecord = Pick<
+  PluginRecord,
+  'id' | 'origin' | 'catalogId' | 'marketplaceSource' | 'originalSource'
+>;
 
 const EMPTY: PluginAvailabilityFile = { version: 1, sources: {} };
 
@@ -45,6 +51,7 @@ function catalogEntries(
     {
       clients: entry.clients,
       platforms: entry.platforms,
+      artifactSource: entry.source,
       checkedAt,
     },
   ]));
@@ -79,30 +86,39 @@ export class PluginAvailabilityStore {
     const source = normalizeSource(marketplace.source);
     const checkedAt = new Date().toISOString();
     const incoming = catalogEntries(marketplace, checkedAt);
-    const existing = this.current.sources[source] ?? {};
-    const changed = Object.entries(incoming).some(([id, entry]) =>
-      existing[id] === undefined || availabilityValue(existing[id]) !== availabilityValue(entry)
-    );
-    if (!changed) return false;
-    const latest = await readAvailability(path.dirname(path.dirname(this.filePath)));
-    const next: PluginAvailabilityFile = {
-      version: 1,
-      sources: {
-        ...latest.sources,
-        [source]: { ...latest.sources[source], ...incoming },
-      },
-    };
-    const temporary = `${this.filePath}.tmp`;
+    await mkdir(path.dirname(this.filePath), { recursive: true });
+    const release = await lockfile.lock(`${this.filePath}.lock`, {
+      retries: { retries: 120, factor: 1, minTimeout: 50, maxTimeout: 200 },
+      stale: 5_000,
+      realpath: false,
+    });
+    let temporary: string | undefined;
     try {
-      await mkdir(path.dirname(this.filePath), { recursive: true });
+      const latest = await readAvailability(path.dirname(path.dirname(this.filePath)));
+      const existing = latest.sources[source] ?? {};
+      const changed = Object.entries(incoming).some(([id, entry]) =>
+        existing[id] === undefined || availabilityValue(existing[id]) !== availabilityValue(entry)
+      );
+      if (!changed) {
+        this.current = latest;
+        return false;
+      }
+      const next: PluginAvailabilityFile = {
+        version: 1,
+        sources: {
+          ...latest.sources,
+          [source]: { ...latest.sources[source], ...incoming },
+        },
+      };
+      temporary = `${this.filePath}.${randomUUID()}.tmp`;
       await writeFile(temporary, JSON.stringify(next, null, 2), 'utf8');
       await rename(temporary, this.filePath);
-    } catch {
       this.current = next;
       return true;
+    } finally {
+      if (temporary !== undefined) await rm(temporary, { force: true }).catch(() => undefined);
+      await release();
     }
-    this.current = next;
-    return true;
   }
 
   entryFor(record: AvailabilityRecord): PluginAvailabilityEntry | undefined {
@@ -115,7 +131,13 @@ export class PluginAvailabilityStore {
     const matches = Object.values(this.current.sources)
       .map((entries) => entries[catalogId])
       .filter((entry): entry is PluginAvailabilityEntry => entry !== undefined);
-    return matches.length === 1 ? matches[0] : undefined;
+    if (matches.length === 1) return matches[0];
+    if (matches.length === 0) return undefined;
+    const provenanceMatches = matches.filter(
+      (entry) => entry.artifactSource !== undefined && entry.artifactSource === record.originalSource,
+    );
+    if (provenanceMatches.length === 1) return provenanceMatches[0];
+    return { clients: [], platforms: [], checkedAt: '' };
   }
 
   supports(record: AvailabilityRecord, client: PluginClient, platform: NodeJS.Platform): boolean {

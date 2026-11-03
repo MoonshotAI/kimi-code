@@ -322,7 +322,7 @@ export type PluginsPanelSelection =
   | { readonly kind: 'install-source'; readonly source: string };
 
 export interface PluginsPanelOptions {
-  readonly installed: readonly PluginSummary[];
+  installed: readonly PluginSummary[];
   readonly capabilities?: readonly CapabilityStatus[];
   readonly catalogIsDefault?: boolean;
   readonly initialTab?: PluginsPanelTabId;
@@ -386,6 +386,10 @@ export class PluginsPanelComponent extends Container implements Focusable {
 
   setMarketplaceLoading(): void {
     this.market = { status: 'loading' };
+  }
+
+  setInstalled(plugins: readonly PluginSummary[]): void {
+    this.opts.installed = plugins;
   }
 
   setMarketplace(entries: readonly PluginMarketplaceEntry[], source: string): void {

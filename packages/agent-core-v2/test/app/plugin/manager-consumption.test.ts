@@ -1011,4 +1011,74 @@ describe('PluginManager consumption plane', () => {
       expect.objectContaining({ id: 'host-only', enabled: true }),
     ]);
   });
+
+  it('preserves provenance when cached catalogs reuse a plugin id', async () => {
+    const home = await makeKimiHome();
+    const availability = new PluginAvailabilityStore(home);
+    const artifactSource = 'https://cdn.example.test/default/plugin.zip';
+    await availability.update({
+      source: 'https://marketplace.test/default',
+      plugins: [{
+        id: 'shared-plugin',
+        displayName: 'Default',
+        source: artifactSource,
+        clients: ['desktop'],
+      }],
+    });
+    await availability.update({
+      source: 'https://marketplace.test/custom',
+      plugins: [{
+        id: 'shared-plugin',
+        displayName: 'Custom',
+        source: 'https://cdn.example.test/custom/plugin.zip',
+        clients: ['cli'],
+      }],
+    });
+    const record = {
+      id: 'shared-plugin',
+      origin: 'marketplace' as const,
+      catalogId: 'shared-plugin',
+      originalSource: artifactSource,
+    };
+    expect(availability.supports(record, 'desktop', process.platform)).toBe(true);
+    expect(availability.supports(record, 'cli', process.platform)).toBe(false);
+    expect(availability.supports(
+      { ...record, originalSource: 'https://cdn.example.test/unknown/plugin.zip' },
+      'desktop',
+      process.platform,
+    )).toBe(false);
+  });
+
+  it('serializes availability writes from independent stores', async () => {
+    const home = await makeKimiHome();
+    const first = new PluginAvailabilityStore(home);
+    const second = new PluginAvailabilityStore(home);
+    await Promise.all([
+      first.update({
+        source: 'https://marketplace.test/first',
+        plugins: [{ id: 'first', displayName: 'First', source: 'https://cdn.example.test/first.zip' }],
+      }),
+      second.update({
+        source: 'https://marketplace.test/second',
+        plugins: [{ id: 'second', displayName: 'Second', source: 'https://cdn.example.test/second.zip' }],
+      }),
+    ]);
+    const persisted = JSON.parse(
+      await readFile(path.join(home, 'plugins', 'availability.json'), 'utf8'),
+    ) as { sources: Record<string, unknown> };
+    expect(Object.keys(persisted.sources).toSorted()).toEqual([
+      'https://marketplace.test/first',
+      'https://marketplace.test/second',
+    ]);
+  });
+
+  it('propagates availability persistence failures', async () => {
+    const home = await makeKimiHome();
+    await mkdir(path.join(home, 'plugins', 'availability.json'), { recursive: true });
+    const availability = new PluginAvailabilityStore(home);
+    await expect(availability.update({
+      source: 'https://marketplace.test/default',
+      plugins: [{ id: 'demo', displayName: 'Demo', source: 'https://cdn.example.test/demo.zip' }],
+    })).rejects.toThrow();
+  });
 });

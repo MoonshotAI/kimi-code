@@ -381,6 +381,35 @@ describe('PluginService (plugin boundary)', () => {
     }
   });
 
+  it('delivers availability reloads after releasing the mutation queue', async () => {
+    const home = await makeHome();
+    await writeValidInstalledFile(home);
+    const host = makeHost(home);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      const listener = vi.fn();
+      svc.onDidReload((event) => {
+        event.waitUntil(
+          Promise.all([svc.enabledMcpServers(), svc.mcpServerEntries()]).then(() => {
+            listener();
+          }),
+        );
+      });
+      await svc.reconcileAvailability({
+        source: 'https://marketplace.example.test/plugins/marketplace',
+        plugins: [{
+          id: 'demo',
+          displayName: 'Demo',
+          source: 'https://cdn.example.test/demo.zip',
+          clients: ['desktop'],
+        }],
+      });
+      expect(listener).toHaveBeenCalledOnce();
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('invalidates removed plugin OAuth credentials without a workspace', async () => {
     const home = await makeHome();
     await writeValidInstalledFile(home);
