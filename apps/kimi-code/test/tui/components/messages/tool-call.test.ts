@@ -3405,3 +3405,30 @@ describe('ToolCallComponent render cache', () => {
     component.dispose();
   });
 });
+
+describe('ToolCallComponent expanded clip detection', () => {
+  const bashCall = { id: 'call_clip', name: 'Bash', args: { command: 'echo hi' } };
+  const longLine = 'x'.repeat(200);
+  const bashResult = { tool_call_id: 'call_clip', output: longLine, is_error: false };
+
+  it('tracks the render width instead of keeping the first answer', () => {
+    const component = new ToolCallComponent(bashCall, bashResult);
+    component.setExpanded(true);
+    component.render(400);
+    expect(component.hasHiddenContent()).toBe(false);
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(true);
+    component.dispose();
+  });
+
+  it('forgets the answer when the result changes', () => {
+    const component = new ToolCallComponent(bashCall, { ...bashResult, output: 'short' });
+    component.setExpanded(true);
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(false);
+    component.setResult(bashResult, { known: false });
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(true);
+    component.dispose();
+  });
+});

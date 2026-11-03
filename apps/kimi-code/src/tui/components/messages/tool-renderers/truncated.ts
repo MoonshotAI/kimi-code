@@ -34,6 +34,7 @@ export class TruncatedOutputComponent implements Component {
   private readonly tail: boolean;
   /** Whether the last collapsed render cut rows; kept while expanded so the footer can still offer collapse. */
   private truncatedAtLastRender = false;
+  private renderCache: { width: number; source: string[]; lines: string[] } | undefined;
 
   constructor(
     output: string,
@@ -70,6 +71,7 @@ export class TruncatedOutputComponent implements Component {
 
   invalidate(): void {
     // Text component caches wrapped lines; invalidate on terminal resize.
+    this.renderCache = undefined;
     this.textComponent.invalidate();
   }
 
@@ -94,6 +96,16 @@ export class TruncatedOutputComponent implements Component {
       return contentLines;
     }
 
+    if (this.renderCache?.width === width && this.renderCache.source === contentLines) {
+      return this.renderCache.lines;
+    }
+
+    const lines = this.collapse(width, contentLines);
+    this.renderCache = { width, source: contentLines, lines };
+    return lines;
+  }
+
+  private collapse(width: number, contentLines: string[]): string[] {
     const remaining = contentLines.length - this.maxLines;
     if (this.tail) {
       const shown = contentLines.slice(contentLines.length - this.maxLines);
