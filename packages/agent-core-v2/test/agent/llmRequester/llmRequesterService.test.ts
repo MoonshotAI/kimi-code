@@ -191,6 +191,7 @@ function createService(
     readonly env?: Record<string, string>;
     readonly modelAlias?: () => string;
     readonly prefixRevision?: () => number;
+    readonly selectedModels?: string[];
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -272,7 +273,10 @@ function createService(
   ix.stub(ITelemetryService, telemetry);
   ix.stub(IModelCatalog, {
     _serviceBrand: undefined,
-    get: () => requester.model,
+    get: (alias) => {
+      options.selectedModels?.push(alias);
+      return requester.model;
+    },
     findByName: () => [],
   });
   ix.stub(IModelService, {
@@ -311,6 +315,31 @@ function createService(
     measuredCalls,
   };
 }
+
+describe('AgentLoopRequester operation overrides', () => {
+  it('selects another model and passes the response format for an independent operation', async () => {
+    const inputs: ModelRequestInput[] = [];
+    const requester = createRequester({ value: 0 }, null, [], inputs);
+    const selectedModels: string[] = [];
+    const { service } = createService(requester, { selectedModels });
+
+    await service.request({
+      modelAlias: 'review-model',
+      responseFormat: { type: 'json_object' },
+      messages: history,
+      tools: [],
+      source: { type: 'operation', requestKind: 'auto_review' },
+    });
+
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toMatchObject({
+      tools: [],
+      messages: history,
+      responseFormat: { type: 'json_object' },
+    });
+    expect(selectedModels).toEqual(['review-model']);
+  });
+});
 
 describe('AgentLoopRequester measured anchors', () => {
   it('skips the measured anchor when the stream reports no usage', async () => {

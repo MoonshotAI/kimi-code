@@ -39,7 +39,7 @@ import {
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import { IModelService } from '#/llm-adapter/model/model';
 import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
-import { resolveThinkingKeep, type ThinkingConfig } from '#/llm-adapter/model/thinking';
+import { resolveThinkingKeep, resolveThinkingEffortForModel, requiresStrictThinkingValidation, type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { IProtocolAdapterRegistry, type Protocol } from '#/llm-adapter/protocol/protocol';
 import type { ApiErrorEvent, CacheBreakDetectedEvent } from '#/app/telemetry/events';
@@ -123,6 +123,7 @@ interface ResolvedLLMRequest {
   readonly systemPrompt: string;
   readonly tools?: readonly Tool[];
   readonly messages: Message[];
+  readonly responseFormat: AgentLLMRequestOverrides['responseFormat'];
   readonly contextRevision: number;
   readonly promptCacheProbe: 'compaction' | undefined;
   readonly source: AgentLLMRequestSource | undefined;
@@ -389,6 +390,7 @@ export class AgentLoopRequester implements LoopRequester {
           systemPrompt: request.systemPrompt,
           tools: request.tools,
           messages: request.messages,
+          responseFormat: request.responseFormat,
         },
         signal,
         {
@@ -726,8 +728,9 @@ export class AgentLoopRequester implements LoopRequester {
   private resolveRequest(overrides: AgentLLMRequestOverrides): ResolvedLLMRequest {
     const turnConfig = this.resolveTurnConfig(overrides.source);
     const resolved = turnConfig?.resolved ?? this.profile.resolveModelContext();
+    const modelAlias = overrides.modelAlias ?? resolved.modelAlias;
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
-    const model = this.modelCatalog.get(resolved.modelAlias);
+    const model = this.modelCatalog.get(modelAlias);
     const maxCompletionTokensCap =
       this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens;
     const usedContextTokens =
@@ -740,7 +743,7 @@ export class AgentLoopRequester implements LoopRequester {
         maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
         maxCompletionTokensCap,
       }),
-      capability: resolved.modelCapabilities,
+      capability: model.capabilities,
       usedContextTokens,
     });
     const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
@@ -749,18 +752,28 @@ export class AgentLoopRequester implements LoopRequester {
       ...budgetParams,
       ...(usedContextTokens === undefined ? {} : { usedContextTokens }),
       ...(optedOut ? { maxCompletionTokens: maxCompletionTokensCap } : {}),
+      ...(overrides.modelAlias !== undefined ? { sampling: { temperature: 0 } } : {}),
     };
 
     const messages = overrides.messages ?? this.context.get();
+    const thinkingEffort = modelAlias === resolved.modelAlias
+      ? resolved.thinkingLevel
+      : resolveThinkingEffortForModel(
+          undefined,
+          this.config.get<ThinkingConfig>(THINKING_SECTION),
+          model,
+          requiresStrictThinkingValidation(this.protocolRegistry, model.protocol, model.providerType),
+        );
     return {
       request: this.protocolRegistry.request(model, params),
       model,
       params,
-      modelAlias: resolved.modelAlias,
-      thinkingEffort: resolved.thinkingLevel,
+      modelAlias,
+      thinkingEffort,
       systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),
       tools: overrides.tools === undefined ? undefined : [...overrides.tools],
       messages: [...messages],
+      responseFormat: overrides.responseFormat,
       contextRevision: this.context.prefixRevision(),
       promptCacheProbe: overrides.promptCacheProbe,
       source: overrides.source,

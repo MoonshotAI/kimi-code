@@ -109,6 +109,7 @@ timeout = 5
 | [`models`](#models) | `table` | — | 模型别名表 |
 | [`thinking`](#thinking) | `table` | — | Thinking 模式默认参数 |
 | [`loop_control`](#loop_control) | `table` | — | Agent 循环控制参数 |
+| [`auto_review`](#auto_review) | `table` | — | `auto` 权限模式下的实验性 LLM 复核 |
 | [`task`](#task) | `table` | — | 后台任务与 Tower Agent 运行参数；`background` 为 legacy 配置节名称 |
 | [`tools`](#tools) | `table` | — | 全局工具开关 |
 | [`image`](#image) | `table` | — | 图片压缩参数 |
@@ -323,6 +324,25 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 `max_steps_per_turn` 可被环境变量 `KIMI_LOOP_MAX_STEPS_PER_TURN` 覆盖，`max_attempts_per_step` 可被 `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP` 覆盖，优先级均高于配置文件。旧的 `KIMI_LOOP_MAX_RETRIES_PER_STEP` 已废弃，但在新变量未设置时仍生效（启动时会给出警告）。
 
 重试仅针对瞬时故障：连接错误、超时、HTTP 429 限流和 5xx 服务端错误。账户额度耗尽或余额不足导致的 429 不会重试，会立即失败：在充值之前重试不可能成功。
+
+## `auto_review`
+
+`auto_review` 配置 `auto` 权限模式下实验性的 LLM 工具调用复核，默认关闭。设置 `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` 或 `[experimental] auto_review = true` 开启。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `model` | `string` | 已配置时使用托管 K2.8，否则使用主模型 | 独立复核请求使用的模型别名 |
+| `timeout_ms` | `integer` | `30000` | 复核截止时间（毫秒），范围 `1000` 到 `120000` |
+
+显式权限 `deny` 规则优先于复核结果。`Read`、`Grep`、`Glob` 等只读工具跳过复核。复核结果为 `allow` 时执行动作；为 `deny` 时，交互式会话转人工审批，非交互式会话不执行工具并返回错误。复核失败时同样转人工审批，非交互式会话则不执行工具。
+
+复核模型会收到工作目录、AGENTS.md 指令、保留的用户和父级指令、近期工具参数与执行状态，以及待审工具的 schema 和完整参数。工具输出文本和媒体不会发送。复核期间若授权指令、AGENTS.md 或工作目录发生变化，不会使用旧结果执行动作。
+
+```toml
+[auto_review]
+model = "kimi-code/kimi-k2.8"
+timeout_ms = 30000
+```
 
 ## `token_counting`
 

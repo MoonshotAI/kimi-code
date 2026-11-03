@@ -1,4 +1,5 @@
 import type { FinishReason } from '#human/llm-requester/finish-reason';
+import type { ResponseFormat } from '#human/llm/request';
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import type { ThinkingEffort } from '#human/llm-requester/thinking';
 import type {
@@ -42,6 +43,8 @@ export interface AgentLLMRequestFinish {
 export type AgentLLMRequestPartHandler = (part: StreamedMessagePart) => void | Promise<void>;
 
 export interface AgentLLMRequestOverrides {
+  modelAlias?: string;
+  responseFormat?: ResponseFormat;
   messages?: readonly Message[];
   tools?: readonly Tool[];
   systemPrompt?: string;

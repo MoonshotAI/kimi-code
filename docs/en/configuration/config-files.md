@@ -109,6 +109,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`models`](#models) | `table` | — | Model alias table |
 | [`thinking`](#thinking) | `table` | — | Default parameters for Thinking mode |
 | [`loop_control`](#loop_control) | `table` | — | Agent loop control parameters |
+| [`auto_review`](#auto_review) | `table` | — | Experimental LLM review in `auto` permission mode |
 | [`task`](#task) | `table` | — | Background task and Tower agent runtime parameters; `background` is the legacy section name |
 | [`tools`](#tools) | `table` | — | Global tool switch |
 | [`image`](#image) | `table` | — | Image compression parameters |
@@ -324,6 +325,25 @@ Configuration errors fail loudly instead of falling back silently. Session creat
 `max_steps_per_turn` can be overridden by the `KIMI_LOOP_MAX_STEPS_PER_TURN` environment variable, and `max_attempts_per_step` by `KIMI_LOOP_MAX_ATTEMPTS_PER_STEP`; both take higher priority than the config file. The former `KIMI_LOOP_MAX_RETRIES_PER_STEP` variable is deprecated but still honored (with a startup warning) when the new one is unset.
 
 Retries only apply to transient failures: connection errors, timeouts, HTTP 429 rate limits, and 5xx server errors. A 429 caused by an exhausted quota or insufficient account balance is not retried and fails immediately, since it cannot succeed until the account is recharged.
+
+## `auto_review`
+
+`auto_review` configures the experimental LLM reviewer for tool calls in `auto` permission mode. It is disabled by default. Set `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` or `[experimental] auto_review = true` to enable it.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `model` | `string` | managed K2.8 when configured; otherwise the main model | Model alias used for independent review requests |
+| `timeout_ms` | `integer` | `30000` | Review deadline in milliseconds, from `1000` to `120000` |
+
+Explicit permission `deny` rules take precedence over the reviewer. Read-only tools such as `Read`, `Grep`, and `Glob` skip review. A reviewer `allow` executes the action; a `deny` asks for user approval in interactive sessions and returns an error without executing the tool in non-interactive sessions. Review failures also ask for approval interactively and fail closed in non-interactive sessions.
+
+The reviewer receives the working directory, AGENTS.md instructions, retained user and parent instructions, recent tool arguments and execution status, and the pending tool's schema and complete arguments. Tool output text and media are not sent. If authorization instructions, AGENTS.md, or the working directory change during review, the result is not used to execute the action.
+
+```toml
+[auto_review]
+model = "kimi-code/kimi-k2.8"
+timeout_ms = 30000
+```
 
 ## `token_counting`
 

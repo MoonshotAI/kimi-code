@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   WIRE_PROTOCOL_VERSION,
@@ -8,6 +8,9 @@ import {
   type ContextMessage,
   type WireRecord,
 } from '#/index';
+import { IAutoReviewService } from '#/features/autoReview/review';
+import { AUTO_REVIEW_FLAG_ENV, AUTO_REVIEW_FLAG_ID } from '#/features/autoReview/flag';
+import { IFlagService } from '#/app/flag/flag';
 import {
   InMemoryWireRecordPersistence,
   createTestAgent,
@@ -115,6 +118,32 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'tool_select.initialized',
   'tool_select.tools_changed',
 ]);
+
+describe('Auto Review assembly', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('creates the reviewer service in an agent scope when enabled', async () => {
+    vi.stubEnv(AUTO_REVIEW_FLAG_ENV, '1');
+    const ctx = createTestAgent();
+    try {
+      expect(ctx.get(IAutoReviewService)).toBeDefined();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it('keeps the reviewer disabled by default', async () => {
+    const ctx = createTestAgent();
+    try {
+      expect(ctx.get(IFlagService).enabled(AUTO_REVIEW_FLAG_ID)).toBe(false);
+      expect(ctx.get(IAutoReviewService)).toBeDefined();
+    } finally {
+      await ctx.dispose();
+    }
+  });
+});
 
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';

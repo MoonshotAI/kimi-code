@@ -14,6 +14,18 @@ import {
   matchesPathRuleSubject,
 } from '#/tool/rule-match';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import type { AgentLLMRequestFinish, AgentLLMRequestOverrides, AgentLLMRequestPartHandler, LoopRequester } from '#/agent/loop/requesterContract';
+import type { Model } from '#/llm-adapter/model/catalog';
+import type { ContextMessage } from '#/agent/contextMemory/types';
+import { AutoReviewService } from '#/features/autoReview/reviewService';
+import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
+import { emptyUsage } from '#human/llm-requester/usage';
 import { IHostEnvironment, type IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionPolicyService, type PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
@@ -35,6 +47,8 @@ import { IBootstrapService, type HostArgs } from '#/app/bootstrap/bootstrap';
 import { IGitService } from '#/app/git/git';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IFlagService } from '#/app/flag/flag';
+import { IAutoReviewService, type AutoReviewResult } from '#/features/autoReview/review';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -55,10 +69,14 @@ describe('AgentPermissionPolicyService chain', () => {
   let workspace: ReturnType<typeof workspaceStub>;
   let hostArgs: HostArgs;
   let dangerousCommandGuardEnabled: boolean;
+  let autoReviewEnabled: boolean;
+  let reviewResult: AutoReviewResult;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     mode = 'manual';
+    autoReviewEnabled = false;
+    reviewResult = { kind: 'decision', decision: { risk: 'low', decision: 'allow' } };
     rules = [];
     sessionApprovalRulePatterns = [];
     workspace = workspaceStub('/workspace');
@@ -121,6 +139,11 @@ describe('AgentPermissionPolicyService chain', () => {
           workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+        reg.definePartialInstance(IFlagService, { enabled: () => autoReviewEnabled });
+        reg.defineInstance(IAutoReviewService, {
+          _serviceBrand: undefined,
+          review: async () => reviewResult,
+        });
         reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
         reg.define(IBashParserService, BashParserService);
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
@@ -479,6 +502,89 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
+  it('reviews a write in auto mode when enabled', async () => {
+    autoReviewEnabled = true;
+    mode = 'auto';
+
+    await expect(evaluate({ toolName: 'Write', args: { path: 'src/a.ts', content: 'x' } })).resolves.toMatchObject({
+      policyName: 'auto-review',
+      result: { kind: 'approve', reason: { review_risk: 'low' } },
+    });
+  });
+
+  it('does not review a read-only tool', async () => {
+    autoReviewEnabled = true;
+    mode = 'auto';
+    reviewResult = { kind: 'failed', reason: 'not expected' };
+
+    await expect(evaluate({ toolName: 'Read', args: { path: 'src/a.ts' } })).resolves.toMatchObject({
+      policyName: 'auto-mode-approve',
+      result: { kind: 'approve' },
+    });
+  });
+
+  it('keeps an explicit deny ahead of auto review', async () => {
+    autoReviewEnabled = true;
+    mode = 'auto';
+    rules.push({ decision: 'deny', scope: 'user', pattern: 'Bash', reason: 'blocked by test' });
+    reviewResult = { kind: 'failed', reason: 'not expected' };
+
+    await expect(evaluate({ toolName: 'Bash', args: { command: 'printf first' } })).resolves.toMatchObject({
+      policyName: 'user-configured-deny',
+      result: { kind: 'deny' },
+    });
+  });
+
+  it('turns a review denial into one approval in interactive mode', async () => {
+    autoReviewEnabled = true;
+    mode = 'auto';
+    reviewResult = {
+      kind: 'decision',
+      decision: { risk: 'high', decision: 'deny', reason: 'The action exposes credentials.' },
+    };
+
+    const evaluation = await evaluate({ toolName: 'Bash', args: { command: 'publish-secrets' } });
+    expect(evaluation).toMatchObject({ policyName: 'auto-review', result: { kind: 'ask' } });
+    if (evaluation?.result.kind !== 'ask') throw new Error('expected ask');
+    expect(evaluation.result.resolveApproval?.({ decision: 'approved' })).toBeUndefined();
+    expect(evaluation.result.resolveApproval?.({ decision: 'rejected' })).toMatchObject({ kind: 'deny' });
+  });
+
+  it('does not execute after a review denial in non-interactive mode', async () => {
+    autoReviewEnabled = true;
+    mode = 'auto';
+    hostArgs = { ...hostArgs, nonInteractive: true };
+    reviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
+
+    await expect(evaluate({ toolName: 'Bash', args: { command: 'publish-secrets' } })).resolves.toMatchObject({
+      policyName: 'auto-review',
+      result: { kind: 'deny', message: expect.stringContaining('not executed') },
+    });
+  });
+
+  it('fails back to approval when review fails in interactive mode', async () => {
+    autoReviewEnabled = true;
+    mode = 'auto';
+    reviewResult = { kind: 'failed', reason: 'invalid JSON' };
+
+    await expect(evaluate({ toolName: 'Write', args: { path: 'src/a.ts', content: 'x' } })).resolves.toMatchObject({
+      policyName: 'auto-review',
+      result: { kind: 'ask', reason: { review_error: true } },
+    });
+  });
+
+  it('does not execute when review fails in non-interactive mode', async () => {
+    autoReviewEnabled = true;
+    mode = 'auto';
+    hostArgs = { ...hostArgs, nonInteractive: true };
+    reviewResult = { kind: 'failed', reason: 'invalid JSON' };
+
+    await expect(evaluate({ toolName: 'Write', args: { path: 'src/a.ts', content: 'x' } })).resolves.toMatchObject({
+      policyName: 'auto-review',
+      result: { kind: 'deny', message: expect.stringContaining('invalid JSON') },
+    });
+  });
+
   it.each(['AgentSwarm', 'ExitPlanMode', 'CreateGoal'] as const)(
     'approves %s through the default tool allowlist in manual mode',
     async (toolName) => {
@@ -488,6 +594,146 @@ describe('AgentPermissionPolicyService chain', () => {
       });
     },
   );
+});
+
+describe('AutoReviewService', () => {
+  let disposables: DisposableStore;
+  let requestOverrides: AgentLLMRequestOverrides | undefined;
+  let response: AgentLLMRequestFinish;
+  let history: ContextMessage[];
+  let agentsMd: string;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    requestOverrides = undefined;
+    response = {
+      message: { role: 'assistant', content: [{ type: 'text', text: '{"risk":"low","decision":"allow"}' }], toolCalls: [] },
+      usage: emptyUsage(),
+    };
+    history = [
+      { role: 'user', content: [{ type: 'text', text: 'Only remove generated files.' }], origin: { kind: 'user' } },
+      { role: 'assistant', content: [], toolCalls: [toolCallFor('mkdir', 'Bash', { command: 'mkdir generated' })] },
+      { role: 'tool', toolCallId: 'mkdir', content: [{ type: 'text', text: 'untrusted tool output' }] },
+    ];
+    agentsMd = 'Do not delete user-data.';
+  });
+
+  afterEach(() => {
+    disposables.dispose();
+  });
+
+  function service(request: (
+    overrides: AgentLLMRequestOverrides,
+    onPart: AgentLLMRequestPartHandler | undefined,
+    signal: AbortSignal | undefined,
+  ) => Promise<AgentLLMRequestFinish> = async () => response): AutoReviewService {
+    const ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.definePartialInstance(IConfigService, {
+          get: ((section: string) => section === AUTO_REVIEW_SECTION ? { timeoutMs: 1000 } : undefined) as IConfigService['get'],
+        });
+        reg.definePartialInstance(IModelCatalog, {
+          findByName: () => ['kimi-code/kimi-k2.8'],
+          get: () => ({ providerName: 'kimi-code' }) as Model,
+        });
+        reg.definePartialInstance(IAgentProfileService, {
+          resolveModelContext: () => ({
+            modelAlias: 'main-model',
+            modelCapabilities: { image_in: false, video_in: false, audio_in: false, thinking: false, tool_use: false, max_context_tokens: 1000 },
+            maxOutputSize: undefined,
+            alwaysThinking: undefined,
+            thinkingLevel: 'off',
+            reservedContextSize: undefined,
+            compactionTriggerRatio: undefined,
+            compactionMaxAttempts: undefined,
+          }),
+        });
+        reg.definePartialInstance(IAgentLoopService, {
+          requester: {
+            request: (overrides, onPart, signal) => {
+              requestOverrides = overrides;
+              return request(overrides ?? {}, onPart, signal);
+            },
+          } as LoopRequester,
+        });
+        reg.definePartialInstance(IAgentContextMemoryService, { get: () => history });
+        reg.definePartialInstance(IAgentToolRegistryService, {
+          resolve: () => ({
+            name: 'Bash',
+            description: 'Execute a shell command.',
+            parameters: { type: 'object' },
+            resolveExecution: () => ({ output: '', isError: true }),
+          }),
+        });
+        reg.definePartialInstance(ISessionInstructionsProvider, {
+          ready: Promise.resolve(),
+          get agentsMd() { return agentsMd; },
+          agentsMdPaths: ['/workspace/AGENTS.md'],
+        });
+        reg.defineInstance(ISessionWorkspaceContext, workspaceStub('/workspace').stub);
+      },
+      strict: true,
+    });
+    return ix.createInstance(AutoReviewService);
+  }
+
+  it('uses the managed reviewer and sends bounded context without tool output', async () => {
+    const result = await service().review(policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' } }));
+
+    expect(result).toEqual({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });
+    expect(requestOverrides?.modelAlias).toBe('kimi-code/kimi-k2.8');
+    expect(requestOverrides?.tools).toEqual([]);
+    expect(requestOverrides?.responseFormat?.type).toBe('json_schema');
+    const content = JSON.stringify(requestOverrides?.messages);
+    expect(content).toContain('human-instruction');
+    expect(content).toContain('Do not delete user-data.');
+    expect(content).not.toContain('untrusted tool output');
+    expect(content).toContain('rm generated/file');
+  });
+
+  it.each([
+    'not JSON',
+    '{"risk":"low","decision":"deny"}',
+    '{"risk":"high","decision":"allow"}',
+    '{"risk":"low","decision":"allow","extra":true}',
+  ])('fails invalid reviewer output: %s', async (text) => {
+    response.message.content = [{ type: 'text', text }];
+    await expect(service().review(policyContext({ toolName: 'Bash', args: { command: 'echo test' } }))).resolves.toMatchObject({ kind: 'failed' });
+  });
+
+  it('rejects a reviewer tool call', async () => {
+    response.message.toolCalls = [toolCallFor('review-call', 'Bash', { command: 'echo escaped' })];
+    await expect(service().review(policyContext({ toolName: 'Bash', args: { command: 'echo test' } }))).resolves.toMatchObject({ kind: 'failed' });
+  });
+
+  it('invalidates a decision when authorization changes during review', async () => {
+    const result = await service(async () => {
+      history = [...history, { role: 'user', content: [{ type: 'text', text: 'Now delete everything.' }], origin: { kind: 'user' } }];
+      return response;
+    }).review(policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' } }));
+    expect(result).toMatchObject({ kind: 'failed', reason: expect.stringContaining('changed') });
+  });
+
+  it('fails instead of allowing when review times out', async () => {
+    const result = await service((_overrides, _onPart, signal) => new Promise<AgentLLMRequestFinish>((_resolve, reject) => {
+      signal?.addEventListener('abort', () => {
+        reject(signal.reason);
+      });
+    })).review(policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' } }));
+    expect(result).toMatchObject({ kind: 'failed', reason: 'Review timed out.' });
+  });
+
+  it('propagates user cancellation', async () => {
+    const controller = new AbortController();
+    const context = policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' }, signal: controller.signal });
+    const result = service((_overrides, _onPart, signal) => new Promise<AgentLLMRequestFinish>((_resolve, reject) => {
+      signal?.addEventListener('abort', () => {
+        reject(signal.reason);
+      });
+    })).review(context);
+    controller.abort();
+    await expect(result).rejects.toMatchObject({ name: 'AbortError' });
+  });
 });
 
 describe('AgentPermissionPolicyService git cwd write approval', () => {
@@ -562,6 +808,11 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
           workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
+        reg.definePartialInstance(IFlagService, { enabled: () => false });
+        reg.defineInstance(IAutoReviewService, {
+          _serviceBrand: undefined,
+          review: async () => ({ kind: 'failed', reason: 'not expected' }),
+        });
         reg.definePartialInstance(IGitService, {
           findWorkTree: (cwd: string) => findGitWorkTree(hostFs, cwd),
         });
@@ -745,6 +996,7 @@ interface PolicyContextInput {
   readonly toolName: string;
   readonly args: Record<string, unknown>;
   readonly accesses?: ToolAccessList;
+  readonly signal?: AbortSignal;
 }
 
 function policyContext(input: PolicyContextInput): ResolvedToolExecutionHookContext {
@@ -752,7 +1004,7 @@ function policyContext(input: PolicyContextInput): ResolvedToolExecutionHookCont
   const subject = ruleSubject(input.toolName, input.args);
   return {
     turnId: 0,
-    signal,
+    signal: input.signal ?? signal,
     toolCall,
     toolCalls: [toolCall],
     args: input.args,
