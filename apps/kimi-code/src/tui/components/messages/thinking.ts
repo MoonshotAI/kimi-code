@@ -154,9 +154,10 @@ export class ThinkingComponent implements Component {
         !this.expanded && this.previewHidesLines
           ? streamed.slice(streamed.length - THINKING_PREVIEW_LINES)
           : streamed;
+      const paint = this.sweep.painter();
       const title =
-        this.sweep.paint(STATUS_BULLET, 0) +
-        this.sweep.paint(LIVE_LABEL, visibleWidth(STATUS_BULLET)) +
+        paint(STATUS_BULLET, 0) +
+        paint(LIVE_LABEL, visibleWidth(STATUS_BULLET)) +
         elapsedSuffix(this.startedAtMs, Date.now());
       rendered = [
         '',

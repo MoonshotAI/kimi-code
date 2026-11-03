@@ -16,8 +16,8 @@ export class TitleSweep {
   private position = -TRANSCRIPT_GROUP_SWEEP_HALF_WIDTH;
   private lastFrame: number | undefined;
   private level = 0;
-  // A wrapped detail title paints more characters than the columns passed to advance, so the
-  // gap check uses the widest text painted so far.
+  // Only painting knows the columns a title covers: a wrapped detail title paints more characters
+  // than the columns passed to advance, and a cut title fewer.
   private paintedColumns = 0;
 
   get intensity(): number {
@@ -51,7 +51,13 @@ export class TitleSweep {
     }
   }
 
-  paint(text: string, offset: number): string {
+  /** Starts painting a new title; the gap check covers only what the returned function paints. */
+  painter(): (text: string, offset: number) => string {
+    this.paintedColumns = 0;
+    return (text, offset) => this.paint(text, offset);
+  }
+
+  private paint(text: string, offset: number): string {
     const characters = Array.from(text);
     this.paintedColumns = Math.max(this.paintedColumns, offset + characters.length);
     if (this.level === 0) return currentTheme.fg('textDim', text);

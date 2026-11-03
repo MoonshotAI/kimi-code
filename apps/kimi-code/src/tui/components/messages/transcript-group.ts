@@ -235,8 +235,9 @@ export class TranscriptGroupComponent implements Component {
   private renderTitle(shape: GroupShape, text: string, width: number, now: number): string[] {
     const { summary } = this.model;
     const offset = visibleWidth(MARKER) + 1;
-    let markerStyle = (value: string): string => this.sweep.paint(value, 0);
-    const textStyle = (value: string): string => this.sweep.paint(value, offset);
+    const paint = this.sweep.painter();
+    let markerStyle = (value: string): string => paint(value, 0);
+    const textStyle = (value: string): string => paint(value, offset);
     if (summary.allFailed) markerStyle = (value) => currentTheme.fg('error', value);
     const head = `${markerStyle(MARKER)} `;
 

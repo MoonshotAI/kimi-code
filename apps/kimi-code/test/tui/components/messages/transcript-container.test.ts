@@ -655,6 +655,38 @@ describe('TranscriptGroupComponent', () => {
     container.clear();
   });
 
+  it('skips renders off a title that got shorter than one drawn before', () => {
+    chalk.level = 3;
+    vi.useFakeTimers();
+    const { container, requestRender } = makeContainer();
+    container.addChild(tool('Bash', { command: `echo ${'x'.repeat(90)}` }));
+    container.setTurnActive(true);
+    container.render(100);
+    container.addChild(tool('Bash', { command: 'pwd' }));
+    expect(onlyGroup(container, 100).title).toBe('● Ran 2 commands');
+
+    const frames = sweepFrames(container, requestRender);
+    expect(frames.slice(1).some((frame) => frame.renders === 0)).toBe(true);
+    container.clear();
+  });
+
+  it('skips renders off a one-line title again after its wrapped command title closes', () => {
+    chalk.level = 3;
+    vi.useFakeTimers();
+    const { container, requestRender } = makeContainer();
+    const bash = tool('Bash', { command: `echo first\necho ${'x'.repeat(80)}` });
+    container.addChild(bash);
+    container.setTurnActive(true);
+    container.toggleGroup(bash);
+    expect(plain(container.render(100))).toContain('x'.repeat(40));
+    container.toggleGroup(bash);
+    expect(onlyGroup(container, 100).title).toBe('● $ echo first…');
+
+    const frames = sweepFrames(container, requestRender);
+    expect(frames.slice(1).some((frame) => frame.renders === 0)).toBe(true);
+    container.clear();
+  });
+
   it('keeps redrawing while the highlight crosses the wrapped lines of an opened command title', () => {
     chalk.level = 3;
     vi.useFakeTimers();
