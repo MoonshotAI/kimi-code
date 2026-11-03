@@ -29,8 +29,8 @@ This is a pnpm monorepo. The most relevant entry points are:
 - `apps/vscode` — VS Code extension
 - `apps/vis` — session debug visualizer
 - `packages/node-sdk` — public TypeScript SDK (`@moonshot-ai/kimi-code-sdk`)
-- `packages/agent-core-v2` — the agent engine (v2, DI Scope architecture); `packages/agent-core` is v1 and being phased out
-- `packages/klient`, `kap-server`, `protocol`, `transcript`, `oauth`, `telemetry` — internal engine packages
+- `packages/agent-core-v2` — the agent engine (v2, DI Scope architecture)
+- `packages/klient`, `kap-server`, `transcript`, `oauth`, `telemetry` — internal engine packages
 - `docs/` — VitePress bilingual docs site
 
 For the full project map, see [AGENTS.md](AGENTS.md).
@@ -77,10 +77,8 @@ PR titles are enforced by the `pr-title-checker` workflow — a non-conforming t
 
 This repo uses [changesets](https://github.com/changesets/changesets) to manage versioning and releases.
 
-- Every PR that affects release artifacts (code, behavior, public API) **must** include a changeset.
-- Docs-only, test-only, or CI-only PRs may skip changesets.
-- Generate one with `pnpm changeset` and follow the prompts (which packages are touched, which bump level).
-- For repo-specific conventions on package selection and bump levels, see `.changeset/README.md`. When working in this repo with coding agents, use the `gen-changesets` skill.
+- Use `pnpm changeset` to add a changeset for user-perceivable changes; otherwise skip it.
+- See `.changeset/README.md` for package selection and bump levels. When working in this repo with coding agents, use the `gen-changesets` skill.
 
 ## Pull Requests
 

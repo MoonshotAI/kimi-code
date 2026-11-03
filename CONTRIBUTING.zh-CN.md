@@ -29,8 +29,8 @@ Kimi Code 对 CLI/TUI 行为、agent 工作流和公开 API 已有自己的主�
 - `apps/vscode` — VS Code 插件
 - `apps/vis` — 会话调试可视化工具
 - `packages/node-sdk` — 公开 TypeScript SDK（`@moonshot-ai/kimi-code-sdk`）
-- `packages/agent-core-v2` — 当前的 agent 引擎（v2，DI Scope 架构）；`packages/agent-core` 为 v1，正在逐步废弃
-- `packages/klient`、`kap-server`、`protocol`、`transcript`、`oauth`、`telemetry` — 内部引擎包
+- `packages/agent-core-v2` — 当前的 agent 引擎（v2，DI Scope 架构）
+- `packages/klient`、`kap-server`、`transcript`、`oauth`、`telemetry` — 内部引擎包
 - `docs/` — VitePress 双语文档站
 
 完整项目地图见 [AGENTS.md](AGENTS.md)。
@@ -77,9 +77,7 @@ PR 标题由 `pr-title-checker` 工作流强制校验——不合规的标题会
 
 本仓库使用 [changesets](https://github.com/changesets/changesets) 管理版本与发布。
 
-- 每个影响发布产物（代码、行为、公开 API）的 PR **必须**包含 changeset。
-- 仅文档、仅测试或仅 CI 的 PR 可以不加。
-- 用 `pnpm changeset` 生成并按提示操作（涉及哪些包、什么 bump 级别）。
+- 对用户可感知的改动，用 `pnpm changeset` 添加 changeset；其他改动不写。
 - 包选择与 bump 级别的仓库约定见 `.changeset/README.md`。在本仓库使用编程 agent 时，使用 `gen-changesets` 技能。
 
 ## Pull Requests
