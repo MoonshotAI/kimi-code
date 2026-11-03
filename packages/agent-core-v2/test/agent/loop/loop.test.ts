@@ -1278,7 +1278,7 @@ describe('Agent loop', () => {
     begin.mockRestore();
   });
 
-  it('keeps the session lock from queueing until the queued prompt finishes its turn', async () => {
+  it('keeps the session lock while the queue is paused or holds prompts, through the turn a queued prompt starts', async () => {
     const locks = ctx.get(ISessionLockService);
     const gate = ctx.get(ISessionRunGate);
     const retain = gate.retain.bind(gate);
@@ -1294,11 +1294,13 @@ describe('Agent loop', () => {
       };
     });
     loop.pauseQueue();
-    const withdrawn = submitTracked(loop, 'withdrawn');
+    expect(lock).toEqual(['retain']);
     locks.release('test-session');
     expect(locks.held('test-session')).toBe(true);
+    const withdrawn = submitTracked(loop, 'withdrawn');
     expect(loop.cancel({ promptId: withdrawn })).toBe(true);
-    expect(locks.held('test-session')).toBe(false);
+    expect(locks.held('test-session')).toBe(true);
+    loop.resumeQueue();
     expect(lock).toEqual(['retain', 'release']);
 
     const started = deferred();
@@ -1308,9 +1310,8 @@ describe('Agent loop', () => {
       await release.promise;
       await next();
     });
-    const waiting = submitTracked(loop, 'waiting');
     ctx.mockNextResponse({ type: 'text', text: 'answer' });
-    loop.resumeQueue();
+    const waiting = submitTracked(loop, 'waiting');
     await started.promise;
     expect(loop.snapshot().queue).toEqual([]);
     locks.release('test-session');
@@ -1323,7 +1324,6 @@ describe('Agent loop', () => {
     hook.dispose();
     spy.mockRestore();
   });
-
   it('refuses to steer prompts that start Plan mode or a goal, or prompts queued behind them', async () => {
     const started = deferred();
     const release = deferred();
@@ -1373,6 +1373,19 @@ describe('Agent loop', () => {
     release.resolve();
     await expect(loop.promptHandle(first)!.completion).resolves.toMatchObject({ state: 'completed' });
     hook.dispose();
+  });
+
+  it('reports a prompt that starts Plan mode as queued behind a pending notification', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'noted' });
+    loop.notify({ message: { role: 'user', content: [{ type: 'text', text: 'background note' }] } });
+    const planned = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'plan it' }] },
+      meta: { origin: { kind: 'user' }, tracked: true, launch: { planMode: true } },
+    });
+
+    expect(planned.queued).toBe(true);
+    loop.cancel({ promptId: planned.id });
+    await loop.settled();
   });
 
   it('keeps a withdrawal when the start gate then blocks the prompt', async () => {

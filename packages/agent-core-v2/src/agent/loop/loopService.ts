@@ -218,7 +218,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private syncWorkLock(): void {
-    const queued = this.snapshot().queue.length > 0;
+    const queued = this.queuePausedByUser || this.snapshot().queue.length > 0;
     const running = this.active !== undefined || this.pendingMachineTurn !== undefined;
     if (queued && this.workLock === undefined) this.workLock = this.runGate.retain();
     if (!queued && !running && this.workLock !== undefined) {
@@ -376,11 +376,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       id,
       origin: meta?.origin as PromptOrigin | undefined,
     };
+    const machine = this.engine?.snapshot();
     const queued =
       this.active !== undefined ||
+      this.pendingMachineTurn !== undefined ||
       this.machinePaused() ||
       this.queuePausedByUser ||
-      (this.engine !== undefined && this.engine.snapshot().queue.length > 0);
+      (machine?.queue.length ?? 0) > 0 ||
+      (meta?.launch !== undefined && (machine?.notificationCount ?? 0) > 0);
     if (tracked) {
       this.publishPromptSubmitted(
         { promptId: id, origin, userMessageId, createdAt, message },
