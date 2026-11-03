@@ -1127,7 +1127,7 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(list.body.data.plugins).toEqual([]);
   });
 
-  it('does not mark capability rows from an untrusted managed origin', async () => {
+  it('keeps capability rows for managed base URL overrides', async () => {
     await server?.close();
     vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_URL', undefined);
     vi.stubEnv('KIMI_CODE_BASE_URL', 'http://marketplace.test/coding/v1');
@@ -1150,7 +1150,7 @@ describe('server-v2 /api/v1 plugins', () => {
 
     expect(response.body.code).toBe(0);
     expect(response.body.data.entries.find((entry) => entry.id === 'kimi-browser-extension')?.capabilityId)
-      .toBeUndefined();
+      .toBe('kimi-webbridge');
   });
 
   it('keeps strict metadata requirements for the managed catalog', async () => {

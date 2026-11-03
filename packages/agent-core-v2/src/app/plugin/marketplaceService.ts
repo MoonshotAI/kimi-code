@@ -17,7 +17,6 @@ import { IProviderService } from '#/llm-adapter/provider/provider';
 
 import {
   isMissingMarketplaceTokenError,
-  isTrustedPluginMarketplaceUrl,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
   parsePluginMarketplace,
   pluginMarketplaceUrl,
@@ -80,7 +79,7 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
     if (configured !== undefined) {
       return this.bootstrap.getEnv('KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER') === '1';
     }
-    return isTrustedPluginMarketplaceUrl((await this.context()).source);
+    return true;
   }
 
   async resolveInstall(

@@ -372,11 +372,28 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
     }
     if (permissionsProbeError !== undefined) {
       steps.push(
+        { id: 'permissions', state: 'failed', detail: permissionsProbeError },
         { id: 'permissions.accessibility', state: 'failed', detail: permissionsProbeError },
         { id: 'permissions.screenRecording', state: 'failed', detail: permissionsProbeError },
       );
     } else {
+      const granted =
+        permissions !== undefined && permissions.accessibility && permissions.screenRecording;
+      const missingPermissions = permissions === undefined
+        ? undefined
+        : [
+            ...(permissions.accessibility ? [] : ['accessibility']),
+            ...(permissions.screenRecording ? [] : ['screenRecording']),
+          ].join(',');
       steps.push(
+        {
+          id: 'permissions',
+          state: granted ? 'ok' : 'missing',
+          detail:
+            granted || missingPermissions === undefined || missingPermissions.length === 0
+              ? undefined
+              : missingPermissions,
+        },
         {
           id: 'permissions.accessibility',
           state: permissions?.accessibility === true ? 'ok' : 'missing',

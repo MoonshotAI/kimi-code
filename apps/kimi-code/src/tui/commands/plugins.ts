@@ -42,9 +42,7 @@ import {
   isOfficialPluginSource,
 } from '../utils/plugin-source-label';
 import {
-  isTrustedKimiCodePluginMarketplace,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
-  kimiCodePluginMarketplaceUrl,
   QUOTA_CONSUMING_PLUGIN_IDS,
 } from '#/constant/app';
 import {
@@ -320,7 +318,7 @@ function isDefaultMarketplaceCatalog(
   if (env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] !== undefined) {
     return env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1';
   }
-  return isTrustedKimiCodePluginMarketplace(kimiCodePluginMarketplaceUrl());
+  return true;
 }
 
 async function loadMarketplaceCatalog(

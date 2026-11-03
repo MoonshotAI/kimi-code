@@ -378,13 +378,13 @@ describe('plugins command capability surface', () => {
     expect(statuses.some((s) => s.includes('runtime binaries were left untouched'))).toBe(true);
   });
 
-  it('treats only trusted managed catalogs and the dev server as capability-mapped', () => {
+  it('treats managed base URL catalogs as default and explicit catalogs as custom', () => {
     vi.stubEnv('KIMI_CODE_BASE_URL', 'https://api.kimi.com/coding/v1');
     expect(isDefaultMarketplaceCatalog(undefined, {})).toBe(true);
     vi.stubEnv('KIMI_CODE_BASE_URL', 'https://coding.deva.msh.team/coding/v1');
     expect(isDefaultMarketplaceCatalog(undefined, {})).toBe(true);
     vi.stubEnv('KIMI_CODE_BASE_URL', 'https://gateway.example.test/coding/v1');
-    expect(isDefaultMarketplaceCatalog(undefined, {})).toBe(false);
+    expect(isDefaultMarketplaceCatalog(undefined, {})).toBe(true);
     expect(
       isDefaultMarketplaceCatalog(undefined, {
         KIMI_CODE_PLUGIN_MARKETPLACE_URL: 'http://127.0.0.1:60056/marketplace.json',

@@ -779,6 +779,7 @@ describe('kimi-cu entry', () => {
       { id: 'plugin', state: 'ok', detail: '0.5.4' },
       { id: 'app', state: 'ok', detail: '0.5.4' },
       { id: 'service', state: 'ok' },
+      { id: 'permissions', state: 'missing', detail: 'screenRecording' },
       { id: 'permissions.accessibility', state: 'ok' },
       { id: 'permissions.screenRecording', state: 'missing' },
     ]);
@@ -794,6 +795,7 @@ describe('kimi-cu entry', () => {
       ['plugin', 'missing'],
       ['app', 'missing'],
       ['service', 'missing'],
+      ['permissions', 'missing'],
       ['permissions.accessibility', 'missing'],
       ['permissions.screenRecording', 'missing'],
     ]);

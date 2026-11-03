@@ -81,10 +81,10 @@ export function pluginMarketplaceCliDescription(
   locale = 'en-US',
 ): string | undefined {
   const block = findLocaleBlock(entry, locale);
-  if (entry.locale === undefined || sameLocale(locale, entry.locale.defaultLocale)) {
-    return entry.cliDescription ?? nonEmptyString(block?.['cliDescription']);
-  }
-  return nonEmptyString(block?.['cliDescription']);
+  const description = entry.locale === undefined || sameLocale(locale, entry.locale.defaultLocale)
+    ? (entry.cliDescription ?? nonEmptyString(block?.['cliDescription']))
+    : nonEmptyString(block?.['cliDescription']);
+  return description ?? nonEmptyString(entry.description);
 }
 
 function findLocaleBlock(

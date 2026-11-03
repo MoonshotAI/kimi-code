@@ -77,14 +77,20 @@ describe('pluginMarketplaceCliDescription', () => {
     })).toBe('English translation');
   });
 
-  it('does not use a non-English top-level description as an English translation', () => {
+  it('falls back to the legacy description when no CLI description exists', () => {
     expect(pluginMarketplaceCliDescription({
       id: 'demo',
       displayName: 'Demo',
       source: 'demo.zip',
-      cliDescription: '默认中文',
+      description: 'Legacy description',
+    })).toBe('Legacy description');
+    expect(pluginMarketplaceCliDescription({
+      id: 'demo',
+      displayName: 'Demo',
+      source: 'demo.zip',
+      description: '默认中文',
       locale: { defaultLocale: 'zh-cn' },
-    })).toBeUndefined();
+    })).toBe('默认中文');
   });
 
   it('prefers exact locale and base language over sibling regions', () => {
