@@ -422,6 +422,28 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
+  it('rejects a second goal while one is already queued', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const loop = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentLoopService);
+    loop.pauseQueue();
+    const post = (objective: string) =>
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: objective }],
+        goal_objective: objective,
+      });
+
+    const first = await post('first goal');
+    expect(first.body.code).toBe(0);
+    expect((await post('second goal')).body.code).toBe(40913);
+    expect(loop.snapshot().queue).toHaveLength(1);
+    loop.cancel({ promptId: first.body.data!.prompt_id });
+    loop.resumeQueue();
+  });
+
   it('rejects queue controls for agents other than the main agent', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);

@@ -636,8 +636,12 @@ function promptLaunch(resolved: ResolvedPrompt, body: PromptSubmission): PromptL
   }
   const goalObjective =
     body.goal_objective === undefined ? undefined : validateGoalObjective(body.goal_objective);
-  if (goalObjective !== undefined && resolved.agent.accessor.get(IAgentGoalService).getGoal().goal !== null) {
-    throw new Error2(ErrorCodes.GOAL_ALREADY_EXISTS, 'A goal already exists; finish or cancel it first');
+  if (
+    goalObjective !== undefined &&
+    (resolved.agent.accessor.get(IAgentGoalService).getGoal().goal !== null ||
+      resolved.prompt.snapshot().queue.some((item) => item.meta?.launch?.goalObjective !== undefined))
+  ) {
+    throw new Error2(ErrorCodes.GOAL_ALREADY_EXISTS, 'A goal already exists or is queued; finish or cancel it first');
   }
   return planMode === undefined && goalObjective === undefined ? undefined : { planMode, goalObjective };
 }
