@@ -22,19 +22,7 @@ export interface GroupProjection {
   readonly running: boolean;
 }
 
-export interface MoreProjection {
-  readonly kind: 'more';
-  readonly anchor: Component;
-  readonly sourceIndex: number;
-  readonly count: number;
-  readonly items: readonly (SingleProjection | GroupProjection)[];
-  readonly collapsed: readonly (SingleProjection | GroupProjection)[];
-  readonly placeholderIndex: number;
-}
-
-export type TranscriptProjection = SingleProjection | GroupProjection | MoreProjection;
-
-export const TRANSCRIPT_MAX_VISIBLE = 10;
+export type TranscriptProjection = SingleProjection | GroupProjection;
 
 export function projectTranscript(
   items: readonly TranscriptItem[],
@@ -44,7 +32,7 @@ export function projectTranscript(
   if (!transcriptGroupingActive(options)) {
     return items.map((item) => ({ kind: 'single', item }));
   }
-  const projections: (SingleProjection | GroupProjection)[] = [];
+  const projections: TranscriptProjection[] = [];
   let run: LogicalTranscriptItem[] = [];
   const flush = (): void => {
     const first = run[0];
@@ -80,53 +68,7 @@ export function projectTranscript(
     projections.push({ kind: 'single', item });
   }
   flush();
-  return truncateTranscript(projections);
-}
-
-function truncateTranscript(
-  projections: readonly (SingleProjection | GroupProjection)[],
-): readonly TranscriptProjection[] {
-  const result: TranscriptProjection[] = [];
-  let segment: (SingleProjection | GroupProjection)[] = [];
-  const flush = (): void => {
-    if (segment.length === 0) return;
-    result.push(...truncateSegment(segment));
-    segment = [];
-  };
-  for (const projection of projections) {
-    if (projection.kind === 'single' && projection.item.kind === 'boundary' && projection.item.role === 'text') {
-      flush();
-      result.push(projection);
-    } else {
-      segment.push(projection);
-    }
-  }
-  flush();
-  return result;
-}
-
-function truncateSegment(
-  segment: readonly (SingleProjection | GroupProjection)[],
-): readonly TranscriptProjection[] {
-  const countable = segment.filter((projection) =>
-    projection.kind === 'group' ||
-    projection.item.kind === 'logical' ||
-    (projection.item.kind === 'boundary' && projection.item.role === 'card'),
-  );
-  if (countable.length < TRANSCRIPT_MAX_VISIBLE + 2) return segment;
-  const hidden = countable.slice(0, countable.length - TRANSCRIPT_MAX_VISIBLE);
-  const hiddenSet = new Set(hidden);
-  const first = hidden[0];
-  if (first === undefined) return segment;
-  return [{
-    kind: 'more',
-    anchor: first.kind === 'group' ? first.anchor : first.item.source,
-    sourceIndex: first.kind === 'group' ? first.sourceIndex : first.item.sourceIndex,
-    count: hidden.length,
-    items: segment,
-    collapsed: segment.filter((projection) => !hiddenSet.has(projection)),
-    placeholderIndex: segment.indexOf(first),
-  }];
+  return projections;
 }
 
 export function canFoldItem(

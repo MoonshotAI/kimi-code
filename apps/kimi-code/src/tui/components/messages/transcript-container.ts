@@ -19,7 +19,6 @@ import {
   type TranscriptGroupInteraction,
 } from '#/tui/components/messages/transcript-group';
 import { SkillActivationComponent } from '#/tui/components/messages/skill-activation';
-import { TranscriptMoreComponent } from '#/tui/components/messages/transcript-more';
 import {
   countedByExpandHint,
   hasHiddenContent,
@@ -73,9 +72,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   private readonly inspector = new TranscriptItemInspector();
   private groups = new Map<Component, TranscriptGroupComponent>();
   private summaries = new Map<Component, GroupSummaryCache>();
-  private moreComponents = new Map<Component, TranscriptMoreComponent>();
   private expandedGroups = new WeakMap<Component, boolean>();
-  private expandedMore = new WeakSet<Component>();
   private openedMembers = new WeakSet<Component>();
   private options: TranscriptPresentationOptions = {
     ...DEFAULT_TRANSCRIPT_CONFIG,
@@ -169,9 +166,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     this.dispose();
     this.groups.clear();
     this.summaries.clear();
-    this.moreComponents.clear();
     this.expandedGroups = new WeakMap();
-    this.expandedMore = new WeakSet();
     this.openedMembers = new WeakSet();
     this.sourceChildren.splice(0);
     this.projectionCache = undefined;
@@ -200,7 +195,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   }
 
   toggleGroup(anchor: Component, fromBottom?: { readonly removedLines: number }): void {
-    const group = expandMore(this.ensureProjection().projections).find(
+    const group = this.ensureProjection().projections.find(
       (projection) => projection.kind === 'group' && projection.anchor === anchor,
     );
     const expanded = !(this.expandedGroups.get(anchor) ?? false);
@@ -216,15 +211,6 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     }
     this.projectionCache = undefined;
     this.host?.track('transcript_group_toggle', { expanded });
-    this.renderRequest?.();
-  }
-
-  private toggleMore(anchor: Component): void {
-    this.withScrollAnchor(() => {
-      if (this.expandedMore.has(anchor)) this.expandedMore.delete(anchor);
-      else this.expandedMore.add(anchor);
-    });
-    this.projectionCache = undefined;
     this.renderRequest?.();
   }
 
@@ -247,9 +233,8 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     const cache = this.ensureProjection();
     this.globalExpanded = !this.globalExpanded;
     const cutoff = this.firstExpandableSourceIndex();
-    const projections = expandMore(cache.projections);
     if (this.globalExpanded) {
-      for (const projection of projections) {
+      for (const projection of cache.projections) {
         if (projection.kind === 'group') {
           this.expandedGroups.set(projection.anchor, projection.sourceIndex >= cutoff);
         }
@@ -258,7 +243,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
       this.expandedGroups = new WeakMap();
     }
     const visited = new Set<Component>();
-    for (const projection of projections) {
+    for (const projection of cache.projections) {
       for (const item of projectionItems(projection)) {
         const component = item.display;
         if (visited.has(component)) continue;
@@ -282,7 +267,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
       return this.hasExpandedContentAnywhere(cache.projections) ? 'collapse' : null;
     }
     const cutoff = this.firstExpandableSourceIndex();
-    for (const projection of expandMore(cache.projections)) {
+    for (const projection of cache.projections) {
       if (projection.kind === 'group' && projection.sourceIndex >= cutoff) return 'expand';
       for (const item of projectionItems(projection)) {
         if (item.sourceIndex >= cutoff && countedByExpandHint(item.display)) return 'expand';
@@ -320,42 +305,14 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
       (component) => this.openedMembers.has(component),
     );
     const cutoff = this.firstExpandableSourceIndex();
-    const visibleProjections: TranscriptProjection[] = [];
-    for (const projection of projections) {
-      if (projection.kind !== 'more') {
-        visibleProjections.push(projection);
-        continue;
-      }
-      const segment = this.expandedMore.has(projection.anchor)
-        ? projection.items
-        : projection.collapsed;
-      visibleProjections.push(
-        ...segment.slice(0, projection.placeholderIndex),
-        projection,
-        ...segment.slice(projection.placeholderIndex),
-      );
-    }
     const viewChildren: Component[] = [];
     const viewSourceIndices: number[] = [];
     const nextGroups = new Map<Component, TranscriptGroupComponent>();
     const nextSummaries = new Map<Component, GroupSummaryCache>();
-    const nextMore = new Map<Component, TranscriptMoreComponent>();
-    for (const projection of visibleProjections) {
+    for (const projection of projections) {
       if (projection.kind === 'single') {
         viewChildren.push(projection.item.display);
         viewSourceIndices.push(projection.item.sourceIndex);
-        continue;
-      }
-      if (projection.kind === 'more') {
-        const more = this.moreComponents.get(projection.anchor) ??
-          new TranscriptMoreComponent(projection.count, () => {
-            this.toggleMore(projection.anchor);
-          });
-        more.setCount(projection.count);
-        more.setExpanded(this.expandedMore.has(projection.anchor));
-        nextMore.set(projection.anchor, more);
-        viewChildren.push(more);
-        viewSourceIndices.push(projection.sourceIndex);
         continue;
       }
       let expanded = this.expandedGroups.get(projection.anchor);
@@ -368,7 +325,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
         ? cachedSummary.summary
         : summarizeGroup(projection.members);
       nextSummaries.set(projection.anchor, { members: projection.members, summary });
-      const active = this.isOpen(projection, visibleProjections) && projection.external.length === 0;
+      const active = this.isOpen(projection, projections) && projection.external.length === 0;
       const model = {
         anchor: projection.anchor,
         sourceIndex: projection.sourceIndex,
@@ -392,7 +349,6 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     }
     this.groups = nextGroups;
     this.summaries = nextSummaries;
-    this.moreComponents = nextMore;
     this.gutter.clear();
     for (const child of viewChildren) this.gutter.addChild(child);
     this.projectionCache = {
@@ -414,7 +370,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   }
 
   private hasExpandedContentAnywhere(projections: readonly TranscriptProjection[]): boolean {
-    return expandMore(projections).some((projection) =>
+    return projections.some((projection) =>
       (projection.kind === 'group' && this.expandedGroups.get(projection.anchor) === true) ||
       projectionItems(projection).some(
         (item) => isExpandedComponent(item.display) && countedByExpandHint(item.display),
@@ -443,7 +399,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     if (expanded) this.openedMembers.add(component);
     else {
       this.openedMembers.delete(component);
-      this.keepMergedGroupExpanded(component, expandMore(cache.projections));
+      this.keepMergedGroupExpanded(component, cache.projections);
     }
     this.projectionCache = undefined;
     this.renderRequest?.();
@@ -478,13 +434,8 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   }
 }
 
-function expandMore(projections: readonly TranscriptProjection[]): readonly TranscriptProjection[] {
-  return projections.flatMap((projection) => projection.kind === 'more' ? projection.items : [projection]);
-}
-
 function projectionItems(projection: TranscriptProjection): readonly TranscriptItem[] {
   if (projection.kind === 'single') return [projection.item];
-  if (projection.kind === 'more') return [];
   return [...projection.members, ...projection.external];
 }
 

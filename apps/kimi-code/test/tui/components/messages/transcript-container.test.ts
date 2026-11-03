@@ -3,19 +3,16 @@ import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SkillActivationComponent } from '#/tui/components/messages/skill-activation';
-import { StatusMessageComponent } from '#/tui/components/messages/status-message';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { TranscriptContainer } from '#/tui/components/messages/transcript-container';
 import { TranscriptGroupComponent } from '#/tui/components/messages/transcript-group';
-import { TranscriptMoreComponent } from '#/tui/components/messages/transcript-more';
 import { UserMessageComponent } from '#/tui/components/messages/user-message';
 import type { TranscriptPresentationOptions } from '#/tui/config';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import { mixColors } from '#/tui/theme/color-mix';
 import type { ToolCallBlockData, ToolResultBlockData, TranscriptEntry } from '#/tui/types';
 import { markTranscriptComponent } from '#/tui/utils/transcript-component-metadata';
-import { TRANSCRIPT_MAX_VISIBLE } from '#/tui/utils/transcript-projection';
 
 let id = 0;
 const defaultChalkLevel = chalk.level;
@@ -675,7 +672,7 @@ describe('TranscriptGroupComponent', () => {
     container.clear();
   });
 
-  it('draws both Show less rows in the tail color and follows theme and background changes', () => {
+  it('draws the Show less row in the tail color and follows theme and background changes', () => {
     chalk.level = 3;
     const previousPalette = currentTheme.palette;
     currentTheme.setTerminalBackground('#FFFFFF');
@@ -686,25 +683,17 @@ describe('TranscriptGroupComponent', () => {
     group.setTurnActive(true);
     group.toggleGroup(read);
     group.render(100);
-    const { container: dense } = makeContainer(options({ groupTools: 'auto' }));
-    for (const component of [tool('Read'), tool('Agent'), tool('Read'), ...agents(TRANSCRIPT_MAX_VISIBLE - 1)]) dense.addChild(component);
-    click(dense, 1);
-    dense.render(100);
     const tailColor = (background: string): string => mixColors(lightColors.textDim, background, 0.35);
 
     try {
       currentTheme.setPalette(lightColors);
       expect(group.render(100).join('\n')).toContain(chalk.hex(tailColor('#FFFFFF'))('Show less'));
-      expect(dense.render(100).join('\n')).toContain(chalk.hex(tailColor('#FFFFFF'))('Show less'));
 
       currentTheme.setTerminalBackground('#FAFBFC');
       expect(group.render(100).join('\n')).toContain(chalk.hex(tailColor('#FAFBFC'))('Show less'));
-      expect(dense.render(100).join('\n')).toContain(chalk.hex(tailColor('#FAFBFC'))('Show less'));
 
       group.toggleGroup(read);
       expect(group.render(100).join('\n')).toContain(chalk.hex(tailColor('#FAFBFC'))('└ Read a.ts'));
-      click(dense, 1);
-      expect(dense.render(100).join('\n')).toContain(currentTheme.fg('textMuted', '… 2 more'));
     } finally {
       currentTheme.setPalette(previousPalette);
       group.clear();
@@ -1216,119 +1205,36 @@ describe('TranscriptContainer streaming updates', () => {
   });
 });
 
-describe('TranscriptContainer dense truncation', () => {
-  it('expands and collapses older top-level items without destroying sources', () => {
+describe('TranscriptContainer dense segments', () => {
+  it('shows every group and card in a dense segment and applies Ctrl+O to all of them', () => {
     const { container } = makeContainer(options({ groupTools: 'auto' }));
     const components = [
       tool('Read', { path: '/work/a.ts' }),
       tool('Agent', { description: 'first-agent' }),
       tool('Read', { path: '/work/b.ts' }),
       tool('Agent', { description: 'second-agent' }),
-      ...agents(TRANSCRIPT_MAX_VISIBLE - 2),
+      ...agents(8),
     ];
     for (const component of components) container.addChild(component);
 
-    const collapsed = plain(container.render(100));
-    expect(collapsed).toContain('… 2 more');
-    expect(collapsed).not.toContain('first-agent');
-    expect(collapsed).toContain('second-agent');
-    expect(container.children).toEqual(components);
+    const text = plain(container.render(100));
+    expect(text).toContain('first-agent');
+    expect(text).toContain('second-agent');
+    expect(groupViews(container, 100).map((group) => [group.title, group.expanded])).toEqual([
+      ['● Read a.ts', false],
+      ['● Read b.ts', false],
+    ]);
 
-    click(container, 1);
-    const expanded = plain(container.render(100));
-    expect(expanded).toContain('Show less');
-    expect(expanded).not.toContain('… 2 more');
-    expect(expanded).toContain('first-agent');
-    expect(container.children).toEqual(components);
-
-    click(container, 1);
-    const collapsedAgain = plain(container.render(100));
-    expect(collapsedAgain).toContain('… 2 more');
-    expect(collapsedAgain).not.toContain('first-agent');
-    expect(container.children).toEqual(components);
-  });
-
-  it('recolors items hidden behind the more row when the theme changes', () => {
-    chalk.level = 3;
-    const previousPalette = currentTheme.palette;
-    const firstAgentLine = (rendered: readonly string[]) => rendered.find((line) => line.includes('first-agent'));
-    try {
-      currentTheme.setPalette(darkColors);
-      const darkCard = firstAgentLine(tool('Agent', { description: 'first-agent' }).render(100));
-      const { container } = makeContainer(options({ groupTools: 'auto' }));
-      const components = [
-        tool('Read', { path: '/work/a.ts' }),
-        tool('Agent', { description: 'first-agent' }),
-        tool('Read', { path: '/work/b.ts' }),
-        tool('Agent', { description: 'second-agent' }),
-        ...agents(TRANSCRIPT_MAX_VISIBLE - 2),
-      ];
-      for (const component of components) container.addChild(component);
-      expect(plain(container.render(100))).toContain('… 2 more');
-
-      currentTheme.setPalette(lightColors);
-      container.invalidate();
-      click(container, 1);
-
-      const lightCard = firstAgentLine(tool('Agent', { description: 'first-agent' }).render(100));
-      expect(lightCard).not.toBe(darkCard);
-      expect(firstAgentLine(container.render(100))).toBe(lightCard);
-    } finally {
-      currentTheme.setPalette(previousPalette);
-    }
-  });
-
-  it('applies Ctrl+O to every group and card in a dense segment', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
-    const components = [
-      tool('Read', { path: '/work/a.ts' }),
-      tool('Agent', { description: 'first-agent' }),
-      tool('Read', { path: '/work/b.ts' }),
-      tool('Agent', { description: 'second-agent' }),
-      ...agents(TRANSCRIPT_MAX_VISIBLE - 2),
-    ];
-    for (const component of components) container.addChild(component);
-
-    expect(container.toolOutputExpandHint()).toBe('expand');
     expect(container.toggleToolOutputExpansion()).toBe(true);
-    expect(groupViews(container, 100).map((group) => [group.title, group.expanded])).toEqual([['● Read b.ts', true]]);
-    expect(components.every((component) => component.isExpanded())).toBe(true);
-    expect(container.toolOutputExpandHint()).toBe('collapse');
-
-    click(container, 1);
     expect(groupViews(container, 100).map((group) => [group.title, group.expanded])).toEqual([
       ['● Read a.ts', true],
       ['● Read b.ts', true],
     ]);
+    expect(components.every((component) => component.isExpanded())).toBe(true);
 
     expect(container.toggleToolOutputExpansion()).toBe(false);
     expect(groupViews(container, 100).some((group) => group.expanded)).toBe(false);
     expect(components.every((component) => !component.isExpanded())).toBe(true);
-  });
-
-  it('keeps communication, plan, and status rows visible without counting them', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
-    const components = [
-      tool('Read'),
-      tool('NotifyUser', { title: 'update-visible' }),
-      tool('Agent'),
-      tool('Read'),
-      tool('AskUserQuestion'),
-      tool('Agent'),
-      tool('ExitPlanMode', { plan: 'plan-visible' }),
-      new StatusMessageComponent('status-visible'),
-      ...agents(TRANSCRIPT_MAX_VISIBLE - 2),
-    ];
-    for (const component of components) container.addChild(component);
-
-    const text = plain(container.render(120));
-    expect(text).toContain('… 2 more');
-    expect(text).toContain('update-visible');
-    expect(text).toContain('Collected your answers');
-    expect(text).toContain('plan-visible');
-    expect(text).toContain('status-visible');
-    expect(container.getRenderedLayout()?.children
-      .filter((entry) => entry.component instanceof TranscriptMoreComponent)).toHaveLength(1);
   });
 });
 

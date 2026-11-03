@@ -17,7 +17,6 @@ import { TranscriptItemInspector } from '#/tui/utils/transcript-items';
 import {
   projectTranscript,
   summarizeGroup,
-  TRANSCRIPT_MAX_VISIBLE,
   type GroupProjection,
   type GroupSummary,
 } from '#/tui/utils/transcript-projection';
@@ -51,10 +50,6 @@ function tool(
     undefined,
     '/work',
   );
-}
-
-function agents(count: number): ToolCallComponent[] {
-  return Array.from({ length: count }, () => tool('Agent'));
 }
 
 function thought(ms?: number): ThinkingComponent {
@@ -276,67 +271,6 @@ describe('transcript projection', () => {
   it('passes through a run containing only select_tools', () => {
     expect(project([tool('select_tools'), tool('select_tools')]).map((item) => item.kind))
       .toEqual(['single', 'single']);
-  });
-
-  it('truncates only older countable top-level items', () => {
-    const notify = tool('NotifyUser');
-    const question = tool('AskUserQuestion');
-    const plan = tool('ExitPlanMode');
-    const read = tool('Read');
-    const firstAgent = tool('Agent');
-    const secondAgent = tool('Agent');
-    const latestRead = tool('Read');
-    const newer = agents(TRANSCRIPT_MAX_VISIBLE - 2);
-    const projections = project([
-      read,
-      notify,
-      firstAgent,
-      latestRead,
-      question,
-      secondAgent,
-      plan,
-      ...newer,
-    ], options({ groupTools: 'auto' }));
-    const more = projections[0];
-
-    expect(projections).toHaveLength(1);
-    expect(more).toMatchObject({ kind: 'more', count: 2, placeholderIndex: 0 });
-    if (more?.kind !== 'more') return;
-    expect(more.items).toHaveLength(7 + newer.length);
-    expect(more.collapsed.map((projection) => projection.kind === 'single'
-      ? projection.item.display
-      : projection.anchor)).toEqual([notify, latestRead, question, secondAgent, plan, ...newer]);
-  });
-
-  it('does not truncate below the threshold and truncates each text segment', () => {
-    const assistant = new AssistantMessageComponent();
-    assistant.updateContent('answer');
-    const belowThreshold = [tool('Read'), ...agents(TRANSCRIPT_MAX_VISIBLE)];
-    expect(project(belowThreshold, options({ groupTools: 'auto' }))
-      .some((projection) => projection.kind === 'more')).toBe(false);
-
-    const acrossText = project([
-      tool('Read'),
-      ...agents(TRANSCRIPT_MAX_VISIBLE + 1),
-      assistant,
-      tool('Read'),
-      ...agents(TRANSCRIPT_MAX_VISIBLE + 1),
-    ], options({ groupTools: 'auto' }));
-    expect(acrossText.map((projection) => projection.kind)).toEqual([
-      'more',
-      'single',
-      'more',
-    ]);
-    expect(acrossText[1]).toMatchObject({ kind: 'single', item: { display: assistant } });
-  });
-
-  it('does not truncate dense segments when tool and thinking grouping are off', () => {
-    const projections = project(
-      agents(TRANSCRIPT_MAX_VISIBLE + 2),
-      options({ groupTools: 'off', groupThinking: false }),
-    );
-
-    expect(projections.some((projection) => projection.kind === 'more')).toBe(false);
   });
 
   it('groups a thought-only run and preserves its elapsed text', () => {
