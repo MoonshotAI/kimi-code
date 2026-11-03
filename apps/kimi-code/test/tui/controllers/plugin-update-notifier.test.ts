@@ -28,6 +28,9 @@ function makePluginSummary(overrides: Partial<PluginSummary> = {}): PluginSummar
     commandCount: 0,
     hasErrors: false,
     source: 'zip-url',
+    origin: 'marketplace',
+    catalogId: 'kimi-datasource',
+    installedAt: '2026-01-01T00:00:00.000Z',
     originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
     ...overrides,
   };
@@ -168,14 +171,78 @@ describe('PluginUpdateNotifier', () => {
   it('does not notify for a same-id fork installed from a local path', async () => {
     const harness = makeHarness({
       installed: [
-        makePluginSummary({ source: 'local-path', originalSource: undefined }),
+        makePluginSummary({
+          source: 'local-path',
+          originalSource: undefined,
+          origin: 'custom',
+          catalogId: undefined,
+        }),
       ],
     });
     const notifier = makeNotifier(harness);
 
     await notifier.handlePluginCommandCompleted('kimi-datasource');
-    // Provenance is not official, so the marketplace version is irrelevant.
     expect(harness.notify).not.toHaveBeenCalled();
+  });
+
+  it('does not notify for a same-id custom ZIP that uses an official URL', async () => {
+    const harness = makeHarness({
+      installed: [makePluginSummary({ origin: 'custom', catalogId: undefined })],
+    });
+    const notifier = makeNotifier(harness);
+
+    await notifier.handlePluginCommandCompleted('kimi-datasource');
+    expect(harness.notify).not.toHaveBeenCalled();
+  });
+
+  it('does not notify for a custom fork of a built-in capability plugin', async () => {
+    const harness = makeHarness({
+      marketplace: {
+        source: kimiCodePluginMarketplaceUrl(),
+        plugins: [makeMarketplaceEntry('kimi-cu', 'Kimi Computer Use', '1.0.0')],
+      },
+      installed: [
+        makePluginSummary({
+          id: 'kimi-cu',
+          displayName: 'Custom Computer Use',
+          version: '0.1.0',
+          source: 'local-path',
+          originalSource: undefined,
+          origin: 'custom',
+          catalogId: undefined,
+        }),
+      ],
+    });
+    const notifier = makeNotifier(harness);
+
+    await notifier.handlePluginCommandCompleted('kimi-cu');
+    expect(harness.notify).not.toHaveBeenCalled();
+  });
+
+  it('notifies a legacy WebBridge install about the renamed marketplace entry', async () => {
+    const harness = makeHarness({
+      marketplace: {
+        source: kimiCodePluginMarketplaceUrl(),
+        plugins: [makeMarketplaceEntry('kimi-browser-extension', 'Kimi Browser Extension', '2.0.0')],
+      },
+      installed: [
+        makePluginSummary({
+          id: 'kimi-webbridge',
+          displayName: 'Kimi WebBridge',
+          version: '1.0.0',
+          origin: 'unknown',
+          catalogId: undefined,
+          originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
+        }),
+      ],
+    });
+    const notifier = makeNotifier(harness);
+
+    await notifier.handlePluginCommandCompleted('kimi-webbridge');
+    expect(harness.notify).toHaveBeenCalledWith(
+      'Update detected: Kimi WebBridge 2.0.0 is available. ' +
+        'Run /plugins to install the latest version from the Official Marketplace.',
+    );
   });
 
   it('resolves plugin tools whose qualified name core truncated before the separator', async () => {
@@ -280,6 +347,7 @@ describe('PluginUpdateNotifier', () => {
           id: 'another-plugin',
           displayName: 'Another Plugin',
           version: '1.0.0',
+          catalogId: 'another-plugin',
         }),
       ],
     });

@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 import { messageSchema } from './message';
 import {
-  sessionStatusResponseSchema,
   sessionWarningSchema,
   sessionWarningsResponseSchema,
   updateSessionProfileRequestSchema,
@@ -19,13 +18,11 @@ import {
 } from './session';
 
 export {
-  sessionStatusResponseSchema,
   sessionWarningSchema,
   sessionWarningsResponseSchema,
   updateSessionProfileRequestSchema,
 };
 export type {
-  SessionStatusResponse,
   SessionWarning,
   SessionWarningsResponse,
   UpdateSessionProfileRequest,
@@ -128,6 +125,14 @@ export type CreateSessionChildResponse = z.infer<typeof createSessionChildRespon
 export const getSessionGoalResponseSchema = goalSnapshotSchema.nullable();
 export type GetSessionGoalResponse = z.infer<typeof getSessionGoalResponseSchema>;
 
+export const editSessionGoalRequestSchema = z.object({
+  objective: z.string(),
+});
+export type EditSessionGoalRequest = z.infer<typeof editSessionGoalRequestSchema>;
+
+export const editSessionGoalResponseSchema = goalSnapshotSchema;
+export type EditSessionGoalResponse = z.infer<typeof editSessionGoalResponseSchema>;
+
 export const compactSessionRequestSchema = z.preprocess(
   (value) => value === undefined ? {} : value,
   z.object({
@@ -150,7 +155,6 @@ export type UndoSessionRequest = z.infer<typeof undoSessionRequestSchema>;
 
 export const undoSessionResponseSchema = z.object({
   messages: pageResponseSchema(messageSchema),
-  status: sessionStatusResponseSchema,
 });
 export type UndoSessionResponse = z.infer<typeof undoSessionResponseSchema>;
 

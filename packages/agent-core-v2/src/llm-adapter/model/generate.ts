@@ -44,7 +44,11 @@ export interface ModelRequestTiming {
 
 export type ModelRequestEvent =
   | { readonly type: 'part'; readonly part: StreamedMessagePart }
-  | { readonly type: 'usage'; readonly usage: TokenUsage; readonly model?: string }
+  | {
+      readonly type: 'usage';
+      readonly usage: TokenUsage;
+      readonly model?: string;
+    }
   | {
       readonly type: 'finish';
       readonly message: AssistantMessage;
@@ -166,7 +170,7 @@ async function runModel(
       },
     );
     if (outcome.type === 'aborted') {
-      throw errorFromLlmMessage({ kind: 'abort', message: 'The operation was aborted.' });
+      throw errorFromLlmMessage({ kind: 'abort', message: 'The operation was aborted.', retryable: false });
     }
     if (outcome.type === 'failed') {
       const classified =
@@ -201,7 +205,13 @@ function pushDone(
   events: ModelEventSink,
   model: string | undefined,
 ): void {
-  if (outcome.usage !== undefined) events.push({ type: 'usage', usage: outcome.usage, model });
+  if (outcome.usage !== undefined) {
+    events.push({
+      type: 'usage',
+      usage: outcome.usage,
+      model,
+    });
+  }
   events.push({
     type: 'finish',
     message: outcome.message,

@@ -10,5 +10,10 @@ export async function probeExecutorEnvironment(): Promise<RemoteEnvironmentInfo>
     probeHostEnvironmentFromNode(),
     applyLoginShellPathFromNode(),
   ]);
-  return { ...info, cwd: process.cwd(), tempDir: tmpdir() };
+  return {
+    ...info,
+    cwd: process.cwd(),
+    tempDir: tmpdir(),
+    windowsProcessLifecycle: process.platform === 'win32' ? true : undefined,
+  };
 }

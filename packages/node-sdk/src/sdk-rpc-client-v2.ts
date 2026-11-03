@@ -8,9 +8,9 @@
  * Migrated so far:
  * - `getExperimentalFeatures` → `klient.global.flags.list()`
  * - `listWorkspaceSkills` → not covered by the klient facade, so it goes
- *   through the `engineAccessor` escape hatch (the workspace handler's
+ *   through the `engineAccessor` escape hatch (the workspace instance's
  *   `IWorkspaceSkillCatalog`) instead.
- * - `suggestFiles` → same escape hatch (the workspace handler's
+ * - `suggestFiles` → same escape hatch (the workspace instance's
  *   `IWorkspaceFsService`); the v1 client inherits the base's `undefined`
  *   (capability absent).
  * - `getConfig` / `setConfig` / `removeProvider` / `getConfigDiagnostics` →
@@ -27,8 +27,8 @@
  *   `updateSessionMetadata` / `addAdditionalDir` → the session lifecycle
  *   batch: `klient.global.sessions.list` plus the `klient.session(id)`
  *   metadata mutations where the facade reaches, and the
- *   `IWorkspaceLifecycleService` / handler chain / session-scope services through
- *   {@link engineAccessor} where it does not (explicit session ids, resume,
+ *   `ISessionManager`, `IWorkspaceInstanceManager`, and session-scope services
+ *   through {@link engineAccessor} where it does not (explicit session ids, resume,
  *   fork ids, delete, the workspace-level add-dir surface). The v1 `SessionSummary` / `SessionMeta`
  *   shapes are restored by the pure mapping layer in
  *   `src/v2/session-mapper.ts`. The resumed results carry the full v1
@@ -67,7 +67,7 @@
  *   `ISessionInitService` through the session scope; `getSessionWarnings` →
  *   rebuilt over the profile's cached AGENTS.md warning plus the engine's
  *   `prepareSystemPromptContext` (no v2 aggregate service exists).
- * - `createGoal` / `getGoal` / `pauseGoal` / `resumeGoal` / `cancelGoal` →
+ * - `createGoal` / `editGoalObjective` / `getGoal` / `pauseGoal` / `resumeGoal` / `cancelGoal` →
  *   the target agent scope's `IAgentGoalService`; `getCronTasks` →
  *   with the v1 snapshot
  *   shape restored; `listBackgroundTasks` / `getBackgroundTaskOutput` → the
@@ -99,8 +99,8 @@
  *   `addSessionMcpServer` →
  *   the seeded `ISessionMcpHandle.connectionManager` through the session
  *   scope (no klient facade exists) — one shared manager per workspace
- *   handler since the workspace-domain resource consolidation; the v2
- *   `McpServerEntry` is field-identical with v1's `McpServerInfo`.
+ *   `Program`; the v2 `McpServerEntry` is field-identical with v1's
+ *   `McpServerInfo`.
  *   `reconnectMcpServer` with an explicit config and `addSessionMcpServer`
  *   ride the manager's upserting `connect`; both reject sessions whose
  *   handle is a merged ephemeral-server view (no `connect` on it), and an
@@ -307,6 +307,7 @@ import type {
   CompactOptions,
   ConfigDiagnostics,
   CreateGoalInput,
+  EditGoalObjectiveInput,
   CreateSessionOptions,
   ExportSessionInput,
   ExportSessionResult,
@@ -323,6 +324,7 @@ import type {
   KimiConfigPatch,
   KimiHarnessOptions,
   KimiHostIdentity,
+  InstallPluginInput,
   KimiSshPasswordOptions,
   ListSessionsOptions,
   McpManagedServerInfo,
@@ -335,6 +337,7 @@ import type {
   PluginCommandDef,
   PluginInfo,
   PluginSummary,
+  PromptSubmissionResult,
   ReloadSummary,
   RenameSessionInput,
   ResumeSessionInput,
@@ -406,6 +409,22 @@ export interface SDKRpcClientV2Options {
  * `timeoutOutcome` clamps to.
  */
 const MAX_TIMER_DELAY_MS = 0x7fffffff;
+
+function promptSubmissionResult(result: {
+  readonly turn_id?: number;
+  readonly prompt_id: string;
+  readonly created_at: string;
+  readonly state: 'running' | 'queued' | 'blocked';
+  readonly steered?: boolean;
+}): PromptSubmissionResult {
+  return {
+    turnId: result.turn_id,
+    promptId: result.prompt_id,
+    createdAt: result.created_at,
+    state: result.state,
+    steered: result.steered === true,
+  };
+}
 
 export class SDKRpcClientV2 extends SDKRpcClientBase {
   readonly homeDir: string;
@@ -543,9 +562,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         if (translated !== undefined) this.receiveEvent(translated);
       }),
       // A session closed without going through this client (archive, an
-      // engine-initiated close) drops its wiring with the scope. Close events
-      // fire per workspace handler, so follow every handler — present and
-      // future — through the App-scope registry.
+      // engine-initiated close) drops its wiring with the scope. Follow the
+      // App-scope ISessionManager to observe those closes for every workspace.
       followSessionLifecycles(this.app.accessor, (service) =>
         service.onDidCloseSession((closed) => {
           this.unwireSession(closed.sessionId);
@@ -704,9 +722,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Session-less workspace handler resolution shared by the workspace query
+   * Session-less workspace instance acquisition shared by the workspace query
    * surfaces: normalize, reject a missing / non-directory root (the
-   * `POST /workspaces` rule), then create-or-get the handler.
+   * `POST /workspaces` rule), then acquire a leased instance.
    */
   private async withWorkspaceInstance<T>(
     operation: string,
@@ -724,11 +742,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the workspace handler's `IWorkspaceSkillCatalog` — the engine's
+   * Through the workspace instance's `IWorkspaceSkillCatalog` — the engine's
    * own merged view (builtin / user / explicit / extra / workspace-root /
    * plugin), so the session-less list matches what a session would serve.
-   * `handlerFor` is create-or-get: session creation materializes the handler
-   * anyway.
+   * `IWorkspaceInstanceManager.acquire` is create-or-get: session creation
+   * materializes the instance anyway.
    */
   override async listWorkspaceSkills(workDir: string): Promise<readonly SkillSummary[]> {
     return this.withWorkspaceInstance('listWorkspaceSkills', workDir, async (handler) => {
@@ -754,7 +772,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * The same engine suggest the kap-server `fs:suggest` routes serve (fuzzy
    * scoring, directories included, gitignore respected), either through the
-   * workspace handler's local fs or a live session's own working directory.
+   * workspace instance's local fs or a live session's own working directory.
    */
   override async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
     const parsed = fsSuggestRequestSchema.safeParse({
@@ -791,8 +809,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * klient has no workspace-trust facade; composed directly from the engine
-   * via {@link engineAccessor} — the same `handlerFor({ root })` path
-   * `createSession` takes. The disclosure of what trusting would activate is
+   * via {@link engineAccessor} — the same `IWorkspaceInstanceManager.acquire({ root })`
+   * path `createSession` takes. The disclosure of what trusting would activate is
    * computed inside the engine by `WorkspaceTrustDisclosureService`.
    */
   override async getWorkspaceTrustInfo(
@@ -989,8 +1007,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.klient.global.plugins.list();
   }
 
-  override async installPlugin(source: string): Promise<PluginSummary> {
-    return this.klient.global.plugins.install(source);
+  override async installPlugin(input: string | InstallPluginInput): Promise<PluginSummary> {
+    return this.klient.global.plugins.install(input);
   }
 
   override async setPluginEnabled(id: string, enabled: boolean): Promise<void> {
@@ -1077,9 +1095,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   //
   // The v2 engine splits what v1's SessionStore + in-memory session map did
   // across the app-scope `ISessionIndex` (persisted read model),
-  // `IWorkspaceLifecycleService` (live workspace handlers and, under them, the
-  // live session scopes), and the session-scope
-  // metadata/workspace services. The klient facade covers listing and the
+  // `ISessionManager` (live sessions and per-workspace lifecycle controllers),
+  // `IWorkspaceInstanceManager` (leased workspace `Program` instances), and
+  // session-scope metadata/workspace services. The klient facade covers listing and the
   // metadata mutations of a LIVE session; everything that needs an explicit
   // session id, a resume, or a workspace command goes through the
   // `engineAccessor` escape hatch (named per method below).
@@ -1509,7 +1527,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * v1 semantics: register the workDir as a workspace and create the session
-   * (the handler's `ISessionLifecycleService.create` does both; the klient facade
+   * (the App-scoped `ISessionManager.create` does both; the klient facade
    * wrapper is bypassed because it takes neither an explicit session id nor
    * caller metadata). The `model` / `thinking` / `permission` options are the
    * main-agent configuration v1 applies eagerly at creation: supplying any of
@@ -1625,9 +1643,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through `engineAccessor` (the handler chain's `ISessionLifecycleService.fork`) because the
-   * klient facade fork takes no explicit target id. `turnIndex` truncation and
-   * the live-source busy rejection (v1's `SESSION_FORK_ACTIVE_TURN`) are the
+   * Through `engineAccessor` (the App-scoped `ISessionManager.fork`) because
+   * the klient facade fork takes no explicit target id. `turnIndex` truncation and
+   * live-source history conflicts (v1's `SESSION_FORK_ACTIVE_TURN`) are the
    * engine's own now, so their failures cross the in-process call with v1's
    * codes and details (`request.invalid` with `{turnIndex, availableTurns}` /
    * `session.fork_active_turn`). The default title still differs by design
@@ -1674,8 +1692,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through `engineAccessor` (the handler chain's
-   * `ISessionLifecycleService.delete`) because the klient facade's
+   * Through `engineAccessor` (the App-scoped `ISessionManager.delete`)
+   * because the klient facade's
    * `session(id).delete()` reports a missing session with its own
    * `RPCError(NOT_FOUND)` where v1's store failure is a
    * `KimiError(SESSION_NOT_FOUND)` — the pre-check here keeps the v1 shape.
@@ -1705,8 +1723,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * Materializes the session through `engineAccessor`
-   * (`resumeSessionById` through the handler chain; the facade only offers `restore`,
-   * which would also clear the archived flag — v1's resume does not).
+   * (`resumeSessionById` through `ISessionManager`; the facade only offers
+   * `restore`, which would also clear the archived flag — v1's resume does not).
    * `includeSubagents` / `replayTurnLimit` shape the returned per-agent
    * snapshot exactly like v1: subagent states are folded best-effort from
    * each persisted agent wire, and every agent's replay is trimmed to the
@@ -1715,9 +1733,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
     // v1 re-resolves caller-provided additional dirs on every resume and
     // merges them over the workspace-local set; the engine's resume options
-    // union them into the handler's shared in-memory set while the session
-    // scope is materialized. Unlike v1, the v2
-    // engine has no caller `mcpServers` channel on create/resume (caller
+    // union them into the workspace-local shared in-memory set while the
+    // session scope is materialized. Unlike v1, the v2 engine has no caller
+    // `mcpServers` channel on create/resume (caller
     // servers are an ACP-side concern to be designed separately).
     return this.runSessionAccess(input.id, async () => {
       // The main agent's fold depends only on the persisted wire, never on
@@ -1916,12 +1934,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the session's handler (`IWorkspaceDirs`, workspace scope) — the
+   * Through the leased `WorkspaceInstance.program.dirs` (`IWorkspaceDirs`) — the
    * workspace-level add-dir surface: `persist: true` (default) appends to the
-   * workspace entry in the registry, `persist: false` joins the handler's
+   * workspace entry in the registry, `persist: false` joins the `Program`'s
    * shared in-memory set. The set is shared by every session of the workspace
    * (a v1 `persist: false` dir was session-scoped and written into session
-   * metadata to survive a resume; the v2 handler keeps it until the last
+   * metadata to survive a resume; the v2 `Program` keeps it until the last
    * workspace reference is released). Returns the same
    * `{additionalDirs, projectRoot, configPath, persisted}` shape as v1.
    */
@@ -2370,14 +2388,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * message, so the bundle launches as one turn and undoes as a single
    * anchor. v2-only: the base class rejects this method on the v1 engine.
    */
-  override async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
-    await this.withStaleReload(input.sessionId, async () => {
+  override async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<PromptSubmissionResult> {
+    return this.withStaleReload(input.sessionId, async () => {
       const agent = await this.agentFacade(input.sessionId);
-      await agent.promptWithSkills({
+      const result = await agent.promptWithSkills({
         input: input.input,
         skills: input.skills,
         steerIfActive: input.steerIfActive,
       });
+      return promptSubmissionResult(result);
     });
   }
 
@@ -2387,10 +2406,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * launching a fresh turn (the enqueue launches it directly) while
    * title/lastPrompt are updated like a prompt's.
    */
-  override async steer(input: SessionPromptRpcInput): Promise<void> {
-    await this.withStaleReload(input.sessionId, async () => {
+  override async steer(input: SessionPromptRpcInput): Promise<PromptSubmissionResult> {
+    return this.withStaleReload(input.sessionId, async () => {
       const agent = await this.agentFacade(input.sessionId);
-      await agent.steer({ input: input.input });
+      const result = await agent.steer({ input: input.input });
+      return promptSubmissionResult(result);
     });
   }
 
@@ -2611,6 +2631,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async getGoal(input: SessionIdRpcInput): Promise<GoalToolResult> {
     const agent = await this.agentScope(input.sessionId);
     return agent.accessor.get(IAgentGoalService).getGoal();
+  }
+
+  override async editGoalObjective(input: SessionIdRpcInput & EditGoalObjectiveInput): Promise<GoalSnapshot> {
+    const agent = await this.agentScope(input.sessionId);
+    return agent.accessor.get(IAgentGoalService).editGoalObjective({ objective: input.objective });
   }
 
   override async pauseGoal(input: SessionIdRpcInput): Promise<GoalSnapshot> {
@@ -3024,7 +3049,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
 
   /**
    * Through the session scope (the seeded `ISessionMcpHandle.connectionManager`
-   * — the workspace handler's one shared manager). This is a live snapshot:
+   * — the workspace instance's one shared manager). This is a live snapshot:
    * create/resume no longer waits for MCP startup, so entries may still be
    * pending. The v2 `McpServerEntry` is field-identical with v1's
    * `McpServerInfo` (the cast bridges the two packages' type declarations).
@@ -3035,9 +3060,9 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Workspace-level MCP view (the handler's one shared connection set), so
-   * `/mcp` is inspectable on a v2 session-less startup before any session
-   * exists. Awaits `ready` so a fresh handler's initial connect settles
+   * Workspace-level MCP view (the workspace `Program`'s shared connection set),
+   * so `/mcp` is inspectable on a v2 session-less startup before any session
+   * exists. Awaits `ready` so a fresh instance's initial connect settles
    * before the list is read.
    * Same `McpServerEntry`-as-`McpServerInfo` cast as listMcpServers.
    */
@@ -3094,7 +3119,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * validate, optionally persist to the user-level file, then upsert through
    * `connect`. Two accepted gaps against v1: the v2 entry carries no
    * `source`/`config` tags (the manager does not track origins), and the one
-   * shared manager per workspace handler makes an unpersisted add visible to
+   * shared manager per workspace instance makes an unpersisted add visible to
    * sibling sessions of the same workspace. The same merged-view limitation
    * as {@link reconnectMcpServer} applies.
    */

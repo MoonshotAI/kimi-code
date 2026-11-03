@@ -24,7 +24,7 @@ export class McpOAuthAuthorizationUrlOpener {
 
 export function parseMcpOAuthAuthorizationUrlUpdate(
   update: ToolUpdate,
-): McpOAuthAuthorizationUrlUpdateData | undefined {
+): Pick<McpOAuthAuthorizationUrlUpdateData, 'serverName' | 'authorizationUrl'> | undefined {
   if (update.kind !== 'custom') return undefined;
   if (update.customKind !== MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE) return undefined;
   const data = update.customData;

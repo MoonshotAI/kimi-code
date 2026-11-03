@@ -16,7 +16,10 @@ export function getShareBinRgPath(): string {
 export function shareBinRgPath(environment: Environment | undefined): string {
   if (isRemoteEnvironment(environment)) {
     const homeDir = environment.host?.homeDir;
-    if (homeDir !== undefined) return `${homeDir}/.kimi-code/bin/rg`;
+    if (homeDir !== undefined) {
+      const binary = environment.host?.pathClass === 'win32' ? 'rg.exe' : 'rg';
+      return environment.path?.join(homeDir, '.kimi-code', 'bin', binary) ?? `${homeDir}/.kimi-code/bin/${binary}`;
+    }
   }
   return getShareBinRgPath();
 }

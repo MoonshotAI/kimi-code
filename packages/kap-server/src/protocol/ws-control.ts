@@ -6,6 +6,12 @@ import { transcriptGradeSpecSchema, transcriptSeqSchema } from '@moonshot-ai/tra
 import { pushEventSchema } from './events-zod';
 import { interactionEventMessageSchema } from './interaction';
 import {
+  agentEventMessageSchema,
+  goalEventMessageSchema,
+  todoEventMessageSchema,
+  usageEventMessageSchema,
+} from './ws-agent';
+import {
   taskBackgroundMessageSchema,
   taskEventMessageSchema,
   taskListMessageSchema,
@@ -350,6 +356,42 @@ export const taskOutputEventOperation = {
     'Task output starting at a UTF-8 byte offset, sent only to connections watching the task.',
 } as const satisfies WsOperationDefinition;
 
+export const agentEventOperation = {
+  type: 'agent',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: agentEventMessageSchema,
+  description:
+    'Status, model, thinking effort, permission mode and plan / swarm / tower mode switches of one subscribed agent, sent when a connection starts receiving that agent and on every change; it replaces the client copy.',
+} as const satisfies WsOperationDefinition;
+
+export const usageEventOperation = {
+  type: 'usage',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: usageEventMessageSchema,
+  description:
+    'Context window usage of one subscribed agent, sent when a connection starts receiving that agent and then at most a few times per second while it changes; only the latest value matters.',
+} as const satisfies WsOperationDefinition;
+
+export const goalEventOperation = {
+  type: 'goal',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: goalEventMessageSchema,
+  description:
+    'Goal of the main agent, sent when a connection starts receiving it and on every change; goal is omitted when the session has none.',
+} as const satisfies WsOperationDefinition;
+
+export const todoEventOperation = {
+  type: 'todo',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: todoEventMessageSchema,
+  description:
+    'Todo list of one subscribed agent, sent when a connection starts receiving that agent and on every change, including undo; it replaces the client list.',
+} as const satisfies WsOperationDefinition;
+
 export const wsOperations = [
   ...clientControlOperations,
   ...serverSystemOperations,
@@ -358,6 +400,10 @@ export const wsOperations = [
   taskListEventOperation,
   taskEventOperation,
   taskOutputEventOperation,
+  agentEventOperation,
+  usageEventOperation,
+  goalEventOperation,
+  todoEventOperation,
 ] as const satisfies readonly WsOperationDefinition[];
 
 export function getClientControlOperation(

@@ -65,6 +65,17 @@ export {
   redact,
   resolveGlobalLogPath,
 } from '#/logging/index';
+export {
+  computeUpdateStatus,
+  isMissingMarketplaceTokenError,
+  isTrustedPluginMarketplaceUrl,
+  KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
+  parsePluginMarketplace,
+  PLUGIN_MARKETPLACE_CLASSIFICATIONS,
+  PLUGIN_MARKETPLACE_TIERS,
+  readPluginMarketplace,
+  withLatestVersions,
+} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
 export { resolveKimiHome } from '@moonshot-ai/agent-core-v2';
 export type { LogContext, LogLevel, LogPayload, Logger } from '#/logging/index';
 

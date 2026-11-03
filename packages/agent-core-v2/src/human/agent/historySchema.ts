@@ -93,7 +93,7 @@ export const toolMessageSchema = z.object({
 const tokenUsageSchema = z.object({
   inputOther: z.number(),
   output: z.number(),
-  inputCacheRead: z.number(),
+  inputCacheRead: z.number().optional(),
   inputCacheCreation: z.number(),
   raw: z.record(z.string(), z.unknown()).optional(),
 });

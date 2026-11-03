@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter } from '#/_base/event';
+import { REMOTE_SHELL_PATH_BRIDGE } from '#/_base/execEnv/shellPathBridge';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService, type ConfigSectionChangedEvent } from '#/app/config/config';
 import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
@@ -223,6 +224,36 @@ describe('RemoteEnvironmentProviderFactory', () => {
     expect(placeholder.path?.join('/a', 'b')).toBe('/a/b');
     expect(placeholder.workspace?.mapRoots({ workDir: 'rel' }).workDir).toBe(placeholder.path?.resolve('rel'));
     expect(statuses[0]).toBe('connecting');
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('uses target-native paths for a Windows executor', async () => {
+    const registry = new EnvironmentRegistry();
+    const session = connectedSession();
+    Object.assign(session.host, {
+      osKind: 'Windows',
+      shellName: 'bash',
+      pathClass: 'win32',
+      homeDir: 'C:\\Users\\me',
+      cwd: 'C:\\work',
+      tempDir: 'C:\\Temp',
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: async () => session }));
+    const attachment = await factory.attach(fakeHost(baseServices(registry), registry));
+
+    await registry.current('dev-box')!.connect!();
+    const environment = registry.current('dev-box')!;
+    expect(environment.path?.separator).toBe('\\');
+    expect(environment.path?.delimiter).toBe(';');
+    expect(environment.path?.isAbsolute('C:\\work')).toBe(true);
+    expect(environment.path?.join('C:\\work', 'src')).toBe('C:\\work\\src');
+    expect(environment.workspace?.mapRoots({ workDir: 'C:\\work\\.\\project\\sub\\..' })).toEqual({
+      workDir: 'C:\\work\\project',
+      additionalDirs: undefined,
+    });
+    expect(environment.shellPathBridge).toBe(REMOTE_SHELL_PATH_BRIDGE);
 
     await attachment.dispose();
     await registry.dispose();

@@ -183,6 +183,14 @@ export interface PromptLaunchResult {
   readonly turn_id: number;
 }
 
+export interface SteerResult {
+  readonly turn_id?: number;
+  readonly prompt_id: string;
+  readonly created_at: string;
+  readonly state: 'running' | 'queued' | 'blocked';
+  readonly steered?: boolean;
+}
+
 export interface PromptSubmitContext {
   readonly promptMessage: ContextMessage;
   readonly isSteer: boolean;
@@ -219,6 +227,8 @@ export interface IAgentLoopService {
   settled(): Promise<void>;
 
   tryAcquireQuiescence(): IDisposable | undefined;
+
+  tryAcquireHistorySnapshot(): IDisposable | undefined;
 
   notify(note?: LoopNotify): LoopNotifyHandle;
 
