@@ -497,3 +497,41 @@ describe('Markdown mermaid copy source', () => {
     }
   });
 });
+
+describe('Markdown child render cache', () => {
+  const source = '# Title\n\nbody text that is long enough to wrap when the width is small';
+
+  it('returns the same array when nothing changed between renders', () => {
+    const markdown = new Markdown(source, 0, 0, createMarkdownTheme());
+    const first = markdown.render(80);
+    expect(markdown.render(80)).toBe(first);
+  });
+
+  it('matches pi-tui Markdown after a width change and back', () => {
+    const markdown = new Markdown(source, 0, 0, createMarkdownTheme());
+    const wide = markdown.render(80);
+    const plain = new PiMarkdown(source, 0, 0, createMarkdownTheme());
+    expect(markdown.render(20)).toEqual(plain.render(20));
+    expect(markdown.render(80)).toEqual(wide);
+  });
+
+  it('re-renders when the text changes', () => {
+    const markdown = new Markdown(source, 0, 0, createMarkdownTheme());
+    const first = markdown.render(80);
+    markdown.setText('# Other');
+    const second = markdown.render(80);
+    expect(second).not.toBe(first);
+    expect(second).toEqual(new PiMarkdown('# Other', 0, 0, createMarkdownTheme()).render(80));
+  });
+
+  it('re-renders after a theme change once invalidated', () => {
+    const markdown = new Markdown(source, 0, 0, createMarkdownTheme());
+    const dark = markdown.render(80);
+    currentTheme.setPalette(lightColors);
+    markdown.invalidate();
+    const light = markdown.render(80);
+    expect(light).not.toBe(dark);
+    expect(light).not.toEqual(dark);
+    expect(light).toEqual(new PiMarkdown(source, 0, 0, createMarkdownTheme()).render(80));
+  });
+});
