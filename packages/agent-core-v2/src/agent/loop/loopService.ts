@@ -178,7 +178,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly cancelOnLaunch = new Map<string, unknown>();
   private readonly onDidChangeQueueEmitter = this._register(new Emitter<void>());
   readonly onDidChangeQueue = this.onDidChangeQueueEmitter.event;
-  private queueLock: IDisposable | undefined;
+  private workLock: IDisposable | undefined;
   private activeRequestTrace: LLMRequestTrace | undefined;
   private engine: MachineEngine | undefined;
 
@@ -213,16 +213,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await next();
     });
     this._register(toDisposable(() => this.disarmTurnWatch()));
-    this._register(this.onDidChangeQueue(() => this.syncQueueLock()));
-    this._register(toDisposable(() => this.queueLock?.dispose()));
+    this._register(this.onDidChangeQueue(() => this.syncWorkLock()));
+    this._register(toDisposable(() => this.workLock?.dispose()));
   }
 
-  private syncQueueLock(): void {
-    const waiting = this.snapshot().queue.length > 0;
-    if (waiting && this.queueLock === undefined) this.queueLock = this.runGate.retain();
-    if (!waiting && this.queueLock !== undefined) {
-      this.queueLock.dispose();
-      this.queueLock = undefined;
+  private syncWorkLock(): void {
+    const queued = this.snapshot().queue.length > 0;
+    const running = this.active !== undefined || this.pendingMachineTurn !== undefined;
+    if (queued && this.workLock === undefined) this.workLock = this.runGate.retain();
+    if (!queued && !running && this.workLock !== undefined) {
+      this.workLock.dispose();
+      this.workLock = undefined;
     }
   }
 

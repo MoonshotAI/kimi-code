@@ -1215,15 +1215,50 @@ describe('Agent loop', () => {
     begin.mockRestore();
   });
 
-  it('keeps the session lock while prompts wait in the queue', () => {
+  it('keeps the session lock from queueing until the queued prompt finishes its turn', async () => {
     const locks = ctx.get(ISessionLockService);
+    const gate = ctx.get(ISessionRunGate);
+    const retain = gate.retain.bind(gate);
+    const lock: string[] = [];
+    const spy = vi.spyOn(gate, 'retain').mockImplementation(() => {
+      lock.push('retain');
+      const held = retain();
+      return {
+        dispose: () => {
+          lock.push('release');
+          held.dispose();
+        },
+      };
+    });
     loop.pauseQueue();
-    const waiting = submitTracked(loop, 'waiting');
+    const withdrawn = submitTracked(loop, 'withdrawn');
     locks.release('test-session');
     expect(locks.held('test-session')).toBe(true);
-
-    expect(loop.cancel({ promptId: waiting })).toBe(true);
+    expect(loop.cancel({ promptId: withdrawn })).toBe(true);
     expect(locks.held('test-session')).toBe(false);
+    expect(lock).toEqual(['retain', 'release']);
+
+    const started = deferred();
+    const release = deferred();
+    const hook = loop.hooks.onWillBeginStep.register('test-hold-step', async (_step, next) => {
+      started.resolve();
+      await release.promise;
+      await next();
+    });
+    const waiting = submitTracked(loop, 'waiting');
+    ctx.mockNextResponse({ type: 'text', text: 'answer' });
+    loop.resumeQueue();
+    await started.promise;
+    expect(loop.snapshot().queue).toEqual([]);
+    locks.release('test-session');
+    expect(locks.held('test-session')).toBe(true);
+    expect(lock).toEqual(['retain', 'release', 'retain']);
+
+    release.resolve();
+    await expect(loop.promptHandle(waiting)!.completion).resolves.toMatchObject({ state: 'completed' });
+    expect(lock).toEqual(['retain', 'release', 'retain', 'release']);
+    hook.dispose();
+    spy.mockRestore();
   });
 
   it('refuses to steer prompts that start Plan mode or a goal, or prompts queued behind them', async () => {
