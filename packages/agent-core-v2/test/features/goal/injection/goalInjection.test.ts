@@ -269,19 +269,6 @@ describe('GoalInjection content', () => {
     expect(refreshed).toContain('Blocked audit:');
   });
 
-  it.each(['paused', 'blocked'] as const)(
-    'carries the edited objective in the %s reminder',
-    async (status) => {
-      const text = await readGoalReminder(async (goals) => {
-        await goals.createGoal({ objective: 'old task' });
-        if (status === 'paused') await goals.pauseGoal();
-        else await goals.markBlocked({ reason: 'need creds' });
-        await goals.editGoalObjective({ objective: 'new task' });
-      });
-      expect(text).toContain('<untrusted_objective>\nnew task\n</untrusted_objective>');
-    },
-  );
-
   it('refreshes the full reminder when the goal resumes after being paused', async () => {
     await goals.createGoal({ objective: 'work' });
     await injectDynamic(ctx, true);

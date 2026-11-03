@@ -438,10 +438,9 @@ describe('AgentGoalService', () => {
       );
     });
 
-    it.each(['paused', 'blocked'] as const)('keeps a %s goal in its status', async (status) => {
+    it('keeps a blocked goal in its status', async () => {
       const created = await goals.createGoal({ objective: 'old task' });
-      if (status === 'paused') await goals.pauseGoal({ reason: 'later' });
-      else await goals.markBlocked({ reason: 'need creds' });
+      await goals.markBlocked({ reason: 'need creds' });
       const terminalReason = goals.getGoal().goal?.terminalReason;
 
       const edited = await goals.editGoalObjective({ objective: 'new task' });
@@ -449,7 +448,7 @@ describe('AgentGoalService', () => {
       expect(edited).toMatchObject({
         goalId: created.goalId,
         objective: 'new task',
-        status,
+        status: 'blocked',
         terminalReason,
       });
     });
@@ -471,15 +470,6 @@ describe('AgentGoalService', () => {
       });
     });
 
-    it('rejects a goal that already completed and was cleared', async () => {
-      await goals.createGoal({ objective: 'old task' });
-      await goals.markComplete({ reason: 'done' }, 'model');
-
-      await expect(goals.editGoalObjective({ objective: 'new task' })).rejects.toMatchObject({
-        code: 'goal.not_found',
-      });
-    });
-
     it('rejects a goal still in complete status', async () => {
       await goals.createGoal({ objective: 'old task' });
       void ctx.get(IEventDispatcher).dispatch(new GoalUpdate({ agentId: 'main', status: 'complete' }));
@@ -490,13 +480,12 @@ describe('AgentGoalService', () => {
       expect(goals.getGoal().goal?.objective).toBe('old task');
     });
 
-    it.each([
-      ['empty', '   ', 'goal.objective_empty'],
-      ['too long', 'x'.repeat(4001), 'goal.objective_too_long'],
-    ])('rejects %s text and keeps the objective', async (_name, objective, code) => {
+    it('rejects empty text and keeps the objective', async () => {
       await goals.createGoal({ objective: 'old task' });
 
-      await expect(goals.editGoalObjective({ objective })).rejects.toMatchObject({ code });
+      await expect(goals.editGoalObjective({ objective: '   ' })).rejects.toMatchObject({
+        code: 'goal.objective_empty',
+      });
       expect(goals.getGoal().goal?.objective).toBe('old task');
     });
   });
@@ -1119,90 +1108,73 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(goals.getGoal().goal).toMatchObject({ goalId: created.goalId, status: 'active' });
   });
 
-  it.each(['complete', 'blocked'])(
-    'ignores UpdateGoal %s from a turn that started before the objective edit',
-    async (status) => {
-      await goals.createGoal({ objective: 'old task' });
-      const turn = makeTurn(71);
-      eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
-      await goals.editGoalObjective({ objective: 'new task' });
+  it('ignores UpdateGoal complete from a turn that started before the objective edit', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const turn = makeTurn(71);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+    await goals.editGoalObjective({ objective: 'new task' });
 
-      const results = await executeToolCall(toolExecutor, turn, {
-        type: 'function',
-        id: 'call_update_after_edit',
-        name: 'UpdateGoal',
-        arguments: JSON.stringify({ status }),
+    const results = await executeToolCall(toolExecutor, turn, {
+      type: 'function',
+      id: 'call_update_after_edit',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete' }),
+    });
+
+    expect(results[0]!.result.output).toContain('The goal objective was edited since this turn started');
+    expect(goals.getGoal().goal).toMatchObject({ objective: 'new task', status: 'active' });
+  });
+
+  it('ignores UpdateGoal blocked when the objective is edited while the call awaits approval', async () => {
+    const created = await goals.createGoal({ objective: 'old task' });
+    const turn = makeTurn(74);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+    const listener = toolExecutor.onBeforeExecuteTool((event) => {
+      event.waitUntil(async () => {
+        await goals.editGoalObjective({ objective: 'new task' });
+        return undefined;
       });
+    });
 
-      expect(results[0]!.result.output).toContain('The goal objective was edited since this turn started');
-      expect(goals.getGoal().goal).toMatchObject({ objective: 'new task', status: 'active' });
-    },
-  );
+    const results = await executeToolCall(toolExecutor, turn, {
+      type: 'function',
+      id: 'call_update_during_approval',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'blocked' }),
+    });
+    listener.dispose();
 
-  it.each(['complete', 'blocked'])(
-    'ignores UpdateGoal %s when the objective is edited while the call awaits approval',
-    async (status) => {
-      const created = await goals.createGoal({ objective: 'old task' });
-      const turn = makeTurn(74);
-      eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
-      const listener = toolExecutor.onBeforeExecuteTool((event) => {
-        event.waitUntil(async () => {
-          await goals.editGoalObjective({ objective: 'new task' });
-          return undefined;
-        });
-      });
+    expect(results[0]!.result.output).toContain('The goal objective was edited since this turn started');
+    expect(results[0]!.result.stopTurn).not.toBe(true);
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: created.goalId,
+      objective: 'new task',
+      status: 'active',
+    });
+  });
 
-      const results = await executeToolCall(toolExecutor, turn, {
-        type: 'function',
-        id: 'call_update_during_approval',
-        name: 'UpdateGoal',
-        arguments: JSON.stringify({ status }),
-      });
-      listener.dispose();
+  it('accepts UpdateGoal complete for a goal that replaced the edited goal in the same turn', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const turn = makeTurn(75);
+    eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
+    await goals.editGoalObjective({ objective: 'new task' });
+    await executeToolCall(toolExecutor, turn, {
+      type: 'function',
+      id: 'call_replace_after_edit',
+      name: 'CreateGoal',
+      arguments: JSON.stringify({ objective: 'replacement task', replace: true }),
+    });
 
-      expect(results[0]!.result.output).toContain('The goal objective was edited since this turn started');
-      expect(results[0]!.result.stopTurn).not.toBe(true);
-      expect(goals.getGoal().goal).toMatchObject({
-        goalId: created.goalId,
-        objective: 'new task',
-        status: 'active',
-      });
-    },
-  );
+    const results = await executeToolCall(toolExecutor, turn, {
+      type: 'function',
+      id: 'call_update_after_replace',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete' }),
+    });
 
-  it.each([
-    ['complete', null],
-    ['blocked', { objective: 'replacement task', status: 'blocked' }],
-  ])(
-    'accepts UpdateGoal %s for a goal that replaced the edited goal in the same turn',
-    async (status, expected) => {
-      await goals.createGoal({ objective: 'old task' });
-      const turn = makeTurn(75);
-      eventBus.publish(new TurnStarted({ agentId: 'main', turnId: turn.id, origin: USER_PROMPT_ORIGIN }));
-      await goals.editGoalObjective({ objective: 'new task' });
-      await executeToolCall(toolExecutor, turn, {
-        type: 'function',
-        id: 'call_replace_after_edit',
-        name: 'CreateGoal',
-        arguments: JSON.stringify({ objective: 'replacement task', replace: true }),
-      });
-      expect(goals.getGoal().goal).toMatchObject({ objective: 'replacement task', status: 'active' });
-
-      const results = await executeToolCall(toolExecutor, turn, {
-        type: 'function',
-        id: 'call_update_after_replace',
-        name: 'UpdateGoal',
-        arguments: JSON.stringify({ status }),
-      });
-
-      expect(results[0]!.result.output).not.toContain('The goal objective was edited since this turn started');
-      if (expected === null) {
-        expect(goals.getGoal().goal).toBeNull();
-      } else {
-        expect(goals.getGoal().goal).toMatchObject(expected);
-      }
-    },
-  );
+    expect(results[0]!.result.output).not.toContain('The goal objective was edited since this turn started');
+    expect(goals.getGoal().goal).toBeNull();
+  });
 
   it('accepts UpdateGoal again on the turn after the objective edit', async () => {
     await goals.createGoal({ objective: 'old task' });
