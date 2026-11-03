@@ -8,7 +8,10 @@ import { resetCapabilitiesCache, setCapabilities, type Component } from '@moonsh
 
 import { __pluginsCommandInternals } from '#/tui/commands/plugins';
 import { NoticeMessageComponent } from '#/tui/components/messages/status-message';
-import { capabilityIdForMarketplaceEntry } from '#/tui/utils/capability-marketplace';
+import {
+  capabilityIdForMarketplaceEntry,
+  installedPluginForMarketplaceEntry,
+} from '#/tui/utils/capability-marketplace';
 
 const {
   installCapabilityFromPanel,
@@ -177,6 +180,16 @@ describe('plugins command capability surface', () => {
     expect(capabilityIdForMarketplaceEntry('kimi-browser-extension', false)).toBeUndefined();
     expect(capabilityIdForMarketplaceEntry('kimi-cu', false)).toBeUndefined();
     expect(capabilityIdForMarketplaceEntry('superpowers', true)).toBeUndefined();
+  });
+
+  it('matches ordinary marketplace installs by catalog provenance', () => {
+    const custom = installedPlugin('demo');
+    const marketplace = { ...installedPlugin('renamed'), origin: 'marketplace' as const, catalogId: 'demo' };
+    const legacy = { ...installedPlugin('demo'), origin: 'unknown' as const };
+
+    expect(installedPluginForMarketplaceEntry('demo', [custom], undefined, true)).toBeUndefined();
+    expect(installedPluginForMarketplaceEntry('demo', [marketplace], undefined, true)).toBe(marketplace);
+    expect(installedPluginForMarketplaceEntry('demo', [legacy], undefined, true)).toBe(legacy);
   });
 
   it('installs ordinary marketplace entries by id, expected version and digest', async () => {

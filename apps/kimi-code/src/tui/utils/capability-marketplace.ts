@@ -49,7 +49,10 @@ export function installedPluginForMarketplaceEntry(
   catalogIsDefault: boolean,
 ): PluginSummary | undefined {
   const capabilityId = capabilityIdForMarketplaceEntry(entryId, catalogIsDefault);
-  if (capabilityId === undefined) return installed.find((plugin) => plugin.id === entryId);
+  if (capabilityId === undefined) {
+    return installed.find((plugin) => plugin.catalogId === entryId) ??
+      installed.find((plugin) => plugin.id === entryId && plugin.origin === 'unknown');
+  }
   const pluginIds =
     capability?.pluginId === undefined
       ? CAPABILITY_PLUGIN_IDS[capabilityId]
