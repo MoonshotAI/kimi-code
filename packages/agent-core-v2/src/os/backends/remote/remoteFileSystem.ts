@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   decodeTextWithErrors,
   readUtf8Lines,
@@ -99,6 +101,17 @@ export class RemoteFileSystem implements IHostFileSystem {
   }
 
   private async writeChunked(path: string, data: Uint8Array, mode: FsWriteMode): Promise<void> {
+    if (data.byteLength > FS_WRITE_FILE_CHUNK_BYTES && mode === 'truncate') {
+      const staged = `${path}.tmp-${randomUUID()}`;
+      try {
+        await this.writeChunked(staged, data, 'exclusive');
+        await this.rename(staged, path);
+      } catch (error) {
+        await this.remove(staged).catch(() => {});
+        throw error;
+      }
+      return;
+    }
     if (data.byteLength <= FS_WRITE_FILE_CHUNK_BYTES) {
       await this.writeMode(path, data, mode);
       return;
@@ -159,25 +172,39 @@ export class RemoteFileSystem implements IHostFileSystem {
       await this.writeChunked(path, data, 'truncate');
       return;
     }
-    let mode: FsWriteMode = 'truncate';
+    let staged: string | undefined;
+    let mode: FsWriteMode = 'exclusive';
     const pending = new Uint8Array(FS_WRITE_FILE_CHUNK_BYTES);
     let pendingBytes = 0;
-    for await (const chunk of data) {
-      let offset = 0;
-      while (offset < chunk.byteLength) {
-        const length = Math.min(pending.byteLength - pendingBytes, chunk.byteLength - offset);
-        pending.set(chunk.subarray(offset, offset + length), pendingBytes);
-        pendingBytes += length;
-        offset += length;
-        if (pendingBytes === pending.byteLength) {
-          await this.writeMode(path, pending, mode);
-          mode = 'append';
-          pendingBytes = 0;
+    try {
+      for await (const chunk of data) {
+        let offset = 0;
+        while (offset < chunk.byteLength) {
+          if (pendingBytes === pending.byteLength) {
+            staged ??= `${path}.tmp-${randomUUID()}`;
+            await this.writeMode(staged, pending, mode);
+            mode = 'append';
+            pendingBytes = 0;
+          }
+          const length = Math.min(pending.byteLength - pendingBytes, chunk.byteLength - offset);
+          pending.set(chunk.subarray(offset, offset + length), pendingBytes);
+          pendingBytes += length;
+          offset += length;
         }
       }
-    }
-    if (pendingBytes > 0 || mode === 'truncate') {
-      await this.writeMode(path, pending.subarray(0, pendingBytes), mode);
+      if (staged === undefined) {
+        await this.writeMode(path, pending.subarray(0, pendingBytes), 'truncate');
+        return;
+      }
+      if (pendingBytes > 0) {
+        await this.writeMode(staged, pending.subarray(0, pendingBytes), 'append');
+      }
+      await this.rename(staged, path);
+    } catch (error) {
+      if (staged !== undefined) {
+        await this.remove(staged).catch(() => {});
+      }
+      throw error;
     }
   }
 

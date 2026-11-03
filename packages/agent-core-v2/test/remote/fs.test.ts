@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -14,7 +14,10 @@ import {
   FS_READ_DIRECTORY_MAX_ENTRIES,
   FS_READ_DIRECTORY_METHOD,
   FS_READ_FILE_WHOLE_MAX_BYTES,
+  FS_RENAME_METHOD,
   FS_WALK_METHOD,
+  FS_WRITE_FILE_CHUNK_BYTES,
+  FS_WRITE_FILE_METHOD,
 } from '#/remote/protocol/methods';
 import {
   connectInProcess,
@@ -82,14 +85,14 @@ describe('fs group over a subprocess loopback', () => {
     expect(await readFile(path, 'utf8')).toBe('before\nnew value\n');
   });
 
-  it('writes a byte stream progressively without retaining the complete input', async () => {
+  it('stages a byte stream without retaining the complete input', async () => {
     const path = join(workDir, 'stream.bin');
     await fs.writeText(path, 'old content');
     const chunkSize = 2 * 1024 * 1024 + 3;
     async function* input(): AsyncGenerator<Uint8Array> {
       for (let index = 1; index <= 3; index += 1) {
         yield new Uint8Array(chunkSize).fill(index);
-        expect((await fs.stat(path)).size).toBeGreaterThanOrEqual((index - 1) * chunkSize);
+        expect(await fs.readText(path)).toBe('old content');
       }
     }
     await fs.writeBytes(path, input());
@@ -101,15 +104,60 @@ describe('fs group over a subprocess loopback', () => {
       Buffer.alloc(chunkSize, 2),
       Buffer.alloc(chunkSize, 3),
     ]))).toBe(true);
+    expect((await readdir(workDir)).filter((name) => name.startsWith('stream.bin.tmp-'))).toEqual([]);
+  });
+
+  it('keeps the original file when a chunked overwrite fails', async () => {
+    const path = join(workDir, 'atomic.bin');
+    await fs.writeText(path, 'old content');
+    const originalCall = connection.call.bind(connection);
+    let writeCalls = 0;
+    const calls = vi.spyOn(connection, 'call').mockImplementation(async (method, params) => {
+      if (method === FS_WRITE_FILE_METHOD) {
+        writeCalls += 1;
+        if (writeCalls === 2) throw new Error('injected write failure');
+      }
+      return originalCall(method, params);
+    });
+
+    await expect(fs.writeText(path, 'x'.repeat(2 * FS_WRITE_FILE_CHUNK_BYTES))).rejects.toThrow('injected write failure');
+
+    expect(await readFile(path, 'utf8')).toBe('old content');
+    expect(calls.mock.calls.filter(([method]) => method === FS_RENAME_METHOD)).toHaveLength(0);
+    expect((await readdir(workDir)).filter((name) => name.startsWith('atomic.bin.tmp-'))).toEqual([]);
+  });
+
+  it('keeps the original file when a staged stream fails', async () => {
+    const path = join(workDir, 'stream-failure.bin');
+    await fs.writeText(path, 'old content');
+    async function* input(): AsyncGenerator<Uint8Array> {
+      yield new Uint8Array(2 * FS_WRITE_FILE_CHUNK_BYTES).fill(1);
+      expect(await fs.readText(path)).toBe('old content');
+      throw new Error('injected stream failure');
+    }
+
+    await expect(fs.writeBytes(path, input())).rejects.toThrow('injected stream failure');
+
+    expect(await readFile(path, 'utf8')).toBe('old content');
+    expect((await readdir(workDir)).filter((name) => name.startsWith('stream-failure.bin.tmp-'))).toEqual([]);
   });
 
   it('round-trips binary data written across chunk boundaries', async () => {
     const path = join(workDir, 'binary.bin');
     const data = new Uint8Array(2 * 1024 * 1024 + 7);
     for (let i = 0; i < data.byteLength; i += 1) data[i] = (i * 131 + 7) % 256;
+    const calls = vi.spyOn(connection, 'call');
     await fs.writeBytes(path, data);
     await fs.appendText(path, '中'.repeat(400 * 1024));
 
+    expect(calls.mock.calls.map(([method]) => method)).toEqual([
+      FS_WRITE_FILE_METHOD,
+      FS_WRITE_FILE_METHOD,
+      FS_WRITE_FILE_METHOD,
+      FS_RENAME_METHOD,
+      FS_WRITE_FILE_METHOD,
+      FS_WRITE_FILE_METHOD,
+    ]);
     const read = await fs.readBytes(path);
     expect(Buffer.from(read).equals(Buffer.concat([Buffer.from(data), Buffer.from('中'.repeat(400 * 1024))]))).toBe(true);
   }, 30_000);
@@ -166,8 +214,10 @@ describe('fs group over a subprocess loopback', () => {
     async function* input(): AsyncGenerator<Uint8Array> {
       yield* [];
     }
+    const calls = vi.spyOn(connection, 'call');
     await fs.writeBytes(path, input());
 
+    expect(calls.mock.calls.map(([method]) => method)).toEqual([FS_WRITE_FILE_METHOD]);
     expect((await fs.stat(path)).size).toBe(0);
     await expect(fs.readBytes(path)).resolves.toEqual(new Uint8Array(0));
   });
