@@ -5,6 +5,10 @@ import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/share
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ILogger as Logger } from '#/_base/log/log';
+import {
+  createMcpAuthTool,
+  MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
+} from '#/agent/mcp/tools/auth';
 import * as callbackServerModule from '#/mcpCore/oauth/callback-server';
 import {
   META_SUFFIX,
@@ -19,7 +23,7 @@ import {
 } from '#/mcpCore/oauth/service';
 import { mcpOAuthStoreKey, type McpOAuthStore } from '#/mcpCore/oauth/store';
 
-import { createMemoryMcpOAuthStore, ManualMcpOAuthScheduler } from '../stubs';
+import { createMemoryMcpOAuthStore, executeTool, ManualMcpOAuthScheduler } from '../stubs';
 
 const SERVER_NAME = 'notion';
 const SERVER_URL = 'https://mcp.example.test/mcp';
@@ -1038,6 +1042,75 @@ describe('McpOAuthService interactive flow serialization', () => {
     expect(authServer.counts.exchange).toBe(1);
   }, 15000);
 
+  it('cancels an active authenticate tool wait by ID while another waiter completes', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+    const signal = new AbortController().signal;
+    const reconnect = vi.fn(async () => undefined);
+    let resolveWaitId!: (waitId: string) => void;
+    const ready = new Promise<string>((resolve) => {
+      resolveWaitId = resolve;
+    });
+    const tool = createMcpAuthTool({
+      serverName: SERVER_NAME,
+      serverUrl: SERVER_URL,
+      oauthService: fixture.service,
+      reconnect,
+    });
+    const result = executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'auth-call',
+      args: {},
+      signal,
+      onUpdate: (update) => {
+        if (update.customKind === MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE) {
+          resolveWaitId((update.customData as { waitId: string }).waitId);
+        }
+      },
+    });
+    const waitId = await ready;
+    expect(waitId).toEqual(expect.any(String));
+    const second = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const completion = second.complete({ timeoutMs: 10_000 });
+
+    await fixture.service.cancelAuthorizationWait(waitId);
+    const cancelled = await result;
+    expect(cancelled.isError).toBe(true);
+    expect(cancelled.output).toMatch(/cancelled/);
+    expect(cancelled.stopTurn).toBeUndefined();
+    expect(signal.aborted).toBe(false);
+    expect(reconnect).not.toHaveBeenCalled();
+
+    await deliverCallback(second);
+    await completion;
+    await fixture.service.cancelAuthorizationWait(waitId);
+    await fixture.service.cancelAuthorizationWait(second.waitId);
+    expect(authServer.counts.exchange).toBe(1);
+    expect((await fixture.service.tokenState(SERVER_NAME, SERVER_URL)).hasTokens).toBe(true);
+  }, 15000);
+
+  it('keeps a joined completion alive when the first completing caller aborts', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+    const first = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const second = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const controller = new AbortController();
+    const firstCompletion = first.complete({ signal: controller.signal, timeoutMs: 10_000 });
+    const rejected = expect(firstCompletion).rejects.toThrow();
+    const secondCompletion = second.complete({ timeoutMs: 10_000 });
+    controller.abort();
+    await rejected;
+    await deliverCallback(second);
+    await secondCompletion;
+    expect(authServer.counts.exchange).toBe(1);
+  }, 15000);
+
   it('keeps the shared flow active when the first handle cancels, so a joined handle completes', async () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.dispose());
@@ -1119,6 +1192,30 @@ describe('McpOAuthService interactive flow serialization', () => {
     expect(hanging.counts.requests).toBeGreaterThan(0);
     expect(authServer.counts.exchange).toBe(1);
     expect((await fixture.service.tokenState(SERVER_NAME, hanging.url)).hasTokens).toBe(true);
+  }, 15000);
+
+  it('keeps the callback timeout from limiting the token exchange', async () => {
+    const gated = await startGatedExchangeAuthServer();
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    cleanups.push(() => {
+      gated.releaseExchange();
+    });
+    const provider = fixture.service.getProvider(SERVER_NAME, gated.url);
+    await provider.ready;
+    const state = authServerState(gated.url);
+    await provider.saveDiscoveryState(state.discovery);
+    await provider.saveClientInformation(state.client);
+    const flow = await fixture.service.beginAuthorization(SERVER_NAME, gated.url);
+    const timeoutMs = 100;
+    const complete = flow.complete({ timeoutMs });
+    const completion = complete.then(() => undefined, (error: unknown) => error);
+    await deliverCallback(flow);
+    await gated.exchangeStarted;
+    await new Promise((resolve) => setTimeout(resolve, timeoutMs + 20));
+    gated.releaseExchange();
+    expect(await completion).toBeUndefined();
+    expect((await fixture.service.tokenState(SERVER_NAME, gated.url)).hasTokens).toBe(true);
   }, 15000);
 
   it('rejects completion without writing tokens when the caller aborts after the callback', async () => {
