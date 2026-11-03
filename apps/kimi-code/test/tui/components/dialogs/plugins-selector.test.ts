@@ -422,7 +422,7 @@ describe('plugins selector dialogs', () => {
   });
 
   it('Enter on an installed plugin with an available update installs it', () => {
-    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0', origin: 'unknown' as const }];
     const entries = [
       {
         id: 'superpowers',
@@ -461,7 +461,7 @@ describe('plugins selector dialogs', () => {
   });
 
   it('I on an installed plugin opens details even when an update is available', () => {
-    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0', origin: 'unknown' as const }];
     const entries = [
       {
         id: 'superpowers',
@@ -634,7 +634,14 @@ describe('plugins selector dialogs', () => {
     const first = makeMarketplaceEntry('first', desktopPlatforms, 'First');
     const second = makeMarketplaceEntry('second', desktopPlatforms, 'Second');
     const third = makeMarketplaceEntry('third', desktopPlatforms, 'Third');
-    const installed = { ...superpowers, id: 'second', displayName: 'Second', version: '1.0.0' };
+    const installed = {
+      ...superpowers,
+      id: 'second',
+      displayName: 'Second',
+      version: '1.0.0',
+      origin: 'marketplace' as const,
+      catalogId: 'second',
+    };
     const { panel } = makePanel({ installed: [installed], initialTab: 'official' });
     panel.setMarketplace([first, second, third], '/tmp/marketplace.json');
 
@@ -849,7 +856,7 @@ describe('plugins selector dialogs', () => {
   });
 
   it('shows an update badge when the marketplace version is newer than installed', () => {
-    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0', origin: 'unknown' as const }];
     const entries = [
       {
         id: 'superpowers',
@@ -867,7 +874,7 @@ describe('plugins selector dialogs', () => {
   });
 
   it('shows an update badge on the Installed tab when the marketplace version is newer', () => {
-    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0', origin: 'unknown' as const }];
     const entries = [
       {
         id: 'superpowers',
@@ -882,6 +889,26 @@ describe('plugins selector dialogs', () => {
     panel.setMarketplace(entries, '/tmp/marketplace.json');
     const out = strip(renderRaw(panel));
     expect(out).toContain('Superpowers  enabled  update 4.0.0 → 5.0.0');
+  });
+
+  it('does not offer marketplace updates for same-id custom installs', () => {
+    const installed = [{ ...superpowers, version: '4.0.0', source: 'github' as const }];
+    const entries = [
+      {
+        id: 'superpowers',
+        tier: 'curated' as const,
+        displayName: 'Superpowers',
+        version: '5.0.0',
+        platforms: desktopPlatforms,
+        source: 'https://x/s.zip',
+      },
+    ];
+    const { panel, onSelect } = makePanel({ installed });
+    panel.setMarketplace(entries, '/tmp/marketplace.json');
+
+    expect(strip(renderRaw(panel))).not.toContain('update 4.0.0 → 5.0.0');
+    panel.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'details', id: 'superpowers' });
   });
 
   it('updates the Windows backing plugin through its capability entry', () => {
@@ -1094,7 +1121,7 @@ describe('plugins selector dialogs', () => {
   });
 
   it('does not show an update badge on the Installed tab before the marketplace loads', () => {
-    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0' }];
+    const installed = [{ ...superpowers, id: 'superpowers', version: '4.0.0', origin: 'unknown' as const }];
     const { panel } = makePanel({ installed });
     // The marketplace has not been loaded yet, so the badge stays hidden rather
     // than guessing.
@@ -1103,7 +1130,13 @@ describe('plugins selector dialogs', () => {
   });
 
   it('shows installed · v<version> when the installed plugin is up to date', () => {
-    const installed = [{ ...superpowers, id: 'superpowers', version: '5.0.0' }];
+    const installed = [{
+      ...superpowers,
+      id: 'superpowers',
+      version: '5.0.0',
+      origin: 'marketplace' as const,
+      catalogId: 'superpowers',
+    }];
     const entries = [
       {
         id: 'superpowers',

@@ -28,7 +28,8 @@ function makePluginSummary(overrides: Partial<PluginSummary> = {}): PluginSummar
     commandCount: 0,
     hasErrors: false,
     source: 'zip-url',
-    origin: 'custom',
+    origin: 'marketplace',
+    catalogId: 'kimi-datasource',
     installedAt: '2026-01-01T00:00:00.000Z',
     originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-datasource.zip',
     ...overrides,
@@ -170,13 +171,27 @@ describe('PluginUpdateNotifier', () => {
   it('does not notify for a same-id fork installed from a local path', async () => {
     const harness = makeHarness({
       installed: [
-        makePluginSummary({ source: 'local-path', originalSource: undefined }),
+        makePluginSummary({
+          source: 'local-path',
+          originalSource: undefined,
+          origin: 'custom',
+          catalogId: undefined,
+        }),
       ],
     });
     const notifier = makeNotifier(harness);
 
     await notifier.handlePluginCommandCompleted('kimi-datasource');
-    // Provenance is not official, so the marketplace version is irrelevant.
+    expect(harness.notify).not.toHaveBeenCalled();
+  });
+
+  it('does not notify for a same-id custom ZIP that uses an official URL', async () => {
+    const harness = makeHarness({
+      installed: [makePluginSummary({ origin: 'custom', catalogId: undefined })],
+    });
+    const notifier = makeNotifier(harness);
+
+    await notifier.handlePluginCommandCompleted('kimi-datasource');
     expect(harness.notify).not.toHaveBeenCalled();
   });
 
@@ -282,6 +297,7 @@ describe('PluginUpdateNotifier', () => {
           id: 'another-plugin',
           displayName: 'Another Plugin',
           version: '1.0.0',
+          catalogId: 'another-plugin',
         }),
       ],
     });

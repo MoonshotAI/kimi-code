@@ -10,6 +10,7 @@ import {
   readPluginUpdateNoticeState,
   writePluginUpdateNoticeState,
 } from '#/utils/plugin-update-notice-state';
+import { installedPluginForMarketplaceEntry } from '../utils/capability-marketplace';
 import { isOfficialPluginInstall } from '../utils/plugin-source-label';
 
 /**
@@ -169,11 +170,14 @@ export class PluginUpdateNotifier {
       if (marketplace.source !== kimiCodePluginMarketplaceUrl()) return;
       const entry = marketplace.plugins.find((plugin) => plugin.id === pluginId);
       if (entry === undefined) return;
-      const installed = (await session.listPlugins()).find((plugin) => plugin.id === pluginId);
+      const installed = installedPluginForMarketplaceEntry(
+        entry.id,
+        await session.listPlugins(),
+        undefined,
+        true,
+      );
       if (installed === undefined) return;
-      // Only official installs are tracked against the Official Marketplace —
-      // a local/GitHub fork that happens to share a catalog id is not it.
-      if (!isOfficialPluginInstall(installed)) return;
+      if (installed.origin === 'unknown' && !isOfficialPluginInstall(installed)) return;
       const status = computeUpdateStatus(entry.version, installed.version, true);
       if (status.kind !== 'update') return;
       const state = await readPluginUpdateNoticeState(this.deps.stateFile);

@@ -653,9 +653,9 @@ export class PluginsPanelComponent extends Container implements Focusable {
   ): { entry: PluginMarketplaceEntry; local: string; latest: string } | undefined {
     if (this.market.status !== 'loaded') return undefined;
     const entries = this.marketplaceEntries.filter((entry) => !marketplaceEntryIsCloudOnly(entry));
-    const entry =
-      entries.find((candidate) => candidate.id === plugin.id) ??
-      entries.find((candidate) => this.installedPluginForEntry(candidate)?.id === plugin.id);
+    const entry = entries.find(
+      (candidate) => this.installedPluginForEntry(candidate)?.id === plugin.id,
+    );
     if (entry === undefined) return undefined;
     const status = computeUpdateStatus(entry.version, plugin.version, true);
     return status.kind === 'update' ? { entry, local: status.local, latest: status.latest } : undefined;
