@@ -1272,6 +1272,65 @@ describe('server-v2 /api/v1 plugins', () => {
     }
   });
 
+  it('sanitizes cross-origin redirects after an authenticated artifact retry', async () => {
+    await server?.close();
+    catalog.plugins[0]!['source'] = 'http://marketplace.test/artifacts/demo.zip';
+    await useDemoArtifact();
+    artifact!.requireAuth = true;
+    vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_URL', undefined);
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'http://marketplace.test/coding/v1/');
+    vi.spyOn(KimiOAuthToolkit.prototype, 'tokenProvider').mockReturnValue({
+      getAccessToken: async () => 'managed-token',
+    });
+    const currentFetch = globalThis.fetch;
+    const artifactRedirect = 'https://cdn.example.test/authorized-demo.zip';
+    const redirectedHeaders: Headers[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (artifact !== undefined && url === artifact.source) {
+          const authorization = new Headers(init?.headers).get('Authorization') ?? undefined;
+          artifactAuthorizations.push(authorization);
+          if (authorization !== 'Bearer managed-token') {
+            return new Response(null, { status: 401 });
+          }
+          return new Response(null, { status: 302, headers: { location: artifactRedirect } });
+        }
+        if (url === artifactRedirect) {
+          redirectedHeaders.push(new Headers(init?.headers));
+          return new Response(artifact!.buffer, { status: 200 });
+        }
+        return currentFetch(input as never, init);
+      }),
+    );
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home!,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    custom = true;
+
+    const installed = await call('POST', '/api/v1/plugins', {
+      marketplaceId: 'demo-plugin',
+      expectedVersion: '2.0.0', expectedSha256: artifactDigest(),
+    });
+
+    expect(installed.body.code).toBe(0);
+    expect(artifactAuthorizations).toEqual([undefined, 'Bearer managed-token']);
+    expect(redirectedHeaders).toHaveLength(1);
+    for (const headers of redirectedHeaders) {
+      expect(headers.get('Authorization')).toBeNull();
+      expect(headers.get('Proxy-Authorization')).toBeNull();
+      expect(headers.get('Cookie')).toBeNull();
+      expect(headers.get('X-Msh-Device-Id')).toBeNull();
+      expect(headers.get('X-Msh-Device-Name')).toBeNull();
+    }
+  });
+
   it('does not send managed OAuth to a third-party artifact host after a 401', async () => {
     await server?.close();
     await useDemoArtifact();

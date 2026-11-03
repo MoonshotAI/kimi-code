@@ -233,7 +233,7 @@ export class PluginMarketplaceService implements IPluginMarketplaceService {
       const token = await context.tokenProvider!.getAccessToken();
       const retryHeaders = this.requestHeaders(init, responseUrl, context);
       retryHeaders.set('Authorization', `Bearer ${token}`);
-      return fetch(responseUrl, { ...init, headers: retryHeaders });
+      return this.fetchWithRedirects(responseUrl, { ...init, headers: retryHeaders }, context);
     };
   }
 

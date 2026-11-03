@@ -1457,7 +1457,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 读取已安装插件的详情与能力。`skills` 包含实际发现的 Skill 调用名称，以及可选的展示名称与描述；`mcpServers` 包含 manifest 声明的 MCP 服务及其名称、运行时名称、启停状态、传输方式、非敏感连接配置，以及可选的展示名称、描述和图标 URL。两份清单都来自插件的真实文件与 manifest。`interface.skillOverrides` 和 `interface.mcpOverrides` 只覆盖展示信息，不改变调用名称或运行配置。
 
-成功时 `data` 为上文 `GET /api/v1/plugins` 的插件摘要，加上 `root`、`updatedAt?`、`manifestKind?`、`manifestPath?`、`manifest?`、`skills`、`mcpServers`、`shadowedManifestPath?` 和 `diagnostics`。可选 query 参数 `locale`（例如 `en-US` 或 `zh-CN`）用于读取 `interface.locales` 中对应语言的翻译，只影响能力的展示文案；未匹配的字段回退到默认 `interface`。
+成功时 `data` 为上文 `GET /api/v1/plugins` 的插件摘要，加上 `root`、`updatedAt?`、`manifestKind?`、`manifestPath?`、`skills`、`mcpServers`、`shadowedManifestPath?` 和 `diagnostics`。可选 query 参数 `locale`（例如 `en-US` 或 `zh-CN`）用于读取 `interface.locales` 中对应语言的翻译，只影响能力的展示文案；未匹配的字段回退到默认 `interface`。
 
 - `40419`：没有该 id 的已安装插件
 

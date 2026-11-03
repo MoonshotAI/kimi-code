@@ -1459,7 +1459,7 @@ On success, `data` is `{ entries }` where each item includes `id`, `tier`, `clas
 
 Reads an installed plugin's details and capabilities. `skills` contains the discovered Skill invocation names with optional display names and descriptions. `mcpServers` contains the declared MCP servers with their names, runtime names, enabled states, transports, non-secret connection settings, and optional display names, descriptions, and icon URLs. Both lists reflect the plugin's actual files and manifest. `interface.skillOverrides` and `interface.mcpOverrides` override display information only; they do not change invocation names or runtime configuration.
 
-On success, `data` is the plugin summary documented under `GET /api/v1/plugins`, plus `root`, `updatedAt?`, `manifestKind?`, `manifestPath?`, `manifest?`, `skills`, `mcpServers`, `shadowedManifestPath?`, and `diagnostics`. The optional `locale` query parameter, such as `en-US` or `zh-CN`, selects translations from `interface.locales` and affects capability display text only. Fields without a matching translation fall back to the default `interface`.
+On success, `data` is the plugin summary documented under `GET /api/v1/plugins`, plus `root`, `updatedAt?`, `manifestKind?`, `manifestPath?`, `skills`, `mcpServers`, `shadowedManifestPath?`, and `diagnostics`. The optional `locale` query parameter, such as `en-US` or `zh-CN`, selects translations from `interface.locales` and affects capability display text only. Fields without a matching translation fall back to the default `interface`.
 
 - `40419`: no installed plugin with that id
 

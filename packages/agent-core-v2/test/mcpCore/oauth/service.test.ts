@@ -797,6 +797,22 @@ describe('McpOAuthService interactive flow serialization', () => {
     expect(authServer.counts.exchange).toBe(1);
   }, 15000);
 
+  it('publishes a provider after its first dynamic registration', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+
+    const flow = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+
+    expect(authServer.counts.register).toBe(1);
+    await expect(
+      fixture.service.getProvider(SERVER_NAME, SERVER_URL).clientInformation(),
+    ).resolves.toMatchObject({ client_id: 'test-client-1' });
+    await flow.cancel();
+  }, 15000);
+
   it('closes the callback listener when stale registration cleanup fails', async () => {
     const memory = createMemoryMcpOAuthStore();
     const store: McpOAuthStore = {

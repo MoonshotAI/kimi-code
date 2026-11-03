@@ -431,7 +431,10 @@ export class McpOAuthService {
     try {
       provider.setRedirectUrl(new URL(callbackServer.redirectUri));
       await provider.ready;
-      if (await provider.invalidateStaleRegistration(callbackServer.redirectUri)) {
+      const registrationInvalidated = await provider.invalidateStaleRegistration(
+        callbackServer.redirectUri,
+      );
+      if (registrationInvalidated || (await provider.clientInformation()) === undefined) {
         this.providers.set(storeKey, provider);
       }
       const requestScope = await this.resolveRequestScope(provider, serverUrl, signal);
