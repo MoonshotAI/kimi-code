@@ -60,7 +60,7 @@ export class UpdateGoalTool implements IUpdateGoalTool {
           await this.goal.resumeGoal({}, 'model');
           return { output: 'Goal resumed.' };
         }
-        if (this.goal.isObjectiveEditedInTurn(turnId)) {
+        if (this.goal.isObjectiveEditedSinceTurnStart(turnId)) {
           return { output: GOAL_OBJECTIVE_EDITED_TOOL_RESULT };
         }
         if (status === 'complete') {

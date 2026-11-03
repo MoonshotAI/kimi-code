@@ -1931,7 +1931,7 @@ describe('AgentGoalService API boundary', () => {
       'getGoal',
       'incrementTurn',
       'isGoalToolTarget',
-      'isObjectiveEditedInTurn',
+      'isObjectiveEditedSinceTurnStart',
       'markBlocked',
       'markComplete',
       'pauseGoal',
@@ -1965,7 +1965,7 @@ describe('AgentGoalService agent eligibility', () => {
   it.each([
     ['getGoal', (goals: IAgentGoalService) => goals.getGoal()],
     ['isGoalToolTarget', (goals: IAgentGoalService) => goals.isGoalToolTarget(1, 'goal-1')],
-    ['isObjectiveEditedInTurn', (goals: IAgentGoalService) => goals.isObjectiveEditedInTurn(1)],
+    ['isObjectiveEditedSinceTurnStart', (goals: IAgentGoalService) => goals.isObjectiveEditedSinceTurnStart(1)],
     ['createGoal', (goals: IAgentGoalService) => goals.createGoal({ objective: 'work' })],
     ['pauseGoal', (goals: IAgentGoalService) => goals.pauseGoal()],
     ['resumeGoal', (goals: IAgentGoalService) => goals.resumeGoal()],
