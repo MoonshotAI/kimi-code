@@ -242,6 +242,7 @@ describe('command program PATH resolution', () => {
     try {
       expect(resolveProgramPath(program, { cwd: cwdDir, pathEnv: pathDir }).toLowerCase()).toBe(join(pathDir, 'sandbox.exe').toLowerCase());
       expect(() => resolveProgramPath(program, { cwd: pathDir, pathEnv: pathDir })).toThrow(/refusing cwd match/);
+      expect(() => resolveProgramPath(program, { cwd: sandbox.toUpperCase(), pathEnv: pathDir })).toThrow(/refusing cwd match/);
     } finally {
       Object.defineProperty(process, 'platform', descriptor);
       vi.unstubAllEnvs();
