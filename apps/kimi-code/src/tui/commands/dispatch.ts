@@ -2,7 +2,7 @@ import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import type { ReverseRpcModalOwner } from '../reverse-rpc/modal-coordinator';
 
-import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { KimiHarness, Session, ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ColorToken, ThemeName } from '#/tui/theme';
 
@@ -19,6 +19,7 @@ import type {
   AppState,
   InlineSkillActivation,
   LoginProgressSpinnerHandle,
+  ModelSwitchPersistence,
   QueuedMessage,
   TranscriptEntry,
 } from '../types';
@@ -174,8 +175,15 @@ export interface SlashCommandHost {
   beginSessionRequest(): void;
   failSessionRequest(message: string): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
+  drainQueueIfIdle(): void;
+  completedCompactionSerial: number;
   /** Queue a `/compact` for FIFO dispatch; false when one is already queued. */
   enqueueCompactCommand(args: string): boolean;
+  enqueueModelSwitch(
+    alias: string,
+    thinking: ThinkingEffort,
+    persist: ModelSwitchPersistence,
+  ): void;
   requestQueuedGoalPromotion?(): void;
 
   // UI
