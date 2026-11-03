@@ -1,5 +1,6 @@
 import {
   ErrorCodes,
+  isKimiError,
   PRIMARY_SUBAGENT_MODEL_CHOICE,
   type ExperimentalFeatureState,
   type ModelAlias,
@@ -45,7 +46,8 @@ import {
   type EffortSwitchRule,
 } from '#/utils/effort-switch-config';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
-import { NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
+import { MAIN_AGENT_ID, NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
+import type { QueuedModelSwitch } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
 import {
@@ -295,8 +297,7 @@ async function confirmThenPerformEffortSwitch(
   const model = host.state.appState.availableModels[alias];
   if (
     model?.provider !== DEFAULT_OAUTH_PROVIDER_NAME ||
-    thinking === host.state.appState.thinkingEffort ||
-    host.state.appState.streamingPhase !== 'idle'
+    thinking === host.state.appState.thinkingEffort
   ) {
     await performModelSwitch(host, alias, thinking, persist);
     return;
@@ -523,7 +524,7 @@ function matchedEffortSwitchRule(host: SlashCommandHost, thinking: ThinkingEffor
   const previous = host.state.appState.thinkingEffort;
   const model = host.state.appState.availableModels[host.state.appState.model];
   if (model?.provider !== DEFAULT_OAUTH_PROVIDER_NAME) return undefined;
-  if (thinking === previous || host.state.appState.streamingPhase !== 'idle') return undefined;
+  if (thinking === previous) return undefined;
   return matchEffortSwitchRule(
     peekEffortSwitchConfig(),
     previous,
@@ -534,10 +535,8 @@ function matchedEffortSwitchRule(host: SlashCommandHost, thinking: ThinkingEffor
 
 export function matchedModelSwitchRule(host: SlashCommandHost, alias: string): ModelSwitchRule | undefined {
   const prevAlias = host.state.appState.model;
-  // Same-alias effort changes use matchedEffortSwitchRule instead. Streaming
-  // switches keep the existing error path without a preceding dialog.
+  // Same-alias effort changes use matchedEffortSwitchRule instead.
   if (alias === prevAlias) return undefined;
-  if (host.state.appState.streamingPhase !== 'idle') return undefined;
   const fromModelId = host.state.appState.availableModels[prevAlias]?.model;
   const toModelId = host.state.appState.availableModels[alias]?.model;
   if (fromModelId === undefined || toModelId === undefined) return undefined;
@@ -552,9 +551,8 @@ export function matchedModelSwitchRule(host: SlashCommandHost, alias: string): M
 /**
  * Fire a compaction and wait for it to settle before the model switch. The
  * compact RPC resolves as soon as the engine *starts* compacting — the
- * completed/cancelled/failed outcome arrives later as an event — and
- * performModelSwitch rejects any switch while the session is busy, so the
- * switch must hold until one of those events lands. True only when the
+ * completed/cancelled/failed outcome arrives later as an event. The switch
+ * must wait because compaction reads the current model. True only when the
  * compaction completed on the same session; any other outcome shows a
  * message and leaves the model unchanged.
  */
@@ -568,6 +566,7 @@ export async function compactForModelSwitch(
     settle = resolve;
   });
   const unsubscribe = session.onEvent((event) => {
+    if (event.agentId !== MAIN_AGENT_ID) return;
     if (event.type === 'compaction.completed') settle('completed');
     else if (event.type === 'compaction.cancelled') settle('cancelled');
     else if (event.type === 'error' && event.code === ErrorCodes.COMPACTION_FAILED) {
@@ -592,7 +591,13 @@ export async function compactForModelSwitch(
     }
     return false;
   } catch (error) {
-    host.showError(`Failed to compact: ${formatErrorMessage(error)}. Model unchanged.`);
+    if (isKimiError(error) && error.code === ErrorCodes.COMPACTION_UNABLE) {
+      host.showError(
+        "Couldn't compact while the agent is still running — model unchanged. Pause the goal or switch with Continue as-is.",
+      );
+    } else {
+      host.showError(`Failed to compact: ${formatErrorMessage(error)}. Model unchanged.`);
+    }
     return false;
   } finally {
     clearTimeout(timer);
@@ -607,20 +612,71 @@ async function runModelSwitchAction(
   thinking: ThinkingEffort,
   persist: ModelSwitchPersistence,
 ): Promise<void> {
+  const busy = host.state.appState.streamingPhase !== 'idle' || host.state.appState.isCompacting;
   switch (action) {
     case 'cancel':
       return;
     case 'continue':
       await performModelSwitch(host, alias, thinking, persist);
       return;
-    case 'compact': {
-      // Compact with the current model first, then switch: the new model
-      // starts from the compacted context.
-      if (host.session !== undefined && !(await compactForModelSwitch(host, host.session))) {
+    case 'compact':
+      if (busy) {
+        host.enqueueModelSwitch(alias, thinking, persist);
         return;
       }
-      await performModelSwitch(host, alias, thinking, persist);
+      await runModelSwitchWithQueueHeld(host, () =>
+        compactThenPerformModelSwitch(host, alias, thinking, persist),
+      );
       return;
+  }
+}
+
+export async function runQueuedModelSwitch(
+  host: SlashCommandHost,
+  item: QueuedModelSwitch,
+): Promise<void> {
+  await runModelSwitchWithQueueHeld(host, async () => {
+    if (item.queuedAfterCompactionSerial === host.completedCompactionSerial) {
+      await compactThenPerformModelSwitch(host, item.alias, item.thinking, item.persist);
+      return;
+    }
+    host.showNotice('Skipped compaction — context was already compacted. Switching model.');
+    await performModelSwitch(host, item.alias, item.thinking, item.persist, {
+      appliesNextTurn: false,
+    });
+  });
+}
+
+async function compactThenPerformModelSwitch(
+  host: SlashCommandHost,
+  alias: string,
+  thinking: ThinkingEffort,
+  persist: ModelSwitchPersistence,
+): Promise<void> {
+  if (host.session !== undefined && !(await compactForModelSwitch(host, host.session))) return;
+  await performModelSwitch(host, alias, thinking, persist, { appliesNextTurn: false });
+}
+
+async function runModelSwitchWithQueueHeld(
+  host: SlashCommandHost,
+  action: () => Promise<unknown>,
+): Promise<void> {
+  const session = host.session;
+  host.state.queuedMessageDispatchPending = true;
+  host.setAppState({ streamingPhase: 'waiting', streamingStartTime: Date.now() });
+  try {
+    await action();
+  } finally {
+    host.state.queuedMessageDispatchPending = false;
+    if (
+      (session === undefined || host.session === session) &&
+      !host.streamingUI.hasActiveTurn() &&
+      host.state.appState.streamingPhase !== 'shell' &&
+      !host.state.appState.isCompacting
+    ) {
+      host.resetLivePane();
+      host.setAppState({ streamingPhase: 'idle' });
+      host.drainQueueIfIdle();
     }
   }
 }

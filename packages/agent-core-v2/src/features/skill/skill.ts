@@ -27,4 +27,5 @@ export interface PromptWithSkillsResult {
   readonly prompt_id: string;
   readonly created_at: string;
   readonly state: 'running' | 'queued' | 'blocked';
+  readonly steered?: boolean;
 }

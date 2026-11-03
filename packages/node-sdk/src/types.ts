@@ -120,10 +120,25 @@ export type {
   PluginGithubRef,
   PluginInfo,
   PluginMcpServerInfo,
+  PluginOrigin,
   PluginSource,
   PluginSummary,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
+export type {
+  MarketplaceLocation,
+  MarketplaceUpdateStatus,
+  PluginMarketplace,
+  PluginMarketplaceClassification,
+  PluginMarketplaceDistribution,
+  PluginMarketplaceEntry,
+  PluginMarketplaceLocale,
+  PluginMarketplaceLocalizedText,
+  PluginMarketplacePlatform,
+  PluginMarketplaceTier,
+  ReadPluginMarketplaceOptions,
+} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+export type { InstallPluginInput } from '@moonshot-ai/agent-core-v2/app/plugin/plugin';
 export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 export type { ToolInfo } from '#/tool';
 export type {
@@ -234,6 +249,10 @@ export interface UploadFileOptions {
   readonly expiresInSec?: number;
 }
 
+export interface EditGoalObjectiveInput {
+  readonly objective: string;
+}
+
 export interface CreateGoalInput {
   readonly objective: string;
   readonly replace?: boolean;
@@ -247,6 +266,14 @@ export type PromptInput = readonly PromptPart[];
 export interface PromptSkillActivation {
   readonly name: string;
   readonly args?: string;
+}
+
+export interface PromptSubmissionResult {
+  readonly promptId: string;
+  readonly createdAt: string;
+  readonly state: 'running' | 'queued' | 'blocked';
+  readonly turnId?: number;
+  readonly steered: boolean;
 }
 
 export interface KimiHarnessOptions {

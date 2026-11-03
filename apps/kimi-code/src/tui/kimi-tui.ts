@@ -15,8 +15,10 @@ import type {
   PermissionMode,
   PluginCommandDef,
   PromptPart,
+  PromptSubmissionResult,
   Session,
   SkillSummary,
+  ThinkingEffort,
   TurnEndedEvent,
   TurnStartedEvent,
   Unsubscribe,
@@ -67,6 +69,7 @@ import {
   type SkillListSession,
 } from './commands';
 import * as slashCommands from './commands/dispatch';
+import { runQueuedModelSwitch } from './commands/config';
 import { promptSshPassword } from './commands/prompts';
 import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
@@ -157,6 +160,8 @@ import type { ColorToken, ResolvedTheme, ThemeName } from './theme';
 import { createTUIState, mountFooter, setEditorSlot, type TUIState } from './tui-state';
 import {
   INITIAL_LIVE_PANE,
+  isPromptQueuedMessage,
+  isQueuedCompactionBarrier,
   sumTokenUsage,
   type AppState,
   type InlineSkillActivation,
@@ -164,7 +169,9 @@ import {
   type KimiTUIOptions,
   type LivePaneState,
   type LoginProgressSpinnerHandle,
+  type ModelSwitchPersistence,
   type QueuedMessage,
+  type QueuedPromptMessage,
   type EnvironmentSlotState,
   type SteerInputItem,
   type StepRetryState,
@@ -193,6 +200,14 @@ import {
 } from './utils/image-placeholder';
 import type { ExtractionResult } from './utils/image-placeholder';
 import { installInputLatencyProbe } from './utils/input-latency';
+import {
+  isInTurnUserOrigin,
+  steerEventParts,
+  steerMatchTexts,
+  steerPayloadText,
+  takeDeliveredSteerBatches,
+  type SteerDeliveryBatch,
+} from './utils/steer-delivery';
 import { combineSteerInput } from './utils/steer-input';
 import { startupTrace } from '#/utils/startup-trace';
 import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
@@ -251,6 +266,11 @@ export interface KimiTUIStartupInput {
 }
 
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
+
+type PendingSteerDelivery = SteerDeliveryBatch<TranscriptEntry> & {
+  readonly mediaOnly: boolean;
+  readonly promptId?: string;
+};
 type LoadingTipKind = 'moon' | 'braille';
 
 function loadingTipKind(mode: EffectiveActivityPaneMode): LoadingTipKind | undefined {
@@ -334,6 +354,10 @@ interface SendMessageOptions {
   readonly occupiedRetry?: boolean;
 }
 
+type EnqueueMessageOptions = SendMessageOptions & {
+  readonly inlineSkillActivations?: readonly InlineSkillActivation[];
+};
+
 /** How long the one-shot "moved to background" footer hint stays visible. */
 const DETACH_HINT_DISPLAY_MS = 4_000;
 
@@ -352,6 +376,8 @@ export class KimiTUI {
   private readonly staging: StagingLeaseTracker;
   private readonly steeringQueuedMessages = new Set<QueuedMessage>();
   private readonly pendingPromptEntries = new Set<TranscriptEntry>();
+  private pendingSteerDeliveries: PendingSteerDelivery[] = [];
+  private readonly consumedSteerPromptIds = new Set<string>();
   private readonly autoTitleAttempts = new Map<string, { attempts: number; done: boolean }>();
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
@@ -375,6 +401,7 @@ export class KimiTUI {
   lastCompactionTrigger: CompactionStartedEvent['trigger'] | undefined;
   /** Bumped on every completed auto compaction; queued /compact items snapshot it. */
   autoCompactionSerial = 0;
+  completedCompactionSerial = 0;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
   private clipboardImageHintController: ClipboardImageHintController | undefined;
@@ -1936,10 +1963,11 @@ export class KimiTUI {
     // A recall restores the draft into the editor — it is not a discard:
     // consumes the retains only, keeping the staged daemon uploads alive
     // (see `releaseRecalled`) so the restored draft resubmits them.
-    this.staging.releaseRecalled([
-      ...(last.imageAttachmentIds ?? []),
-      ...(last.videoAttachmentIds ?? []),
-    ]);
+    this.staging.releaseRecalled(
+      isPromptQueuedMessage(last)
+        ? [...(last.imageAttachmentIds ?? []), ...(last.videoAttachmentIds ?? [])]
+        : [],
+    );
     return last;
   }
 
@@ -1963,22 +1991,21 @@ export class KimiTUI {
 
   private enqueueMessage(
     text: string,
-    options?: SendMessageOptions & {
-      readonly inlineSkillActivations?: readonly InlineSkillActivation[];
-    },
+    options?: EnqueueMessageOptions,
     mode?: 'prompt' | 'bash',
   ): void {
-    this.state.queuedMessages.push(this.toQueuedMessage(text, options, mode));
+    const item =
+      mode === 'bash'
+        ? { text, agentId: this.harness.interactiveAgentId, mode }
+        : this.toQueuedMessage(text, options);
+    this.state.queuedMessages.push(item);
     this.track('input_queue');
   }
 
   private toQueuedMessage(
     text: string,
-    options?: SendMessageOptions & {
-      readonly inlineSkillActivations?: readonly InlineSkillActivation[];
-    },
-    mode?: 'prompt' | 'bash',
-  ): QueuedMessage {
+    options?: EnqueueMessageOptions,
+  ): QueuedPromptMessage {
     return {
       text,
       agentId: this.harness.interactiveAgentId,
@@ -1991,7 +2018,7 @@ export class KimiTUI {
         options?.videoAttachmentIds !== undefined && options.videoAttachmentIds.length > 0
           ? options.videoAttachmentIds
           : undefined,
-      mode,
+      mode: undefined,
       mediaSnapshots: options?.mediaSnapshots,
       inlineSkillActivations: options?.inlineSkillActivations,
     };
@@ -2010,6 +2037,23 @@ export class KimiTUI {
     this.updateQueueDisplay();
     this.state.ui.requestRender();
     return true;
+  }
+
+  enqueueModelSwitch(
+    alias: string,
+    thinking: ThinkingEffort,
+    persist: ModelSwitchPersistence,
+  ): void {
+    this.state.queuedMessages.push({
+      text: `/model ${alias}`,
+      mode: 'model-switch',
+      alias,
+      thinking,
+      persist,
+      queuedAfterCompactionSerial: this.completedCompactionSerial,
+    });
+    this.updateQueueDisplay();
+    this.state.ui.requestRender();
   }
 
   beginSessionRequest(): void {
@@ -2092,6 +2136,11 @@ export class KimiTUI {
         return;
       }
       void session.compact({ instruction: item.compactInstruction }).catch(retryOrDrop);
+      return;
+    }
+    if (item.mode === 'model-switch') {
+      if (this.session !== session) return;
+      void runQueuedModelSwitch(this, item);
       return;
     }
     if (item.mode === 'bash') {
@@ -2192,11 +2241,11 @@ export class KimiTUI {
     this.sessionEventHandler.requestQueuedGoalPromotion();
   }
 
-  private dispatchPreparedInput<T>(
+  private dispatchPreparedInput<T, R>(
     session: Session,
     input: T | Promise<T>,
-    dispatch: (input: T) => Promise<void>,
-  ): Promise<void> {
+    dispatch: (input: T) => Promise<R>,
+  ): Promise<R> {
     if (!(input instanceof Promise)) return dispatch(input);
     let rejectPreparation!: (error: Error) => void;
     const interrupted = new Promise<never>((_resolve, reject) => { rejectPreparation = reject; });
@@ -2219,6 +2268,11 @@ export class KimiTUI {
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
         ? options.imageAttachmentIds
         : undefined;
+    const goalActive = this.state.appState.goal?.status === 'active';
+    const goalSteerIntoRunningTurn =
+      goalActive &&
+      this.state.appState.streamingPhase !== 'idle' &&
+      this.state.appState.streamingPhase !== 'shell';
     const entry: TranscriptEntry = {
       id: nextTranscriptId(),
       kind: 'user',
@@ -2226,6 +2280,7 @@ export class KimiTUI {
       renderMode: 'plain',
       content: input,
       imageAttachmentIds,
+      steerPending: goalSteerIntoRunningTurn ? true : undefined,
     };
     this.appendTranscriptEntry(entry);
     // A goal-active steer is buffered into the running goal turn — no new
@@ -2252,7 +2307,6 @@ export class KimiTUI {
             session,
           )
         : input;
-    const goalActive = this.state.appState.goal?.status === 'active';
     // The lease normally arrives pre-created by sendNormalUserInput (carrying
     // its exact-binding submission id). Queued dispatches and steer batches
     // arrive with raw ids instead: a prompt submission carrying staged
@@ -2296,7 +2350,13 @@ export class KimiTUI {
       if (runningTurnId !== undefined) this.staging.bindToTurn(stagingLease, runningTurnId);
       const request = this.trackPendingEntries(
         [entry],
-        this.dispatchPreparedInput(session, sdkInput, (parts) => session.steer(parts)),
+        this.dispatchPreparedInput(session, sdkInput, (parts) => {
+          this.notePendingSteer([entry], parts);
+          if (!this.turnCanAcceptSteer()) this.setSteerEntriesPending([entry], false);
+          return session.steer(parts).then((result) => {
+            this.applySteerSubmission([entry], result);
+          });
+        }),
       );
       void request.then(
         () => {
@@ -2305,6 +2365,7 @@ export class KimiTUI {
         () => {},
       );
       this.staging.trackDispatch(stagingLease, request, (error) => {
+        this.releaseSteerEntries([entry]);
         const recovered = this.handlePromptConflict({
           session,
           error,
@@ -2348,10 +2409,10 @@ export class KimiTUI {
     });
   }
 
-  private trackPendingEntries(
+  private trackPendingEntries<T>(
     entries: readonly TranscriptEntry[],
-    request: Promise<void>,
-  ): Promise<void> {
+    request: Promise<T>,
+  ): Promise<T> {
     for (const entry of entries) this.pendingPromptEntries.add(entry);
     const settle = (): void => {
       for (const entry of entries) this.pendingPromptEntries.delete(entry);
@@ -2498,19 +2559,22 @@ export class KimiTUI {
   steerQueuedMessagesIntoRunningTurn(manual = false): void {
     const session = this.session;
     if (session === undefined || this.steeringQueuedMessages.size > 0) return;
+    if (this.state.queuedMessageDispatchPending) return;
     if (manual ? !this.canManuallySteer() : !this.canSteerQueueIntoRunningTurn()) return;
-    // A queued /compact is a FIFO barrier for steering, manual or automatic:
-    // messages behind it must wait for the compaction, not jump into the
-    // pre-compaction context.
-    const firstCompact = this.state.queuedMessages.findIndex((message) => message.mode === 'compact');
+    // Compaction and model-switch items are FIFO barriers for steering:
+    // messages behind them must not jump into the pre-compaction context.
+    const firstBarrier = this.state.queuedMessages.findIndex(isQueuedCompactionBarrier);
     const beforeBarrier = this.state.queuedMessages.slice(
       0,
-      firstCompact === -1 ? this.state.queuedMessages.length : firstCompact,
+      firstBarrier === -1 ? this.state.queuedMessages.length : firstBarrier,
     );
-    const batch = manual
-      ? beforeBarrier.filter((message) => message.mode !== 'bash')
-      : beforeBarrier;
-    if (batch.length === 0 || (!manual && !batch.every(isSteerableQueuedMessage))) return;
+    const batch = beforeBarrier.filter(isPromptQueuedMessage);
+    if (
+      batch.length === 0 ||
+      (!manual && (batch.length !== beforeBarrier.length || !batch.every(isSteerableQueuedMessage)))
+    ) {
+      return;
+    }
     const pending = [...batch];
     const sendNext = (): void => {
       if (this.deferUserMessages || this.state.appState.isCompacting) return;
@@ -2551,7 +2615,7 @@ export class KimiTUI {
         if (this.session !== session) return;
         if (steered) this.programStatus.markUserSteer();
         if (steered || manual) {
-          const done = new Set(group);
+          const done = new Set<QueuedMessage>(group);
           this.state.queuedMessages = this.state.queuedMessages.filter((message) => !done.has(message));
         }
         if (!steered) {
@@ -2580,7 +2644,7 @@ export class KimiTUI {
     return this.steeringQueuedMessages.size > 0;
   }
 
-  private drainQueueIfIdle(): void {
+  drainQueueIfIdle(): void {
     if (
       this.state.appState.streamingPhase !== 'idle' ||
       this.deferUserMessages ||
@@ -2590,6 +2654,140 @@ export class KimiTUI {
       return;
     }
     this.drainOneQueuedMessage();
+  }
+
+  private turnCanAcceptSteer(): boolean {
+    const phase = this.state.appState.streamingPhase;
+    return phase !== 'idle' && phase !== 'shell' && !this.state.appState.isCompacting;
+  }
+
+  acknowledgeSteerDelivery(input: unknown, promptIds?: readonly string[]): void {
+    if (promptIds !== undefined && promptIds.length > 0) {
+      this.acknowledgeSteerPromptIds(promptIds);
+      return;
+    }
+    this.acknowledgeLegacySteerDelivery(input);
+  }
+
+  acknowledgeSteerTurnPrompt(promptId: string | undefined, input: unknown, origin: unknown): void {
+    const delivered = promptId === undefined ? false : this.acknowledgeSteerPromptIds([promptId]);
+    if (!delivered && isInTurnUserOrigin(origin)) this.acknowledgeLegacySteerDelivery(input);
+  }
+
+  acknowledgeSteerTurnStarted(promptId?: string): void {
+    if (promptId !== undefined) this.acknowledgeSteerPromptIds([promptId]);
+  }
+
+  releaseSteerDelivery(promptId: string): void {
+    const batch = this.pendingSteerDeliveries.find((batch) => batch.promptId === promptId);
+    if (batch !== undefined) this.releaseSteerEntries(batch.entries);
+  }
+
+  private acknowledgeSteerPromptIds(promptIds: readonly string[]): boolean {
+    const ids = new Set(promptIds);
+    const delivered = this.pendingSteerDeliveries.filter(
+      (batch) => batch.promptId !== undefined && ids.has(batch.promptId),
+    );
+    this.pendingSteerDeliveries = this.pendingSteerDeliveries.filter(
+      (batch) => !delivered.includes(batch),
+    );
+    if (this.pendingSteerDeliveries.length > 0) {
+      const deliveredIds = new Set(delivered.map((batch) => batch.promptId));
+      for (const id of promptIds) {
+        if (!deliveredIds.has(id)) this.consumedSteerPromptIds.add(id);
+      }
+    }
+    for (const batch of delivered) this.setSteerEntriesPending(batch.entries, false);
+    if (this.pendingSteerDeliveries.length === 0) this.consumedSteerPromptIds.clear();
+    return delivered.length > 0;
+  }
+
+  private acknowledgeLegacySteerDelivery(input: unknown): void {
+    const { texts, hasMedia } = steerEventParts(input);
+    let pending = this.pendingSteerDeliveries;
+    const delivered: PendingSteerDelivery[] = [];
+    const candidates = steerMatchTexts(texts);
+    for (const text of candidates) {
+      const step = takeDeliveredSteerBatches(pending, text);
+      delivered.push(...step.delivered);
+      pending = pending.filter((batch) => !step.delivered.includes(batch));
+    }
+    if (texts.length === 0 && hasMedia) {
+      const index = pending.findIndex((batch) => batch.mediaOnly);
+      if (index >= 0) {
+        delivered.push(pending[index]!);
+        pending = pending.filter((_, item) => item !== index);
+      }
+    }
+    if (delivered.length === 0) return;
+    this.pendingSteerDeliveries = pending;
+    for (const batch of delivered) this.setSteerEntriesPending(batch.entries, false);
+    if (this.pendingSteerDeliveries.length === 0) this.consumedSteerPromptIds.clear();
+  }
+
+  private notePendingSteer(
+    entries: readonly TranscriptEntry[],
+    payload: string | readonly { readonly type: string; readonly text?: string }[],
+  ): void {
+    const payloadText = steerPayloadText(payload);
+    const displayText = entries.map((entry) => entry.content).join('\n\n');
+    this.pendingSteerDeliveries.push({
+      entries,
+      text: payloadText.length > 0 ? payloadText : displayText,
+      mediaOnly: payloadText.length === 0,
+    });
+  }
+
+  private applySteerSubmission(
+    entries: readonly TranscriptEntry[],
+    result: PromptSubmissionResult | undefined,
+  ): void {
+    if (result === undefined) return;
+    const index = this.pendingSteerDeliveries.findIndex(
+      (batch) => batch.entries.some((entry) => entries.includes(entry)),
+    );
+    if (index < 0) return;
+    if (result.state === 'blocked' || (result.state === 'running' && !result.steered)) {
+      this.releaseSteerEntries(entries);
+      return;
+    }
+    const batch = this.pendingSteerDeliveries[index]!;
+    this.pendingSteerDeliveries[index] = { ...batch, promptId: result.promptId };
+    if (this.consumedSteerPromptIds.delete(result.promptId)) {
+      this.releaseSteerEntries(entries);
+      return;
+    }
+    this.setSteerEntriesPending(entries, true);
+  }
+
+  private releaseSteerEntries(entries: readonly TranscriptEntry[]): void {
+    const doomed = new Set(entries);
+    this.pendingSteerDeliveries = this.pendingSteerDeliveries.filter(
+      (batch) => !batch.entries.some((entry) => doomed.has(entry)),
+    );
+    this.setSteerEntriesPending(entries, false);
+    if (this.pendingSteerDeliveries.length === 0) this.consumedSteerPromptIds.clear();
+  }
+
+  private resetSteerDeliveries(): void {
+    const entries = this.pendingSteerDeliveries.flatMap((batch) => batch.entries);
+    this.pendingSteerDeliveries = [];
+    this.consumedSteerPromptIds.clear();
+    this.setSteerEntriesPending(entries, false);
+  }
+
+  private setSteerEntriesPending(entries: readonly TranscriptEntry[], pending: boolean): void {
+    const targets = new Set(entries);
+    for (const entry of entries) {
+      if (pending) entry.steerPending = true;
+      else delete entry.steerPending;
+    }
+    for (const child of this.state.transcriptContainer.children) {
+      const entry = getTranscriptComponentEntry(child);
+      if (entry === undefined || !targets.has(entry)) continue;
+      if (child instanceof UserMessageComponent) child.setSteerPending(pending);
+    }
+    this.state.ui.requestRender();
   }
 
   steerMessage(
@@ -2646,6 +2844,7 @@ export class KimiTUI {
         item.imageAttachmentIds !== undefined && item.imageAttachmentIds.length > 0
           ? item.imageAttachmentIds
           : undefined,
+      steerPending: startsNewTurn ? undefined : true,
     }));
     for (const entry of steeredEntries) this.appendTranscriptEntry(entry);
     const mediaAttachmentIds = input.flatMap((item) => [
@@ -2664,9 +2863,17 @@ export class KimiTUI {
     // the submission's own turn.started claims them; a merged steer simply
     // retires its media at session close instead.
     if (currentTurnId !== undefined && prepared === undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
-    const dispatch = (items: readonly SteerInputItem[]) => prepared === undefined
-      ? session.steer(combineSteerInput(items))
-      : session.promptWithSkills(combineSteerInput(items), prepared.skills, { steerIfActive: true });
+    const dispatch = (items: readonly SteerInputItem[]) => {
+      const payload = combineSteerInput(items);
+      this.notePendingSteer(steeredEntries, payload);
+      if (!this.turnCanAcceptSteer()) this.setSteerEntriesPending(steeredEntries, false);
+      const request = prepared === undefined
+        ? session.steer(payload)
+        : session.promptWithSkills(payload, prepared.skills, { steerIfActive: true });
+      return request.then((result) => {
+        this.applySteerSubmission(steeredEntries, result);
+      });
+    };
     const request = this.trackPendingEntries(
       steeredEntries,
       this.dispatchPreparedInput(
@@ -2684,6 +2891,7 @@ export class KimiTUI {
       );
     }
     this.staging.trackDispatch(stagingLease, request, (error) => {
+      this.releaseSteerEntries(steeredEntries);
       if (this.session !== session) {
         onSettled?.(false);
         return;
@@ -3222,6 +3430,7 @@ export class KimiTUI {
     previous?.setQuestionHandler(undefined);
     this.approvalController.cancelAll(reason);
     this.questionController.cancelAll(reason);
+    this.resetSteerDeliveries();
     this.session = undefined;
     this.state.swarmModeEntry = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
@@ -3365,6 +3574,7 @@ export class KimiTUI {
     this.cacheHint.resetRuntime();
     this.surveyController.reset();
     this.streamingUI.discardPending();
+    this.resetSteerDeliveries();
     // The lazy first creation keeps input queued while it was in flight (the
     // queued messages belong to the session being created); every other
     // reset discards the old session's backlog.
@@ -3618,7 +3828,13 @@ export class KimiTUI {
         for (const [command, skillName] of this.skillCommandMap) {
           if (entry.skillNames?.includes(skillName)) skillNames.add(command.replace(/^skill:/, ''));
         }
-        return new UserMessageComponent(entry.content, images, entry.bullet, [...skillNames]);
+        return new UserMessageComponent(
+          entry.content,
+          images,
+          entry.bullet,
+          [...skillNames],
+          entry.steerPending === true,
+        );
       }
       case 'skill_activation':
         return new SkillActivationComponent(
@@ -4349,6 +4565,7 @@ export class KimiTUI {
       isCompacting: this.state.appState.isCompacting,
       isStreaming: this.state.appState.streamingPhase !== 'idle',
       canSteerImmediately: !this.deferUserMessages && !this.isSteeringQueuedMessages(),
+      availableModels: this.state.appState.availableModels,
     });
     if (queueContainer.children.length === 0) queueContainer.addChild(queuePane);
   }
@@ -5196,15 +5413,11 @@ export class KimiTUI {
   }
 }
 
-function isSteerableQueuedMessage(message: QueuedMessage): boolean {
-  return (
-    message.inlineSkillActivations === undefined &&
-    message.mode !== 'bash' &&
-    message.mode !== 'compact'
-  );
+function isSteerableQueuedMessage(message: QueuedMessage): message is QueuedPromptMessage {
+  return isPromptQueuedMessage(message) && message.inlineSkillActivations === undefined;
 }
 
-function toSteerInputItem(message: QueuedMessage): SteerInputItem {
+function toSteerInputItem(message: QueuedPromptMessage): SteerInputItem {
   return {
     text: message.text,
     parts: message.parts,

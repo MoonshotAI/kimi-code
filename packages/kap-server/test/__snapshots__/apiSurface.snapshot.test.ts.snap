@@ -166,6 +166,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/plugins/{tail}",
+    ],
+    [
+      "GET",
       "/api/v1/plugins/marketplace",
     ],
     [
@@ -246,10 +250,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/status",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/transcript",
     ],
     [
@@ -315,6 +315,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "PATCH",
       "/api/v1/remote-control/devices/{id}",
+    ],
+    [
+      "PATCH",
+      "/api/v1/sessions/{session_id}/goal",
     ],
     [
       "PATCH",
@@ -391,6 +395,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/plugins/{tail}",
+    ],
+    [
+      "POST",
+      "/api/v1/plugins/preview",
     ],
     [
       "POST",

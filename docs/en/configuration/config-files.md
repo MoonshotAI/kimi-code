@@ -580,7 +580,7 @@ MCP server declarations are configured in `~/.kimi-code/mcp.json` or the project
 
 Each entry is keyed by its environment id: at most 64 characters, no leading or trailing whitespace, and `local` and `default` are reserved words. Within one entry, `type` and `command` are mutually exclusive.
 
-Remote working directories must be absolute POSIX paths; relative paths and `~` are not expanded.
+Remote working directories must be absolute POSIX paths or Windows drive paths; relative paths and `~` are not expanded. See [Windows targets](../guides/remote-environment.md#windows-targets) for the Git Bash and launcher requirements.
 
 The optional top-level `default` names the environment a session binds to when creation does not specify one. It must reference a configured entry, and that entry must set `defaultCwd` — a binding pairs an environment with a working directory, so a default without one would dangle. Without a `default`, those sessions start on the `local` environment. A TUI `/new` does not use this default: it keeps the current environment. See [Remote environments](../guides/remote-environment.md).
 
@@ -590,7 +590,7 @@ The optional top-level `default` names the environment a session binds to when c
 | --- | --- | --- | --- |
 | `type` | `string` | Yes | `"ssh"` |
 | `host` | `string` | Yes | SSH host; spawned through the system `ssh`, so `~/.ssh/config` (user, port, key, `ProxyJump`, `ControlMaster`) applies |
-| `remoteBin` | `string` | No | Executor path on the target; defaults to `~/.kimi-code/bin/kimi` |
+| `remoteBin` | `string` | No | Executor path on the target; defaults to `~/.kimi-code/bin/kimi`. Windows targets require a bare executable name on the target's `PATH`, such as `kimi`, instead of an absolute Windows path |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session; not validated locally |
 
 ### Docker entries

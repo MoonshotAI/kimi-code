@@ -8,6 +8,7 @@ import { FileEditService } from '#/app/edit/fileEditService';
 import { HostFsError } from '#/os/interface/hostFsErrors';
 
 import { RemoteExecConnection } from '#/remote/client/connection';
+import { requireAbsolutePath } from '#/remote/server/fsHandler';
 import { RemoteFileSystem } from '#/os/backends/remote/remoteFileSystem';
 import {
   FS_READ_DIRECTORY_MAX_ENTRIES,
@@ -79,6 +80,21 @@ describe('fs group over a subprocess loopback', () => {
     expect(result).toEqual({ ok: true, count: 1 });
     expect(calls.mock.calls.map(([method]) => method)).toEqual(['fs/readFile', 'fs/writeFile']);
     expect(await readFile(path, 'utf8')).toBe('before\nnew value\n');
+  });
+
+  it('preserves a UTF-8 BOM when editing', async () => {
+    const path = join(workDir, 'edit-bom.txt');
+    await writeFile(path, Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x0a, 0x62, 0x0a]));
+    const editor = new FileEditService(fs);
+    const result = await editor.edit({
+      path,
+      displayPath: 'edit-bom.txt',
+      old_string: 'b',
+      new_string: 'c',
+      replace_all: false,
+    });
+    expect(result).toEqual({ ok: true, count: 1 });
+    expect(await readFile(path)).toEqual(Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x0a, 0x63, 0x0a]));
   });
 
   it('writes a byte stream progressively without retaining the complete input', async () => {
@@ -315,4 +331,19 @@ describe('fs protocol semantics', () => {
       await rm(smallDir, { recursive: true, force: true });
     }
   }, 60_000);
+});
+
+describe('requireAbsolutePath', () => {
+  it('asks Windows targets for a drive path', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      for (const path of ['/c/work', '/tmp', '\\\\server\\share']) {
+        expect(() => requireAbsolutePath({ path }, 'path')).toThrow('path must be an absolute Windows drive path such as C:\\work');
+      }
+      expect(requireAbsolutePath({ path: 'C:\\work' }, 'path')).toBe('C:\\work');
+    } finally {
+      Object.defineProperty(process, 'platform', descriptor);
+    }
+  });
 });

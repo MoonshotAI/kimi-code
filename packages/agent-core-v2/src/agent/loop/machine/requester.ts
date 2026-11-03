@@ -33,6 +33,7 @@ export interface MachineRequester {
 const GATE_FAILURE: LlmRemoteErrorMessage = {
   kind: 'abort',
   message: 'The agent loop gate stopped the step.',
+  retryable: false,
 };
 
 function toRemoteErrorMessage(error: unknown, signal: AbortSignal): LlmRemoteErrorMessage {
@@ -41,7 +42,7 @@ function toRemoteErrorMessage(error: unknown, signal: AbortSignal): LlmRemoteErr
     llmMessageFromError(raw) ?? (raw === error ? undefined : llmMessageFromError(error));
   if (known !== undefined) return known;
   if (signal.aborted) {
-    return { kind: 'abort', message: 'The operation was aborted.' };
+    return { kind: 'abort', message: 'The operation was aborted.', retryable: false };
   }
   return toLlmErrorMessage(raw);
 }

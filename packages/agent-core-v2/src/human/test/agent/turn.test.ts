@@ -36,7 +36,15 @@ function statusError(
   message: string,
   retryAfterMs: number | null = null,
 ): LlmErrorMessage {
-  return { kind: 'status', statusCode, message, requestId: null, retryAfterMs, headers: null };
+  return {
+    kind: 'status',
+    statusCode,
+    message,
+    requestId: null,
+    retryAfterMs,
+    headers: null,
+    retryable: [408, 409, 429, 500, 502, 503, 504, 529].includes(statusCode),
+  };
 }
 
 function createStubRequester(
@@ -200,7 +208,11 @@ describe('turn machine llm retry', () => {
       'think_only',
       statusError(429, 'rate limited'),
       statusError(500, 'server error'),
-      { kind: 'provider', message: 'Error: upstream error, status_code=429: too many requests' },
+      {
+        kind: 'provider',
+        message: 'Error: upstream error, status_code=429: too many requests',
+        retryable: true,
+      },
       'ok',
     ]);
     const { actor, retrying, failed } = startTurnActor(requester, {
@@ -303,6 +315,7 @@ describe('turn machine llm retry', () => {
         requestId: null,
         retryAfterMs: null,
         headers: null,
+        retryable: false,
       },
     ];
     for (const error of cases) {
@@ -331,6 +344,7 @@ describe('turn machine llm retry', () => {
       kind: 'empty_response',
       finishReason: 'filtered',
       rawFinishReason: 'content_filter',
+      retryable: false,
     });
   });
 
@@ -359,6 +373,7 @@ describe('turn machine llm retry', () => {
           requestId: null,
           retryAfterMs: 2000,
           headers: null,
+          retryable: true,
         },
         2000,
       ],
@@ -394,6 +409,7 @@ describe('turn machine llm retry', () => {
       requestId: null,
       retryAfterMs: 1000,
       headers: null,
+      retryable: false,
     };
     const { requester, calls } = createStubRequester([error]);
     const { actor, retrying } = startTurnActor(requester, { retry: { maxAttemptsPerStep: 5 } });
@@ -425,6 +441,7 @@ function tooLargeError(): LlmErrorMessage {
     requestId: null,
     retryAfterMs: null,
     headers: null,
+    retryable: false,
   };
 }
 
@@ -436,6 +453,7 @@ function imageFormatError(): LlmErrorMessage {
     requestId: null,
     retryAfterMs: null,
     headers: null,
+    retryable: false,
   };
 }
 

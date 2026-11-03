@@ -1,14 +1,12 @@
 import { IAgentTaskService } from '#/agent/task/task';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IConfigService } from '#/app/config/config';
-import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { acquireOrWhenReady, pinnedGeneration, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
   type ExecutableToolResult,
@@ -154,11 +152,13 @@ export class BashTool implements IBashTool {
 
   private spawn(
     processService: IHostProcessService,
-    env: HostEnvironmentInfo,
-    effectiveCwd: string,
+    view: EnvironmentWorkspaceView,
+    cwd: string | undefined,
     command: string,
   ): Promise<IHostProcess> {
-    const shellCwd = getShellPathBridge(env).toShellPath(effectiveCwd);
+    const env = view.host;
+    const effectiveCwd = view.resolve(cwd ?? view.workDir);
+    const shellCwd = view.shellPathBridge?.toShellPath(effectiveCwd) ?? effectiveCwd;
     const shellCommand = `cd ${shellQuote(shellCwd)} && ${command}`;
     const noninteractiveEnv: Record<string, string> = {
       NO_COLOR: '1',
@@ -191,7 +191,6 @@ export class BashTool implements IBashTool {
     const view = new EnvironmentWorkspaceView(lease.environment, this.workspaceCtx);
     const env = view.host;
     const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
-    const effectiveCwd = view.resolve(args.cwd ?? view.workDir);
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
     const timeoutMs = startsInBackground
       ? args.disable_timeout
@@ -202,7 +201,7 @@ export class BashTool implements IBashTool {
     const builder = new ToolOutputAccumulator();
     let proc: IHostProcess;
     try {
-      proc = lease.track(await this.spawn(lease.environment.process!, env, effectiveCwd, command), this.ctx.sessionId);
+      proc = lease.track(await this.spawn(lease.environment.process!, view, args.cwd, command), this.ctx.sessionId);
     } catch (error) {
       lease.dispose();
       return {
