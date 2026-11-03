@@ -47,8 +47,24 @@ export function steerMatchTexts(texts: readonly string[]): readonly string[] {
 
 export function isTurnSteerEvent(
   event: object,
-): event is { readonly type: 'turn.steer'; readonly input?: unknown; readonly origin?: unknown } {
+): event is {
+  readonly type: 'turn.steer';
+  readonly input?: unknown;
+  readonly promptIds?: readonly string[];
+  readonly origin?: unknown;
+} {
   return 'type' in event && event.type === 'turn.steer';
+}
+
+export function isTurnPromptEvent(
+  event: object,
+): event is {
+  readonly type: 'turn.prompt';
+  readonly input?: unknown;
+  readonly promptId?: string;
+  readonly origin?: unknown;
+} {
+  return 'type' in event && event.type === 'turn.prompt';
 }
 
 export function isUserSteerOrigin(event: { readonly origin?: unknown }): boolean {

@@ -71,7 +71,7 @@ import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
-import { isUserSteerOrigin } from '../utils/steer-delivery';
+import { isTurnPromptEvent, isTurnSteerEvent, isUserSteerOrigin } from '../utils/steer-delivery';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
@@ -291,12 +291,15 @@ export class SessionEventHandler {
     if ('turnId' in event && event.turnId !== undefined) {
       this.host.streamingUI.setTurnId(String(event.turnId));
     }
-    if (event.type === 'turn.steer') {
-      if (isUserSteerOrigin(event)) this.host.acknowledgeSteerDelivery?.(event.input, event.promptIds);
+    const rawEvent: object = event;
+    if (isTurnSteerEvent(rawEvent)) {
+      if (isUserSteerOrigin(rawEvent)) {
+        this.host.acknowledgeSteerDelivery?.(rawEvent.input, rawEvent.promptIds);
+      }
       return;
     }
-    if (event.type === 'turn.prompt') {
-      this.host.acknowledgeSteerTurnPrompt?.(event.promptId, event.input, event.origin);
+    if (isTurnPromptEvent(rawEvent)) {
+      this.host.acknowledgeSteerTurnPrompt?.(rawEvent.promptId, rawEvent.input, rawEvent.origin);
       return;
     }
 
