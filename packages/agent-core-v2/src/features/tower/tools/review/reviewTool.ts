@@ -70,7 +70,37 @@ export class TowerReviewTool implements ITowerReviewTool {
           if (result.activityLogError !== undefined) {
             lines.push(`activity log error: ${result.activityLogError}`);
           }
-          if (args.status === 'clean' && args.merge === 'merge') {
+          const artifactMission = state.missions.find(
+            (mission) =>
+              mission.branch === args.target &&
+              mission.kind === 'artifact' &&
+              mission.status !== 'merged' &&
+              mission.status !== 'abandoned',
+          );
+          if (artifactMission !== undefined) {
+            if (
+              args.status === 'clean' &&
+              args.merge === 'merge' &&
+              caller === 'tower' &&
+              result.review.mission === artifactMission.id
+            ) {
+              lines.push(
+                `next: explicit human acceptance for ${args.target} is recorded on the exact tip — the tower can TowerMerge it in Dependency Flow order.`,
+              );
+            } else if (args.status === 'clean' && args.merge === 'merge') {
+              lines.push(
+                `next: ${args.target} is still waiting for mission-matching explicit human acceptance recorded by reviewer=tower; this review alone does not make the artifact merge-ready.`,
+              );
+            } else if (args.status === 'clean') {
+              lines.push(
+                `next: ${args.target} is not merge-approved — artifact acceptance requires status "clean" with merge verdict "merge", recorded by reviewer=tower after explicit user approval.`,
+              );
+            } else {
+              lines.push(
+                `next: ${args.target} is not merge-ready — the author must rework the artifacts, then the tower must obtain fresh explicit human acceptance on the exact tip.`,
+              );
+            }
+          } else if (args.status === 'clean' && args.merge === 'merge') {
             lines.push(
               `next: ${args.target} is merge-ready — the tower can TowerMerge it in Dependency Flow order.`,
             );
