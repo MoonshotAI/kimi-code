@@ -474,6 +474,8 @@ describe('AgentPlanService plan-guard listener', () => {
       );
 
       expect(decision?.veto?.isError).toBe(false);
+      expect(decision?.veto?.output).toContain('Approach B');
+      expect(decision?.veto?.output).toContain('# Plan');
       expect(records).toContainEqual({
         event: 'plan_submitted',
         properties: { has_options: true, mode: 'plan' },

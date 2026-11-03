@@ -1694,6 +1694,8 @@ describe('BashTool background mode', () => {
     expect(output).toContain(`task_id: ${task.taskId}`);
     expect(output).toContain('automatic_notification: true');
     expect(output).toContain('foreground_output:');
+    expect(output).toContain('noisy output line 0');
+    expect(output).toContain('noisy output line 5999');
     expect(output).not.toContain('[...truncated]');
     expect(output.indexOf(`task_id: ${task.taskId}`)).toBeLessThan(
       output.indexOf('foreground_output:'),

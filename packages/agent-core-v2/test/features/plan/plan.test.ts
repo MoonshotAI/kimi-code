@@ -964,6 +964,11 @@ describe('Plan service', () => {
       plan.exit();
       await injectDynamic();
       const afterExit = context.get().length;
+      const text = lastUserText(context.get());
+      expect(text).toContain('Plan mode is no longer active');
+      expect(text).toContain('restrictions from plan mode no longer apply');
+      expect(text).toContain('If the user approved a plan, carry it out');
+      expect(text).toContain("otherwise follow the user's latest message");
 
       await injectDynamic();
       expect(context.get()).toHaveLength(afterExit);

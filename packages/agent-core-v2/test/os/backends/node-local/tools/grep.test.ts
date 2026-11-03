@@ -1552,6 +1552,7 @@ describe('GrepTool', () => {
 
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('ripgrep stderr:');
+    expect(result.output).toContain('error: unclosed character class');
     expect(exec).toHaveBeenCalledTimes(1);
   });
 
@@ -1573,6 +1574,8 @@ describe('GrepTool', () => {
     const result = await executeTool(tool, context({ pattern: 'hit' }));
 
     expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('error: very large failure');
+    expect(result.output).toContain('[stderr truncated at 10485760 bytes]');
   });
 
   it('returns a locator error when ripgrep cannot be resolved', async () => {

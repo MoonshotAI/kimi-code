@@ -411,6 +411,8 @@ describe('TowerPlanTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('planned 2 mission(s):');
+    expect(result.output).toContain('| M1 | Build engine | build | feat/build-engine | wt-1 | src/engine/** |');
+    expect(result.output).toContain('| M2 | Build UI | build | feat/build-ui | wt-2 | src/ui/** |');
   });
 
   it('passes mission context through to the stored mission', async () => {
@@ -785,6 +787,7 @@ describe('TowerSendTool + TowerInboxTool', () => {
     expect(result.isError).toBeFalsy();
     const loop = agentLoops.get('agent-w1')!;
     expect(loop.submitted).toHaveLength(1);
+    expect(loop.submitted[0]).toContain('new message from tower: "rebase now"');
     expect(loop.submitted[0]).toContain('TowerInbox');
   });
 
@@ -1105,6 +1108,10 @@ describe('readTowerStatusSummary', () => {
     const [headline, ...bodyLines] = summary.split('\n');
     expect(headline).toBe('Tower status — ON');
     const body = bodyLines.join('\n');
+    expect(body).toContain('Base: main (mode: branch) · You are: tower');
+    expect(body).toContain('Missions:\n  M1 Build engine — active · owner w1 · feat/build-engine');
+    expect(body).toContain('Roster:\n  w1 (worker) — mission M1 · agent-w1');
+    expect(body).toContain('Review gate:\n  M1 feat/build-engine — BLOCKED: not-completed');
     expect(body).toContain('Inbox: 0 message(s)');
     expect(body).toContain('Recent activity:');
     expect(body).toContain(' tower init');
@@ -1635,9 +1642,13 @@ describe('tower state loss degradation', () => {
     expect(await readStatus()).toEqual({ active: true, initialized: false, stateLost: true });
     const result = await run(ix.get(ITowerStatusTool), {});
     expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('# Tower status — STATE LOST');
+    expect(result.output).toContain('Report this history loss to the user');
+    expect(result.output).toContain('TowerMerge and TowerRebase refuse');
 
     const summary = await readStatusSummary();
     expect(summary).toContain('Tower mode: ON');
+    expect(summary).toContain('Tower state was lost');
   });
 
   it('TowerSend recovers a minimal state stamped recoveredAt and delivers normally', async () => {
@@ -1724,7 +1735,12 @@ describe('tower state loss degradation', () => {
 
     const result = await run(ix.get(ITowerStatusTool), {});
     expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('State recovered after a loss');
+    expect(result.output).toContain('Report the history loss to the user');
 
+    const summary = await readStatusSummary();
+    expect(summary).toContain('State recovered at');
+    expect(summary).toContain('report this history loss to the user');
   });
 
   it('TowerMerge and TowerRebase fail with an explicit state-lost error instead of a not-initialized one', async () => {

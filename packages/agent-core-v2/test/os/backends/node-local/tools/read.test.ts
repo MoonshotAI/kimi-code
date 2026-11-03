@@ -1557,6 +1557,7 @@ describe('ReadTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('1\tHello 世界 🌍');
+    expect(result.output).toContain('2\tUnicode test: café, naïve, résumé');
   });
 
   it('schema validation rejects n_lines=0 and n_lines=-1 with an n_lines-keyed error', () => {

@@ -356,6 +356,10 @@ describe('AgentPluginService plugin-change reminder', () => {
 
     const messages = findPluginChangeMessages(ctx);
     expect(messages).toHaveLength(1);
+    const text = messageText(messages[0]!);
+    expect(text).toContain('demo');
+    expect(text).toContain('enable');
+    expect(text).toMatch(/\/new|\/reload/);
     mutateEmitter.dispose();
   });
 

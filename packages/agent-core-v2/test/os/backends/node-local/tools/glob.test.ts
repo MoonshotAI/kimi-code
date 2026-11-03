@@ -517,6 +517,7 @@ describe('GlobTool', () => {
 
     expect(result.output).toContain('src/a.ts');
     expect(result.output).not.toContain('.env');
+    expect(result.output).toContain('Filtered 1 sensitive file');
   });
 
   it('surfaces the raw spawn error when rg cannot be spawned', async () => {

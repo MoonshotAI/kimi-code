@@ -278,6 +278,8 @@ describe('goal tools', () => {
     expect(result.stopTurn).toBe(true);
     expect(result.output).toContain('Goal completed successfully');
     expect(result.output).toContain('Worked');
+    expect(result.output).toContain('Write a concise final message for the user');
+    expect(result.output).toContain('Do not call more goal tools');
   });
 
   it('UpdateGoal blocked returns the blocked-reason prompt and stops the turn', async () => {

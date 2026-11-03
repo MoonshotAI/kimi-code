@@ -86,6 +86,8 @@ describe('session cron wire persistence', () => {
       const reminder = withInherited.get(IAgentContextMemoryService).get().at(-1);
       expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'cron_fork_cleared' });
       const text = JSON.stringify(reminder?.content);
+      expect(text).toContain('This fork does not have any scheduled cron tasks.');
+      expect(text).toContain('Tasks from the source session continue to run in the source session.');
     } finally {
       await withInherited.dispose();
     }
