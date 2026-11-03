@@ -3525,6 +3525,26 @@ describe('AgentTowerService', () => {
       expect(isUserCancellation(loop.cancels[0]?.reason)).toBe(true);
     });
 
+    it('lets the inbox wake turn finish when the submitted prompt waits in a paused queue', async () => {
+      const tower = ix.get(IAgentTowerService);
+      await tower.enter();
+
+      const wakeTurn = loop.startTurn();
+      publishAsMain(
+        ix,
+        new TurnStarted({
+          agentId: 'main',
+          turnId: wakeTurn.id,
+          origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
+        }),
+      );
+      loop.pauseQueue();
+      publishUserPrompt('p1');
+      await flushWake();
+
+      expect(loop.cancels).toEqual([]);
+    });
+
     it('ignores turns seeded by other notification origins', async () => {
       const tower = ix.get(IAgentTowerService);
       await tower.enter();

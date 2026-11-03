@@ -223,6 +223,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         if (turnId === undefined) return;
         queueMicrotask(() => {
           if (this.wakeDisposed || !this.isActive || this.loop === undefined) return;
+          if (this.loop.snapshot().queuePaused) return;
           if (this.loop.cancel({ turnId }, userCancellationReason())) {
             this.wakeAbortedForUserPrompt = true;
           }
