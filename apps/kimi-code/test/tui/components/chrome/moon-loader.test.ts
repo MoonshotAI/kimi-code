@@ -1,7 +1,8 @@
-import { AnimationFrameScheduler, type TUI } from '@moonshot-ai/pi-tui';
+import { ANIMATION_FRAME_INTERVAL_MS, AnimationFrameScheduler, type TUI } from '@moonshot-ai/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MoonLoader, type SpinnerStyle } from '#/tui/components/chrome/moon-loader';
+import { MOON_LOADER_FRAME_MS } from '#/tui/constant/rendering';
 
 // MoonLoader requests animation frames from its constructor, so every loader
 // created in these tests must be stopped to avoid leaving live timers behind.
@@ -20,6 +21,10 @@ function createLoader(style: SpinnerStyle = 'moon') {
   const loader = new MoonLoader(ui, style);
   loaders.push(loader);
   return { loader, requestRender };
+}
+
+function firstAnimationFrameAtOrAfter(ms: number): number {
+  return Math.ceil(ms / ANIMATION_FRAME_INTERVAL_MS) * ANIMATION_FRAME_INTERVAL_MS;
 }
 
 afterEach(() => {
@@ -52,16 +57,20 @@ describe('MoonLoader', () => {
   it.each([
     ['moon', ['🌑', '🌒', '🌓']],
     ['braille', ['⠋', '⠙', '⠹']],
-  ] as const)('shows the next %s frame every 120 ms and stops requesting frames after stop()', (style, [first, second, third]) => {
+  ] as const)('shows the next %s frame on the first animation frame after each frame duration and stops requesting frames after stop()', (style, [first, second, third]) => {
     vi.useFakeTimers();
     const { loader, requestRender } = createLoader(style);
+    const secondShownAt = firstAnimationFrameAtOrAfter(MOON_LOADER_FRAME_MS);
+    const thirdShownAt = firstAnimationFrameAtOrAfter(2 * MOON_LOADER_FRAME_MS);
     expect(loader.renderInline()).toBe(first);
 
-    vi.advanceTimersByTime(119);
+    vi.advanceTimersByTime(secondShownAt - 1);
     expect(loader.renderInline()).toBe(first);
     vi.advanceTimersByTime(1);
     expect(loader.renderInline()).toBe(second);
-    vi.advanceTimersByTime(120);
+    vi.advanceTimersByTime(thirdShownAt - secondShownAt - 1);
+    expect(loader.renderInline()).toBe(second);
+    vi.advanceTimersByTime(1);
     expect(loader.renderInline()).toBe(third);
 
     loader.stop();
