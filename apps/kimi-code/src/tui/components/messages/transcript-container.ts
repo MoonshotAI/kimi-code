@@ -309,12 +309,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
       return cached;
     }
 
-    const items = this.inspector.read(this.sourceChildren, this.options);
-    const projections = projectTranscript(
-      items,
-      this.options,
-      (component) => this.openedMembers.has(component),
-    );
+    const projections = this.project();
     const cutoff = this.firstExpandableSourceIndex();
     const viewChildren: Component[] = [];
     const viewSourceIndices: number[] = [];
@@ -429,18 +424,24 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     return item.kind === 'logical' && this.openedMembers.has(item.display) && canFoldItem(item, this.options);
   }
 
-  private keepMergedGroupExpanded(closed: Component, projections: readonly TranscriptProjection[]): void {
-    const at = projections.findIndex((projection) => projection.kind === 'single' && projection.item.display === closed);
-    const single = projections[at];
-    if (single?.kind !== 'single' || single.item.kind !== 'logical') return;
-    if (!canFoldItem(single.item, this.options)) return;
-    const before = projections[at - 1];
-    const after = projections[at + 1];
-    const wasExpanded = [before, after].some(
-      (projection) => projection?.kind === 'group' && this.expandedGroups.get(projection.anchor) === true,
+  private keepMergedGroupExpanded(closed: Component, previous: readonly TranscriptProjection[]): void {
+    const merged = this.project().find((projection): projection is GroupProjection =>
+      projection.kind === 'group' && projectionItems(projection).some((item) => item.display === closed));
+    if (merged === undefined) return;
+    const members = new Set(merged.members.map((member) => member.display));
+    const absorbedExpanded = previous.some((projection) =>
+      projection.kind === 'group' &&
+      this.expandedGroups.get(projection.anchor) === true &&
+      projection.members.some((member) => members.has(member.display)));
+    if (absorbedExpanded) this.expandedGroups.set(merged.anchor, true);
+  }
+
+  private project(): readonly TranscriptProjection[] {
+    return projectTranscript(
+      this.inspector.read(this.sourceChildren, this.options),
+      this.options,
+      (component) => this.openedMembers.has(component),
     );
-    if (!wasExpanded) return;
-    this.expandedGroups.set(before?.kind === 'group' ? before.anchor : single.item.source, true);
   }
 
   private initializeChild(child: Component, sourceIndex: number): void {

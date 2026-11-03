@@ -1089,6 +1089,27 @@ describe('TranscriptGroupComponent', () => {
     });
   });
 
+  it('keeps the group below an opened thought expanded when a silent tool call before the thought joins it', () => {
+    const { container } = makeContainer();
+    const thinking = new ThinkingComponent('one\ntwo\nthree\nfour\nfive', true, 'live');
+    container.addChild(tool('select_tools', { names: ['Read'] }));
+    container.addChild(thinking);
+    click(container, plain(container.render(80)).split('\n').length - 1);
+    thinking.finalize({ known: true, ms: 3000 });
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(tool('Bash', { command: 'ls' }));
+    click(container, lineOf(container, 'Read 1 file'));
+    expect(groupViews(container).map((group) => group.expanded)).toEqual([true]);
+
+    click(container, lineOf(container, 'one'));
+
+    expect(onlyGroup(container)).toMatchObject({
+      title: '● Thought for 3s, read 1 file, ran 1 command',
+      expanded: true,
+    });
+    expect(plain(container.render(80))).toContain('Bash ls');
+  });
+
   it('keeps an expanded group on either side of an opened thought when it closes', () => {
     for (const expandedSide of [0, 1]) {
       const { container } = makeContainer();
