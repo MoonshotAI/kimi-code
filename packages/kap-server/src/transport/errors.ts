@@ -62,6 +62,7 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
 const PUBLIC_DETAIL_CODES: ReadonlySet<string> = new Set([
   ErrorCodes.SESSION_OCCUPIED,
   ErrorCodes.SESSION_STALE,
+  ErrorCodes.WIRE_VERSION_TOO_LOW,
 ]);
 
 export function mapError(err: unknown, requestId: string): ReturnType<typeof errEnvelope> {

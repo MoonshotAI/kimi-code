@@ -26,7 +26,7 @@ export function assertWireReaderVersion(minReaderVersion: string | undefined): v
   ) {
     throw new WireError(
       WireErrors.codes.WIRE_VERSION_TOO_LOW,
-      `This wire.jsonl requires reader protocol ${minReaderVersion}; current Kimi Code supports ${WIRE_PROTOCOL_VERSION}. Upgrade Kimi Code to read this session.`,
+      'This session requires a newer version of Kimi Code. Upgrade Kimi Code to the latest version to read this session.',
       {
         details: {
           minReaderVersion,

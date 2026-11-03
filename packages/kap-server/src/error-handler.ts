@@ -26,7 +26,15 @@ export function installErrorHandler(app: ErrorHandlerHost): void {
     if (isError2(err) && err.code === ErrorCodes.WIRE_VERSION_TOO_LOW) {
       reply
         .status(200)
-        .send(errEnvelope(ErrorCode.WIRE_VERSION_TOO_LOW, err.message, requestId, err.stack));
+        .send(
+          errEnvelope(
+            ErrorCode.WIRE_VERSION_TOO_LOW,
+            err.message,
+            requestId,
+            err.stack,
+            err.details,
+          ),
+        );
       return;
     }
     req.log.error({ err, request_id: requestId }, 'unhandled error');
