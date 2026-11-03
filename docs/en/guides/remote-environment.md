@@ -23,7 +23,7 @@ POSIX and Windows targets are supported. Windows targets require Git for Windows
 
 ## Declaring environments
 
-Environments are declared in the `[environments]` section of `config.toml`. Three kinds of entries are available: SSH hosts, Docker-compatible containers, and custom launcher commands for anything else (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes, and so on).
+Environments are declared in the `[environments]` section of `config.toml`. Three kinds of entries are available: SSH hosts, Docker-compatible containers, and custom launcher commands for anything else (WSL distributions, OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes, and so on).
 
 ```toml
 [environments]
@@ -78,6 +78,19 @@ defaultCwd = 'C:\work\project'
 ```
 
 Custom command launchers also need the Windows executor and Git Bash on the target. If the supplied `args` already invoke `exec-server`, the launcher is responsible for its own Windows command quoting.
+
+### WSL targets
+
+When Kimi Code runs on Windows, a custom command launcher can run tools inside a WSL distribution. A WSL target is a Linux target and does not need Git for Windows: install the Linux `kimi` binary at `~/.kimi-code/bin/kimi` inside the distribution.
+
+```toml
+[environments.wsl]
+command = "wsl.exe"
+args = ["-d", "Ubuntu", "--"]   # Kimi Code appends ~/.kimi-code/bin/kimi exec-server
+defaultCwd = "/home/me/project"
+```
+
+The command after `--` runs through the distribution's default shell, so `~` expands and the default `remoteBin` works. Use a Linux path inside the distribution for `defaultCwd`, not a Windows-side path such as `\\wsl$\...`. With [multiple environments](#multiple-environments-in-one-session) enabled, a local Windows session can also mount a WSL directory with `/add-dir`.
 
 ## Creating and resuming sessions
 

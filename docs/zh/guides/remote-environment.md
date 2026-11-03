@@ -23,7 +23,7 @@ Kimi Code 把 Agent 循环、模型请求、凭据、审批和会话状态全部
 
 ## 声明环境
 
-环境声明在 `config.toml` 的 `[environments]` 节中。共有三类条目：SSH 主机、Docker 兼容容器，以及用于其他环境的自定义启动命令（OrbStack 机器、`kubectl exec`、Apple Container、受管沙箱等）。
+环境声明在 `config.toml` 的 `[environments]` 节中。共有三类条目：SSH 主机、Docker 兼容容器，以及用于其他环境的自定义启动命令（WSL 发行版、OrbStack 机器、`kubectl exec`、Apple Container、受管沙箱等）。
 
 ```toml
 [environments]
@@ -78,6 +78,19 @@ defaultCwd = 'C:\work\project'
 ```
 
 自定义命令启动器同样要求目标上有 Windows 执行器和 Git Bash。如果传入的 `args` 已经调用 `exec-server`，启动器需要自行处理 Windows 命令引号。
+
+### WSL 目标
+
+在 Windows 上运行 Kimi Code 时，可以用自定义命令启动器把工具执行放进 WSL 发行版。WSL 目标是 Linux 目标，不需要 Git for Windows：在发行版里把 Linux 版 `kimi` 安装到 `~/.kimi-code/bin/kimi`。
+
+```toml
+[environments.wsl]
+command = "wsl.exe"
+args = ["-d", "Ubuntu", "--"]   # Kimi Code 会追加 ~/.kimi-code/bin/kimi exec-server
+defaultCwd = "/home/me/project"
+```
+
+`--` 之后的命令由发行版的默认 shell 执行，因此 `~` 会展开，可以沿用默认的 `remoteBin`。`defaultCwd` 使用发行版内的 Linux 路径，不要使用 `\\wsl$\...` 这类 Windows 侧路径。开启[多环境](#在一个会话中使用多个环境)后，也可以在本地 Windows 会话中用 `/add-dir` 挂载 WSL 里的目录。
 
 ## 创建与恢复会话
 
