@@ -122,6 +122,36 @@ describe('ThinkingComponent', () => {
     expect(out).toContain('… (5 more lines, ctrl+o to expand)');
   });
 
+  it('keeps every line in place under the given title when an opened thought finishes', () => {
+    const component = new ThinkingComponent(`${longThinking}\n\n`, true, 'live');
+    component.setExpanded(true);
+    const live = component.render(80);
+    component.setFinishedForm({ kind: 'opened', title: 'Thought for 5s' });
+    expect(component.render(80)).toEqual(live);
+
+    component.finalize({ known: true, ms: 5_000 });
+    const finished = component.render(80);
+    expect(finished.map((line) => strip(line).trimEnd())).toEqual([
+      '',
+      '● Thought for 5s',
+      '  line1',
+      '  line2',
+      '  line3',
+      '  line4',
+      '  line5',
+      '  line6',
+      '  line7',
+    ]);
+    expect(finished.slice(2)).toEqual(live.slice(2));
+    component.setFinishedForm({ kind: 'opened', title: 'Thought for 5s' });
+    expect(component.render(80)).toBe(finished);
+
+    component.setFinishedForm({ kind: 'standalone' });
+    component.setExpanded(false);
+    expect(strip(component.render(80).join('\n'))).toContain('● line1');
+    expect(strip(component.render(80).join('\n'))).toContain('ctrl+o to expand');
+  });
+
   it('expands and collapses after finalization', () => {
     const component = new ThinkingComponent(longThinking, true, 'live');
     component.finalize({ known: false });

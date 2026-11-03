@@ -7,6 +7,7 @@
 
 import { Text, truncateToWidth, visibleWidth, type Component, type TUI } from '@moonshot-ai/pi-tui';
 
+import { renderHeaderContent } from '#/tui/components/messages/truncated-header-line';
 import {
   ANSI_ESCAPE_PATTERN,
   MESSAGE_INDENT,
@@ -23,12 +24,17 @@ const FINALIZED_FOLD_HINT_ROWS = 1;
 
 export type ThinkingRenderMode = 'live' | 'finalized';
 
+export type FinishedThinkingForm =
+  | { readonly kind: 'standalone' }
+  | { readonly kind: 'opened'; readonly title: string };
+
 export class ThinkingComponent implements Component {
   readonly startedAtMs = Date.now();
 
   private text: string;
   private showMarker: boolean;
   private mode: ThinkingRenderMode;
+  private finishedForm: FinishedThinkingForm = { kind: 'standalone' };
   private expanded = false;
   private previewHidesLines = false;
   private readonly ui: TUI | undefined;
@@ -110,6 +116,12 @@ export class ThinkingComponent implements Component {
     this.markRenderDirty();
   }
 
+  setFinishedForm(form: FinishedThinkingForm): void {
+    if (sameFinishedForm(this.finishedForm, form)) return;
+    this.finishedForm = form;
+    this.markRenderDirty();
+  }
+
   hasHiddenContent(): boolean {
     return this.previewHidesLines;
   }
@@ -150,6 +162,13 @@ export class ThinkingComponent implements Component {
         '',
         truncateToWidth(title, width, '…'),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
+      ];
+    } else if (this.finishedForm.kind === 'opened') {
+      this.previewHidesLines = false;
+      rendered = [
+        '',
+        openedTitle(this.finishedForm.title, width),
+        ...withoutTrailingBlankLines(contentLines).map((line) => MESSAGE_INDENT + line),
       ];
     } else {
       this.previewHidesLines = contentLines.length > THINKING_PREVIEW_LINES + FINALIZED_FOLD_HINT_ROWS;
@@ -214,6 +233,20 @@ export class ThinkingComponent implements Component {
     this.ui?.cancelAnimationFrame(this.frameRequest);
     this.frameRequest = undefined;
   }
+}
+
+function sameFinishedForm(left: FinishedThinkingForm, right: FinishedThinkingForm): boolean {
+  if (left.kind === 'standalone' || right.kind === 'standalone') return left.kind === right.kind;
+  return left.title === right.title;
+}
+
+function openedTitle(title: string, width: number): string {
+  const dim = (text: string): string => currentTheme.fg('textDim', text);
+  return renderHeaderContent({
+    head: `${dim(STATUS_BULLET.trimEnd())} `,
+    flex: { text: title, style: dim, keep: 'head' },
+    tail: '',
+  }, width);
 }
 
 function withoutTrailingBlankLines(lines: readonly string[]): readonly string[] {

@@ -427,7 +427,7 @@ function oneLine(subject: string): string {
   return newline < 0 ? subject : `${subject.slice(0, newline)}…`;
 }
 
-function itemText(item: LogicalTranscriptItem): string {
+export function itemText(item: LogicalTranscriptItem): string {
   const { verb, subject } = item.label;
   return subject === undefined ? verb : `${verb} ${oneLine(subject)}`;
 }

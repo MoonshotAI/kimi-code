@@ -16,10 +16,12 @@ import {
   type TranscriptPresentationOptions,
 } from '#/tui/config';
 import {
+  itemText,
   TranscriptGroupComponent,
   type TranscriptGroupInteraction,
 } from '#/tui/components/messages/transcript-group';
 import { SkillActivationComponent } from '#/tui/components/messages/skill-activation';
+import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import {
   countedByExpandHint,
   hasHiddenContent,
@@ -320,8 +322,14 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     const nextSummaries = new Map<Component, GroupSummaryCache>();
     for (const projection of projections) {
       if (projection.kind === 'single') {
-        viewChildren.push(projection.item.display);
-        viewSourceIndices.push(projection.item.sourceIndex);
+        const { item } = projection;
+        if (item.display instanceof ThinkingComponent) {
+          item.display.setFinishedForm(
+            this.isOpenedOutsideGroup(item) ? { kind: 'opened', title: itemText(item) } : { kind: 'standalone' },
+          );
+        }
+        viewChildren.push(item.display);
+        viewSourceIndices.push(item.sourceIndex);
         continue;
       }
       let expanded = this.expandedGroups.get(projection.anchor);
@@ -400,10 +408,12 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     const cache = this.ensureProjection();
     const component = cache.viewChildren[index];
     const sourceIndex = cache.viewSourceIndices[index];
-    if (component === undefined || sourceIndex === undefined) return undefined;
-    if (!isExpandable(component) || !hasHiddenContent(component)) return undefined;
-    if (!isExpandedComponent(component) && sourceIndex < this.firstExpandableSourceIndex()) return undefined;
-    const expanded = !isExpandedComponent(component);
+    if (component === undefined || sourceIndex === undefined || !isExpandable(component)) return undefined;
+    const openedOutsideGroup = cache.projections.some((projection) =>
+      projection.kind === 'single' && projection.item.display === component && this.isOpenedOutsideGroup(projection.item));
+    if (!openedOutsideGroup && !hasHiddenContent(component)) return undefined;
+    const expanded = !openedOutsideGroup && !isExpandedComponent(component);
+    if (expanded && sourceIndex < this.firstExpandableSourceIndex()) return undefined;
     component.setExpanded(expanded);
     if (expanded) this.openedMembers.add(component);
     else {
@@ -413,6 +423,10 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     this.projectionCache = undefined;
     this.ui.requestRender();
     return { handled: true };
+  }
+
+  private isOpenedOutsideGroup(item: TranscriptItem): item is LogicalTranscriptItem {
+    return item.kind === 'logical' && this.openedMembers.has(item.display) && canFoldItem(item, this.options);
   }
 
   private keepMergedGroupExpanded(closed: Component, projections: readonly TranscriptProjection[]): void {

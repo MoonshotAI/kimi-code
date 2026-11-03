@@ -3,6 +3,7 @@ import {
   AnimationFrameScheduler,
   visibleWidth,
   type Component,
+  type TuiMouseDispatchResult,
   type TuiMouseEvent,
 } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
@@ -143,8 +144,8 @@ function lines(count: number): string {
   return Array.from({ length: count }, (_, index) => `line ${index + 1}`).join('\n');
 }
 
-function click(container: TranscriptContainer, y: number, x = 0): void {
-  const lines = container.render(80);
+function click(container: TranscriptContainer, y: number, x = 0, width = 80): TuiMouseDispatchResult | undefined {
+  const lines = container.render(width);
   const event: TuiMouseEvent = {
     type: 'click',
     button: 'left',
@@ -152,14 +153,14 @@ function click(container: TranscriptContainer, y: number, x = 0): void {
     y,
     screenX: x,
     screenY: y,
-    width: 80,
+    width,
     height: lines.length,
     shift: false,
     alt: false,
     ctrl: false,
     clickCount: 1,
   };
-  container.handleMouse(event);
+  return container.handleMouse(event);
 }
 
 function user(text: string): UserMessageComponent {
@@ -900,12 +901,105 @@ describe('TranscriptGroupComponent', () => {
     thinking.finalize({ known: true, ms: 3000 });
     const finished = plain(container.render(80));
     expect(onlyGroup(container).title).toBe('● Read a.ts');
-    expect(finished).not.toContain('Thought for 3s');
+    expect(finished).toContain('● Thought for 3s');
     expect(finished).toContain('one');
 
     click(container, plain(container.render(80)).split('\n').length - 1);
     expect(thinking.isExpanded()).toBe(false);
     expect(onlyGroup(container).title).toBe('● Thought for 3s, read 1 file');
+  });
+
+  it.each([
+    ['● Thought for 5s', { known: true, ms: 5000 }],
+    ['● Thought', { known: false }],
+  ] as const)('titles a finished opened thought "%s" exactly like its one-item group', (title, elapsed) => {
+    chalk.level = 3;
+    const { container } = makeContainer();
+    const thinking = new ThinkingComponent(lines(5), true, 'live');
+    container.addChild(thinking);
+    click(container, plain(container.render(80)).split('\n').length - 1);
+
+    thinking.finalize(elapsed);
+    const opened = container.render(80);
+    const narrow = container.render(12);
+    expect(plain(opened).split('\n').map((line) => line.trimEnd())).toEqual([
+      '',
+      title,
+      '  line 1',
+      '  line 2',
+      '  line 3',
+      '  line 4',
+      '  line 5',
+    ]);
+
+    click(container, 1);
+    expect(onlyGroup(container)).toMatchObject({ title, expanded: false });
+    expect(container.render(80)[1]).toBe(opened[1]);
+    expect(container.render(12)[1]).toBe(narrow[1]);
+  });
+
+  it.each([
+    ['three lines', 'one\ntwo\nthree', 80],
+    ['one line', 'one two three four five six seven', 12],
+  ])('folds a finished opened thought of %s back into its group on click', (_name, text, openWidth) => {
+    const { container } = makeContainer();
+    const thinking = new ThinkingComponent(text, true, 'live');
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    container.addChild(thinking);
+    click(container, plain(container.render(openWidth)).split('\n').length - 1, 0, openWidth);
+    expect(thinking.isExpanded()).toBe(true);
+
+    thinking.finalize({ known: true, ms: 3000 });
+    expect(onlyGroup(container).title).toBe('● Read a.ts');
+    click(container, lineOf(container, 'three'));
+
+    expect(onlyGroup(container).title).toBe('● Thought for 3s, read 1 file');
+    expect(plain(container.render(80))).not.toContain('three');
+  });
+
+  it('folds an opened thought back on click after Ctrl+O passes over its old turn', () => {
+    const { container } = makeContainer();
+    const thinking = new ThinkingComponent(lines(5), true, 'live');
+    container.addChild(thinking);
+    click(container, plain(container.render(80)).split('\n').length - 1);
+    thinking.finalize({ known: true, ms: 3000 });
+    container.addChild(tool('Read', { path: '/work/a.ts' }));
+    for (const text of ['one', 'two', 'three', 'four']) container.addChild(user(text));
+    container.toggleToolOutputExpansion();
+
+    click(container, lineOf(container, 'Thought for 3s'));
+
+    expect(groupViews(container).map((group) => group.title)).toEqual(['● Thought for 3s, read 1 file']);
+  });
+
+  const ungroupedThinking = [
+    ['grouping is off', options({ groupTools: 'off', groupThinking: false })],
+    ['thinking does not fold', options({ groupThinking: false })],
+    ['the transcript is regular', options({ fullscreen: false })],
+  ] as const;
+
+  it.each(ungroupedThinking)('keeps the untitled finished form of an opened thought when %s', (_name, presentation) => {
+    const { container } = makeContainer(presentation);
+    const thinking = new ThinkingComponent(lines(5), true, 'live');
+    container.addChild(thinking);
+    click(container, plain(container.render(80)).split('\n').length - 1);
+    thinking.finalize({ known: true, ms: 5000 });
+
+    const rows = (): string[] => plain(container.render(80)).split('\n').map((line) => line.trimEnd());
+    expect(rows()).toEqual(['', '● line 1', '  line 2', '  line 3', '  line 4', '  line 5']);
+    click(container, 1);
+    expect(rows()).toEqual(['', '● line 1', '  line 2', '  … (3 more lines, ctrl+o to expand)']);
+  });
+
+  it.each(ungroupedThinking)('leaves clicks on a short finished opened thought unhandled when %s', (_name, presentation) => {
+    const { container } = makeContainer(presentation);
+    const thinking = new ThinkingComponent('one\ntwo\nthree', true, 'live');
+    container.addChild(thinking);
+    click(container, plain(container.render(80)).split('\n').length - 1);
+    thinking.finalize({ known: true, ms: 5000 });
+
+    expect(click(container, 1)).toBeUndefined();
+    expect(plain(container.render(80)).split('\n').map((line) => line.trimEnd())).toEqual(['', '● one', '  two', '  three']);
   });
 
   it('keeps an opened thought before tools that arrived after it', () => {
