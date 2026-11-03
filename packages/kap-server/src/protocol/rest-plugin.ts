@@ -104,6 +104,7 @@ export const installPluginRequestSchema = z.union([
 export type InstallPluginRequest = z.infer<typeof installPluginRequestSchema>;
 
 export const pluginMarketplaceLocalizedTextSchema = z.object({
+  displayName: z.string().optional(),
   cliDescription: z.string().optional(),
   longDescription: z.string().optional(),
   shortDescription: z.string().optional(),

@@ -105,7 +105,7 @@ function createCatalog(): { plugins: Array<Record<string, unknown>> } {
         cliDescription: 'CLI description',
         locale: {
           defaultLocale: 'en-us',
-          'zh-cn': { shortDescription: '短介绍', longDescription: '完整介绍' },
+          'zh-cn': { displayName: '本地化名称', shortDescription: '短介绍', longDescription: '完整介绍' },
         },
         distribution: { category: 'third_party', weight: 1, userLevel: 'pro' },
       }),
@@ -602,7 +602,10 @@ describe('server-v2 /api/v1 plugins', () => {
       shortDescription: 'Short description',
       longDescription: 'Long description',
       defaultLocale: 'en-us',
-      locale: { defaultLocale: 'en-us' },
+      locale: {
+        defaultLocale: 'en-us',
+        'zh-cn': { displayName: '本地化名称', shortDescription: '短介绍', longDescription: '完整介绍' },
+      },
       billing: 'free',
       distribution: { userLevel: 'pro' },
     });

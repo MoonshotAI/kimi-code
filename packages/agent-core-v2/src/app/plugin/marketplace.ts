@@ -24,6 +24,7 @@ export type PluginMarketplaceTier = (typeof PLUGIN_MARKETPLACE_TIERS)[number];
 export type PluginMarketplacePlatform = 'darwin' | 'win32' | 'linux' | 'cloud';
 
 export interface PluginMarketplaceLocalizedText {
+  readonly displayName?: string;
   readonly cliDescription?: string;
   readonly longDescription?: string;
   readonly shortDescription?: string;
@@ -420,6 +421,7 @@ function parseLocale(value: unknown, id: string): PluginMarketplaceLocale | unde
       throw new TypeError(`Plugin marketplace entry ${id} locale "${key}" must be an object.`);
     }
     locale[key] = {
+      displayName: stringField(block, 'displayName'),
       cliDescription: stringField(block, 'cliDescription'),
       longDescription: stringField(block, 'longDescription'),
       shortDescription: stringField(block, 'shortDescription'),
