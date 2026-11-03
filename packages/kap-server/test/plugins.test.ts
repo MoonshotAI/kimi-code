@@ -618,18 +618,25 @@ describe('server-v2 /api/v1 plugins', () => {
     expect((await call<{ plugins: Array<{ id: string }> }>('GET', '/api/v1/plugins'))
       .body.data.plugins.map((plugin) => plugin.id)).not.toContain('demo-plugin');
 
+    const runtimeReload = vi.fn();
+    server!.core.accessor.get(IPluginService).onDidReload(runtimeReload);
     catalog.plugins[0]!['clients'] = ['desktop', 'cli'];
     await call('GET', '/api/v1/plugins/marketplace');
+    expect(runtimeReload).toHaveBeenCalledTimes(1);
     expect((await call<{ plugins: Array<{ id: string }> }>('GET', '/api/v1/plugins'))
       .body.data.plugins.map((plugin) => plugin.id)).toContain('demo-plugin');
+    await call('GET', '/api/v1/plugins/marketplace');
+    expect(runtimeReload).toHaveBeenCalledTimes(1);
 
     catalog.plugins[0]!['clients'] = ['desktop'];
     await call('GET', '/api/v1/plugins/marketplace');
+    expect(runtimeReload).toHaveBeenCalledTimes(2);
     expect((await call<{ plugins: Array<{ id: string }> }>('GET', '/api/v1/plugins'))
       .body.data.plugins.map((plugin) => plugin.id)).not.toContain('demo-plugin');
 
     catalog.plugins[0]!['clients'] = ['desktop', 'cli'];
     await call('GET', '/api/v1/plugins/marketplace');
+    expect(runtimeReload).toHaveBeenCalledTimes(3);
     expect((await call<{ plugins: Array<{ id: string }> }>('GET', '/api/v1/plugins'))
       .body.data.plugins.map((plugin) => plugin.id)).toContain('demo-plugin');
     expect((await call('POST', '/api/v1/plugins/demo-plugin:remove')).body.code).toBe(0);

@@ -334,6 +334,7 @@ async function loadMarketplaceCatalog(
         if (!changed) return;
         const plugins = await resolvePluginApi(host);
         await plugins.reloadPlugins();
+        await host.refreshPluginCommands(host.session);
         panel.setInstalled(await plugins.listPlugins());
       },
     });
@@ -462,6 +463,7 @@ export const __pluginsCommandInternals = {
   installMarketplaceEntryFromPanel,
   installPluginFromSource,
   isDefaultMarketplaceCatalog,
+  loadMarketplaceCatalog,
   pollCapabilityInstall,
   removePlugin,
 };

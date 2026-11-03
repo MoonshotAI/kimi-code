@@ -87,6 +87,7 @@ export class PluginService extends Service implements IPluginService {
   private readonly client: PluginClient;
   private readonly platform: NodeJS.Platform;
   private initialLoadPromise: Promise<void> | undefined;
+  private appliedAvailabilityGeneration = 0;
   private snapshotLoaded = false;
   private loadError: Error | undefined;
   private mutationQueue: Promise<void> = Promise.resolve();
@@ -261,8 +262,8 @@ export class PluginService extends Service implements IPluginService {
 
   reconcileAvailability(marketplace: PluginMarketplace): Promise<void> {
     return this.runNotifiedMutation(async () => {
-      const changed = await this.availability.update(marketplace);
-      if (!changed) {
+      await this.availability.update(marketplace);
+      if (this.availability.generation === this.appliedAvailabilityGeneration) {
         return {
           result: undefined,
           notification: {
@@ -286,6 +287,7 @@ export class PluginService extends Service implements IPluginService {
     summary: ReloadSummary,
     options?: { readonly mutation: PluginMutation },
   ): PluginReloadNotification {
+    this.appliedAvailabilityGeneration = this.availability.generation;
     this.snapshotLoaded = true;
     this.loadError = undefined;
     const delivery = this.onDidReloadEmitter.fireAsyncConcurrent(summary, NO_ABORT);

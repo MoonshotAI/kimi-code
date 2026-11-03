@@ -151,6 +151,9 @@ describe('facade routing', () => {
     channel.result = {
       id: 'demo',
       displayName: 'Demo',
+      description: 'Plugin description',
+      shortDescription: 'Short description',
+      longDescription: 'Long description',
       enabled: true,
       state: 'ok',
       skillCount: 0,
@@ -165,8 +168,18 @@ describe('facade routing', () => {
       installedAt: '2026-01-01T00:00:00.000Z',
     };
 
-    await klient.global.plugins.install('/tmp/demo');
-    await klient.global.plugins.install({ marketplaceId: 'demo', expectedVersion: '1.0.0' });
+    await expect(klient.global.plugins.install('/tmp/demo')).resolves.toMatchObject({
+      description: 'Plugin description',
+      shortDescription: 'Short description',
+      longDescription: 'Long description',
+    });
+    await expect(
+      klient.global.plugins.install({ marketplaceId: 'demo', expectedVersion: '1.0.0' }),
+    ).resolves.toMatchObject({
+      description: 'Plugin description',
+      shortDescription: 'Short description',
+      longDescription: 'Long description',
+    });
 
     expect(channel.calls).toEqual([
       {

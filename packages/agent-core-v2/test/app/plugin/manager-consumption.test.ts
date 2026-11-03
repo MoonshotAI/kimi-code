@@ -1050,6 +1050,38 @@ describe('PluginManager consumption plane', () => {
     )).toBe(false);
   });
 
+  it('requires artifact provenance before applying availability to legacy unknown installs', async () => {
+    const home = await makeKimiHome();
+    const availability = new PluginAvailabilityStore(home);
+    const artifactSource = 'https://cdn.example.test/official/plugin.zip';
+    await availability.update({
+      source: 'https://marketplace.test/default',
+      plugins: [{
+        id: 'shared-plugin',
+        displayName: 'Official',
+        source: artifactSource,
+        clients: ['desktop'],
+      }],
+    });
+    const record = {
+      id: 'shared-plugin',
+      origin: 'unknown' as const,
+      originalSource: artifactSource,
+    };
+    expect(availability.supports(record, 'desktop', process.platform)).toBe(true);
+    expect(availability.supports(record, 'cli', process.platform)).toBe(false);
+    expect(availability.supports(
+      { ...record, originalSource: '/tmp/shared-plugin' },
+      'cli',
+      process.platform,
+    )).toBe(true);
+    expect(availability.supports(
+      { ...record, originalSource: undefined },
+      'cli',
+      process.platform,
+    )).toBe(true);
+  });
+
   it('serializes availability writes from independent stores', async () => {
     const home = await makeKimiHome();
     const first = new PluginAvailabilityStore(home);
@@ -1071,6 +1103,36 @@ describe('PluginManager consumption plane', () => {
       `sha256:${createHash('sha256').update('https://marketplace.test/first').digest('hex')}`,
       `sha256:${createHash('sha256').update('https://marketplace.test/second').digest('hex')}`,
     ].toSorted());
+  });
+
+  it('reports invalid availability caches and retains the last valid policy', async () => {
+    const home = await makeKimiHome();
+    const source = 'https://marketplace.test/default';
+    const artifactSource = 'https://cdn.example.test/demo.zip';
+    const availability = new PluginAvailabilityStore(home);
+    await availability.update({
+      source,
+      plugins: [{ id: 'demo', displayName: 'Demo', source: artifactSource, clients: ['desktop'] }],
+    });
+    const record = {
+      id: 'demo',
+      origin: 'marketplace' as const,
+      catalogId: 'demo',
+      marketplaceSource: source,
+      originalSource: artifactSource,
+    };
+    expect(availability.supports(record, 'cli', process.platform)).toBe(false);
+
+    const filePath = path.join(home, 'plugins', 'availability.json');
+    await writeFile(filePath, '{', 'utf8');
+    await expect(availability.refresh()).rejects.toThrow();
+    expect(availability.supports(record, 'cli', process.platform)).toBe(false);
+    await writeFile(filePath, JSON.stringify({
+      version: 1,
+      sources: { [source]: { demo: { clients: 'desktop', checkedAt: '2026-01-01T00:00:00.000Z' } } },
+    }), 'utf8');
+    await expect(availability.refresh()).rejects.toThrow('Invalid plugin availability cache');
+    expect(availability.supports(record, 'cli', process.platform)).toBe(false);
   });
 
   it('propagates availability persistence failures', async () => {
