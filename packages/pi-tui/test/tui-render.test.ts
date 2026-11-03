@@ -1352,6 +1352,35 @@ describe("TUI above-viewport in-place changes", () => {
 		tui.stop();
 	});
 
+	it("repaints pre-fold rows after consecutive Termux height increases", async () => {
+		await withEnv({ TERMUX_VERSION: "1" }, async () => {
+			const terminal = new LoggingVirtualTerminal(40, 10);
+			const tui: TUI = new TuiMainScreen(terminal);
+			const component = new TestComponent();
+			tui.addChild(component);
+			component.lines = makeLines(30);
+			tui.start();
+			await terminal.waitForRender();
+			const initialRedraws = tui.fullRedraws;
+
+			const folded = makeLines(30);
+			folded.splice(5, 5);
+			component.lines = folded;
+			tui.requestRender();
+			await terminal.waitForRender();
+
+			terminal.resize(40, 24);
+			await terminal.waitForRender();
+			terminal.resize(40, 25);
+			await terminal.waitForRender();
+
+			assert.strictEqual(tui.fullRedraws, initialRedraws, "Termux height changes must not full-redraw");
+			const viewport = terminal.getViewport();
+			assert.ok(viewport[0]?.includes("line 0"), `logical row 0 must be repainted, got ${viewport[0]}`);
+			tui.stop();
+		});
+	});
+
 	it("preserves the skipped-row marker across render-state capture/restore", async () => {
 		await withEnv({ TERMUX_VERSION: "1" }, async () => {
 			const terminal = new LoggingVirtualTerminal(40, 10);

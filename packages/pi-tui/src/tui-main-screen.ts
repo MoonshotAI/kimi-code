@@ -145,7 +145,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	private hardwareCursorRow = 0;
 	private maxLinesRendered = 0;
 	private previousViewportTop = 0;
-	/** Lowest row whose repaint was skipped by the above-viewport in-place path. */
+	/** Lowest logical row that may be stale after an above-viewport skip. */
 	private aboveViewportStaleTop: number | null = null;
 
 	captureRenderState(): TuiMainScreenRenderState {
@@ -579,12 +579,13 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				fullRender(true);
 				return;
 			}
-			// Remember the lowest skipped row: a later Termux height increase
-			// re-exposes such rows and must invalidate them (see doRender top).
+			// Remember the lowest potentially stale row: a later Termux height
+			// increase re-exposes such rows and must invalidate them. A shrink also
+			// changes the logical-to-physical mapping of rows before firstChanged,
+			// so row 0 must remain marked until it has actually been repainted.
+			const staleTop = invisibleShrinkAboveViewport ? 0 : firstChanged;
 			this.aboveViewportStaleTop =
-				this.aboveViewportStaleTop === null
-					? firstChanged
-					: Math.min(this.aboveViewportStaleTop, firstChanged);
+				this.aboveViewportStaleTop === null ? staleTop : Math.min(this.aboveViewportStaleTop, staleTop);
 			const lineCountDelta = newLines.length - this.previousLines.length;
 			if (invisibleShrinkAboveViewport) {
 				this.cursorRow = Math.max(0, newLines.length - 1);
