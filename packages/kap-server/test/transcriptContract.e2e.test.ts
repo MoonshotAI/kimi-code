@@ -839,7 +839,9 @@ describe('transcript contract e2e', () => {
         await idle(server!, base, sid);
         expect(ranInOrder(['keep the plan', 'after compaction'])).toBe(true);
         expect(mainQueue(channel)?.ids).toEqual([]);
-        expect((await compact(sid)).accepted_as).toBe('compact');
+        expect((await compact(sid, 'final pass')).accepted_as).toBe('compact');
+        await until('final compaction reached the model', () => firstHit('final pass') > 0, 30000);
+        await idle(server!, base, sid);
       } finally {
         channel.close();
       }
