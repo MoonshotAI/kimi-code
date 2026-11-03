@@ -618,6 +618,7 @@ describe('AgentTaskService — notification delivery', () => {
     const text = notificationMessageFor(agent, taskId).content[0]!.text;
     expect(text).toContain('Which database? completed.');
     expect(text).not.toContain('dismissed');
+    expect(text).toContain('<answer>\nnot an answer payload\n</answer>');
     expect(text).not.toContain('<output-file');
   });
 
@@ -625,12 +626,10 @@ describe('AgentTaskService — notification delivery', () => {
     const { agent, ctx, manager } = createAgentTaskService();
     ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
     const turnEnd = ctx.untilTurnEnd();
+    const reason = 'The connected client does not support interactive questions.';
     const taskId = manager.registerTask(
       new QuestionBackgroundTask(
-        async () => ({
-          isError: true,
-          output: 'The connected client does not support interactive questions.',
-        }),
+        async () => ({ isError: true, output: reason }),
         'Which database?',
         { questionCount: 1, toolCallId: 'call_q' },
       ),
@@ -648,7 +647,7 @@ describe('AgentTaskService — notification delivery', () => {
     expect(message.origin).toMatchObject({ kind: 'task', taskId, status: 'failed' });
     const text = message.content[0]!.text;
     expect(text).toContain('Which database?');
-    expect(text).toContain('The connected client does not support interactive questions.');
+    expect(text).toContain(reason);
     expect(text).not.toContain('<answer>');
     expect(text).not.toContain('dismissed');
   });
@@ -766,17 +765,19 @@ describe('AgentTaskService — notification delivery', () => {
     const output = outputString(
       await executeTool(tool, toolContext('task_stop_agent', { task_id: taskId })),
     );
+    const again = outputString(
+      await executeTool(tool, toolContext('task_stop_agent_again', { task_id: taskId })),
+    );
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(output).toContain('status: killed');
     expect(output).toContain('agent_id: agent-child');
     expect(output).toMatch(/^output_path: \S+$/m);
     expect(output).toContain(`${PARTIAL_OUTPUT_NOTICE}\n\n${STOPPED_AGENT_FINDING}`);
-    const again = outputString(
-      await executeTool(tool, toolContext('task_stop_agent_again', { task_id: taskId })),
-    );
     expect(again).toContain('status: killed');
     expect(again).not.toContain(STOPPED_AGENT_FINDING);
+    const snapshot = await manager.getOutputSnapshot(taskId, 64 * 1024);
+    expect(snapshot.preview).toBe(`${PARTIAL_OUTPUT_NOTICE}\n\n${STOPPED_AGENT_FINDING}`);
     expect(notifiedCount(ctx)).toBe(0);
     expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
     expect(ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);

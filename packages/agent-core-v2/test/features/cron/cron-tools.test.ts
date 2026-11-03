@@ -302,9 +302,8 @@ describe('CronCreateTool', () => {
         recurring: true,
       }),
     );
-
     expect(output).toContain('0 0 31 2 *');
-    expect(harness.store.list()).toHaveLength(0);
+    expect(harness.store.list()).toEqual([]);
   });
 
   it('refuses to schedule past the session cap', async () => {

@@ -561,6 +561,7 @@ describe('TowerTeardownTool', () => {
     const result = await run(ix.get(ITowerTeardownTool), { dry_run: true });
 
     expect(result.isError).toBeFalsy();
+    expect(result.output).toContain(`would remove .tower/worktrees/${mission.worktree}`);
     expect(
       (await stat(join(repo, '.tower/worktrees', mission.worktree))).isDirectory(),
     ).toBe(true);
@@ -651,6 +652,8 @@ describe('TowerSendTool + TowerInboxTool', () => {
     const inbox = await run(ix.get(ITowerInboxTool), {});
     expect(inbox.isError).toBeFalsy();
     expect(inbox.output).toContain('message(s) for w1');
+    expect(inbox.output).toContain('subject: for current w1');
+    expect(inbox.output).not.toContain('subject: for stale identity');
 
     const sent = await run(ix.get(ITowerSendTool), { to: 'tower', subject: 'report', body: 'c' });
     expect(sent.isError).toBeFalsy();
@@ -673,8 +676,14 @@ describe('TowerSendTool + TowerInboxTool', () => {
   it('notes when the tower messages a roster agent that has no running task to deliver it', async () => {
     const idle = await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'wake', body: 'x' });
     expect(idle.isError).toBeFalsy();
+    expect(idle.output).toContain('w1 has no running task');
+    expect(idle.output).toContain('Agent(resume="agent-w1", run_in_background=true');
 
+    liveAgentTaskIds.push('agent-w1');
+    const busy = await run(ix.get(ITowerSendTool), { to: 'w1', subject: 'wake', body: 'x' });
+    expect(busy.output).not.toContain('has no running task');
   });
+
   it('skips the delivery note for broadcasts and for sends from workers', async () => {
     const broadcast = await run(ix.get(ITowerSendTool), { to: 'all', subject: 'b', body: 'x' });
     expect(broadcast.output).not.toContain('has no running task');
@@ -960,8 +969,15 @@ describe('TowerStatusTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('## Awaiting spawn');
+    expect(result.output).toContain('M1 (feat/build-engine) — planned but no worker spawned yet');
+    expect(result.output).toContain('TowerSpawn(kind="worker", mission_id="M1"');
+    expect(result.output).not.toContain('M2 (feat/build-ui) — planned but no worker spawned yet');
 
+    await store.updateMission('tower', 'M1', { status: 'active', owner: 'w-engine' }, { silent: true });
+    const settled = await run(ix.get(ITowerStatusTool), {});
+    expect(settled.output).not.toContain('## Awaiting spawn');
   });
+
   it('uses the merge evaluator for clean-rebase waivers and marks worker runtime unknown off-main', async () => {
     await initViaTool();
     await run(ix.get(ITowerPlanTool), {

@@ -437,6 +437,10 @@ describe('progressive tool disclosure end-to-end', () => {
     ctx.mockNextResponse({ type: 'text', text: 'ok' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load ghost again' }] });
     await ctx.untilTurnEnd();
+    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+      '"mcp__srv__ghost" has already failed selection 2 times. ' +
+        'Stop retrying this name until its availability changes.',
+    );
   });
 });
 

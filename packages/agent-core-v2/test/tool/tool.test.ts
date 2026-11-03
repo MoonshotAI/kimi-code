@@ -820,6 +820,25 @@ describe('Agent tool description', () => {
     expect(ctx.get(IAgentToolRegistryService).resolve('NotifyUser') !== undefined).toBe(enabled);
   });
 
+  it.each([false, true])('renders caller model tools without a pool when fork=%s', async (fork) => {
+    ctx = createTestAgent(forkFlags(fork));
+    ctx.configure({
+      modelCapabilities: {
+        image_in: true,
+        video_in: false,
+        audio_in: false,
+        thinking: false,
+        tool_use: true,
+        max_context_tokens: 0,
+      },
+    });
+    await ctx.get(IEventDispatcher).flush();
+
+    const description = agentDescription();
+    expect(description).toContain('Tools: Bash, Read, ReadMediaFile, Glob, Grep, FetchURL');
+    expect(description).toContain('Tools: Bash, CronCreate, CronDelete, CronList, Edit');
+  });
+
   it('omits unregistered tools from subagent type descriptions', () => {
     ctx = createTestAgent();
 
@@ -1665,8 +1684,11 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('status: completed');
     expect(result.output).toContain('stop_reason: completed');
     expect(result.output).toContain('[summary]\nchild result');
-
+    expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child"');
+    expect(result.output).not.toContain('notice:');
+    expect(result.output).not.toContain('next_step:');
   });
+
   it('reports a repeat-breaker handoff as completed with stop_reason repeat_breaker', async () => {
     const lifecycle = createAgentLifecycleStub({
       createAgentIds: ['agent-child'],
@@ -1683,10 +1705,10 @@ describe('Agent tool execution contract', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.isError).toBeUndefined();
     expect(result.output).toContain('status: completed');
     expect(result.output).toContain('stop_reason: repeat_breaker');
-    expect(result.output).toContain('Stuck: the same grep keeps returning nothing.');
+    expect(result.output).toContain('[summary]\nStuck: the same grep keeps returning nothing.');
+    expect(result.output).toContain('next_step: The subagent was stuck on one tool call.');
   });
 
   it('settles a repeat-breaker completion with a stop code and a task reason', async () => {
@@ -1781,7 +1803,9 @@ describe('Agent tool execution contract', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('status: failed');
     expect(result.output).toContain('stop_reason: no_final_message');
+    expect(result.output).toContain('Subagent turn ended without a final message (stop reason: repeat_breaker).');
     expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child", prompt="continue")');
+    expect(result.output).toContain('next_step: Resume to continue where it stopped');
   });
 
   it('keeps the repeat_breaker classification when the handoff produced no text', async () => {
@@ -3533,8 +3557,10 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain(
       'The subagent was stopped before it finished. Reason: Session closed',
     );
-
+    expect(result.output).toContain('resume_hint: Continue with Agent(resume="agent-child"');
+    expect(result.output).not.toContain('The user stopped this subagent');
   });
+
   it('returns the spawned agent id when a foreground subagent times out', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const lifecycle = createAgentLifecycleStub({
