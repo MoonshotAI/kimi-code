@@ -80,7 +80,7 @@ function makeHost(
     } satisfies ISkillDiscovery),
     stubPair(ITelemetryService, telemetry),
     stubPair(IMcpOAuthService, {
-      cancelAuthorization,
+      cancelAuthorizationFromConfiguration: cancelAuthorization,
       invalidateFromConfiguration,
     } as unknown as McpOAuthService),
     stubPair(ILogService, stubLog()),
@@ -353,7 +353,7 @@ describe('PluginService (plugin boundary)', () => {
       await svc.installPlugin({ source: pluginRoot });
       await svc.removePlugin({ id: 'oauth-remove-demo' });
 
-      expect(cancelAuthorization).toHaveBeenCalledWith(expect.any(String), url);
+      expect(cancelAuthorization).toHaveBeenCalledWith(undefined, expect.any(String), url);
       expect(invalidateFromConfiguration).toHaveBeenCalledOnce();
       expect(invalidateFromConfiguration).toHaveBeenCalledWith(
         undefined,

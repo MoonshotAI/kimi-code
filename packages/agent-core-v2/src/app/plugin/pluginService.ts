@@ -190,7 +190,7 @@ export class PluginService extends Service implements IPluginService {
     for (const entry of removedServers) {
       if (!('url' in entry.config)) continue;
       try {
-        await this.oauth.cancelAuthorization(entry.name, entry.config.url);
+        await this.oauth.cancelAuthorizationFromConfiguration(undefined, entry.name, entry.config.url);
         await this.oauth.invalidateFromConfiguration(undefined, entry.name, entry.config.url);
       } catch (error) {
         this.log.warn('plugin oauth credential cleanup failed', {

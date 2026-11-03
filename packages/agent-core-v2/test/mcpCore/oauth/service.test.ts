@@ -721,6 +721,31 @@ describe('McpOAuthService single-flight refresh', () => {
 });
 
 describe('McpOAuthService interactive flow serialization', () => {
+  it('preserves a shared authorization until the last configuration reference is removed', async () => {
+    const fixture = makeFixture();
+    cleanups.push(() => fixture.service.dispose());
+    const authServer = await startFakeAuthServer();
+    const provider = await readyProvider(fixture);
+    await provider.saveDiscoveryState(authServerState(authServer.url).discovery);
+    const sourceA = {};
+    const sourceB = {};
+    fixture.service.setConfigurationSource(sourceA, [[SERVER_NAME, SERVER_URL]]);
+    fixture.service.setConfigurationSource(sourceB, [[SERVER_NAME, SERVER_URL]]);
+
+    const flow = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const completion = flow.complete({ timeoutMs: 10_000 });
+    await fixture.service.cancelAuthorizationFromConfiguration(sourceA, SERVER_NAME, SERVER_URL);
+    await deliverCallback(flow);
+    await completion;
+
+    const next = await fixture.service.beginAuthorization(SERVER_NAME, SERVER_URL);
+    const nextCompletion = next.complete({ timeoutMs: 10_000 });
+    void nextCompletion.catch(() => undefined);
+    await fixture.service.cancelAuthorizationFromConfiguration(sourceB, SERVER_NAME, SERVER_URL);
+
+    await expect(nextCompletion).rejects.toThrow(/callback listener closed/);
+  }, 15000);
+
   it('cancels an active authorization by server credential without exchanging tokens', async () => {
     const fixture = makeFixture();
     cleanups.push(() => fixture.service.dispose());

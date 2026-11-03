@@ -70,7 +70,7 @@ describe('WorkspaceMcpConfigService', () => {
   let trustFlips: Emitter<WorkspaceTrustChange>;
   let sectionChanges: Emitter<ConfigSectionChangedEvent>;
   let changes: McpServersChange[];
-  let cancelAuthorization: Mock<(serverName: string, serverUrl: string | URL) => Promise<void>>;
+  let cancelAuthorization: Mock<(source: object | undefined, serverName: string, serverUrl: string | URL) => Promise<void>>;
   let invalidate: Mock<(source: object | undefined, serverName: string, serverUrl: string | URL) => Promise<void>>;
 
   beforeEach(() => {
@@ -144,7 +144,7 @@ describe('WorkspaceMcpConfigService', () => {
         });
         reg.definePartialInstance(IMcpConfigStore, { onDidWrite: storeWrites.event });
         reg.definePartialInstance(IMcpOAuthService, oauth ?? {
-          cancelAuthorization,
+          cancelAuthorizationFromConfiguration: cancelAuthorization,
           invalidate: (name, url) => invalidate(undefined, name, url),
           invalidateFromConfiguration: invalidate,
           setConfigurationSource: vi.fn(),
@@ -409,7 +409,7 @@ describe('WorkspaceMcpConfigService', () => {
     );
 
     expect(cancelAuthorization).toHaveBeenCalledOnce();
-    expect(cancelAuthorization).toHaveBeenCalledWith('alpha', url);
+    expect(cancelAuthorization).toHaveBeenCalledWith(service, 'alpha', url);
     expect(invalidate).toHaveBeenCalledOnce();
     expect(invalidate).toHaveBeenCalledWith(service, 'alpha', url);
   });
@@ -427,7 +427,7 @@ describe('WorkspaceMcpConfigService', () => {
       new AbortController().signal,
     );
 
-    expect(cancelAuthorization).toHaveBeenCalledWith('alpha', previousUrl);
+    expect(cancelAuthorization).toHaveBeenCalledWith(service, 'alpha', previousUrl);
     expect(invalidate).toHaveBeenCalledWith(service, 'alpha', previousUrl);
     expect(invalidate).not.toHaveBeenCalledWith(service, 'alpha', nextUrl);
   });
@@ -444,7 +444,7 @@ describe('WorkspaceMcpConfigService', () => {
     await vi.waitFor(() => {
       expect(service.servers()).toEqual({});
     });
-    expect(cancelAuthorization).toHaveBeenCalledWith('alpha', url);
+    expect(cancelAuthorization).toHaveBeenCalledWith(service, 'alpha', url);
     expect(invalidate).not.toHaveBeenCalled();
   });
 
@@ -547,7 +547,7 @@ describe('WorkspaceMcpConfigService', () => {
     );
 
     expect(cancelAuthorization).toHaveBeenCalledOnce();
-    expect(cancelAuthorization).toHaveBeenCalledWith('alpha', url);
+    expect(cancelAuthorization).toHaveBeenCalledWith(service, 'alpha', url);
     expect(invalidate).not.toHaveBeenCalled();
   });
 

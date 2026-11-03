@@ -193,6 +193,19 @@ export class McpOAuthService {
     this.configurationSources.delete(source);
   }
 
+  async cancelAuthorizationFromConfiguration(
+    source: object | undefined,
+    serverName: string,
+    serverUrl: string | URL,
+  ): Promise<void> {
+    const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
+    if (source !== undefined) this.configurationSources.get(source)?.delete(storeKey);
+    for (const keys of this.configurationSources.values()) {
+      if (keys.has(storeKey)) return;
+    }
+    await this.cancelAuthorization(serverName, serverUrl);
+  }
+
   async invalidateFromConfiguration(
     source: object | undefined,
     serverName: string,

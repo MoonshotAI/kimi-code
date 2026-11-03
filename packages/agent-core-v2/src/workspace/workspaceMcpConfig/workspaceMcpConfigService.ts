@@ -312,7 +312,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   ): Promise<void> {
     if (config === undefined || !('url' in config)) return;
     try {
-      await this.oauth.cancelAuthorization(name, config.url);
+      await this.oauth.cancelAuthorizationFromConfiguration(this, name, config.url);
     } catch (error) {
       this.log.warn('mcp oauth authorization cleanup failed', { name, error });
     }
