@@ -1,12 +1,10 @@
-import type { AttachmentId, InteractionId, PromptId, TodoId, TurnId } from '../model/ids';
+import type { AttachmentId, InteractionId, PromptId, TurnId } from '../model/ids';
 import { turnOrdinal } from '../model/ids';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem } from '../model/item';
-import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
 import type { TranscriptPrompt } from '../model/prompt';
-import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 import type {
   AppendOp,
@@ -19,9 +17,7 @@ export interface AgentState {
   readonly items: readonly TranscriptItem[];
   readonly interactions: ReadonlyMap<InteractionId, TranscriptInteraction>;
   readonly attachments: ReadonlyMap<AttachmentId, TranscriptAttachment>;
-  readonly todos: ReadonlyMap<TodoId, TranscriptTodo>;
   readonly prompts: ReadonlyMap<PromptId, TranscriptPrompt>;
-  readonly meta: TranscriptMeta;
   readonly pendingInteractions: ReadonlySet<InteractionId>;
   readonly hasMoreOlder: boolean;
 }
@@ -30,9 +26,7 @@ export const EMPTY_AGENT_STATE: AgentState = {
   items: [],
   interactions: new Map(),
   attachments: new Map(),
-  todos: new Map(),
   prompts: new Map(),
-  meta: {},
   pendingInteractions: new Set(),
   hasMoreOlder: false,
 };
@@ -61,12 +55,8 @@ export function applyOperation(state: AgentState, op: TranscriptOperation): Appl
       return applyInteractionUpsert(state, op.interaction);
     case 'attachment.upsert':
       return applyAttachmentUpsert(state, op.attachment);
-    case 'todo.upsert':
-      return applyTodoUpsert(state, op.todo);
     case 'prompt.upsert':
       return applyPromptUpsert(state, op.prompt);
-    case 'meta.merge':
-      return applyMetaMerge(state, op.meta);
     case 'items.remove':
       return applyItemsRemove(state, op.ids);
   }
@@ -86,9 +76,7 @@ function applyReset(state: AgentState, op: Extract<TranscriptOperation, { op: 'r
       attachments: new Map(
         op.snapshot.attachments.map((attachment) => [attachment.attachmentId, attachment]),
       ),
-      todos: new Map(op.snapshot.todos.map((todo) => [todo.todoId, todo])),
       prompts: new Map(op.snapshot.prompts.map((prompt) => [prompt.promptId, prompt])),
-      meta: op.snapshot.meta,
       pendingInteractions: pending,
       hasMoreOlder: op.snapshot.hasMoreOlder ?? false,
     },
@@ -282,7 +270,6 @@ function frameEquals(a: TranscriptFrame, b: TranscriptFrame): boolean {
       a.progress === b.progress &&
       a.taskId === b.taskId &&
       a.approvalId === b.approvalId &&
-      a.todoId === b.todoId &&
       a.agentRefs === b.agentRefs
     );
   }
@@ -469,18 +456,6 @@ function attachmentEquals(a: TranscriptAttachment, b: TranscriptAttachment): boo
   );
 }
 
-function applyTodoUpsert(state: AgentState, todo: TranscriptTodo): ApplyResult {
-  const current = state.todos.get(todo.todoId);
-  if (current && todoEquals(current, todo)) return { state, changed: false };
-  const todos = new Map(state.todos);
-  todos.set(todo.todoId, todo);
-  return { state: { ...state, todos }, changed: true };
-}
-
-function todoEquals(a: TranscriptTodo, b: TranscriptTodo): boolean {
-  return a.items === b.items && a.updatedAt === b.updatedAt;
-}
-
 function applyPromptUpsert(state: AgentState, prompt: TranscriptPrompt): ApplyResult {
   const current = state.prompts.get(prompt.promptId);
   if (current && promptEquals(current, prompt)) return { state, changed: false };
@@ -498,38 +473,4 @@ function promptEquals(a: TranscriptPrompt, b: TranscriptPrompt): boolean {
     a.finishedAt === b.finishedAt &&
     a.steeredAt === b.steeredAt
   );
-}
-
-function applyMetaMerge(state: AgentState, meta: TranscriptMetaMerge): ApplyResult {
-  const modes =
-    meta.modes !== undefined
-      ? {
-          plan: meta.modes.plan === null ? undefined : (meta.modes.plan ?? state.meta.modes?.plan),
-          swarm: meta.modes.swarm === null ? undefined : (meta.modes.swarm ?? state.meta.modes?.swarm),
-          tower: meta.modes.tower === null ? undefined : (meta.modes.tower ?? state.meta.modes?.tower),
-        }
-      : state.meta.modes;
-  const agent =
-    meta.agent !== undefined ? { ...state.meta.agent, ...meta.agent } : state.meta.agent;
-  const next: TranscriptMeta = {
-    goal: meta.goal === null ? undefined : (meta.goal ?? state.meta.goal),
-    activity: meta.activity ?? state.meta.activity,
-    modes:
-      modes !== undefined &&
-      modes.plan === undefined &&
-      modes.swarm === undefined &&
-      modes.tower === undefined
-        ? undefined
-        : modes,
-    agent,
-  };
-  if (
-    next.goal === state.meta.goal &&
-    next.activity === state.meta.activity &&
-    next.modes === state.meta.modes &&
-    next.agent === state.meta.agent
-  ) {
-    return { state, changed: false };
-  }
-  return { state: { ...state, meta: next }, changed: true };
 }

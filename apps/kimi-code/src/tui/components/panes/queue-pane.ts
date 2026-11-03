@@ -1,7 +1,9 @@
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
+import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 import { SELECT_POINTER } from '../../constant/symbols';
-import type { QueuedMessage } from '../../types';
+import { isQueuedCompactionBarrier, type QueuedMessage } from '../../types';
+import { modelDisplayName } from '../dialogs/model-selector';
 import { DockSection, type DockPart } from '#/tui/components/chrome/dock-section';
 import { currentTheme } from '#/tui/theme';
 
@@ -10,6 +12,7 @@ export interface QueuePaneOptions {
   readonly isCompacting: boolean;
   readonly isStreaming: boolean;
   readonly canSteerImmediately: boolean;
+  readonly availableModels?: Record<string, ModelAlias>;
 }
 
 const ELLIPSIS = '…';
@@ -17,20 +20,19 @@ const ELLIPSIS = '…';
 /** Queued messages: a rule, one row per message, and the key hint. */
 export class QueuePaneComponent extends DockSection {
   private messages: readonly QueuedMessage[] = [];
+  private availableModels: Record<string, ModelAlias> = {};
   private hint: string | undefined;
 
   setOptions(options: QueuePaneOptions): void {
     this.messages = options.messages;
+    this.availableModels = options.availableModels ?? {};
     if (options.messages.length === 0) {
       this.hint = undefined;
       return;
     }
-    // Bash commands (`! …`) are not steerable, and a queued /compact
-    // barriers everything behind it — only advertise Ctrl-S when an item
-    // ahead of the first /compact would actually steer.
-    const firstCompact = options.messages.findIndex((m) => m.mode === 'compact');
+    const firstBarrier = options.messages.findIndex(isQueuedCompactionBarrier);
     const steerableWindow =
-      firstCompact === -1 ? options.messages : options.messages.slice(0, firstCompact);
+      firstBarrier === -1 ? options.messages : options.messages.slice(0, firstBarrier);
     const hasSteerable = steerableWindow.some((m) => m.mode !== 'bash');
     const canSteer = options.canSteerImmediately && hasSteerable;
     // A docked list shows only a few rows, so name the total once it scrolls.
@@ -52,7 +54,7 @@ export class QueuePaneComponent extends DockSection {
       case 'head':
         return [currentTheme.fg('border', '─'.repeat(width))];
       case 'body':
-        return this.messages.map((item) => renderItem(item, width));
+        return this.messages.map((item) => renderItem(item, width, this.availableModels));
       case 'foot':
         return this.hint === undefined
           ? []
@@ -61,10 +63,22 @@ export class QueuePaneComponent extends DockSection {
   }
 }
 
-function renderItem(item: QueuedMessage, width: number): string {
+function renderItem(
+  item: QueuedMessage,
+  width: number,
+  availableModels: Record<string, ModelAlias>,
+): string {
   const accent = (text: string) => currentTheme.fg('accent', text);
   const singleLine = item.text.replaceAll(/\s+/g, ' ').trim();
   const prefix = `  ${SELECT_POINTER} `;
+  if (item.mode === 'model-switch') {
+    const text = `Compact, then switch to ${modelDisplayName(item.alias, availableModels[item.alias])} with thinking ${item.thinking}`;
+    const availableWidth = Math.max(1, width - visibleWidth(prefix));
+    return (
+      accent(prefix) +
+      currentTheme.fg('primary', truncateToWidth(text, availableWidth, ELLIPSIS))
+    );
+  }
   if (item.mode === 'bash') {
     // Shell commands get a `$ ` prompt and the shell-mode hue so they read
     // as commands, not as plain text that would be sent to the model.

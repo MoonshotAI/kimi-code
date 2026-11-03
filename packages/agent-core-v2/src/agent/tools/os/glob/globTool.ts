@@ -100,6 +100,7 @@ export class GlobTool implements IGlobTool {
       if (args.path !== undefined) {
         path = resolvePathAccessPath(args.path, {
           env,
+          shellPathBridge: view.shellPathBridge,
           workspace,
           operation: 'search',
           policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
@@ -227,7 +228,7 @@ export class GlobTool implements IGlobTool {
     const { exitCode, stdoutText, stderrText, bufferTruncated, timedOut } = run;
 
     let traversalWarning: string | undefined;
-    if (exitCode !== 0 && exitCode !== 1 && !timedOut) {
+    if (exitCode !== 0 && exitCode !== 1 && !timedOut && !bufferTruncated) {
       const rawPathsBeforeError = splitCompletePaths(stdoutText, true);
       if (rawPathsBeforeError.length === 0) {
         return { isError: true, output: formatGlobError(searchRoot, stderrText) };

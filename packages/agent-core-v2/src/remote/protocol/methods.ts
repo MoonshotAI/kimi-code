@@ -7,6 +7,7 @@ export const FS_CREATE_DIRECTORY_METHOD = 'fs/createDirectory';
 export const FS_GET_METADATA_METHOD = 'fs/getMetadata';
 export const FS_CANONICALIZE_METHOD = 'fs/canonicalize';
 export const FS_READ_DIRECTORY_METHOD = 'fs/readDirectory';
+export const FS_WALK_METHOD = 'fs/walk';
 export const FS_REMOVE_METHOD = 'fs/remove';
 export const FS_RENAME_METHOD = 'fs/rename';
 
@@ -39,6 +40,7 @@ export interface RemoteEnvironmentInfo {
   readonly homeDir: string;
   readonly cwd: string;
   readonly tempDir: string;
+  readonly windowsProcessLifecycle?: boolean;
 }
 
 export interface InitializeResult {
@@ -50,11 +52,13 @@ export interface FsReadFileParams {
   readonly path: string;
   readonly offset?: number;
   readonly maxBytes?: number;
+  readonly includeMetadata?: boolean;
 }
 
 export interface FsReadFileResult {
   readonly dataBase64: string;
   readonly eof: boolean;
+  readonly metadata?: FsGetMetadataResult;
 }
 
 export type FsWriteMode = 'truncate' | 'append' | 'exclusive';
@@ -105,7 +109,22 @@ export interface FsReadDirectoryEntry {
 
 export interface FsReadDirectoryResult {
   readonly entries: FsReadDirectoryEntry[];
+  readonly truncated: boolean;
+}
 
+export interface FsWalkParams {
+  readonly path: string;
+  readonly ignore?: readonly string[];
+  readonly timeoutMs?: number;
+}
+
+export interface FsWalkEntry {
+  readonly path: string;
+  readonly kind: 'file' | 'directory' | 'symlink';
+}
+
+export interface FsWalkResult {
+  readonly entries: readonly FsWalkEntry[];
   readonly truncated: boolean;
 }
 
@@ -159,7 +178,7 @@ export interface ProcessSignalParams {
   readonly signal: ProcessSignalKind;
 }
 
-export const MIN_EXECUTOR_VERSION = '0.1.0';
+export const MIN_EXECUTOR_VERSION = '2.5.0';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map((part) => Number.parseInt(part, 10) || 0);
@@ -175,5 +194,9 @@ export const FS_READ_FILE_MAX_BYTES = 1024 * 1024;
 export const FS_READ_FILE_WHOLE_MAX_BYTES = 32 * 1024 * 1024;
 export const FS_WRITE_FILE_CHUNK_BYTES = 1024 * 1024;
 export const FS_READ_DIRECTORY_MAX_ENTRIES = 50_000;
+export const FS_WALK_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+export const FS_WALK_ENTRY_OVERHEAD_BYTES = 48;
+export const FS_WALK_DEFAULT_TIMEOUT_MS = 55_000;
+export const FS_WALK_MAX_TIMEOUT_MS = 60_000;
 export const MAX_IN_FLIGHT_CALLS = 256;
 export const MAX_PENDING_SEND_BYTES = 64 * 1024 * 1024;

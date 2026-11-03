@@ -294,6 +294,20 @@ describe('foldWireRecords', () => {
     });
   });
 
+  it('carries an edited objective into later goal_updated records without a transcript entry', () => {
+    const folded = fold([
+      { type: 'goal.create', goalId: 'g1', objective: 'old task', time: 1 },
+      { type: 'goal.update', objective: 'new task', actor: 'user', time: 2 },
+      { type: 'goal.update', status: 'paused', reason: 'wait', time: 3 },
+    ]);
+    expect(folded.replay).toHaveLength(2);
+    expect(folded.replay[1]).toMatchObject({
+      type: 'goal_updated',
+      time: 3,
+      snapshot: { goalId: 'g1', objective: 'new task', status: 'paused' },
+    });
+  });
+
   it('clears the goal and appends the fork reminder on forked', () => {
     const folded = fold([
       { type: 'goal.create', goalId: 'g1', objective: 'ship it', time: 1 },
@@ -385,6 +399,34 @@ describe('foldWireRecords', () => {
       { type: 'totally.unknown.op', time: 13 },
     ]);
     expect(folded).toEqual({ replay: [], toolStore: {} });
+
+    const turnClock = fold([
+      { type: 'turn.prompt', turnId: 4, input: [{ type: 'text', text: 'current' }], origin: { kind: 'user' }, time: 1 },
+      { type: 'turn.steer', input: [{ type: 'text', text: 'steered' }], origin: { kind: 'user' }, time: 2 },
+      { type: 'turn.cancel', turnId: 5, time: 3 },
+      appendMessage(userMessage('current', { kind: 'user' }), 4),
+      appendMessage(userMessage('steered', { kind: 'user' }), 4.5),
+      { type: 'turn.cancel', turnId: 5, target: 'queued', time: 5 },
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'next' }], origin: { kind: 'user' }, time: 6 },
+      appendMessage(userMessage('next', { kind: 'user' }), 7),
+    ]);
+    expect(messageRecords(turnClock.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([4, 4, 6]);
+
+    const mixed = fold([
+      { type: 'turn.prompt', turnId: 7, input: [{ type: 'text', text: 'persistent' }], origin: { kind: 'user' }, time: 1 },
+      appendMessage(userMessage('persistent', { kind: 'user' }), 2),
+      { type: 'turn.ended', turnId: 7, reason: 'completed', time: 3 },
+      appendMessage(userMessage('legacy tail', { kind: 'user' }), 4),
+      appendMessage({ role: 'assistant', content: [], toolCalls: [] }, 5),
+    ]);
+    expect(messageRecords(mixed.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([7, undefined, undefined]);
+
+    const ordered = fold([
+      appendMessage(userMessage('same', { kind: 'user' }), 1),
+      { type: 'turn.prompt', turnId: 7, input: [{ type: 'text', text: 'same' }], origin: { kind: 'user' }, time: 2 },
+      appendMessage(userMessage('same', { kind: 'user' }), 3),
+    ]);
+    expect(messageRecords(ordered.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([undefined, 7]);
   });
 
   it('migrates older protocol journals before folding', () => {

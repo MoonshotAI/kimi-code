@@ -79,8 +79,20 @@ export function shQuote(value: string): string {
 }
 
 const TILDE_PREFIX = /^~[a-zA-Z0-9._-]*/;
+const BARE_REMOTE_BIN = /^[A-Za-z0-9_.-]+$/;
+const SHELL_RESERVED_WORDS: ReadonlySet<string> = new Set([
+  'case', 'coproc', 'do', 'done', 'elif', 'else', 'esac', 'fi', 'for', 'function',
+  'if', 'in', 'select', 'then', 'time', 'until', 'while',
+]);
+
+export function isBareRemoteBin(remoteBin: string): boolean {
+  return BARE_REMOTE_BIN.test(remoteBin) && !SHELL_RESERVED_WORDS.has(remoteBin);
+}
 
 function execServerShellCommand(remoteBin: string): string {
+  if (isBareRemoteBin(remoteBin)) {
+    return [remoteBin, ...EXEC_SERVER_ARGV].join(' ');
+  }
   const tilde = TILDE_PREFIX.exec(remoteBin);
   if (tilde === null) {
     return [shQuote(remoteBin), ...EXEC_SERVER_ARGV.map(shQuote)].join(' ');

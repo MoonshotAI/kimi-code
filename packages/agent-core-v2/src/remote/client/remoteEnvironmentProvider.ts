@@ -21,7 +21,8 @@ import type {
 } from '#/environment/environmentProvider';
 
 import { EnvironmentError, type EnvironmentRegistrationHandle } from '#/environment/environmentRegistry';
-import { POSIX_ENVIRONMENT_PATH, POSIX_ENVIRONMENT_WORKSPACE } from '#/environment/environmentDefaults';
+import { ENVIRONMENT_PATHS, ENVIRONMENT_WORKSPACES } from '#/environment/environmentDefaults';
+import { REMOTE_SHELL_PATH_BRIDGE } from '#/_base/execEnv/shellPathBridge';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { classifyHandshakeFailure, connectWithGuidance } from './connectGuidance';
@@ -55,12 +56,14 @@ class DeclaredRemoteEnvironment implements Environment {
     writeText: async (path, data) => this.connected().fs.writeText(path, data),
     appendText: async (path, data) => this.connected().fs.appendText(path, data),
     readBytes: async (path, n, offset) => this.connected().fs.readBytes(path, n, offset),
+    readFileHead: async (path, maxBytes) => this.connected().fs.readFileHead(path, maxBytes),
     writeBytes: async (path, data) => this.connected().fs.writeBytes(path, data),
     readLines: (path, options) => this.readLines(path, options),
     createExclusive: async (path, data) => this.connected().fs.createExclusive(path, data),
     stat: async (path) => this.connected().fs.stat(path),
     lstat: async (path) => this.connected().fs.lstat(path),
     readdir: async (path) => this.connected().fs.readdir(path),
+    walk: async (path, options, visit) => this.connected().fs.walk(path, options, visit),
     mkdir: async (path, options) => this.connected().fs.mkdir(path, options),
     remove: async (path) => this.connected().fs.remove(path),
     rename: async (from, to) => this.connected().fs.rename(from, to),
@@ -113,11 +116,16 @@ class DeclaredRemoteEnvironment implements Environment {
   }
 
   get path(): Environment['path'] {
-    return this.session === undefined ? undefined : POSIX_ENVIRONMENT_PATH;
+    return this.session === undefined ? undefined : ENVIRONMENT_PATHS[this.session.host.pathClass];
   }
 
   get workspace(): Environment['workspace'] {
-    return this.session === undefined ? undefined : POSIX_ENVIRONMENT_WORKSPACE;
+    return this.session === undefined ? undefined : ENVIRONMENT_WORKSPACES[this.session.host.pathClass];
+  }
+
+  get shellPathBridge(): Environment['shellPathBridge'] {
+    const host = this.session?.host;
+    return host?.osKind === 'Windows' && host.shellName === 'bash' ? REMOTE_SHELL_PATH_BRIDGE : undefined;
   }
 
   private connected(): RemoteSession {

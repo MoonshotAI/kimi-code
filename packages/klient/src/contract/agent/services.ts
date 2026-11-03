@@ -25,6 +25,7 @@ import {
   setModelResultSchema,
   shellCommandResultSchema,
   steerPayloadSchema,
+  steerResultSchema,
   usageStatusSchema,
 } from './schemas.js';
 
@@ -35,7 +36,7 @@ export const agentPromptContract = {
   },
   submitSteer: {
     input: z.tuple([steerPayloadSchema]),
-    output: maybe(promptLaunchResultSchema),
+    output: steerResultSchema,
   },
 } satisfies ServiceContract;
 

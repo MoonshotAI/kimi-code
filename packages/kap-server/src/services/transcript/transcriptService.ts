@@ -6,19 +6,15 @@ import { readFile } from 'node:fs/promises';
 import {
   IAgentLifecycleService,
   IAgentContextMemoryService,
-  IFlagService,
   IWireService,
   IBlobStore,
   ISessionIndex,
-  ISessionManager,
   ISessionMetadata,
   IAgentLoopService,
-  TOWER_FLAG_ID,
   flattenChain,
   makeAgentScopeContext,
   followSessionLifecycles,
   getLiveSessionById,
-  isTowerFeatureAssembled,
   isUndoAnchor,
   reduceContextTranscript,
   type ContextMessage,
@@ -27,10 +23,6 @@ import {
   type SessionMeta,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  TowerStore,
-  resolveTowerRepoRoot,
-} from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
-import {
   TranscriptStore,
   foldWireRecordFacts,
   groupMessagesIntoSnapshot,
@@ -38,7 +30,6 @@ import {
   turnId as exportTurnKey,
   withoutUserPromptSubmitHookParts,
   type AgentDescriptor,
-  type ActivityMeta,
   type AgentTranscript,
   type AgentTranscriptSnapshot,
   type TranscriptChangeEvent,
@@ -210,7 +201,7 @@ export class TranscriptService {
         (op) => op.op !== 'attachment.upsert' || !superseded.has(op.attachment.attachmentId),
       );
       const overlay = this.liveTurnOverlay(sessionId, agentId, transcript, snapshot);
-      if (overlay !== undefined) ops.push(overlay, { op: 'meta.merge', meta: { activity: 'turn' } });
+      if (overlay !== undefined) ops.push(overlay);
       ops.push(...this.livePromptBackfill(sessionId, agentId));
       const result = transcript.apply(ops);
       if (result.gap !== undefined) {
@@ -673,27 +664,12 @@ export class TranscriptService {
       ?.handleOf(agentId)
       ?.accessor.get(IAgentLoopService)
       .snapshot();
-    const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
+    return foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
       agentId,
       resolvePlanRevisionKey: (key) =>
         join(SESSIONS_ROOT, summary.workspaceId, sessionId, AGENTS_DIR, agentId, key),
       activeWireTurnId: status?.state === 'running' ? status.activeTurnId : undefined,
     });
-    const activity: ActivityMeta = status?.state === 'running' ? 'turn' : 'idle';
-    const snapshot = { ...folded, meta: { ...folded.meta, activity } };
-    if (snapshot.meta.modes?.tower === undefined) return snapshot;
-    const flags = this.deps.core.accessor.get(IFlagService);
-    if (
-      agentId === MAIN_AGENT_ID &&
-      flags.enabled(TOWER_FLAG_ID) &&
-      isTowerFeatureAssembled(flags) &&
-      (await this.coldTowerOwnedHere(sessionId, summary.cwd))
-    ) {
-      return snapshot;
-    }
-    const modes = { ...snapshot.meta.modes, tower: undefined };
-    const cleared = modes.plan === undefined && modes.swarm === undefined && modes.tower === undefined;
-    return { ...snapshot, meta: { ...snapshot.meta, modes: cleared ? undefined : modes } };
   }
 
   private async drainLiveWire(
@@ -711,15 +687,6 @@ export class TranscriptService {
         'transcript: draining the live wire before a cold read failed',
       );
     }
-  }
-
-  private async coldTowerOwnedHere(sessionId: string, cwd: string | undefined): Promise<boolean> {
-    if (cwd === undefined) return true;
-    const owner = await new TowerStore(resolveTowerRepoRoot(cwd))
-      .load()
-      .then((state) => state.sessionId, () => undefined);
-    if (owner === undefined || owner === sessionId) return true;
-    return this.deps.core.accessor.get(ISessionManager).get(owner) === undefined;
   }
 
   dropSession(sessionId: string): void {
@@ -761,7 +728,6 @@ export function snapshotToOps(
   for (const attachment of snapshot.attachments) {
     ops.push({ op: 'attachment.upsert', attachment });
   }
-  ops.push({ op: 'meta.merge', meta: snapshot.meta });
   return ops;
 }
 

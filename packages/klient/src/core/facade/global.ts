@@ -72,6 +72,7 @@ import type {
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
 import type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
+import type { InstallPluginInput } from '@moonshot-ai/agent-core-v2/app/plugin/plugin';
 
 /** Low-level caller the klient factory builds: routes + validates one service call. */
 export type Caller = (
@@ -248,8 +249,8 @@ export interface GlobalCapabilitiesFacade {
 
 export interface GlobalPluginsFacade {
   list(): Promise<readonly PluginSummary[]>;
-  info(id: string): Promise<PluginInfo>;
-  install(source: string): Promise<PluginSummary>;
+  info(id: string, locale?: string): Promise<PluginInfo>;
+  install(input: string | InstallPluginInput): Promise<PluginSummary>;
   setEnabled(input: { id: string; enabled: boolean }): Promise<void>;
   setMcpServerEnabled(input: { id: string; server: string; enabled: boolean }): Promise<void>;
   remove(id: string): Promise<void>;
@@ -583,9 +584,11 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
 
     plugins: {
       list: () => call('pluginService', 'listPlugins', []) as Promise<readonly PluginSummary[]>,
-      info: (id) => call('pluginService', 'getPluginInfo', [{ id }]) as Promise<PluginInfo>,
-      install: (source) =>
-        call('pluginService', 'installPlugin', [{ source }]) as Promise<PluginSummary>,
+      info: (id, locale) => call('pluginService', 'getPluginInfo', [{ id, locale }]) as Promise<PluginInfo>,
+      install: (input) =>
+        call('pluginService', 'installPlugin', [
+          typeof input === 'string' ? { source: input } : input,
+        ]) as Promise<PluginSummary>,
       setEnabled: (input) => call('pluginService', 'setPluginEnabled', [input]) as Promise<void>,
       setMcpServerEnabled: (input) =>
         call('pluginService', 'setPluginMcpServerEnabled', [input]) as Promise<void>,
