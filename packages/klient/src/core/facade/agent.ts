@@ -43,6 +43,10 @@ import type { ScopedCaller } from './session.js';
 // klient free of protocol-package imports).
 export type PromptLaunchResult = import('@moonshot-ai/agent-core-v2/agent/loop/loop').PromptLaunchResult | undefined;
 export type SteerResult = import('@moonshot-ai/agent-core-v2/agent/loop/loop').SteerResult;
+export type AgentSteerEntry = {
+  readonly message: { readonly role: 'user'; readonly content: readonly ContentPart[] };
+  readonly meta: { readonly origin: { readonly kind: 'user' }; readonly tracked: true };
+};
 export type PromptWithSkillsInput = Omit<Parameters<IAgentSkillService['promptWithSkills']>[0], 'input'> & {
   input: readonly ContentPart[];
 };
@@ -140,11 +144,16 @@ export interface AgentFacade {
 export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFacade {
   return {
     prompt: (input) =>
-      call(scope, 'agentPromptService', 'submit', [input]) as Promise<PromptLaunchResult>,
+      call(scope, 'agentLoopService', 'submit', [input]) as Promise<PromptLaunchResult>,
     promptWithSkills: (input) =>
       call(scope, 'agentSkillService', 'promptWithSkills', [input]) as Promise<PromptWithSkillsResult>,
-    steer: (input) =>
-      call(scope, 'agentPromptService', 'submitSteer', [input]) as Promise<SteerResult>,
+    steer: (input) => {
+      const entry: AgentSteerEntry = {
+        message: { role: 'user', content: input.input },
+        meta: { origin: { kind: 'user' }, tracked: true },
+      };
+      return call(scope, 'agentLoopService', 'notifyClient', [entry]) as Promise<SteerResult>;
+    },
     activateSkill: (input) =>
       call(scope, 'agentSkillService', 'activate', [input]) as Promise<PromptLaunchResult>,
     cancel: (input) =>

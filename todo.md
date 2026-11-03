@@ -262,3 +262,124 @@
 - `diagnoseError` 改为当前未提交工作副本改动；本地相关测试 658/658；远程 Loop + kap-server 评分复跑 87/90，剩余 3 个为既有 Loop 事件顺序快照差异；agent-core、klient、product typecheck 和 agent-core build、comment-free 通过；kap-server typecheck 仅剩既有 `getRequester` 错误；未运行全量。
 - select_tools 改造为当前未提交工作副本改动；本地 select_tools 94/94、远程聚焦 276/276，typecheck、build、comment-free、完整 lint（0 errors）通过。远程全量 17877 passed / 11 failed / 26 skipped，修正后失败文件复跑剩 8 个既有失败（config 1、Loop 快照 3、plan 快照 2、tool 快照 1、已知子代理中断 1），requester、stateManifest 和 session-import 均恢复通过；未据此宣称全量通过。
 - `lint:imports` 仍只有 main 基线已有的 `human/agent/origin.ts` 违规；此前 Handoff 中的全量失败集合需要在该任务要求全量验证时重新确认。
+
+---
+
+# 323 Loop 回归 Review（2026-11-03）
+
+## 结论
+
+**323 相对 `main@origin` 存在多组确定的行为回归，目前不建议合并，也不能视为等价重构。**
+
+本轮由主 Agent 和 7 个 Subagent 分别审查 Core 队列、LLM、工具、持久化、压缩历史、生命周期/RPC、测试覆盖，并沿实际调用栈复核。比较基线为 `main@origin=fc3b521b`，323 的真实改动直接基于该提交。
+
+按用户要求，**ContextMemory 从 append 改为 Loop history 接口本身不计回归**；但接口迁移后的数据丢失、恢复分叉和调用失败仍计入。
+
+## P0
+
+- `promptWithSkills()` 的讨论已结论：保留公开 `steerIfActive` 及 `PromptWithSkillsResult`；steer 且存在 tracked active prompt 时直接 `notify(UserEntry)`，否则 `submit(UserEntry)`，skill parts 与用户输入继续属于同一 entry。model tool-call 仍走独立 tool delivery。
+- `RestGateway.steer()` 没有仓库内生产或测试消费者，用户已确认删除，不再为它保留 `PromptHandle` 等待或 `steerIfActive` 兼容逻辑。
+
+## 确认的回归
+
+以下按子系统归并；P1/P2 表示组内最高严重度。“测试”表示本轮远程测试已复现，其余为有明确新旧调用链证据的静态确认。
+
+| 级别 | 回归 | 证据 |
+| --- | --- | --- |
+| P1 | **1. 普通工具步跳过 `onDidFinishStep`**。工具返回后的 `continue` 直接走 `step.continuing`，不经过挂载 afterStep 的 `step.stopping`；`stopTurn`、Goal、toolDedupe、after-step compaction 都受影响。**测试已复现多发一次 LLM 请求。** | `packages/agent-core-v2/src/agent/loop/core/hook/run.ts:243`、`packages/agent-core-v2/src/agent/loop/loopService.ts:765` |
+| P1 | **2. 工具批执行异常不再立即结束/恢复 step**。适配器把批次异常转成普通错误工具结果，Core 随后继续调用 LLM，绕过当前 step 的 Loop error handler。 | `packages/agent-core-v2/src/agent/loop/toolAdapter.ts:172`、`packages/agent-core-v2/src/agent/loop/loopService.ts:213` |
+| P1 | **3. 任意 retry/recovery 后，LoopService 的 step 投影失联**。`llm.retrying` 清空 `turn.current`，但 Core 内部重试不会重新发 `step.started`；后续 usage、assistant message、工具完成、afterStep、timing 都可能被忽略。 | `packages/agent-core-v2/src/agent/loop/loopService.ts:1386`、`packages/agent-core-v2/src/agent/loop/core/agent-machine.ts:689` |
+| P1 | **4. Prompt gate 生命周期破坏**。gate 中的 prompt 从公开 queue 消失，cancel 只过滤 `inbox.normal`，无法阻止其随后启动；gate 拒绝又设置 `held=true`，已有后续队列可能永久停摆。队列快照问题**已由测试复现**。 | `packages/agent-core-v2/src/agent/loop/core/state.ts:263`、`packages/agent-core-v2/src/agent/loop/core/agent-machine.ts:514`、`packages/agent-core-v2/src/agent/loop/loopService.ts:844` |
+| P1 | **5. Steer 和 notify 状态复用错误**。第二个 notify-only turn 会从数组头部复用已消费通知；steer 合并丢失 prompt/userMessage id、`inTurn`、clientMetadata、skill 元数据；媒体物化后的重新校验也被删除。多项**已由 prompt 测试复现**。 | `packages/agent-core-v2/src/agent/loop/loopService.ts:1229`、`packages/agent-core-v2/src/agent/loop/core/state.ts:295`、`packages/agent-core-v2/src/agent/loop/loopService.ts:470` |
+| P1 | **6. `stopTurn` 不再抑制已排队 notify 的新 turn**。LoopService 只 drop 外围 nudge，没有删除 Core inbox；Core 收尾仍立即 `schedule()`，因此会多启动一次 LLM turn。 | `packages/agent-core-v2/src/agent/loop/core/agent-machine.ts:1126`、`packages/agent-core-v2/src/agent/loop/loopService.ts:1663` |
+| P1 | **7. `maxStepsPerTurn=0` 从“不限制”变成首个 continuation 被阻断**。print 默认配置也使用 0，因此普通工具链会受影响。另有 cap/hhandoff 现存测试少执行一步。 | `packages/agent-core-v2/src/agent/loop/core/builtin/hooks.ts:26` |
+| P1 | **8. Wire 结局与 RPC 结局分叉，turn 收尾也不再串行**。Journal 在 filtered/maxSteps/failedStep 最终分类前写入 Core 原始 outcome；同时 Core 不等待异步 `endTurn`，下一 turn 可先于上一 `TurnEnded` 完成。`dispatcher.flush()` 等 await 若拒绝，`turn.result` 和 subagent completion 会永久 pending。 | `packages/agent-core-v2/src/agent/loop/journal.ts:388`、`packages/agent-core-v2/src/agent/loop/loopService.ts:1583`、`packages/agent-core-v2/src/agent/loop/loopService.ts:1698` |
+| P1 | **9. Token ledger 与 clear 语义回归**。请求消息和 `history()` 不再是相同对象引用，measured anchor 失效；clear 不再 rebase ledger。运行中 `clearContext` 还会先写 `context.clear`、再忽略 `replaceHistory(false)`，造成“RPC 成功、live 未清、restore 后清空”。**token 测试 6 项失败。** | `packages/agent-core-v2/src/agent/loop/requester.ts:564`、`packages/agent-core-v2/src/session/tokenCounting/tokenCountingAgentModel.ts:191`、`packages/node-sdk/src/sdk-rpc-client-v2.ts:2309` |
+| P1 | **10. klient/node-sdk/ACP 的 `getContext` 真实调用断裂**。`agentContextMemoryService` 映射到 LoopService，但 facade 仍调用 `.get()`；只有 `agentLoopService` 名称做了 `get → history` 适配。**node-sdk 已复现 `method not found: agentContextMemoryService.get`；ACP `session/load` 可能静默不重放历史。** | `packages/klient/src/transports/memory/serviceRegistry.ts:77`、`packages/klient/src/core/facade/agent.ts:167`、`packages/klient/src/transports/memory/dispatcher.ts:437` |
+| P1 | **11. Resume 有多类信息丢失**：offload 媒体只有 dehydrate、没有 Loop restore rehydrate；undo 裁剪不保留 queued-cancel turn clock 空洞，冷恢复可复用 turnId；恢复不再折叠同 variant 的环境/项目提醒。 | `packages/agent-core-v2/src/agent/loop/journal.ts:116`、`packages/agent-core-v2/src/agent/loop/journal.ts:177`、`packages/agent-core-v2/src/wire/tree/fork.ts:102` |
+| P1 | **12. 后台 compaction 存在 Wire/live 分叉竞态**。先 dispatch `ContextApplyCompaction`，再调用可能被当前 Loop 阶段拒绝的 `replaceHistory`；若下一 turn 已进入 starting/appending/requesting，Wire 已压缩而 live 未压缩。 | `packages/agent-core-v2/src/agent/fullCompaction/fullCompactionService.ts:786`、`packages/agent-core-v2/src/agent/loop/core/state.ts:208` |
+| P1 | **13. `swarm.exit()` 无条件删除末尾历史**。不再确认末尾是否真是 swarm reminder，后续 user/assistant/notify 会被误删。**测试已复现。** | `packages/agent-core-v2/src/features/swarm/agent/swarmService.ts:83` |
+| P1 | **14. Unknown tool 绕过真实 executor**。丢失 missing-tool describer 的 MCP 指导，以及 executor finalization、PostToolUse 和 telemetry。 | `packages/agent-core-v2/src/agent/loop/toolAdapter.ts:283` |
+| P1 | **15. Restore 前可提前启动 Loop**。`history()` 或 `remind()` 会 `ensureLoop()` 并 drain pending，使输入在 restore/bootstrap/toolActivation 前执行，随后 restore 又重建 Loop。 | `packages/agent-core-v2/src/agent/loop/loopService.ts:252`、`packages/agent-core-v2/src/agent/loop/loopService.ts:288`、`packages/agent-core-v2/src/agent/loop/loopService.ts:538` |
+| P2 | **16. Turn 冻结的 systemPrompt 可被后续 profile 覆盖**。生产 Core 请求把 durable prompt 作为 override，其优先级高于 turnConfig；活跃 turn 中再次 submit 会触发 `syncProfile()`。 | `packages/agent-core-v2/src/agent/loop/core/request.ts:68`、`packages/agent-core-v2/src/agent/loop/requester.ts:1111` |
+| P2 | **17. LLM 取消和 attempt 边界变化**：requesting 阶段 cancel 最长等待 2.5 秒；跨 attempt partial 未重置，最终失败会混合输出；aborted salvage 可保留未签名 thinking；late outcome 的 timing 可写入新 step。 | `packages/agent-core-v2/src/agent/loop/core/agent-machine.ts:539`、`packages/agent-core-v2/src/agent/loop/core/state.ts:440`、`packages/agent-core-v2/src/agent/loop/requester.ts:382` |
+| P2 | **18. 外部事件与元数据还有一组回归**：`PromptQueued.queueLength` 少 1；空 `tool_calls` 的 finishReason 从 `other` 变成 `tool_use`；continuation tool delta 丢 name 且不再过滤 null；tool display/LLM timing 丢失；gate 异常 prompt 也会写入模型历史。 | `packages/agent-core-v2/src/agent/loop/loopService.ts:879`、`packages/agent-core-v2/src/agent/loop/loopService.ts:1351`、`packages/agent-core-v2/src/agent/loop/loopService.ts:1435`、`packages/agent-core-v2/src/agent/loop/history.ts:9` |
+
+另有两个较低级别但确定的覆盖缺口：
+
+- Core `executeTool()` 没把已创建的 `waitForTasks` 传给工具，旧 human `waitForTool` 会退化为 unsupported；生产版 TaskService 的 WaitFor 不受这一遗漏影响。证据：`packages/agent-core-v2/src/agent/loop/core/agent-machine.ts:893`。
+- 当前步新 reminders 在物化前不参与 auto-compaction 阈值计算，可能推迟压缩；afterStep 的非 abort 异常也从“忽略并继续”变成“失败整个 turn”。证据：`packages/agent-core-v2/src/agent/fullCompaction/fullCompactionService.ts:484`。
+
+## Loop 行为覆盖清单
+
+这里的“已覆盖”指**本轮已沿调用栈审查**，不代表测试通过或行为无回归。
+
+| Loop 行为 | 已审查的 323 调用栈 | 结果 |
+| --- | --- | --- |
+| 文本、普通多步 | `submit → schedule → appendPending → startStep → request → step ending` | 主路径有测试；收尾见 #8 |
+| FIFO queue | `submit → inbox.normal → schedule → finishTurnTx → schedule next` | 慢持久化下可重叠，见 #8 |
+| Prompt gate | `turn.starting → onBeforeSubmitPrompt → appendPending` | #4 |
+| Queue snapshot/cancel | `snapshot/cancelWaiter → Core inbox.normal` | #4 |
+| Steer、多 ID 合并 | `LoopService.steer → state.steer → notify → message.appended` | #5 |
+| Notify-only turn | `notify → schedule → activateTurn → TurnPrompt` | #5 |
+| Remind 三队列 | `remind → inbox.remind → drainReminders/flushReminders` | 当前步物化已查；阈值与恢复有问题 |
+| Max steps、bypass | `step.continuing → createMaxStepsHook → finishTurn` | #7；未把普通无通知 text-only 误判为回归 |
+| Prompt/step/tool hooks | `turn.starting/message.appending/step.starting/step.stopping/tool.*` | #1、#3 |
+| StopTurn | `afterStep/tool outcome → stopRequested → turn.ended → schedule` | #1、#6 |
+| LLM retry/recovery | `requester.generate → llm.retrying → 同 Core step 内下一 attempt` | #3、#17 |
+| Streaming delta | `requestProgress → LoopService → Assistant/Thinking/ToolCallDelta` | continuation delta 回归，见 #18 |
+| Usage/requestId/timing/telemetry | `requester.completeRequest → step state → TurnStepCompleted/TurnEnded` | #3、#8、#9 |
+| 工具批执行与权限 | `batch-starting → toolAdapter → IAgentToolExecutorService → tool.ended` | #2、#13；正常权限路径保留 |
+| Detached/background task | `detach → slot.detached → async completion → notify` | 主路径有测试；Core waitForTasks 传递有缺口 |
+| Late completion | `isCurrentStep/slot.done/open → late LLM/tool outcome` | 工具隔离保留；LLM timing 可串步，见 #17 |
+| Abort、二次 abort、grace | `cancelActiveTurn → requestAbort → expireAbort/expireTools` | #17 |
+| `settled()`、`waitForIdle()`、close | `Core idle → Service settleWaiters → journal/Wire drain` | gate held 和收尾异常可悬挂，见 #4、#8 |
+| Profile/tools 更新 | `syncProfile → Core profile → prepareCoreRequest` | #16 |
+| Side request/full compaction | `fullCompaction → requester.start → replaceHistory` | side request 独立路径保留；#9、#12 |
+| 旧 Wire 与新运行后 resume | `readHumanChain → restoreLoopJournal → LoopInput` | #8、#11 |
+| Undo/fork | `restorableChain/resetLoop/seededMessages → nextTurnId` | #5、#11 |
+| Agent/subagent 生命周期 | `create/restore/bootstrap/toolActivation/dispose → Loop close` | #8、#14、#15 |
+| RPC、SDK、ACP 外部事件 | `LoopEmitted → Prompt/Turn/klient/node-sdk/ACP` | #9、#10、#18 |
+
+因此，**主要 Loop 行为本轮都已有调用栈级覆盖，但并非都有自动化测试覆盖，更不是所有行为都被保住**。尤其缺少 gate 中 cancel、拒绝后的 FIFO 尾部、连续 notify-only、慢持久化、retry 后完整投影、后台 compaction 与下一 turn 竞态、queued-cancel+undo+冷恢复这些组合场景。
+
+## 本轮验证与限制
+
+- 远程首轮聚焦测试：**39 failed / 193 passed**，6 个文件中 5 个失败，直接覆盖 Loop、Prompt、tokenCounting、toolDedupe、swarm。
+- node-sdk 真实调用已复现 `agentContextMemoryService.get` 不存在。
+- klient memory/IPC suite 在加载时仍 import 已删除的 `contextMemory`，所以两个 suite **0 测试执行**；这是独立的测试迁移缺口。
+- Preview `56894`/`59015` 健康检查为 200；业务会话 API 未携带鉴权返回 401，因此没有把 Preview 探活当作业务端到端验证。
+- 未运行全量测试，未修改任何产品代码或测试；本节仅追加 Review 记录。
+
+---
+
+# notify 收敛待决清单（2026-11-03）
+
+## 当前已完成
+
+- `IAgentLoopService.notify(SteerPayload)` 与 `SteerPayload` 类型已删除；klient facade 和测试 harness 在调用前构造 Entry，客户端启动等待由 `notifyClient(LoopNotifyEntry)` 保留，公开 `AgentFacade.steer({ input })` 与 `turn_id` 返回不变。
+- Goal outcome 已改为 `UpdateGoal` 工具结果后在同一 turn 自然生成最终 assistant 回答，不再使用空 `notify()` 另起总结 turn。正常终态结果不携带 `stopTurn`；仅当前 step 已达到 `maxStepsPerTurn` 时，Goal 在 `toolCompleted` 中补回 `stopTurn`，保留不强行总结且正常结束的语义。
+- Goal 验证：目标 outcome 场景 2/2、goal-tools 21/21；Core typecheck、build 和聚焦 lint 通过。两份 Goal 文件全量另有 6 项失败，位于未修改的 reminder、budget grace 和旧 turn 结算路径，未据全量结果宣称通过。
+
+## A. 尚未确定归属的行为
+
+| 行为 | 当前使用方与机制 | 仍需决定的归属 |
+| --- | --- | --- |
+| 最终 handoff step | ToolDedupe 在重复工具调用达到阈值后，以无消息 `notify()` 安排最后一次文本回答；后续工具调用被 veto，并记录 `text` / `vetoed` 结果。 | 应由哪种明确的“最终回答步骤”原语承载，而不是继续伪装成空 HistoryEntry；需同时覆盖禁止继续执行工具和正常结束 turn。 |
+| `bypassMaxSteps` | LoopService 在通知消费时修改 `active.bypassStep`，允许 ToolDedupe 的 handoff 越过步数上限。 | 应归属通用 step-budget policy 的例外，还是最终回答步骤自身的策略；应与最终 handoff step 一并定稿。 |
+| 通知生命周期 | `turnScoped`、`drop()`、`dropped` 控制通知何时失效及如何主动撤销；Task、Cron、Tower 使用跨 turn 通知。 | 这些控制不应进入 HistoryEntry，但应由 Core inbox/ack 持有，还是由 LoopService 的独立 notification lease/handle 持有，尚未定稿。 |
+| 投递完成语义 | `onConsume`、`onDrop` 当前围绕 `message.appended` 和 nudge 状态运行。 | `consume` 到底表示进入 History、加入下一次模型请求，还是模型已实际消费，尚未定稿；需同时确定由哪个 Core 或 LoopService 事件表达。 |
+
+## B. 方向已定但尚未迁移
+
+- 其余 `LoopNotify.message` 调用方按同一边界原则主动包装成 Entry；普通消息提交与通知生命周期控制分离，不再以 `ContextMessage` 作为 Loop 的领域输入。
+- Shell 后台输出按既有契约迁往 `remind`，不再占用 `notify`。
+- ToolDedupe 与测试中的空 `notify()` 有了明确替代后，删除 `notify(note?)` 的可空消息入口及 `LoopNotify` 兼容层。
+- Stop Hook 和 Task/Cron/Tower 的异步消息仍走 notify 队列，但其撤销、消费和跨 turn 语义应迁到独立生命周期接口，不继续混在消息签名里。
+
+## C. 推荐收敛顺序
+
+1. 先定义最终 handoff step 与 `bypassMaxSteps` 的预算策略，消除 ToolDedupe 对空通知的依赖。
+2. 再定义 notification lease/handle 及 `consume` 的准确时机，迁移 `turnScoped`、callbacks 和 `drop/dropped`。
+3. 迁移剩余 `LoopNotify.message` 调用方为 Entry，并将 Shell 后台输出改走 `remind`。
+4. 最后删除空通知测试入口、`LoopNotify` 及重复的外围 nudge 表达，保留单一 `notify(UserEntry)` 消息入口。

@@ -69,6 +69,9 @@ function makeTool(
   readonly telemetryTrack: ReturnType<typeof vi.fn>;
   readonly registerTask: ReturnType<typeof vi.fn>;
   readonly getTask: ReturnType<typeof vi.fn>;
+  readonly detachTask: ReturnType<typeof vi.fn>;
+  readonly waitTask: ReturnType<typeof vi.fn>;
+  readonly readOutput: ReturnType<typeof vi.fn>;
   readonly lastRegisteredTask: () => QuestionBackgroundTask | undefined;
 } {
   const request = vi.fn(options.request ?? (async () => ({ Postgres: true }) as QuestionResult));
@@ -78,6 +81,9 @@ function makeTool(
     lastTask = task;
     return 'q_test_task_id';
   });
+  const detachTask = vi.fn();
+  const waitTask = vi.fn();
+  const readOutput = vi.fn();
   const getTask = vi.fn(
     (id: string): QuestionTaskInfo | undefined =>
       id === 'q_test_task_id'
@@ -99,7 +105,13 @@ function makeTool(
     additionalServices: (reg) => {
       reg.definePartialInstance(ISessionContext, { sessionId: TEST_SESSION_ID });
       reg.definePartialInstance(ITelemetryService, { track2: telemetryTrack });
-      reg.definePartialInstance(IAgentTaskService, { registerTask, getTask });
+      reg.definePartialInstance(IAgentTaskService, {
+        registerTask,
+        getTask,
+        detach: detachTask,
+        wait: waitTask,
+        readOutput,
+      });
       reg.definePartialInstance(IAgentScopeContext, { agentId: 'main' });
       reg.definePartialInstance(IAgentToolPolicyService, {
         isToolActive: (name: string) => activeTaskTools.has(name),
@@ -131,7 +143,17 @@ function makeTool(
   };
   disposables.add(toDisposable(interactions.onDidChangePending(answerNewPending)));
   const tool = ix.get(IAskUserQuestionTool);
-  return { tool, request, telemetryTrack, registerTask, getTask, lastRegisteredTask: () => lastTask };
+  return {
+    tool,
+    request,
+    telemetryTrack,
+    registerTask,
+    getTask,
+    detachTask,
+    waitTask,
+    readOutput,
+    lastRegisteredTask: () => lastTask,
+  };
 }
 
 describe('AskUserQuestionTool', () => {
@@ -550,26 +572,68 @@ describe('AskUserQuestionTool', () => {
       expect(settlements).toEqual([{ status: 'completed' }]);
     });
 
-    it('detaches the background question from the asking turn', async () => {
-      const { tool, request, lastRegisteredTask } = makeTool();
-      await executeTool(tool, {
+    it('detaches with the existing acknowledgement but resolves the Core tool only at the real terminal state', async () => {
+      let answer!: (result: QuestionResult) => void;
+      const answerPending = new Promise<QuestionResult>((resolve) => {
+        answer = resolve;
+      });
+      let terminate!: (info: { status: string }) => void;
+      const terminal = new Promise<{ status: string }>((resolve) => {
+        terminate = resolve;
+      });
+      const {
+        tool,
+        request,
+        registerTask,
+        lastRegisteredTask,
+        detachTask,
+        waitTask,
+        readOutput,
+      } = makeTool({ request: () => answerPending });
+      waitTask.mockReturnValue(terminal);
+      readOutput.mockResolvedValue(JSON.stringify({ answers: { Postgres: true } }));
+      let settled = false;
+      const running = executeTool(tool, {
         turnId: 4,
         toolCallId: 'call_bg_detached',
         args: { ...input(), background: true },
         signal,
+        detach: () => {},
+      });
+      void running.then(() => {
+        settled = true;
       });
 
-      const { sink } = makeSink();
-      await lastRegisteredTask()!.start(sink);
+      await vi.waitFor(() => {
+        expect(detachTask).toHaveBeenCalledWith(
+          'q_test_task_id',
+          expect.stringContaining('task_id: q_test_task_id'),
+        );
+      });
+      expect(registerTask.mock.calls[0]![1]).toMatchObject({
+        detached: true,
+        coreDetachedTool: true,
+      });
+      expect(settled).toBe(false);
+      expect(readOutput).not.toHaveBeenCalled();
 
-      expect(request).toHaveBeenCalledOnce();
+      const { sink } = makeSink();
+      const taskRun = lastRegisteredTask()!.start(sink);
+      await vi.waitFor(() => {
+        expect(request).toHaveBeenCalledOnce();
+      });
       expect(request.mock.calls[0]![0]).toMatchObject({ turnId: 4, toolCallId: 'call_bg_detached' });
       expect(request.mock.calls[0]![1]).toMatchObject({ detached: true });
+      answer({ Postgres: true });
+      await taskRun;
+      expect(settled).toBe(false);
 
-      await executeTool(tool, { turnId: 4, toolCallId: 'call_fg', args: input(), signal });
-
-      expect(request).toHaveBeenCalledTimes(2);
-      expect(request.mock.calls[1]![1]).not.toMatchObject({ detached: true });
+      terminate({ status: 'completed' });
+      await expect(running).resolves.toEqual({
+        isError: false,
+        output: JSON.stringify({ answers: { Postgres: true } }),
+      });
+      expect(waitTask).toHaveBeenCalledWith('q_test_task_id', Number.POSITIVE_INFINITY);
     });
 
     it('settles completed with a dismissed result when the background task is aborted', async () => {

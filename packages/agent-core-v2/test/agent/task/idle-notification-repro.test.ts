@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LifecycleScope } from '#/app/scopes';
 import { type IAgentScopeHandle } from '#/_base/di/scope';
 import type { LlmRequester } from '#human/llm-requester/requester';
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -22,6 +22,7 @@ import {
 } from '../../harness';
 import {
   createAgentTaskPersistence,
+  restoreTaskHistory,
   type TaskServiceTestManager,
 } from './stubs';
 
@@ -341,31 +342,33 @@ describe('task notification → main agent (real Agent instance)', () => {
     let ctx: TestAgentContext;
     let background: TaskServiceTestManager;
     let loop: IAgentLoopService;
+    let previousTasks: AgentTaskInfo[];
 
     beforeEach(async () => {
       sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-repro-'));
       const backgroundPersistence = createAgentTaskPersistence(sessionDir);
-      await backgroundPersistence.writeTask({
-        taskId: 'bash-prev0000',
-        kind: 'process',
-        command: 'echo previous',
-        description: 'previous bash task',
-        pid: 12345,
-        startedAt: 1_700_000_000,
-        endedAt: 1_700_000_005,
-        exitCode: 0,
-        status: 'completed',
-      });
       await backgroundPersistence.appendTaskOutput('bash-prev0000', 'previous bash output');
-
-      await backgroundPersistence.writeTask({
-        taskId: 'agent-prev0000',
-        kind: 'agent',
-        description: 'previous agent task',
-        startedAt: 1_700_000_000,
-        endedAt: null,
-        status: 'running',
-      });
+      previousTasks = [
+        {
+          taskId: 'bash-prev0000',
+          kind: 'process',
+          command: 'echo previous',
+          description: 'previous bash task',
+          pid: 12345,
+          startedAt: 1_700_000_000,
+          endedAt: 1_700_000_005,
+          exitCode: 0,
+          status: 'completed',
+        },
+        {
+          taskId: 'agent-prev0000',
+          kind: 'agent',
+          description: 'previous agent task',
+          startedAt: 1_700_000_000,
+          endedAt: null,
+          status: 'running',
+        },
+      ];
 
       ctx = createTestAgent(homeDirServices(sessionDir), taskServices());
       background = ctx.get(IAgentTaskService) as TaskServiceTestManager;
@@ -390,10 +393,10 @@ describe('task notification → main agent (real Agent instance)', () => {
         launches.push(event.turnId);
       });
 
-      await background.loadFromDisk();
-      await background.reconcile();
+      await restoreTaskHistory(ctx, previousTasks);
 
       expect(background.getTask('agent-prev0000')?.status).toBe('lost');
+      loop.flushReminders();
 
       await vi.waitFor(() => {
         const flatContext = JSON.stringify(ctx.contextData());

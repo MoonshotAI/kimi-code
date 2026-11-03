@@ -1,6 +1,5 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
-import type { ITaskHandle } from '#/app/task/task';
 import type {
   AgentTask,
   AgentTaskInfo,
@@ -16,10 +15,6 @@ export type {
   AgentTaskKind,
   AgentTaskStatus,
 } from './types';
-
-export interface AgentTaskLoadOptions {
-  readonly replace?: boolean;
-}
 
 export interface AgentTaskOutputSnapshot {
   readonly outputPath?: string;
@@ -48,25 +43,9 @@ export interface RegisterAgentTaskOptions {
   readonly detachTimeoutMs?: number;
   readonly autoBackgroundOnTimeout?: boolean;
   readonly signal?: AbortSignal;
-}
-
-export type ForegroundTaskReleaseReason = 'detached' | 'timeout_detached' | 'terminal';
-
-export interface AgentTaskTrackOptions {
-  readonly idPrefix?: string;
-  readonly description: string;
-  readonly detached?: boolean;
-  readonly timeoutMs?: number;
-  readonly detachTimeoutMs?: number;
-  readonly signal?: AbortSignal;
-  readonly forceStop?: () => Promise<void>;
-  readonly onDetach?: () => void;
-  readonly toInfo: (base: AgentTaskInfoBase) => AgentTaskInfo;
-}
-
-export interface IAgentTaskEntry {
-  readonly taskId: string;
-  readonly onDidDetach: Promise<ForegroundTaskReleaseReason>;
+  readonly coreDetachedTool?: boolean;
+  readonly detachText?: (viaTimeout: boolean) => string;
+  readonly onDetach?: (viaTimeout: boolean) => void;
 }
 
 export interface AgentTaskNotificationContext {
@@ -90,7 +69,6 @@ export interface IAgentTaskService {
   readonly onDidAppendOutput: Event<AgentTaskOutputChunk>;
   readonly onDidChangeTask: Event<AgentTaskInfo>;
 
-  track(handle: ITaskHandle, options: AgentTaskTrackOptions): IAgentTaskEntry;
   registerTask(task: AgentTask, options?: RegisterAgentTaskOptions): string;
   getTask(taskId: string): AgentTaskInfo | undefined;
   refresh(taskId: string): void;
@@ -105,7 +83,7 @@ export interface IAgentTaskService {
   suppressTerminalNotification(taskId: string): Promise<void>;
   suppressAllTerminalNotifications(): Promise<void>;
   markTasksDeliveredViaWait(tasks: readonly AgentTaskWaitDelivery[]): void;
-  detach(taskId: string): AgentTaskInfo | undefined;
+  detach(taskId: string, text?: string): AgentTaskInfo | undefined;
   stop(taskId: string, reason?: string): Promise<AgentTaskInfo | undefined>;
   stopByUser(taskId: string): Promise<AgentTaskInfo | undefined>;
   stopAll(reason?: string): Promise<readonly AgentTaskInfo[]>;
@@ -115,9 +93,6 @@ export interface IAgentTaskService {
     timeoutMs?: number,
     signal?: AbortSignal,
   ): Promise<AgentTaskInfo | undefined>;
-  waitForForegroundRelease(
-    taskId: string,
-  ): Promise<ForegroundTaskReleaseReason | undefined>;
 }
 
 export const IAgentTaskService =

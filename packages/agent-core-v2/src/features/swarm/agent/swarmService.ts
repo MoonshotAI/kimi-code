@@ -1,6 +1,5 @@
 import { Service } from '#/_base/di/service';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
@@ -15,7 +14,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { SwarmInjection } from './injection/swarmInjection';
 import { IAgentSwarmService, type SwarmModeTrigger } from './swarm';
-import { SwarmModeEnter, SwarmModeExit, swarmKey } from '../swarmOps';
+import { SwarmModeEnter, SwarmModeExit, swarmKey, swarmReminderDeliveredKey } from '../swarmOps';
 
 export class AgentSwarmService extends Service implements IAgentSwarmService {
   declare readonly _serviceBrand: undefined;
@@ -24,7 +23,6 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentReminderService reminder: IAgentReminderService,
     @IEventBus eventBus: IEventBus,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
@@ -33,11 +31,14 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
   ) {
     super();
     this.agentState.contributeState(swarmKey);
+    this.agentState.contributeState(swarmReminderDeliveredKey);
     this._register(
       new SwarmInjection(
-        { getTrigger: () => this.agentState.get(swarmKey) },
+        {
+          getTrigger: () => this.agentState.get(swarmKey),
+          isReminderDelivered: () => this.agentState.get(swarmReminderDeliveredKey),
+        },
         reminder,
-        this.context,
       ),
     );
     this._register(
@@ -82,10 +83,8 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
   exit(): void {
     const trigger = this.agentState.get(swarmKey);
     if (trigger === null) return;
-    const history = this.context.get();
     void this.dispatcher.dispatch(new SwarmModeExit({ agentId: this.agentCtx.agentId }));
     this.telemetry.track2('swarm_mode_exited', { trigger });
-    this.context.publishTrailingRemoval(history);
   }
 
   get isActive(): boolean {

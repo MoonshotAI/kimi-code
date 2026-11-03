@@ -1,10 +1,10 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import { appendContext } from '../../agent/contextMemory/stubs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -60,8 +60,8 @@ function updateSystemPrompt(profile: IAgentProfileService, systemPrompt: string,
   });
 }
 
-function dateReminders(context: IAgentContextMemoryService): readonly ContextMessage[] {
-  return context.get().filter((message) => {
+function dateReminders(context: IAgentLoopService): readonly ContextMessage[] {
+  return context.history().filter((message) => {
     return message.origin?.kind === 'injection' && message.origin.variant === 'date_change';
   });
 }
@@ -74,7 +74,7 @@ function messageText(message: ContextMessage): string {
 
 describe('AgentDateChangeService', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let clock: TestHostClock;
   let loop: IAgentLoopService;
   let profile: IAgentProfileService;
@@ -82,7 +82,7 @@ describe('AgentDateChangeService', () => {
   beforeEach(async () => {
     clock = testHostClock(INITIAL_INSTANT);
     ctx = createTestAgent({ autoConfigure: false }, appService(IHostClock, clock));
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     loop = ctx.get(IAgentLoopService);
     profile = ctx.get(IAgentProfileService);
     await ctx.restorePersisted();
@@ -177,7 +177,7 @@ describe('AgentDateChangeService', () => {
       { autoConfigure: false, persistence },
       appService(IHostClock, clock),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     loop = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
 
@@ -210,7 +210,7 @@ describe('AgentDateChangeService', () => {
       { autoConfigure: false, persistence },
       appService(IHostClock, clock),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     loop = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
 
@@ -231,7 +231,7 @@ describe('AgentDateChangeService', () => {
     try {
       await ctx.dispose();
       ctx = createTestAgent(appService(IHostClock, clock), hostEnvironmentServices(homeDir));
-      context = ctx.get(IAgentContextMemoryService);
+      context = ctx.get(IAgentLoopService);
       loop = ctx.get(IAgentLoopService);
       profile = ctx.get(IAgentProfileService);
         await ctx.restorePersisted();
@@ -264,7 +264,7 @@ describe('AgentDateChangeService', () => {
     await runWillBeginStepHooks(loop);
     expect(dateReminders(context)).toHaveLength(1);
 
-    context.append({
+    appendContext(context,{
       role: 'user',
       content: [{ type: 'text', text: 'older metadata reminder' }],
       origin: {
@@ -290,7 +290,7 @@ describe('AgentDateChangeService', () => {
       'You are a deterministic test agent.',
       ctx.get(ISessionContext).cwd,
     );
-    context.append({
+    appendContext(context,{
       role: 'user',
       content: [{ type: 'text', text: 'first turn' }],
       origin: { kind: 'user' },
@@ -300,7 +300,7 @@ describe('AgentDateChangeService', () => {
 
     await ctx.get(IAgentConversationUndoService).undo(1);
     expect(dateReminders(context)).toHaveLength(1);
-    context.append({
+    appendContext(context,{
       role: 'user',
       content: [{ type: 'text', text: 'replacement turn' }],
       origin: { kind: 'user' },
@@ -317,7 +317,7 @@ describe('AgentDateChangeService', () => {
       'You are a deterministic test agent.',
       ctx.get(ISessionContext).cwd,
     );
-    context.append({
+    appendContext(context,{
       role: 'user',
       content: [{ type: 'text', text: 'first turn' }],
       origin: { kind: 'user' },
@@ -327,7 +327,7 @@ describe('AgentDateChangeService', () => {
 
     await ctx.get(IAgentConversationUndoService).undo(1);
     expect(dateReminders(context)).toHaveLength(1);
-    context.append({
+    appendContext(context,{
       role: 'user',
       content: [{ type: 'text', text: 'replacement turn' }],
       origin: { kind: 'user' },

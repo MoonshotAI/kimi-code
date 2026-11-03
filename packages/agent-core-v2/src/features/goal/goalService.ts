@@ -14,7 +14,6 @@ import {
   type AgentActorRestoreEvent,
 } from '#/agent/actorService/agentActorService';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { GoalInjection, GOAL_WAIT_FOR_GUIDANCE } from '#/features/goal/injection/goalInjection';
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
@@ -198,8 +197,6 @@ interface GoalEffectState {
   readonly goalDrivenTurns: Map<number, string>;
   readonly countedGoalTurns: Set<number>;
   readonly goalStarterTurns: Set<number>;
-  readonly goalOutcomeToolResultTurns: Map<number, string>;
-  readonly goalOutcomeContinuationTurns: Set<number>;
   readonly budgetGraceTurns: Set<number>;
   readonly pendingContinuationGoals: Map<number, string>;
   readonly goalTurnTargets: Map<number, string>;
@@ -548,8 +545,6 @@ function handleTurnLaunched(context: GoalOperationContext, turnId: number, origi
     }
   }
   context.effects.pendingContinuationGoals.delete(turnId);
-  context.effects.goalOutcomeToolResultTurns.delete(turnId);
-  context.effects.goalOutcomeContinuationTurns.delete(turnId);
   context.effects.turnObjectiveRevisions.set(turnId, context.effects.objectiveRevision);
 }
 
@@ -591,8 +586,7 @@ function handleUsageRecorded(context: GoalOperationContext, ctx: UsageRecordedCo
 }
 
 function handleAfterStep(context: GoalOperationContext, ctx: AfterStepContext): void {
-  if (stopAfterBudgetReached(context, ctx)) return;
-  enqueueGoalOutcomeContinuation(context, ctx);
+  stopAfterBudgetReached(context, ctx);
 }
 
 function stopAfterBudgetReached(context: GoalOperationContext, ctx: AfterStepContext): boolean {
@@ -629,20 +623,6 @@ function stopAfterBudgetReached(context: GoalOperationContext, ctx: AfterStepCon
   }
   ctx.stopTurn = true;
   return true;
-}
-
-function enqueueGoalOutcomeContinuation(context: GoalOperationContext, ctx: AfterStepContext): void {
-  if (context.effects.goalOutcomeContinuationTurns.has(ctx.turnId)) return;
-  const goalId = goalTurnTarget(context, ctx.turnId);
-  const outcomeGoalId = context.effects.goalOutcomeToolResultTurns.get(ctx.turnId);
-  context.effects.goalOutcomeToolResultTurns.delete(ctx.turnId);
-  if (goalId === undefined || outcomeGoalId !== goalId) return;
-  const state = context.runtime.getState().goal;
-  if (state !== null && state.goalId !== goalId) return;
-  context.effects.goalOutcomeContinuationTurns.add(ctx.turnId);
-  const maxSteps = context.runtime.get(IConfigService).get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn;
-  if (!hasStepBudgetRemaining(maxSteps, ctx.step)) return;
-  context.runtime.get(IAgentLoopService).notify();
 }
 
 async function handleTurnEnded(context: GoalOperationContext,
@@ -697,8 +677,6 @@ function clearTurnTracking(
   const starterTurn = context.effects.goalStarterTurns.delete(turnId);
   context.effects.goalDrivenTurns.delete(turnId);
   context.effects.countedGoalTurns.delete(turnId);
-  context.effects.goalOutcomeToolResultTurns.delete(turnId);
-  context.effects.goalOutcomeContinuationTurns.delete(turnId);
   context.effects.budgetGraceTurns.delete(turnId);
   context.effects.pendingContinuationGoals.delete(turnId);
   context.effects.goalTurnTargets.delete(turnId);
@@ -1096,9 +1074,7 @@ function isTerminalUpdateGoalResult(
   args: unknown,
   result: ExecutableToolResult,
 ): boolean {
-  if (toolName !== 'UpdateGoal' || result.isError === true || result.stopTurn !== true) {
-    return false;
-  }
+  if (toolName !== 'UpdateGoal' || result.isError === true) return false;
   if (!isPlainRecord(args)) return false;
   const status = args['status'];
   return status === 'complete' || status === 'blocked';
@@ -1200,10 +1176,12 @@ function createGoalEffectHandlers(runtime: AgentActorContext<GoalRuntimeState>) 
     },
     toolCompleted: (tool: Parameters<Parameters<IAgentToolExecutorService['hooks']['onDidExecuteTool']['register']>[1]>[0]) => {
       const goalId = goalTurnTarget(context, tool.turnId);
-      if (
-        goalId !== undefined &&
-        isTerminalUpdateGoalResult(tool.toolCall.name, tool.args, tool.result)
-      ) context.effects.goalOutcomeToolResultTurns.set(tool.turnId, goalId);
+      if (goalId === undefined || !isTerminalUpdateGoalResult(tool.toolCall.name, tool.args, tool.result)) return;
+      const maxSteps = context.runtime.get(IConfigService).get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn;
+      const step = context.runtime.get(IAgentLoopService).snapshot().turn?.step;
+      if (step !== undefined && !hasStepBudgetRemaining(maxSteps, step)) {
+        tool.result = { ...tool.result, stopTurn: true };
+      }
     },
     turnEnded: (event: TurnEnded) => {
       const goalId = goalTurnTarget(context, event.turnId);
@@ -1241,7 +1219,7 @@ const goalEffects = fromCallback(({
     disposables.push(new GoalInjection(
       handlers.injection,
       reminderOf(input.runtime),
-      input.runtime.get(IAgentContextMemoryService),
+      input.runtime.get(IAgentLoopService),
     ));
     disposables.push(input.runtime.get(IEventBus).subscribe(TurnStarted, handlers.turnStarted));
     disposables.push(input.runtime.get(ISessionUsageService).onDidRecord(handlers.usageRecorded));
@@ -1292,8 +1270,6 @@ const goalActorLogic = setup({
       goalDrivenTurns: new Map(),
       countedGoalTurns: new Set(),
       goalStarterTurns: new Set(),
-      goalOutcomeToolResultTurns: new Map(),
-      goalOutcomeContinuationTurns: new Set(),
       budgetGraceTurns: new Set(),
       pendingContinuationGoals: new Map(),
       goalTurnTargets: new Map(),

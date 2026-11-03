@@ -95,7 +95,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
 
   private async execution(
     args: AskUserQuestionInput,
-    { toolCallId, signal, turnId, trace }: ExecutableToolContext,
+    { toolCallId, signal, turnId, trace, detach }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     if (this.bootstrap.args.nonInteractive === true) {
       return { isError: true, output: QUESTION_NON_INTERACTIVE_MESSAGE };
@@ -111,7 +111,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     }
 
     if (args.background === true) {
-      return this.executeInBackground(args, { toolCallId, turnId, signal, trace });
+      return this.executeInBackground(args, { toolCallId, turnId, signal, trace, detach });
     }
 
     return this.executeQuestion(args, { toolCallId, turnId, signal, trace });
@@ -125,20 +125,31 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     );
   }
 
-  private executeInBackground(
+  private async executeInBackground(
     args: AskUserQuestionInput,
     {
       toolCallId,
       signal,
       turnId,
       trace,
-    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId' | 'trace'>,
-  ): ExecutableToolResult {
+      detach,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId' | 'trace' | 'detach'>,
+  ): Promise<ExecutableToolResult> {
     if (signal.aborted) {
       signal.throwIfAborted();
     }
 
     const description = questionDescription(args.questions);
+    const acknowledgement = (): ExecutableToolResult & { readonly output: string } => {
+      const status = this.tasks.getTask(taskId)?.status ?? 'running';
+      return {
+        isError: false,
+        output:
+          `task_id: ${taskId}\n` +
+          `status: ${status}\n` +
+          'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
+      };
+    };
     let taskId: string;
     try {
       taskId = this.tasks.registerTask(
@@ -147,7 +158,11 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
           description,
           { questionCount: args.questions.length, toolCallId },
         ),
-        { detached: true },
+        {
+          detached: true,
+          coreDetachedTool: detach !== undefined,
+          detachText: () => acknowledgement().output,
+        },
       );
     } catch (error) {
       return {
@@ -156,13 +171,14 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
       };
     }
 
-    const status = this.tasks.getTask(taskId)?.status ?? 'running';
+    const started = acknowledgement();
+    if (detach === undefined) return started;
+    this.tasks.detach(taskId, started.output);
+    const info = await this.tasks.wait(taskId, Number.POSITIVE_INFINITY);
+    const output = await this.tasks.readOutput(taskId);
     return {
-      isError: false,
-      output:
-        `task_id: ${taskId}\n` +
-        `status: ${status}\n` +
-        'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
+      isError: info?.status !== 'completed',
+      output: output.length > 0 ? output : info?.stopReason ?? `Background question ${info?.status ?? 'lost'}.`,
     };
   }
 

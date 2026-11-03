@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
 import type { ContentPart } from '#human/llm/message';
@@ -55,7 +54,7 @@ describe('AgentTitlePromptSource', () => {
     disposables = new DisposableStore();
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.definePartialInstance(IAgentContextMemoryService, { get: () => liveMessages });
+        reg.definePartialInstance(IAgentLoopService, { history: () => liveMessages });
         reg.definePartialInstance(IAgentLoopService, {
           snapshot: () => ({
             state: 'idle' as const,

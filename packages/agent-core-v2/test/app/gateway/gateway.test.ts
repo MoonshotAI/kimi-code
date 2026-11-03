@@ -17,6 +17,7 @@ import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import type { PromptPayload } from '#/agent/loop/loop';
 import type { UserEntry } from '#human/agent/turn';
 import { stubLog } from '../../_base/log/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
@@ -51,7 +52,11 @@ describe('RestGateway', () => {
     ix = disposables.add(new TestInstantiationService());
     promptCalls = [];
     turnService = stubLoopWithHooks({ hasActiveTurn: true });
-    turnService.submit = (input: UserEntry) => { promptCalls.push({ ...input.message, origin: input.meta?.origin as PromptOrigin | undefined }); return { id: 'p' }; };
+    turnService.submit = ((input: UserEntry | PromptPayload) => {
+      if ('input' in input) throw new Error('unused in this suite');
+      promptCalls.push({ ...input.message, origin: input.meta?.origin as PromptOrigin | undefined });
+      return { id: 'p' };
+    }) as StubLoop['submit'];
 
     const agentHandle: IAgentScopeHandle = {
       id: 'main',

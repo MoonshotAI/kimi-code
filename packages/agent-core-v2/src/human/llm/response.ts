@@ -126,7 +126,7 @@ export type LlmNoticeSink = (notice: LlmNoticeInput) => void;
 export type LlmStreamEvent =
   | { readonly type: 'llm.notice'; readonly notice: LlmNotice }
   | { readonly type: 'llm.streaming.headers'; readonly headers: Record<string, string> }
-  | { readonly type: 'llm.streaming.part'; readonly part: StreamedMessagePart }
+  | { readonly type: 'llm.streaming.part'; readonly part: StreamedMessagePart; readonly block?: number }
   | { readonly type: 'llm.streaming.usage'; readonly usage: Partial<TokenUsage> }
   | { readonly type: 'llm.streaming.finish'; readonly finish: FinishInfo }
   | { readonly type: 'llm.streaming.tool_call_end'; readonly toolCall: ToolCall; readonly index?: number | string }

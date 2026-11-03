@@ -161,7 +161,7 @@ const turnStepInterruptedSchema = z.object({
 
 export class TurnStepInterrupted extends AgentEvent2<TurnStepInterruptedPayload> {
   static override readonly type = 'turn.step.interrupted';
-  static override readonly durable = true;
+  static override readonly durable = false;
   static override readonly observable = true;
   static override readonly schema = turnStepInterruptedSchema;
 }
@@ -197,7 +197,7 @@ const turnStepRetryingSchema = z.object({
 
 export class TurnStepRetrying extends AgentEvent2<TurnStepRetryingPayload> {
   static override readonly type = 'turn.step.retrying';
-  static override readonly durable = true;
+  static override readonly durable = false;
   static override readonly observable = true;
   static override readonly schema = turnStepRetryingSchema;
 }

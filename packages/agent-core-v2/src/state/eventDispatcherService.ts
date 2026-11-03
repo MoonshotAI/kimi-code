@@ -194,6 +194,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     registerModel: (definition, model) => this.registerModel(definition, model),
     dispatchModelEvent: (event) => this.dispatch(event),
     readLegacyState: (key) => this.agentState.get(key),
+    readHistory: () => this.space()?.readHistory() ?? [],
   };
 
   restorePhase: RestorePhase = 'new';
@@ -342,7 +343,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         if (applier === undefined) continue;
         const ctx = new FoldContextImpl(this, true);
         const next = produce(
-          attachment.getState(),
+          structuredClone(attachment.getState()),
           (draft: any) => applier(draft, event, ctx),
         );
         if (ctx.pendingUndo !== undefined && next !== attachment.getState()) {
@@ -948,7 +949,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     }
     this.replayFreshKeys.clear();
     for (const attachment of this.replayFreshAttachments) {
-      attachment.commit(freeze(attachment.getState(), true));
+      attachment.commit(freeze(structuredClone(attachment.getState()), true));
     }
     this.replayFreshAttachments.clear();
     this.replayMutableStates.clear();

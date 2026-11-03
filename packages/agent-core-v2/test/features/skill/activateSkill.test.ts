@@ -116,7 +116,7 @@ describe('promptWithSkills', () => {
     expect(llmInput).toContain('# Security body');
     expect(llmInput).toContain('Review this change.');
 
-    const messages = ctx.context.get();
+    const messages = ctx.context.history();
     const promptMessage = messages.find((message) => message.origin?.kind === 'user');
     expect(messages.filter((message) => message.origin?.kind === 'skill_activation')).toHaveLength(
       0,
@@ -166,7 +166,7 @@ describe('promptWithSkills', () => {
     expect(ctx.context.get().find((message) => message.origin?.kind === 'user')?.id).toBe('msg_bundled');
   });
 
-  it('steers the bundled submission into the running turn without starting a new one', async () => {
+  it('ends the active step and launches the bundled submission in a new turn', async () => {
     ctx = agentWithSkills();
     ctx.mockNextResponse({ type: 'text', text: 'first reply' });
     ctx.mockNextResponse({ type: 'text', text: 'second reply' });
@@ -175,19 +175,20 @@ describe('promptWithSkills', () => {
     const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
     await hold.started;
 
-    const steered = await ctx.rpc.promptWithSkills({
+    const steeredPromise = ctx.rpc.promptWithSkills({
       input: [{ type: 'text', text: '/review src/app.ts' }],
       skills: [{ name: 'review', args: 'src/app.ts' }],
       steerIfActive: true,
     });
-    expect(steered.turn_id).toBe(0);
+    hold.release();
+    const steered = await steeredPromise;
+    expect(steered.turn_id).toBe(1);
     expect(steered.state).toBe('running');
     expect(steered.steered).toBe(true);
     expect(steered.prompt_id).toBeTruthy();
 
-    hold.release();
     await promptPromise;
-    await ctx.untilTurnEnd();
+    await ctx.get(IAgentLoopService).settled();
 
     expect(ctx.llmCalls).toHaveLength(2);
     const llmInput = JSON.stringify(ctx.llmInputs());
@@ -196,14 +197,13 @@ describe('promptWithSkills', () => {
     expect(llmInput).toContain('/review src/app.ts');
 
     const bundled = ctx.context
-      .get()
+      .history()
       .find(
         (message) =>
           message.origin?.kind === 'user' && message.origin.skillActivations !== undefined,
       );
     expect(bundled?.origin).toMatchObject({
       kind: 'user',
-      inTurn: true,
       skillActivations: [{ skillName: 'review', skillArgs: 'src/app.ts' }],
     });
     const texts = bundled?.content
@@ -217,7 +217,7 @@ describe('promptWithSkills', () => {
         event.type === '[rpc]' &&
         (event.event === 'skill.activated' || event.event === 'turn.started'),
     );
-    expect(events.map((event) => event.event)).toEqual(['turn.started', 'skill.activated']);
+    expect(events.map((event) => event.event)).toEqual(['turn.started', 'skill.activated', 'turn.started']);
   });
 
   it('clears a previous parent workspace when a multi-skill bundle steers into the turn', async () => {
@@ -381,7 +381,7 @@ describe('promptWithSkills', () => {
     ).rejects.toThrow(/not found/i);
 
     expect(ctx.llmCalls).toHaveLength(0);
-    expect(ctx.context.get()).toHaveLength(0);
+    expect(ctx.context.history()).toHaveLength(0);
     expect(
       ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'skill.activated'),
     ).toBe(false);
@@ -398,7 +398,7 @@ describe('promptWithSkills', () => {
     ).rejects.toThrow(/non-empty prompt/i);
 
     expect(ctx.llmCalls).toHaveLength(0);
-    expect(ctx.context.get()).toHaveLength(0);
+    expect(ctx.context.history()).toHaveLength(0);
     expect(
       ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'skill.activated'),
     ).toBe(false);
@@ -415,7 +415,7 @@ describe('promptWithSkills', () => {
     ).rejects.toThrow(/at least one skill/i);
 
     expect(ctx.llmCalls).toHaveLength(0);
-    expect(ctx.context.get()).toHaveLength(0);
+    expect(ctx.context.history()).toHaveLength(0);
     expect(
       ctx.allEvents.some((event) => event.type === '[rpc]' && event.event === 'skill.activated'),
     ).toBe(false);
@@ -430,11 +430,11 @@ describe('promptWithSkills', () => {
       skills: [{ name: 'review' }, { name: 'security' }],
     });
     await ctx.untilTurnEnd();
-    expect(ctx.context.get().length).toBeGreaterThan(0);
+    expect(ctx.context.history().length).toBeGreaterThan(0);
 
     const undone = await ctx.rpc.undoHistory({ count: 1 });
     expect(undone).toBe(1);
-    expect(ctx.context.get()).toHaveLength(0);
+    expect(ctx.context.history()).toHaveLength(0);
   });
 
   it('accepts later prompt_id reuse of a bundled prompt id as a pure correlation id', async () => {

@@ -1918,19 +1918,19 @@ describe('server-v2 /api/v1/sessions', () => {
     await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
       agentId: MAIN_AGENT_ID,
       input: [{ type: 'text', text: 'steered prompt' }],
-      origin: { kind: 'user', inTurn: true },
+      origin: { kind: 'user' },
     }));
     context.append(
-      { role: 'user', content: [{ type: 'text', text: 'steered prompt' }], origin: { kind: 'user', inTurn: true } },
+      { role: 'user', content: [{ type: 'text', text: 'steered prompt' }], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer after steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
       agentId: MAIN_AGENT_ID,
       input: [{ type: 'text', text: 'second steer' }],
-      origin: { kind: 'user', inTurn: true },
+      origin: { kind: 'user' },
     }));
     context.append(
-      { role: 'user', content: [{ type: 'text', text: 'second steer' }], origin: { kind: 'user', inTurn: true } },
+      { role: 'user', content: [{ type: 'text', text: 'second steer' }], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer after second steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IWireService).flush();

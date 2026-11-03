@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { appendContext } from '../contextMemory/stubs';
 import { createControlledPromise } from '@antfu/utils';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -229,11 +229,11 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(announcementText).toContain('<tools_added>');
     expect(announcementText).toContain(MCP_ALPHA);
 
-    const requests = wireEvents(ctx, 'llm.request').filter(
-      (event) => (event.args as { kind?: string }).kind === 'loop',
-    );
-    expect(requests.map((request) => (request.args as { toolSelect?: boolean }).toolSelect))
-      .toEqual([true, true, true, true, true, false]);
+  const requests = wireEvents(ctx, 'llm.request').filter(
+    (event) => (event.args as { kind?: string }).kind === 'loop',
+  );
+  expect(requests.map((request) => (request.args as { toolSelect?: boolean }).toolSelect))
+    .toEqual([true, true, true, true, true, false]);
 
     const secondWire = ctx.llmCalls[1]!;
     const schemaMessages = secondWire.history.filter(
@@ -275,7 +275,7 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(historyText(switchWire.history)).toContain('The available tools changed during this session.');
     expect(historyText(switchWire.history)).not.toContain('Use the select_tools tool');
     expect(wireEvents(ctx, 'llm.tools_snapshot')).toHaveLength(2);
-    expect(ctx.get(IAgentContextMemoryService).get().some((message) =>
+    expect(ctx.get(IAgentLoopService).history().some((message) =>
       message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT)).toBe(true);
 
     expect(alpha.calls).toBe(1);
@@ -321,16 +321,16 @@ describe('progressive tool disclosure end-to-end', () => {
       additionalProperties: false,
     });
     expect(secondWire.tools).toEqual(firstWire.tools);
-    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+    expect(historyText(ctx.get(IAgentLoopService).history())).toContain(
       `Loaded: ${DASHBOARD_TOOL}`,
     );
-    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+    expect(historyText(ctx.get(IAgentLoopService).history())).toContain(
       'dashboard-created',
     );
   });
 
   it('keeps the selected schema across undo and reports it as already available on reselect', async () => {
-    ctx.get(IAgentContextMemoryService).append({
+    appendContext(ctx.get(IAgentLoopService),{
       role: 'user',
       content: [{ type: 'text', text: 'earlier question' }],
       origin: { kind: 'user' },
@@ -342,7 +342,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.untilTurnEnd();
 
     await ctx.get(IAgentConversationUndoService).undo(1);
-    const afterUndo = ctx.get(IAgentContextMemoryService).get();
+    const afterUndo = ctx.get(IAgentLoopService).history();
     expect(afterUndo.some((message) => toolsOf(message)?.some((tool) => tool.name === MCP_ALPHA))).toBe(
       true,
     );
@@ -352,7 +352,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load alpha again' }] });
     await ctx.untilTurnEnd();
 
-    const afterReload = ctx.get(IAgentContextMemoryService).get();
+    const afterReload = ctx.get(IAgentLoopService).history();
     expect(
       afterReload.some((message) => toolsOf(message)?.some((tool) => tool.name === MCP_ALPHA)),
     ).toBe(true);
@@ -367,7 +367,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select the selection tool' }] });
     await ctx.untilTurnEnd();
 
-    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    const text = historyText(ctx.get(IAgentLoopService).history());
     expect(text).toContain('"select_tools" is already available — call it directly;');
     expect(text).not.toContain('disabled by the current tool policy');
     expect(text).not.toContain('Unknown tool: select_tools');
@@ -391,7 +391,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select automation' }] });
     await ctx.untilTurnEnd();
 
-    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    const text = historyText(ctx.get(IAgentLoopService).history());
     expect(text).toContain(
       '"Automation" is disabled by the current tool policy. select_tools cannot enable it. ' +
         'Do not retry unless the policy changes; use an available tool instead.',
@@ -410,7 +410,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load the announced tool' }] });
     await ctx.untilTurnEnd();
 
-    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    const text = historyText(ctx.get(IAgentLoopService).history());
     expect(text).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
     expect(text).toContain(`Loaded: ${MCP_ALPHA}`);
     expect(text).not.toContain('disabled by the current tool policy');
@@ -421,7 +421,7 @@ describe('progressive tool disclosure end-to-end', () => {
     ctx.mockNextResponse({ type: 'text', text: 'loaded' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load alpha' }] });
     await ctx.untilTurnEnd();
-    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+    expect(historyText(ctx.get(IAgentLoopService).history())).toContain(
       `Loaded: ${MCP_ALPHA}`,
     );
 
@@ -433,7 +433,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select alpha again' }] });
     await ctx.untilTurnEnd();
 
-    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    const text = historyText(ctx.get(IAgentLoopService).history());
     expect(text).toContain(
       `"${MCP_ALPHA}" was previously selected or loaded but is no longer registered. ` +
         'select_tools cannot restore it. Do not select it again unless a new <tools_added> announcement lists it.',
@@ -451,7 +451,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select a tool' }] });
     await ctx.untilTurnEnd();
 
-    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    const text = historyText(ctx.get(IAgentLoopService).history());
     expect(text).toContain('Unknown tool: mcp__example__automation.');
     expect(text.match(/3 consecutive select_tools calls/g)).toHaveLength(1);
     expect(text).toContain(`Loaded: ${MCP_ALPHA}`);
@@ -464,7 +464,7 @@ describe('progressive tool disclosure end-to-end', () => {
     ctx.mockNextResponse({ type: 'text', text: 'ok' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load ghost' }] });
     await ctx.untilTurnEnd();
-    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+    expect(historyText(ctx.get(IAgentLoopService).history())).toContain(
       'Unknown tool: mcp__srv__ghost.',
     );
 
@@ -472,7 +472,7 @@ describe('progressive tool disclosure end-to-end', () => {
     ctx.mockNextResponse({ type: 'text', text: 'ok' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load ghost again' }] });
     await ctx.untilTurnEnd();
-    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+    expect(historyText(ctx.get(IAgentLoopService).history())).toContain(
       '"mcp__srv__ghost" has already failed selection 2 times. ' +
         'Stop retrying this name until its availability changes.',
     );
@@ -534,7 +534,7 @@ describe('same-turn MCP tool replacement', () => {
       expect(ctx.llmCalls).toHaveLength(deferred ? 5 : 4);
       const afterAuthentication = ctx.llmCalls[deferred ? 2 : 1]!;
       const beforeEcho = ctx.llmCalls[deferred ? 3 : 2]!;
-      const context = ctx.get(IAgentContextMemoryService).get();
+      const context = ctx.get(IAgentLoopService).history();
       expect(context.filter((message) => message.origin?.kind === 'user')).toHaveLength(1);
       expect(context.some((message) => message.role === 'tool' &&
         message.content.some((part) => part.type === 'text' && part.text === 'authorized echo'))).toBe(true);

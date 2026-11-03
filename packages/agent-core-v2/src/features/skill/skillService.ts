@@ -160,25 +160,23 @@ export class AgentSkillService implements IAgentSkillService {
       input.steerIfActive === true &&
       status.state === 'running' &&
       status.activePromptId !== undefined;
-    const { id } = this.loop.submit(
-      {
-        message: {
-          role: 'user',
-          content: [...prepared.map((activation) => activation.part), ...input.input],
-        },
-        meta: {
-          promptId: input.promptId,
-          origin: {
-            kind: 'user',
-            skillActivations: prepared.map((activation) => activation.entry),
-            clientMetadata: input.clientMetadata,
-            attachments: input.attachments,
-          } as PromptOrigin,
-          tracked: true,
-        },
+    const submission = {
+      message: {
+        role: 'user' as const,
+        content: [...prepared.map((activation) => activation.part), ...input.input],
       },
-      { steerIfActive: input.steerIfActive },
-    );
+      meta: {
+        promptId: input.promptId,
+        origin: {
+          kind: 'user',
+          skillActivations: prepared.map((activation) => activation.entry),
+          clientMetadata: input.clientMetadata,
+          attachments: input.attachments,
+        } as PromptOrigin,
+        tracked: true,
+      },
+    };
+    const { id } = steerable ? this.loop.notify(submission) : this.loop.submit(submission);
     const handle = this.loop.promptHandle(id)!;
     if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
       if (prepared.length === 1) {
@@ -309,14 +307,15 @@ export class AgentSkillService implements IAgentSkillService {
     this.publishActivation(origin);
 
     if (input === undefined) return undefined;
-    const steer = this.loop.snapshot().state === 'running';
-    const { id } = this.loop.submit(
-      {
-        message: { role: 'user', content: [...input] },
-        meta: { promptId, origin, tracked: !steer },
-      },
-      { steerIfActive: steer },
-    );
+    const status = this.loop.snapshot();
+    const running = status.state === 'running';
+    const submission = {
+      message: { role: 'user' as const, content: [...input] },
+      meta: { promptId, origin, tracked: !running },
+    };
+    const { id } = running && status.activePromptId !== undefined
+      ? this.loop.notify(submission)
+      : this.loop.submit(submission);
     return this.loop.promptHandle(id)!.launched;
   }
 
