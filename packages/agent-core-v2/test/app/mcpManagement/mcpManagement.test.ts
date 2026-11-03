@@ -1290,6 +1290,7 @@ describe('McpManagementService', () => {
       );
       const cancel = vi.fn(async () => undefined);
       const begin = vi.spyOn(oauth, 'beginAuthorization').mockResolvedValue({
+        waitId: 'project-auth-wait',
         authorizationUrl: new URL('https://project.example.test/authorize'),
         complete: vi.fn(async () => undefined),
         cancel,
@@ -1524,6 +1525,7 @@ describe('McpManagementService', () => {
       });
       const cancel = vi.fn(async () => undefined);
       const beginSpy = vi.spyOn(oauth, 'beginAuthorization').mockResolvedValue({
+        waitId: 'idle-auth-wait',
         authorizationUrl: new URL('https://oauthable.example.test/authorize'),
         complete: vi.fn(async () => undefined),
         cancel,
