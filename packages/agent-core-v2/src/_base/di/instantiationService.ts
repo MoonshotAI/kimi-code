@@ -36,6 +36,7 @@ import { Emitter } from '../event';
 import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
 import type { Disposer } from '../lifecycle/disposer';
 import { ServiceCollection } from './serviceCollection';
+import { createUnit, currentUnit, mountRoot, type UnitNode } from '../composition-api/runtime';
 
 const enum TraceType {
   None = 0,
@@ -488,6 +489,33 @@ export class InstantiationService implements IInstantiationService {
     return found;
   }
 
+  private _compositionRootNode: UnitNode | undefined;
+
+  compositionRootNode(): UnitNode {
+    if (this._compositionRootNode === undefined) {
+      let node: UnitNode | undefined;
+      const recipe = createUnit(`di:${this.debugLabel ?? 'root'}`, () => {
+        node = currentUnit();
+        node.own(node.listen('unit.error', (event) => {
+          onUnexpectedError(event['error']);
+        }));
+      });
+      const parent = this._parent?.compositionRootNode();
+      if (parent === undefined) {
+        mountRoot(recipe);
+      } else {
+        parent.mount(recipe, undefined);
+      }
+      if (node === undefined) {
+        throw new Error(`failed to mount composition root '${this.debugLabel ?? 'root'}'`);
+      }
+      const root = node;
+      this._compositionRootNode = root;
+      this.anchorKernelFinalizer(() => root.dispose(), `composition:${this.debugLabel ?? 'root'}`);
+    }
+    return this._compositionRootNode;
+  }
+
   anchorKernelEntry(disposer: Disposer, label: string): LedgerEntry {
     return this._ledger.register(disposer, label);
   }
@@ -549,6 +577,16 @@ export class InstantiationService implements IInstantiationService {
           providerBook,
           value,
         ),
+      compositionRootNode: () => this.compositionRootNode(),
+      retireService: (id, instance) => {
+        if (id === undefined) {
+          instance.dispose();
+          return;
+        }
+        if (this._services.get(id) === instance) {
+          return this._retireUnit(id);
+        }
+      },
       constructService: <T>(ctor: new (...args: any[]) => T, config: unknown): T => {
         return this._createInstance(ctor, [], Trace.traceCreation(this._enableTracing, ctor), {
           config,

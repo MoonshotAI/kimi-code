@@ -84,7 +84,7 @@ describe('InstantiationService.provide/unprovide (L1)', () => {
     ix.dispose();
   });
 
-  it('fires availability events with { oldUid, newUid } on provide/unprovide', () => {
+  it('fires availability events across provide, materialization, retirement, and unprovide', () => {
     const ix = new InstantiationService(new ServiceCollection(), true);
     const changes: AvailabilityChange[] = [];
     const services = (ix as unknown as { _services: ServiceCollection })._services;
@@ -97,7 +97,11 @@ describe('InstantiationService.provide/unprovide (L1)', () => {
 
     expect(changes).toEqual([
       { oldUid: undefined, newUid: h1.uid },
+      { oldUid: h1.uid, newUid: h1.uid },
+      { oldUid: h1.uid, newUid: h1.uid },
       { oldUid: h1.uid, newUid: uid2 },
+      { oldUid: uid2, newUid: uid2 },
+      { oldUid: uid2, newUid: uid2 },
       { oldUid: uid2, newUid: undefined },
     ]);
     ix.dispose();

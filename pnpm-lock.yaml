@@ -492,6 +492,9 @@ importers:
       '@noble/hashes':
         specifier: ^2.0.0
         version: 2.4.0
+      '@vue/reactivity':
+        specifier: ^3.5.35
+        version: 3.5.35
       ajv:
         specifier: ^8.18.0
         version: 8.18.0

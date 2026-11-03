@@ -1,7 +1,9 @@
 import type { IDisposable } from './lifecycle';
 import type { Emitter } from '../event';
+import { onUnexpectedError } from '../errors/unexpectedError';
 import { isPromiseLike, type EffectBody } from '../lifecycle/disposer';
 import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
+import { createUnit, type UnitNode } from '../composition-api/runtime';
 import {
   collection,
   isCollectionToken,
@@ -145,9 +147,11 @@ export function isClassRecipe(recipe: unknown): recipe is ServiceClassRecipe {
 export type BufferedOp = (runtime: Fiber) => void;
 
 export interface UnitInternals {
+  readonly name: string;
   readonly unitBook: Ledger;
   takeUnitBuffer(): BufferedOp[] | null;
   setUnitRuntime(runtime: Fiber): void;
+  setup(): void;
 }
 
 export interface FiberHost {
@@ -175,6 +179,8 @@ export interface FiberHost {
     providerBook: Ledger,
     value: T,
   ): () => void;
+  compositionRootNode(): UnitNode;
+  retireService(id: ServiceIdentifier<any> | undefined, instance: IDisposable): void | Promise<void>;
   constructService<T>(ctor: new (...args: any[]) => T, config: unknown): T;
 }
 
@@ -215,6 +221,33 @@ export function bindServiceUnit(instance: UnitInternals & IDisposable, frame: Co
   try {
     for (const op of buffer) {
       op(runtime);
+    }
+    const node = frame.host.compositionRootNode().mount(
+      createUnit(instance.name, () => {
+        instance.setup();
+      }),
+      undefined,
+    );
+    node.onDidDispose(() => {
+      if (!node.failed) return;
+      try {
+        const retired = frame.host.retireService(frame.token, instance);
+        if (isPromiseLike(retired)) {
+          Promise.resolve(retired).catch(onUnexpectedError);
+        }
+      } catch (error) {
+        onUnexpectedError(error);
+      }
+    });
+    instance.unitBook.register(() => {
+      const deferred = node.hasDeferredCleanup;
+      const disposal = node.dispose();
+      if (deferred) return disposal;
+      disposal.catch(onUnexpectedError);
+      return undefined;
+    }, `composition:${instance.name}`);
+    if (node.failed) {
+      throw node.reason;
     }
   } catch (error) {
     instance.dispose();
