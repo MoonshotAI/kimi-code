@@ -27,6 +27,13 @@ export function capabilityIdForMarketplaceEntry(
   }
 }
 
+export function marketplaceEntryIdForInstalledPlugin(
+  pluginId: string,
+  catalogIsDefault: boolean,
+): string {
+  return catalogIsDefault && pluginId === 'kimi-webbridge' ? 'kimi-browser-extension' : pluginId;
+}
+
 export function dedupeCapabilityMarketplaceEntries(
   entries: readonly PluginMarketplaceEntry[],
   capabilities: readonly CapabilityStatus[],

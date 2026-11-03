@@ -10,7 +10,10 @@ import {
   readPluginUpdateNoticeState,
   writePluginUpdateNoticeState,
 } from '#/utils/plugin-update-notice-state';
-import { installedPluginForMarketplaceEntry } from '../utils/capability-marketplace';
+import {
+  installedPluginForMarketplaceEntry,
+  marketplaceEntryIdForInstalledPlugin,
+} from '../utils/capability-marketplace';
 import { isOfficialPluginInstall } from '../utils/plugin-source-label';
 
 /**
@@ -168,7 +171,8 @@ export class PluginUpdateNotifier {
       // notice — a custom catalog (KIMI_CODE_PLUGIN_MARKETPLACE_URL) may
       // advertise anything under any id.
       if (marketplace.source !== kimiCodePluginMarketplaceUrl()) return;
-      const entry = marketplace.plugins.find((plugin) => plugin.id === pluginId);
+      const entryId = marketplaceEntryIdForInstalledPlugin(pluginId, true);
+      const entry = marketplace.plugins.find((plugin) => plugin.id === entryId);
       if (entry === undefined) return;
       const installed = installedPluginForMarketplaceEntry(
         entry.id,
@@ -176,7 +180,7 @@ export class PluginUpdateNotifier {
         undefined,
         true,
       );
-      if (installed === undefined) return;
+      if (installed === undefined || installed.origin === 'custom') return;
       if (installed.origin === 'unknown' && !isOfficialPluginInstall(installed)) return;
       const status = computeUpdateStatus(entry.version, installed.version, true);
       if (status.kind !== 'update') return;
