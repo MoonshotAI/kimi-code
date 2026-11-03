@@ -697,7 +697,8 @@ function applyMediaLabels(out: Message[], labels: readonly MediaLabelEntry[]): b
     let messageChanged = false;
     for (const [partIndex, part] of message.content.entries()) {
       const label = entries.get(partIndex);
-      const labelled = label === undefined ? [part] : labelMediaPart(part, label, content.at(-1));
+      const previous = entries.has(partIndex - 1) ? undefined : content.at(-1);
+      const labelled = label === undefined ? [part] : labelMediaPart(part, label, previous);
       messageChanged ||= labelled.length !== 1 || labelled[0] !== part;
       content.push(...labelled);
     }

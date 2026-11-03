@@ -1521,4 +1521,26 @@ describe('AgentMediaResolverService media labels', () => {
     expect(out[1]!.content[0]).toEqual({ type: 'text', text: '<image name="new.png">' });
     expect(out[1]!.content[1]!.type).toBe('image_url');
   });
+
+  it('labels a kept image that follows a budget-dropped sibling in the same message', async () => {
+    const older = Buffer.concat([PNG_BYTES, Buffer.alloc(14 * 1024 * 1024)]);
+    const newer = Buffer.concat([PNG_BYTES, Buffer.alloc(2 * 1024 * 1024)]);
+    const oldPath = await plantCanonical('f_old', '.png', older);
+    const files = new Map([
+      ['f_old', { name: 'old.png', bytes: older }],
+      ['f_new', { name: 'new.png', bytes: newer }],
+    ]);
+
+    const out = await resolveMedia(
+      resolver(files, sessionDir),
+      [{ role: 'user', content: [namedImage('f_old', 'old.png'), namedImage('f_new', 'new.png')] }],
+      requester({}),
+    );
+
+    expect(out[0]!.content.slice(0, 2)).toEqual([
+      { type: 'text', text: `<image name="old.png" path="${oldPath}"></image>` },
+      { type: 'text', text: '<image name="new.png">' },
+    ]);
+    expect(out[0]!.content[2]!.type).toBe('image_url');
+  });
 });
