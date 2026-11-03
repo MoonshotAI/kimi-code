@@ -1,11 +1,14 @@
 import {
   computeUpdateStatus,
   ErrorCodes as DomainErrorCodes,
+  IBootstrapService,
   ICapabilityService,
   IPluginMarketplaceService,
   IPluginService,
   PluginErrors,
   isError2,
+  marketplaceEntryVisibleOnHost,
+  pluginClientForIdentity,
   type PluginMarketplace,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -106,19 +109,20 @@ export function registerPluginsRoutes(
         return;
       }
       const marketplaceIsDefault = await core.accessor.get(IPluginMarketplaceService).isDefaultMarketplace();
-      const installed = await core.accessor.get(IPluginService).listPlugins();
+      const plugins = core.accessor.get(IPluginService);
+      await plugins.reconcileAvailability(marketplace);
+      const installed = await plugins.listPlugins();
       const byId = new Map(installed.map((p) => [p.id, p]));
       const byCatalogId = new Map(
         installed.filter((p) => p.catalogId !== undefined).map((p) => [p.catalogId, p]),
       );
       const capabilities = core.accessor.get(ICapabilityService).describeCapabilities();
+      const bootstrap = core.accessor.get(IBootstrapService);
+      const client = pluginClientForIdentity(bootstrap.clientIdentity.platform);
       const entries: PluginMarketplaceEntryWire[] = [];
       for (const entry of marketplace.plugins) {
         if (entry.id === 'kimi-webbridge') continue;
-        const supportsLocal =
-          entry.platforms?.some((platform) => platform === process.platform) === true;
-        const cloudOnly = entry.platforms?.every((platform) => platform === 'cloud') === true;
-        if (entry.platforms !== undefined && !supportsLocal && !cloudOnly) continue;
+        if (!marketplaceEntryVisibleOnHost(entry, client, bootstrap.platform)) continue;
         const capabilityId =
           marketplaceIsDefault ? CAPABILITY_ROW_IDS[entry.id] : undefined;
         const capability = capabilities.find(

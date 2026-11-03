@@ -129,6 +129,7 @@ export type {
   MarketplaceLocation,
   MarketplaceUpdateStatus,
   PluginMarketplace,
+  PluginClient,
   PluginMarketplaceClassification,
   PluginMarketplaceDistribution,
   PluginMarketplaceEntry,

@@ -25,6 +25,7 @@ export function stubPluginService(options: StubPluginServiceOptions): IPluginSer
     setPluginMcpServerEnabled: async () => {},
     removePlugin: async () => {},
     reloadPlugins: async (): Promise<ReloadSummary> => ({ added: [], removed: [], errors: [] }),
+    reconcileAvailability: async () => {},
     getPluginInfo: async () => {
       throw new Error('getPluginInfo is not used by this stub');
     },

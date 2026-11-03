@@ -159,6 +159,7 @@ export class SessionEventHandler {
       new PluginUpdateNotifier({
         getSession: () => this.host.session,
         workDir: host.state.appState.workDir,
+        reloadPlugins: async () => host.session?.reloadPlugins(),
         notify: (message) => {
           this.host.showStatus(message, 'warning');
         },

@@ -18,10 +18,42 @@ export const KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV = 'KIMI_CODE_PLUGIN_MARKETPLAC
 export const PLUGIN_MARKETPLACE_CLASSIFICATIONS = ['official', 'third_party'] as const;
 export const PLUGIN_MARKETPLACE_TIERS = ['official', 'curated'] as const;
 export const PLUGIN_MARKETPLACE_PLATFORMS = ['macos', 'windows', 'linux', 'cloud'] as const;
+export const PLUGIN_MARKETPLACE_CLIENTS = ['desktop', 'cli'] as const;
 
 export type PluginMarketplaceClassification = (typeof PLUGIN_MARKETPLACE_CLASSIFICATIONS)[number];
 export type PluginMarketplaceTier = (typeof PLUGIN_MARKETPLACE_TIERS)[number];
 export type PluginMarketplacePlatform = 'darwin' | 'win32' | 'linux' | 'cloud';
+export type PluginClient = (typeof PLUGIN_MARKETPLACE_CLIENTS)[number];
+
+export function pluginClientForIdentity(identity: string): PluginClient {
+  return identity === 'kimi_code_desktop' ? 'desktop' : 'cli';
+}
+
+export function marketplaceEntrySupportsClient(
+  entry: Pick<PluginMarketplaceEntry, 'clients'>,
+  client: PluginClient,
+): boolean {
+  return entry.clients === undefined || entry.clients.includes(client);
+}
+
+export function marketplaceEntryInstallableOnHost(
+  entry: Pick<PluginMarketplaceEntry, 'clients' | 'platforms'>,
+  client: PluginClient,
+  platform: NodeJS.Platform,
+): boolean {
+  if (!marketplaceEntrySupportsClient(entry, client)) return false;
+  return entry.platforms === undefined || entry.platforms.some((candidate) => candidate === platform);
+}
+
+export function marketplaceEntryVisibleOnHost(
+  entry: Pick<PluginMarketplaceEntry, 'clients' | 'platforms'>,
+  client: PluginClient,
+  platform: NodeJS.Platform,
+): boolean {
+  if (!marketplaceEntrySupportsClient(entry, client)) return false;
+  if (entry.platforms === undefined) return true;
+  return entry.platforms.some((candidate) => candidate === platform) || entry.platforms.every((candidate) => candidate === 'cloud');
+}
 
 export interface PluginMarketplaceLocalizedText {
   readonly displayName?: string;
@@ -60,6 +92,7 @@ export interface PluginMarketplaceEntry {
   readonly filename?: string;
   readonly cliDescription?: string;
   readonly locale?: PluginMarketplaceLocale;
+  readonly clients?: readonly PluginClient[];
   readonly platforms?: readonly PluginMarketplacePlatform[];
   readonly distribution?: PluginMarketplaceDistribution;
   readonly billing?: unknown;
@@ -239,6 +272,7 @@ function parseMarketplaceEntry(
     filename: stringField(value, 'filename'),
     cliDescription: stringField(value, 'cliDescription'),
     locale: parseLocale(value['locale'], id),
+    clients: parseClients(value['clients']),
     platforms: parsePlatforms(value['platforms'], id),
     distribution,
     billing: value['billing'],
@@ -298,6 +332,14 @@ function parseDistribution(
     weight: numberField(value, 'weight', id),
     userLevel: value['userLevel'],
   };
+}
+
+function parseClients(value: unknown): readonly PluginClient[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((client): client is PluginClient =>
+    PLUGIN_MARKETPLACE_CLIENTS.includes(client as PluginClient)
+  ))];
 }
 
 function parsePlatforms(

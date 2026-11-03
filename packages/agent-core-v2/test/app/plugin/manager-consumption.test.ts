@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { PluginAvailabilityStore } from '#/app/plugin/availability';
 import { PluginManager } from '#/app/plugin/manager';
 
 import { stubSkill } from '../../features/skill/catalog/stubs';
@@ -935,5 +936,79 @@ describe('PluginManager consumption plane', () => {
       }),
     );
     expect(JSON.stringify(server)).not.toContain('ELECTRON_RUN_AS_NODE');
+  });
+
+  it('isolates shared installations by client and reconciles availability changes without reinstalling', async () => {
+    const home = await makeKimiHome();
+    const source = 'https://marketplace.test/plugins/marketplace';
+    const root = await makePlugin('host-only', {
+      skills: true,
+      agents: true,
+      sessionStartSkill: 'demo-skill',
+      systemPrompt: 'from plugin',
+      mcpServers: { docs: { transport: 'stdio', command: 'node', args: ['server.js'] } },
+      hooks: [{ event: 'PreToolUse', command: './guard.sh', timeout: 10 }],
+      commands: { 'demo.md': '---\ndescription: Demo command\n---\nRun demo' },
+    });
+    const availability = new PluginAvailabilityStore(home);
+    const desktop = new PluginManager({ kimiHomeDir: home, client: 'desktop', availability });
+    await desktop.load();
+    await desktop.install(root, {
+      origin: 'marketplace',
+      catalogId: 'host-only',
+      marketplaceSource: source,
+    });
+    const catalog = (clients: readonly ('desktop' | 'cli')[]) => ({
+      source,
+      plugins: [{
+        id: 'host-only',
+        displayName: 'Host only',
+        source: 'https://cdn.example.test/host-only.zip',
+        clients,
+      }],
+    });
+    const expectVisibility = async (manager: PluginManager, visible: boolean): Promise<void> => {
+      const count = visible ? 1 : 0;
+      expect(manager.summaries()).toHaveLength(count);
+      expect(manager.get('host-only') !== undefined).toBe(visible);
+      expect(manager.info('host-only') !== undefined).toBe(visible);
+      expect(manager.pluginSkillRoots()).toHaveLength(count);
+      expect(manager.pluginAgentRoots()).toHaveLength(count);
+      expect(manager.enabledHooks()).toHaveLength(count);
+      expect(await manager.enabledCommands()).toHaveLength(count);
+      expect(manager.enabledSessionStarts()).toHaveLength(count);
+      expect(manager.enabledSystemPrompts()).toHaveLength(count);
+      expect(Object.keys(manager.enabledMcpServers())).toHaveLength(count);
+      expect(manager.mcpServerEntries()).toHaveLength(count);
+    };
+
+    await availability.update(catalog(['desktop']));
+    await desktop.reload();
+    await expectVisibility(desktop, true);
+    const cli = new PluginManager({ kimiHomeDir: home, client: 'cli' });
+    await cli.load();
+    await expectVisibility(cli, false);
+    await expect(cli.setEnabled('host-only', false)).rejects.toThrow('not installed');
+    await expect(cli.remove('host-only')).rejects.toThrow('not installed');
+
+    await availability.update(catalog(['desktop', 'cli']));
+    await cli.reload();
+    await expectVisibility(cli, true);
+
+    await availability.update(catalog(['desktop']));
+    await cli.reload();
+    await expectVisibility(cli, false);
+    await desktop.reload();
+    await expectVisibility(desktop, true);
+
+    await availability.update(catalog(['desktop', 'cli']));
+    await cli.reload();
+    await expectVisibility(cli, true);
+    const persisted = JSON.parse(
+      await readFile(path.join(home, 'plugins', 'installed.json'), 'utf8'),
+    ) as { plugins: Array<{ id: string; enabled: boolean }> };
+    expect(persisted.plugins).toEqual([
+      expect.objectContaining({ id: 'host-only', enabled: true }),
+    ]);
   });
 });

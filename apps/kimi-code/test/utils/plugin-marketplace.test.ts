@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { OAuthUnauthorizedError } from '@moonshot-ai/kimi-code-oauth';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   computeUpdateStatus,
@@ -12,6 +12,10 @@ import {
   pluginMarketplaceCliDescription,
   withMarketplaceLatestVersions,
 } from '#/utils/plugin-marketplace';
+
+beforeEach(async () => {
+  vi.stubEnv('KIMI_CODE_HOME', await mkdtemp(join(tmpdir(), 'kimi-plugin-marketplace-home-')));
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -554,5 +558,36 @@ describe('loadPluginMarketplace', () => {
       }),
     ).rejects.toBe(failure);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('filters desktop-only entries and reconciles only changed availability', async () => {
+    const entries = [
+      catalogEntry({ id: 'desktop-only', clients: ['desktop'] }),
+      catalogEntry({ id: 'cli-only', clients: ['cli'] }),
+      catalogEntry({ id: 'legacy' }),
+      catalogEntry({ id: 'unknown-client', clients: ['web'] }),
+    ];
+    const fetchImpl = catalogFetch(entries);
+    const changes: boolean[] = [];
+    const load = () => loadPluginMarketplace({
+      workDir: '/tmp/work',
+      source: 'https://marketplace.test/plugins/marketplace',
+      fetchImpl,
+      reconcileAvailability: async (changed) => {
+        changes.push(changed);
+      },
+    });
+
+    expect((await load()).plugins.map((entry) => entry.id)).toEqual(['cli-only', 'legacy']);
+    expect((await load()).plugins.map((entry) => entry.id)).toEqual(['cli-only', 'legacy']);
+    entries[0]!['clients'] = ['desktop', 'cli'];
+    expect((await load()).plugins.map((entry) => entry.id)).toEqual([
+      'desktop-only',
+      'cli-only',
+      'legacy',
+    ]);
+    entries[0]!['clients'] = ['desktop'];
+    expect((await load()).plugins.map((entry) => entry.id)).toEqual(['cli-only', 'legacy']);
+    expect(changes).toEqual([true, false, true, true]);
   });
 });

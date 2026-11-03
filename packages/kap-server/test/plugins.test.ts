@@ -238,6 +238,8 @@ describe('server-v2 /api/v1 plugins', () => {
         description: 'test plugin',
         interface: withCapabilities
           ? {
+              shortDescription: 'test short description',
+              longDescription: 'test long description',
               defaultLocale: 'zh-CN',
               locales: './locales/',
               mcpOverrides: {
@@ -254,7 +256,10 @@ describe('server-v2 /api/v1 plugins', () => {
                 },
               },
             }
-          : undefined,
+          : {
+              shortDescription: 'test short description',
+              longDescription: 'test long description',
+            },
         skills: withCapabilities ? ['./skills'] : undefined,
         mcpServers: withCapabilities
           ? { demo: { transport: 'stdio', command: 'node', args: ['server.js'] } }
@@ -394,6 +399,9 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(installed.body.data).toMatchObject({
       id: 'demo-plugin',
       version: '1.0.0',
+      description: 'test plugin',
+      shortDescription: 'test short description',
+      longDescription: 'test long description',
       enabled: true,
       origin: 'custom',
       installedAt: expect.any(String),
@@ -559,6 +567,72 @@ describe('server-v2 /api/v1 plugins', () => {
     const noManifest = await mkdtemp(join(tmpdir(), 'kimi-no-manifest-'));
     createdDirs.push(noManifest);
     expect((await call('POST', '/api/v1/plugins', { source: noManifest })).body.code).toBe(40001);
+  });
+
+  it('isolates marketplace and shared installs by server client and reconciles catalog changes', async () => {
+    catalog.plugins[0]!['clients'] = ['desktop'];
+    catalog.plugins.push(catalogEntry({ id: 'cli-only', clients: ['cli'] }));
+    await useDemoArtifact('demo-plugin', '2.0.0');
+
+    const defaultMarketplace = await call<{ entries: Array<{ id: string }> }>(
+      'GET',
+      '/api/v1/plugins/marketplace',
+    );
+    expect(defaultMarketplace.body.data.entries.map((entry) => entry.id)).not.toContain('demo-plugin');
+    expect(defaultMarketplace.body.data.entries.map((entry) => entry.id)).toContain('cli-only');
+    const rejected = await call('POST', '/api/v1/plugins', {
+      marketplaceId: 'demo-plugin',
+      expectedVersion: '2.0.0',
+      expectedSha256: artifactDigest(),
+    });
+    expect(rejected.body.code).toBe(40001);
+
+    await server?.close();
+    server = await startServer({
+      hostIdentity: { ...TEST_HOST_IDENTITY, platform: 'kimi_code_desktop' },
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home!,
+      logLevel: 'silent',
+      pluginMarketplaceUrl: CATALOG_URL,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    custom = true;
+    const desktopMarketplace = await call<{ entries: Array<{ id: string }> }>(
+      'GET',
+      '/api/v1/plugins/marketplace',
+    );
+    expect(desktopMarketplace.body.data.entries.map((entry) => entry.id)).toContain('demo-plugin');
+    expect(desktopMarketplace.body.data.entries.map((entry) => entry.id)).not.toContain('cli-only');
+    const installed = await call('POST', '/api/v1/plugins', {
+      marketplaceId: 'demo-plugin',
+      expectedVersion: '2.0.0',
+      expectedSha256: artifactDigest(),
+    });
+    expect(installed.body.code).toBe(0);
+    expect((await call<{ plugins: Array<{ id: string }> }>('GET', '/api/v1/plugins'))
+      .body.data.plugins.map((plugin) => plugin.id)).toContain('demo-plugin');
+
+    await server.close();
+    await bootDefault();
+    expect((await call<{ plugins: Array<{ id: string }> }>('GET', '/api/v1/plugins'))
+      .body.data.plugins.map((plugin) => plugin.id)).not.toContain('demo-plugin');
+
+    catalog.plugins[0]!['clients'] = ['desktop', 'cli'];
+    await call('GET', '/api/v1/plugins/marketplace');
+    expect((await call<{ plugins: Array<{ id: string }> }>('GET', '/api/v1/plugins'))
+      .body.data.plugins.map((plugin) => plugin.id)).toContain('demo-plugin');
+
+    catalog.plugins[0]!['clients'] = ['desktop'];
+    await call('GET', '/api/v1/plugins/marketplace');
+    expect((await call<{ plugins: Array<{ id: string }> }>('GET', '/api/v1/plugins'))
+      .body.data.plugins.map((plugin) => plugin.id)).not.toContain('demo-plugin');
+
+    catalog.plugins[0]!['clients'] = ['desktop', 'cli'];
+    await call('GET', '/api/v1/plugins/marketplace');
+    expect((await call<{ plugins: Array<{ id: string }> }>('GET', '/api/v1/plugins'))
+      .body.data.plugins.map((plugin) => plugin.id)).toContain('demo-plugin');
+    expect((await call('POST', '/api/v1/plugins/demo-plugin:remove')).body.code).toBe(0);
   });
 
   it('serves new-protocol metadata with live install state and platform filtering', async () => {

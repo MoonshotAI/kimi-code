@@ -339,6 +339,48 @@ describe('PluginService (plugin boundary)', () => {
     }
   });
 
+  it('rejects a pre-resolved marketplace artifact unavailable to the current client', async () => {
+    const home = await makeHome();
+    await writeValidInstalledFile(home);
+    const marketplaceSource = 'https://marketplace.example.test/plugins/marketplace';
+    await writeFile(
+      path.join(home, 'plugins', 'availability.json'),
+      JSON.stringify({
+        version: 1,
+        sources: {
+          [marketplaceSource]: {
+            'resolved-demo': { clients: ['desktop'], checkedAt: '2026-01-01T00:00:00.000Z' },
+          },
+        },
+      }),
+      'utf8',
+    );
+    const artifactFetch = vi.fn() as unknown as typeof fetch;
+    const resolved: MarketplacePluginInstall = {
+      source: 'https://marketplace.example.test/resolved-demo.zip',
+      version: '2.0.0',
+      sha256sum: 'a'.repeat(64),
+      catalogId: 'resolved-demo',
+      marketplaceSource,
+      origin: 'marketplace',
+      expectedPluginId: 'resolved-demo',
+      fetchImpl: artifactFetch,
+    };
+    const host = makeHost(home);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await expect(installResolvedMarketplacePlugin(
+        svc,
+        { marketplaceId: 'resolved-demo', expectedVersion: '2.0.0' },
+        resolved,
+      )).rejects.toThrow('does not support cli');
+      expect(artifactFetch).not.toHaveBeenCalled();
+      await expect(svc.listPlugins()).resolves.toEqual([]);
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('invalidates removed plugin OAuth credentials without a workspace', async () => {
     const home = await makeHome();
     await writeValidInstalledFile(home);

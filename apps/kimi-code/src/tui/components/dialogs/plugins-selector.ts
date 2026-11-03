@@ -7,11 +7,12 @@ import {
   visibleWidth,
   type Focusable,
 } from '@moonshot-ai/pi-tui';
-import type {
-  CapabilityStatus,
-  PluginInfo,
-  PluginMcpServerInfo,
-  PluginSummary,
+import {
+  marketplaceEntryVisibleOnHost,
+  type CapabilityStatus,
+  type PluginInfo,
+  type PluginMcpServerInfo,
+  type PluginSummary,
 } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 
@@ -849,11 +850,7 @@ function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {
 }
 
 function marketplaceEntryIsVisible(entry: PluginMarketplaceEntry): boolean {
-  const platforms: readonly string[] | undefined = entry.platforms;
-  if (platforms === undefined) return true;
-  const supportsLocal = platforms.includes(process.platform);
-  const cloudOnly = platforms.every((platform) => platform === 'cloud');
-  return supportsLocal || cloudOnly;
+  return marketplaceEntryVisibleOnHost(entry, 'cli', process.platform);
 }
 
 function marketplaceEntryIsCloudOnly(entry: PluginMarketplaceEntry): boolean {
