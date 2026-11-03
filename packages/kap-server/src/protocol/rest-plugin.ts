@@ -128,6 +128,8 @@ export const pluginMarketplaceEntrySchema = z.object({
   tier: z.enum(['official', 'curated', 'third-party']),
   displayName: z.string(),
   description: z.string().optional(),
+  shortDescription: z.string().optional(),
+  longDescription: z.string().optional(),
   homepage: z.string().optional(),
   keywords: z.array(z.string()).optional(),
   version: z.string().optional(),

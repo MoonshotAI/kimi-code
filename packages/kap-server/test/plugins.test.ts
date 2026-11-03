@@ -100,6 +100,8 @@ function createCatalog(): { plugins: Array<Record<string, unknown>> } {
         id: 'meta-plugin',
         displayName: 'Metadata',
         description: 'Full description',
+        shortDescription: 'Short description',
+        longDescription: 'Long description',
         cliDescription: 'CLI description',
         locale: {
           defaultLocale: 'en-us',
@@ -597,6 +599,8 @@ describe('server-v2 /api/v1 plugins', () => {
       'http://marketplace.test/plugins/relative.zip',
     );
     expect(before.body.data.entries.find((entry) => entry.id === 'meta-plugin')).toMatchObject({
+      shortDescription: 'Short description',
+      longDescription: 'Long description',
       defaultLocale: 'en-us',
       locale: { defaultLocale: 'en-us' },
       billing: 'free',

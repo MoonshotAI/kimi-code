@@ -150,6 +150,8 @@ export function registerPluginsRoutes(
           tier: entry.tier ?? 'third-party',
           displayName: entry.displayName,
           description: entry.description,
+          shortDescription: entry.shortDescription,
+          longDescription: entry.longDescription,
           homepage: entry.homepage,
           keywords: entry.keywords === undefined ? undefined : [...entry.keywords],
           version: entry.version,

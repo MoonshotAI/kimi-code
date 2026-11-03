@@ -50,6 +50,8 @@ export interface PluginMarketplaceEntry {
   readonly tier?: PluginMarketplaceTier;
   readonly version?: string;
   readonly description?: string;
+  readonly shortDescription?: string;
+  readonly longDescription?: string;
   readonly homepage?: string;
   readonly keywords?: readonly string[];
   readonly iconUrl?: string;
@@ -227,6 +229,8 @@ function parseMarketplaceEntry(
     tier,
     version: stringField(value, 'version') ?? deriveVersionFromGithubSource(resolvedSource),
     description: stringField(value, 'description') ?? stringField(value, 'shortDescription'),
+    shortDescription: stringField(value, 'shortDescription'),
+    longDescription: stringField(value, 'longDescription'),
     homepage: stringField(value, 'homepage') ?? stringField(value, 'websiteURL'),
     keywords: stringArrayField(value, 'keywords'),
     iconUrl: stringField(value, 'iconUrl'),
