@@ -2436,7 +2436,8 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 每个条目都有 `item_id`、`type` 与 `status`：
 
 - `user_message`：`{ placement: "opener" | "steer", prompt_ids, origin?, content, created_at? }`。`content` 使用 [提示词](#提示词) 中的内容块格式；`prompt_ids` 列出它承载的 prompt id，客户端可据此撤下本地的乐观气泡；`origin` 是引擎记录的 prompt 来源，包含随 prompt 发送的 `clientMetadata`。
-- `assistant_message` 与 `reasoning`：`{ step_index?, text }`。隐藏的思考不会下发。
+- `assistant_message`：`{ step_index?, text }`。
+- `reasoning`：`{ step_index?, text, started_at?, duration_ms? }`。`started_at` 是思考开始输出的时间，`duration_ms` 是思考输出的时长，条目结束后才有。隐藏的思考不会下发。
 - `tool_call`：`{ item_id: 工具调用 id, step_index?, name, input?, display?, output?, is_error?, duration_ms?, agent_refs?, interaction? }`。`agent_refs` 列出该调用启动的 subagent，形如 `{ agent_id, name?, description?, swarm_index?, run_in_background? }`；`interaction` 是为该调用发起的审批或提问，形如 `{ interaction_id, kind, status: "pending" | "ended", request?, response? }`。
 - `notification`：`{ origin?, text }`，投递进对话的后台任务通知。
 - `compaction`：`{ trigger?, outcome?, summary?, tokens_before?, tokens_after? }`。
@@ -2444,7 +2445,7 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 连接开始接收某个 agent 时，先收到 `{ type: "turns", session_id, agent_id, event_created_at, turns, has_more }`，携带最新的一页，包括运行中的轮次以及当前步骤已经生成的内容。之后：
 
 - `turn.started`、`turn.updated`、`turn.ended` 携带 `turn`，即不含 `items` 的完整轮次头部，客户端用它替换本地的轮次头部。
-- `item.started`、`item.updated`、`item.ended` 携带 `turn_id` 与完整的 `item`，客户端用它替换本地同 `item_id` 的条目。运行中的文本条目开始时带有已生成的文本。
+- `item.started`、`item.updated`、`item.ended` 携带 `turn_id` 与完整的 `item`，客户端用它替换本地同 `item_id` 的条目。运行中的文本条目开始时带有已生成的文本。运行中的 `assistant_message` 或 `reasoning` 条目在同一步骤的下一段文本、思考或工具调用开始时即结束；该步骤完成后，会以落盘后的值再发一次它的 `item.ended`。
 - `item.delta` 携带 `turn_id`、`item_id` 与 `delta`，是追加到运行中的 `assistant_message` 或 `reasoning` 条目的文本。
 - `item.removed` 携带 `turn_id` 与 `item_id`：一个不会完成的运行中条目，例如请求重试导致该步骤重新开始。
 - `turns.removed` 携带 `turn_ids`：撤销或清空上下文后离开对话的轮次。

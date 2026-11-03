@@ -2435,7 +2435,8 @@ A turn is `{ turn_id, ordinal, turn_number?, kind, status, outcome?, error?, sta
 Every item has `item_id`, `type`, and `status`:
 
 - `user_message`: `{ placement: "opener" | "steer", prompt_ids, origin?, content, created_at? }`. `content` uses the content-part format of [Prompts](#prompts); `prompt_ids` lists the prompt ids it carries, so a client can retire its optimistic bubble; `origin` is the engine's prompt origin as recorded, including the `clientMetadata` sent with the prompt.
-- `assistant_message` and `reasoning`: `{ step_index?, text }`. Hidden reasoning is never sent.
+- `assistant_message`: `{ step_index?, text }`.
+- `reasoning`: `{ step_index?, text, started_at?, duration_ms? }`. `started_at` is when the reasoning began streaming and `duration_ms` how long it streamed, present once the item has ended. Hidden reasoning is never sent.
 - `tool_call`: `{ item_id: tool call id, step_index?, name, input?, display?, output?, is_error?, duration_ms?, agent_refs?, interaction? }`. `agent_refs` lists subagents the call started as `{ agent_id, name?, description?, swarm_index?, run_in_background? }`; `interaction` is the approval or question raised for the call, `{ interaction_id, kind, status: "pending" | "ended", request?, response? }`.
 - `notification`: `{ origin?, text }`, a background task notification delivered into the conversation.
 - `compaction`: `{ trigger?, outcome?, summary?, tokens_before?, tokens_after? }`.
@@ -2443,7 +2444,7 @@ Every item has `item_id`, `type`, and `status`:
 When a connection starts receiving an agent it gets `{ type: "turns", session_id, agent_id, event_created_at, turns, has_more }` with the latest page, including the running turn and what its current step has streamed so far. After that:
 
 - `turn.started`, `turn.updated`, `turn.ended` carry `turn`, the full turn header without `items`, and replace the client copy of the header.
-- `item.started`, `item.updated`, `item.ended` carry `turn_id` and the full `item`, and replace the client copy with the same `item_id`. Running text items start with the text generated so far.
+- `item.started`, `item.updated`, `item.ended` carry `turn_id` and the full `item`, and replace the client copy with the same `item_id`. Running text items start with the text generated so far. A running `assistant_message` or `reasoning` item ends as soon as the next text, reasoning, or tool call of its step starts, and its `item.ended` is sent again with the persisted values when the step completes.
 - `item.delta` carries `turn_id`, `item_id`, and `delta`, text to append to a running `assistant_message` or `reasoning` item.
 - `item.removed` carries `turn_id` and `item_id`: a running item that will not be finished, for example after a request retry restarts the step.
 - `turns.removed` carries `turn_ids`: turns that left the conversation after an undo or a context clear.
