@@ -4646,6 +4646,7 @@ export class KimiTUI {
   }
 
   private toolOutputExpandHint(): 'expand' | 'collapse' | null {
+    if (transcriptGroupingActiveIn(this.state)) return null;
     return this.state.transcriptContainer.toolOutputExpandHint();
   }
 

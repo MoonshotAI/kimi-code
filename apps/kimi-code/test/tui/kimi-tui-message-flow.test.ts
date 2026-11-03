@@ -13753,6 +13753,30 @@ describe('footer ctrl+o hint', () => {
     driver.toggleToolOutputExpansion();
     expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
   });
+
+  it('hides the hint while transcript grouping is active and keeps it when grouping is off', async () => {
+    async function fullscreenDriver(transcript: { groupTools: 'auto' | 'off'; groupThinking: boolean }) {
+      const base = makeStartupInput();
+      const { driver, session } = await makeDriver(makeSession(), {}, {
+        ...base,
+        tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const, transcript },
+      });
+      await driver.setSession(session);
+      await driver.syncRuntimeState(session);
+      emitBashResult(driver, 'call_bash', ['line1', 'line2', 'line3', 'line4', 'Tests 5 passed'].join('\n'));
+      return driver;
+    }
+
+    const grouped = await fullscreenDriver({ groupTools: 'auto', groupThinking: true });
+    expect(stripSgr(renderTranscript(grouped))).not.toContain('line1');
+    expect(renderFooterLine1(grouped)).not.toContain('ctrl+o');
+    grouped.toggleToolOutputExpansion();
+    expect(stripSgr(renderTranscript(grouped))).toContain('line1');
+    expect(renderFooterLine1(grouped)).not.toContain('ctrl+o');
+
+    const ungrouped = await fullscreenDriver({ groupTools: 'off', groupThinking: false });
+    expect(renderFooterLine1(ungrouped)).toContain('ctrl+o expand');
+  });
 });
 
 describe('activity bar Ctrl+B hint', () => {
