@@ -967,8 +967,8 @@ describe('KimiTUI startup', () => {
     expect(remoteBinding?.source.localWorkDir).toBeUndefined();
     await remoteBinding?.source.pullRequest();
     expect(remoteHarness.getGitPullRequest).toHaveBeenCalledWith(remote.state.appState.workDir, { sessionId: 'ses-remote' });
-    expect(driver.footerGitBinding({ ...connected, environment: { ...connected.environment, status: 'connecting' } })?.key)
-      .not.toBe(remoteBinding?.key);
+    expect(driver.footerGitBinding({ ...connected, environment: { ...connected.environment, status: 'disconnected' } })?.key)
+      .toBe(remoteBinding?.key);
   });
 
   it('completes remote @ mentions through the live session', async () => {

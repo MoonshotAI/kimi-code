@@ -241,6 +241,9 @@ export class FooterComponent implements Component {
 
   setState(state: AppState): void {
     this.syncGitCache(state);
+    if (state.environment?.status === 'ready' && this.state.environment?.status !== 'ready') {
+      this.gitCache?.refresh();
+    }
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.syncEnvironmentSpinner(state.environment);

@@ -113,6 +113,29 @@ describe('FooterComponent', () => {
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the git cache through a disconnect and refreshes it once the environment is ready again', () => {
+    const refresh = vi.fn();
+    const dispose = vi.fn();
+    gitStatusMocks.createGitStatusCache.mockImplementation(() => ({ getStatus: () => null, refresh, dispose }));
+    const remote = (status: 'ready' | 'disconnected'): AppState => ({
+      ...appState,
+      environment: { environmentId: 'dev-box', type: 'ssh', status },
+    });
+    const footer = new FooterComponent(remote('ready'));
+    footer.setGitBinding((state) => ({ key: state.sessionId, source: gitSource }));
+
+    footer.setState(remote('disconnected'));
+    expect(dispose).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+
+    footer.setState(remote('ready'));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    footer.setState(remote('ready'));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenCalledTimes(1);
+    footer.dispose();
+  });
+
   it('keeps the git cache for the same binding key and replaces it on a new one', () => {
     const dispose = vi.fn();
     gitStatusMocks.createGitStatusCache.mockImplementation(() => ({

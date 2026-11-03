@@ -623,8 +623,9 @@ export class KimiTUI {
   /**
    * The footer reads git state through the engine: a live session's own
    * environment, or the local work dir before the lazy session exists. A
-   * remote binding has nothing to read until its session does; a new
-   * environment status re-reads, so a connected remote shows up at once.
+   * remote binding has nothing to read until its session does. The key
+   * ignores the connection status so a transient disconnect keeps the last
+   * badge; the footer re-reads when the environment turns ready.
    */
   private footerGitBinding(state: AppState): FooterGitBinding | null {
     const local = this.environmentIdOf(state.environment) === 'local';
@@ -632,7 +633,7 @@ export class KimiTUI {
     if (sessionId === undefined && !local) return null;
     const { workDir } = state;
     return {
-      key: [sessionId ?? '', workDir, state.environment?.status ?? ''].join('\0'),
+      key: [sessionId ?? '', workDir, local ? 'local' : 'remote'].join('\0'),
       source: {
         status: () => this.harness.getGitStatus(workDir, { sessionId }),
         pullRequest: () => this.harness.getGitPullRequest(workDir, { sessionId }),
