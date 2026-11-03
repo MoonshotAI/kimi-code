@@ -70,6 +70,7 @@ describe('Workspace MCP initialization', () => {
         reg.definePartialInstance(IWorkspaceContext, { cwd, workspaceId: 'test-workspace' });
         reg.definePartialInstance(IPluginService, {
           enabledMcpServers: async () => ({}),
+          mcpServerEntries: async () => [],
           onDidReload: Event.None as Event<PluginReloadEvent>,
         });
         reg.definePartialInstance(
