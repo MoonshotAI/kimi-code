@@ -887,12 +887,12 @@ describe('AgentLoopRequester media-degraded resend', () => {
     const calls = { value: 0 };
     const capturedInputs: ModelRequestInput[] = [];
     let directory = '/session/media/first';
-    const imageMessage = (url: string): Message => ({
+    const imageMessage = (url: string, name?: string): Message => ({
       role: 'user',
-      content: [{ type: 'image_url', imageUrl: { url } }],
+      content: [{ type: 'image_url', imageUrl: { url, name } }],
     });
     const messages = [
-      imageMessage('kimi-file://f_old'),
+      imageMessage('kimi-file://f_old', 'old.png'),
       imageMessage('kimi-file://f_keep1'),
       imageMessage('kimi-file://f_keep2'),
     ];
@@ -924,10 +924,10 @@ describe('AgentLoopRequester media-degraded resend', () => {
       .filter((part) => part.type === 'image_url')
       .map((part) => mediaUrlOf(part));
     expect(urls).toEqual(['kimi-file://f_keep1', 'kimi-file://f_keep2']);
-    expect(textsAt(1)).toContain('<image path="/session/media/first/f_old.png"></image>');
+    expect(textsAt(1)).toContain('<image name="old.png" path="/session/media/first/f_old.png"></image>');
     expect(textsAt(2)).toEqual(
       expect.arrayContaining([
-        '<image path="/session/media/first/f_old.png"></image>',
+        '<image name="old.png" path="/session/media/first/f_old.png"></image>',
         '<image path="/session/media/first/f_keep1.png"></image>',
         '<image path="/session/media/first/f_keep2.png"></image>',
       ]),
@@ -940,7 +940,7 @@ describe('AgentLoopRequester media-degraded resend', () => {
     const inheritedTexts = textsAt(3);
     expect(inheritedTexts).toEqual(
       expect.arrayContaining([
-        '<image path="/session/media/second/f_old.png"></image>',
+        '<image name="old.png" path="/session/media/second/f_old.png"></image>',
         '<image path="/session/media/second/f_keep1.png"></image>',
         '<image path="/session/media/second/f_keep2.png"></image>',
       ]),

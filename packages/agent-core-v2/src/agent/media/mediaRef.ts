@@ -166,8 +166,22 @@ export function unescapeMediaAttribute(value: string): string {
     .replaceAll('&amp;', '&');
 }
 
-export function buildMediaPathTag(kind: MediaKind, path: string): string {
-  return `<${kind} path="${escapeMediaAttribute(path)}"></${kind}>`;
+function mediaOpenTag(kind: MediaKind, name: string | undefined, path: string | undefined): string {
+  const nameAttr = name === undefined ? '' : ` name="${escapeMediaAttribute(name)}"`;
+  const pathAttr = path === undefined ? '' : ` path="${escapeMediaAttribute(path)}"`;
+  return `<${kind}${nameAttr}${pathAttr}>`;
+}
+
+export function buildMediaLabel(
+  kind: MediaKind,
+  name: string | undefined,
+  path: string | undefined,
+): string | undefined {
+  return name === undefined && path === undefined ? undefined : mediaOpenTag(kind, name, path);
+}
+
+export function buildMediaPathTag(kind: MediaKind, path: string, name?: string): string {
+  return `${mediaOpenTag(kind, name, path)}</${kind}>`;
 }
 
 export function matchMediaPathTags(text: string): MediaPathTag[] {
