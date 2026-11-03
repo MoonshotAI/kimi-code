@@ -331,7 +331,7 @@ async function loadMarketplaceCatalog(
       workDir: host.state.appState.workDir,
       source,
       reconcileAvailability: async (changed) => {
-        if (changed) await host.harness.reloadPlugins();
+        if (changed) await (await resolvePluginApi(host)).reloadPlugins();
       },
     });
     panel.setMarketplace(catalog.plugins, catalog.source);

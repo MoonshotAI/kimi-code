@@ -560,13 +560,14 @@ describe('loadPluginMarketplace', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('filters desktop-only entries and reconciles only changed availability', async () => {
+  it('preserves catalog entries while reconciling only changed availability', async () => {
     const entries = [
       catalogEntry({ id: 'desktop-only', clients: ['desktop'] }),
       catalogEntry({ id: 'cli-only', clients: ['cli'] }),
       catalogEntry({ id: 'legacy' }),
       catalogEntry({ id: 'unknown-client', clients: ['web'] }),
     ];
+    const expectedIds = entries.map((entry) => entry['id']);
     const fetchImpl = catalogFetch(entries);
     const changes: boolean[] = [];
     const load = () => loadPluginMarketplace({
@@ -578,16 +579,12 @@ describe('loadPluginMarketplace', () => {
       },
     });
 
-    expect((await load()).plugins.map((entry) => entry.id)).toEqual(['cli-only', 'legacy']);
-    expect((await load()).plugins.map((entry) => entry.id)).toEqual(['cli-only', 'legacy']);
+    expect((await load()).plugins.map((entry) => entry.id)).toEqual(expectedIds);
+    expect((await load()).plugins.map((entry) => entry.id)).toEqual(expectedIds);
     entries[0]!['clients'] = ['desktop', 'cli'];
-    expect((await load()).plugins.map((entry) => entry.id)).toEqual([
-      'desktop-only',
-      'cli-only',
-      'legacy',
-    ]);
+    expect((await load()).plugins.map((entry) => entry.id)).toEqual(expectedIds);
     entries[0]!['clients'] = ['desktop'];
-    expect((await load()).plugins.map((entry) => entry.id)).toEqual(['cli-only', 'legacy']);
+    expect((await load()).plugins.map((entry) => entry.id)).toEqual(expectedIds);
     expect(changes).toEqual([true, false, true, true]);
   });
 });

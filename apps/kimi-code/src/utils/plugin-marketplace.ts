@@ -1,6 +1,5 @@
 import {
   isMissingMarketplaceTokenError,
-  marketplaceEntryVisibleOnHost,
   parsePluginMarketplace,
   PluginAvailabilityStore,
   readPluginMarketplace,
@@ -82,12 +81,7 @@ export async function loadPluginMarketplace(
   await availability.refresh();
   const changed = await availability.update(marketplace);
   await options.reconcileAvailability?.(changed);
-  return {
-    ...marketplace,
-    plugins: marketplace.plugins.filter((entry) =>
-      marketplaceEntryVisibleOnHost(entry, 'cli', process.platform)
-    ),
-  };
+  return marketplace;
 }
 
 export function pluginMarketplaceCliDescription(
