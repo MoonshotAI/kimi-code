@@ -374,7 +374,12 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   ): ParticipantAttachment {
     const base = new Map<Event2Class<any, any>, StateFold<any, any>>();
     for (const cls of participant.events) base.set(cls, participant.transition);
-    const folds = expandedRuntimeFolds(participant.id, participant.undoable, base);
+    const folds = expandedRuntimeFolds(
+      participant.id,
+      participant.undoable,
+      base,
+      participant.onUndo,
+    );
     const appliers = new Map<Event2Class<any, any>, ParticipantApplier>();
     for (const [cls, fold] of folds) {
       appliers.set(cls, (state, event, ctx) => fold(state, event, ctx));
