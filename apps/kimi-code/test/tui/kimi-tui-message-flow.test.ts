@@ -5166,6 +5166,48 @@ command = "vim"
     ).toBeUndefined();
   });
 
+  it.each(['blocked', 'failed'] as const)('releases a queued steer when its prompt completes as %s', async (reason) => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const session = makeSession({
+        steer: vi.fn(async () => ({
+          promptId: 'prompt-goal-rejected',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          state: 'queued',
+          steered: false,
+        })),
+      });
+      const { driver } = await makeDriver(session);
+      driver.state.appState.goal = makeActiveGoalSnapshot();
+      driver.handleUserInput('queued but rejected');
+      await vi.waitFor(() => { expect(session.steer).toHaveBeenCalledOnce(); });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(renderTranscript(driver)).toContain('\u001B[2m');
+
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'prompt.completed',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          promptId: 'prompt-goal-rejected',
+          finishedAt: '2026-01-01T00:00:00.000Z',
+          reason,
+        } as Event,
+        () => {},
+      );
+
+      expect(
+        driver.state.transcriptEntries.find(
+          (entry) => entry.content === 'queued but rejected',
+        )?.steerPending,
+      ).toBeUndefined();
+      expect(renderTranscript(driver)).not.toContain('\u001B[2m');
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
+
   it('restores a blocked steer result instead of leaving it faint', async () => {
     const previousLevel = chalk.level;
     chalk.level = 3;

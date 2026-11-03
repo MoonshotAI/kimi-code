@@ -174,7 +174,7 @@ describe('SessionEventWiring status snapshot fold', () => {
     expect(JSON.stringify(events[3])).not.toContain('"source"');
   });
 
-  it('forwards prompt.completed so gate-blocked prompts can settle clients', () => {
+  it.each(['blocked', 'failed'] as const)('forwards prompt.completed(%s) so rejected prompts can settle clients', (reason) => {
     const sub = new FakeAgentHandle('agent-1');
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
@@ -183,7 +183,7 @@ describe('SessionEventWiring status snapshot fold', () => {
         type: 'prompt.completed',
         promptId: 'prompt-1',
         finishedAt: '2026-01-01T00:00:00.000Z',
-        reason: 'blocked',
+        reason,
       });
     } finally {
       wiring.dispose();
@@ -195,11 +195,12 @@ describe('SessionEventWiring status snapshot fold', () => {
       sessionId: 's1',
       agentId: 'agent-1',
       promptId: 'prompt-1',
-      reason: 'blocked',
+      reason,
     });
   });
 
-  it.each(['completed', 'failed'] as const)('keeps prompt.completed(%s) on the internal bus', (reason) => {
+  it('keeps prompt.completed(completed) on the internal bus', () => {
+    const reason = 'completed';
     const sub = new FakeAgentHandle('agent-1');
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);

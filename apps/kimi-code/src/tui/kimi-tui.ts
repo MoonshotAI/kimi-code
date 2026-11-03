@@ -2642,6 +2642,11 @@ export class KimiTUI {
     if (promptId !== undefined) this.acknowledgeSteerPromptIds([promptId]);
   }
 
+  releaseSteerDelivery(promptId: string): void {
+    const batch = this.pendingSteerDeliveries.find((batch) => batch.promptId === promptId);
+    if (batch !== undefined) this.releaseSteerEntries(batch.entries);
+  }
+
   private acknowledgeSteerPromptIds(promptIds: readonly string[]): boolean {
     const ids = new Set(promptIds);
     const delivered = this.pendingSteerDeliveries.filter(

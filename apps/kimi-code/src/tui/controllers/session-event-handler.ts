@@ -130,6 +130,7 @@ export interface SessionEventHost {
   acknowledgeSteerDelivery?(input: unknown, promptIds?: readonly string[]): void;
   acknowledgeSteerTurnPrompt?(promptId: string | undefined, input: unknown, origin: unknown): void;
   acknowledgeSteerTurnStarted?(promptId?: string): void;
+  releaseSteerDelivery?(promptId: string): void;
   lastCompactionTrigger: CompactionStartedEvent['trigger'] | undefined;
   autoCompactionSerial: number;
   handleTurnStarted?(event: TurnStartedEvent): void;
@@ -408,6 +409,9 @@ export class SessionEventHandler {
     event: Extract<Event, { type: 'prompt.completed' }>,
     sendQueued: (item: QueuedMessage) => void,
   ): void {
+    if (event.reason === 'blocked' || event.reason === 'failed') {
+      this.host.releaseSteerDelivery?.(event.promptId);
+    }
     if (event.reason !== 'blocked') return;
     this.host.programStatus?.failRequest('Turn blocked by a prompt hook');
     this.host.streamingUI.finalizeTurn(sendQueued);
