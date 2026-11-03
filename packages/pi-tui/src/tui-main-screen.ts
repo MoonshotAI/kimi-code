@@ -570,10 +570,10 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				previousTailStart >= 0 &&
 				newTailStart >= 0 &&
 				newLines.slice(newTailStart).every((line, index) => line === this.previousLines[previousTailStart + index]);
-			const invisibleShrinkAboveViewport = newLines.length < this.previousLines.length && visibleTailUnchanged;
-			const canDiffAboveViewport =
-				newLines.length >= this.previousLines.length &&
-				!this.rangeHasKittyImages(firstChanged, aboveEnd, lineImageIds);
+			const noKittyImagesAboveViewport = !this.rangeHasKittyImages(firstChanged, aboveEnd, lineImageIds);
+			const invisibleShrinkAboveViewport =
+				newLines.length < this.previousLines.length && visibleTailUnchanged && noKittyImagesAboveViewport;
+			const canDiffAboveViewport = newLines.length >= this.previousLines.length && noKittyImagesAboveViewport;
 			if (!canDiffAboveViewport && !invisibleShrinkAboveViewport) {
 				logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
 				fullRender(true);
@@ -585,8 +585,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				this.aboveViewportStaleTop === null
 					? firstChanged
 					: Math.min(this.aboveViewportStaleTop, firstChanged);
+			const lineCountDelta = newLines.length - this.previousLines.length;
 			if (invisibleShrinkAboveViewport) {
-				const lineCountDelta = newLines.length - this.previousLines.length;
 				this.cursorRow = Math.max(0, newLines.length - 1);
 				this.hardwareCursorRow += lineCountDelta;
 				this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
@@ -597,7 +597,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				// commit the caches and reposition the hardware cursor,
 				// mirroring the no-change path above.
 				this.positionHardwareCursor(cursorPos, newLines.length);
-				this.previousViewportTop = invisibleShrinkAboveViewport ? newTailStart : prevViewportTop;
+				this.previousViewportTop = Math.max(0, prevViewportTop + lineCountDelta);
 				this.previousLines = newLines;
 				this.previousRawLines = rawLines;
 				this.previousLineImageIds = lineImageIds;

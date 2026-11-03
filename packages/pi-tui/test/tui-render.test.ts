@@ -1294,6 +1294,64 @@ describe("TUI above-viewport in-place changes", () => {
 		tui.stop();
 	});
 
+	it("preserves the live viewport offset when an invisible shrink follows a tail shrink", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = makeLines(30);
+		tui.start();
+		await terminal.waitForRender();
+
+		component.lines = makeLines(25);
+		tui.requestRender();
+		await terminal.waitForRender();
+		const viewportBefore = await terminal.flushAndGetViewport();
+		const initialRedraws = tui.fullRedraws;
+
+		const folded = makeLines(25);
+		folded.splice(5, 5);
+		component.lines = folded;
+		tui.requestRender();
+		await terminal.waitForRender();
+		assert.strictEqual(tui.fullRedraws, initialRedraws, "invisible fold must not full-redraw");
+		assert.deepStrictEqual(await terminal.flushAndGetViewport(), viewportBefore, "fold leaves the viewport unchanged");
+
+		const updated = [...folded];
+		updated[12] = "changed above the live viewport";
+		component.lines = updated;
+		terminal.clearWrites();
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(await terminal.flushAndGetViewport(), viewportBefore, "offscreen update must not overwrite a live row");
+		assert.ok(!terminal.getWrites().includes("\x1b[3J"), "must not clear scrollback");
+		tui.stop();
+	});
+
+	it("keeps Kitty-bearing above-viewport shrinks on the full-redraw path", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		const lines = makeLines(30);
+		lines[3] = encodeKitty("AAAA", { columns: 2, rows: 1, imageId: 42, moveCursor: false });
+		component.lines = lines;
+		tui.start();
+		await terminal.waitForRender();
+		const initialRedraws = tui.fullRedraws;
+
+		lines.splice(3, 1);
+		component.lines = lines;
+		terminal.clearWrites();
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.ok(tui.fullRedraws > initialRedraws, "removing an image must force a full redraw");
+		assert.ok(terminal.getWrites().includes(deleteKittyImage(42)), "removed image id must be deleted");
+		tui.stop();
+	});
+
 	it("preserves the skipped-row marker across render-state capture/restore", async () => {
 		await withEnv({ TERMUX_VERSION: "1" }, async () => {
 			const terminal = new LoggingVirtualTerminal(40, 10);
