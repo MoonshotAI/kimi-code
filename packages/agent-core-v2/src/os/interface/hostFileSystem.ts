@@ -40,7 +40,7 @@ export interface IHostFileSystem {
 
   readText(
     path: string,
-    options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
+    options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors; preserveBOM?: boolean },
   ): Promise<string>;
   writeText(path: string, data: string): Promise<void>;
   appendText(path: string, data: string): Promise<void>;

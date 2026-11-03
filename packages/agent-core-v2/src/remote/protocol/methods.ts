@@ -40,6 +40,7 @@ export interface RemoteEnvironmentInfo {
   readonly homeDir: string;
   readonly cwd: string;
   readonly tempDir: string;
+  readonly windowsProcessLifecycle?: boolean;
 }
 
 export interface InitializeResult {
@@ -177,7 +178,7 @@ export interface ProcessSignalParams {
   readonly signal: ProcessSignalKind;
 }
 
-export const MIN_EXECUTOR_VERSION = '0.1.0';
+export const MIN_EXECUTOR_VERSION = '2.5.0';
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map((part) => Number.parseInt(part, 10) || 0);

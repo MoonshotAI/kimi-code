@@ -13,11 +13,14 @@ import {
 } from '#/_base/di/scope';
 import { AsyncEmitter, Emitter, Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
+import { IRegionService } from '#/app/region/region';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import type { PluginReloadEvent } from '#/app/plugin/types';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IProviderService } from '#/llm-adapter/provider/provider';
+import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IAppStateService } from '#/app/state/appState';
 import { AppStateService } from '#/app/state/appStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -146,6 +149,7 @@ function pluginStub(
     getPluginInfo: async () => {
       throw new Error('getPluginInfo is not used by these tests');
     },
+    previewPlugin: async () => ({ skills: [], mcpServers: [] }),
     listPluginCommands: async () => [],
     checkUpdates: async () => [],
     pluginSkillRoots: async () => skillRoots,
@@ -1062,8 +1066,18 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IConfigService, configStub()),
+      stubPair(ILogService, stubLog()),
       stubPair(IProviderService, stubProviderService()),
+      stubPair(IRegionService, {
+        _serviceBrand: undefined,
+        current: () => ({ region: 'mainland-cn', source: 'default' }),
+        getRegionAsync: async () => 'mainland-cn',
+      } satisfies IRegionService),
       stubPair(ITelemetryService, noopTelemetryService),
+      stubPair(IMcpOAuthService, {
+        cancelAuthorization: async () => {},
+        invalidateFromConfiguration: async () => {},
+      } as unknown as McpOAuthService),
     ]);
     const ws = workspaceContextStub('/work');
     const workspace = host.child('program', 'w1', [

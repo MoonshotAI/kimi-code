@@ -25,6 +25,7 @@ import {
   buildDaemonFileUrl,
   createKimiHarness,
   ErrorCodes,
+  fromKimiErrorPayload,
   isDaemonFileUrl,
   isKimiError,
   KimiHarness,
@@ -68,6 +69,8 @@ import {
   IWorkspaceService,
   MAIN_AGENT_ID,
   OsProcessErrors,
+  APIProviderRateLimitError,
+  APIStatusError,
 } from '@moonshot-ai/agent-core-v2';
 
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
@@ -673,6 +676,62 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   }, 15_000);
 
+  it('preserves status-less rate limits and verbatim backend messages in SDK payloads', () => {
+    const rateLimit = new APIProviderRateLimitError(
+      'backend stream rate limit',
+      'req-stream',
+      null,
+      null,
+      { statusCode: undefined },
+    );
+    expect(toKimiErrorPayload(rateLimit)).toMatchObject({
+      code: ErrorCodes.PROVIDER_RATE_LIMIT,
+      message: 'backend stream rate limit',
+      details: { statusCode: undefined, requestId: 'req-stream' },
+      retryable: true,
+    });
+
+    const message = '<html><title>Backend title</title><body>Backend body</body></html>\r\n';
+    expect(toKimiErrorPayload(new APIStatusError(502, message))).toMatchObject({
+      message,
+    });
+
+    const retryableClientError = new APIStatusError(
+      400,
+      'explicitly retryable',
+      null,
+      null,
+      undefined,
+      undefined,
+      true,
+    );
+    expect(toKimiErrorPayload(retryableClientError)).toMatchObject({
+      code: ErrorCodes.PROVIDER_API_ERROR,
+      message: 'explicitly retryable',
+      retryable: true,
+    });
+
+    const deterministicServerError = new APIStatusError(
+      503,
+      'explicitly deterministic',
+      null,
+      null,
+      undefined,
+      undefined,
+      false,
+    );
+    expect(toKimiErrorPayload(deterministicServerError)).toMatchObject({
+      code: ErrorCodes.PROVIDER_API_ERROR,
+      message: 'explicitly deterministic',
+      retryable: false,
+    });
+
+    for (const error of [retryableClientError, deterministicServerError]) {
+      const revived = fromKimiErrorPayload(toKimiErrorPayload(error));
+      expect(toKimiErrorPayload(revived).retryable).toBe(error.retryable);
+    }
+  });
+
   it('restates engine MCP management Error2s as KimiError, undeclared codes as internal', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
@@ -726,6 +785,57 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       } finally {
         listSpy.mockRestore();
       }
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('returns prompt identities and delivery state from the v2 steer APIs', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_steer_result', workDir });
+      await client.getSessionWarnings({ sessionId: 'ses_steer_result' });
+      const main = getLiveSessionById(client.engineAccessor, 'ses_steer_result')!
+        .accessor.get(IAgentLifecycleService)
+        .handleOf('main')!;
+      vi.spyOn(main.accessor.get(IAgentPromptChannel), 'submitSteer').mockResolvedValue({
+        prompt_id: 'prompt-steer',
+        created_at: '2026-01-01T00:00:00.000Z',
+        state: 'queued',
+        steered: false,
+      });
+      await expect(client.steer({
+        sessionId: 'ses_steer_result',
+        input: [{ type: 'text', text: 'steer' }],
+      })).resolves.toEqual({
+        promptId: 'prompt-steer',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        state: 'queued',
+        steered: false,
+      });
+
+      vi.spyOn(main.accessor.get(IAgentSkillService), 'promptWithSkills').mockResolvedValue({
+        turn_id: 3,
+        prompt_id: 'prompt-skill',
+        created_at: '2026-01-01T00:00:00.000Z',
+        state: 'running',
+        steered: true,
+      });
+      await expect(client.promptWithSkills({
+        sessionId: 'ses_steer_result',
+        input: [{ type: 'text', text: 'skill steer' }],
+        skills: [{ name: 'review' }],
+        steerIfActive: true,
+      })).resolves.toEqual({
+        turnId: 3,
+        promptId: 'prompt-skill',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        state: 'running',
+        steered: true,
+      });
     } finally {
       await client.close();
     }
@@ -1740,6 +1850,35 @@ key = "${titleOAuthRef.key}"
       expect(await rpc.listPlugins()).toEqual([]);
       expect(await rpc.reloadPlugins()).toEqual({ added: [], removed: [], errors: [] });
       await expect(rpc.getPluginInfo('missing-plugin')).rejects.toThrow();
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('returns origin and installedAt from a custom plugin install', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const source = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-plugin-'));
+    tempDirs.push(homeDir, source);
+    await writeFile(
+      join(source, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', version: '1.0.0' }),
+    );
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      const installed = await rpc.installPlugin({ source });
+      expect(installed).toMatchObject({
+        id: 'demo',
+        origin: 'custom',
+        installedAt: expect.any(String),
+      });
+      expect(installed.catalogId).toBeUndefined();
+      expect(await rpc.listPlugins()).toEqual([
+        expect.objectContaining({
+          id: 'demo',
+          origin: 'custom',
+          installedAt: installed.installedAt,
+        }),
+      ]);
     } finally {
       await rpc.close();
     }
