@@ -530,6 +530,9 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         signal,
         steerSignal: options.steerSignal,
         remind: options.remind,
+        detach: options.detach === undefined ? undefined : (text) => {
+          options.detach?.(call.toolCall.id, text);
+        },
         onUpdate: (update) => {
           if (signal.aborted) return;
           this.dispatchToolProgress(call, update, options);
@@ -566,7 +569,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       display: execution?.display ?? normalized.display,
       approvalRule: execution?.approvalRule,
       stopBatchAfterThis: normalized.stopBatchAfterThis ?? execution?.stopBatchAfterThis,
-      delivery: coerced.delivery,
     };
   }
 
@@ -674,7 +676,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         didCtx.stopTurn === true ||
         effectiveResult.stopTurn === true,
       stopBatchAfterThis: result.stopBatchAfterThis,
-      delivery: coercedResult.delivery,
     };
     return this.resultTruncation.truncateForModel({
       toolName: call.toolName,

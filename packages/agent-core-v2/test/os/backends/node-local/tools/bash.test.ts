@@ -9,12 +9,11 @@ import {
   type AgentTaskOutputChunk,
   type AgentTaskOutputSnapshot,
   type AgentTaskStatus,
-  type ForegroundTaskReleaseReason,
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import type { AgentTaskSettlement } from '#/agent/task/types';
 import { userCancellationReason } from '#/_base/utils/abort';
-import { Event } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -317,15 +316,11 @@ const TERMINAL_STATUSES: ReadonlySet<AgentTaskStatus> = new Set([
 const SIGTERM_GRACE_MS = 5_000;
 const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
-interface ForegroundRelease {
-  readonly promise: Promise<ForegroundTaskReleaseReason>;
-  resolve(reason: ForegroundTaskReleaseReason): void;
-}
-
 interface ManagedEntry {
   readonly taskId: string;
   readonly task: AgentTask;
   readonly startedDetached: boolean;
+  detached: boolean;
   readonly options: RegisterAgentTaskOptions;
   readonly outputChunks: string[];
   readonly abortController: AbortController;
@@ -334,18 +329,9 @@ interface ManagedEntry {
   status: AgentTaskStatus;
   stopReason?: string;
   endedAt: number | null;
-  foregroundRelease?: ForegroundRelease;
   timeoutHandle?: ReturnType<typeof setTimeout>;
   lifecyclePromise: Promise<void>;
   signalCleanup?: () => void;
-}
-
-function createRelease(): ForegroundRelease {
-  let resolve!: (reason: ForegroundTaskReleaseReason) => void;
-  const promise = new Promise<ForegroundTaskReleaseReason>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
 }
 
 function isTerminal(status: AgentTaskStatus): boolean {
@@ -365,6 +351,7 @@ function createFakeTaskService(
 } {
   const tasks = new Map<string, ManagedEntry>();
   const persisted = new Set<string>();
+  const changeEmitter = new Emitter<AgentTaskInfo>();
   let counter = 0;
 
   const nextId = (prefix: string): string => {
@@ -378,7 +365,7 @@ function createFakeTaskService(
       taskId: entry.taskId,
       description: entry.task.description,
       status: entry.status,
-      detached: entry.foregroundRelease === undefined,
+      detached: entry.detached,
       startedAt: entry.startedAt,
       endedAt: entry.endedAt,
       stopReason: entry.stopReason,
@@ -397,7 +384,7 @@ function createFakeTaskService(
       clearTimeout(entry.timeoutHandle);
       entry.timeoutHandle = undefined;
     }
-    entry.foregroundRelease?.resolve('terminal');
+    changeEmitter.fire(entryToInfo(entry));
     const waiters = entry.waiters.splice(0);
     for (const waiter of waiters) waiter();
     return true;
@@ -439,10 +426,8 @@ function createFakeTaskService(
   };
 
   const detachEntry = (entry: ManagedEntry, viaTimeout: boolean): AgentTaskInfo => {
-    if (isTerminal(entry.status)) return entryToInfo(entry);
-    const release = entry.foregroundRelease;
-    if (release === undefined) return entryToInfo(entry);
-    entry.foregroundRelease = undefined;
+    if (isTerminal(entry.status) || entry.detached) return entryToInfo(entry);
+    entry.detached = true;
     entry.signalCleanup?.();
     entry.signalCleanup = undefined;
     const detachTimeoutMs = entry.options.detachTimeoutMs;
@@ -460,10 +445,11 @@ function createFakeTaskService(
       }
     }
     try {
+      entry.options.onDetach?.(viaTimeout);
       entry.task.onDetach?.();
     } catch {
     }
-    release.resolve(viaTimeout ? 'timeout_detached' : 'detached');
+    changeEmitter.fire(entryToInfo(entry));
     return entryToInfo(entry);
   };
 
@@ -478,10 +464,10 @@ function createFakeTaskService(
   const service: IAgentTaskService = {
     _serviceBrand: undefined,
     onDidAppendOutput: Event.None as Event<AgentTaskOutputChunk>,
-    onDidChangeTask: Event.None as Event<AgentTaskInfo>,
+    onDidChangeTask: changeEmitter.event,
     refresh(): void {},
-    track(): never {
-      throw new Error('fake IAgentTaskService.track is not implemented');
+    prepareCoreDetach(): undefined {
+      return undefined;
     },
 
     registerTask(task: AgentTask, registerOptions: RegisterAgentTaskOptions = {}): string {
@@ -498,6 +484,7 @@ function createFakeTaskService(
         taskId,
         task,
         startedDetached: detached,
+        detached,
         options: registerOptions,
         outputChunks: [],
         abortController,
@@ -505,7 +492,6 @@ function createFakeTaskService(
         waiters: [],
         status: 'running',
         endedAt: null,
-        foregroundRelease: detached ? undefined : createRelease(),
         lifecyclePromise: Promise.resolve(),
       };
       tasks.set(taskId, entry);
@@ -513,10 +499,7 @@ function createFakeTaskService(
       const timeoutMs = registerOptions.timeoutMs;
       if (timeoutMs !== undefined && timeoutMs > 0) {
         entry.timeoutHandle = setTimeout(() => {
-          if (
-            registerOptions.autoBackgroundOnTimeout === true &&
-            entry.foregroundRelease !== undefined
-          ) {
+          if (registerOptions.autoBackgroundOnTimeout === true && !entry.detached) {
             detachEntry(entry, true);
             return;
           }
@@ -547,7 +530,7 @@ function createFakeTaskService(
       if (!detached && registerOptions.signal !== undefined) {
         const signal = registerOptions.signal;
         const abortFromSignal = (): void => {
-          if (entry.foregroundRelease === undefined) return;
+          if (entry.detached) return;
           void stopEntry(entry, userCancellationReason().message);
         };
         if (signal.aborted) {
@@ -650,16 +633,18 @@ function createFakeTaskService(
       let waiter: (() => void) | undefined;
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
-        await Promise.race([
-          new Promise<void>((resolve) => {
-            waiter = resolve;
-            entry.waiters.push(resolve);
-          }),
+        const completion = new Promise<void>((resolve) => {
+          waiter = resolve;
+          entry.waiters.push(resolve);
+        });
+        const pending = Number.isFinite(timeoutMs) ? Promise.race([
+          completion,
           new Promise<void>((resolve) => {
             timeout = setTimeout(resolve, timeoutMs);
             timeout.unref?.();
           }),
-        ]);
+        ]) : completion;
+        await pending;
       } finally {
         if (timeout !== undefined) clearTimeout(timeout);
         if (waiter !== undefined) {
@@ -668,20 +653,6 @@ function createFakeTaskService(
         }
       }
       return entryToInfo(entry);
-    },
-
-    async waitForForegroundRelease(
-      taskId: string,
-    ): Promise<ForegroundTaskReleaseReason | undefined> {
-      const entry = tasks.get(taskId);
-      if (entry === undefined) return undefined;
-      if (isTerminal(entry.status)) return 'terminal';
-      const release = entry.foregroundRelease;
-      if (release === undefined) return 'detached';
-      return Promise.race([
-        release.promise,
-        entry.lifecyclePromise.then(() => 'terminal' as const),
-      ]);
     },
   };
 
@@ -751,7 +722,7 @@ function bashTool(
     },
   );
   const environment = stubAgentEnvironment(backend, { workDir: ctx.cwd });
-  return new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
+  return new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), background, {} as never, toolPolicy, config);
 }
 
 describe('BashTool', () => {
@@ -939,6 +910,7 @@ describe('BashTool', () => {
       ctx,
       shadow,
       createFakeTaskService().service,
+      {} as never,
       stubToolPolicy(),
       stubConfig(),
     );
@@ -1440,6 +1412,7 @@ describe('BashTool display cwd', () => {
       ctx,
       stubWorkspaceContext(workDir),
       {} as unknown as IAgentTaskService,
+      {} as never,
       {} as unknown as IAgentToolPolicyService,
       {} as unknown as IConfigService,
     );
@@ -1483,6 +1456,7 @@ describe('BashTool spawn cwd', () => {
       createTestCtx('/Users/mac/project'),
       stubWorkspaceContext(workDir),
       createFakeTaskService().service,
+      {} as never,
       stubToolPolicy(),
       stubConfig(),
     );

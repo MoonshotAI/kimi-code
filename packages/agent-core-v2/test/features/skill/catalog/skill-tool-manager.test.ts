@@ -5,7 +5,7 @@ import { join } from 'pathe';
 import type { ToolCall } from '#human/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
@@ -248,7 +248,7 @@ describe('SkillTool nested variants', () => {
 
 describe('ToolManager SkillTool wire behavior', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let profile: IAgentProfileService;
   let persistence: InMemoryWireRecordPersistence;
   let skills: InMemorySkillCatalog;
@@ -261,7 +261,7 @@ describe('ToolManager SkillTool wire behavior', () => {
       skillServices(skills),
       wireRecordPersistenceServices(persistence),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     profile = ctx.get(IAgentProfileService);
     profile.update({ activeToolNames: ['Skill'] });
   });
@@ -315,11 +315,11 @@ describe('ToolManager SkillTool wire behavior', () => {
       },
     ]);
     expect(persistence.records.some((record) => record.type === 'skill.activate')).toBe(false);
-    expect(context.get().at(-1)).toMatchObject({
+    expect(context.history().at(-1)).toMatchObject({
       role: 'assistant',
       content: [{ type: 'text', text: 'Review skill loaded.' }],
     });
-    expect(context.get().at(-2)).toMatchObject({
+    expect(context.history().at(-2)).toMatchObject({
       role: 'user',
       origin: {
         kind: 'skill_activation',
@@ -551,7 +551,7 @@ describe('ToolManager SkillTool wire behavior', () => {
 
 describe('ToolManager SkillTool restore behavior', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let skills: InMemorySkillCatalog;
   let emit: ReturnType<typeof vi.spyOn>;
   let track: ReturnType<typeof vi.spyOn>;
@@ -565,7 +565,7 @@ describe('ToolManager SkillTool restore behavior', () => {
       skillServices(skills),
       telemetryServices(telemetry),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     const events = ctx.get(IEventBus);
     emit = vi.spyOn(events, 'publish');
   });
@@ -606,7 +606,7 @@ describe('ToolManager SkillTool restore behavior', () => {
       expect.objectContaining({ type: '[rpc]', event: 'skill.activated' }),
     );
     expect(track).not.toHaveBeenCalledWith('skill_invoked', expect.anything());
-    expect(context.get()).toMatchObject([message]);
+    expect(context.history()).toMatchObject([message]);
   });
 });
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { appendContext } from '../../agent/contextMemory/stubs';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
@@ -32,9 +33,7 @@ import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/envi
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { AgentReminderService, IAgentReminderService } from '#/features/reminder/reminderService';
-import '#/agent/contextMemory/contextMemoryService';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -106,11 +105,8 @@ import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import type {
-  MachineEngine,
-  MachineEngineAttachBundle,
-} from '#/agent/loop/machine/engine';
-import type { AgentEventStore } from '#human/agent/slices';
+import { contextFromHistoryEntry } from '#/agent/loop/history';
+import type { HistoryMessage } from '#human/agent/turn';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -168,64 +164,6 @@ const pluginServiceStub = {
   mcpServerEntries: async () => [],
   enabledHooks: async () => [],
 } as unknown as IPluginService;
-
-function stubAttachStore(): AgentEventStore {
-  return {
-    ref: { tree: 'test', branch: 'main' },
-    getState: () => ({
-      history: [],
-      queue: [],
-      notifications: [],
-      reminders: [],
-      turnIndex: { nextTurnId: 0 },
-    }),
-    subscribe: () => () => {},
-    dispatch: () => Promise.resolve({ kind: 'entry', seq: 0, ts: 0, type: 'noop', payload: null }),
-    registerSlice: () => Promise.resolve(() => {}),
-    reset: () => Promise.resolve(),
-    flush: () => Promise.resolve(),
-    close: () => Promise.resolve(),
-  } as unknown as AgentEventStore;
-}
-
-function stubAttachEngine(): MachineEngine {
-  return {
-    submit: () => {},
-    steer: () => {},
-    notify: () => {},
-    remind: () => {},
-    cancelQueueItem: () => {},
-    abort: () => {},
-    pause: () => {},
-    resume: () => {},
-    resetHistory: () => Promise.resolve(),
-    resetJournal: () => Promise.resolve(),
-    stop: () => {},
-    snapshot: () => ({
-      running: false,
-      aborting: false,
-      waitingForBackground: false,
-      paused: false,
-      queue: [],
-      queueLength: 0,
-      queueIds: [],
-      notificationCount: 0,
-      reminderCount: 0,
-      backgroundCount: 0,
-    }),
-    currentStep: () => 0,
-    lastFinish: () => undefined,
-    toolExtras: new Map(),
-    handleToolProgress: () => {},
-  };
-}
-
-function stubAttachBundle(): MachineEngineAttachBundle {
-  return {
-    store: stubAttachStore(),
-    request: { model: { provider: 'test', model: 'test' } },
-  } as unknown as MachineEngineAttachBundle;
-}
 
 function recordingAppendLog(initial: readonly WireRecord[] = []): {
   readonly appended: WireRecord[];
@@ -450,8 +388,22 @@ describe('AgentLifecycleService', () => {
         throw new Error('Agent loop did not settle');
       }
     });
+    const loopHistory: ContextMessage[] = [];
     ix.stub(IAgentLoopService, {
       _serviceBrand: undefined,
+      history: () => loopHistory,
+      historyRevision: () => 0,
+      replaceHistory: (entries: readonly HistoryMessage[]) => {
+        loopHistory.splice(0, loopHistory.length, ...entries.map((entry) => contextFromHistoryEntry(entry)));
+        return true;
+      },
+      initializeHistory: async (entries: readonly HistoryMessage[]) => {
+        loopHistory.splice(0, loopHistory.length, ...entries.map((entry) => contextFromHistoryEntry(entry)));
+      },
+      remind: (...entries: readonly HistoryMessage[]) => {
+        loopHistory.push(...entries.map((entry) => contextFromHistoryEntry(entry)));
+      },
+      flushReminders: () => {},
       hooks: {
         onWillBeginStep: { register: () => ({ dispose: () => {} }) },
         onDidFinishStep: { register: () => ({ dispose: () => {} }) },
@@ -474,8 +426,7 @@ describe('AgentLifecycleService', () => {
       cancel: loopCancel,
       settled: loopSettled,
       tryAcquireQuiescence: vi.fn(() => ({ dispose: vi.fn() })),
-      buildAttachBundle: () => stubAttachBundle(),
-      attachEngine: () => stubAttachEngine(),
+      close: vi.fn(() => Promise.resolve()),
     } as unknown as IAgentLoopService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -1581,7 +1532,7 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
     const child = await svc.fork(agentContextOf(svc.handleOf('main')!), { agentId: 'agent-btw' });
-    svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).append({
+    appendContext(svc.handleOf(child.agentId)!.accessor.get(IAgentLoopService), {
       role: 'user',
       content: [{ type: 'text', text: 'persisted side question' }],
     });
@@ -1591,7 +1542,7 @@ describe('AgentLifecycleService', () => {
     const rebuilt = await getOrRestoreAgent(sessionHandle(), child.agentId);
 
     expect(rebuilt).toBeDefined();
-    const restored = rebuilt!.accessor.get(IAgentContextMemoryService).get();
+    const restored = rebuilt!.accessor.get(IAgentLoopService).history();
     expect(
       restored.some(
         (m) =>
@@ -1624,7 +1575,7 @@ describe('AgentLifecycleService', () => {
 
     expect(rebuilt).toBeDefined();
     expect(beforeExecuteListeners - beforeRebuild).toBe(baseline + 1);
-    const restored = rebuilt!.accessor.get(IAgentContextMemoryService).get();
+    const restored = rebuilt!.accessor.get(IAgentLoopService).history();
     expect(
       restored.some((m) =>
         m.content.some((p) => p.type === 'text' && p.text.includes(SIDE_QUESTION_SYSTEM_REMINDER)),
@@ -1705,14 +1656,15 @@ describe('AgentLifecycleService', () => {
       { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }] },
       { role: 'assistant', content: [], toolCalls: [agentCall], partial: true },
     ];
-    sourceHandle.accessor.get(IAgentContextMemoryService).append(...history);
+    appendContext(sourceHandle.accessor.get(IAgentLoopService), ...history);
 
     const child = await svc.fork(agentContextOf(sourceHandle), { agentId: 'forked' });
 
-    const seeded = svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).get();
+    const seeded = svc.handleOf(child.agentId)!.accessor.get(IAgentLoopService).history();
     expect(seeded).toHaveLength(3);
     expect(seeded[0]).toMatchObject({ role: 'user' });
-    expect(seeded[1]).toMatchObject({ role: 'assistant', partial: undefined });
+    expect(seeded[1]).toMatchObject({ role: 'assistant' });
+    expect(seeded[1]?.partial).toBeUndefined();
     expect(seeded[2]).toMatchObject({
       role: 'tool',
       toolCallId: 'call_agent',
@@ -1727,7 +1679,7 @@ describe('AgentLifecycleService', () => {
     const child = await svc.fork(agentContextOf(svc.handleOf(source.agentId)!), { agentId: 'forked' });
 
     expect(
-      svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).get(),
+      svc.handleOf(child.agentId)!.accessor.get(IAgentLoopService).history(),
     ).toEqual([]);
   });
 

@@ -4,7 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { abortable } from '#/_base/utils/abort';
 import { IFlagService } from '#/app/flag/flag';
 import type { ToolDescription as Tool } from '#human/llm/message';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -61,7 +61,6 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IFlagService private readonly flags: IFlagService,
     @IAgentStateService private readonly states: IAgentStateService,
@@ -78,6 +77,11 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     this._register(
       toolExecutor.registerMissingToolDescriber((name) => this.describeMissingTool(name)),
     );
+  }
+
+  private history(): readonly ContextMessage[] {
+    const space = this.scopeContext.agentContext.space;
+    return space instanceof AgentSpaceImpl ? space.readHistory() as readonly ContextMessage[] : [];
   }
 
   featureEnabled(): boolean {
@@ -103,6 +107,14 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return this.defaultToolsForDisclosure(disclosure);
   }
 
+  requestTools(base: readonly Tool[] | undefined, disclosure = this.enabled(), dynamic = false): readonly Tool[] {
+    const current = this.defaultToolsForDisclosure(disclosure);
+    if (base === undefined) return current;
+    if (!dynamic) return base;
+    const names = new Set(base.map((tool) => tool.name));
+    return [...base, ...current.filter((tool) => tool.deferred === true && !names.has(tool.name))];
+  }
+
   shapeTools(
     entries: readonly ToolInfo[],
     disclosure = this.enabled(),
@@ -121,7 +133,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   load(names: readonly string[]): LoadToolsResult {
     const current = this.currentTools();
     const loadable = new Set(this.loadableToolNames());
-    const loaded = collectLoadedDynamicTools(this.context.get(), current);
+    const loaded = collectLoadedDynamicTools(this.history(), current);
     const historicallyLoaded = this.historicallyLoadedToolNames();
     this.resetFailuresIfToolsChanged(current);
     const toLoad: string[] = [];
@@ -239,7 +251,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   private legacyAnnouncement(revision: number): ToolSelectAnnouncement | undefined {
     const state = this.modelState();
-    const history = this.context.get();
+    const history = this.history();
     const announced = foldAnnouncedToolNames(history);
     const loadable = state.current.filter(
       (info) => this.isDynamicallyLoadable(info) && this.toolPolicy.isToolActive(info.name, info.source),
@@ -380,7 +392,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   ): readonly ShapedToolEntry[] {
     const activeEntries = this.activeEntries(entries, disclosure);
     if (!disclosure) return activeEntries;
-    const loaded = collectLoadedDynamicTools(this.context.get(), this.currentTools());
+    const loaded = collectLoadedDynamicTools(this.history(), this.currentTools());
     const shaped: ShapedToolEntry[] = [];
     for (const entry of activeEntries) {
       if (entry.name === SELECT_TOOLS_TOOL_NAME) {
@@ -433,7 +445,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   private historicallyLoadedToolNames(): Set<string> {
     const names = new Set<string>();
-    for (const message of this.context.get()) {
+    for (const message of this.history()) {
       if (!isDynamicToolSchemaMessage(message)) continue;
       for (const tool of message.tools ?? []) names.add(tool.name);
     }
@@ -463,7 +475,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return (
       this.toolPolicy.isToolActive(name, info.source) &&
       (!this.isDynamicallyLoadable(info) ||
-        collectLoadedDynamicTools(this.context.get(), this.currentTools()).has(name))
+        collectLoadedDynamicTools(this.history(), this.currentTools()).has(name))
     );
   }
 
@@ -515,7 +527,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     if (tools === undefined || tools.length === 0) return message;
 
     const current = this.currentTools();
-    const loaded = collectLoadedDynamicTools(this.context.get(), current);
+    const loaded = collectLoadedDynamicTools(this.history(), current);
     let kept: Tool[] | undefined;
     for (let i = 0; i < tools.length; i += 1) {
       const tool = tools[i]!;

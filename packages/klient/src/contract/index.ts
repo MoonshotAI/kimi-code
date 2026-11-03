@@ -17,7 +17,6 @@ import {
   agentPlanContract,
   agentEnvironmentBindingContract,
   agentProfileContract,
-  agentPromptContract,
   agentShellCommandContract,
   agentSkillContract,
   agentTaskContract,
@@ -78,7 +77,6 @@ export const globalContract: KlientContract = {
   sessionTitleService: sessionTitleContract,
   sessionActivityView: sessionActivityViewContract,
   // agent scope
-  agentPromptService: agentPromptContract,
   agentSkillService: agentSkillContract,
   agentLoopService: agentLoopContract,
   agentPermissionModeService: agentPermissionModeContract,

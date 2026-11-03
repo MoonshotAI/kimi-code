@@ -13,6 +13,7 @@ import { BugIndicatingError } from '#/_base/errors/errors';
 import { ILogService } from '#/_base/log/log';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import '#/agent/contextMemory/conversationTime';
+import '#/agent/loop/turnOps';
 import { ContextAppendMessage, ContextUndo } from '#/agent/contextMemory/contextEvents';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -53,6 +54,7 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     },
     readRestoreChains: async () => ({ restorable: [...journal], journal: [...journal] }),
     readHumanChain: () => [],
+    readHumanJournal: () => [],
     read: async function* () {
       for (const record of journal) yield record;
     },

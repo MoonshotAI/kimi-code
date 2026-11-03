@@ -1,6 +1,5 @@
 import type { ReplayableStateKey } from '#/state/state';
 
-import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
 import { fullCompactionKey, fullCompactionWireRangesKey } from '#/agent/fullCompaction/compactionOps';
 import { interruptionReminderKey } from '#/agent/interruptionReminder/interruptionReminderOps';
 import { llmRequestTraceKey } from '#/agent/loop/llmRequestOps';
@@ -17,16 +16,15 @@ import { changeNotifierSnapshotKey } from '#/agent/changeNotifier/changeNotifier
 import { profileActiveToolsKey, profileKey } from '#/agent/profile/profileOps';
 import { environmentBindingKey } from '#/agent/environmentBinding/environmentBindingOps';
 import { taskKey } from '#/agent/task/taskOps';
-import { taskNotificationDeliveryKey } from '#/agent/task/taskService';
+import { taskNotificationDeliveryKey } from '#/agent/task/taskRuntime';
 import { toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
 import { userToolKey } from '#/agent/userTool/userToolOps';
 import { fileHistoryKey } from '#/features/fileHistory/fileHistoryOps';
 import { planKey } from '#/features/plan/planOps';
-import { swarmKey } from '#/features/swarm/swarmOps';
+import { swarmKey, swarmReminderDeliveredKey } from '#/features/swarm/swarmOps';
 import { towerKey, towerOwnerKey } from '#/features/tower/towerOps';
 
 export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] = [
-  contextMemoryKey,
   fullCompactionKey,
   fullCompactionWireRangesKey,
   interruptionReminderKey,
@@ -48,7 +46,7 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   userToolKey,
   fileHistoryKey,
   planKey,
-  swarmKey,
+  swarmKey, swarmReminderDeliveredKey,
   towerKey,
   towerOwnerKey,
 ];

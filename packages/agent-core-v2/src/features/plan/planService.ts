@@ -7,7 +7,7 @@ import { type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { Error2, ErrorCodes } from '#/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -52,7 +52,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   private readonly review: ExitPlanModeReview;
 
   constructor(
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly context: IAgentLoopService,
     @IHostEnvironment private readonly hostEnvironment: IHostEnvironment,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IBlobStore private readonly blobs: IBlobStore,

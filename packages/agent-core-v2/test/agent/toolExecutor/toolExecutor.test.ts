@@ -134,10 +134,16 @@ afterEach(() => {
 
 describe('AgentToolExecutorService', () => {
   it('resolves by interface and routes a successful tool call through execute', async () => {
-    const tool = new TestTool('echo');
+    const detach = vi.fn();
+    const tool = new TestTool('echo', {
+      execute: async (ctx, args) => {
+        ctx.detach?.('background task_id=task-echo');
+        return { output: String(args['text']) };
+      },
+    });
     registry.register(tool);
 
-    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
+    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })], undefined, undefined, detach);
 
     expect(results).toEqual([
       expect.objectContaining({
@@ -146,6 +152,7 @@ describe('AgentToolExecutorService', () => {
       }),
     ]);
     expect(durations).toEqual([expect.any(Number)]);
+    expect(detach).toHaveBeenCalledWith('call_echo', 'background task_id=task-echo');
     expect(tool.calls).toEqual([
       expect.objectContaining({
         toolCallId: 'call_echo',
@@ -830,27 +837,6 @@ describe('AgentToolExecutorService', () => {
         output: 'hook output',
         isError: true,
       }),
-    });
-  });
-  it('threads a declared delivery onto the yielded result for the agent layer to consume', async () => {
-    const message = {
-      role: 'user' as const,
-      content: [{ type: 'text' as const, text: 'injected' }],
-      toolCalls: [],
-      origin: { kind: 'skill_activation', skillName: 'commit', trigger: 'model-tool' },
-    };
-    const tool = new TestTool('skillish', {
-      result: { output: 'ack', delivery: { kind: 'steer', message } },
-    });
-    registry.register(tool);
-
-    const results = await execute([toolCall('call_skillish', 'skillish', {})]);
-
-    expect(results).toHaveLength(1);
-    expect(results[0]!.output).toBe('ack');
-    expect(results[0]!.delivery).toMatchObject({
-      kind: 'steer',
-      message: { content: [{ type: 'text', text: 'injected' }] },
     });
   });
 });
@@ -1609,12 +1595,14 @@ async function execute(
   calls: ToolCall[],
   signal?: AbortSignal,
   trace?: LLMRequestTrace,
+  detach?: (toolCallId: string, text: string) => void,
 ): Promise<ToolResult[]> {
   const results: ToolResult[] = [];
   for await (const item of executor.execute(calls, {
     turnId: 0,
     signal: signal ?? new AbortController().signal,
     trace,
+    detach,
   })) {
     results.push(item.result);
     durations.push(item.durationMs);

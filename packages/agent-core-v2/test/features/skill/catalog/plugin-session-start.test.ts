@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { appendContext } from '../../../agent/contextMemory/stubs';
 
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -80,7 +81,7 @@ async function sessionStartRuntime(input: {
   );
   if (input.skipRestore !== true) await ctx.restorePersisted();
   if (input.history !== undefined) {
-    ctx.context.append(...input.history);
+    appendContext(ctx.context,...input.history);
   }
   return { ctx, warnings };
 }
@@ -91,12 +92,12 @@ async function injectDynamic(ctx: ReturnType<typeof testAgent>): Promise<void> {
 }
 
 function lastReminder(ctx: ReturnType<typeof testAgent>): string {
-  const last = ctx.context.get().findLast((message) => message.role === 'user');
+  const last = ctx.context.history().findLast((message) => message.role === 'user');
   return last?.content.map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
 }
 
 function pluginSessionStartMessages(ctx: ReturnType<typeof testAgent>) {
-  return ctx.context.get().filter(
+  return ctx.context.history().filter(
     (message) =>
       message.origin?.kind === 'injection' && message.origin.variant === 'plugin_session_start',
   );
@@ -123,7 +124,7 @@ describe('plugin session-start dynamic injection', () => {
     expect(text).toContain('TodoList');
     expect(text).toContain('body of skill');
     expect(text).toContain('</plugin_session_start>');
-    expect(ctx.context.get().at(-1)?.origin).toEqual({
+    expect(ctx.context.history().at(-1)?.origin).toEqual({
       kind: 'injection',
       variant: 'plugin_session_start',
     });
@@ -239,7 +240,7 @@ describe('plugin session-start dynamic injection', () => {
 
     await injectDynamic(ctx);
 
-    expect(ctx.context.get()).toEqual([]);
+    expect(ctx.context.history()).toEqual([]);
   });
 
   it('resolves sessionStart skills by plugin identity when names collide', async () => {

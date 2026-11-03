@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentCronService } from '#/features/cron/cronService';
 import { CronCursor } from '#/features/cron/cronOps';
@@ -83,7 +83,7 @@ describe('session cron wire persistence', () => {
     ]);
     try {
       expect(withInherited.get(IAgentCronService).list()).toEqual([]);
-      const reminder = withInherited.get(IAgentContextMemoryService).get().at(-1);
+      const reminder = withInherited.get(IAgentLoopService).history().at(-1);
       expect(reminder?.origin).toEqual({ kind: 'injection', variant: 'cron_fork_cleared' });
       const text = JSON.stringify(reminder?.content);
       expect(text).toContain('This fork does not have any scheduled cron tasks.');
@@ -95,7 +95,7 @@ describe('session cron wire persistence', () => {
     const noTasks = await restoreCronRecords([{ type: 'forked' }]);
     try {
       expect(noTasks.get(IAgentCronService).list()).toEqual([]);
-      expect(noTasks.get(IAgentContextMemoryService).get()).toEqual([]);
+      expect(noTasks.get(IAgentLoopService).history()).toEqual([]);
     } finally {
       await noTasks.dispose();
     }
@@ -127,7 +127,7 @@ describe('session cron wire persistence', () => {
       },
     ]);
     try {
-      expect(delivered.get(IAgentContextMemoryService).get()).toHaveLength(1);
+      expect(delivered.get(IAgentLoopService).history()).toHaveLength(1);
     } finally {
       await delivered.dispose();
     }

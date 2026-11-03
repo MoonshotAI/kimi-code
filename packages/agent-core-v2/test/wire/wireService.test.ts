@@ -19,6 +19,7 @@ import { wireJournalBackupKey } from '#/wire/repair';
 import { WireError, WireErrors } from '#/wire/errors';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 
 import { recordingWireLog, registerTestAgentWire, testWireScope, noopLogger } from './stubs';
 
@@ -120,7 +121,7 @@ describe('WireService appendRecord', () => {
     for (const record of records) wire.appendRecord(record);
 
     expect(await readRecords()).toEqual(records);
-    expect((await collect(wire.read())).slice(1)).toEqual(records);
+    expect((await collect(wire.read())).slice(1)).toEqual(normalizeLegacyTurnSteerRecords(records));
   });
 
   it('runs records through the dehydrate queue in append order', async () => {
