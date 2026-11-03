@@ -122,6 +122,7 @@ export class UnitNode {
   private readonly exposures: Array<() => void> = [];
   private readonly pending = new Set<Promise<unknown>>();
   private readonly faults: unknown[] = [];
+  private readonly failureListeners: Array<(reason: unknown) => void> = [];
   private readonly disposalListeners: Array<() => void> = [];
   private version = 0;
   private released: Promise<unknown[]> | undefined;
@@ -147,6 +148,14 @@ export class UnitNode {
 
   get hasDeferredCleanup(): boolean {
     return this.children.length > 0 || this.stack.length > 0;
+  }
+
+  onDidFail(callback: (reason: unknown) => void): void {
+    if (this.failed) {
+      callback(this.reason);
+      return;
+    }
+    this.failureListeners.push(callback);
   }
 
   onDidDispose(callback: () => void): void {
@@ -275,6 +284,13 @@ export class UnitNode {
           if (!listener.live || unit.state !== 'active') {
             continue;
           }
+          if (listener.once) {
+            listener.live = false;
+            const index = list.indexOf(listener);
+            if (index >= 0) {
+              list.splice(index, 1);
+            }
+          }
           handled = true;
           try {
             listener.handler(enriched);
@@ -283,13 +299,6 @@ export class UnitNode {
               rethrow(error);
             } else {
               report(unit, error);
-            }
-          }
-          if (listener.once) {
-            listener.live = false;
-            const index = list.indexOf(listener);
-            if (index >= 0) {
-              list.splice(index, 1);
             }
           }
         }
@@ -385,6 +394,13 @@ export class UnitNode {
     this.failed = true;
     this.reason = reason;
     const parent = this.parent;
+    for (const listener of this.failureListeners.splice(0)) {
+      try {
+        listener(reason);
+      } catch (error) {
+        this.faults.push(error);
+      }
+    }
     this.dispose().catch((error: unknown) => {
       report(parent ?? this, error);
     });

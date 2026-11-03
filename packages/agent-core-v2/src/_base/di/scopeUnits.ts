@@ -32,7 +32,7 @@ export function watchScopeUnits(container: InstantiationService, kind: ScopeKind
       if (isClassRecipe(recipe)) {
         const instance = host.constructService(recipe, undefined) as Partial<IDisposable>;
         unitLedger.register(() => {
-          return instance.dispose?.();
+          return host.disposeService(instance);
         }, `unit:${name}`);
       } else {
         const facade = new FiberRuntime(

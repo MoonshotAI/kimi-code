@@ -10,6 +10,7 @@ import { DependencyGraph } from './dependencyGraph';
 import { CascadeConflictError, CyclicDependencyError } from './errors';
 import {
   bindServiceUnit,
+  disposeServiceComposition,
   isServiceRecipe,
   pushConstructionFrame,
   popConstructionFrame,
@@ -199,7 +200,7 @@ export class InstantiationService implements IInstantiationService {
           this._cascadeResolving = false;
         }
       },
-      retire: (token) => this._retireUnit(token),
+      prepareRetire: (token) => this._prepareRetireUnit(token),
       applyProvide: (token, descriptor, config) => {
         this._services.set(token, descriptor, { config });
         return this._services.uidOf(token)!;
@@ -360,9 +361,6 @@ export class InstantiationService implements IInstantiationService {
         appliedUid ??= newUid;
       }
     });
-    const release = (): void => {
-      availability.dispose();
-    };
     const change: CascadeChange =
       instanceOrDescriptor instanceof SyncDescriptor
         ? {
@@ -380,6 +378,12 @@ export class InstantiationService implements IInstantiationService {
             config: options?.config,
             reason: `provide ${String(id)}`,
           };
+    const release = (): void => {
+      availability.dispose();
+      if (appliedUid === undefined) {
+        this.cascade.cancel(change);
+      }
+    };
     this.cascade.submit(change).catch(onUnexpectedError);
     return {
       uid: () => {
@@ -429,7 +433,7 @@ export class InstantiationService implements IInstantiationService {
     }
   }
 
-  private _retireUnit<T>(id: ServiceIdentifier<T>): void | Promise<void> {
+  private _prepareRetireUnit<T>(id: ServiceIdentifier<T>): (() => void | Promise<void>) | undefined {
     const instance = this._services.get(id);
     if (instance === undefined || instance instanceof SyncDescriptor) {
       return undefined;
@@ -443,7 +447,15 @@ export class InstantiationService implements IInstantiationService {
     const serviceInstance = instance as object;
     this._edgeNodes.delete(serviceInstance);
     this._tree.graph.removeInstance(serviceInstance);
-    return entry.dispose();
+    return () => entry.dispose();
+  }
+
+  private _disposeService(instance: Partial<IDisposable>): void | Promise<void> {
+    const out = instance.dispose?.() as unknown as void | Promise<void>;
+    if (isServiceRecipe(instance.constructor)) {
+      return disposeServiceComposition(instance as unknown as UnitInternals) ?? out;
+    }
+    return out;
   }
 
   private _nextUnitUid = 0;
@@ -578,18 +590,23 @@ export class InstantiationService implements IInstantiationService {
           value,
         ),
       compositionRootNode: () => this.compositionRootNode(),
-      retireService: (id, instance) => {
+      failService: (id, instance, reason) => {
         if (id === undefined) {
-          instance.dispose();
-          return;
+          return this._disposeService(instance);
         }
         if (this._services.get(id) === instance) {
-          return this._retireUnit(id);
+          return this.cascade.fail(id, reason);
         }
       },
-      constructService: <T>(ctor: new (...args: any[]) => T, config: unknown): T => {
+      disposeService: (instance) => this._disposeService(instance),
+      constructService: <T>(
+        ctor: new (...args: any[]) => T,
+        config: unknown,
+        onDidFail?: (reason: unknown) => void,
+      ): T => {
         return this._createInstance(ctor, [], Trace.traceCreation(this._enableTracing, ctor), {
           config,
+          onDidFail,
         });
       },
     };
@@ -746,6 +763,7 @@ export class InstantiationService implements IInstantiationService {
   private _createInstance<T>(ctor: any, args: unknown[], _trace: Trace, unit?: {
     id?: ServiceIdentifier<any>;
     config?: unknown;
+    onDidFail?: (reason: unknown) => void;
   }): T {
     const serviceDependencies = _util.getServiceDependencies(ctor).toSorted((a, b) => a.index - b.index);
     const serviceArgs: unknown[] = [];
@@ -793,6 +811,7 @@ export class InstantiationService implements IInstantiationService {
       config: unit?.config,
       token: unit?.id,
       host: this._getFiberHost(),
+      onDidFail: unit?.onDidFail,
     };
     pushConstructionFrame(frame);
     let instance: T;
@@ -985,8 +1004,7 @@ export class InstantiationService implements IInstantiationService {
         this._instanceEntries.delete(result);
         this.dependencyGraph.removeInstance(result as object);
         if (isDisposable(result)) {
-          const out = result.dispose() as unknown as void | Promise<void>;
-          return out;
+          return this._disposeService(result);
         }
         return undefined;
       }, `service:${String(id)}`);

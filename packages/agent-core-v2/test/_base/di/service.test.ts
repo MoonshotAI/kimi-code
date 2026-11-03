@@ -99,6 +99,13 @@ describe('Service — kernel construction protocol (L3)', () => {
     expect(ix.compositionRootNode().resolve(facade)).toBe('ready');
     const child = ix.createChild(new ServiceCollection()) as InstantiationService;
     expect(child.compositionRootNode().parent).toBe(ix.compositionRootNode());
+    let reentrantDeliveries = 0;
+    ix.compositionRootNode().listen('test.once', () => {
+      reentrantDeliveries += 1;
+      ix.compositionRootNode().fire({ type: 'test.once' });
+    }, { once: true });
+    ix.compositionRootNode().fire({ type: 'test.once' });
+    expect(reentrantDeliveries).toBe(1);
 
     source.value = 1;
     const withdraw = ix.fiberHost.addCollectionRecord(IFooValues, 'late', ix.ledger, { tag: 'late' });
@@ -174,27 +181,112 @@ describe('Service — kernel construction protocol (L3)', () => {
     ix.dispose();
   });
 
-  it('rethrows setup failures and retires a Service when useReady fails', async () => {
+  it('rethrows setup failures, rolls back buffered resources, and retires async failures through Cascade', async () => {
+    let syncConstructions = 0;
     class SyncFailure extends Service {
+      constructor() {
+        super();
+        syncConstructions += 1;
+        this.provide(IFoo, Foo);
+        this.provide(IFooValues, { tag: 'leaked' });
+      }
+
       override setup(): void {
         throw new Error('setup-sync');
       }
     }
     const ix = new InstantiationService(new ServiceCollection(), true);
-    ix.provide(IBar, new SyncDescriptor(SyncFailure));
-    expect(() => ix.invokeFunction((a) => a.get(IBar))).toThrow('setup-sync');
+    let releaseCascade!: () => void;
+    const cascadeGate = new Promise<void>((resolve) => {
+      releaseCascade = resolve;
+    });
+    let cascadeBlocked = true;
+    ix.cascade.configure({
+      onWillCascade: () => (cascadeBlocked ? cascadeGate : undefined),
+    });
+    const IBlocker = createDecorator<Foo>('service-blocked-cascade');
+    const IUnrelated = createDecorator<Foo>('service-unrelated-queued-provide');
+    ix.provide(IBlocker, new SyncDescriptor(Foo));
+    expect(ix.cascade.isInFlight(IBlocker)).toBe(true);
+    ix.provide(IUnrelated, new SyncDescriptor(Foo));
+    expect(ix.cascade.stateOf(IUnrelated)).toBeUndefined();
+    expect(() => ix.createInstance(SyncFailure)).toThrow('setup-sync');
+    expect(syncConstructions).toBe(1);
+    expect(ix.cascade.isInFlight(IBlocker)).toBe(true);
+    expect(ix.cascade.stateOf(IUnrelated)).toBeUndefined();
+    cascadeBlocked = false;
+    releaseCascade();
+    await ix.cascade.whenIdle();
+    expect(() => ix.invokeFunction((a) => a.get(IFoo))).toThrow(/unknown service/);
+    expect(ix.fiberHost.collectionView(IFooValues).items).toEqual([]);
+    expect(ix.invokeFunction((a) => a.get(IBlocker))).toBeInstanceOf(Foo);
+    expect(ix.invokeFunction((a) => a.get(IUnrelated))).toBeInstanceOf(Foo);
+    expect(ix.cascade.stateOf(IUnrelated)).toBe('Active');
 
+    let releaseCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    let cleanupCalls = 0;
     class AsyncFailure extends Service {
       override setup(): void {
+        useCleanup(() => {
+          cleanupCalls += 1;
+          return cleanup;
+        });
         useReady(Promise.reject(new Error('setup-async')));
       }
     }
-    ix.provide(IFoo, new SyncDescriptor(AsyncFailure));
-    ix.invokeFunction((a) => a.get(IFoo));
-    await flush();
+    class Dependent extends Service {
+      constructor(@IFoo public readonly foo: IFoo) {
+        super();
+      }
+    }
+    const IDependent = createDecorator<Dependent>('service-async-dependent');
     const services = (ix as unknown as { _services: ServiceCollection })._services;
+    const failureAvailabilityStates: Array<string | undefined> = [];
+    services.onDidChange(IFoo, () => {
+      failureAvailabilityStates.push(ix.cascade.stateOf(IFoo));
+    });
+    ix.provide(IFoo, new SyncDescriptor(AsyncFailure));
+    ix.provide(IDependent, new SyncDescriptor(Dependent));
+    const dependent = ix.invokeFunction((a) => a.get(IDependent));
+    await flush();
     expect(services.get(IFoo)).toBeInstanceOf(SyncDescriptor);
+    expect(services.get(IDependent)).toBeInstanceOf(SyncDescriptor);
+    expect(ix.fiberHost.materializedInstance(IFoo)).toBeUndefined();
+    expect(ix.cascade.stateOf(IFoo)).toBe('Failed');
+    expect(ix.cascade.stateOf(IDependent)).toBe('Pending');
+    expect(failureAvailabilityStates.at(-1)).toBe('Failed');
+    expect(cleanupCalls).toBe(1);
+
+    releaseCleanup();
+    await ix.cascade.whenIdle();
+    expect(() => ix.invokeFunction((a) => a.get(IFoo))).toThrow('setup-async');
+    ix.provide(IFoo, new SyncDescriptor(Foo));
+    expect(ix.invokeFunction((a) => a.get(IDependent))).not.toBe(dependent);
     await ix.disposeAsync();
+
+    let anonymous: FiberHandle | undefined;
+    class AnonymousFailure extends Service {
+      override setup(): void {
+        useReady(Promise.reject(new Error('anonymous-async')));
+      }
+    }
+    class Provider extends Service {
+      constructor() {
+        super();
+        anonymous = this.provide(AnonymousFailure);
+      }
+    }
+    const IProvider = createDecorator<Provider>('service-anonymous-failure-provider');
+    const ix2 = new InstantiationService(new ServiceCollection(), true);
+    ix2.provide(IProvider, new SyncDescriptor(Provider));
+    ix2.invokeFunction((a) => a.get(IProvider));
+    await flush();
+    expect(anonymous!.state).toBe(FiberState.Failed);
+    await expect(anonymous!).rejects.toThrow('anonymous-async');
+    await ix2.disposeAsync();
   });
 
   it('attaches pending handles handed out during buffering at flush', async () => {
@@ -342,12 +434,26 @@ describe('Service — kernel construction protocol (L3)', () => {
     ix.dispose();
   });
 
-  it('rebuilds a token unit with new config on update(config)', async () => {
+  it('awaits deferred cleanup before rebuilding a token unit with new config', async () => {
     const configs: unknown[] = [];
+    const units: Service[] = [];
+    let releaseCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    let cleanupCalls = 0;
     class Unit extends Service {
       constructor() {
         super();
         configs.push(this.config);
+        units.push(this);
+      }
+
+      override setup(): void {
+        useCleanup(() => {
+          cleanupCalls += 1;
+          return cleanup;
+        });
       }
     }
     let handle: FiberHandle | undefined;
@@ -363,9 +469,30 @@ describe('Service — kernel construction protocol (L3)', () => {
     ix.invokeFunction((a) => a.get(IProvider));
     ix.invokeFunction((a) => a.get(IFoo));
     expect(configs).toEqual([{ v: 1 }]);
-    await handle!.update({ v: 2 });
+    const services = (ix as unknown as { _services: ServiceCollection })._services;
+    const retirementAvailabilityStates: Array<string | undefined> = [];
+    services.onDidChange(IFoo, () => {
+      retirementAvailabilityStates.push(ix.cascade.stateOf(IFoo));
+    });
+    const update = handle!.update({ v: 2 });
+    await flush();
+    expect(cleanupCalls).toBe(1);
+    expect(configs).toEqual([{ v: 1 }]);
+    expect(retirementAvailabilityStates).toEqual(['Unloading']);
+    const repeatedDisposal = ix.fiberHost.disposeService(units[0]!);
+    expect(repeatedDisposal).toBeInstanceOf(Promise);
+    let repeatedSettled = false;
+    const repeated = Promise.resolve(repeatedDisposal).then(() => {
+      repeatedSettled = true;
+    });
+    await flush();
+    expect(repeatedSettled).toBe(false);
+    releaseCleanup();
+    await Promise.all([update, repeated]);
+    expect(repeatedSettled).toBe(true);
     expect(configs).toEqual([{ v: 1 }, { v: 2 }]);
-    ix.dispose();
+    expect(units).toHaveLength(2);
+    await ix.disposeAsync();
   });
 
   it('exposes config already inside the constructor (frame-carried)', () => {
