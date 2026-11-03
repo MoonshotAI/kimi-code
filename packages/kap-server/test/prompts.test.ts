@@ -394,7 +394,7 @@ describe('server-v2 /api/v1 prompts', () => {
     await stopRunningTurn(id);
   });
 
-  it('rejects an invalid or conflicting goal before the prompt is queued', async () => {
+  it('rejects an invalid or conflicting goal, or a goal combined with Plan mode, before the prompt is queued', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const agent = getLiveSessionById(server!.core.accessor, id)!
@@ -412,8 +412,14 @@ describe('server-v2 /api/v1 prompts', () => {
     const goal = agent.accessor.get(IAgentGoalService);
     await goal.createGoal({ objective: 'existing goal' });
     expect((await post('another goal')).body.code).toBe(40913);
-    expect(submit).not.toHaveBeenCalled();
     await goal.cancelGoal({});
+    const combined = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'start' }],
+      plan_mode: true,
+      goal_objective: 'plan and pursue',
+    });
+    expect(combined.body.code).toBe(40001);
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it('rejects queue controls for agents other than the main agent', async () => {
@@ -919,11 +925,30 @@ describe('server-v2 /api/v1 prompts', () => {
     handlers[5]!({ type: 'prompt.aborted', promptId: 'msg_6' });
     expect(abortedRunning).toHaveBeenCalledWith(false);
 
+    const failedBeforeStart = vi.fn();
+    const failedBeforeStartTracker = watchPromptSettlements(events as never);
+    failedBeforeStartTracker.settle('msg_8', failedBeforeStart);
+    handlers[6]!({ type: 'prompt.completed', promptId: 'msg_8', reason: 'failed' } as never);
+    expect(failedBeforeStart).toHaveBeenCalledWith(true);
+
+    const failedRunning = vi.fn();
+    const failedRunningTracker = watchPromptSettlements(events as never);
+    failedRunningTracker.settle('msg_9', failedRunning);
+    handlers[7]!({ type: 'prompt.started', promptId: 'msg_9' });
+    handlers[7]!({ type: 'prompt.completed', promptId: 'msg_9', reason: 'failed' } as never);
+    expect(failedRunning).toHaveBeenCalledWith(false);
+
+    const blockedBeforeStart = vi.fn();
+    const blockedBeforeStartTracker = watchPromptSettlements(events as never);
+    blockedBeforeStartTracker.settle('msg_10', blockedBeforeStart);
+    handlers[8]!({ type: 'prompt.completed', promptId: 'msg_10', reason: 'blocked' } as never);
+    expect(blockedBeforeStart).toHaveBeenCalledWith(false);
+
     const rejected = vi.fn();
     const rejectedTracker = watchPromptSettlements(events as never);
     rejectedTracker.settle('msg_5', rejected);
     rejectedTracker.dispose();
-    handlers[6]!({ type: 'prompt.completed', promptId: 'msg_5' });
+    handlers[9]!({ type: 'prompt.completed', promptId: 'msg_5' });
     expect(rejected).not.toHaveBeenCalled();
   });
 

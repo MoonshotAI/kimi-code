@@ -631,6 +631,9 @@ async function resolveQueue(core: Scope, sessionId: string, agentId: string): Pr
 function promptLaunch(resolved: ResolvedPrompt, body: PromptSubmission): PromptLaunch | undefined {
   if (resolved.agentId !== MAIN_AGENT_ID) return undefined;
   const planMode = body.plan_mode === true ? true : undefined;
+  if (planMode === true && body.goal_objective !== undefined) {
+    throw new Error2(ErrorCodes.REQUEST_INVALID, 'plan_mode and goal_objective cannot be combined');
+  }
   const goalObjective =
     body.goal_objective === undefined ? undefined : validateGoalObjective(body.goal_objective);
   if (goalObjective !== undefined && resolved.agent.accessor.get(IAgentGoalService).getGoal().goal !== null) {
@@ -827,7 +830,8 @@ export function watchPromptSettlements(events: IEventBus): {
     if (event.type !== 'prompt.completed' && event.type !== 'prompt.aborted') return;
     const id = (event as { readonly promptId?: unknown }).promptId;
     if (typeof id !== 'string') return;
-    const dropped = event.type === 'prompt.aborted' && !startedIds.has(id);
+    const reason = (event as { readonly reason?: unknown }).reason;
+    const dropped = !startedIds.has(id) && (event.type === 'prompt.aborted' || reason === 'failed');
     settledIds.set(id, dropped);
     if (armed !== undefined && armed.id === id) {
       const { discard } = armed;
