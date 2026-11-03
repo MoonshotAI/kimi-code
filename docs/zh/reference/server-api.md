@@ -629,7 +629,6 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `POST /api/v1/sessions/{session_id}:{action}` | 会话动作：`fork` / `compact` / `undo` / `abort` / `btw` / `archive` / `restore` |
 | `GET /api/v1/sessions/{session_id}/children` | 列出子会话 |
 | `POST /api/v1/sessions/{session_id}/children` | 创建子会话（fork 并打标） |
-| `GET /api/v1/sessions/{session_id}/status` | 实时状态汇总 |
 | `GET /api/v1/sessions/{session_id}/goal` | 当前目标快照（无则 `null`） |
 | `GET /api/v1/sessions/{session_id}/warnings` | 会话级告警 |
 | `GET /api/v1/sessions/{session_id}/environment` | 读取 main agent 的环境绑定 |
@@ -807,7 +806,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | `count` | body | integer | 要撤销的轮次数；正整数。默认 `1` |
 | `page_size` | body | integer | 返回的历史窗口大小，1–100。默认 `50` |
 
-成功时，`data` 为 `{ messages, status }`：`messages` 是剩余上下文消息按最新在前的 `{ items, has_more }` 分页，`status` 与 `GET /api/v1/sessions/{session_id}/status` 的汇总相同。
+成功时，`data` 为 `{ messages }`：剩余上下文消息按最新在前的 `{ items, has_more }` 分页。
 
 - `40901`：有轮次正在进行或压缩正在运行——等其结束后重试
 - `40911`：无法撤销那么多轮次（遇到压缩边界或检查点丢失）；`data` 携带 `{ reason, requestedCount, undoableCount }`
@@ -881,18 +880,6 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 成功时，`data` 为新会话的 [session 对象](#session-对象)，并且服务端广播 `event.session.created`。
 
 - `40901`：另一项会话历史操作正在进行
-
-#### `GET /api/v1/sessions/{session_id}/status`
-
-main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-
-成功时，`data` 为 `{ busy, model?, thinking_level, permission, plan_mode, swarm_mode, context_tokens, max_context_tokens?, context_usage? }`：`busy` 表示是否有进行中的轮次，`model` / `thinking_level` / `permission` 为当前生效的 Agent 设置，`plan_mode` / `swarm_mode` 为模式标志，`context_tokens` 与 `max_context_tokens`、`context_usage`（0–1）描述上下文窗口的占用情况。
-
-- `40401`：会话不存在
 
 #### `GET /api/v1/sessions/{session_id}/goal`
 
@@ -1029,7 +1016,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `after_turn` | query | string | 只保留晚于该轮次 id 的轮次；与 `before_turn` 互斥 |
 | `page_size` | query | integer | 1–100 个轮次。默认 `20` |
 
-分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次。成功时，`data` 为 `{ agent_id, items, has_more, interactions, attachments, todos, meta, agents, pending_interactions, seq? }`——`items` 是本次分页的轮次切片，`interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态，`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话）。任务不属于转录，通过 WebSocket 的 `task` 帧到达（见 [事件](#事件)）。
+分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次。成功时，`data` 为 `{ agent_id, items, has_more, interactions, attachments, agents, pending_interactions, seq? }`——`items` 是本次分页的轮次切片，`interactions` / `attachments` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态，`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话）。任务、Agent 的运行状态与设置、上下文用量、目标和待办都不属于转录，分别通过 WebSocket 的 `task`、`agent`、`usage`、`goal`、`todo` 帧到达（见 [事件](#事件)）。
 
 - `40001`：校验失败——`before_turn` 与 `after_turn` 同用，或 `agent_id` 不是纯文本形式
 - `40401`：会话不存在
@@ -2432,7 +2419,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 事件帧形状为 `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`，`type` 即事件类型。按投递范围分两类：
 
 - **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
-- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接——`transcript.reset` / `transcript.ops`（见 [转录协议](#转录协议)）、`task.list`、`task` 与 `interaction`。`task.output` 只发给用 `task.watch` 订阅了该任务输出的连接。
+- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接——`transcript.reset` / `transcript.ops`（见 [转录协议](#转录协议)）、`task.list`、`task`、`agent`、`usage`、`goal`、`todo` 与 `interaction`。`task.output` 只发给用 `task.watch` 订阅了该任务输出的连接。
 
 | 事件族 | 主要事件 |
 | --- | --- |
@@ -2450,9 +2437,16 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 每个 agent 正在跑的任务——Shell 命令（前台与后台）、subagent（含 swarm 成员）及其他异步工作——由 `task.list` 与 `task` 两种平铺帧同步，和 `interaction` 一样不回放。连接开始接收某个 agent 的任务时（`subscribe_v2` 中粒度非 `off` 且此前未接收的 agent），先收到一帧 `{ type: "task.list", session_id, agent_id, tasks }`，`tasks` 是该 agent 此刻正在跑的全部任务，客户端用它整份替换本地列表；之后每次变化收到一帧 `{ type: "task", session_id, agent_id, event_created_at, ...任务状态 }`，之后才加入会话的 agent 直接从 `task` 帧开始。任务状态为 `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`，每帧都携带完整状态。`detached` 表示发起它的工具调用已不再等它，即后台任务；`outcome`（仅已结束的任务）为 `completed` / `failed` / `timed_out` / `killed` / `lost`；`phase`（仅运行中的 subagent）为 `working` / `suspended`，挂起原因在 `state_reason`；`child_agent_id` 是 subagent 任务的 agent id；`swarm_index` 是 swarm 成员在其 swarm 中的序号；`command` 是 Shell 任务的命令。任务结束时推送它最后一帧 `task`（`status: "ended"`），之后不再出现在 `task.list` 里：已结束任务的结果在会话历史中（工具结果与完成通知），需要精确的最终状态时对它发送 `task.watch`，应答带有其状态。任务与转录互相独立：`transcript.ops` 里因撤销产生的 `reset` 操作不影响任务。任务输出单独推送，形状为 `{ type: "task.output", session_id, agent_id, task_id, offset, text }`，`offset` 是 `text` 在任务输出中的 UTF-8 字节偏移。
 
+Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的值，客户端整份替换本地副本；和任务帧一样不回放。连接开始接收某个 agent 时（规则同 `task.list`），先收到当前的 `agent`、`usage`（该 agent 有模型上下文时）、`goal`（仅主 agent）与 `todo` 帧，之后每当某个值变化就再收到对应的帧；之后才加入会话的 agent 也会用这几种帧通告自己。订阅会话时如果主 agent 还不存在，服务端会先创建它，所以订阅之后总能收到主 agent 的这几种帧。四种帧都是 `{ type, session_id, agent_id, event_created_at, ... }`：
+
+- `agent`：`{ status: "idle" | "running", model?, thinking?, permission_mode?, plan_mode, swarm_mode, tower_mode }`。`status` 跟随该 agent 的轮次；某一轮开始或结束对应的帧，排在同一次变化的 `transcript.ops` 批次之后。三个模式字段都是布尔值。
+- `usage`：`{ context_tokens, max_context_tokens? }`。只有最新值有意义，因此上下文增长期间服务端每秒最多发送几次。
+- `goal`：`{ goal? }`，会话没有目标时省略 `goal`，否则为 `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`。
+- `todo`：`{ items: [{ title, status: "pending" | "in_progress" | "done" }] }`，取自 agent 的待办存储，因此会跟随撤销回退，重启后也能恢复。
+
 ### 断线恢复
 
-订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe_v2`：带 `transcript_since` 可续传转录流，省略则从新的 `transcript.reset` 开始；确认后会补发待处理的交互，并重新收到各 agent 的 `task.list`。任务输出的订阅同样会丢失：重新发送 `task.watch`，并把 `since_offset` 设为已有输出的末尾。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
+订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe_v2`：带 `transcript_since` 可续传转录流，省略则从新的 `transcript.reset` 开始；确认后会补发待处理的交互，并重新收到各 agent 的 `task.list`、`agent`、`usage`、`goal` 与 `todo` 帧。任务输出的订阅同样会丢失：重新发送 `task.watch`，并把 `since_offset` 设为已有输出的末尾。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
 
 ### 转录协议
 

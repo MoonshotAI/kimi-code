@@ -629,7 +629,6 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `POST /api/v1/sessions/{session_id}:{action}` | Session actions: `fork` / `compact` / `undo` / `abort` / `btw` / `archive` / `restore` |
 | `GET /api/v1/sessions/{session_id}/children` | List child sessions |
 | `POST /api/v1/sessions/{session_id}/children` | Create a child session (fork with a tag) |
-| `GET /api/v1/sessions/{session_id}/status` | Realtime status rollup |
 | `GET /api/v1/sessions/{session_id}/goal` | Current goal snapshot (`null` when none) |
 | `GET /api/v1/sessions/{session_id}/warnings` | Session-level warnings |
 | `GET /api/v1/sessions/{session_id}/environment` | Read the main agent's environment binding |
@@ -807,7 +806,7 @@ Rewinds the main agent's conversation by `count` turns and reconciles the derive
 | `count` | body | integer | Number of turns to undo; positive integer. Default `1` |
 | `page_size` | body | integer | Size of the returned history window, 1–100. Default `50` |
 
-On success, `data` is `{ messages, status }`: `messages` is a `{ items, has_more }` page of the remaining context messages, newest first, and `status` is the same rollup as `GET /api/v1/sessions/{session_id}/status`.
+On success, `data` is `{ messages }`: a `{ items, has_more }` page of the remaining context messages, newest first.
 
 - `40901`: a turn is active or a compaction is running — wait for it to finish, then retry
 - `40911`: that many turns cannot be undone (a compaction boundary or lost checkpoints); `data` carries `{ reason, requestedCount, undoableCount }`
@@ -881,18 +880,6 @@ Creates a child session: a fork of this session recorded as its child, so it sho
 On success, `data` is [the session object](#the-session-object) of the new session, and the server broadcasts `event.session.created`.
 
 - `40901`: another session history operation is in progress
-
-#### `GET /api/v1/sessions/{session_id}/status`
-
-Realtime status rollup of the main agent; reading it resumes the session if it is cold.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-
-On success, `data` is `{ busy, model?, thinking_level, permission, plan_mode, swarm_mode, context_tokens, max_context_tokens?, context_usage? }`: `busy` reports an active turn, `model` / `thinking_level` / `permission` are the effective agent settings, `plan_mode` / `swarm_mode` are the mode flags, and `context_tokens` with `max_context_tokens` and `context_usage` (0–1) describe context-window consumption.
-
-- `40401`: session not found
 
 #### `GET /api/v1/sessions/{session_id}/goal`
 
@@ -1029,7 +1016,7 @@ Returns one page of an agent's structured transcript: turns (with their steps an
 | `after_turn` | query | string | Only turns newer than this turn id; mutually exclusive with `before_turn` |
 | `page_size` | query | integer | 1–100 turns. Default `20` |
 
-The page unit is the turn: without a cursor the newest page is returned, and `has_more` reports that older turns remain. On success, `data` is `{ agent_id, items, has_more, interactions, attachments, todos, meta, agents, pending_interactions, seq? }` — `items` is the paged turn slice, `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` are global agent state that ships unpaginated with every response, and `seq` is the agent's op-batch watermark for resuming the stream (live sessions only). Tasks are not part of the transcript; they arrive as the WebSocket `task` frame (see [Events](#events)).
+The page unit is the turn: without a cursor the newest page is returned, and `has_more` reports that older turns remain. On success, `data` is `{ agent_id, items, has_more, interactions, attachments, agents, pending_interactions, seq? }` — `items` is the paged turn slice, `interactions` / `attachments` / `agents` / `pending_interactions` are global agent state that ships unpaginated with every response, and `seq` is the agent's op-batch watermark for resuming the stream (live sessions only). Tasks, the agent's status and settings, context usage, the goal, and the todo list are not part of the transcript; they arrive as the WebSocket `task`, `agent`, `usage`, `goal`, and `todo` frames (see [Events](#events)).
 
 - `40001`: validation failure — `before_turn` combined with `after_turn`, or a non-plain `agent_id`
 - `40401`: session not found
@@ -2431,7 +2418,7 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
 
 - **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
-- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2` — `transcript.reset` / `transcript.ops` (see [Transcript protocol](#transcript-protocol)), `task.list`, `task`, and `interaction`. `task.output` goes only to connections watching that task with `task.watch`.
+- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2` — `transcript.reset` / `transcript.ops` (see [Transcript protocol](#transcript-protocol)), `task.list`, `task`, `agent`, `usage`, `goal`, `todo`, and `interaction`. `task.output` goes only to connections watching that task with `task.watch`.
 
 | Family | Main events |
 | --- | --- |
@@ -2449,9 +2436,16 @@ Events also split into durable and volatile: durable events carry a strictly inc
 
 Each agent's running tasks — shell commands in the foreground and background, subagents (swarm members included), and other asynchronous work — are synced by two flat frames, `task.list` and `task`, never replayed like `interaction`. When a connection starts receiving an agent's tasks (an agent whose grade in `subscribe_v2` is not `off` and that it was not receiving yet), it first gets `{ type: "task.list", session_id, agent_id, tasks }`, where `tasks` is every task the agent is running right now and replaces the client's list; after that it gets `{ type: "task", session_id, agent_id, event_created_at, ...task state }` on every change. An agent that joins the session later starts directly with `task` frames. The task state is `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`, and every frame carries the full state. `detached` means the tool call that started the task no longer waits for it, so it runs in the background; `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`, with the reason in `state_reason`; `child_agent_id` is a subagent task's agent id; `swarm_index` is a swarm member's position in its swarm; `command` is a shell task's command. When a task ends, its last `task` frame (`status: "ended"`) is sent and it no longer appears in `task.list`: the outcome of an ended task lives in the session history (tool results and task notifications), and `task.watch` on it replies with its exact final state. Tasks are independent of the transcript: a `reset` op inside `transcript.ops` after an undo does not touch tasks. Task output streams separately as `{ type: "task.output", session_id, agent_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
 
+An agent's own state is synced by four more flat frames, each carrying the full value and replacing the client copy; like the task frames they are never replayed. When a connection starts receiving an agent (the same rule as `task.list`), it first gets the current `agent`, `usage` (when the agent has a model context), `goal` (main agent only), and `todo` frames, and after that each frame again whenever its value changes; an agent that joins the session later announces itself with the same frames. Subscribing to a session creates its main agent if it does not exist yet, so the main agent's frames always follow the subscription. All four are `{ type, session_id, agent_id, event_created_at, ... }`:
+
+- `agent`: `{ status: "idle" | "running", model?, thinking?, permission_mode?, plan_mode, swarm_mode, tower_mode }`. `status` follows the agent's turns, and the frame for a turn's start or end is sent after the `transcript.ops` batch of that same turn change. The three mode fields are booleans.
+- `usage`: `{ context_tokens, max_context_tokens? }`. Only the latest value matters, so while the context grows the server sends it at most a few times per second.
+- `goal`: `{ goal? }`, where `goal` is omitted when the session has none, or is `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`.
+- `todo`: `{ items: [{ title, status: "pending" | "in_progress" | "done" }] }`, read from the agent's todo store, so it follows undo and survives a restart.
+
 ### Reconnect and recovery
 
-Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: pass `transcript_since` to resume the transcript streams, or omit it to start from a fresh `transcript.reset`; pending interactions are resent after the ack, and every agent's `task.list` is sent again. Task output watches are dropped as well: send `task.watch` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
+Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: pass `transcript_since` to resume the transcript streams, or omit it to start from a fresh `transcript.reset`; pending interactions are resent after the ack, and every agent's `task.list`, `agent`, `usage`, `goal`, and `todo` frames are sent again. Task output watches are dropped as well: send `task.watch` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
 
 ### Transcript protocol
 
