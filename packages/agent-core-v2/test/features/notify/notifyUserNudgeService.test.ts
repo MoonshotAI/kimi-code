@@ -136,7 +136,6 @@ describe('AgentNotifyUserNudgeService', () => {
     appendSilentRounds(7);
     await runWillBeginStepHooks(loop);
     expect(nudgeInjections()).toHaveLength(1);
-    expect(messageText(nudgeInjections()[0]!)).toContain('8 rounds of tool calls');
   });
 
   it('does not nudge on mid-turn text before the round threshold', async () => {

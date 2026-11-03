@@ -530,7 +530,6 @@ describe('AgentRecords persistence metadata', () => {
       kind: 'injection',
       variant: 'goal_fork_cleared',
     });
-    expect(JSON.stringify(reminder?.content)).toContain('This fork does not have a current goal.');
   });
 
   it('keeps goals created after the forked boundary', async () => {

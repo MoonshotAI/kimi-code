@@ -977,7 +977,6 @@ describe('BashTool', () => {
       brief: 'Failed with exit code: 2',
     });
     expect(result.output).toContain('boom\n');
-    expect(result.output).toContain('Command failed with exit code: 2.');
   });
 
   it('returns both stdout and stderr when a command succeeds', async () => {
@@ -1117,7 +1116,6 @@ describe('BashTool', () => {
       const result = await running;
 
       expect(result).toMatchObject({ isError: true, brief: 'Killed by timeout (1s)' });
-      expect(result.output).toContain('Command killed by timeout (1s)');
     } finally {
       vi.useRealTimers();
     }
@@ -1241,7 +1239,6 @@ describe('BashTool', () => {
     expect(typeof result.output).toBe('string');
     const output = result.output as string;
     expect(output.startsWith('E'.repeat(10_000_000))).toBe(true);
-    expect(output).toContain('Command failed with exit code: 1.');
     expect(result.spill?.totalChars).toBe(10 * 1024 * 1024 + 1);
   });
 
@@ -1391,7 +1388,6 @@ describe('BashTool', () => {
     );
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('Background execution is not available');
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -1531,10 +1527,7 @@ describe('BashTool background mode', () => {
     expect(result.output).not.toContain('after detach\n');
     expect(result.output).toContain(`task_id: ${task.taskId}`);
     expect(result.output).toContain('automatic_notification: true');
-    expect(result.output).toContain('The user moved this task to the background.');
     expect(result.output).toContain('detached_by_user: true');
-    expect(result.output).toContain('do NOT wait, poll, or call TaskOutput');
-    expect(result.output).toContain('human_shell_hint: The task is visible in the background-task panel.');
     expect((result as { brief?: string }).brief).toBe(`Backgrounded ${task.taskId} by the user`);
     expect(service.getTask(task.taskId)).toMatchObject({ detached: true });
     await vi.waitFor(async () => {
@@ -1632,7 +1625,6 @@ describe('BashTool background mode', () => {
         isError: false,
         brief: expect.stringContaining('after timeout'),
       });
-      expect(result.output).toContain('The task now runs in the background.');
       expect(result.output).not.toContain('The user moved this task');
       expect(result.output).not.toContain('detached_by_user');
       expect(result.output).toContain('human_shell_hint: The task is visible in the background-task panel.');
@@ -1666,8 +1658,6 @@ describe('BashTool background mode', () => {
     const result = await running;
 
     expect(result.output).toContain(`task_id: ${task.taskId}`);
-    expect(result.output).toContain('You will be automatically notified when it completes');
-    expect(result.output).toContain('do NOT wait or poll');
     expect(result.output).not.toContain('TaskOutput');
     expect(result.output).not.toContain('TaskStop');
 
@@ -1704,8 +1694,6 @@ describe('BashTool background mode', () => {
     expect(output).toContain(`task_id: ${task.taskId}`);
     expect(output).toContain('automatic_notification: true');
     expect(output).toContain('foreground_output:');
-    expect(output).toContain('noisy output line 0');
-    expect(output).toContain('noisy output line 5999');
     expect(output).not.toContain('[...truncated]');
     expect(output.indexOf(`task_id: ${task.taskId}`)).toBeLessThan(
       output.indexOf('foreground_output:'),

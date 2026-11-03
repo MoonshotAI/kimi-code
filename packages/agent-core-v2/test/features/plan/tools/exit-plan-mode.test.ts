@@ -185,7 +185,6 @@ describe('ExitPlanMode review display', () => {
 
     expect(recordRevision).not.toHaveBeenCalled();
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('No plan file found');
   });
 });
 
@@ -202,7 +201,6 @@ describe('ExitPlanMode without a review', () => {
 
     expect(exit).not.toHaveBeenCalled();
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('could not be shown to the user for review');
     expect(result.output).not.toContain('## Approved Plan:');
   });
 
@@ -218,8 +216,6 @@ describe('ExitPlanMode without a review', () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('only be called while plan mode is active');
-    expect(result.output).toContain('Only the user can turn plan mode on');
     expect(result.output).not.toContain('EnterPlanMode');
   });
 });

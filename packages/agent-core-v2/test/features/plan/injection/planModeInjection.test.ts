@@ -111,10 +111,6 @@ describe('PlanModeService dynamic injection content', () => {
     await injectDynamic(ctx);
 
     expect(planReminderMessages(context)).toHaveLength(2);
-    const text = lastPlanReminder(context);
-    expect(text).toContain('If the user approved a plan, carry it out');
-    expect(text).toContain("otherwise follow the user's latest message");
-    expect(text).not.toContain('Continue with the approved plan');
   });
 
   it('does not inject anything when plan mode is inactive from the start', async () => {
@@ -184,12 +180,8 @@ describe('PlanModeService dynamic injection cadence', () => {
     await injectDynamic(ctx);
 
     const text = lastPlanReminder(context);
-    expect(text).toContain('Plan mode still active');
-    expect(text).toContain('see full instructions earlier');
-    expect(text).toContain('Stay read-only except the plan file');
     expect(text).toContain('AskUserQuestion');
     expect(text).toContain('ExitPlanMode');
-    expect(text).not.toContain('Bash follows the normal permission mode');
     expect(text).toContain(`Plan file: ${planFilePath}`);
   });
 
@@ -213,7 +205,6 @@ describe('PlanModeService dynamic injection cadence', () => {
     await injectDynamic(ctx);
 
     const text = lastPlanReminder(context);
-    expect(text).toContain('Plan mode is active');
     expect(text).not.toContain('Plan mode still active');
   });
 

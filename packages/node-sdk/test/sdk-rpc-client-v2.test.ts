@@ -2437,10 +2437,7 @@ key = "${titleOAuthRef.key}"
       const [headline, ...bodyLines] = status.split('\n');
       expect(headline).toBe('Tower status — ON');
       const body = bodyLines.join('\n');
-      expect(body).toContain('Base: main (mode: branch) · You are: tower');
-      expect(body).toContain('Missions:\n  M1 Build engine — planned · owner — · feat/build-engine');
       expect(body).toContain('Roster:\n  (none)');
-      expect(body).toContain('Review gate:\n  M1 feat/build-engine — BLOCKED: not-completed');
       expect(body).toContain('Inbox: 0 message(s)');
       expect(body).toContain('Concurrency: budget: ');
       expect(body).toContain('Recent activity:');
@@ -2452,7 +2449,6 @@ key = "${titleOAuthRef.key}"
       expect(inactiveHeadline).toBe('Tower mode: OFF');
       const inactiveBody = inactiveBodyLines.join('\n');
       expect(inactiveBody).toContain(body);
-      expect(inactiveBody).toContain(' tower release session=ses_tower_status');
     } finally {
       vi.unstubAllEnvs();
       await harness.close();

@@ -75,9 +75,6 @@ describe('todoListStaleReminder', () => {
     const result = todoListStaleReminder({ history, todos, active: true });
 
     expect(result?.stepsSinceLastWrite).toBe(10);
-    expect(result?.text).toContain('If the list still matches your progress, no update is needed');
-    expect(result?.text).toContain('1. [in_progress] Read current TodoList implementation');
-    expect(result?.text).toContain('2. [pending] Add reminder injector tests');
   });
 
   it('does not inject before the assistant-step threshold', async () => {

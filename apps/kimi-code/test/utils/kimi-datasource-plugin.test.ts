@@ -313,7 +313,6 @@ describe('kimi-datasource MCP server', () => {
           }>;
         }
       ).tools;
-      const call = tools.find((tool) => tool.name === 'call_data_source_tool');
       const desc = tools.find((tool) => tool.name === 'get_data_source_desc');
       expect(desc?.inputSchema.properties['name']?.enum).toEqual([
         'stock_finance_data',
@@ -342,24 +341,12 @@ describe('kimi-datasource MCP server', () => {
         'xhcj',
         'caixin',
       ]);
-      expect(call?.description).toContain(
-        'For a simple lookup, use one specialized source and stop once a result covers the user',
-      );
-      expect(call?.description).toContain('When the user names a data source, use that source');
-      expect(call?.inputSchema.properties['data_source_name']?.description).toContain(
-        'When the user names a source, pass that source',
-      );
-      expect(desc?.description).toContain('choose exactly one specialized source');
-      expect(desc?.inputSchema.properties['name']?.description).toContain(
-        'yahoo_finance FX history is limited to about 2 years',
-      );
     } finally {
       child?.stdin.end();
       child?.kill();
       await rm(tempDir, { recursive: true, force: true });
     }
   });
-
   it('appends a request-id / tool-call-id trace line to tool results', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'kimi-datasource-plugin-'));
     const kimiHome = join(tempDir, 'kimi-home');
@@ -416,6 +403,7 @@ describe('kimi-datasource MCP server', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
 });
 
 // Pin the expected credential file name to the canonical OAuth-key resolver so

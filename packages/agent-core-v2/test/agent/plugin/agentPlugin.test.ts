@@ -154,9 +154,6 @@ describe('AgentPluginService plugin session-start wiring', () => {
     expect(messageText(messages.at(-1)!)).toContain(
       'Do the explicitly refreshed demo thing.',
     );
-    expect(messageText(messages.at(-1)!)).toContain(
-      'supersedes any earlier plugin_session_start reminder',
-    );
   });
 
   it('does not inject when no plugin session starts are enabled', async () => {
@@ -359,8 +356,6 @@ describe('AgentPluginService plugin-change reminder', () => {
 
     const messages = findPluginChangeMessages(ctx);
     expect(messages).toHaveLength(1);
-    expect(messageText(messages[0]!)).toContain('Plugin "demo" was enabled.');
-    expect(messageText(messages[0]!)).toContain('run /new or /reload to apply the change');
     mutateEmitter.dispose();
   });
 

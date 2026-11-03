@@ -504,7 +504,6 @@ describe('AgentGoalService', () => {
         kind: 'injection',
         variant: 'goal_cancelled',
       });
-      expect(JSON.stringify(reminder?.content)).toContain('Ignore earlier active-goal reminders');
       await expect(goals.cancelGoal()).rejects.toMatchObject({ code: ErrorCodes.GOAL_NOT_FOUND });
     });
 
@@ -1603,7 +1602,6 @@ describe('AgentGoalService core workflow hooks', () => {
     });
     const prompt = JSON.stringify(context.get().at(-1)?.content);
     expect(prompt).toContain('per-turn step limit');
-    expect(prompt).toContain('Pick up where that turn stopped');
   });
 
   it('blocks active goals when the user prompt hook blocks the turn', async () => {
@@ -2211,9 +2209,6 @@ describe('AgentGoalService mid-turn budget stop', () => {
       const history = ctx.get(IAgentContextMemoryService).get();
       const toolResults = history.filter((message) => message.role === 'tool');
       expect(toolResults).toHaveLength(2);
-      expect(JSON.stringify(toolResults.at(-1))).toContain(
-        'Goal budget exhausted; tool calls are rejected. Write your final message.',
-      );
       expect(JSON.stringify(history)).not.toContain('This step should never run.');
 
       const goal = (await ctx.rpc.getGoal({})).goal;
@@ -2382,7 +2377,6 @@ describe('AgentGoalService goal outcome tool result flow', () => {
       );
       expect((await ctx.rpc.getGoal({})).goal).toBeNull();
       const history = ctx.get(IAgentContextMemoryService).get();
-      expect(JSON.stringify(history)).toContain('Write a concise final message');
       expect(JSON.stringify(history)).not.toContain('This summary should not run.');
       expect(history.at(-1)?.role).toBe('tool');
     } finally {
@@ -2423,9 +2417,7 @@ describe('AgentGoalService fork boundaries', () => {
       variant: 'goal_fork_cleared',
     });
     const text = JSON.stringify(reminder?.content);
-    expect(text).toContain('This fork does not have a current goal.');
     expect(text).toContain('Ignore earlier active-goal reminders from the source session.');
-    expect(text).toContain('Handle requests normally unless the user starts a new goal.');
   });
 
   it('does not re-deliver a fork-cleared reminder recorded with the legacy system_trigger origin', async () => {

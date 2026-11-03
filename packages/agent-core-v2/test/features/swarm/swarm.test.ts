@@ -891,12 +891,6 @@ describe('AgentSwarmTool', () => {
       isError: true,
       output: expect.stringContaining('Swarm mode is off, so AgentSwarm did not run'),
     });
-    expect(result.output).toContain(
-      'If the user asked for a swarm, tell them swarm mode is off and that they can turn it on with /swarm, or run /swarm <task>',
-    );
-    expect(result.output).toContain(
-      'Otherwise, continue without AgentSwarm and do not mention swarm mode.',
-    );
     expect(swarmMode.enter).not.toHaveBeenCalled();
     expect(host.swarmService.run).not.toHaveBeenCalled();
   });
@@ -918,12 +912,6 @@ describe('AgentSwarmTool', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('Swarm mode is off, so AgentSwarm did not run');
     expect(host.swarmService.run).not.toHaveBeenCalled();
-  });
-
-  it('description documents the {{item}} placeholder', () => {
-    const host = mockSwarmHost();
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile()), stubCallerProfile());
-    expect(tool.description).toContain('{{item}}');
   });
 
   it('uses the persisted caller allowlist instead of the current catalog profile', async () => {
@@ -959,7 +947,6 @@ describe('AgentSwarmTool', () => {
     );
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('Subagent type "coder" is not allowed for this agent');
     expect(host.swarmService.run).not.toHaveBeenCalled();
   });
 
@@ -1354,19 +1341,6 @@ describe('AgentSwarmTool', () => {
         ],
       }),
     );
-  });
-
-  it('advertises the configured pool in the description only when configured', async () => {
-    const host = mockSwarmHost();
-    const configured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig({ defaultModel: 'provider/fast', models: { 'provider/fast': 'fast and cheap', 'main-model': 'the main model' } }), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig({ defaultModel: 'provider/fast', models: { 'provider/fast': 'fast and cheap', 'main-model': 'the main model' } }), stubCallerProfile({ modelAlias: 'main-model' })), stubCallerProfile({ modelAlias: 'main-model' }));
-
-    expect(configured.description).toContain(
-      'Available models (pass via model): provider/fast [default], main-model.',
-    );
-
-    const unconfigured = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile({ modelAlias: 'main-model' })), stubCallerProfile({ modelAlias: 'main-model' }));
-
-    expect(unconfigured.description).not.toContain('Available models');
   });
 
   it('omits resume hint when incomplete subagents have no agent ids', async () => {

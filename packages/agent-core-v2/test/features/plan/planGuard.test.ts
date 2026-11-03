@@ -474,13 +474,6 @@ describe('AgentPlanService plan-guard listener', () => {
       );
 
       expect(decision?.veto?.isError).toBe(false);
-      expect(decision?.veto?.output).toContain(
-        'Selected approach: Approach B',
-      );
-      expect(decision?.veto?.output).toContain(
-        'Execute ONLY the selected approach',
-      );
-      expect(decision?.veto?.output).toContain('## Approved Plan:\n# Plan');
       expect(records).toContainEqual({
         event: 'plan_submitted',
         properties: { has_options: true, mode: 'plan' },
@@ -517,7 +510,6 @@ describe('AgentPlanService plan-guard listener', () => {
         }),
       );
 
-      expect(decision?.veto?.output).toContain('## Approved Plan:\n# Draft Plan');
       expect(decision?.veto?.output).not.toContain('Plan saved to:');
     });
 

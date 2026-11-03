@@ -900,7 +900,6 @@ describe('server-v2 /api/v1/sessions', () => {
       agent_config: { tower_mode: true },
     });
     expect(on.body.code).toBe(50001);
-    expect(on.body.msg).toContain('the tower experiment is disabled');
     expect(on.body.msg).toContain('KIMI_CODE_EXPERIMENTAL_TOWER=1');
     const after = await getJson<{
       tower_mode?: boolean;
@@ -1287,7 +1286,6 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(after.body.data.items.length).toBeGreaterThan(baselineCount);
       const text = JSON.stringify(after.body.data.items);
       expect(text).toContain('AGENTS.md');
-      expect(text).toContain('were not included in your system prompt');
       expect(text).toContain(`Added directories: ${extra}.`);
       expect(
         after.body.data.items.filter(

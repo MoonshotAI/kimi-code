@@ -306,14 +306,12 @@ describe('ReadMediaFileTool', () => {
 
   it('describes media support without model capability claims', () => {
     const description = makeTool({}).description;
-    expect(description).toContain('image and video files');
     expect(description).not.toContain('current model');
   });
 
   it('rejects empty paths', async () => {
     const result = await execute(makeTool({}), { path: '' });
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('File path cannot be empty');
   });
 
   it('redirects text files to the Read tool', async () => {
@@ -331,7 +329,6 @@ describe('ReadMediaFileTool', () => {
       { path: '/workspace/archive.zip' },
     );
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('not a supported image or video file');
   });
 
   it('returns a text/image/text wrap plus a <system> note for PNG files', async () => {

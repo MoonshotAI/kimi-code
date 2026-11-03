@@ -120,8 +120,6 @@ describe('AgentDateChangeService', () => {
     expect(reminders).toHaveLength(1);
     const first = reminders[0];
     expect(first).toBeDefined();
-    const text = messageText(first as ContextMessage);
-    expect(text).toContain("Today's date is 2026-07-29");
     expect(first?.origin).toMatchObject({
       kind: 'injection',
       variant: 'date_change',

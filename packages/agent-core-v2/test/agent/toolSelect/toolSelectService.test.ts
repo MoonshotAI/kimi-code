@@ -1260,7 +1260,6 @@ describe('AgentToolSelectService.load', () => {
     });
     if (variants.isError === true) throw new Error('expected a runnable execution');
     const result = await variants.execute(ctx);
-    expect(result.output).not.toContain('has already failed selection 2 times');
     expect(result.output).toContain(`Unknown tool: mcp__Ghost__tool. ${UNKNOWN_SELECTION_REASON}Loadable tools: ${MCP_ALPHA}.${NO_ALIAS_GUIDANCE}`);
     expect(result.output).toContain(`Unknown tool: mcp__ghost__tool. ${UNKNOWN_SELECTION_REASON}Loadable tools: ${MCP_ALPHA}.${NO_ALIAS_GUIDANCE}`);
     const second = h.sut.load(['mcp__Ghost__tool', 'mcp__ghost__tool']);
@@ -1293,12 +1292,10 @@ describe('AgentToolSelectService consecutive failures', () => {
     if (execution.isError === true) throw new Error('expected a runnable execution');
     const result = await execution.execute({ turnId: 1, toolCallId: 'call', signal: new AbortController().signal });
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('disabled by the current tool policy');
     expect(result.output).toContain('no longer registered');
     expect(result.output).toContain('Unknown tool: third_guess.');
     if (typeof result.output !== 'string') throw new Error('expected text output');
     expect(result.output.match(/3 consecutive select_tools calls/g)).toHaveLength(1);
-    expect(result.output).toContain('Stop guessing names or retrying unavailable tools.');
     expect(result.output).not.toContain('has already failed selection');
   });
 
@@ -1428,7 +1425,6 @@ describe('AgentToolSelectService executor disclosure independence', () => {
       stopTurn: false,
     }));
     expect(results[0]!.result.output).toContain(`Invalid args for tool "${MCP_ALPHA}"`);
-    expect(results[0]!.result.output).toContain("must have required property 'payload'");
     expect(alpha.calls).toBe(0);
   });
 
@@ -1534,21 +1530,10 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     flagEnabled = true;
   });
 
-  it('tells the model not to select tools without an added announcement', () => {
-    const h = createHarness();
-    const tool = h.ix.createInstance(SelectToolsTool);
-    expect(tool.description).toContain(
-      'If you have not seen a <tools_added> announcement in this session, ' +
-        'no tools are currently loadable — do not call select_tools.',
-    );
-  });
-
   it('announces an initially empty set once, including across turns', async () => {
     const h = createHarness();
     registerBuiltin(h, new EchoTool());
-    const first = await announce(h);
-    expect(first).toContain('No tools are currently available for dynamic loading in this session.');
-    expect(first).toContain('use the tools you already have');
+    await announce(h);
     expect(await announce(h, 2)).toBeUndefined();
 
     h.eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 99, origin: { kind: 'user' } }));

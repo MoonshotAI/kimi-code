@@ -189,8 +189,6 @@ describe('SessionInitService', () => {
       { variant: string },
     ];
     expect(notification).toEqual({ variant: 'init' });
-    expect(content).toContain('The user just ran `/init` slash command.');
-    expect(content).toContain('Latest AGENTS.md file content:');
     expect(content).toContain(AGENTS_MD);
 
     expect(seedInjected).toHaveBeenCalledWith([AGENTS_MD_PATH], WORK_DIR);

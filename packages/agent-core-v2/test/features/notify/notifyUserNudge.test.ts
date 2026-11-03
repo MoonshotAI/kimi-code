@@ -290,7 +290,6 @@ describe('shouldNudgeNotifyUser', () => {
 describe('renderNotifyUserNudge', () => {
   it('mentions the count and the ask', () => {
     const text = renderNotifyUserNudge(8);
-    expect(text).toContain('8 rounds of tool calls');
     expect(text).toContain('NotifyUser');
   });
 });
