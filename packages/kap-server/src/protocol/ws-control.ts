@@ -5,6 +5,22 @@ import { transcriptGradeSpecSchema, transcriptSeqSchema } from '@moonshot-ai/tra
 
 import { pushEventSchema } from './events-zod';
 import { interactionEventMessageSchema } from './interaction';
+import {
+  agentEventMessageSchema,
+  goalEventMessageSchema,
+  todoEventMessageSchema,
+  usageEventMessageSchema,
+} from './ws-agent';
+import {
+  taskBackgroundMessageSchema,
+  taskEventMessageSchema,
+  taskListMessageSchema,
+  taskOutputMessageSchema,
+  taskResponseMessageSchema,
+  taskStopMessageSchema,
+  taskUnwatchMessageSchema,
+  taskWatchMessageSchema,
+} from './ws-task';
 
 export const WS_PROTOCOL_VERSION = 2;
 
@@ -229,6 +245,40 @@ export const clientControlOperations = [
     description: 'Abort a running prompt in a session.',
   },
   {
+    type: 'task.watch',
+    direction: 'client_to_server',
+    kind: 'control',
+    messageSchema: taskWatchMessageSchema,
+    ackSchema: taskResponseMessageSchema,
+    description:
+      'Stream the output of one task owned by agent_id to this connection without a session subscription. The first chunk covers at most tail_bytes; since_offset resumes after output the client already has.',
+  },
+  {
+    type: 'task.unwatch',
+    direction: 'client_to_server',
+    kind: 'control',
+    messageSchema: taskUnwatchMessageSchema,
+    ackSchema: taskResponseMessageSchema,
+    description: "Stop streaming one task's output to this connection.",
+  },
+  {
+    type: 'task.stop',
+    direction: 'client_to_server',
+    kind: 'control',
+    messageSchema: taskStopMessageSchema,
+    ackSchema: taskResponseMessageSchema,
+    description: 'Stop one task; the reply carries its state, and an ended task just replies with it.',
+  },
+  {
+    type: 'task.background',
+    direction: 'client_to_server',
+    kind: 'control',
+    messageSchema: taskBackgroundMessageSchema,
+    ackSchema: taskResponseMessageSchema,
+    description:
+      'Stop the tool call that started a task from waiting for it, so the task keeps running in the background; the reply carries its state.',
+  },
+  {
     type: 'pong',
     direction: 'client_to_server',
     kind: 'control',
@@ -279,11 +329,81 @@ export const interactionEventOperation = {
     'Flat, unsequenced approval or question state for a subscribed session; pending interactions are re-sent after every accepted subscription.',
 } as const satisfies WsOperationDefinition;
 
+export const taskListEventOperation = {
+  type: 'task.list',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: taskListMessageSchema,
+  description:
+    'Every task an agent is running right now, sent when a connection starts receiving that agent; it replaces the client list.',
+} as const satisfies WsOperationDefinition;
+
+export const taskEventOperation = {
+  type: 'task',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: taskEventMessageSchema,
+  description:
+    'Full state of one task of a subscribed agent, sent on every change; the frame for an ended task is its last one.',
+} as const satisfies WsOperationDefinition;
+
+export const taskOutputEventOperation = {
+  type: 'task.output',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: taskOutputMessageSchema,
+  description:
+    'Task output starting at a UTF-8 byte offset, sent only to connections watching the task.',
+} as const satisfies WsOperationDefinition;
+
+export const agentEventOperation = {
+  type: 'agent',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: agentEventMessageSchema,
+  description:
+    'Status, model, thinking effort, permission mode and plan / swarm / tower mode switches of one subscribed agent, sent when a connection starts receiving that agent and on every change; it replaces the client copy.',
+} as const satisfies WsOperationDefinition;
+
+export const usageEventOperation = {
+  type: 'usage',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: usageEventMessageSchema,
+  description:
+    'Context window usage of one subscribed agent, sent when a connection starts receiving that agent and then at most a few times per second while it changes; only the latest value matters.',
+} as const satisfies WsOperationDefinition;
+
+export const goalEventOperation = {
+  type: 'goal',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: goalEventMessageSchema,
+  description:
+    'Goal of the main agent, sent when a connection starts receiving it and on every change; goal is omitted when the session has none.',
+} as const satisfies WsOperationDefinition;
+
+export const todoEventOperation = {
+  type: 'todo',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: todoEventMessageSchema,
+  description:
+    'Todo list of one subscribed agent, sent when a connection starts receiving that agent and on every change, including undo; it replaces the client list.',
+} as const satisfies WsOperationDefinition;
+
 export const wsOperations = [
   ...clientControlOperations,
   ...serverSystemOperations,
   sessionEventOperation,
   interactionEventOperation,
+  taskListEventOperation,
+  taskEventOperation,
+  taskOutputEventOperation,
+  agentEventOperation,
+  usageEventOperation,
+  goalEventOperation,
+  todoEventOperation,
 ] as const satisfies readonly WsOperationDefinition[];
 
 export function getClientControlOperation(

@@ -14,14 +14,13 @@ import {
 } from '#/agent/tokenCounting/tokenCountingOps';
 import { TokenCountingAgentModelDefinition } from '#/session/tokenCounting/tokenCountingAgentModel';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import { grandTotal, type TokenUsage } from '#human/llm-requester/usage';
 import { IWireService } from '#/wire/wire';
 
 import { createTestAgent, InMemoryWireRecordPersistence, type TestAgentContext } from '../../harness';
 
 function totalOf(usage: TokenUsage | undefined): number {
-  if (usage === undefined) return 0;
-  return usage.inputOther + usage.output + usage.inputCacheRead + usage.inputCacheCreation;
+  return usage === undefined ? 0 : (grandTotal(usage) ?? 0);
 }
 
 function tokenCountingState(ctx: TestAgentContext) {
@@ -186,6 +185,14 @@ describe('Agent token counting', () => {
     expect(size.measured).toBe(0);
     expect(size.estimated).toBeGreaterThan(0);
     expect(size.size).toBe(size.estimated);
+
+    tokenCounting.measured(context.get(), [], {
+      inputOther: 10,
+      output: 2,
+      inputCacheRead: undefined,
+      inputCacheCreation: 0,
+    });
+    expect(tokenCountingState(ctx)).toEqual({ anchors: [], tokens: 0 });
   });
 
   it('ignores a stored anchor that overshoots the live context', async () => {

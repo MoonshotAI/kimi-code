@@ -156,12 +156,9 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
               agent_id: query.agent_id,
               items: page.items,
               has_more: page.hasMore,
-              tasks: [...transcript.getTasks().values()],
               interactions: [...transcript.getInteractions().values()],
               attachments: [...transcript.getAttachments().values()],
-              todos: [...transcript.getTodos().values()],
               prompts: [...transcript.getPrompts().values()],
-              meta: transcript.getMeta(),
               agents: store.agents(),
               pending_interactions: transcript.listPendingInteractions(),
               seq: transcriptService.getSeqWatermark(session_id, query.agent_id),
@@ -181,7 +178,7 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
       const roster = (await transcriptService.readColdRoster(session_id)) ?? [];
       if (
         !roster.some((d) => d.agentId === query.agent_id) &&
-        (snapshot.items.length > 0 || snapshot.tasks.length > 0 || query.agent_id === MAIN_AGENT_ID)
+        (snapshot.items.length > 0 || query.agent_id === MAIN_AGENT_ID)
       ) {
         roster.push({
           agentId: query.agent_id,
@@ -194,12 +191,9 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
             agent_id: query.agent_id,
             items: page.items,
             has_more: page.hasMore,
-            tasks: snapshot.tasks,
             interactions: snapshot.interactions,
             attachments: snapshot.attachments,
-            todos: snapshot.todos,
             prompts: snapshot.prompts,
-            meta: snapshot.meta,
             agents: roster,
             pending_interactions: [],
           },

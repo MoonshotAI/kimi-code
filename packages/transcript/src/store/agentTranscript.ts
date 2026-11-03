@@ -1,11 +1,8 @@
-import type { AgentId, AttachmentId, InteractionId, PromptId, TaskId, TodoId, TurnId } from '../model/ids';
+import type { AgentId, AttachmentId, InteractionId, PromptId, TurnId } from '../model/ids';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem } from '../model/item';
-import type { TranscriptMeta } from '../model/meta';
 import type { TranscriptPrompt } from '../model/prompt';
-import type { TranscriptTask } from '../model/task';
-import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptTurn } from '../model/turn';
 import {
   EMPTY_AGENT_STATE,
@@ -74,14 +71,6 @@ export class AgentTranscript {
     return item?.kind === 'turn' ? item : undefined;
   }
 
-  getTasks(): ReadonlyMap<TaskId, TranscriptTask> {
-    return this.#state.tasks;
-  }
-
-  getTask(taskId: TaskId): TranscriptTask | undefined {
-    return this.#state.tasks.get(taskId);
-  }
-
   getInteractions(): ReadonlyMap<InteractionId, TranscriptInteraction> {
     return this.#state.interactions;
   }
@@ -98,24 +87,12 @@ export class AgentTranscript {
     return this.#state.attachments.get(attachmentId);
   }
 
-  getTodos(): ReadonlyMap<TodoId, TranscriptTodo> {
-    return this.#state.todos;
-  }
-
-  getTodo(todoId: TodoId): TranscriptTodo | undefined {
-    return this.#state.todos.get(todoId);
-  }
-
   getPrompts(): ReadonlyMap<PromptId, TranscriptPrompt> {
     return this.#state.prompts;
   }
 
   getPrompt(promptId: PromptId): TranscriptPrompt | undefined {
     return this.#state.prompts.get(promptId);
-  }
-
-  getMeta(): TranscriptMeta {
-    return this.#state.meta;
   }
 
   listPendingInteractions(): readonly InteractionId[] {
@@ -150,12 +127,9 @@ export class AgentTranscript {
     }
     return {
       items,
-      tasks: [...this.#state.tasks.values()],
       interactions: [...this.#state.interactions.values()],
       attachments: [...this.#state.attachments.values()],
-      todos: [...this.#state.todos.values()],
       prompts: [...this.#state.prompts.values()],
-      meta: this.#state.meta,
       hasMoreOlder,
     };
   }

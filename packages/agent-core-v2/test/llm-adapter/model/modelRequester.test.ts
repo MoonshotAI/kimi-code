@@ -269,7 +269,10 @@ describe('generateModel request execution', () => {
       'timing',
     ]);
     const usage = events.find((e) => e.type === 'usage');
-    expect(usage).toMatchObject({ usage: { inputOther: 10, output: 7 }, model: 'fake-model' });
+    expect(usage).toMatchObject({
+      usage: { inputOther: 10, output: 7 },
+      model: 'fake-model',
+    });
     const finish = events.find((e) => e.type === 'finish');
     expect(finish).toMatchObject({
       id: 'msg-42',
@@ -302,6 +305,7 @@ describe('generateModel request execution', () => {
           requestId: null,
           retryAfterMs: null,
           headers: null,
+          retryable: false,
         },
       });
     const impl = modelEventRequester(
@@ -328,6 +332,7 @@ describe('generateModel request execution', () => {
           requestId: null,
           retryAfterMs: null,
           headers: null,
+          retryable: false,
         },
       });
     const impl = modelEventRequester(
@@ -352,6 +357,7 @@ describe('generateModel request execution', () => {
           requestId: null,
           retryAfterMs: null,
           headers: { 'x-trace-id': 'trace-error-1' },
+          retryable: true,
         },
       });
     const impl = modelEventRequester(
@@ -366,7 +372,7 @@ describe('generateModel request execution', () => {
     const nonErrorFailure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
     expect(nonErrorFailure).toBeInstanceOf(ChatProviderError);
     expect((nonErrorFailure as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
-    expect(isRetryableGenerateError(nonErrorFailure)).toBe(true);
+    expect(isRetryableGenerateError(nonErrorFailure)).toBe(false);
 
     requester.handler = (_i, emit) =>
       emit({
@@ -378,7 +384,10 @@ describe('generateModel request execution', () => {
     expect((syntaxFailure as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
 
     requester.handler = (_i, emit) =>
-      emit({ type: 'llm.failed.remote', error: { kind: 'abort', message: 'aborted' } });
+      emit({
+        type: 'llm.failed.remote',
+        error: { kind: 'abort', message: 'aborted', retryable: false },
+      });
     const aborted = await collect(impl.request(INPUT)).catch((error: unknown) => error);
     expect(isAbortError(aborted)).toBe(true);
 

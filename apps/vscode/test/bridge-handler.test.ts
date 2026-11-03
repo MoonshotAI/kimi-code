@@ -250,7 +250,7 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     });
   });
 
-  it("preserves adaptive thinking metadata in the Webview model list", async () => {
+  it("preserves adaptive thinking metadata and tolerates a missing model name", async () => {
     host.harness.getConfig.mockResolvedValueOnce({
       defaultModel: "anthropic/claude",
       models: {
@@ -274,6 +274,19 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
           adaptive_thinking: true,
         }],
       },
+    });
+
+    host.harness.getConfig.mockResolvedValueOnce({
+      defaultModel: "custom/missing",
+      models: {
+        "custom/missing": { provider: "custom", maxContextSize: 200_000 },
+      },
+    } as never);
+    await expect(
+      bridge.handle({ id: "rpc-models", method: Methods.GetModels }, "view-1"),
+    ).resolves.toMatchObject({
+      id: "rpc-models",
+      result: { models: [{ id: "custom/missing" }] },
     });
   });
 

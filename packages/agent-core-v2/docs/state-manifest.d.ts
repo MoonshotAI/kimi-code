@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 72 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 73 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -70,6 +70,7 @@
 //     llm.requestTrace                                src/agent/loop/llmRequestOps.ts
 //     llmRequester.emittedThinkingEffortWarnings      src/agent/loop/requester.ts
 //     llmRequester.lastConfigLogSignature             src/agent/loop/requester.ts
+//     llmRequester.lastMeasuredRequest                src/agent/loop/requester.ts
 //     llmRequester.mediaRecovery                      src/agent/loop/requester.ts
 //     llmRequester.turnConfigs                        src/agent/loop/requester.ts
 //     loop.disposing                                  src/agent/loop/loopService.ts
@@ -947,7 +948,7 @@ export interface AgentStateSnapshot {
     readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
       inputOther: number;
       output: number;
-      inputCacheRead: number;
+      inputCacheRead?: number;
       inputCacheCreation: number;
       raw?: Record<string, unknown>;
     };
@@ -1160,7 +1161,7 @@ export interface AgentStateSnapshot {
     readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
       inputOther: number;
       output: number;
-      inputCacheRead: number;
+      inputCacheRead?: number;
       inputCacheCreation: number;
       raw?: Record<string, unknown>;
     };
@@ -1382,7 +1383,7 @@ export interface AgentStateSnapshot {
     readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
       inputOther: number;
       output: number;
-      inputCacheRead: number;
+      inputCacheRead?: number;
       inputCacheCreation: number;
       raw?: Record<string, unknown>;
     };
@@ -1596,7 +1597,7 @@ export interface AgentStateSnapshot {
     readonly usage?: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
       inputOther: number;
       output: number;
-      inputCacheRead: number;
+      inputCacheRead?: number;
       inputCacheCreation: number;
       raw?: Record<string, unknown>;
     };
@@ -1644,6 +1645,29 @@ export interface AgentStateSnapshot {
   // src/agent/loop/requester.ts
   'llmRequester.emittedThinkingEffortWarnings': Set<string>;
   'llmRequester.lastConfigLogSignature': string | undefined;
+  'llmRequester.lastMeasuredRequest': /* MeasuredRequest — packages/agent-core-v2/src/agent/loop/requester.ts */ {
+    readonly modelAlias: string;
+    readonly contextRevision: number;
+    readonly inputTokens: number;
+    readonly startedAt: number;
+    readonly finishedAt: number;
+    readonly thinkingEffort: /* ThinkingEffort — packages/agent-core-v2/src/human/llm-requester/thinking.ts */ 'off' | 'on' | (string & {});
+    readonly requestKind?: string;
+    readonly turnId?: number;
+    readonly step?: number;
+    readonly traceId?: string;
+    readonly usage: /* TokenUsage — packages/agent-core-v2/src/human/llm-requester/usage.ts */ {
+      inputOther: number;
+      output: number;
+      inputCacheRead?: number;
+      inputCacheCreation: number;
+      raw?: Record<string, unknown>;
+    };
+    readonly systemPromptHash: string;
+    readonly toolsHash: string;
+    readonly messageCount: number;
+    readonly historyHash: string;
+  } | undefined;
   'llmRequester.mediaRecovery': /* MediaRecovery — packages/agent-core-v2/src/agent/loop/requester.ts */ {
     readonly modelAlias: string;
     readonly contextRevision: number;
@@ -1835,6 +1859,9 @@ export interface AgentStateSnapshot {
     readonly model?: string;
     readonly thinkingEffort?: string;
     readonly stopCode?: string;
+    readonly swarmIndex?: number;
+    readonly stateReason?: string;
+    readonly resultSummary?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';
@@ -1887,6 +1914,9 @@ export interface AgentStateSnapshot {
     readonly model?: string;
     readonly thinkingEffort?: string;
     readonly stopCode?: string;
+    readonly swarmIndex?: number;
+    readonly stateReason?: string;
+    readonly resultSummary?: string;
     readonly taskId: string;
     readonly description: string;
     readonly status: /* AgentTaskStatus — packages/agent-core-v2/src/agent/task/types.ts */ 'completed' | 'failed' | 'running' | 'timed_out' | 'killed' | 'lost';

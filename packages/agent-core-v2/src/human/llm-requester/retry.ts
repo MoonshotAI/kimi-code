@@ -7,8 +7,6 @@ const MAX_DELAY_MS = 32_000;
 const RETRY_FACTOR = 2;
 const JITTER_FACTOR = 0.25;
 
-const RETRYABLE_STATUS_CODES: readonly number[] = [408, 409, 429, 500, 502, 503, 504, 529];
-
 export interface LlmRetryOptions {
   readonly maxAttemptsPerStep?: number;
   readonly infiniteRetry?: boolean;
@@ -37,23 +35,8 @@ export function readRetryAfterMs(error: LlmErrorMessage): number | undefined {
 }
 
 export function isRetryableError(error: LlmErrorMessage): boolean {
-  switch (error.kind) {
-    case 'syntax':
-    case 'abort':
-    case 'quota_exhausted':
-    case 'context_overflow':
-    case 'request_too_large':
-    case 'request_structure':
-    case 'image_format':
-    case 'unknown':
-      return false;
-    case 'empty_response':
-      return error.finishReason !== 'filtered';
-    case 'status':
-      return RETRYABLE_STATUS_CODES.includes(error.statusCode);
-    default:
-      return true;
-  }
+  if (error.kind === 'syntax') return false;
+  return error.retryable;
 }
 
 export function shouldRetry(

@@ -6,19 +6,15 @@ import { readFile } from 'node:fs/promises';
 import {
   IAgentLifecycleService,
   IAgentContextMemoryService,
-  IFlagService,
   IWireService,
   IBlobStore,
   ISessionIndex,
-  ISessionManager,
   ISessionMetadata,
   IAgentLoopService,
-  TOWER_FLAG_ID,
   flattenChain,
   makeAgentScopeContext,
   followSessionLifecycles,
   getLiveSessionById,
-  isTowerFeatureAssembled,
   isUndoAnchor,
   reduceContextTranscript,
   type ContextMessage,
@@ -27,10 +23,6 @@ import {
   type SessionMeta,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  TowerStore,
-  resolveTowerRepoRoot,
-} from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
-import {
   TranscriptStore,
   foldWireRecordFacts,
   groupMessagesIntoSnapshot,
@@ -38,14 +30,11 @@ import {
   turnId as exportTurnKey,
   withoutUserPromptSubmitHookParts,
   type AgentDescriptor,
-  type ActivityMeta,
   type AgentTranscript,
   type AgentTranscriptSnapshot,
   type TranscriptChangeEvent,
   type TranscriptMarker,
   type TranscriptOperation,
-  type TranscriptTask,
-  type TranscriptTaskRef,
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
 
@@ -212,7 +201,7 @@ export class TranscriptService {
         (op) => op.op !== 'attachment.upsert' || !superseded.has(op.attachment.attachmentId),
       );
       const overlay = this.liveTurnOverlay(sessionId, agentId, transcript, snapshot);
-      if (overlay !== undefined) ops.push(overlay, { op: 'meta.merge', meta: { activity: 'turn' } });
+      if (overlay !== undefined) ops.push(overlay);
       ops.push(...this.livePromptBackfill(sessionId, agentId));
       const result = transcript.apply(ops);
       if (result.gap !== undefined) {
@@ -222,8 +211,7 @@ export class TranscriptService {
       this.live.get(sessionId)?.binding.syncFromStore(agentId);
     }
     const existing = store.agents().find((d) => d.agentId === agentId);
-    const hasContent =
-      snapshot !== undefined && (snapshot.items.length > 0 || snapshot.tasks.length > 0);
+    const hasContent = snapshot !== undefined && snapshot.items.length > 0;
     if (existing !== undefined || hasContent) {
       store.describeAgent({
         agentId,
@@ -676,34 +664,12 @@ export class TranscriptService {
       ?.handleOf(agentId)
       ?.accessor.get(IAgentLoopService)
       .snapshot();
-    const folded = foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
+    return foldWireRecordFacts(projectQuestionInteractionRecords(records, sessionId), base, {
       agentId,
       resolvePlanRevisionKey: (key) =>
         join(SESSIONS_ROOT, summary.workspaceId, sessionId, AGENTS_DIR, agentId, key),
       activeWireTurnId: status?.state === 'running' ? status.activeTurnId : undefined,
     });
-    const activity: ActivityMeta = status?.state === 'running' ? 'turn' : 'idle';
-    const snapshot = {
-      ...folded,
-      tasks: markLostSubagentTasks(folded, activity, (memberId) =>
-        liveAgents?.handleOf(memberId)?.accessor.get(IAgentLoopService).snapshot().state ===
-        'running',
-      ),
-      meta: { ...folded.meta, activity },
-    };
-    if (snapshot.meta.modes?.tower === undefined) return snapshot;
-    const flags = this.deps.core.accessor.get(IFlagService);
-    if (
-      agentId === MAIN_AGENT_ID &&
-      flags.enabled(TOWER_FLAG_ID) &&
-      isTowerFeatureAssembled(flags) &&
-      (await this.coldTowerOwnedHere(sessionId, summary.cwd))
-    ) {
-      return snapshot;
-    }
-    const modes = { ...snapshot.meta.modes, tower: undefined };
-    const cleared = modes.plan === undefined && modes.swarm === undefined && modes.tower === undefined;
-    return { ...snapshot, meta: { ...snapshot.meta, modes: cleared ? undefined : modes } };
   }
 
   private async drainLiveWire(
@@ -721,15 +687,6 @@ export class TranscriptService {
         'transcript: draining the live wire before a cold read failed',
       );
     }
-  }
-
-  private async coldTowerOwnedHere(sessionId: string, cwd: string | undefined): Promise<boolean> {
-    if (cwd === undefined) return true;
-    const owner = await new TowerStore(resolveTowerRepoRoot(cwd))
-      .load()
-      .then((state) => state.sessionId, () => undefined);
-    if (owner === undefined || owner === sessionId) return true;
-    return this.deps.core.accessor.get(ISessionManager).get(owner) === undefined;
   }
 
   dropSession(sessionId: string): void {
@@ -752,16 +709,10 @@ export function snapshotToOps(
   turnOps: (turn: TranscriptTurn) => TranscriptOperation[] = snapshotTurnOps,
 ): TranscriptOperation[] {
   const ops: TranscriptOperation[] = [];
-  const pending: (TranscriptMarker | TranscriptTaskRef)[] = [];
+  const pending: TranscriptMarker[] = [];
   let lastTurnOrdinal: number | undefined;
   const flushPending = (beforeTurn?: number): void => {
-    for (const item of pending) {
-      ops.push(
-        item.kind === 'marker'
-          ? { op: 'marker.upsert', item, beforeTurn }
-          : { op: 'taskref.upsert', item, beforeTurn },
-      );
-    }
+    for (const item of pending) ops.push({ op: 'marker.upsert', item, beforeTurn });
     pending.length = 0;
   };
   for (const item of snapshot.items) {
@@ -777,10 +728,6 @@ export function snapshotToOps(
   for (const attachment of snapshot.attachments) {
     ops.push({ op: 'attachment.upsert', attachment });
   }
-  for (const task of snapshot.tasks) {
-    ops.push({ op: 'task.upsert', task });
-  }
-  ops.push({ op: 'meta.merge', meta: snapshot.meta });
   return ops;
 }
 
@@ -804,48 +751,6 @@ const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
   'failed',
   'cancelled',
 ]);
-
-function memberTurnOrdinals(snapshot: AgentTranscriptSnapshot): ReadonlyMap<string, number> {
-  const ordinals = new Map<string, number>();
-  for (const item of snapshot.items) {
-    if (item.kind !== 'turn') continue;
-    for (const step of item.steps) {
-      for (const frame of step.frames) {
-        if (frame.kind !== 'tool') continue;
-        for (const ref of frame.agentRefs ?? []) ordinals.set(ref.agentId, item.ordinal);
-      }
-    }
-  }
-  return ordinals;
-}
-
-function latestTurnOrdinal(snapshot: AgentTranscriptSnapshot): number | undefined {
-  let latest: number | undefined;
-  for (const item of snapshot.items) {
-    if (item.kind !== 'turn') continue;
-    if (latest === undefined || item.ordinal > latest) latest = item.ordinal;
-  }
-  return latest;
-}
-
-function markLostSubagentTasks(
-  snapshot: AgentTranscriptSnapshot,
-  activity: ActivityMeta,
-  isMemberRunning: (memberId: string) => boolean,
-): readonly TranscriptTask[] {
-  const ordinals = memberTurnOrdinals(snapshot);
-  const latest = latestTurnOrdinal(snapshot);
-  const interrupted = (task: TranscriptTask): boolean => {
-    if (task.kind !== 'subagent' || task.detached || task.state !== 'running') return false;
-    if (task.agentId !== undefined && isMemberRunning(task.agentId)) return false;
-    if (activity !== 'turn') return true;
-    const owner = task.agentId === undefined ? undefined : ordinals.get(task.agentId);
-    return owner !== undefined && owner !== latest;
-  };
-  return snapshot.tasks.map((task) =>
-    interrupted(task) ? { ...task, state: 'lost' as const } : task,
-  );
-}
 
 function projectQuestionInteractionRecords(
   records: readonly ContextRecord[],

@@ -17,8 +17,7 @@ import {
 import type { TranscriptItem } from '#/model/item';
 import type { AgentTranscriptSnapshot, TranscriptOperation } from '#/ops/operation';
 
-const idLabel = (i: TranscriptItem): string =>
-  i.kind === 'turn' ? i.turnId : i.kind === 'marker' ? i.markerId : i.refId;
+const idLabel = (i: TranscriptItem): string => (i.kind === 'turn' ? i.turnId : i.markerId);
 
 describe('client metadata in transcript user origins', () => {
   it('retains user-invoked single skill frame metadata without exposing model-triggered activations as user input', () => {
@@ -116,7 +115,6 @@ describe('granularity', () => {
     frameOp,
     appendOp,
     promptOp,
-    { op: 'meta.merge', meta: { activity: 'turn' } },
   ];
 
   it('off admits nothing', () => {
@@ -127,7 +125,6 @@ describe('granularity', () => {
     expect(filterOpsForGrade('turn', ops).map((op) => op.op)).toEqual([
       'turn.upsert',
       'prompt.upsert',
-      'meta.merge',
     ]);
   });
 
@@ -137,7 +134,6 @@ describe('granularity', () => {
       'step.upsert',
       'frame.upsert',
       'prompt.upsert',
-      'meta.merge',
     ]);
   });
 
@@ -203,7 +199,6 @@ describe('granularity', () => {
         },
         { kind: 'marker', markerId: 'm1', marker: 'skill' },
       ],
-      tasks: [],
       interactions: [
         {
           interactionId: 'appr-1',
@@ -215,14 +210,11 @@ describe('granularity', () => {
       attachments: [
         { attachmentId: 'att_1', mediaType: 'image/png', source: { kind: 'url' as const, url: 'https://example.com/a.png' } },
       ],
-      todos: [{ todoId: 'todo', items: [{ title: 'write tests', status: 'in_progress' as const }] }],
       prompts: [{ promptId: 'p1', status: 'running' as const, createdAt: '2026-07-22T00:00:00.000Z' }],
-      meta: {},
     };
     const turnGrade = redactSnapshotForGrade('turn', snapshot);
     expect(turnGrade.interactions).toHaveLength(1);
     expect(turnGrade.attachments).toHaveLength(1);
-    expect(turnGrade.todos).toHaveLength(1);
     expect(turnGrade.prompts).toHaveLength(1);
     const turn = turnGrade.items[0];
     expect(turn?.kind === 'turn' && turn.steps).toEqual([]);
@@ -311,14 +303,12 @@ describe('ViewRegistry', () => {
 describe('contract schemas', () => {
   it('roundtrips every op kind', () => {
     const ops: TranscriptOperation[] = [
-      { op: 'reset', agentId: 'main', snapshot: { items: [], tasks: [], interactions: [], attachments: [], todos: [], prompts: [], meta: {}, hasMoreOlder: true } },
+      { op: 'reset', agentId: 'main', snapshot: { items: [], interactions: [], attachments: [], prompts: [], hasMoreOlder: true } },
       turnOp(1),
       stepOp,
       frameOp,
       appendOp,
       { op: 'marker.upsert', item: { kind: 'marker', markerId: 'm1', marker: 'goal' } },
-      { op: 'taskref.upsert', item: { kind: 'taskref', refId: 'r1', taskId: 'task1' } },
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: false, outputTail: '' } },
       {
         op: 'interaction.upsert',
         interaction: { interactionId: 'appr-1', interactionKind: 'approval', toolCallId: 'c1', state: 'pending' },
@@ -327,9 +317,7 @@ describe('contract schemas', () => {
         op: 'attachment.upsert',
         attachment: { attachmentId: 'att_1', mediaType: 'image/png', source: { kind: 'file', fileId: 'f1' } },
       },
-      { op: 'todo.upsert', todo: { todoId: 'todo', items: [{ title: 'x', status: 'done' }] } },
       promptOp,
-      { op: 'meta.merge', meta: { goal: { objective: 'x', status: 'active' } } },
       { op: 'items.remove', ids: ['t1'] },
     ];
     for (const op of ops) {
@@ -345,10 +333,8 @@ describe('contract schemas', () => {
         agentId: 'main',
         snapshot: {
           items: [],
-          tasks: [],
           interactions: [],
           attachments: [],
-          todos: [],
           prompts: [
             {
               promptId: 'p1',
@@ -360,18 +346,6 @@ describe('contract schemas', () => {
               steeredAt: '2026-07-22T00:00:30.000Z',
             },
           ],
-          meta: {
-            agent: {
-              model: 'k2',
-              thinkingEffort: 'high',
-              usage: { byModel: { k2: usage }, currentTurn: usage, total: usage },
-              contextTokens: 1234,
-              maxContextTokens: 128000,
-              contextUsage: 0.01,
-              permission: 'auto',
-              phase: { kind: 'retrying', turnId: 1, step: 1, stepId: 't1.1', failedAttempt: 1, nextAttempt: 2, maxAttempts: 3, delayMs: 500, since: 1000 },
-            },
-          },
         },
       },
       {
@@ -413,20 +387,6 @@ describe('contract schemas', () => {
           inputText: '{"command":"ls',
           progress: { kind: 'progress', text: 'half', percent: 50, customKind: 'bar', customData: { x: 1 } },
         },
-      },
-      {
-        op: 'task.upsert',
-        task: {
-          taskId: 'task1', kind: 'subagent', state: 'completed', detached: false, outputTail: '',
-          resultSummary: 'scanned 12 files',
-          error: 'partial failure',
-          stateReason: 'waiting for input',
-          usage,
-        },
-      },
-      {
-        op: 'meta.merge',
-        meta: { agent: { model: 'k2', phase: { kind: 'ended', turnId: 1, reason: 'completed', durationMs: 1500, at: 2000 } } },
       },
     ];
     for (const op of ops) {
@@ -1540,75 +1500,6 @@ describe('foldWireRecordFacts (cold facts)', () => {
       },
     ]);
 
-  it('folds terminal subagent outcomes, background promotion, and a reused member generation', () => {
-    const spawned = (subagentId: string, time: number): HistoryWireRecord => ({
-      type: 'subagent.spawned', subagentId, subagentName: 'explore', parentAgentId: 'main',
-      parentToolCallId: 'swarm', runInBackground: false, time,
-    });
-    const folded = foldWireRecordFacts([
-      spawned('failed', 1000),
-      { type: 'subagent.failed', subagentId: 'failed', error: 'offline', time: 2000 },
-      spawned('cancelled', 1000),
-      { type: 'subagent.cancelled', subagentId: 'cancelled', time: 2000 },
-      spawned('reused', 1000),
-      { type: 'subagent.completed', subagentId: 'reused', resultSummary: 'old', time: 2000 },
-      spawned('reused', 3000),
-      { ...spawned('background', 1000), taskId: 'task-1', runInBackground: true },
-      { type: 'subagent.completed', subagentId: 'background', resultSummary: 'done', usage: { inputOther: 5, output: 7, inputCacheRead: 1, inputCacheCreation: 2 }, time: 2000 },
-      { type: 'task.terminated', info: { taskId: 'task-1', kind: 'agent', status: 'completed', agentId: 'background', detached: true, startedAt: 1000, endedAt: 2000 } },
-      { ...spawned('foreign', 1000), parentAgentId: 'other' },
-    ], baseWithMarker(), { agentId: 'main' });
-    expect(folded.tasks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ taskId: 'failed', state: 'failed', error: 'offline' }),
-      expect.objectContaining({ taskId: 'cancelled', state: 'killed' }),
-      expect.objectContaining({ taskId: 'reused', state: 'running', startedAt: new Date(3000).toISOString() }),
-      expect.objectContaining({ taskId: 'task-1', state: 'completed', resultSummary: 'done', detached: true, usage: { inputOther: 5, output: 7, inputCacheRead: 1, inputCacheCreation: 2 } }),
-    ]));
-    expect(folded.tasks).toHaveLength(4);
-    expect(folded.tasks.find((task) => task.taskId === 'reused')?.resultSummary).toBeUndefined();
-    expect(folded.tasks.find((task) => task.taskId === 'failed')?.usage).toBeUndefined();
-  });
-
-  it('adopts the spawn placeholder into the task registered afterwards', () => {
-    const folded = foldWireRecordFacts([
-      { type: 'subagent.spawned', subagentId: 'child', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'tower', runInBackground: false, description: 'review the diff', model: 'k2', time: 1000 },
-      { type: 'task.started', info: { taskId: 'task-9', kind: 'agent', status: 'running', agentId: 'child', detached: false, startedAt: 1100 }, time: 1100 },
-      { type: 'subagent.completed', subagentId: 'child', resultSummary: 'done', usage: { inputOther: 3, output: 4, inputCacheRead: 0, inputCacheCreation: 0 }, time: 2000 },
-    ], baseWithMarker(), { agentId: 'main' });
-    expect(folded.tasks).toEqual([
-      expect.objectContaining({
-        taskId: 'task-9', agentId: 'child', state: 'completed', resultSummary: 'done',
-        description: 'review the diff', model: 'k2',
-        startedAt: new Date(1000).toISOString(),
-        usage: { inputOther: 3, output: 4, inputCacheRead: 0, inputCacheCreation: 0 },
-      }),
-    ]);
-  });
-
-  it('terminalises a background member spawned before its task was registered', () => {
-    const folded = foldWireRecordFacts([
-      { type: 'subagent.spawned', subagentId: 'worker', subagentName: 'tower-worker', parentAgentId: 'main', parentToolCallId: 'tower-spawn', runInBackground: true, description: 'build the feature', time: 1000 },
-      { type: 'task.started', info: { taskId: 'task-7', kind: 'agent', status: 'running', agentId: 'worker', detached: true, startedAt: 1100 }, time: 1100 },
-      { type: 'task.terminated', info: { taskId: 'task-7', kind: 'agent', status: 'lost', agentId: 'worker', detached: true, startedAt: 1100, endedAt: 3000 }, time: 3000 },
-    ], baseWithMarker(), { agentId: 'main' });
-    expect(folded.tasks).toEqual([
-      expect.objectContaining({ taskId: 'task-7', agentId: 'worker', state: 'lost', detached: true, description: 'build the feature' }),
-    ]);
-  });
-
-  it('keeps a terminal subagent record in sync with a placeholder left by an earlier generation', () => {
-    const folded = foldWireRecordFacts([
-      { type: 'subagent.spawned', subagentId: 'worker', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'agent-a', runInBackground: false, time: 1000 },
-      { type: 'subagent.spawned', subagentId: 'worker', subagentName: 'explore', parentAgentId: 'main', parentToolCallId: 'agent-b', runInBackground: false, taskId: 'task-7', time: 2000 },
-      { type: 'subagent.failed', subagentId: 'worker', error: 'offline', time: 3000 },
-    ], baseWithMarker(), { agentId: 'main' });
-    expect(folded.tasks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ taskId: 'task-7', state: 'failed', error: 'offline' }),
-      expect.objectContaining({ taskId: 'worker', state: 'failed', error: 'offline' }),
-    ]));
-    expect(folded.tasks).toHaveLength(2);
-  });
-
   it('returns the base snapshot unchanged when no fact records exist (old sessions)', () => {
     const base = baseWithMarker();
     const folded = foldWireRecordFacts(
@@ -1622,50 +1513,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(folded.items).toBe(base.items);
   });
 
-  it('folds todo records into the global todo document, last write wins', () => {
-    const base = baseWithMarker();
-    const folded = foldWireRecordFacts(
-      [
-        { type: 'tools.update_store', key: 'todo', value: [{ title: 'old', status: 'pending' }], time: 1000 },
-        { type: 'tools.update_store', key: 'other', value: [{ title: 'ignored', status: 'done' }], time: 2000 },
-        {
-          type: 'tools.update_store',
-          key: 'todo',
-          value: [
-            { title: 'write tests', status: 'in_progress' },
-            { title: 'ship', status: 'pending' },
-            { title: 'malformed' },
-          ],
-          time: 3000,
-        },
-      ],
-      base,
-    );
-    expect(folded.todos).toEqual([
-      {
-        todoId: 'todo',
-        items: [
-          { title: 'write tests', status: 'in_progress' },
-          { title: 'ship', status: 'pending' },
-        ],
-        updatedAt: new Date(3000).toISOString(),
-      },
-    ]);
-    expect(folded.items).toBe(base.items);
-  });
-
-  it('folds an edited goal objective into meta.goal', () => {
-    const folded = foldWireRecordFacts(
-      [
-        { type: 'goal.create', goalId: 'g1', objective: 'fix the bug', time: 1000 },
-        { type: 'goal.update', objective: 'fix the other bug', time: 2000 },
-      ],
-      baseWithMarker(),
-    );
-    expect(folded.meta.goal?.objective).toBe('fix the other bug');
-  });
-
-  it('folds goal create/update/clear into meta.goal with markers, last write wins', () => {
+  it('adds a marker for every goal create and update record', () => {
     const base = baseWithMarker();
     expect(base.items.some((item) => item.kind === 'marker' && item.markerId === 'm1')).toBe(true);
 
@@ -1683,13 +1531,6 @@ describe('foldWireRecordFacts (cold facts)', () => {
       ],
       base,
     );
-    expect(folded.meta.goal).toEqual({
-      objective: 'fix the bug',
-      status: 'blocked',
-      completionCriterion: 'tests pass',
-      budgetUsed: 1200,
-      budgetLimit: 50000,
-    });
     const goalMarkers = folded.items.filter(
       (item) => item.kind === 'marker' && item.marker === 'goal',
     );
@@ -1700,15 +1541,6 @@ describe('foldWireRecordFacts (cold facts)', () => {
     ]);
     expect(goalMarkers[0]).toMatchObject({ at: new Date(1000).toISOString() });
     expect(folded.items.slice(0, base.items.length)).toEqual(base.items);
-
-    const cleared = foldWireRecordFacts(
-      [
-        { type: 'goal.create', goalId: 'g1', objective: 'fix the bug', time: 1000 },
-        { type: 'goal.clear', time: 2000 },
-      ],
-      base,
-    );
-    expect(cleared.meta.goal).toBeUndefined();
   });
 
   it('marks user-cancelled turns with interruption markers, skipping unattributable cancels', () => {
@@ -1738,7 +1570,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
     ]);
   });
 
-  it('folds plan/swarm mode records into meta.modes with enter/exit markers', () => {
+  it('adds plan/swarm enter and exit markers', () => {
     const base = baseWithMarker();
     const folded = foldWireRecordFacts(
       [
@@ -1748,74 +1580,13 @@ describe('foldWireRecordFacts (cold facts)', () => {
       ],
       base,
     );
-    expect(folded.meta.modes).toEqual({ swarm: {} });
     const markers = folded.items
       .filter((item) => item.kind === 'marker')
       .map((item) => item.kind === 'marker' && item.marker);
     expect(markers).toEqual(['compaction', 'plan.enter', 'swarm.enter', 'plan.exit']);
-
-    const cancelled = foldWireRecordFacts(
-      [
-        { type: 'plan_mode.enter', id: 'plan-1', time: 1000 },
-        { type: 'plan_mode.cancel', time: 2000 },
-        { type: 'swarm_mode.enter', trigger: { kind: 'tool' }, time: 3000 },
-        { type: 'swarm_mode.exit', time: 4000 },
-      ],
-      base,
-    );
-    expect(cancelled.meta.modes).toEqual({});
-
-    const stillPlanning = foldWireRecordFacts(
-      [{ type: 'plan_mode.enter', id: 'plan-1', time: 1000 }],
-      base,
-    );
-    expect(stillPlanning.meta.modes).toEqual({ plan: {} });
   });
 
-  it('keeps a model-started swarm that an older version never closed out of meta.modes', () => {
-    const base = baseWithMarker();
-    const markersOf = (snapshot: AgentTranscriptSnapshot) =>
-      snapshot.items
-        .filter((item) => item.kind === 'marker')
-        .map((item) => item.kind === 'marker' && item.marker);
-
-    const modelStarted = foldWireRecordFacts(
-      [{ type: 'swarm_mode.enter', agentId: 'main', trigger: 'tool', time: 1000 }],
-      base,
-    );
-    expect(modelStarted.meta.modes?.swarm).toBeUndefined();
-    expect(markersOf(modelStarted)).toEqual(['compaction', 'swarm.enter']);
-
-    const userStarted = foldWireRecordFacts(
-      [{ type: 'swarm_mode.enter', agentId: 'main', trigger: 'manual', time: 1000 }],
-      base,
-    );
-    expect(userStarted.meta.modes).toEqual({ swarm: {} });
-  });
-
-  it('folds tower mode records into meta.modes without markers', () => {
-    const base = baseWithMarker();
-    const folded = foldWireRecordFacts(
-      [
-        { type: 'tower_mode.enter', time: 1000 },
-        { type: 'tower_mode.exit', time: 2000 },
-        { type: 'tower_mode.enter', time: 3000 },
-      ],
-      base,
-    );
-    expect(folded.meta.modes).toEqual({ tower: {} });
-
-    const exited = foldWireRecordFacts(
-      [
-        { type: 'tower_mode.enter', time: 1000 },
-        { type: 'tower_mode.exit', time: 2000 },
-      ],
-      base,
-    );
-    expect(exited.meta.modes).toEqual({});
-  });
-
-  it('folds plan.revision records into the plan badge and a timeline marker', () => {
+  it('folds plan.revision records into a timeline marker with the resolved path', () => {
     const base = baseWithMarker();
     const revision = {
       type: 'plan.revision',
@@ -1831,9 +1602,6 @@ describe('foldWireRecordFacts (cold facts)', () => {
       base,
       { resolvePlanRevisionKey: (key) => `sessions/w/s/agents/main/${key}` },
     );
-    expect(folded.meta.modes).toEqual({
-      plan: { reviewPath: 'sessions/w/s/agents/main/plan/plan-1/v2.md', version: 2 },
-    });
     const revisionMarkers = folded.items.filter(
       (item) => item.kind === 'marker' && item.marker === 'plan.revision',
     );
@@ -1861,21 +1629,9 @@ describe('foldWireRecordFacts (cold facts)', () => {
       ],
       base,
     );
-    expect(exited.meta.modes?.plan).toBeUndefined();
     expect(
       exited.items.filter((item) => item.kind === 'marker' && item.marker === 'plan.revision'),
     ).toHaveLength(1);
-
-    const reentered = foldWireRecordFacts(
-      [
-        { type: 'plan_mode.enter', id: 'plan-1', time: 1000 },
-        revision,
-        { type: 'plan_mode.exit', id: 'plan-1', time: 3000 },
-        { type: 'plan_mode.enter', id: 'plan-2', time: 4000 },
-      ],
-      base,
-    );
-    expect(reentered.meta.modes).toEqual({ plan: {} });
   });
 
   it('folds legacy plan.revision path records without a key', () => {
@@ -1893,9 +1649,6 @@ describe('foldWireRecordFacts (cold facts)', () => {
       [{ type: 'plan_mode.enter', id: 'plan-1', time: 1000 }, legacy],
       base,
     );
-    expect(folded.meta.modes).toEqual({
-      plan: { reviewPath: 'sessions/w/s/agents/main/plan/plan-1/v1.md', version: 1 },
-    });
     const revisionMarkers = folded.items.filter(
       (item) => item.kind === 'marker' && item.marker === 'plan.revision',
     );
@@ -1914,102 +1667,6 @@ describe('foldWireRecordFacts (cold facts)', () => {
         at: new Date(2000).toISOString(),
       },
     ]);
-  });
-
-  it('folds task records into task entities and timeline taskrefs', () => {
-    const base = baseWithMarker();
-    const folded = foldWireRecordFacts(
-      [
-        {
-          type: 'task.started',
-          info: {
-            taskId: 'task_1',
-            kind: 'process',
-            description: 'pnpm test',
-            status: 'running',
-            startedAt: 1000,
-            endedAt: null,
-          },
-          time: 1000,
-        },
-        {
-          type: 'task.started',
-          info: {
-            taskId: 'task_2',
-            kind: 'agent',
-            description: 'scan the repo',
-            status: 'running',
-            detached: false,
-            agentId: 'sub-1',
-            startedAt: 2000,
-            endedAt: null,
-          },
-          time: 2000,
-        },
-        {
-          type: 'task.terminated',
-          info: {
-            taskId: 'task_1',
-            kind: 'process',
-            description: 'pnpm test',
-            status: 'completed',
-            startedAt: 1000,
-            endedAt: 5000,
-          },
-          outputTail: '42 passed',
-          time: 5000,
-        },
-      ],
-      base,
-    );
-
-    expect(folded.tasks).toEqual([
-      {
-        taskId: 'task_1',
-        kind: 'shell',
-        state: 'completed',
-        detached: true,
-        description: 'pnpm test',
-        agentId: undefined,
-        outputTail: '42 passed',
-        startedAt: new Date(1000).toISOString(),
-        endedAt: new Date(5000).toISOString(),
-      },
-      {
-        taskId: 'task_2',
-        kind: 'subagent',
-        state: 'running',
-        detached: false,
-        description: 'scan the repo',
-        agentId: 'sub-1',
-        outputTail: '',
-        startedAt: new Date(2000).toISOString(),
-        endedAt: undefined,
-      },
-    ]);
-    const refs = folded.items.filter((item) => item.kind === 'taskref');
-    expect(refs).toEqual([
-      { kind: 'taskref', refId: 'ref-task_1', taskId: 'task_1', at: new Date(1000).toISOString() },
-      { kind: 'taskref', refId: 'ref-task_2', taskId: 'task_2', at: new Date(2000).toISOString() },
-    ]);
-  });
-
-  it('maps unknown task kinds to other and survives malformed task records', () => {
-    const base = baseWithMarker();
-    const folded = foldWireRecordFacts(
-      [
-        {
-          type: 'task.started',
-          info: { taskId: 'task_q', kind: 'question', status: 'running', startedAt: 1000, endedAt: null },
-          time: 1000,
-        },
-        { type: 'task.started', time: 2000 },
-        { type: 'task.terminated', info: { kind: 'process' }, time: 3000 },
-      ],
-      base,
-    );
-    expect(folded.tasks).toHaveLength(1);
-    expect(folded.tasks[0]).toMatchObject({ taskId: 'task_q', kind: 'other', state: 'running' });
   });
 
   it('folds interaction request/resolved into entities with terminal states', () => {
@@ -2237,6 +1894,25 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(first.steps[0]?.stepId).toBe('t5.1');
     expect(first.steps[0]?.frames.every((frame) => frame.frameId.startsWith('t5.1.'))).toBe(true);
     expect(second.steps[0]?.stepId).toBe('t7.1');
+
+    const rawIds = [5, 1, 7, 8, 9, 6];
+    const collisionBase = groupMessagesIntoSnapshot(
+      rawIds.flatMap((rawId) => [
+        { role: 'user' as const, id: `p${rawId}`, content: [{ type: 'text' as const, text: `prompt ${rawId}` }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: `answer ${rawId}` }], toolCalls: [] },
+      ]),
+    );
+    const collision = foldWireRecordFacts(
+      [
+        ...rawIds.map((rawId) => ({ type: 'turn.prompt', turnId: rawId, promptId: `p${rawId}`, origin: { kind: 'user' } })),
+        { type: 'turn.prompt', turnId: 2, origin: { kind: 'retry' } },
+        { type: 'turn.ended', turnId: 2, reason: 'failed' },
+      ],
+      collisionBase,
+    );
+    const collisionTurns = collision.items.filter((item) => item.kind === 'turn');
+    expect(collisionTurns.map((turn) => turn.ordinal).toSorted((a, b) => a - b)).toEqual([1, 2, 5, 6, 7, 8, 9]);
+    expect(new Set(collisionTurns.map((turn) => turn.turnId)).size).toBe(7);
   });
 
   it('marks a turn without terminal events as wedged once a later turn starts, and wedgifies a dangling tail unless it is live', () => {
@@ -2541,7 +2217,10 @@ describe('foldWireRecordFacts (cold facts)', () => {
       ],
       base,
     );
-    const system = folded.items[0];
+    const empty = folded.items[0];
+    if (empty?.kind !== 'turn') throw new Error('expected empty turn');
+    expect(empty).toMatchObject({ turnId: 't0', triggerPromptId: 'prompt-empty', state: 'failed' });
+    const system = folded.items[1];
     if (system?.kind !== 'turn') throw new Error('expected turn');
     expect(system.triggerPromptId).toBeUndefined();
     expect(system.state).toBe('cancelled');
@@ -2572,7 +2251,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(system.error).toBe('system failure');
   });
 
-  it('maps turn.ended around hidden retry turns replayed from the turn-clock records', () => {
+  it('keeps hidden retry turns with their raw turn ids and terminal facts', () => {
     const base = groupMessagesIntoSnapshot([
       { id: 'prompt-1', role: 'user', content: [{ type: 'text', text: 'one' }], toolCalls: [], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
@@ -2594,12 +2273,12 @@ describe('foldWireRecordFacts (cold facts)', () => {
     if (first?.kind !== 'turn') throw new Error('expected turn');
     expect(first.state).toBe('completed');
     expect(first.triggerPromptId).toBe('prompt-1');
-    const second = folded.items[1];
+    const retry = folded.items[1];
+    if (retry?.kind !== 'turn') throw new Error('expected retry turn');
+    expect(retry).toMatchObject({ turnId: 't1', ordinal: 1, state: 'failed', error: 'retry boom', steps: [] });
+    const second = folded.items[2];
     if (second?.kind !== 'turn') throw new Error('expected turn');
-    expect(second.state).toBe('cancelled');
-    expect(second.triggerPromptId).toBe('prompt-2');
-    expect(second.error).toBeUndefined();
-    expect(second.durationMs).toBe(20);
+    expect(second).toMatchObject({ turnId: 't2', ordinal: 2, state: 'cancelled', triggerPromptId: 'prompt-2', durationMs: 20 });
   });
 
   it('maps turn.ended across queued-then-cancelled turn reservations', () => {
@@ -2654,6 +2333,30 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(replacement.triggerPromptId).toBe('prompt-3');
     expect(replacement.state).toBe('failed');
     expect(replacement.error).toBe('replacement failed');
+
+    const reopened = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', turnId: 0, origin: { kind: 'user' }, promptId: 'prompt-old', time: 1 },
+        { type: 'context.append_message', message: { role: 'user', content: [{ type: 'text', text: 'date reminder' }], origin: { kind: 'injection' } }, time: 1.5 },
+        { type: 'token_counting.truncated', time: 2 },
+        { type: 'turn.prompt', turnId: 1, origin: { kind: 'user' }, promptId: 'prompt-new', time: 3 },
+        { type: 'turn.ended', turnId: 1, reason: 'completed', time: 4 },
+      ],
+      groupMessagesIntoSnapshot([
+        { id: 'prompt-new', role: 'user', content: [{ type: 'text', text: 'steered request' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+      ]),
+    );
+    const reopenedTurns = reopened.items.filter((item) => item.kind === 'turn');
+    expect(reopenedTurns.map((turn) => turn.prompt)).toEqual(['steered request']);
+
+    const flattenedUndo = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', turnId: 0, origin: { kind: 'user' }, promptId: 'prompt-undone', time: 1 },
+      ],
+      groupMessagesIntoSnapshot([]),
+    );
+    expect(flattenedUndo.items.filter((item) => item.kind === 'turn')).toEqual([]);
   });
 
   it('counts context-only blocked prompts as undo anchors', () => {

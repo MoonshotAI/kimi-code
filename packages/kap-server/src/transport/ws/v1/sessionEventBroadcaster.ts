@@ -12,6 +12,7 @@ import type {
   Workspace,
 } from '@moonshot-ai/agent-core-v2';
 import {
+  IAgentLifecycleService,
   IEventService,
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
@@ -58,8 +59,14 @@ import {
   interactionOutcome,
 } from '../../../protocol/interaction-wire';
 import { toWireQuestion } from '../../../protocol/question-wire';
+import type { AgentFeedMessage } from '../../../protocol/ws-agent';
+import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
+import { ensureMainAgent } from '../../mainAgent';
+import { SessionAgentFeed } from './sessionAgentFeed';
+import { SessionTaskFeed } from './sessionTaskFeed';
+import { toTaskMessage } from './taskState';
 
 export interface EventEnvelope {
   readonly type: string;
@@ -75,7 +82,12 @@ export interface BroadcastLogger {
 
 export type BroadcastDelivery = 'subscription' | 'immediate';
 
-export type BroadcastFrame = EventEnvelope | InteractionEventMessage;
+export type BroadcastFrame =
+  | EventEnvelope
+  | InteractionEventMessage
+  | TaskEventMessage
+  | TaskListMessage
+  | AgentFeedMessage;
 
 export interface BroadcastTarget {
   send(frame: BroadcastFrame, delivery?: BroadcastDelivery): void;
@@ -94,6 +106,9 @@ interface SessionState {
   readonly knownInteractions: Map<string, Interaction>;
   transcriptStream?: TranscriptStream;
   readonly transcriptSeeded: Set<BroadcastTarget>;
+  tasks?: SessionTaskFeed;
+  agents?: SessionAgentFeed;
+  readonly listedAgents: Map<BroadcastTarget, Set<string>>;
 }
 
 interface WorkTracker {
@@ -182,8 +197,9 @@ export class SessionEventBroadcaster {
     transcriptGrades: TranscriptGradeSpec,
     transcriptSince?: Record<string, number>,
   ): Promise<boolean> {
+    let session: ISessionScopeHandle | undefined;
     try {
-      await resumeSessionById(this.opts.core.accessor, sessionId);
+      session = await resumeSessionById(this.opts.core.accessor, sessionId);
     } catch (error) {
       this.opts.logger?.warn(
         { sessionId, err: error instanceof Error ? error.message : String(error) },
@@ -191,10 +207,21 @@ export class SessionEventBroadcaster {
       );
       return false;
     }
+    if (session !== undefined) {
+      try {
+        await ensureMainAgent(session);
+      } catch (error) {
+        this.opts.logger?.warn(
+          { sessionId, err: error instanceof Error ? error.message : String(error) },
+          'session subscribe main agent failed',
+        );
+      }
+    }
     const state = await this.ensureState(sessionId);
     if (state === undefined || this.sessions.get(sessionId) !== state) return false;
     const prev = state.targets.get(target);
     state.targets.set(target, transcriptGrades);
+    this.sendAgentLists(state, target, transcriptGrades);
     if (this.willSendTranscriptReset(state, transcriptGrades, prev)) {
       state.transcriptSeeded.delete(target);
     }
@@ -208,6 +235,7 @@ export class SessionEventBroadcaster {
     if (state === undefined) return;
     state.targets.delete(target);
     state.transcriptSeeded.delete(target);
+    state.listedAgents.delete(target);
     this.evictDetachedSession(sessionId);
   }
 
@@ -219,6 +247,7 @@ export class SessionEventBroadcaster {
     const state = this.sessions.get(sessionId);
     if (state === undefined || !state.targets.has(target)) return;
     state.targets.set(target, transcriptGrades);
+    this.sendAgentLists(state, target, transcriptGrades);
   }
 
   private willSendTranscriptReset(
@@ -423,6 +452,9 @@ export class SessionEventBroadcaster {
     if (getLiveSessionById(this.opts.core.accessor, sessionId) === undefined) return;
     state.detached = undefined;
     this.attachInteractions(sessionId, state);
+    this.attachAgentFeeds(sessionId, state);
+    state.listedAgents.clear();
+    for (const [target, spec] of state.targets) this.sendAgentLists(state, target, spec);
     for (const [target, spec] of state.targets) {
       await this.subscribeTranscript(state, target, spec, undefined);
       if (state.targets.has(target)) state.transcriptSeeded.add(target);
@@ -444,10 +476,76 @@ export class SessionEventBroadcaster {
       lifecycleDisposables: [],
       knownInteractions: new Map(),
       transcriptSeeded: new Set(),
+      listedAgents: new Map(),
     };
     this.sessions.set(sessionId, state);
     this.attachInteractions(sessionId, state);
+    this.attachAgentFeeds(sessionId, state);
     return state;
+  }
+
+  private attachAgentFeeds(sessionId: string, state: SessionState): void {
+    const agents = getLiveSessionById(this.opts.core.accessor, sessionId)?.accessor.get(
+      IAgentLifecycleService,
+    );
+    if (agents === undefined) return;
+    const tasks = new SessionTaskFeed(agents, (agentId, info) => {
+      this.sendAgentFrame(state, agentId, toTaskMessage(state.sessionId, agentId, info));
+    });
+    const agentStates = new SessionAgentFeed(sessionId, agents, (agentId, message) => {
+      this.sendAgentFrame(state, agentId, message);
+    });
+    state.tasks = tasks;
+    state.agents = agentStates;
+    state.lifecycleDisposables.push(tasks, agentStates);
+  }
+
+  private sendAgentLists(state: SessionState, target: BroadcastTarget, spec: TranscriptGradeSpec): void {
+    const tasks = state.tasks;
+    if (tasks === undefined) return;
+    let listed = state.listedAgents.get(target);
+    if (listed === undefined) {
+      listed = new Set();
+      state.listedAgents.set(target, listed);
+    }
+    const agentIds = new Set([...tasks.agentIds(), ...Object.keys(spec).filter((id) => id !== '*')]);
+    for (const agentId of agentIds) {
+      if (gradeFor(spec, agentId) === 'off') {
+        listed.delete(agentId);
+        continue;
+      }
+      if (listed.has(agentId)) continue;
+      listed.add(agentId);
+      const frames: BroadcastFrame[] = [
+        {
+          type: 'task.list',
+          session_id: state.sessionId,
+          agent_id: agentId,
+          tasks: tasks.running(agentId),
+        },
+        ...(state.agents?.snapshot(agentId) ?? []),
+      ];
+      for (const frame of frames) {
+        try {
+          target.send(frame);
+        } catch {
+        }
+      }
+    }
+  }
+
+  private sendAgentFrame(
+    state: SessionState,
+    agentId: string,
+    frame: TaskEventMessage | AgentFeedMessage,
+  ): void {
+    for (const [target, spec] of state.targets) {
+      if (gradeFor(spec, agentId) === 'off') continue;
+      try {
+        target.send(frame);
+      } catch {
+      }
+    }
   }
 
   private trackWork(sessionId: string, session: ISessionScopeHandle): void {

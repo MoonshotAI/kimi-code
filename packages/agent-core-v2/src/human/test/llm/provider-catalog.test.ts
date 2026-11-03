@@ -44,7 +44,7 @@ function requesterOf(
 }
 
 function failingRequester(message: string): CoreLlmRequester<'protocol'> {
-  return requesterOf({ type: 'failed', error: { kind: 'provider', message } });
+  return requesterOf({ type: 'failed', error: { kind: 'provider', message, retryable: true } });
 }
 
 function stubProvider(
@@ -65,7 +65,7 @@ async function until(predicate: () => boolean): Promise<void> {
 describe('providerCatalog ping', () => {
   it('marks a failing model and emits changed, then clears the mark after a successful ping', async () => {
     let failing = true;
-    const requester = requesterOf(() => (failing ? { type: 'failed', error: { kind: 'provider', message: 'boom' } } : doneOutcome()));
+    const requester = requesterOf(() => (failing ? { type: 'failed', error: { kind: 'provider', message: 'boom', retryable: true } } : doneOutcome()));
     const catalog = await createProviderCatalog();
     const changed: string[][] = [];
     catalog.onChanged((event) => changed.push([...event.providers]));

@@ -2,10 +2,11 @@ import {
   APIConnectionError,
   APIEmptyResponseError,
   APIProviderQuotaExhaustedError,
+  APIProviderRateLimitError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
-} from '@moonshot-ai/kosong';
+} from '@moonshot-ai/agent-core-v2';
 
 export const ErrorCodes = {
   CONFIG_INVALID: 'config.invalid',
@@ -151,10 +152,10 @@ export const KIMI_ERROR_INFO = {
     action: 'The session state.json is corrupted; remove the session or repair the file.',
   },
   'session.fork_active_turn': {
-    title: 'Cannot fork session during active turn',
+    title: 'Session history operation in progress',
     retryable: true,
     public: true,
-    action: 'Wait for the active turn to complete before forking.',
+    action: 'Wait for the other session history operation to finish, then retry.',
   },
   'session.occupied': {
     title: 'Session is in use by another client',
@@ -488,12 +489,14 @@ export function isKimiErrorCode(code: unknown): code is KimiErrorCode {
 export interface KimiErrorOptions {
   readonly details?: Record<string, unknown>;
   readonly cause?: unknown;
+  readonly retryable?: boolean;
 }
 
 export class KimiError extends Error {
   readonly code: KimiErrorCode;
   readonly details?: Record<string, unknown>;
   override readonly cause?: unknown;
+  readonly retryable: boolean;
 
   constructor(code: KimiErrorCode, message: string, options: KimiErrorOptions = {}) {
     super(message);
@@ -501,6 +504,7 @@ export class KimiError extends Error {
     this.code = code;
     this.details = options.details;
     this.cause = options.cause;
+    this.retryable = options.retryable ?? KIMI_ERROR_INFO[code].retryable;
   }
 }
 
@@ -537,7 +541,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
       message: error.message,
       name: error.name,
       details: error.details,
-      retryable: KIMI_ERROR_INFO[error.code].retryable,
+      retryable: error.retryable,
     };
   }
 
@@ -545,20 +549,20 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
     const code: KimiErrorCode =
       error instanceof APIProviderQuotaExhaustedError
         ? ErrorCodes.PROVIDER_API_ERROR
-        : error.statusCode === 429
+        : error instanceof APIProviderRateLimitError || error.statusCode === 429
           ? ErrorCodes.PROVIDER_RATE_LIMIT
           : error.statusCode === 401
             ? ErrorCodes.PROVIDER_AUTH_ERROR
             : ErrorCodes.PROVIDER_API_ERROR;
     return {
       code,
-      message: sanitizeStatusErrorMessage(error.message),
+      message: error.message,
       name: error.name,
       details: {
         statusCode: error.statusCode,
         requestId: error.requestId,
       },
-      retryable: KIMI_ERROR_INFO[code].retryable,
+      retryable: error.retryable,
     };
   }
 
@@ -567,7 +571,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
       code: ErrorCodes.PROVIDER_CONNECTION_ERROR,
       message: error.message,
       name: error.name,
-      retryable: KIMI_ERROR_INFO[ErrorCodes.PROVIDER_CONNECTION_ERROR].retryable,
+      retryable: error.retryable,
     };
   }
 
@@ -584,7 +588,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
         finishReason: error.finishReason,
         rawFinishReason: error.rawFinishReason,
       },
-      retryable: KIMI_ERROR_INFO[code].retryable,
+      retryable: error.retryable,
     };
   }
 
@@ -593,7 +597,7 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
       code: ErrorCodes.PROVIDER_API_ERROR,
       message: error.message,
       name: error.name,
-      retryable: KIMI_ERROR_INFO[ErrorCodes.PROVIDER_API_ERROR].retryable,
+      retryable: error.retryable,
     };
   }
 
@@ -613,15 +617,9 @@ export function toKimiErrorPayload(error: unknown): KimiErrorPayload {
   };
 }
 
-function sanitizeStatusErrorMessage(message: string): string {
-  const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(message);
-  const extracted = titleMatch?.[1]?.trim();
-  const normalized = extracted !== undefined && extracted.length > 0 ? extracted : message;
-  return normalized.replaceAll('\r', '');
-}
-
 export function fromKimiErrorPayload(payload: KimiErrorPayload): KimiError {
   return new KimiError(payload.code, payload.message, {
     details: payload.details,
+    retryable: payload.retryable,
   });
 }

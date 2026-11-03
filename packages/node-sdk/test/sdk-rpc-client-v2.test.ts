@@ -25,6 +25,7 @@ import {
   buildDaemonFileUrl,
   createKimiHarness,
   ErrorCodes,
+  fromKimiErrorPayload,
   isDaemonFileUrl,
   isKimiError,
   KimiHarness,
@@ -68,6 +69,8 @@ import {
   IWorkspaceService,
   MAIN_AGENT_ID,
   OsProcessErrors,
+  APIProviderRateLimitError,
+  APIStatusError,
 } from '@moonshot-ai/agent-core-v2';
 
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
@@ -672,6 +675,62 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       await client.close();
     }
   }, 15_000);
+
+  it('preserves status-less rate limits and verbatim backend messages in SDK payloads', () => {
+    const rateLimit = new APIProviderRateLimitError(
+      'backend stream rate limit',
+      'req-stream',
+      null,
+      null,
+      { statusCode: undefined },
+    );
+    expect(toKimiErrorPayload(rateLimit)).toMatchObject({
+      code: ErrorCodes.PROVIDER_RATE_LIMIT,
+      message: 'backend stream rate limit',
+      details: { statusCode: undefined, requestId: 'req-stream' },
+      retryable: true,
+    });
+
+    const message = '<html><title>Backend title</title><body>Backend body</body></html>\r\n';
+    expect(toKimiErrorPayload(new APIStatusError(502, message))).toMatchObject({
+      message,
+    });
+
+    const retryableClientError = new APIStatusError(
+      400,
+      'explicitly retryable',
+      null,
+      null,
+      undefined,
+      undefined,
+      true,
+    );
+    expect(toKimiErrorPayload(retryableClientError)).toMatchObject({
+      code: ErrorCodes.PROVIDER_API_ERROR,
+      message: 'explicitly retryable',
+      retryable: true,
+    });
+
+    const deterministicServerError = new APIStatusError(
+      503,
+      'explicitly deterministic',
+      null,
+      null,
+      undefined,
+      undefined,
+      false,
+    );
+    expect(toKimiErrorPayload(deterministicServerError)).toMatchObject({
+      code: ErrorCodes.PROVIDER_API_ERROR,
+      message: 'explicitly deterministic',
+      retryable: false,
+    });
+
+    for (const error of [retryableClientError, deterministicServerError]) {
+      const revived = fromKimiErrorPayload(toKimiErrorPayload(error));
+      expect(toKimiErrorPayload(revived).retryable).toBe(error.retryable);
+    }
+  });
 
   it('restates engine MCP management Error2s as KimiError, undeclared codes as internal', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
@@ -3201,6 +3260,7 @@ describe('foldAgentWireReplay turn limiting', () => {
           {
             type: 'message',
             time: 3,
+            turnId: 0,
             message: {
               role: 'user',
               content: [{ type: 'text', text: 'kept question' }],
@@ -3293,6 +3353,7 @@ describe('foldAgentWireReplay turn limiting', () => {
 
     for (const limit of [undefined, 0, 1]) {
       expect(await foldAgentWireReplay(wirePath, limit)).toMatchObject({ userTurnCount: 2 });
+      if (limit !== undefined) expect(await foldAgentWireReplay(wirePath, limit)).toEqual(await referenceFold(wirePath, limit));
     }
   });
 
@@ -3318,6 +3379,7 @@ describe('foldAgentWireReplay turn limiting', () => {
       {
         type: 'message',
         time: 12,
+        turnId: 1,
         message: {
           role: 'user',
           content: [{ type: 'text', text: 'last question' }],
@@ -3415,13 +3477,28 @@ describe('foldAgentWireReplay turn limiting', () => {
             keptUserMessageCount: 2,
             time: time++,
           },
+          appendUser('post-compaction note', time++, { kind: 'injection', variant: 'x' }),
+        );
+      }
+      if (index === 10) {
+        records.push(
+          { type: 'context.clear', time: time++ },
+          appendUser('post-clear note', time++, { kind: 'injection', variant: 'x' }),
         );
       }
       if (index === 12) {
-        records.push({ type: 'forked', time: time++ });
+        records.push(
+          { type: 'context.undo', count: 1, time: time++ },
+          appendUser('post-undo note', time++, { kind: 'injection', variant: 'x' }),
+          { type: 'forked', time: time++ },
+        );
       }
     }
-    records.push({
+    records.push(
+      { type: 'turn.cancel', turnId: 15, target: 'queued', time: time++ },
+      { type: 'turn.prompt', agentId: 'main', origin: { kind: 'retry' }, time: time++ },
+      appendUser('retry after queued cancel', time++, { kind: 'retry' }),
+      {
       type: 'tools.update_store',
       key: 'todo',
       value: [{ title: 'final', status: 'done' }],
@@ -3459,7 +3536,7 @@ describe('foldAgentWireReplay turn limiting', () => {
     expect(await foldAgentWireReplay(wirePath, 2)).toEqual(await referenceFold(wirePath, 2));
   });
 
-  it('shifts the window across undo-erased turns exactly like the reference', async () => {
+  it('shifts the window across undo-erased turns and no-metadata mixed inputs exactly like the reference', async () => {
     const records: Record<string, unknown>[] = [
       { type: 'metadata', protocol_version: '1.5', created_at: 1 },
     ];
@@ -3480,13 +3557,52 @@ describe('foldAgentWireReplay turn limiting', () => {
       ...stepRecords('cron-step', time, {}),
     );
     time += 10;
-    records.push({ type: 'context.undo', count: 2, time: time++ });
+    records.push(
+      { type: 'context.undo', count: 2, time: time++ },
+      { type: 'turn.prompt', turnId: 7, input: [{ type: 'text', text: 'persistent' }], origin: { kind: 'user' }, time: time++ },
+      appendUser('persistent', time++, { kind: 'user' }),
+      { type: 'turn.ended', turnId: 7, reason: 'completed', time: time++ },
+      appendUser('legacy tail', time++, { kind: 'user' }),
+      { type: 'context.append_message', message: { role: 'assistant', content: [], toolCalls: [] }, time: time++ },
+    );
     const wirePath = await writeWire(records);
+    const full = await foldAgentWireReplay(wirePath);
+    const mixed = full.replay.filter((record) => record.type === 'message').slice(-3);
+    expect(mixed.map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([7, undefined, undefined]);
     for (const limit of [5, 11, 12, 13]) {
       expect(await foldAgentWireReplay(wirePath, limit)).toEqual(
         await referenceFold(wirePath, limit),
       );
     }
+
+    const checkNoMetadata = async (
+      journal: Record<string, unknown>[],
+      expected: (number | undefined)[],
+    ): Promise<void> => {
+      const path = await writeWire(journal);
+      const unfolded = await foldAgentWireReplay(path);
+      const messages = unfolded.replay.filter((record) => record.type === 'message');
+      expect(messages.map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual(expected);
+      expect(await foldAgentWireReplay(path, 1)).toEqual(await referenceFold(path, 1));
+    };
+    await checkNoMetadata([
+      appendUser('same', 1, { kind: 'user' }),
+      { type: 'turn.prompt', turnId: 7, input: [{ type: 'text', text: 'same' }], origin: { kind: 'user' }, time: 2 },
+      appendUser('same', 3, { kind: 'user' }),
+    ], [undefined, 7]);
+    await checkNoMetadata([
+      { type: 'turn.prompt', turnId: 7, input: [{ type: 'text', text: 'first' }], origin: { kind: 'user' }, time: 1 },
+      appendUser('first', 2, { kind: 'user' }),
+    ], [7]);
+    await checkNoMetadata([
+      { type: 'turn.steer', turnId: 7, input: [{ type: 'text', text: 'steered' }], origin: { kind: 'user' }, time: 1 },
+      appendUser('steered', 2, { kind: 'user' }),
+    ], [7]);
+    await checkNoMetadata([
+      { type: 'turn.cancel', turnId: 0, target: 'queued', time: 1 },
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'after cancel' }], origin: { kind: 'user' }, time: 2 },
+      appendUser('after cancel', 3, { kind: 'user' }),
+    ], [1]);
   });
 
   it('reproduces a tool call pending across the turn boundary', async () => {
