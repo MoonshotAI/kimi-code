@@ -4,7 +4,7 @@ The tower uses this when `TowerMerge` refuses with `stale-base` (the base moved 
 
 - Refuses while the mission's worker is mid-turn or the worktree has uncommitted changes — rebasing under a running worker could race its edits.
 - Clean rebase of a build mission → the branch tip moves; the old review keeps its exact-tip binding, but merge approval still requires a clean review with merge recommendation "merge" (never `hold` or `fix-then-merge`).
-- Clean rebase of an artifact mission → previous human acceptance is invalidated; obtain fresh acceptance on the current committed artifact paths. When the pre-rebase tip matched the completion tip, the completion tip follows the rebased tip; if the branch had commits after the acceptance-request, the worker must run TowerComplete again with those paths before acceptance.
+- Clean rebase of an artifact mission → previous human acceptance is invalidated; present the current key artifacts and obtain fresh acceptance of the entire rebased tip. When the pre-rebase tip matched the completion tip, the completion tip follows the rebased tip; if the branch had commits after the acceptance-request, the worker must run TowerComplete again with the current report and key_artifacts before acceptance.
 - Conflict → only a rebase left in progress with actual unmerged paths is classified as a conflict: it is aborted with recovery postconditions checked, the files are reported, and the mission is marked blocked for the worker. Other errors are not mislabeled as conflicts; failed abort or recovery is reported as recovery-required.
 
 A rebase that drops the spawn-time WIP snapshot commit is expected — the diff then falls back to the base branch. Only the tower runs this tool; a worker rebases only when the tower asks it to.

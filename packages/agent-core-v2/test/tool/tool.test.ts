@@ -2883,6 +2883,61 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('resumed with model default effort');
   });
 
+  it('applies Thinking-off when resume rebinds a high-effort agent', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'resumed with Thinking off' }),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+      ),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+          },
+          thinking: { enabled: false },
+        },
+      },
+    );
+    const targetProfile = resumedProfileStub(
+      {
+        profileName: 'explore',
+        modelAlias: 'provider/fast',
+        thinkingLevel: 'high',
+        systemPrompt: 'preserved conversation prompt',
+      },
+      context.get(IModelCatalog),
+    );
+    lifecycle.addHandle(
+      'agent-existing',
+      'explore',
+      new Map([[IAgentProfileService, targetProfile]]),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+      model: 'provider/smart',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(targetProfile.setModel).toHaveBeenCalledWith('provider/smart');
+    expect(targetProfile.setThinking).toHaveBeenCalledOnce();
+    expect(targetProfile.setThinking).toHaveBeenCalledWith('off');
+    expect(targetProfile.data()).toMatchObject({
+      profileName: 'explore',
+      modelAlias: 'provider/smart',
+      thinkingLevel: 'off',
+      systemPrompt: 'preserved conversation prompt',
+    });
+    expect(result.output).toContain('resumed with Thinking off');
+  });
+
   it('rebuilds a persisted subagent that is not live before resuming it', async () => {
     const lifecycle = createAgentLifecycleStub({
       runCompletion: async () => ({ summary: 'resumed after restart' }),

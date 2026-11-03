@@ -113,7 +113,7 @@ async function setupMission(input: {
     await store.registerAgent(
       rosterEntry({ name: worker, kind: 'worker', missionId: mission.id }),
     );
-    await store.complete(worker, `Committed artifact: ${input.file}`);
+    await store.complete(worker, `Key artifact: ${input.file}`, [input.file]);
     return mission;
   }
   await store.updateMission(
@@ -140,7 +140,8 @@ async function completeMission(mission: TowerMission): Promise<void> {
   if (mission.kind === 'artifact') {
     const base = (await store.load()).base;
     const changed = await git(repo, 'diff', '--name-only', `${base}...${mission.branch}`);
-    await store.complete(`worker-${mission.id}`, `Committed artifacts:\n${changed}`);
+    const keyArtifacts = changed.split('\n').filter((path) => path.length > 0);
+    await store.complete(`worker-${mission.id}`, `Key artifacts:\n${changed}`, keyArtifacts);
     return;
   }
   await store.updateMission('tower', mission.id, { status: 'completed' }, { silent: true });
@@ -1647,10 +1648,14 @@ describe('merge gate', () => {
     const mission = await setupMission({
       title: 'render guarded summary',
       scope: 'reports/**',
-      file: 'README.md',
+      file: 'reports/guarded.html',
       content: '<h1>Guarded</h1>\n',
       kind: 'artifact',
     });
+    await commitFile(worktreeOf(mission), 'README.md', '# outside the key artifacts\n', 'auxiliary change');
+    await store.complete(`worker-${mission.id}`, 'Key artifact: reports/guarded.html', [
+      'reports/guarded.html',
+    ]);
     await cleanReview('tower', mission.branch);
 
     await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
@@ -1718,10 +1723,37 @@ describe('merge gate', () => {
     await store.registerAgent(
       rosterEntry({ name: 'late-worker', kind: 'worker', missionId: mission!.id }),
     );
-    await store.complete('late-worker', 'Committed artifact: reports/generic.html');
+    await store.complete('late-worker', 'Key artifact: reports/generic.html', [
+      'reports/generic.html',
+    ]);
     await cleanReview('tower', mission!.branch);
     await store.merge(mission!.branch, { activeAgentIds: new Set() });
     expect((await store.load()).missions.find((m) => m.id === mission!.id)?.status).toBe('merged');
+  });
+
+  it('refreshes the completion tip when an identical artifact report is re-completed at a new tip', async () => {
+    const mission = await setupMission({
+      title: 'render revised summary',
+      scope: 'reports/**',
+      file: 'reports/revised.html',
+      content: '<h1>Initial</h1>\n',
+      kind: 'artifact',
+    });
+    const report = 'Key artifact: reports/revised.html';
+    const keyArtifacts = ['reports/revised.html'];
+    const initialTip = (await store.load()).missions.find((m) => m.id === mission.id)!
+      .completionTip;
+    await commitFile(worktreeOf(mission), 'reports/revised.html', '<h1>Revised</h1>\n', 'revise');
+    const currentTip = await git(repo, 'rev-parse', mission.branch);
+    expect(currentTip).not.toBe(initialTip);
+
+    const completed = await store.complete(`worker-${mission.id}`, report, keyArtifacts);
+
+    expect(completed.notificationCreated).toBe(true);
+    expect(completed.mission?.completionTip).toBe(currentTip);
+    await cleanReview('tower', mission.branch);
+    await store.merge(mission.branch, { activeAgentIds: new Set() });
+    expect(await readFile(join(repo, 'reports/revised.html'), 'utf8')).toBe('<h1>Revised</h1>\n');
   });
 
   it('keeps the recorded completion tip when a generic patch re-completes after the tip moves', async () => {
@@ -3736,7 +3768,7 @@ describe('completion invariants', () => {
     ).rejects.toThrow(/does not exist, so no work has landed/);
   });
 
-  it('requires committed artifact paths and emits acceptance-request only after a nonzero diff', async () => {
+  it('requires committed key artifacts and emits whole-tip acceptance-request only after a nonzero diff', async () => {
     const mission = await seedMission('render report', { kind: 'artifact' });
     await store.registerAgent(
       rosterEntry({
@@ -3748,14 +3780,14 @@ describe('completion invariants', () => {
       }),
     );
 
-    await expect(store.complete('w1', 'src/render-report/result.html')).rejects.toThrow(
-      /does not exist, so no work has landed/,
-    );
+    await expect(
+      store.complete('w1', 'render the report', ['src/render-report/result.html']),
+    ).rejects.toThrow(/does not exist, so no work has landed/);
     const state = await store.load();
     await store.addWorktree(mission.worktree, mission.branch, state.base);
-    await expect(store.complete('w1', 'src/render-report/result.html')).rejects.toThrow(
-      /has no changes vs "main"/,
-    );
+    await expect(
+      store.complete('w1', 'render the report', ['src/render-report/result.html']),
+    ).rejects.toThrow(/has no changes vs "main"/);
 
     await commitFile(
       worktreeOf(mission),
@@ -3763,24 +3795,43 @@ describe('completion invariants', () => {
       '<h1>Result</h1>\n',
       'render result',
     );
-    await expect(store.complete('w1', 'delivery without paths')).rejects.toThrow(
-      /must name every committed artifact path.*src\/render-report\/result\.html/s,
+    await commitFile(
+      worktreeOf(mission),
+      'src/render-report/result',
+      'supporting data\n',
+      'add supporting data',
+    );
+    await expect(store.complete('w1', 'delivery without key artifacts')).rejects.toThrow(
+      /must name at least one committed key deliverable/,
     );
     await writeFile(join(worktreeOf(mission), 'src/render-report/uncommitted.html'), 'not included\n');
+    await expect(
+      store.complete('w1', 'wrong key artifact', ['src/render-report/uncommitted.html']),
+    ).rejects.toThrow(/must name paths from the committed branch diff.*uncommitted\.html/s);
+    await commitFile(worktreeOf(mission), 'README.md', '# auxiliary\n', 'auxiliary change');
+    await expect(store.complete('w1', 'out of scope key artifact', ['README.md'])).rejects.toThrow(
+      /must stay inside its scope.*README\.md/s,
+    );
 
     const result = await store.complete(
       'w1',
-      'Committed artifact for acceptance:\n- src/render-report/result.html',
+      'Key deliverable for acceptance:\n- src/render-report/result.html',
+      ['./src/render-report/result.html'],
     );
 
     expect(result.notificationCreated).toBe(true);
     expect(result.mission?.status).toBe('completed');
+    expect(result.mission?.keyArtifacts).toEqual(['src/render-report/result.html']);
     expect(result.message?.item).toMatchObject({
       subject: 'acceptance-request',
       scope: mission.id,
       action: 'complete',
-      body: 'Committed artifact for acceptance:\n- src/render-report/result.html',
     });
+    expect(result.message?.item.body).toContain('Approval authorizes the entire current mission tip presented for acceptance');
+    expect(result.message?.item.body).toContain('Additional committed files included in this approval: 2.');
+    expect(result.message?.item.body).toContain('Optional full manifest:');
+    expect(result.message?.item.body).not.toContain('- src/render-report/result\n');
+    expect(result.message?.item.body).not.toContain('uncommitted.html');
     const messages = await store.readInbox('tower', 20);
     expect(messages.filter((item) => item.action === 'complete')).toHaveLength(1);
     expect(messages.some((item) => item.subject === 'review-request')).toBe(false);

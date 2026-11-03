@@ -954,7 +954,7 @@ describe('TowerSpawnTool', () => {
     expect(prompt).not.toContain('subject="survey-summary"');
   });
 
-  it('briefs the artifact worker to commit deliverables and name paths for human acceptance', async () => {
+  it('briefs the artifact worker to commit deliverables and name key artifacts for whole-tip acceptance', async () => {
     const [artifact] = await store.plan([
       { title: 'Render report', scope: ['artifacts/**'], kind: 'artifact' },
     ]);
@@ -965,9 +965,11 @@ describe('TowerSpawnTool', () => {
     const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
     expect(prompt).toContain('git commit` every artifact needed for acceptance');
     expect(prompt).toContain('Uncommitted files are excluded from acceptance and merge');
-    expect(prompt).toContain('naming every committed artifact path');
+    expect(prompt).toContain('key_artifacts=[the committed paths of the key deliverables');
+    expect(prompt).toContain('does not need to cover the whole diff');
     expect(prompt).toContain('stores acceptance-request to the tower');
-    expect(prompt).toContain('explicit human acceptance; no independent reviewer is required');
+    expect(prompt).toContain('approval authorizes the entire tip');
+    expect(prompt).toContain('no independent reviewer is required');
     expect(prompt).toContain('acceptance is bound to the last completion tip');
     expect(prompt).not.toContain('source files only — no build outputs');
     expect(prompt).not.toContain('READ-ONLY survey mission');

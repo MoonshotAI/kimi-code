@@ -1335,27 +1335,46 @@ describe('TowerCompleteTool', () => {
     });
   });
 
-  it('completes an artifact with its committed paths and stores acceptance-request', async () => {
-    const { store, mission } = await setupCompletable('artifact');
-    const report = 'Committed artifact for acceptance:\n- src/engine/report.html';
+  it('rejects key_artifacts for a non-artifact mission', async () => {
+    await setupCompletable();
 
-    const result = await run(ix.get(ITowerCompleteTool), { report });
+    const result = await run(ix.get(ITowerCompleteTool), {
+      report: 'implemented the engine',
+      key_artifacts: ['src/engine/engine.ts'],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('key_artifacts is only supported for artifact missions');
+  });
+
+  it('completes an artifact with key artifacts and stores a whole-tip acceptance-request', async () => {
+    const { store, mission } = await setupCompletable('artifact');
+    const report = 'Rendered the quarterly report for acceptance.';
+
+    const result = await run(ix.get(ITowerCompleteTool), {
+      report,
+      key_artifacts: ['src/engine/report.html'],
+    });
 
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('mission M1 persisted as completed');
     expect(result.output).toContain('acceptance-request notification:');
     expect(result.output).not.toContain('review-request notification:');
     const messages = await store.readInbox('tower', 20);
-    expect(messages.find((item) => item.subject === 'acceptance-request')).toMatchObject({
+    const notification = messages.find((item) => item.subject === 'acceptance-request');
+    expect(notification).toMatchObject({
       from: 'w1',
       to: 'tower',
-      body: report,
       scope: 'M1',
       action: 'complete',
     });
-    expect((await store.load()).missions[0]?.completionTip).toBe(
-      await git(repo, 'rev-parse', mission.branch),
-    );
+    expect(notification?.body).toContain('- src/engine/report.html');
+    expect(notification?.body).toContain('Approval authorizes the entire current mission tip presented for acceptance');
+    expect(notification?.body).toContain('Additional committed files included in this approval: 0.');
+    expect(notification?.body).toContain(report);
+    const completed = (await store.load()).missions[0]!;
+    expect(completed.completionTip).toBe(await git(repo, 'rev-parse', mission.branch));
+    expect(completed.keyArtifacts).toEqual(['src/engine/report.html']);
   });
 
   it('completes a zero-diff survey with survey-summary', async () => {
@@ -1575,7 +1594,9 @@ describe('TowerReviewTool', () => {
       missionId: 'M1',
       spawnedAt: new Date().toISOString(),
     });
-    await store.complete('w1', 'Committed artifact: src/engine/report.html');
+    await store.complete('w1', 'Key artifact: src/engine/report.html', [
+      'src/engine/report.html',
+    ]);
     await store.registerAgent({
       name: 'r1',
       kind: 'reviewer',
@@ -1602,7 +1623,7 @@ describe('TowerReviewTool', () => {
       status: 'clean',
       merge: 'merge',
       findings: 'none',
-      decision: 'the user explicitly approved the committed artifact paths',
+      decision: 'the user explicitly approved the entire committed tip',
     });
     expect(accepted.isError).toBeFalsy();
     expect(accepted.output).toContain('explicit human acceptance for feat/artifact-engine');
@@ -1795,7 +1816,9 @@ describe('TowerMergeTool', () => {
       missionId: 'M1',
       spawnedAt: new Date().toISOString(),
     });
-    await store.complete('w1', 'Committed artifact: src/engine/report.html');
+    await store.complete('w1', 'Key artifact: src/engine/report.html', [
+      'src/engine/report.html',
+    ]);
     const baseTip = await git(repo, 'rev-parse', 'HEAD');
 
     const waiting = await run(ix.get(ITowerMergeTool), { branch: 'feat/artifact-engine' });
@@ -1824,15 +1847,14 @@ describe('TowerMergeTool', () => {
       status: 'clean',
       merge: 'merge',
       findings: 'none',
-      decision: 'user approved the current artifact paths',
+      decision: 'user approved the entire current tip',
     } as const;
     await expect(store.submitReview('tower', freshAcceptance)).rejects.toThrow(
       /advanced after the artifact acceptance-request/,
     );
-    await store.complete(
-      'w1',
-      'Committed artifacts: src/engine/report.html src/engine/data.csv',
-    );
+    await store.complete('w1', 'Updated key artifact: src/engine/report.html', [
+      'src/engine/report.html',
+    ]);
     await store.submitReview('tower', freshAcceptance);
     const merged = await run(ix.get(ITowerMergeTool), { branch: 'feat/artifact-engine' });
 
@@ -1843,6 +1865,7 @@ describe('TowerMergeTool', () => {
     expect(await readFile(join(repo, 'src/engine/report.html'), 'utf8')).toBe(
       '<h1>Engine report</h1>\n',
     );
+    expect(await readFile(join(repo, 'src/engine/data.csv'), 'utf8')).toBe('name,value\na,1\n');
   });
 
   it('points at TowerTeardown when a survey noop-merge closes the last mission', async () => {

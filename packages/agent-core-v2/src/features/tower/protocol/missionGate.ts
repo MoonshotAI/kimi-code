@@ -176,7 +176,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     return block(
       'stale-base',
       mission.kind === 'artifact'
-        ? `${mission.branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land artifacts that were never produced or accepted against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree and refuses while the worker is mid-turn or the worktree is dirty), then present the rebased artifact paths for fresh explicit human acceptance before retrying the merge`
+        ? `${mission.branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land artifacts that were never produced or accepted against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree and refuses while the worker is mid-turn or the worktree is dirty), then present the rebased key artifacts for fresh explicit human acceptance of the entire tip before retrying the merge`
         : `${mission.branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land code that was never built or reviewed against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree, refuses while the worker is mid-turn or the worktree is dirty, and a conflict-free rebase waives the re-review), then retry the merge`,
     );
   }
@@ -184,7 +184,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     return block(
       'no-review',
       mission.kind === 'artifact'
-        ? `${mission.branch} is waiting for explicit human acceptance — present the committed artifact paths to the user, then record acceptance with TowerReview(status="clean", merge="merge") only after the user approves; an independent reviewer is not required`
+        ? `${mission.branch} is waiting for explicit human acceptance — present the key artifacts and explain that approval covers the entire committed tip, then record acceptance with TowerReview(status="clean", merge="merge") only after the user approves; an independent reviewer is not required`
         : `${mission.branch} has no review — assign a reviewer first`,
     );
   }
@@ -194,7 +194,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
   ) {
     return block(
       'no-review',
-      `${mission.branch} is still waiting for mission-matching explicit human acceptance recorded by reviewer=tower — the latest applicable review by ${selectedReview.reviewer} cannot substitute for it; present the committed artifact paths and record TowerReview only after the user approves`,
+      `${mission.branch} is still waiting for mission-matching explicit human acceptance recorded by reviewer=tower — the latest applicable review by ${selectedReview.reviewer} cannot substitute for it; present the key artifacts and the whole-tip approval scope, and record TowerReview only after the user approves`,
     );
   }
   if (selectedReview.merge === 'hold') {
@@ -226,7 +226,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     return block(
       'tip-moved',
       mission.kind === 'artifact'
-        ? `${mission.branch} moved since the human acceptance (accepted ${selectedReview.reviewedCommit.slice(0, 7)}, tip ${branch.tip.slice(0, 7)}) — present the current committed artifact paths for fresh explicit human acceptance; rebase never waives artifact acceptance`
+        ? `${mission.branch} moved since the human acceptance (accepted ${selectedReview.reviewedCommit.slice(0, 7)}, tip ${branch.tip.slice(0, 7)}) — present the current key artifacts for fresh explicit human acceptance of the entire tip; rebase never waives artifact acceptance`
         : `${mission.branch} moved since the clean review (reviewed ${selectedReview.reviewedCommit.slice(0, 7)}, tip ${branch.tip.slice(0, 7)}) — re-review required`,
     );
   }
@@ -234,13 +234,13 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     if (mission.completionTip === undefined) {
       return block(
         'completion-tip-mismatch',
-        `${mission.branch} has explicit human acceptance but no recorded completion tip — the acceptance cannot be tied to the artifact paths the user was shown; ask the worker to run TowerComplete at the current tip with every committed artifact path, present those paths, then record fresh acceptance`,
+        `${mission.branch} has explicit human acceptance but no recorded completion tip — the acceptance cannot be tied to the delivery the user approved; ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record fresh acceptance`,
       );
     }
     if (selectedReview.reviewedCommit !== mission.completionTip) {
       return block(
         'completion-tip-mismatch',
-        `${mission.branch} was accepted at ${selectedReview.reviewedCommit.slice(0, 7)} but its acceptance-request covered ${mission.completionTip.slice(0, 7)} — the user approved paths from a different tip; ask the worker to run TowerComplete at the current tip with every committed artifact path, present those paths, then record fresh acceptance`,
+        `${mission.branch} was accepted at ${selectedReview.reviewedCommit.slice(0, 7)} but its acceptance-request covered ${mission.completionTip.slice(0, 7)} — the user approved a different tip; ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope, then record fresh acceptance`,
       );
     }
   }

@@ -18,6 +18,8 @@ import {
 } from '#/agent/task/task';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import type { ThinkingConfig } from '#/llm-adapter/model/thinking';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import {
   isToolActive as evaluateToolActive,
@@ -348,7 +350,10 @@ export class SubagentTool implements ISubagentTool {
         try {
           await targetProfile.setModel(binding.model);
           const model = this.modelCatalog.get(binding.model);
-          const thinking = resolveSubagentThinking(this.config, model, binding.thinking);
+          const thinking =
+            this.config.get<ThinkingConfig>(THINKING_SECTION)?.enabled === false
+              ? 'off'
+              : resolveSubagentThinking(this.config, model, binding.thinking);
           if (thinking !== undefined) targetProfile.setThinking(thinking);
         } catch (error) {
           throw wrapSubagentModelError(error, binding.model, own.modelAlias);

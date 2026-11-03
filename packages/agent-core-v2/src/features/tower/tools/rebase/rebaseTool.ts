@@ -70,7 +70,7 @@ export class TowerRebaseTool implements ITowerRebaseTool {
             output: [
               `rebased mission ${mission.id} (${mission.branch}) onto "${state.base}": ${result.fromCommit!.slice(0, 7)} → ${result.toCommit!.slice(0, 7)}.`,
               mission.kind === 'artifact'
-                ? 'The pre-rebase human acceptance does not carry over — present the current committed artifact paths for fresh explicit human acceptance, record it with TowerReview, then retry TowerMerge.'
+                ? 'The pre-rebase human acceptance does not carry over — present the current key artifacts for fresh explicit human acceptance of the entire tip, record it with TowerReview, then retry TowerMerge.'
                 : 'The pre-rebase review keeps its exact-tip binding, but merge approval still requires a clean review with merge verdict "merge" — retry TowerMerge.',
             ].join('\n'),
           };

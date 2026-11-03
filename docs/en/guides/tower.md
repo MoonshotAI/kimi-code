@@ -73,12 +73,12 @@ Tower may snapshot uncommitted and untracked files into worker branches; when cr
 Tower supports three mission kinds. Choose according to what the worker may write and what must happen before the mission closes.
 
 - **Build (`kind: "build"`)**: reserves its scope for code changes, requires a committed diff and independent clean review, and performs a real merge.
-- **Artifact (`kind: "artifact"`)**: reserves its scope for business deliverables such as rendered results, training outputs, or analysis reports. It requires committed artifact paths and your explicit acceptance, but no independent reviewer, followed by a real merge.
+- **Artifact (`kind: "artifact"`)**: reserves its scope for business deliverables such as rendered results, training outputs, or analysis reports. It requires key committed deliverables and your explicit acceptance of the entire committed tip, but no independent reviewer, followed by a real merge.
 - **Survey (`kind: "survey"`)**: treats its scope as informational, remains read-only, and closes with zero diff, no review, and no Git merge.
 
 Use `artifact` when the work reads business inputs but must write deliverables. For example: "Create an artifact mission for the quarterly analysis. Commit `reports/q3/summary.html` and `reports/q3/data.csv`, then show me those files for acceptance."
 
-The worker commits those files inside the reserved scope and names both paths in its completion report; uncommitted files are not accepted or merged. Tower presents the committed paths and merges only after you explicitly approve. Requested changes trigger rework, and any new commit or rebase requires fresh acceptance. In automatic or noninteractive runs, Tower leaves the artifact waiting rather than approving it for you.
+The worker commits all deliverables inside the reserved scope and marks `reports/q3/summary.html` and `reports/q3/data.csv` as key artifacts; uncommitted files are not accepted or merged. Tower presents the key artifacts and the number of additional committed files, with an optional full manifest when you want more detail. Your approval authorizes the entire current tip, including changes not shown in the key-artifact list. Requested changes trigger rework, and any new commit or rebase requires fresh acceptance. In automatic or noninteractive runs, Tower leaves the artifact waiting rather than approving it for you.
 
 ## Check status and intervene
 

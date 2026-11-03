@@ -54,6 +54,7 @@ export interface TowerMission {
     readonly toCommit: string;
   };
   completionTip?: string;
+  keyArtifacts?: string[];
   status: TowerMissionStatus;
   owner?: string;
   context?: string;
