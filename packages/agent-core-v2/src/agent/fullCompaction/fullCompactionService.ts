@@ -15,7 +15,7 @@ import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recove
 import { IAgentLoopService, type LoopErrorContext, type QueuedCompactionContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { isAbortError } from '#/_base/utils/abort';
+import { abortable, isAbortError } from '#/_base/utils/abort';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
 import {
   agentContextOfScope,
@@ -128,13 +128,6 @@ export const fullCompactionActiveTurnIdKey = defineState<number | undefined>(
   'fullCompaction.activeTurnId',
   () => undefined as number | undefined,
 );
-
-function abortedOf(signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) resolve();
-    else signal.addEventListener('abort', () => resolve(), { once: true });
-  });
-}
 
 export class AgentFullCompactionService extends Service implements IAgentFullCompactionService {
   declare readonly _serviceBrand: undefined;
@@ -381,7 +374,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private async runQueued(ctx: QueuedCompactionContext): Promise<void> {
     while (this._compacting !== null && !ctx.signal.aborted) {
-      await Promise.race([this._compacting.promise.catch(() => undefined), abortedOf(ctx.signal)]);
+      await abortable(this._compacting.promise, ctx.signal).catch(() => undefined);
     }
     if (ctx.signal.aborted) return;
     let task: ActiveCompaction;

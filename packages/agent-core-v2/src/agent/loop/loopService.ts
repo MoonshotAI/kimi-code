@@ -10,7 +10,7 @@ import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
-import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
+import { abortError, abortable, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { retryErrorFields } from '#/_base/utils/retry';
@@ -174,7 +174,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private historySnapshotDepth = 0;
   private queuePausedByUser = false;
   private gatingPromptId: string | undefined;
-  private gatingCompaction: AbortController | undefined;
+  private gatingAbort: AbortController | undefined;
   private readonly cancelOnLaunch = new Map<string, unknown>();
   private readonly onDidChangeQueueEmitter = this._register(new Emitter<void>());
   readonly onDidChangeQueue = this.onDidChangeQueueEmitter.event;
@@ -757,15 +757,22 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       hookParts: [],
       block: false,
     };
+    const controller = new AbortController();
     this.gatingPromptId = queueItemId;
+    this.gatingAbort = controller;
     this.onDidChangeQueueEmitter.fire();
     try {
-      if (ctx.launch !== undefined) await this.active?.afterChain;
+      const settling = this.active;
+      if (ctx.launch !== undefined && settling !== undefined) {
+        await abortable(settling.afterChain, controller.signal).catch(() => undefined);
+        if (controller.signal.aborted) return { block: true };
+      }
       await this.hooks.onBeforeSubmitPrompt.run(ctx);
       if (ctx.block) return { block: true };
       await this.materializeDaemonRefs(promptMessage);
     } finally {
       this.gatingPromptId = undefined;
+      this.gatingAbort = undefined;
     }
     return {
       block: false,
@@ -782,14 +789,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private async runQueuedCompaction(id: string, compaction: QueuedCompaction): Promise<PromptGateVerdict> {
     const controller = new AbortController();
     this.gatingPromptId = id;
-    this.gatingCompaction = controller;
+    this.gatingAbort = controller;
     this.onDidChangeQueueEmitter.fire();
     try {
       const settling = this.active;
       if (settling !== undefined) {
         this.logger.info('queued compaction waiting for the previous turn to settle', { promptId: id, turnId: settling.id });
-        await settling.afterChain;
+        await abortable(settling.afterChain, controller.signal).catch(() => undefined);
       }
+      if (controller.signal.aborted) return { block: true };
       this.logger.info('queued compaction started', { promptId: id, aborted: controller.signal.aborted });
       await this.hooks.onRunQueuedCompaction.run({
         instruction: compaction.instruction,
@@ -801,7 +809,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       onUnexpectedError(error);
     } finally {
       this.gatingPromptId = undefined;
-      this.gatingCompaction = undefined;
+      this.gatingAbort = undefined;
     }
     return { block: true };
   }
@@ -961,12 +969,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       return this.cancelActiveTurn(undefined, cancellation);
     }
     if (waiter.id === this.gatingPromptId) {
-      this.logger.info('starting queue entry withdrawn', {
-        promptId: waiter.id,
-        compaction: this.gatingCompaction !== undefined,
-      });
+      this.logger.info('starting queue entry withdrawn', { promptId: waiter.id });
       this.cancelOnLaunch.set(waiter.id, cancellation);
-      this.gatingCompaction?.abort(cancellation);
+      this.gatingAbort?.abort(cancellation);
       return true;
     }
     this.logger.info('queued entry withdrawn', { promptId: waiter.id });

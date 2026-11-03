@@ -1203,6 +1203,43 @@ describe('Agent loop', () => {
     hook.dispose();
   });
 
+  it('withdraws a queued compaction that is still waiting for the previous turn to settle', async () => {
+    const finishing = deferred();
+    const release = deferred();
+    let armed = true;
+    const runs: (string | undefined)[] = [];
+    const compactionHook = loop.hooks.onRunQueuedCompaction.register('test-compaction', async (run, next) => {
+      runs.push(run.instruction);
+      await next();
+    });
+    const hook = loop.hooks.onDidFinishStep.register('test-hold-finish', async (_step, next) => {
+      if (armed) {
+        armed = false;
+        finishing.resolve();
+        await release.promise;
+      }
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'first answer' });
+    const first = submitTracked(loop, 'first');
+    await finishing.promise;
+    loop.submit({
+      message: { role: 'user', content: [] },
+      meta: { promptId: 'compact-1', compaction: { instruction: 'keep the plan' } },
+    });
+    await vi.waitFor(() => {
+      expect(loop.snapshot().startingPromptId).toBe('compact-1');
+    });
+
+    expect(loop.cancel({ promptId: 'compact-1' }, userCancellationReason())).toBe(true);
+    await expect(loop.promptHandle('compact-1')!.completion).resolves.toMatchObject({ state: 'cancelled' });
+    expect(runs).toEqual([]);
+    release.resolve();
+    await expect(loop.promptHandle(first)!.completion).resolves.toMatchObject({ state: 'completed' });
+    hook.dispose();
+    compactionHook.dispose();
+  });
+
   it('answers prompts steered at the end of a turn before running a queued compaction', async () => {
     let late: string | undefined;
     const stepHook = loop.hooks.onWillBeginStep.register('test-late-steer', async (_step, next) => {

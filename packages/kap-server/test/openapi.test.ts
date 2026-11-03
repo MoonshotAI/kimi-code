@@ -122,6 +122,9 @@ describe('server-v2 OpenAPI', () => {
       '/api/v1/sessions/{session_id}/title/generate',
       '/api/v1/sessions/{session_id}/children',
       '/api/v1/sessions/{session_id}/skills/{tail}',
+      '/api/v1/sessions/{session_id}/agents/{agent_id}/queue:pause',
+      '/api/v1/sessions/{session_id}/agents/{agent_id}/queue:resume',
+      '/api/v1/sessions/{session_id}/agents/{agent_id}/queue/{tail}',
     ];
     for (const path of paths) {
       const op = operation(doc, path, 'post');

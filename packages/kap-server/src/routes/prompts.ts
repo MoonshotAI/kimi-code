@@ -504,6 +504,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     [ErrorCode.VALIDATION_FAILED]: {},
     [ErrorCode.SESSION_NOT_FOUND]: {},
     [ErrorCode.PROMPT_NOT_FOUND]: {},
+    ...sessionConflictErrors,
   };
 
   const pauseRoute = defineRoute(
