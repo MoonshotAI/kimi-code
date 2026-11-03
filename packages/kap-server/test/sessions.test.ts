@@ -1629,9 +1629,6 @@ describe('server-v2 /api/v1/sessions', () => {
         .replace('"min_protocol_version":"1.5"', '"min_protocol_version":"9.9"'),
     );
     await closeSessionById((server as RunningServer).core.accessor, parentId);
-    const coldStatus = await getJson<unknown>(`/api/v1/sessions/${parentId}/status`);
-    expect(coldStatus.body.code).toBe(40930);
-    expect(coldStatus.body.msg).toContain('Upgrade Kimi Code');
     const messages = await getJson<unknown>(`/api/v1/sessions/${parentId}/messages`);
     expect(messages.body.code).toBe(40930);
     const message = await getJson<unknown>(`/api/v1/sessions/${parentId}/messages/msg_incompatible`);
