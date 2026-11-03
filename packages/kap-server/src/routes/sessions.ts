@@ -89,6 +89,7 @@ import {
 } from './sessionErrors';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
+import type { TranscriptService } from '../services/transcript/transcriptService';
 
 interface SessionRouteHost {
   post(
@@ -195,7 +196,11 @@ const sessionActionRequestSchema = z.preprocess(
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void {
+export function registerSessionsRoutes(
+  app: SessionRouteHost,
+  core: Scope,
+  transcriptService: TranscriptService,
+): void {
   const createRoute = defineRoute(
     {
       method: 'POST',
@@ -657,7 +662,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           tail: req.params.tail,
           actions: sessionActions,
           resourceLabel: 'session',
-          extra: { core, req, reply },
+          extra: { core, transcriptService, req, reply },
           body: req.body,
           onUnsupported: (message) => {
             reply.send(buildValidationEnvelope([{ path: 'session_id', message }], req.id));
@@ -921,6 +926,7 @@ type SessionAction =
 
 interface SessionActionExtra {
   readonly core: Scope;
+  readonly transcriptService: TranscriptService;
   readonly req: { readonly id: string };
   readonly reply: { readonly send: (payload: unknown) => unknown };
 }
@@ -1023,7 +1029,7 @@ async function abortSessionAction(ctx: SessionActionCtx): Promise<void> {
 }
 
 async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
-  const { core, req, reply, id } = ctx;
+  const { core, transcriptService, req, reply, id } = ctx;
   const session = await resumeSessionById(core.accessor, id);
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
@@ -1032,6 +1038,9 @@ async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
   const sessionModel = agent.accessor.get(IAgentProfileService).getModel();
   await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
   const agentId = await session.accessor.get(ISessionBtwService).start();
+  if (transcriptService.forSessionLive(id) !== undefined) {
+    await transcriptService.ensureAgentHistory(id, agentId);
+  }
   reply.send(okEnvelope({ agent_id: agentId }, req.id));
 }
 
