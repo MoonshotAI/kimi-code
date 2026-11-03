@@ -731,6 +731,57 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
+  it('returns prompt identities and delivery state from the v2 steer APIs', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_steer_result', workDir });
+      await client.getSessionWarnings({ sessionId: 'ses_steer_result' });
+      const main = getLiveSessionById(client.engineAccessor, 'ses_steer_result')!
+        .accessor.get(IAgentLifecycleService)
+        .handleOf('main')!;
+      vi.spyOn(main.accessor.get(IAgentPromptChannel), 'submitSteer').mockResolvedValue({
+        prompt_id: 'prompt-steer',
+        created_at: '2026-01-01T00:00:00.000Z',
+        state: 'queued',
+        steered: false,
+      });
+      await expect(client.steer({
+        sessionId: 'ses_steer_result',
+        input: [{ type: 'text', text: 'steer' }],
+      })).resolves.toEqual({
+        promptId: 'prompt-steer',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        state: 'queued',
+        steered: false,
+      });
+
+      vi.spyOn(main.accessor.get(IAgentSkillService), 'promptWithSkills').mockResolvedValue({
+        turn_id: 3,
+        prompt_id: 'prompt-skill',
+        created_at: '2026-01-01T00:00:00.000Z',
+        state: 'running',
+        steered: true,
+      });
+      await expect(client.promptWithSkills({
+        sessionId: 'ses_steer_result',
+        input: [{ type: 'text', text: 'skill steer' }],
+        skills: [{ name: 'review' }],
+        steerIfActive: true,
+      })).resolves.toEqual({
+        turnId: 3,
+        promptId: 'prompt-skill',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        state: 'running',
+        steered: true,
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
   it('restates engine session-lock Error2s as KimiError on the conflict-handled entry points', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));

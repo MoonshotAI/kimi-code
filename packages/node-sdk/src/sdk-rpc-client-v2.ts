@@ -335,6 +335,7 @@ import type {
   PluginCommandDef,
   PluginInfo,
   PluginSummary,
+  PromptSubmissionResult,
   ReloadSummary,
   RenameSessionInput,
   ResumeSessionInput,
@@ -406,6 +407,22 @@ export interface SDKRpcClientV2Options {
  * `timeoutOutcome` clamps to.
  */
 const MAX_TIMER_DELAY_MS = 0x7fffffff;
+
+function promptSubmissionResult(result: {
+  readonly turn_id?: number;
+  readonly prompt_id: string;
+  readonly created_at: string;
+  readonly state: 'running' | 'queued' | 'blocked';
+  readonly steered?: boolean;
+}): PromptSubmissionResult {
+  return {
+    turnId: result.turn_id,
+    promptId: result.prompt_id,
+    createdAt: result.created_at,
+    state: result.state,
+    steered: result.steered === true,
+  };
+}
 
 export class SDKRpcClientV2 extends SDKRpcClientBase {
   readonly homeDir: string;
@@ -2370,14 +2387,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * message, so the bundle launches as one turn and undoes as a single
    * anchor. v2-only: the base class rejects this method on the v1 engine.
    */
-  override async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
-    await this.withStaleReload(input.sessionId, async () => {
+  override async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<PromptSubmissionResult> {
+    return this.withStaleReload(input.sessionId, async () => {
       const agent = await this.agentFacade(input.sessionId);
-      await agent.promptWithSkills({
+      const result = await agent.promptWithSkills({
         input: input.input,
         skills: input.skills,
         steerIfActive: input.steerIfActive,
       });
+      return promptSubmissionResult(result);
     });
   }
 
@@ -2387,10 +2405,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * launching a fresh turn (the enqueue launches it directly) while
    * title/lastPrompt are updated like a prompt's.
    */
-  override async steer(input: SessionPromptRpcInput): Promise<void> {
-    await this.withStaleReload(input.sessionId, async () => {
+  override async steer(input: SessionPromptRpcInput): Promise<PromptSubmissionResult> {
+    return this.withStaleReload(input.sessionId, async () => {
       const agent = await this.agentFacade(input.sessionId);
-      await agent.steer({ input: input.input });
+      const result = await agent.steer({ input: input.input });
+      return promptSubmissionResult(result);
     });
   }
 

@@ -244,12 +244,14 @@ describe('SessionEventWiring status snapshot fold', () => {
       sub.bus.emit({
         type: 'turn.prompt',
         turnId: 1,
+        promptId: 'prompt-1',
         input: [{ type: 'text', text: '<notification>internal only</notification>' }],
         origin: { kind: 'task', taskId: 'task_1' },
       });
       sub.bus.emit({
         type: 'turn.started',
         turnId: 1,
+        promptId: 'prompt-1',
         origin: { kind: 'user' },
         prompt: 'describe this',
         promptAttachments: [{ kind: 'image', fileId: 'f_1' }],
@@ -264,6 +266,7 @@ describe('SessionEventWiring status snapshot fold', () => {
       turnId: 1,
       sessionId: 's1',
       agentId: 'agent-1',
+      promptId: 'prompt-1',
       input: [{ type: 'text', text: '<notification>internal only</notification>' }],
     });
     expect(events[1]).toMatchObject({
@@ -271,6 +274,7 @@ describe('SessionEventWiring status snapshot fold', () => {
       turnId: 1,
       sessionId: 's1',
       agentId: 'agent-1',
+      promptId: 'prompt-1',
       prompt: 'describe this',
     });
     expect(events[1]).not.toHaveProperty('promptAttachments');

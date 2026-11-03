@@ -15,6 +15,7 @@ import type {
   PermissionMode,
   PluginCommandDef,
   PromptPart,
+  PromptSubmissionResult,
   Session,
   SkillSummary,
   TurnEndedEvent,
@@ -194,6 +195,7 @@ import {
 import type { ExtractionResult } from './utils/image-placeholder';
 import { installInputLatencyProbe } from './utils/input-latency';
 import {
+  isInTurnUserOrigin,
   steerEventParts,
   steerMatchTexts,
   steerPayloadText,
@@ -258,6 +260,11 @@ export interface KimiTUIStartupInput {
 }
 
 type EffectiveActivityPaneMode = ActivityPaneMode | 'idle' | 'session';
+
+type PendingSteerDelivery = SteerDeliveryBatch<TranscriptEntry> & {
+  readonly mediaOnly: boolean;
+  readonly promptId?: string;
+};
 type LoadingTipKind = 'moon' | 'braille';
 
 function loadingTipKind(mode: EffectiveActivityPaneMode): LoadingTipKind | undefined {
@@ -359,7 +366,8 @@ export class KimiTUI {
   private readonly staging: StagingLeaseTracker;
   private readonly steeringQueuedMessages = new Set<QueuedMessage>();
   private readonly pendingPromptEntries = new Set<TranscriptEntry>();
-  private pendingSteerDeliveries: Array<SteerDeliveryBatch<TranscriptEntry> & { readonly mediaOnly: boolean }> = [];
+  private pendingSteerDeliveries: PendingSteerDelivery[] = [];
+  private readonly consumedSteerPromptIds = new Set<string>();
   private readonly autoTitleAttempts = new Map<string, { attempts: number; done: boolean }>();
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
@@ -2158,7 +2166,6 @@ export class KimiTUI {
   }
 
   handleTurnEnded(event: TurnEndedEvent): void {
-    this.pendingSteerDeliveries = [];
     this.staging.handleTurnEnded(event);
     this.surveyController.notifyTurnEnded(event.requestId);
     this.programStatus.finishTurn(event);
@@ -2201,11 +2208,11 @@ export class KimiTUI {
     this.sessionEventHandler.requestQueuedGoalPromotion();
   }
 
-  private dispatchPreparedInput<T>(
+  private dispatchPreparedInput<T, R>(
     session: Session,
     input: T | Promise<T>,
-    dispatch: (input: T) => Promise<void>,
-  ): Promise<void> {
+    dispatch: (input: T) => Promise<R>,
+  ): Promise<R> {
     if (!(input instanceof Promise)) return dispatch(input);
     let rejectPreparation!: (error: Error) => void;
     const interrupted = new Promise<never>((_resolve, reject) => { rejectPreparation = reject; });
@@ -2311,9 +2318,11 @@ export class KimiTUI {
       const request = this.trackPendingEntries(
         [entry],
         this.dispatchPreparedInput(session, sdkInput, (parts) => {
-          if (this.turnCanAcceptSteer()) this.notePendingSteer([entry], parts);
-          else this.releaseSteerEntries([entry]);
-          return session.steer(parts);
+          this.notePendingSteer([entry], parts);
+          if (!this.turnCanAcceptSteer()) this.setSteerEntriesPending([entry], false);
+          return session.steer(parts).then((result) => {
+            this.applySteerSubmission([entry], result);
+          });
         }),
       );
       void request.then(
@@ -2367,10 +2376,10 @@ export class KimiTUI {
     });
   }
 
-  private trackPendingEntries(
+  private trackPendingEntries<T>(
     entries: readonly TranscriptEntry[],
-    request: Promise<void>,
-  ): Promise<void> {
+    request: Promise<T>,
+  ): Promise<T> {
     for (const entry of entries) this.pendingPromptEntries.add(entry);
     const settle = (): void => {
       for (const entry of entries) this.pendingPromptEntries.delete(entry);
@@ -2616,10 +2625,46 @@ export class KimiTUI {
     return phase !== 'idle' && phase !== 'shell' && !this.state.appState.isCompacting;
   }
 
-  acknowledgeSteerDelivery(input: unknown): void {
+  acknowledgeSteerDelivery(input: unknown, promptIds?: readonly string[]): void {
+    if (promptIds !== undefined && promptIds.length > 0) {
+      this.acknowledgeSteerPromptIds(promptIds);
+      return;
+    }
+    this.acknowledgeLegacySteerDelivery(input);
+  }
+
+  acknowledgeSteerTurnPrompt(promptId: string | undefined, input: unknown, origin: unknown): void {
+    const delivered = promptId === undefined ? false : this.acknowledgeSteerPromptIds([promptId]);
+    if (!delivered && isInTurnUserOrigin(origin)) this.acknowledgeLegacySteerDelivery(input);
+  }
+
+  acknowledgeSteerTurnStarted(promptId?: string): void {
+    if (promptId !== undefined) this.acknowledgeSteerPromptIds([promptId]);
+  }
+
+  private acknowledgeSteerPromptIds(promptIds: readonly string[]): boolean {
+    const ids = new Set(promptIds);
+    const delivered = this.pendingSteerDeliveries.filter(
+      (batch) => batch.promptId !== undefined && ids.has(batch.promptId),
+    );
+    this.pendingSteerDeliveries = this.pendingSteerDeliveries.filter(
+      (batch) => !delivered.includes(batch),
+    );
+    if (this.pendingSteerDeliveries.length > 0) {
+      const deliveredIds = new Set(delivered.map((batch) => batch.promptId));
+      for (const id of promptIds) {
+        if (!deliveredIds.has(id)) this.consumedSteerPromptIds.add(id);
+      }
+    }
+    for (const batch of delivered) this.setSteerEntriesPending(batch.entries, false);
+    if (this.pendingSteerDeliveries.length === 0) this.consumedSteerPromptIds.clear();
+    return delivered.length > 0;
+  }
+
+  private acknowledgeLegacySteerDelivery(input: unknown): void {
     const { texts, hasMedia } = steerEventParts(input);
     let pending = this.pendingSteerDeliveries;
-    const delivered: SteerDeliveryBatch<TranscriptEntry>[] = [];
+    const delivered: PendingSteerDelivery[] = [];
     const candidates = steerMatchTexts(texts);
     for (const text of candidates) {
       const step = takeDeliveredSteerBatches(pending, text);
@@ -2636,6 +2681,7 @@ export class KimiTUI {
     if (delivered.length === 0) return;
     this.pendingSteerDeliveries = pending;
     for (const batch of delivered) this.setSteerEntriesPending(batch.entries, false);
+    if (this.pendingSteerDeliveries.length === 0) this.consumedSteerPromptIds.clear();
   }
 
   private notePendingSteer(
@@ -2651,11 +2697,41 @@ export class KimiTUI {
     });
   }
 
+  private applySteerSubmission(
+    entries: readonly TranscriptEntry[],
+    result: PromptSubmissionResult | undefined,
+  ): void {
+    if (result === undefined) return;
+    const index = this.pendingSteerDeliveries.findIndex(
+      (batch) => batch.entries.some((entry) => entries.includes(entry)),
+    );
+    if (index < 0) return;
+    if (result.state === 'blocked' || (result.state === 'running' && !result.steered)) {
+      this.releaseSteerEntries(entries);
+      return;
+    }
+    const batch = this.pendingSteerDeliveries[index]!;
+    this.pendingSteerDeliveries[index] = { ...batch, promptId: result.promptId };
+    if (this.consumedSteerPromptIds.delete(result.promptId)) {
+      this.releaseSteerEntries(entries);
+      return;
+    }
+    this.setSteerEntriesPending(entries, true);
+  }
+
   private releaseSteerEntries(entries: readonly TranscriptEntry[]): void {
     const doomed = new Set(entries);
     this.pendingSteerDeliveries = this.pendingSteerDeliveries.filter(
       (batch) => !batch.entries.some((entry) => doomed.has(entry)),
     );
+    this.setSteerEntriesPending(entries, false);
+    if (this.pendingSteerDeliveries.length === 0) this.consumedSteerPromptIds.clear();
+  }
+
+  private resetSteerDeliveries(): void {
+    const entries = this.pendingSteerDeliveries.flatMap((batch) => batch.entries);
+    this.pendingSteerDeliveries = [];
+    this.consumedSteerPromptIds.clear();
     this.setSteerEntriesPending(entries, false);
   }
 
@@ -2748,11 +2824,14 @@ export class KimiTUI {
     if (currentTurnId !== undefined && prepared === undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
     const dispatch = (items: readonly SteerInputItem[]) => {
       const payload = combineSteerInput(items);
-      if (this.turnCanAcceptSteer()) this.notePendingSteer(steeredEntries, payload);
-      else this.releaseSteerEntries(steeredEntries);
-      return prepared === undefined
+      this.notePendingSteer(steeredEntries, payload);
+      if (!this.turnCanAcceptSteer()) this.setSteerEntriesPending(steeredEntries, false);
+      const request = prepared === undefined
         ? session.steer(payload)
         : session.promptWithSkills(payload, prepared.skills, { steerIfActive: true });
+      return request.then((result) => {
+        this.applySteerSubmission(steeredEntries, result);
+      });
     };
     const request = this.trackPendingEntries(
       steeredEntries,
@@ -3310,7 +3389,7 @@ export class KimiTUI {
     previous?.setQuestionHandler(undefined);
     this.approvalController.cancelAll(reason);
     this.questionController.cancelAll(reason);
-    this.pendingSteerDeliveries = [];
+    this.resetSteerDeliveries();
     this.session = undefined;
     this.state.swarmModeEntry = undefined;
     this.harness.setTelemetryContext({ sessionId: null });
@@ -3454,6 +3533,7 @@ export class KimiTUI {
     this.cacheHint.resetRuntime();
     this.surveyController.reset();
     this.streamingUI.discardPending();
+    this.resetSteerDeliveries();
     // The lazy first creation keeps input queued while it was in flight (the
     // queued messages belong to the session being created); every other
     // reset discards the old session's backlog.

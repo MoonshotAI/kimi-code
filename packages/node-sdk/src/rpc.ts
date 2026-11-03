@@ -62,6 +62,7 @@ import type {
   SessionUsage,
   PromptInput,
   PromptSkillActivation,
+  PromptSubmissionResult,
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
@@ -336,7 +337,7 @@ export abstract class SDKRpcClientBase {
 
   abstract prompt(input: SessionPromptRpcInput): Promise<void>;
 
-  abstract promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void>;
+  abstract promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<PromptSubmissionResult>;
 
   abstract runShellCommand(input: {
     sessionId: string;
@@ -346,7 +347,7 @@ export abstract class SDKRpcClientBase {
 
   abstract cancelShellCommand(input: { sessionId: string; commandId: string }): Promise<void>;
 
-  abstract steer(input: SessionPromptRpcInput): Promise<void>;
+  abstract steer(input: SessionPromptRpcInput): Promise<PromptSubmissionResult>;
 
   abstract generateAgentsMd(input: SessionIdRpcInput): Promise<void>;
 

@@ -49,6 +49,16 @@ export interface TurnPrompt {
   readonly turnId?: number;
 }
 
+export interface TurnPromptEvent {
+  readonly type: 'turn.prompt';
+  readonly time?: number;
+  readonly agentId: string;
+  readonly input: readonly ContentPart[];
+  readonly origin: PromptOrigin;
+  readonly promptId?: string;
+  readonly turnId?: number;
+}
+
 const turnSteerSchema = z.object({
   agentId: z.string(),
   input: z.custom<readonly ContentPart[]>(),
@@ -65,6 +75,17 @@ export class TurnSteer extends AgentEvent2<z.infer<typeof turnSteerSchema>> {
   static override readonly schema = turnSteerSchema;
 }
 export interface TurnSteer {
+  readonly agentId: string;
+  readonly input: readonly ContentPart[];
+  readonly origin: PromptOrigin;
+  readonly messageId?: string;
+  readonly promptIds?: readonly string[];
+  readonly turnId?: number;
+}
+
+export interface TurnSteerEvent {
+  readonly type: 'turn.steer';
+  readonly time?: number;
   readonly agentId: string;
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;

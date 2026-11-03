@@ -83,6 +83,7 @@ export type {
   PromptWithSkillsResult,
   SetModelResult,
   ShellCommandResult,
+  SteerResult,
   ThinkingLevel,
   UsageStatus,
 } from './core/facade/agent.js';

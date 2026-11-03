@@ -28,7 +28,11 @@ export type {
   TurnStepInterruptedEvent,
   TurnEndReason,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-export type { TurnEndedEvent } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+export type {
+  TurnEndedEvent,
+  TurnPromptEvent,
+  TurnSteerEvent,
+} from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 
 export type {
   AssistantDeltaEvent,

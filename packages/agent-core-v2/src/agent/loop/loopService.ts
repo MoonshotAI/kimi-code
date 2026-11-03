@@ -2019,6 +2019,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     outcome: { readonly outcome: MachineTurnOutcome; readonly error?: unknown },
   ): Promise<void> {
     if (this.active !== turn) return;
+    const mirrorDrainedNudges = (): void => {
+      if (turn.current === undefined) this.mirrorConsumedNudges(turn);
+    };
     if (
       turn.failedStep !== undefined &&
       turn.abortReason === undefined &&
@@ -2032,11 +2035,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         turn.abortReason ??
         (turn.controller.signal.aborted ? turn.controller.signal.reason : undefined) ??
         abortError('Turn aborted');
+      mirrorDrainedNudges();
       this.interruptMachineRunForCancel(turn, reason);
       await this.endTurn(turn, { type: 'cancelled', steps: turn.steps, reason });
       return;
     }
     if (turn.filtered) {
+      mirrorDrainedNudges();
       await this.endTurn(turn, {
         type: 'failed',
         steps: turn.steps,
@@ -2048,10 +2053,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       return;
     }
     if (turn.maxStepsError !== undefined) {
+      mirrorDrainedNudges();
       await this.endTurn(turn, { type: 'failed', steps: turn.steps, error: turn.maxStepsError });
       return;
     }
     if (turn.stopRequested) {
+      mirrorDrainedNudges();
       await this.endTurn(turn, this.machineCompletedResult(turn));
       return;
     }
@@ -2059,15 +2066,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       return;
     }
     if (turn.toolStopRequested) {
+      mirrorDrainedNudges();
       await this.endTurn(turn, this.machineCompletedResult(turn));
       return;
     }
     if (outcome.outcome === 'failed') {
       const error = outcome.error ?? new Error('Turn failed');
       this.emitStepInterrupted(turn.id, turn.interruptStep, 'error', toErrorMessage(error));
+      mirrorDrainedNudges();
       await this.endTurn(turn, { type: 'failed', steps: turn.steps, error });
       return;
     }
+    mirrorDrainedNudges();
     await this.endTurn(turn, this.machineCompletedResult(turn));
   }
 

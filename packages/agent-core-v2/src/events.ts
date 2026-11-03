@@ -1,6 +1,6 @@
 import type { CompactionBlockedEvent, CompactionCancelledEvent, CompactionCompletedEvent, CompactionStartedEvent } from '#/agent/fullCompaction/compactionOps';
 import type { TurnStartedEvent, TurnStepCompletedEvent, TurnStepInterruptedEvent, TurnStepRetryingEvent, TurnStepStartedEvent, AssistantDeltaEvent, ThinkingDeltaEvent } from '#/agent/loop/turnEvents';
-import type { TurnEndedEvent } from '#/agent/loop/turnOps';
+import type { TurnEndedEvent, TurnPromptEvent, TurnSteerEvent } from '#/agent/loop/turnOps';
 import type { PluginCommandActivatedEvent } from '#/agent/pluginCommand/pluginCommand';
 import type { PromptAbortedEvent, PromptCompletedEvent, PromptSteeredEvent, PromptSubmittedEvent } from '#/agent/prompt/promptEvents';
 import type { EnvironmentStatusChangedEvent } from '#/agent/environmentBinding/environmentEvents';
@@ -49,6 +49,8 @@ export type AgentEvent =
   | PluginCommandActivatedEvent
   | EnvironmentStatusChangedEvent
   | TurnStartedEvent
+  | TurnPromptEvent
+  | TurnSteerEvent
   | TurnEndedEvent
   | TurnStepStartedEvent
   | TurnStepCompletedEvent

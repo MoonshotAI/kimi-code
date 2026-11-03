@@ -71,7 +71,7 @@ import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
-import { isTurnSteerEvent, isUserSteerOrigin } from '../utils/steer-delivery';
+import { isUserSteerOrigin } from '../utils/steer-delivery';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
@@ -127,7 +127,9 @@ export interface SessionEventHost {
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
   steerQueuedMessagesIntoRunningTurn(): void;
-  acknowledgeSteerDelivery?(input: unknown): void;
+  acknowledgeSteerDelivery?(input: unknown, promptIds?: readonly string[]): void;
+  acknowledgeSteerTurnPrompt?(promptId: string | undefined, input: unknown, origin: unknown): void;
+  acknowledgeSteerTurnStarted?(promptId?: string): void;
   lastCompactionTrigger: CompactionStartedEvent['trigger'] | undefined;
   autoCompactionSerial: number;
   handleTurnStarted?(event: TurnStartedEvent): void;
@@ -289,9 +291,12 @@ export class SessionEventHandler {
     if ('turnId' in event && event.turnId !== undefined) {
       this.host.streamingUI.setTurnId(String(event.turnId));
     }
-    const rawEvent: object = event;
-    if (isTurnSteerEvent(rawEvent)) {
-      if (isUserSteerOrigin(rawEvent)) this.host.acknowledgeSteerDelivery?.(rawEvent.input);
+    if (event.type === 'turn.steer') {
+      if (isUserSteerOrigin(event)) this.host.acknowledgeSteerDelivery?.(event.input, event.promptIds);
+      return;
+    }
+    if (event.type === 'turn.prompt') {
+      this.host.acknowledgeSteerTurnPrompt?.(event.promptId, event.input, event.origin);
       return;
     }
 
@@ -355,6 +360,7 @@ export class SessionEventHandler {
   // ---------------------------------------------------------------------------
 
   private handleTurnBegin(event: TurnStartedEvent): void {
+    this.host.acknowledgeSteerTurnStarted?.(event.promptId);
     this.host.handleTurnStarted?.(event);
     this.currentTurnHasAssistantText = false;
     if (event.origin?.kind === 'plugin_command') {

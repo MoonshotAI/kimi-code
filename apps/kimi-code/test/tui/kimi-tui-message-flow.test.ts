@@ -4443,6 +4443,7 @@ command = "vim"
         [{ name: 'review', args: 'src/app.ts' }],
         { steerIfActive: true },
       );
+      expect(driver.state.queuedMessages).toEqual([]);
     });
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(session.steer).not.toHaveBeenCalled();
@@ -4990,12 +4991,250 @@ command = "vim"
     }
   });
 
-  it('does not let an unmatched steer steal a later confirmation of the same text', async () => {
+  it('uses the accepted prompt id instead of transformed steer text', async () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      let resolveSteer!: () => void;
+      const session = makeSession({
+        steer: vi.fn(() => new Promise<import('@moonshot-ai/kimi-code-sdk').PromptSubmissionResult>((resolve) => {
+          resolveSteer = () => resolve({
+            promptId: 'prompt-transformed',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            state: 'running',
+            steered: true,
+            turnId: 1,
+          });
+        })),
+      });
+      const { driver } = await makeDriver(session);
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+      driver.state.editor.setText('original input');
+      driver.state.editor.onCtrlS?.();
+
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'prompt.steered',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          activePromptId: 'active',
+          promptIds: ['prompt-transformed'],
+          content: [{ type: 'text', text: 'original input' }],
+          steeredAt: '2026-01-01T00:00:00.000Z',
+        } as Event,
+        () => {},
+      );
+      expect(renderTranscript(driver)).toContain('\u001B[2m');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.steer',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          promptIds: ['prompt-transformed'],
+          input: [{ type: 'text', text: 'rewritten input' }],
+          origin: { kind: 'user' },
+        } as unknown as Event,
+        () => {},
+      );
+
+      expect(renderTranscript(driver)).toContain('\u001B[2m');
+      resolveSteer();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(renderTranscript(driver)).not.toContain('\u001B[2m');
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
+
+  it('keeps a steer unread across turn end until its own turn prompt arrives', async () => {
     const previousLevel = chalk.level;
     chalk.level = 3;
     try {
       const session = makeSession({
-        steer: vi.fn(async () => {}),
+        steer: vi.fn(async () => ({
+          promptId: 'prompt-seeded',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          state: 'running',
+          steered: true,
+          turnId: 1,
+        })),
+      });
+      const { driver } = await makeDriver(session);
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+      driver.state.editor.setText('carry me forward');
+      driver.state.editor.onCtrlS?.();
+      await vi.waitFor(() => { expect(session.steer).toHaveBeenCalledOnce(); });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      driver.sessionEventHandler.handleEvent(
+        { type: 'turn.ended', agentId: 'main', sessionId: 'ses-1', turnId: 1, reason: 'cancelled' } as Event,
+        () => {},
+      );
+      expect(renderTranscript(driver)).toContain('\u001B[2m');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.prompt',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 2,
+          promptId: 'prompt-seeded',
+          input: [{ type: 'text', text: 'carry me forward' }],
+          origin: { kind: 'user', inTurn: true },
+        } as unknown as Event,
+        () => {},
+      );
+
+      expect(renderTranscript(driver)).not.toContain('\u001B[2m');
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
+
+  it('does not confirm same text under a different prompt id', async () => {
+    const session = makeSession({
+      steer: vi.fn(async () => ({
+        promptId: 'prompt-mine',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        state: 'running',
+        steered: true,
+        turnId: 1,
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.state.editor.setText('same');
+    driver.state.editor.onCtrlS?.();
+    await vi.waitFor(() => { expect(session.steer).toHaveBeenCalledOnce(); });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.steer',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        promptIds: ['prompt-other-client'],
+        input: [{ type: 'text', text: 'same' }],
+        origin: { kind: 'user' },
+      } as unknown as Event,
+      () => {},
+    );
+
+    expect(driver.state.transcriptEntries).toContainEqual(expect.objectContaining({
+      content: 'same', steerPending: true,
+    }));
+  });
+
+  it('uses a queued goal submission id when its own turn starts', async () => {
+    const session = makeSession({
+      steer: vi.fn(async () => ({
+        promptId: 'prompt-goal-queued',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        state: 'queued',
+        steered: false,
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    driver.state.appState.goal = makeActiveGoalSnapshot();
+    driver.handleUserInput('queue behind the continuation');
+    await vi.waitFor(() => { expect(session.steer).toHaveBeenCalledOnce(); });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(driver.state.transcriptEntries).toContainEqual(expect.objectContaining({
+      content: 'queue behind the continuation', steerPending: true,
+    }));
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 2,
+        promptId: 'prompt-goal-queued',
+        origin: { kind: 'user' },
+      } as Event,
+      () => {},
+    );
+
+    expect(
+      driver.state.transcriptEntries.find(
+        (entry) => entry.content === 'queue behind the continuation',
+      )?.steerPending,
+    ).toBeUndefined();
+  });
+
+  it('restores a blocked steer result instead of leaving it faint', async () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const session = makeSession({
+        steer: vi.fn(async () => ({
+          promptId: 'prompt-blocked',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          state: 'blocked',
+          steered: false,
+        })),
+      });
+      const { driver } = await makeDriver(session);
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+      driver.state.editor.setText('blocked input');
+      driver.state.editor.onCtrlS?.();
+      await vi.waitFor(() => { expect(session.steer).toHaveBeenCalledOnce(); });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(renderTranscript(driver)).not.toContain('\u001B[2m');
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
+
+  it('releases local steer pending state when reloading without replaying history', async () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const session = makeSession({
+        steer: vi.fn(async () => ({
+          promptId: 'prompt-reload',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          state: 'running',
+          steered: true,
+          turnId: 1,
+        })),
+      });
+      const { driver } = await makeDriver(session);
+      driver.state.appState.streamingPhase = 'waiting';
+      driver.streamingUI.setTurnId('1');
+      driver.state.editor.setText('pending through reload');
+      driver.state.editor.onCtrlS?.();
+      await vi.waitFor(() => { expect(session.steer).toHaveBeenCalledOnce(); });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(renderTranscript(driver)).toContain('\u001B[2m');
+
+      await driver.reloadCurrentSessionView(session as unknown as Session, 'Reloaded.');
+
+      expect(renderTranscript(driver)).not.toContain('\u001B[2m');
+    } finally {
+      chalk.level = previousLevel;
+    }
+  });
+
+  it('does not let an unmatched steer steal a later confirmation of the same text', async () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      let submission = 0;
+      const session = makeSession({
+        steer: vi.fn(async () => ({
+          promptId: `prompt-same-${++submission}`,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          state: 'running',
+          steered: true,
+          turnId: submission,
+        })),
       });
       const { driver } = await makeDriver(session);
       driver.state.appState.streamingPhase = 'waiting';
@@ -5004,6 +5243,7 @@ command = "vim"
       driver.state.editor.onCtrlS?.();
       await vi.waitFor(() => {
         expect(session.steer).toHaveBeenCalledTimes(1);
+        expect(driver.state.queuedMessages).toEqual([]);
       });
 
       driver.sessionEventHandler.handleEvent(
@@ -5016,6 +5256,7 @@ command = "vim"
       driver.state.editor.onCtrlS?.();
       await vi.waitFor(() => {
         expect(session.steer).toHaveBeenCalledTimes(2);
+        expect(driver.state.queuedMessages).toEqual([]);
       });
       driver.sessionEventHandler.handleEvent(
         {
@@ -5023,16 +5264,17 @@ command = "vim"
           agentId: 'main',
           sessionId: 'ses-1',
           turnId: 2,
+          promptIds: ['prompt-same-2'],
           input: [{ type: 'text', text: 'same' }],
           origin: { kind: 'user' },
         } as unknown as Event,
         () => {},
       );
 
-      const pending = driver.state.transcriptEntries.filter((entry) => entry.content === 'same' && entry.steerPending === true);
-      const delivered = driver.state.transcriptEntries.filter((entry) => entry.content === 'same' && entry.steerPending !== true);
-      expect(pending).toHaveLength(1);
-      expect(delivered).toHaveLength(1);
+      const entries = driver.state.transcriptEntries.filter((entry) => entry.content === 'same');
+      expect(entries).toHaveLength(2);
+      expect(entries[0]?.steerPending).toBe(true);
+      expect(entries[1]?.steerPending).toBeUndefined();
     } finally {
       chalk.level = previousLevel;
     }

@@ -57,6 +57,11 @@ export function isUserSteerOrigin(event: { readonly origin?: unknown }): boolean
   return 'kind' in event.origin && event.origin.kind === 'user';
 }
 
+export function isInTurnUserOrigin(origin: unknown): boolean {
+  if (origin === null || typeof origin !== 'object') return false;
+  return 'kind' in origin && origin.kind === 'user' && 'inTurn' in origin && origin.inTurn === true;
+}
+
 // A shorter pending steer must not match inside a different message.
 // Skill activation text is prepended and ends at `</skill-loaded>`, so the
 // submitted user text is also a suffix immediately after `>`.
@@ -77,10 +82,10 @@ function boundaryIndex(eventText: string, batchText: string): number {
   return -1;
 }
 
-export function takeDeliveredSteerBatches<T>(
-  batches: readonly SteerDeliveryBatch<T>[],
+export function takeDeliveredSteerBatches<B extends SteerDeliveryBatch<unknown>>(
+  batches: readonly B[],
   eventText: string,
-): { readonly delivered: SteerDeliveryBatch<T>[]; readonly pending: SteerDeliveryBatch<T>[] } {
+): { readonly delivered: B[]; readonly pending: B[] } {
   if (eventText.length === 0) {
     return { delivered: [], pending: [...batches] };
   }
@@ -96,8 +101,8 @@ export function takeDeliveredSteerBatches<T>(
     deliveredIndexes.add(item.index);
     rest = rest.slice(0, at) + rest.slice(at + item.batch.text.length);
   }
-  const delivered: SteerDeliveryBatch<T>[] = [];
-  const pending: SteerDeliveryBatch<T>[] = [];
+  const delivered: B[] = [];
+  const pending: B[] = [];
   batches.forEach((batch, index) => {
     if (deliveredIndexes.has(index)) delivered.push(batch);
     else pending.push(batch);

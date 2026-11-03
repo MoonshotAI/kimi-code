@@ -24,6 +24,13 @@ describe('Event public types', () => {
     >();
   });
 
+  it('narrows prompt consumption identities', () => {
+    expectTypeOf<EventByType<'turn.prompt'>['promptId']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<EventByType<'turn.steer'>['promptIds']>().toEqualTypeOf<
+      readonly string[] | undefined
+    >();
+  });
+
   it('exposes LLM stream timing on step completion events', () => {
     expectTypeOf<EventByType<'turn.step.completed'>['llmFirstTokenLatencyMs']>().toEqualTypeOf<
       number | undefined
@@ -94,6 +101,8 @@ describe('Event public types', () => {
         case 'error':
         case 'warning':
         case 'turn.started':
+        case 'turn.prompt':
+        case 'turn.steer':
         case 'turn.ended':
         case 'turn.step.started':
         case 'turn.step.completed':
