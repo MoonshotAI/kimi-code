@@ -558,6 +558,9 @@ function adoptStarterTurn(context: GoalOperationContext, actor: GoalActor): void
   if (turnId === undefined) return;
   const state = context.runtime.getState().goal;
   if (state === null || state.status !== 'active') return;
+  if (!context.effects.turnObjectiveRevisions.has(turnId)) {
+    context.effects.turnObjectiveRevisions.set(turnId, context.effects.objectiveRevision);
+  }
   const goalId = context.effects.goalDrivenTurns.get(turnId);
   if (actor === 'model') context.effects.goalTurnTargets.set(turnId, state.goalId);
   if (toSnapshot(context, state).budget.turnBudgetReached) {
