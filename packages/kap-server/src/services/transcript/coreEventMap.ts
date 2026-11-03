@@ -27,7 +27,6 @@ import {
   type TurnStepStarted,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
-import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import type { PluginCommandActivated } from '@moonshot-ai/agent-core-v2/agent/pluginCommand/pluginCommand';
 import type { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
@@ -57,7 +56,6 @@ import {
   projectTranscriptUserOrigin,
   projectTranscriptUserTurnOrigin,
   type AgentRef,
-  type AgentUsageMeta,
   type StepHeader,
   type StepUsage,
   type TextFrame,
@@ -69,7 +67,6 @@ import {
   type TranscriptMarker,
   type TranscriptOperation,
   type TranscriptPrompt,
-  type TranscriptTodo,
   turnId as exportTurnKey,
   turnOrdinal,
   type TranscriptUsage,
@@ -79,8 +76,6 @@ import {
   type TurnState,
 } from '@moonshot-ai/transcript';
 
-import { toLegacyPhase, type LegacyActivityApproval } from '../legacyStatus/legacyStatus';
-import { LegacyActivityTracker, phaseFromDomainEvent } from '../legacyStatus/legacyActivity';
 import { interactionOutcome } from '../../protocol/interaction-wire';
 import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts, projectToolResultOutput } from '../messages/messageProjection';
@@ -189,8 +184,6 @@ export interface ProjectorLookups {
   readonly maxOrdinal?: ProjectorMaxOrdinalLookup;
   readonly prompt?: ProjectorPromptLookup;
   readonly resolvePlanRevisionKey?: ProjectorPlanRevisionKey;
-  readonly activitySnapshot?: () => AgentActivitySnapshot;
-  readonly pendingApprovals?: () => readonly LegacyActivityApproval[];
 }
 
 interface OpenTextFrame {
@@ -225,7 +218,6 @@ export class AgentTranscriptProjector {
   private openText: OpenTextFrame | undefined;
   private openThinking: OpenTextFrame | undefined;
   private readonly toolFrames = new Map<string, ToolFrameRecord>();
-  private activityTracker: LegacyActivityTracker | undefined;
 
   seedActiveTurn(info: { turnId: number; promptId?: string }): void {
     this.ensureHighWater();
@@ -298,7 +290,6 @@ export class AgentTranscriptProjector {
   private readonly prompts = new Map<string, TranscriptPrompt>();
   private readonly stepUsageByTurn = new Map<string, StepUsage[]>();
   private markerSeq = 0;
-  private planModeActive = false;
 
   constructor(
     readonly agentId: string,
@@ -307,21 +298,7 @@ export class AgentTranscriptProjector {
   ) {}
 
   map(event: ProjectorBusEvent): TranscriptOperation[] {
-    const ops = this.mapEvent(event);
-    const phase = this.phaseFor(event);
-    if (phase === undefined) return ops;
-    return [...ops, { op: 'meta.merge', meta: { agent: { phase } } }];
-  }
-
-  private phaseFor(event: ProjectorBusEvent): ReturnType<typeof toLegacyPhase> {
-    if (this.lookups?.activitySnapshot === undefined || this.lookups.pendingApprovals === undefined) {
-      return undefined;
-    }
-    this.activityTracker ??= new LegacyActivityTracker(
-      this.lookups.activitySnapshot,
-      this.lookups.pendingApprovals,
-    );
-    return phaseFromDomainEvent(this.activityTracker, event);
+    return this.mapEvent(event);
   }
 
   private mapEvent(event: ProjectorBusEvent): TranscriptOperation[] {
@@ -363,8 +340,6 @@ export class AgentTranscriptProjector {
         return this.onSubagentSpawned(event);
       case 'goal.updated':
         return this.onGoalUpdated(event);
-      case 'agent.status.updated':
-        return this.onAgentStatusUpdated(event);
       case 'prompt.queued':
         return this.onPromptQueued(event);
       case 'prompt.submitted':
@@ -499,7 +474,6 @@ export class AgentTranscriptProjector {
     this.openText = undefined;
     this.openThinking = undefined;
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
-    ops.push({ op: 'meta.merge', meta: { activity: 'turn' } });
     return ops;
   }
 
@@ -620,7 +594,6 @@ export class AgentTranscriptProjector {
       usage: this.takeTurnUsage(turnId),
     };
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
-    ops.push({ op: 'meta.merge', meta: { activity: 'idle' } });
     this.currentStep = undefined;
     this.pendingTaskNotifications = [];
     if (event.reason === 'cancelled' && event.interruptReason === 'user_cancelled') {
@@ -978,7 +951,6 @@ export class AgentTranscriptProjector {
       input,
       inputText: this.toolFrames.get(event.toolCallId)?.frame.inputText,
       display: event.display,
-      todoId: event.name === TODO_LIST_TOOL_NAME && todoWriteItems(input) !== undefined ? TODO_ENTITY_ID : undefined,
     };
     this.toolFrames.set(event.toolCallId, { turnId, stepId: step.stepId, frame });
     ops.push({ op: 'frame.upsert', turnId, stepId: step.stepId, frame });
@@ -1001,17 +973,7 @@ export class AgentTranscriptProjector {
       error: isError && typeof output === 'string' ? output : undefined,
     };
     this.toolFrames.set(event.toolCallId, { ...hit, frame });
-    const ops: TranscriptOperation[] = [
-      { op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame },
-    ];
-    if (!isError && frame.name === TODO_LIST_TOOL_NAME) {
-      const items = todoWriteItems(frame.input);
-      if (items !== undefined) {
-        const todo: TranscriptTodo = { todoId: TODO_ENTITY_ID, items, updatedAt: nowIso() };
-        ops.push({ op: 'todo.upsert', todo });
-      }
-    }
-    return ops;
+    return [{ op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame }];
   }
 
   private adoptToolFrame(toolCallId: string): ToolFrameRecord | undefined {
@@ -1068,126 +1030,15 @@ export class AgentTranscriptProjector {
     return [{ op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame }];
   }
 
-  private onGoalUpdated(event: {
-    readonly type: string;
-    snapshot: {
-      objective: string;
-      status: 'active' | 'paused' | 'blocked' | 'complete';
-      completionCriterion?: string;
-      tokensUsed: number;
-      budget: { tokenBudget: number | null };
-    } | null;
-  }): TranscriptOperation[] {
-    const ops: TranscriptOperation[] = [];
-    const snapshot = event.snapshot;
-    if (snapshot === null) {
-      ops.push({ op: 'meta.merge', meta: { goal: null } });
-    } else {
-      ops.push({
-        op: 'meta.merge',
-        meta: {
-          goal: {
-            objective: snapshot.objective,
-            status: snapshot.status,
-            completionCriterion: snapshot.completionCriterion,
-            budgetUsed: snapshot.tokensUsed,
-            budgetLimit: snapshot.budget.tokenBudget ?? undefined,
-          },
-        },
-      });
-    }
-    ops.push(this.markerOp('goal', restOf(event)));
-    return ops;
-  }
-
-  private onAgentStatusUpdated(event: {
-    planMode?: boolean;
-    swarmMode?: boolean;
-    towerMode?: boolean;
-    model?: string;
-    thinkingEffort?: string;
-    usage?: AgentUsageMeta;
-    contextTokens?: number;
-    maxContextTokens?: number;
-    contextUsage?: number;
-    permission?: 'manual' | 'yolo' | 'auto';
-  }): TranscriptOperation[] {
-    const ops: TranscriptOperation[] = [];
-    const modes: {
-      plan?: Record<string, never> | null;
-      swarm?: Record<string, never> | null;
-      tower?: Record<string, never> | null;
-    } = {};
-    if (event.planMode === true) {
-      modes.plan = {};
-      this.planModeActive = true;
-    } else if (event.planMode === false) {
-      modes.plan = null;
-      this.planModeActive = false;
-    }
-    if (event.swarmMode === true) modes.swarm = {};
-    else if (event.swarmMode === false) modes.swarm = null;
-    if (event.towerMode === true) modes.tower = {};
-    else if (event.towerMode === false) modes.tower = null;
-    if (modes.plan !== undefined || modes.swarm !== undefined || modes.tower !== undefined) {
-      ops.push({ op: 'meta.merge', meta: { modes } });
-    }
-    const agent: {
-      model?: string;
-      thinkingEffort?: string;
-      usage?: AgentUsageMeta;
-      contextTokens?: number;
-      maxContextTokens?: number;
-      contextUsage?: number;
-      permission?: 'manual' | 'yolo' | 'auto';
-    } = {};
-    let hasStatusSlice = false;
-    if (event.model !== undefined) {
-      agent.model = event.model;
-      hasStatusSlice = true;
-    }
-    if (event.thinkingEffort !== undefined) {
-      agent.thinkingEffort = event.thinkingEffort;
-      hasStatusSlice = true;
-    }
-    if (event.usage !== undefined) {
-      agent.usage = event.usage;
-      hasStatusSlice = true;
-    }
-    if (event.contextTokens !== undefined) {
-      agent.contextTokens = event.contextTokens;
-      hasStatusSlice = true;
-    }
-    if (event.maxContextTokens !== undefined) {
-      agent.maxContextTokens = event.maxContextTokens;
-      hasStatusSlice = true;
-    }
-    if (event.contextUsage !== undefined) {
-      agent.contextUsage = event.contextUsage;
-      hasStatusSlice = true;
-    }
-    if (event.permission !== undefined) {
-      agent.permission = event.permission;
-      hasStatusSlice = true;
-    }
-    if (hasStatusSlice) {
-      ops.push({ op: 'meta.merge', meta: { agent } });
-    }
-    return ops;
+  private onGoalUpdated(event: { readonly type: string }): TranscriptOperation[] {
+    return [this.markerOp('goal', restOf(event))];
   }
 
   private onPlanRevision(event: PlanRevisionEvent): TranscriptOperation[] {
     const path = this.lookups?.resolvePlanRevisionKey?.(event.key) ?? event.key;
     const { key: _key, ...rest } = restOf(event);
     const payload = { ...rest, path };
-    const ops: TranscriptOperation[] = [this.markerOp('plan.revision', payload)];
-    if (this.planModeActive) {
-      ops.push({
-        op: 'meta.merge',
-        meta: { modes: { plan: { reviewPath: path, version: event.version } } },
-      });
-    }
-    return ops;
+    return [this.markerOp('plan.revision', payload)];
   }
 
   private markerOp(marker: string, payload: unknown): TranscriptOperation {
@@ -1514,23 +1365,6 @@ function mapTurnEndState(reason: 'completed' | 'cancelled' | 'failed' | 'blocked
     case 'blocked':
       return 'failed';
   }
-}
-
-const TODO_LIST_TOOL_NAME = 'TodoList';
-const TODO_ENTITY_ID = 'todo';
-
-function todoWriteItems(input: unknown): TranscriptTodo['items'] | undefined {
-  const todos = (input as { todos?: unknown } | undefined)?.todos;
-  if (!Array.isArray(todos)) return undefined;
-  const items: { title: string; status: 'pending' | 'in_progress' | 'done' }[] = [];
-  for (const entry of todos) {
-    const title = (entry as { title?: unknown } | undefined)?.title;
-    const status = (entry as { status?: unknown } | undefined)?.status;
-    if (typeof title !== 'string') return undefined;
-    if (status !== 'pending' && status !== 'in_progress' && status !== 'done') return undefined;
-    items.push({ title, status });
-  }
-  return items;
 }
 
 function parseToolArgs(args: unknown): unknown {

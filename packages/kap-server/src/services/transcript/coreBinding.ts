@@ -18,7 +18,6 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentDescriptor, TranscriptChangeEvent, TranscriptStore } from '@moonshot-ai/transcript';
 
-import { legacyApprovalsOf } from '../legacyStatus/legacyActivity';
 import {
   AgentTranscriptProjector,
   type ProjectorBusEvent,
@@ -98,12 +97,6 @@ export function bindSessionTranscript(
           if (agentHandle === undefined) return undefined;
           const turn = agentHandle.accessor.get(IAgentLoopService)?.snapshot().turn;
           return turn === undefined || `t${turn.turnId}` !== turnId ? undefined : turn.step;
-        },
-        activitySnapshot: () =>
-          agents.handleOf(agentId)?.accessor.get(IAgentLoopService)?.snapshot() ?? {},
-        pendingApprovals: () => {
-          const agentHandle = agents.handleOf(agentId);
-          return agentHandle === undefined ? [] : legacyApprovalsOf(agentHandle);
         },
         turn: (turnId) => store.getAgent(agentId)?.getTurn(turnId),
         maxOrdinal: () => {
