@@ -15,7 +15,7 @@ Kimi Code 把 Agent 循环、模型请求、凭据、审批和会话状态全部
 - **Hooks 与 MCP server 默认留在本机**：生命周期钩子和未显式设置 `environment_id` 的 stdio MCP server 在本机运行，详见 [限制](#限制)。
 - **SSH 走系统 `ssh`**：SSH 启动器调用系统 `ssh`，因此 `~/.ssh/config`（用户、端口、密钥、`ProxyJump`、`ControlMaster`）和 ssh-agent 照常生效——密码、口令与主机密钥的处理详见 [SSH 认证](#ssh-认证)。
 
-仅支持 POSIX 目标，不支持 Windows 目标。
+支持 POSIX 和 Windows 目标。Windows 目标需要 Git for Windows（Git Bash），支持 SSH 和自定义命令启动器，不支持 Docker 启动器。
 
 ::: info 远程环境 vs. 远程控制
 [远程控制](./remote-control.md) 是相反方向：它让另一台设备（比如手机）查看和操控运行在**本机**的会话。远程环境则相反——由本机的 CLI 驱动工具在**另一台**机器或容器里执行。
@@ -50,7 +50,7 @@ defaultCwd = "/home/me/kimi-code"
 关键规则：
 
 - `type` 与 `command` 在同一条目内互斥：`type = "ssh"` 和 `type = "docker"` 是内置启动器，`command` + `args` 是通用形式（与 `.mcp.json` 的 stdio 条目形态一致）。通用形式下，Kimi Code 会在 `args` 之后追加 `<remoteBin> exec-server`（默认 `~/.kimi-code/bin/kimi`），`args` 已经调用 `exec-server` 时不追加；`kubectl exec` 这类不经 shell、原样传递参数的启动器不会展开 `~`，需要把 `remoteBin` 设为绝对路径。`env` 设置的是本机启动器进程的环境，**不会**传播到 Agent 在目标环境执行的命令里。
-- `defaultCwd` 是在该环境上创建会话时使用的工作目录，可被 `--environment-cwd` 覆盖。它必须是目标环境上的 POSIX 绝对路径；相对路径和 `~` 不会按本机目录或目标机器的 home 展开。系统先规范化重复分隔符、`.` 和 `..`，再在目标环境上校验目录，并保存同一个规范化路径。符号链接名称会保留，不会用 realpath 改写；因此 `symlink/..` 使用路径拼写中的父目录，而不是符号链接目标的物理父目录。
+- `defaultCwd` 是在该环境上创建会话时使用的工作目录，可被 `--environment-cwd` 覆盖。它必须是目标环境上的 POSIX 绝对路径或 Windows 驱动器路径（如 `C:\work\project`）；不支持相对路径、`~` 和 UNC 路径。系统先规范化重复分隔符、`.` 和 `..`，再在目标环境上校验目录，并保存同一个规范化路径。符号链接名称会保留，不会用 realpath 改写；因此 `symlink/..` 使用路径拼写中的父目录，而不是符号链接目标的物理父目录。
 - 可选的顶层 `default` 指定创建会话时未显式给出绑定时使用的环境——冷启动、print 模式，或 API 创建。它指向的条目必须设置 `defaultCwd`。未设置 `default` 时，这些会话从 `local` 开始。TUI 里的 `/new` 不属于这种情况：它保留当前会话的环境和工作目录。还没有会话时，`/new` 使用进程启动时的 `--environment`；没有该参数时才用解析后的 default。
 - 配置文件无法读取或 `[environments]` 节无效时，创建会话会以 `config.invalid` 失败，不会将其视为未设置 default。显式选择 `local` 仍可创建本地会话。
 - 环境 id 即条目的键名：不超过 64 个字符，首尾不能有空白；`local` 和 `default` 是保留字。
@@ -62,6 +62,22 @@ defaultCwd = "/home/me/kimi-code"
 环境 ID 是进程级的：绑定到同一 ID 的会话共享一条连接，工作目录可以不同。
 
 完整字段参考见 [`environments`](../configuration/config-files.md#environments)。
+
+### Windows 目标
+
+Windows 目标通过 Git Bash 执行 `Bash` 工具，与本机 Windows 会话一致。在目标机器上安装 [Git for Windows](https://gitforwindows.org/) 和 Windows 版 `kimi` 二进制文件。不支持原生 PowerShell 工具命令和 Windows Docker 容器。
+
+使用 SSH 时，把二进制文件放到目标账户的 `PATH` 中，并确认 `ssh windows-dev kimi --version` 可以无提示成功执行。`remoteBin` 应设为裸名称 `kimi` 或 `kimi.exe`，不要设为 Windows 绝对路径，这样无论 SSH 默认 Shell 是 cmd、PowerShell 还是 Git Bash，都能使用同一条调用命令。`defaultCwd` 使用原生驱动器路径，不要使用 `/c/work/project` 这类 Git Bash 路径，也不支持 UNC 路径。工具参数可以使用 `/c/work/file.txt` 这类驱动器路径形式，但 `/tmp`、`/usr`、`/dev`、`/proc` 等其他 MSYS 路径会由于无法在目标上确认挂载映射而被拒绝；控制端不会运行本机 `cygpath` 进行猜测。
+
+```toml
+[environments.windows-dev]
+type = "ssh"
+host = "windows-dev"
+remoteBin = "kimi"
+defaultCwd = 'C:\work\project'
+```
+
+自定义命令启动器同样要求目标上有 Windows 执行器和 Git Bash。如果传入的 `args` 已经调用 `exec-server`，启动器需要自行处理 Windows 命令引号。
 
 ## 创建与恢复会话
 
@@ -139,7 +155,7 @@ Host dev-box
 
 执行器是 Kimi Code 自身的轻量构建，在目标环境以 `kimi exec-server` 启动。它只响应文件系统、进程请求——不接触模型 API、凭据和会话状态。stdio 是默认且唯一支持的传输方式，显式写法 `kimi exec-server --listen stdio` 与之等价且依然可用。
 
-固定安装路径是目标环境上的 `~/.kimi-code/bin/kimi`（执行器位于其他位置时——例如预装的容器镜像——可用条目里的 `remoteBin` 覆盖）。
+POSIX 目标的默认安装路径是目标环境上的 `~/.kimi-code/bin/kimi`（执行器位于其他位置时——例如预装的容器镜像——可用条目里的 `remoteBin` 覆盖）。[Windows 目标](#windows-目标)则使用目标 `PATH` 中的裸可执行文件名。
 
 ### 安装执行器
 
@@ -147,11 +163,13 @@ Kimi Code 不会自动安装执行器。连接在预期路径上找不到执行�
 
 ### 版本兼容
 
-连接握手会校验执行器的最低版本和 POSIX 目标。版本过旧的执行器会被拒绝接入并给出升级指引——安装当前构建覆盖旧版本，然后重新连接。
+连接握手会校验执行器的最低版本和目标是否为可识别的 POSIX 或 Windows 环境。Windows 执行器还必须声明随 Windows 支持引入的进程生命周期能力；缺少该能力的旧执行器会被拒绝接入并给出升级指引。安装当前构建覆盖过旧或不兼容的执行器，然后重新连接。
 
 ## 限制
 
 以下行为均为有意限定的范围，逐条列出已知限制：
+
+- **Windows 主进程退出后的进程树清理**：运行中的进程会通过 `taskkill` 终止，但主进程已经退出后，其遗留的子进程不会再按进程组回收。如果需要清理这些子进程，请在主进程退出前停止对应的后台任务。
 
 - **Hooks 在 Kimi Code 所在主机执行**：`PreToolUse` 等生命周期钩子始终在运行 Kimi Code 的机器上执行，因此在远程会话中它们读到的是本机事实（本机文件、本机进程），而非目标环境的。它们以会话的本地工作目录运行；在目标环境上执行 hook 仍是未来才可能设计的能力。
 - **MCP server 默认留在本机**：未显式设置 `environment_id` 的 stdio MCP server 在远程会话中仍在本机运行，看不到目标环境的文件系统。MCP 配置取自启动 Kimi Code 的本机目录（包括该目录的项目级配置），不读取目标环境上的 MCP 配置。

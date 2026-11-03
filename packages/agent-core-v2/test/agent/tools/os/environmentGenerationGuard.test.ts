@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { IFileEditService } from '#/app/edit/fileEdit';
+import { REMOTE_SHELL_PATH_BRIDGE } from '#/_base/execEnv/shellPathBridge';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { Environment, EnvironmentAccess, EnvironmentBinding, EnvironmentCapability, EnvironmentHandle, EnvironmentTarget } from '#/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
@@ -579,5 +580,46 @@ describe('tool environment routing', () => {
     const result = await finish(resolved);
     expect(result.isError).toBe(true);
     expect(result.output).toBe(ENVIRONMENT_CHANGED_OUTPUT);
+  });
+
+  it('does not treat a pending resolve reconnect as an environment change', async () => {
+    const harness = connectSwappingHarness(createFakeHostFs());
+    const result = await finish(bashTool(harness.service).resolveExecution({ command: 'echo hi' }));
+
+    expect(harness.calls).toEqual(['connect']);
+    expect(outputText(result)).not.toContain(ENVIRONMENT_CHANGED_OUTPUT);
+  });
+
+  it('fails the call and releases the lease when the cwd cannot be resolved on the target', async () => {
+    const registry = new EnvironmentRegistry();
+    const ready = Object.assign(
+      new FakeEnvironment(
+        { ...BINDING, generation: 'remote-one' },
+        { status: 'ready', capabilities: ['fs', 'process'] },
+      ),
+      { fs: createFakeHostFs(), process: {}, shellPathBridge: REMOTE_SHELL_PATH_BRIDGE },
+    );
+    registry.register(ready);
+    const harness = { registry, service: registryBackedService(registry) };
+    const release = vi.fn();
+    const service: IAgentEnvironmentService = {
+      ...harness.service,
+      acquire: (required) => {
+        const lease = harness.service.acquire(required);
+        return {
+          environment: lease.environment,
+          track: (resource, sessionId) => lease.track(resource, sessionId),
+          dispose: () => {
+            release();
+            lease.dispose();
+          },
+        };
+      },
+    };
+
+    await expect(bashTool(service).resolveExecution({ command: 'echo hi', cwd: '/tmp' })).rejects.toThrow(
+      'cannot be resolved on the target',
+    );
+    expect(release).toHaveBeenCalledOnce();
   });
 });

@@ -230,9 +230,15 @@ export class RemoteExecConnection implements ExecChannel {
         },
       );
     }
-    if (this.environmentValue.pathClass !== 'posix') {
+    if (this.environmentValue.pathClass !== 'posix' && this.environmentValue.pathClass !== 'win32') {
       return new HandshakeError(
-        `executor environment ${this.environmentValue.osKind} is not posix; remote environments require a posix target`,
+        `executor environment ${this.environmentValue.osKind} has unsupported path class ${this.environmentValue.pathClass}`,
+        { kind: 'incompatible' },
+      );
+    }
+    if (this.environmentValue.pathClass === 'win32' && this.environmentValue.windowsProcessLifecycle !== true) {
+      return new HandshakeError(
+        'Windows executor does not support the required process lifecycle; upgrade the remote executor (kimi exec-server) and retry',
         { kind: 'incompatible' },
       );
     }

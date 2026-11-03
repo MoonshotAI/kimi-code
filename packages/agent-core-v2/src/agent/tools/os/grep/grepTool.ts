@@ -101,6 +101,7 @@ export class GrepTool implements IGrepTool {
       if (args.path !== undefined) {
         path = resolvePathAccessPath(args.path, {
           env,
+          shellPathBridge: view.shellPathBridge,
           workspace,
           operation: 'search',
           policy: { guardMode: 'absolute-outside-allowed', checkSensitive: false },
@@ -199,7 +200,7 @@ export class GrepTool implements IGrepTool {
     const { exitCode, stderrText, bufferTruncated, stderrTruncated, timedOut } = runResult;
     let { stdoutText } = runResult;
 
-    if (exitCode !== 0 && exitCode !== 1 && !timedOut) {
+    if (exitCode !== 0 && exitCode !== 1 && !timedOut && !bufferTruncated) {
       return {
         isError: true,
         output: formatRipgrepError(exitCode, stderrText, stderrTruncated),

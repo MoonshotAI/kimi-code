@@ -19,6 +19,7 @@ import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import { stubAgentEnvironment } from '../../../../environment/stubs';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
@@ -735,7 +736,11 @@ function bashTool(
       { environmentId: 'local', generation: 'test' },
       { capabilities: ['process'], pathClass: env.pathClass },
     ),
-    { host: env, process: processService },
+    {
+      host: env,
+      process: processService,
+      shellPathBridge: env.pathClass === 'win32' ? getShellPathBridge(env) : undefined,
+    },
   );
   const environment = stubAgentEnvironment(backend, { workDir: ctx.cwd });
   return new BashTool(environment, ctx, background, toolPolicy, config);
