@@ -120,10 +120,25 @@ export type {
   PluginGithubRef,
   PluginInfo,
   PluginMcpServerInfo,
+  PluginOrigin,
   PluginSource,
   PluginSummary,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
+export type {
+  MarketplaceLocation,
+  MarketplaceUpdateStatus,
+  PluginMarketplace,
+  PluginMarketplaceClassification,
+  PluginMarketplaceDistribution,
+  PluginMarketplaceEntry,
+  PluginMarketplaceLocale,
+  PluginMarketplaceLocalizedText,
+  PluginMarketplacePlatform,
+  PluginMarketplaceTier,
+  ReadPluginMarketplaceOptions,
+} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+export type { InstallPluginInput } from '@moonshot-ai/agent-core-v2/app/plugin/plugin';
 export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 export type { ToolInfo } from '#/tool';
 export type {

@@ -145,6 +145,45 @@ describe('facade routing', () => {
     ]);
   });
 
+  it('routes custom and marketplace plugin installs through the same contract', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    channel.result = {
+      id: 'demo',
+      displayName: 'Demo',
+      enabled: true,
+      state: 'ok',
+      skillCount: 0,
+      mcpServerCount: 0,
+      enabledMcpServerCount: 0,
+      hookCount: 0,
+      commandCount: 0,
+      hasErrors: false,
+      source: 'zip-url',
+      origin: 'marketplace',
+      catalogId: 'demo',
+      installedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    await klient.global.plugins.install('/tmp/demo');
+    await klient.global.plugins.install({ marketplaceId: 'demo', expectedVersion: '1.0.0' });
+
+    expect(channel.calls).toEqual([
+      {
+        scope: {},
+        service: 'pluginService',
+        method: 'installPlugin',
+        args: [{ source: '/tmp/demo' }],
+      },
+      {
+        scope: {},
+        service: 'pluginService',
+        method: 'installPlugin',
+        args: [{ marketplaceId: 'demo', expectedVersion: '1.0.0' }],
+      },
+    ]);
+  });
+
   it('env() fans out property reads and merges them', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);

@@ -122,6 +122,7 @@ export class McpOAuthService {
   private readonly refreshTimers = new Map<string, McpOAuthScheduledTask>();
   private readonly activeAuthorizations = new Map<string, ActiveAuthorization>();
   private readonly backgroundTasks = new Set<Promise<unknown>>();
+  private readonly configurationSources = new Map<object, Set<string>>();
   private shuttingDown = false;
   private shutdownPromise: Promise<void> | undefined;
 
@@ -177,6 +178,45 @@ export class McpOAuthService {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  setConfigurationSource(
+    source: object,
+    entries: Iterable<readonly [string, string | URL]>,
+  ): void {
+    const keys = new Set<string>();
+    for (const [name, url] of entries) keys.add(mcpOAuthStoreKey(name, url));
+    this.configurationSources.set(source, keys);
+  }
+
+  removeConfigurationSource(source: object): void {
+    this.configurationSources.delete(source);
+  }
+
+  async cancelAuthorizationFromConfiguration(
+    source: object | undefined,
+    serverName: string,
+    serverUrl: string | URL,
+  ): Promise<void> {
+    const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
+    if (source !== undefined) this.configurationSources.get(source)?.delete(storeKey);
+    for (const keys of this.configurationSources.values()) {
+      if (keys.has(storeKey)) return;
+    }
+    await this.cancelAuthorization(serverName, serverUrl);
+  }
+
+  async invalidateFromConfiguration(
+    source: object | undefined,
+    serverName: string,
+    serverUrl: string | URL,
+  ): Promise<void> {
+    const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
+    if (source !== undefined) this.configurationSources.get(source)?.delete(storeKey);
+    for (const keys of this.configurationSources.values()) {
+      if (keys.has(storeKey)) return;
+    }
+    await this.invalidate(serverName, serverUrl);
   }
 
   protected trackBackgroundTask(task: Promise<unknown>): void {
@@ -256,6 +296,7 @@ export class McpOAuthService {
         deadline.cancel();
         this.listeners.clear();
         this.providers.clear();
+        this.configurationSources.clear();
       }
     })();
     return this.shutdownPromise;
@@ -360,10 +401,23 @@ export class McpOAuthService {
     try {
       flow = await started;
     } catch (error) {
-      this.activeAuthorizations.delete(storeKey);
+      if (this.activeAuthorizations.get(storeKey)?.serverRef === serverRef) {
+        this.activeAuthorizations.delete(storeKey);
+      }
       throw error;
     }
     return flow.attach();
+  }
+
+  async cancelAuthorization(serverName: string, serverUrl: string | URL): Promise<void> {
+    const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
+    const active = this.activeAuthorizations.get(storeKey);
+    if (active === undefined) return;
+    this.activeAuthorizations.delete(storeKey);
+    await active.serverRef.current?.close().catch(() => undefined);
+    active.controller.abort();
+    const flow = await active.started.catch(() => undefined);
+    await flow?.cancelUnderlying();
   }
 
   private async startAuthorizationFlow(
@@ -374,13 +428,7 @@ export class McpOAuthService {
     serverRef: { current: CallbackServer | undefined },
   ): Promise<SharedAuthorizationFlow> {
     const storeKey = mcpOAuthStoreKey(serverName, serverUrl);
-    const provider =
-      options.clientLabel === undefined
-        ? this.getProvider(serverName, serverUrl)
-        : this.createProvider(serverName, serverUrl, options.clientLabel);
-    if (options.clientLabel !== undefined) {
-      this.providers.set(provider.storeKey, provider);
-    }
+    const provider = this.createProvider(serverName, serverUrl, options.clientLabel);
 
     provider.resetFlow();
 
@@ -396,7 +444,12 @@ export class McpOAuthService {
     try {
       provider.setRedirectUrl(new URL(callbackServer.redirectUri));
       await provider.ready;
-      await provider.invalidateStaleRegistration(callbackServer.redirectUri);
+      const registrationInvalidated = await provider.invalidateStaleRegistration(
+        callbackServer.redirectUri,
+      );
+      if (registrationInvalidated || (await provider.clientInformation()) === undefined) {
+        this.providers.set(storeKey, provider);
+      }
       const requestScope = await this.resolveRequestScope(provider, serverUrl, signal);
       let tokensSaved = false;
       const unsubscribeTokensSaved = this.onEvent((event) => {
@@ -448,7 +501,9 @@ export class McpOAuthService {
     const settle = async (): Promise<void> => {
       if (settled) return;
       settled = true;
-      this.activeAuthorizations.delete(storeKey);
+      if (this.activeAuthorizations.get(storeKey)?.serverRef === serverRef) {
+        this.activeAuthorizations.delete(storeKey);
+      }
       provider.resetFlow();
       await callbackServer.close().catch(() => undefined);
     };

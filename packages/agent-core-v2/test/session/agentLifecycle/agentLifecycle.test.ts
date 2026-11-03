@@ -158,6 +158,7 @@ const pluginServiceStub = {
   pluginSkillRoots: async () => [],
   enabledSessionStarts: async () => [],
   enabledMcpServers: async () => ({}),
+  mcpServerEntries: async () => [],
   enabledHooks: async () => [],
 } as unknown as IPluginService;
 

@@ -5,7 +5,9 @@ import { Readable, Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { IPluginService } from '#/app/plugin/plugin';
+import type { InstallPluginInput, IPluginService } from '#/app/plugin/plugin';
+import type { IPluginMarketplaceService } from '#/app/plugin/marketplaceService';
+import type { ResolvedMarketplacePluginInstallOptions } from '#/app/plugin/pluginService';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import type { CapabilityEntryContext } from '#/app/capability/entries/context';
 import {
@@ -69,16 +71,52 @@ function fakeHostProcess(
   return { service, calls };
 }
 
+interface FakePlugin {
+  id: string;
+  enabled: boolean;
+  state: string;
+  version?: string;
+  enabledMcp?: number;
+  origin?: 'marketplace' | 'custom' | 'unknown';
+  catalogId?: string;
+}
+
+function fakeMarketplace(
+  entries: readonly { id: string; version?: string; sha256sum?: string }[] = [
+    { id: 'kimi-cu', version: '0.5.4' },
+    { id: 'kimi-cu-win', version: '0.2.14' },
+  ],
+): IPluginMarketplaceService {
+  return {
+    _serviceBrand: undefined,
+    listMarketplace: () =>
+      Promise.resolve({
+        source: 'https://marketplace.example.test/catalog',
+        plugins: entries.map((entry) => ({
+          id: entry.id,
+          displayName: entry.id,
+          version: entry.version,
+          sha256sum: entry.sha256sum,
+          source: `https://marketplace.example.test/${entry.id}.zip`,
+        })),
+      }),
+    isDefaultMarketplace: () => Promise.resolve(true),
+    resolveInstall: () => Promise.reject(new Error('unexpected marketplace resolution')),
+  };
+}
+
 function fakePlugins(
-  installed: Array<{ id: string; enabled: boolean; state: string; version?: string; enabledMcp?: number }>,
+  installed: FakePlugin[],
   onInstall?: () => void | Promise<void>,
 ): {
   service: IPluginService;
-  installs: string[];
+  installs: InstallPluginInput[];
+  resolvedInstalls: Array<ResolvedMarketplacePluginInstallOptions['resolved']>;
   enabledCalls: Array<{ id: string; enabled: boolean }>;
   mcpEnabledCalls: Array<{ id: string; server: string; enabled: boolean }>;
 } {
-  const installs: string[] = [];
+  const installs: InstallPluginInput[] = [];
+  const resolvedInstalls: Array<ResolvedMarketplacePluginInstallOptions['resolved']> = [];
   const enabledCalls: Array<{ id: string; enabled: boolean }> = [];
   const mcpEnabledCalls: Array<{ id: string; server: string; enabled: boolean }> = [];
   const service = {
@@ -97,6 +135,8 @@ function fakePlugins(
           commandCount: 0,
           hasErrors: false,
           source: 'zip-url',
+          origin: p.origin ?? 'custom',
+          catalogId: p.catalogId,
         })),
       ),
     getPluginInfo: (input: { id: string }) => {
@@ -112,20 +152,43 @@ function fakePlugins(
         ],
       } as never);
     },
-    installPlugin: async (input: { source: string }) => {
-      installs.push(input.source);
+    installPlugin: async (
+      input: InstallPluginInput,
+      options?: ResolvedMarketplacePluginInstallOptions,
+    ) => {
+      installs.push(input);
+      if (options?.resolved !== undefined) resolvedInstalls.push(options.resolved);
       await onInstall?.();
-      const id = input.source.includes('computer-use-windows') ? 'kimi-cu-win' : 'kimi-cu';
+      const id = options?.resolved.expectedPluginId ?? ('marketplaceId' in input
+        ? input.marketplaceId
+        : input.source.includes('kimi-cu-win') ? 'kimi-cu-win' : 'kimi-cu');
+      const version = options?.resolved.version ??
+        ('marketplaceId' in input ? input.expectedVersion : undefined);
+      const origin = options?.resolved.origin ??
+        ('marketplaceId' in input ? 'marketplace' : 'custom');
+      const catalogId = options?.resolved.catalogId ??
+        ('marketplaceId' in input ? id : undefined);
       const existing = installed.find((p) => p.id === id);
       if (existing === undefined) {
-        installed.push({ id, enabled: true, state: 'ok' });
-        return { enabled: true, mcpServerCount: 1, enabledMcpServerCount: 1 } as never;
+        installed.push({ id, enabled: true, state: 'ok', version, origin, catalogId });
+        return {
+          enabled: true,
+          mcpServerCount: 1,
+          enabledMcpServerCount: 1,
+          origin,
+          catalogId,
+        } as never;
       }
       existing.state = 'ok';
+      existing.version = version;
+      existing.origin = origin;
+      existing.catalogId = catalogId;
       return {
         enabled: existing.enabled,
         mcpServerCount: 1,
         enabledMcpServerCount: existing.enabledMcp ?? 1,
+        origin,
+        catalogId,
       } as never;
     },
     setPluginEnabled: (input: { id: string; enabled: boolean }) => {
@@ -141,7 +204,7 @@ function fakePlugins(
       return Promise.resolve();
     },
   } as unknown as IPluginService;
-  return { service, installs, enabledCalls, mcpEnabledCalls };
+  return { service, installs, resolvedInstalls, enabledCalls, mcpEnabledCalls };
 }
 
 describe('parsePermissionStatus', () => {
@@ -255,6 +318,7 @@ describe('kimi-cu entry', () => {
       kimiHomeDir: path.join(root, 'kimi-home'),
       userHomeDir: path.join(root, 'user-home'),
       plugins: fakePlugins([]).service,
+      marketplace: fakeMarketplace(),
       hostProcess: fakeHostProcess([]).service,
       ...overrides,
     };
@@ -348,7 +412,9 @@ describe('kimi-cu entry', () => {
         return Promise.resolve(fakeProc(1));
       },
     } as IHostProcessService;
-    const fetchImpl = (() => {
+    const downloads: string[] = [];
+    const fetchImpl = ((input: unknown) => {
+      downloads.push(String(input));
       const bytes = new TextEncoder().encode("Write-Host 'official setup'");
       return Promise.resolve(
         new Response(bytes, {
@@ -371,7 +437,10 @@ describe('kimi-cu entry', () => {
     await entry.install((step, percent) => reports.push([step, percent]));
 
     expect(plugins.installs).toEqual([
-      'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
+      { marketplaceId: 'kimi-cu-win', expectedVersion: '0.2.14' },
+    ]);
+    expect(downloads).toEqual([
+      'https://cdn.kimi.com/kimi-computer-use-windows/latest/setup_windows.ps1',
     ]);
     expect(reports).toContainEqual(['plugin', undefined]);
     expect(reports).toContainEqual(['download', 0]);
@@ -444,7 +513,7 @@ describe('kimi-cu entry', () => {
       ),
     ).toBe(true);
     expect(plugins.installs).toEqual([
-      'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
+      { marketplaceId: 'kimi-cu-win', expectedVersion: '0.2.14' },
     ]);
   });
 
@@ -496,7 +565,7 @@ describe('kimi-cu entry', () => {
     await expect(entry.detect()).resolves.toEqual({
       version: '0.2.14',
       steps: [
-        { id: 'plugin', state: 'ok' },
+        { id: 'plugin', state: 'ok', detail: '0.2.14' },
         { id: 'runtime', state: 'ok', detail: '0.2.14' },
       ],
     });
@@ -636,7 +705,7 @@ describe('kimi-cu entry', () => {
     await entry.install(() => undefined);
 
     expect(plugins.installs).toEqual([
-      'https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip',
+      { marketplaceId: 'kimi-cu-win', expectedVersion: '0.2.14' },
     ]);
     expect(doctorResults).toEqual([]);
   });
@@ -711,6 +780,8 @@ describe('kimi-cu entry', () => {
       { id: 'app', state: 'ok', detail: '0.5.4' },
       { id: 'service', state: 'ok' },
       { id: 'permissions', state: 'missing', detail: 'screenRecording' },
+      { id: 'permissions.accessibility', state: 'ok' },
+      { id: 'permissions.screenRecording', state: 'missing' },
     ]);
     expect(host.calls.some((call) => call.endsWith(' xpc-ping'))).toBe(true);
     expect(host.calls.some((call) => call.includes('request-permissions'))).toBe(false);
@@ -725,6 +796,8 @@ describe('kimi-cu entry', () => {
       ['app', 'missing'],
       ['service', 'missing'],
       ['permissions', 'missing'],
+      ['permissions.accessibility', 'missing'],
+      ['permissions.screenRecording', 'missing'],
     ]);
   });
 
@@ -732,6 +805,36 @@ describe('kimi-cu entry', () => {
     const plugins = fakePlugins([]);
     const entry = createKimiCuEntry(makeCtx({ platform: 'linux', plugins: plugins.service }));
     await expect(entry.install(() => {})).rejects.toThrow(/only supported on macOS/);
+    expect(plugins.installs).toEqual([]);
+  });
+
+  it('fails clearly when the wiring plugin is missing from the marketplace', async () => {
+    const plugins = fakePlugins([]);
+    const entry = createKimiCuEntry(
+      makeCtx({
+        plugins: plugins.service,
+        marketplace: fakeMarketplace([{ id: 'kimi-cu-win', version: '0.2.14' }]),
+      }),
+    );
+
+    await expect(entry.install(() => {})).rejects.toThrow(
+      'Marketplace plugin "kimi-cu" was not found in the current catalog',
+    );
+    expect(plugins.installs).toEqual([]);
+  });
+
+  it('fails clearly when the marketplace wiring plugin has no version', async () => {
+    const plugins = fakePlugins([]);
+    const entry = createKimiCuEntry(
+      makeCtx({
+        plugins: plugins.service,
+        marketplace: fakeMarketplace([{ id: 'kimi-cu' }]),
+      }),
+    );
+
+    await expect(entry.install(() => {})).rejects.toThrow(
+      'Marketplace plugin "kimi-cu" has no version in the current catalog',
+    );
     expect(plugins.installs).toEqual([]);
   });
 
@@ -746,6 +849,9 @@ describe('kimi-cu entry', () => {
       makeCtx({
         applicationsDir,
         plugins: plugins.service,
+        marketplace: fakeMarketplace([
+          { id: 'kimi-cu', version: '9.8.7', sha256sum: 'a'.repeat(64) },
+        ]),
         hostProcess: host.service,
         fetchImpl: (() => Promise.reject(new Error('download should be skipped'))) as never,
       }),
@@ -754,9 +860,85 @@ describe('kimi-cu entry', () => {
 
     await entry.install((step) => reports.push(step));
 
-    expect(plugins.installs).toHaveLength(1);
+    expect(plugins.installs).toEqual([
+      {
+        marketplaceId: 'kimi-cu',
+        expectedVersion: '9.8.7',
+        expectedSha256: 'a'.repeat(64),
+      },
+    ]);
+    await expect(plugins.service.listPlugins()).resolves.toMatchObject([
+      { id: 'kimi-cu', version: '9.8.7', origin: 'marketplace', catalogId: 'kimi-cu' },
+    ]);
     expect(reports).toEqual(['plugin']);
     expect(host.calls.every((call) => call.includes('service-status') || call.includes('xpc-ping'))).toBe(true);
+  });
+
+  it('uses the fixed official CDN when the marketplace catalog is unavailable', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess([
+      { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+      { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=true' },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({
+        applicationsDir,
+        plugins: plugins.service,
+        marketplace: {
+          ...fakeMarketplace(),
+          listMarketplace: () => Promise.reject(new Error('catalog unavailable')),
+        },
+        hostProcess: host.service,
+      }),
+    );
+
+    await entry.install(() => {});
+
+    expect(plugins.installs).toEqual([{ marketplaceId: 'kimi-cu' }]);
+    expect(plugins.resolvedInstalls).toMatchObject([{
+      source: expect.stringContaining('kimi-computer-use/latest/kimi-cu-plugin.zip'),
+      origin: 'marketplace',
+      catalogId: 'kimi-cu',
+      expectedPluginId: 'kimi-cu',
+    }]);
+    await expect(plugins.service.listPlugins()).resolves.toMatchObject([
+      { origin: 'marketplace', catalogId: 'kimi-cu' },
+    ]);
+  });
+
+  it('uses the fixed official CDN when a custom catalog lacks the capability entry', async () => {
+    const applicationsDir = await fakeAppBundle();
+    const plugins = fakePlugins([]);
+    const host = fakeHostProcess([
+      { match: 'service-status', code: 0, stdout: 'SMAppService status=1' },
+      { match: 'xpc-ping', code: 0, stdout: 'permissionStatus: accessibility=true screenRecording=true' },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({
+        applicationsDir,
+        plugins: plugins.service,
+        marketplace: {
+          ...fakeMarketplace(),
+          isDefaultMarketplace: () => Promise.resolve(false),
+          listMarketplace: () => Promise.resolve({ source: 'custom', plugins: [] }),
+        },
+        hostProcess: host.service,
+      }),
+    );
+
+    await entry.install(() => {});
+
+    expect(plugins.installs).toEqual([{ marketplaceId: 'kimi-cu' }]);
+    expect(plugins.resolvedInstalls).toMatchObject([{
+      source: expect.stringContaining('kimi-computer-use/latest/kimi-cu-plugin.zip'),
+      origin: 'marketplace',
+      catalogId: 'kimi-cu',
+      expectedPluginId: 'kimi-cu',
+    }]);
+    await expect(plugins.service.listPlugins()).resolves.toMatchObject([
+      { origin: 'marketplace', catalogId: 'kimi-cu' },
+    ]);
   });
 
   it('migrates the exact legacy standalone MCP registration after installing the plugin', async () => {
@@ -894,11 +1076,18 @@ describe('kimi-cu entry', () => {
       state: 'failed',
       detail: expect.stringContaining('timed out'),
     });
-    expect(detected.steps.find((s) => s.id === 'permissions')).toEqual({
-      id: 'permissions',
-      state: 'failed',
-      detail: expect.stringContaining('timed out'),
-    });
+    expect(detected.steps.filter((s) => s.id.startsWith('permissions.'))).toEqual([
+      {
+        id: 'permissions.accessibility',
+        state: 'failed',
+        detail: expect.stringContaining('timed out'),
+      },
+      {
+        id: 'permissions.screenRecording',
+        state: 'failed',
+        detail: expect.stringContaining('timed out'),
+      },
+    ]);
 
     await expect(entry.install(() => {})).rejects.toThrow(/not running after install/);
     expect(plugins.installs).toHaveLength(1);
@@ -939,7 +1128,7 @@ describe('kimi-cu entry', () => {
     await entry.install(() => {});
 
     expect(plugins.installs).toEqual([
-      'https://cdn.kimi.com/kimi-computer-use/latest/kimi-cu-plugin.zip',
+      { marketplaceId: 'kimi-cu', expectedVersion: '0.5.4' },
     ]);
   });
 
@@ -1018,13 +1207,16 @@ describe('kimi-cu entry', () => {
     const host = fakeHostProcess([
       { match: 'ditto -x -k', code: 1, stderr: 'ditto: Not a zip file' },
     ]);
-    const fetchImpl = (() =>
-      Promise.resolve(
+    const downloads: string[] = [];
+    const fetchImpl = ((input: unknown) => {
+      downloads.push(String(input));
+      return Promise.resolve(
         new Response(new TextEncoder().encode('<html>captive portal</html>'), {
           status: 200,
           headers: { 'content-length': '26' },
         }),
-      )) as never;
+      );
+    }) as never;
     const entry = createKimiCuEntry(
       makeCtx({
         applicationsDir: path.join(root, 'Applications'),
@@ -1035,6 +1227,7 @@ describe('kimi-cu entry', () => {
     );
 
     await expect(entry.install(() => {})).rejects.toThrow(/Failed to unzip/);
+    expect(downloads).toEqual(['https://cdn.kimi.com/kimi-computer-use/latest/KimiCU.app.zip']);
     expect(host.calls.some((call) => call.includes('uninstall'))).toBe(false);
     expect(host.calls.some((call) => call.includes('bootout'))).toBe(false);
     expect(host.calls.some((call) => call.includes('pkill'))).toBe(false);

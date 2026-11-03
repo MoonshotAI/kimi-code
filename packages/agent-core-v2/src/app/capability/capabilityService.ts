@@ -8,6 +8,7 @@ import { ILogService } from '#/_base/log/log';
 import { Error2 } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
+import { IPluginMarketplaceService } from '#/app/plugin/marketplaceService';
 import { IRegionService } from '#/app/region/region';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
@@ -48,6 +49,7 @@ export class CapabilityService extends Disposable implements ICapabilityService 
   constructor(
     @IBootstrapService bootstrap: IBootstrapService,
     @IPluginService plugins: IPluginService,
+    @IPluginMarketplaceService marketplace: IPluginMarketplaceService,
     @IHostProcessService hostProcess: IHostProcessService,
     @ILogService private readonly log: ILogService,
     @IRegionService regions: IRegionService,
@@ -63,6 +65,7 @@ export class CapabilityService extends Disposable implements ICapabilityService 
         kimiHomeDir: bootstrap.homeDir,
         userHomeDir: homedir(),
         plugins,
+        marketplace,
         hostProcess,
         resolveRegion: () => regions.getRegionAsync(),
       };
