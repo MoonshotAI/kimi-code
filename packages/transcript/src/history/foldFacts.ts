@@ -2,8 +2,6 @@ import type { AgentRef } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import { turnId as exportTurnKey } from '../model/ids';
-import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
-import type { TodoItem, TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 import type { AgentTranscriptSnapshot } from '../ops/operation';
 
@@ -11,19 +9,6 @@ export interface HistoryWireRecord {
   readonly type: string;
   readonly time?: number;
   readonly [key: string]: unknown;
-}
-
-interface UpdateStorePayload {
-  readonly key?: unknown;
-  readonly value?: unknown;
-}
-
-interface GoalPayload {
-  readonly objective?: unknown;
-  readonly completionCriterion?: unknown;
-  readonly status?: unknown;
-  readonly tokensUsed?: unknown;
-  readonly budgetLimits?: { readonly tokenBudget?: unknown };
 }
 
 interface InteractionRequestPayload {
@@ -82,19 +67,6 @@ interface TurnCancelPayload {
   readonly reason?: unknown;
 }
 
-function isVisibleTurnOrigin(origin: unknown): boolean {
-  const kind = (origin as { kind?: unknown } | undefined)?.kind;
-  if (kind === 'system_trigger') {
-    const name = (origin as { name?: unknown } | undefined)?.name;
-    return name === 'goal_continuation' || name === 'subagent';
-  }
-  if (kind === 'skill_activation' || kind === 'plugin_command') {
-    return (origin as { trigger?: unknown } | undefined)?.trigger === 'user-slash';
-  }
-  if (kind === 'injection' || kind === 'retry' || kind === 'compaction_summary') return false;
-  return true;
-}
-
 function isUndoAnchorTurnOrigin(origin: unknown): boolean {
   const payload = origin as { kind?: unknown; trigger?: unknown } | undefined;
   if (payload?.kind === undefined || payload.kind === 'user') return true;
@@ -124,8 +96,6 @@ function turnOriginKind(origin: unknown): TranscriptTurn['origin']['kind'] {
       return 'other';
   }
 }
-
-const GOAL_STATUSES = new Set<GoalStatus>(['active', 'paused', 'blocked', 'complete']);
 
 function mapInteractionEndState(
   kind: TranscriptInteraction['interactionKind'],
@@ -178,19 +148,6 @@ function payloadOf(record: HistoryWireRecord): Record<string, unknown> {
   return payload;
 }
 
-function readTodoItems(raw: unknown): TodoItem[] {
-  if (!Array.isArray(raw)) return [];
-  const items: TodoItem[] = [];
-  for (const entry of raw) {
-    const title = (entry as { title?: unknown } | undefined)?.title;
-    const status = (entry as { status?: unknown } | undefined)?.status;
-    if (typeof title !== 'string') continue;
-    if (status !== 'pending' && status !== 'in_progress' && status !== 'done') continue;
-    items.push({ title, status });
-  }
-  return items;
-}
-
 export function foldWireRecordFacts(
   records: Iterable<HistoryWireRecord>,
   base: AgentTranscriptSnapshot,
@@ -200,6 +157,8 @@ export function foldWireRecordFacts(
     readonly activeWireTurnId?: number;
   },
 ): AgentTranscriptSnapshot {
+  const materializedTurnIds = new Set<number>();
+  let currentTurnId: number | undefined;
   const interactions = new Map<string, TranscriptInteraction>();
   const endedTurns = new Map<number, HistoryWireRecord>();
   const interruptedSteps = new Map<number, Map<number, HistoryWireRecord>>();
@@ -220,13 +179,6 @@ export function foldWireRecordFacts(
       nextTurnId += 1;
     }
   };
-  let todo: TranscriptTodo | undefined;
-  let goal: GoalMeta | undefined;
-  let goalTouched = false;
-  let planActive: boolean | undefined;
-  let planRevision: { readonly reviewPath?: string; readonly version?: number } | undefined;
-  let swarmActive: boolean | undefined;
-  let towerActive: boolean | undefined;
 
   const appended: TranscriptItem[] = [];
   const activeCancelTurnIds = new Set<number>();
@@ -263,66 +215,17 @@ export function foldWireRecordFacts(
         subagentRefs.set(toolCallId, refs);
         break;
       }
-      case 'tools.update_store': {
-        const payload = record as UpdateStorePayload;
-        if (payload.key !== 'todo') break;
-        todo = {
-          todoId: 'todo',
-          items: readTodoItems(payload.value),
-          updatedAt: recordTimeIso(record),
-        };
-        break;
-      }
-      case 'goal.create': {
-        const payload = record as GoalPayload;
-        goalTouched = true;
-        goal = {
-          objective: typeof payload.objective === 'string' ? payload.objective : '',
-          status: 'active',
-          completionCriterion:
-            typeof payload.completionCriterion === 'string'
-              ? payload.completionCriterion
-              : undefined,
-          budgetUsed: 0,
-        };
-        pushMarker('goal', record);
-        break;
-      }
+      case 'goal.create':
       case 'goal.update': {
-        const payload = record as GoalPayload;
-        goalTouched = true;
-        if (goal !== undefined) {
-          const tokenBudget = payload.budgetLimits?.tokenBudget;
-          goal = {
-            ...goal,
-            status:
-              typeof payload.status === 'string' &&
-              GOAL_STATUSES.has(payload.status as GoalStatus)
-                ? (payload.status as GoalStatus)
-                : goal.status,
-            budgetUsed:
-              typeof payload.tokensUsed === 'number' ? payload.tokensUsed : goal.budgetUsed,
-            budgetLimit: typeof tokenBudget === 'number' ? tokenBudget : goal.budgetLimit,
-          };
-        }
         pushMarker('goal', record);
-        break;
-      }
-      case 'goal.clear': {
-        goalTouched = true;
-        goal = undefined;
         break;
       }
       case 'plan_mode.enter': {
-        planActive = true;
-        planRevision = undefined;
         pushMarker('plan.enter', record);
         break;
       }
       case 'plan_mode.exit':
       case 'plan_mode.cancel': {
-        planActive = false;
-        planRevision = undefined;
         pushMarker('plan.exit', record);
         break;
       }
@@ -334,11 +237,6 @@ export function foldWireRecordFacts(
             : typeof payload.path === 'string'
               ? payload.path
               : undefined;
-        planActive = true;
-        planRevision = {
-          reviewPath: path,
-          version: typeof payload.version === 'number' ? payload.version : undefined,
-        };
         if (path === undefined) {
           pushMarker('plan.revision', record);
         } else {
@@ -348,21 +246,11 @@ export function foldWireRecordFacts(
         break;
       }
       case 'swarm_mode.enter': {
-        if (record['trigger'] !== 'tool') swarmActive = true;
         pushMarker('swarm.enter', record);
         break;
       }
       case 'swarm_mode.exit': {
-        swarmActive = false;
         pushMarker('swarm.exit', record);
-        break;
-      }
-      case 'tower_mode.enter': {
-        towerActive = true;
-        break;
-      }
-      case 'tower_mode.exit': {
-        towerActive = false;
         break;
       }
       case 'turn.cancel': {
@@ -403,15 +291,26 @@ export function foldWireRecordFacts(
             hiddenTurnIds.add(turnId);
           }
         }
+        currentTurnId = undefined;
         break;
       }
       case 'context.clear':
       case 'context.apply_compaction': {
         undoAnchorFloor = undoAnchors.length;
+        currentTurnId = undefined;
         break;
       }
       case 'context.append_message': {
         const message = (record as ContextAppendMessagePayload).message;
+        const originKind = (message?.origin as { kind?: unknown } | undefined)?.kind;
+        if (
+          currentTurnId !== undefined &&
+          message?.role === 'user' &&
+          originKind !== 'injection' &&
+          originKind !== 'compaction_summary'
+        ) {
+          materializedTurnIds.add(currentTurnId);
+        }
         if (message?.role !== 'user' || !isUndoAnchorTurnOrigin(message.origin)) break;
         const matchingIndex =
           typeof message.id === 'string'
@@ -480,6 +379,7 @@ export function foldWireRecordFacts(
           endedTurns.set(payload.turnId, record);
           const pendingIndex = pendingUndoAnchorTurnIds.indexOf(payload.turnId);
           if (pendingIndex >= 0) pendingUndoAnchorTurnIds.splice(pendingIndex, 1);
+          if (currentTurnId === payload.turnId) currentTurnId = undefined;
         }
         break;
       }
@@ -488,6 +388,8 @@ export function foldWireRecordFacts(
         const at = recordTimeIso(record);
         if (typeof turnId === 'number' && Number.isInteger(turnId) && at !== undefined) {
           turnStartedTimes.set(turnId, at);
+          materializedTurnIds.add(turnId);
+          currentTurnId = turnId;
         }
         break;
       }
@@ -513,13 +415,13 @@ export function foldWireRecordFacts(
         const payload = record as TurnPromptPayload;
         const turnId = typeof payload.turnId === 'number' ? payload.turnId : nextTurnId;
         hasExplicitTurnId ||= typeof payload.turnId === 'number';
+        currentTurnId = turnId;
         nextTurnId = Math.max(nextTurnId, turnId + 1);
         turnOrigins.set(turnId, payload.origin);
         const promptAt = recordTimeIso(record);
         if (promptAt !== undefined) turnPromptTimes.set(turnId, promptAt);
         if (typeof payload.promptId === 'string') turnPromptIds.set(turnId, payload.promptId);
         if (isUndoAnchorTurnOrigin(payload.origin)) pendingUndoAnchorTurnIds.push(turnId);
-        if (!isVisibleTurnOrigin(payload.origin)) hiddenTurnIds.add(turnId);
         break;
       }
       default:
@@ -686,8 +588,8 @@ export function foldWireRecordFacts(
     }
   }
   const wedgedTurnIds = new Set<number>();
-  if (wireIdByOrdinal.size > 0) {
-    let latestPromptTurnId: number | undefined;
+  let latestPromptTurnId: number | undefined;
+  if (hasExplicitTurnId) {
     for (const rawTurnId of turnOrigins.keys()) {
       if (latestPromptTurnId === undefined || rawTurnId > latestPromptTurnId) {
         latestPromptTurnId = rawTurnId;
@@ -699,7 +601,23 @@ export function foldWireRecordFacts(
       wedgedTurnIds.add(rawTurnId);
     }
   }
-  const realignedItems =
+  const missingTurnIds = rawTurnIds.filter(
+    (rawTurnId) =>
+      !ordinalByRawTurnId.has(rawTurnId) &&
+      turnOrigins.has(rawTurnId) &&
+      (endedTurns.has(rawTurnId) ||
+        interruptedSteps.has(rawTurnId) ||
+        (wedgedTurnIds.has(rawTurnId) &&
+          rawTurnId !== latestPromptTurnId &&
+          materializedTurnIds.has(rawTurnId)) ||
+        options?.activeWireTurnId === rawTurnId),
+  );
+  if (!hasExplicitTurnId && missingTurnIds.length > 0) {
+    for (const [rawTurnId, ordinal] of ordinalByRawTurnId) {
+      wireIdByOrdinal.set(ordinal, rawTurnId);
+    }
+  }
+  const realignedBaseItems =
     wireIdByOrdinal.size === 0
       ? items
       : (() => {
@@ -729,25 +647,43 @@ export function foldWireRecordFacts(
             };
           });
         })();
-
-  const modesTouched = planActive !== undefined || swarmActive !== undefined || towerActive !== undefined;
-  const meta: TranscriptMeta = {
-    ...base.meta,
-    goal: goalTouched ? goal : base.meta.goal,
-    modes: modesTouched
-      ? {
-          ...base.meta.modes,
-          plan:
-            planActive === undefined
-              ? base.meta.modes?.plan
-              : planActive
-                ? (planRevision ?? {})
-                : undefined,
-          swarm: swarmActive === undefined ? base.meta.modes?.swarm : swarmActive ? {} : undefined,
-          tower: towerActive === undefined ? base.meta.modes?.tower : towerActive ? {} : undefined,
-        }
-      : base.meta.modes,
-  };
+  const realignedItems: TranscriptItem[] =
+    missingTurnIds.length === 0 ? (realignedBaseItems as TranscriptItem[]) : [...realignedBaseItems];
+  const occupiedOrdinals = new Set(
+    realignedItems.flatMap((item) => item.kind === 'turn' ? [item.ordinal] : []),
+  );
+  const occupiedTurnIds = new Set(
+    realignedItems.flatMap((item) => item.kind === 'turn' ? [item.turnId] : []),
+  );
+  for (const rawTurnId of missingTurnIds) {
+    let ordinal = rawTurnId;
+    while (occupiedOrdinals.has(ordinal) || occupiedTurnIds.has(exportTurnKey(ordinal))) {
+      ordinal += 1;
+    }
+    const nextTurnId = exportTurnKey(ordinal);
+    occupiedOrdinals.add(ordinal);
+    occupiedTurnIds.add(nextTurnId);
+    const ended = endedTurns.get(rawTurnId) as TurnEndedPayload | undefined;
+    const wedged = wedgedTurnIds.has(rawTurnId);
+    const turn: TranscriptTurn = {
+      kind: 'turn',
+      turnId: nextTurnId,
+      ordinal,
+      state: mapTurnEndReason(ended?.reason) ?? (wedged ? 'failed' : 'running'),
+      origin: { kind: turnOriginKind(turnOrigins.get(rawTurnId)) } as TranscriptTurn['origin'],
+      triggerPromptId: turnPromptIds.get(rawTurnId),
+      steps: [],
+      startedAt: turnStartedTimes.get(rawTurnId) ?? turnPromptTimes.get(rawTurnId),
+      endedAt: ended === undefined ? undefined : recordTimeIso(ended as HistoryWireRecord),
+      durationMs: typeof ended?.durationMs === 'number' ? ended.durationMs : undefined,
+      error: readTurnErrorMessage(ended?.error),
+      wedged: wedged ? true : undefined,
+    };
+    const insertAt = realignedItems.findIndex(
+      (item) => item.kind === 'turn' && item.ordinal > ordinal,
+    );
+    realignedItems.splice(insertAt === -1 ? realignedItems.length : insertAt, 0, turn);
+  }
 
   let restoredItems = appended.length > 0 ? [...realignedItems, ...appended] : realignedItems;
   if (subagentRefs.size > 0) {
@@ -777,8 +713,6 @@ export function foldWireRecordFacts(
     ...base,
     items: restoredItems,
     interactions: [...interactions.values()],
-    todos: todo !== undefined ? [todo] : base.todos,
-    meta,
   };
 }
 

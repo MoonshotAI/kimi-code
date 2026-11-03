@@ -1,8 +1,6 @@
 import { appendFile, mkdtemp, mkdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 
 import {
   INTERACTION_TAG_SESSION_ID,
@@ -12,7 +10,6 @@ import {
   IAgentLoopService,
   IAgentScopeContext,
   IEventBus,
-  IFlagService,
   IBlobStore,
   ISessionIndex,
   ISessionMetadata,
@@ -27,13 +24,10 @@ import {
   type ContextMessage,
   type AgentConversationUndoParticipant,
   type Event2,
-  TOWER_FLAG_ID,
-  _setTowerFeatureAssembledForTests,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 
-import { TowerStore } from '@moonshot-ai/agent-core-v2/features/tower/protocol/index';
 import {
   AgentTranscript,
   TranscriptStore,
@@ -51,7 +45,6 @@ import { bindSessionTranscript } from '../../src/services/transcript/coreBinding
 import { toWireQuestion } from '../../src/protocol/question-wire';
 import type { TaskEventMessage } from '../../src/protocol/ws-task';
 import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
-import type { LegacyActivityApproval } from '../../src/services/legacyStatus/legacyStatus';
 import {
   AgentTranscriptProjector,
   type ProjectorBusEvent,
@@ -63,10 +56,6 @@ import {
   TRANSCRIPT_OPS_JOURNAL_CAPACITY,
 } from '../../src/services/transcript/transcriptService';
 import { WireRecordCache, type ContextRecord } from '../../src/services/transcript/wireCache';
-
-_setTowerFeatureAssembledForTests(true);
-
-const execFileAsync = promisify(execFile);
 
 function ev(payload: Record<string, unknown>): ProjectorBusEvent {
   return payload as unknown as ProjectorBusEvent;
@@ -642,7 +631,6 @@ describe('AgentTranscriptProjector', () => {
     const snapshot: AgentTranscriptSnapshot = {
       interactions: [],
       attachments: [],
-      todos: [],
       prompts: [],
       items: [
         {
@@ -666,7 +654,6 @@ describe('AgentTranscriptProjector', () => {
         },
         { kind: 'marker', markerId: 'm2', marker: 'notice' },
       ],
-      meta: {},
     };
     const ops = snapshotToOps(snapshot);
     expect(ops.filter((op) => op.op === 'marker.upsert')).toMatchObject([
@@ -698,7 +685,6 @@ describe('AgentTranscriptProjector', () => {
           source: { kind: 'file', fileId: 'file_1' },
         },
       ],
-      todos: [],
       prompts: [],
       items: [
         {
@@ -712,7 +698,6 @@ describe('AgentTranscriptProjector', () => {
           steps: [],
         },
       ],
-      meta: {},
     };
 
     const ops = snapshotToOps(snapshot);
@@ -1119,7 +1104,7 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
-  it('projects goal updates into meta.goal plus an inline marker', () => {
+  it('projects goal updates as an inline marker', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const snapshot = {
@@ -1135,176 +1120,23 @@ describe('AgentTranscriptProjector', () => {
     const ops = projector.map(ev({ type: 'goal.updated', snapshot, change: { kind: 'lifecycle' } }));
     tx.apply(ops);
 
-    expect(tx.getMeta().goal).toEqual({
-      objective: 'ship it',
-      status: 'active',
-      completionCriterion: 'tests green',
-      budgetUsed: 1234,
-      budgetLimit: 50000,
-    });
     const marker = tx.getItems().find((item) => item.kind === 'marker');
     expect(marker).toMatchObject({ marker: 'goal', payload: { snapshot } });
 
     const clearedOps = projector.map(ev({ type: 'goal.updated', snapshot: null }));
-    expect(clearedOps[0]).toEqual({ op: 'meta.merge', meta: { goal: null } });
-    tx.apply(clearedOps);
-    expect(tx.getMeta().goal).toBeUndefined();
+    expect(clearedOps.map((op) => op.op)).toEqual(['marker.upsert']);
   });
 
-  it('mirrors plan / swarm mode slices into meta.modes (only when provided)', () => {
+  it('leaves agent status updates to the agent frame', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-
-    tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: true })));
-    tx.apply(projector.map(ev({ type: 'agent.status.updated', swarmMode: true })));
-    expect(tx.getMeta().modes).toEqual({ plan: {}, swarm: {} });
-
-    tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: false })));
-    expect(tx.getMeta().modes).toEqual({ swarm: {} });
-    tx.apply(projector.map(ev({ type: 'agent.status.updated', swarmMode: false })));
-    expect(tx.getMeta().modes).toBeUndefined();
+    expect(
+      projector.map(
+        ev({ type: 'agent.status.updated', planMode: true, model: 'k2', contextTokens: 1000, permission: 'yolo' }),
+      ),
+    ).toEqual([]);
   });
 
-  it('mirrors the tower mode slice into meta.modes', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-
-    tx.apply(projector.map(ev({ type: 'agent.status.updated', towerMode: true })));
-    expect(tx.getMeta().modes).toEqual({ tower: {} });
-
-    tx.apply(projector.map(ev({ type: 'agent.status.updated', towerMode: false })));
-    expect(tx.getMeta().modes).toBeUndefined();
-  });
-
-  it('mirrors status slices into meta.agent (shallow-merged across slices)', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-
-    const usageOnly = projector.map(ev({ type: 'agent.status.updated', usage: {} }));
-    expect(usageOnly).toEqual([{ op: 'meta.merge', meta: { agent: { usage: {} } } }]);
-
-    feed(ev({ type: 'agent.status.updated', model: 'k2', thinkingEffort: 'high' }));
-    feed(
-      ev({
-        type: 'agent.status.updated',
-        usage: {
-          total: { inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 },
-        },
-      }),
-    );
-    feed(
-      ev({
-        type: 'agent.status.updated',
-        contextTokens: 1000,
-        maxContextTokens: 200000,
-        contextUsage: 0.5,
-      }),
-    );
-    feed(ev({ type: 'agent.status.updated', permission: 'yolo' }));
-
-    expect(tx.getMeta().agent).toEqual({
-      model: 'k2',
-      thinkingEffort: 'high',
-      usage: { total: { inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 } },
-      contextTokens: 1000,
-      maxContextTokens: 200000,
-      contextUsage: 0.5,
-      permission: 'yolo',
-    });
-
-    feed(ev({ type: 'agent.status.updated', model: 'k3' }));
-    expect(tx.getMeta().agent).toMatchObject({ model: 'k3', thinkingEffort: 'high' });
-  });
-
-  it('maps domain events into meta.agent.phase', () => {
-    let snapshot: AgentActivitySnapshot = {};
-    let approvals: readonly LegacyActivityApproval[] = [];
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
-      activitySnapshot: () => snapshot,
-      pendingApprovals: () => approvals,
-    });
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-    const runningTurn = (overrides: Record<string, unknown>): AgentActivitySnapshot => ({
-      turn: {
-        turnId: 1,
-        phase: 'running',
-        step: 1,
-        ending: false,
-        activeToolCalls: [],
-        since: 1000,
-        ...overrides,
-      },
-    });
-
-    snapshot = runningTurn({});
-    feed(ev({ type: 'turn.started', agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
-    expect(tx.getMeta().agent?.phase).toEqual({
-      kind: 'running',
-      turnId: 1,
-      step: 1,
-      stepId: '',
-      since: 1000,
-    });
-
-    snapshot = runningTurn({
-      phase: 'retrying',
-      retry: { failedAttempt: 1, nextAttempt: 2, maxAttempts: 10, delayMs: 500 },
-    });
-    feed(
-      ev({
-        type: 'turn.step.retrying',
-        agentId: 'main',
-        turnId: 1,
-        step: 1,
-        failedAttempt: 1,
-        nextAttempt: 2,
-        maxAttempts: 10,
-        delayMs: 500,
-        errorName: 'status',
-        errorMessage: 'boom',
-      }),
-    );
-    expect(tx.getMeta().agent?.phase).toMatchObject({
-      kind: 'retrying',
-      failedAttempt: 1,
-      nextAttempt: 2,
-      maxAttempts: 10,
-    });
-
-    approvals = [{ approvalId: 'ap1', toolCallId: 'c1', since: 1500 }];
-    feed(
-      ev({
-        type: 'permission.approval.requested',
-        agentId: 'main',
-        turnId: 1,
-        toolCallId: 'c1',
-        id: 'ap1',
-      }),
-    );
-    expect(tx.getMeta().agent?.phase).toEqual({
-      kind: 'awaiting_approval',
-      turnId: 1,
-      step: 1,
-      approval: { approvalId: 'ap1', toolCallId: 'c1' },
-      since: 1500,
-    });
-
-    feed(ev({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed', durationMs: 100 }));
-    expect(tx.getMeta().agent?.phase).toMatchObject({
-      kind: 'ended',
-      turnId: 1,
-      reason: 'completed',
-      durationMs: 100,
-    });
-
-    snapshot = {};
-    feed(ev({ type: 'permission.approval.resolved', agentId: 'main', turnId: 1, toolCallId: 'c1', id: 'ap1', decision: 'approved' }));
-    expect(tx.getMeta().agent?.phase).toMatchObject({ kind: 'ended', turnId: 1 });
-  });
-
-  it('projects plan.revision as a marker and refines the active plan badge', () => {
+  it('projects plan.revision as a marker with the resolved path', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
       resolvePlanRevisionKey: (key) => `sessions/w/s/agents/main/${key}`,
     });
@@ -1320,16 +1152,9 @@ describe('AgentTranscriptProjector', () => {
     };
 
     tx.apply(projector.map(ev(revision)));
-    expect(tx.getMeta().modes).toBeUndefined();
-
-    tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: true })));
-    expect(tx.getMeta().modes).toEqual({ plan: {} });
     tx.apply(
       projector.map(ev({ ...revision, version: 2, key: 'plan/plan-1/v2.md' })),
     );
-    expect(tx.getMeta().modes).toEqual({
-      plan: { reviewPath: 'sessions/w/s/agents/main/plan/plan-1/v2.md', version: 2 },
-    });
 
     const markers = tx
       .getItems()
@@ -1347,12 +1172,6 @@ describe('AgentTranscriptProjector', () => {
         bytes: 128,
       },
     });
-
-    tx.apply(projector.map(ev({ type: 'agent.status.updated', planMode: false })));
-    expect(tx.getMeta().modes).toBeUndefined();
-    expect(
-      tx.getItems().filter((item) => item.kind === 'marker' && item.marker === 'plan.revision'),
-    ).toHaveLength(2);
   });
 
   it('projects skill / plugin-command / cron / compaction / hook / undo markers', () => {
@@ -1597,51 +1416,6 @@ describe('AgentTranscriptProjector', () => {
     feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
     feed(ev({ type: 'turn.step.started', turnId: 2, step: 1 }));
     expect(turnOps('t2', tx.getItems()).steps[0]!.frames).toHaveLength(0);
-  });
-
-  it('replaces the global todo document on a confirmed TodoList write', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-
-    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
-    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
-
-    feed(ev({ type: 'tool.call.started', turnId: 1, toolCallId: 'call_read', name: 'TodoList', args: {} }));
-    feed(ev({ type: 'tool.result', toolCallId: 'call_read', output: '2 todos' }));
-    expect(tx.getTodo('todo')).toBeUndefined();
-
-    feed(
-      ev({
-        type: 'tool.call.started',
-        turnId: 1,
-        toolCallId: 'call_write',
-        name: 'TodoList',
-        args: { todos: [{ title: 'write tests', status: 'in_progress' }, { title: 'ship', status: 'pending' }] },
-      }),
-    );
-    const writeFrame = turnOps('t1', tx.getItems()).steps[0]!.frames.find(
-      (f) => f.kind === 'tool' && f.toolCallId === 'call_write',
-    );
-    expect(writeFrame?.kind === 'tool' && writeFrame.todoId).toBe('todo');
-
-    feed(ev({ type: 'tool.result', toolCallId: 'call_write', output: 'updated' }));
-    expect(tx.getTodo('todo')?.items).toEqual([
-      { title: 'write tests', status: 'in_progress' },
-      { title: 'ship', status: 'pending' },
-    ]);
-
-    feed(
-      ev({
-        type: 'tool.call.started',
-        turnId: 1,
-        toolCallId: 'call_fail',
-        name: 'TodoList',
-        args: { todos: [] },
-      }),
-    );
-    feed(ev({ type: 'tool.result', toolCallId: 'call_fail', output: 'boom', isError: true }));
-    expect(tx.getTodo('todo')?.items).toHaveLength(2);
   });
 
   it('emits an unanchored entity when the payload has no toolCallId', () => {
@@ -2491,15 +2265,6 @@ describe('AgentTranscriptProjector', () => {
       ]);
       expect(JSON.stringify(snapshot)).not.toContain('blobref:');
 
-      expect(snapshot!.todos).toEqual([
-        {
-          todoId: 'todo',
-          items: [{ title: 'write tests', status: 'in_progress' }],
-          updatedAt: new Date(3000).toISOString(),
-        },
-      ]);
-      expect(snapshot!.meta.goal).toMatchObject({ objective: 'fix the bug', status: 'active' });
-      expect(snapshot!.meta.modes).toEqual({ plan: {} });
       expect(snapshot!.interactions).toEqual([
         {
           interactionId: 'apr-1',
@@ -2682,7 +2447,7 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
-  it('readColdSnapshot derives meta.activity from the final turn state when no live session exists', async () => {
+  it('readColdSnapshot pairs a cold turn with its prompt', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-activity-'));
     try {
       const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
@@ -2695,15 +2460,7 @@ describe('AgentTranscriptProjector', () => {
 
       await write([boundary, user, assistant, { type: 'turn.ended', turnId: 0, reason: 'completed', time: 3000 }]);
       const ended = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
-      expect(ended!.meta.activity).toBe('idle');
       expect(ended!.items[0]).toMatchObject({ triggerPromptId: 'prompt-1' });
-
-      await write([boundary, user, assistant]);
-      const dangling = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
-      expect(dangling!.meta.activity).toBe('idle');
-
-      const running = await coldTranscriptService(home, fakeLoopStates({ main: 'running' })).readColdSnapshot('s1', 'main');
-      expect(running!.meta.activity).toBe('turn');
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -2741,10 +2498,12 @@ describe('AgentTranscriptProjector', () => {
       const turns = (snapshot?.items ?? []).filter((item) => item.kind === 'turn');
       expect(turns.map((turn) => [turn.turnId, turn.ordinal, turn.state])).toEqual([
         ['t3', 3, 'completed'],
+        ['t4', 4, 'failed'],
+        ['t5', 5, 'failed'],
         ['t6', 6, 'failed'],
         ['t7', 7, 'completed'],
       ]);
-      const wedged = turns[1];
+      const wedged = turns[3];
       if (wedged?.kind !== 'turn') throw new Error('expected turn');
       expect(wedged.wedged).toBe(true);
       expect(wedged.prompt).toBe('wedged prompt');
@@ -3044,105 +2803,6 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
-  it('gates the cold tower mode badge behind the tower experiment flag', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-tower-'));
-    try {
-      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
-      await mkdir(wireDir, { recursive: true });
-      const records = [
-        {
-          type: 'context.append_message',
-          message: {
-            role: 'user',
-            content: [{ type: 'text', text: 'hi' }],
-            toolCalls: [],
-            origin: { kind: 'user' },
-          },
-          time: 1000,
-        },
-        { type: 'tower_mode.enter', time: 2000 },
-      ];
-      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
-
-      const serviceWith = (
-        flagOn: boolean,
-        opts: { cwd?: string; liveSessionIds?: string[] } = {},
-      ) =>
-        new TranscriptService({
-          homeDir: home,
-          core: {
-            accessor: {
-              get: (token: unknown) => {
-                if (token === ISessionManager) {
-                  return {
-                    get: (id: string) => (opts.liveSessionIds?.includes(id) ? {} : undefined),
-                    list: () => [],
-                  };
-                }
-                if (token === IWorkspaceInstanceManager) {
-                  return { list: () => [], onDidChange: () => ({ dispose: () => undefined }) };
-                }
-                if (token === ISessionIndex) {
-                  return { get: async () => ({ workspaceId: 'ws', cwd: opts.cwd }) };
-                }
-                if (token === IFlagService) {
-                  return { enabled: (id: string) => flagOn && id === TOWER_FLAG_ID };
-                }
-                return undefined;
-              },
-            },
-          } as unknown as Scope,
-        });
-
-      const withFlag = await serviceWith(true).readColdSnapshot('s1', 'main');
-      expect(withFlag!.meta.modes).toEqual({ tower: {} });
-
-      const withoutFlag = await serviceWith(false).readColdSnapshot('s1', 'main');
-      expect(withoutFlag!.meta.modes).toBeUndefined();
-
-      _setTowerFeatureAssembledForTests(false);
-      try {
-        const notAssembled = await serviceWith(true).readColdSnapshot('s1', 'main');
-        expect(notAssembled!.meta.modes).toBeUndefined();
-      } finally {
-        _setTowerFeatureAssembledForTests(true);
-      }
-
-      const repo = await mkdtemp(join(tmpdir(), 'tower-cold-owner-'));
-      try {
-        await execFileAsync('git', ['init', '-b', 'main'], { cwd: repo });
-        await execFileAsync('git', ['config', 'user.email', 'tower-test@example.com'], { cwd: repo });
-        await execFileAsync('git', ['config', 'user.name', 'Tower Test'], { cwd: repo });
-        await writeFile(join(repo, 'README.md'), '# fixture\n');
-        await execFileAsync('git', ['add', 'README.md'], { cwd: repo });
-        await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repo });
-        await new TowerStore(repo).init('session-b');
-
-        const adoptedByLive = await serviceWith(true, {
-          cwd: repo,
-          liveSessionIds: ['session-b'],
-        }).readColdSnapshot('s1', 'main');
-        expect(adoptedByLive!.meta.modes).toBeUndefined();
-
-        const adoptedByDead = await serviceWith(true, { cwd: repo }).readColdSnapshot('s1', 'main');
-        expect(adoptedByDead!.meta.modes).toEqual({ tower: {} });
-      } finally {
-        await rm(repo, { recursive: true, force: true });
-      }
-
-      const childDir = join(home, 'sessions', 'ws', 's1', 'agents', 'worker-1');
-      await mkdir(childDir, { recursive: true });
-      await writeFile(
-        join(childDir, 'wire.jsonl'),
-        `${records.map((r) => JSON.stringify(r)).join('\n')}\n`,
-      );
-      const child = await serviceWith(true).readColdSnapshot('s1', 'worker-1');
-      expect(child!.meta.modes).toBeUndefined();
-    } finally {
-      await rm(home, { recursive: true, force: true });
-    }
-  });
-
   it('folds blocked turn endings into failed (engine wire contract)', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
@@ -3164,21 +2824,6 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getPrompt('p2')).toMatchObject({ status: 'completed' });
     feed(ev({ type: 'prompt.aborted', promptId: 'p1', abortedAt: '2026-08-20T00:00:02.000Z' }));
     expect(tx.getPrompt('p1')).toMatchObject({ status: 'aborted' });
-  });
-
-  it('mirrors turn liveness into meta.activity', () => {    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
-
-    expect(tx.getMeta().activity).toBeUndefined();
-    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } }));
-    expect(tx.getMeta().activity).toBe('turn');
-    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
-    expect(tx.getMeta().activity).toBe('idle');
-    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } }));
-    expect(tx.getMeta().activity).toBe('turn');
-    feed(ev({ type: 'turn.ended', turnId: 2, reason: 'failed' }));
-    expect(tx.getMeta().activity).toBe('idle');
   });
 
   it('maps cron / task origins onto the turn header', () => {    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);

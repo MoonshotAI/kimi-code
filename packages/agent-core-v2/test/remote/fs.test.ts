@@ -1,15 +1,23 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { FileEditService } from '#/app/edit/fileEditService';
 import { HostFsError } from '#/os/interface/hostFsErrors';
 
 import { RemoteExecConnection } from '#/remote/client/connection';
+import { requireAbsolutePath } from '#/remote/server/fsHandler';
 import { RemoteFileSystem } from '#/os/backends/remote/remoteFileSystem';
-import { FS_READ_DIRECTORY_MAX_ENTRIES, FS_READ_FILE_WHOLE_MAX_BYTES } from '#/remote/protocol/methods';
 import {
+  FS_READ_DIRECTORY_MAX_ENTRIES,
+  FS_READ_DIRECTORY_METHOD,
+  FS_READ_FILE_WHOLE_MAX_BYTES,
+  FS_WALK_METHOD,
+} from '#/remote/protocol/methods';
+import {
+  connectInProcess,
   connectSubprocess,
   createInProcessLoopback,
   RawClient,
@@ -32,6 +40,61 @@ describe('fs group over a subprocess loopback', () => {
     connection.close();
     spawned.bridge.close();
     await rm(workDir, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('reads metadata and the file head in one RPC', async () => {
+    const path = join(workDir, 'head.txt');
+    await writeFile(path, 'alpha\nbeta\n');
+    const calls = vi.spyOn(connection, 'call');
+    const head = await fs.readFileHead(path, 5);
+    expect(Buffer.from(head.bytes).toString('utf8')).toBe('alpha');
+    expect(head.stat).toMatchObject({ isFile: true, isDirectory: false, size: 11 });
+    expect(head.stat.mtimeMs).toBeGreaterThan(0);
+    expect(calls.mock.calls.map(([method]) => method)).toEqual(['fs/readFile']);
+  });
+
+  it('returns metadata without bytes for directories and devices', async () => {
+    for (const target of [workDir, '/dev/null']) {
+      const head = await fs.readFileHead(target, 5);
+      expect(head.stat.isFile).toBe(false);
+      expect(head.bytes.byteLength).toBe(0);
+    }
+  });
+
+  it('edits a small file with one read and one write RPC', async () => {
+    const path = join(workDir, 'edit.txt');
+    await writeFile(path, 'before\nold value\n');
+    const editor = new FileEditService(fs);
+    const calls = vi.spyOn(connection, 'call');
+    const result = await editor.edit({
+      path,
+      displayPath: 'edit.txt',
+      old_string: 'old value',
+      new_string: 'new value',
+      replace_all: false,
+    });
+    expect(result).toEqual({ ok: true, count: 1 });
+    expect(calls.mock.calls.map(([method]) => method)).toEqual(['fs/readFile', 'fs/writeFile']);
+    expect(await readFile(path, 'utf8')).toBe('before\nnew value\n');
+  });
+
+  it('preserves a UTF-8 BOM when editing', async () => {
+    const path = join(workDir, 'edit-bom.txt');
+    await writeFile(path, Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x0a, 0x62, 0x0a]));
+    const editor = new FileEditService(fs);
+    const result = await editor.edit({
+      path,
+      displayPath: 'edit-bom.txt',
+      old_string: 'b',
+      new_string: 'c',
+      replace_all: false,
+    });
+    expect(result).toEqual({ ok: true, count: 1 });
+    expect(await readFile(path)).toEqual(Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x0a, 0x63, 0x0a]));
   });
 
   it('writes a byte stream progressively without retaining the complete input', async () => {
@@ -126,6 +189,87 @@ describe('fs group over a subprocess loopback', () => {
 });
 
 describe('fs protocol semantics', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each(['response', 'visitor'])('stops replaying entries when the deadline expires during the %s', async (phase) => {
+    let clock = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const fs = new RemoteFileSystem({
+      call: async () => {
+        if (phase === 'response') clock = 2_000;
+        return { entries: [{ path: 'first.ts', kind: 'file' }, { path: 'second.ts', kind: 'file' }], truncated: false };
+      },
+      notify: () => {},
+      onNotification: () => () => {},
+      onDidClose: () => {},
+    });
+    const visited: string[] = [];
+
+    const result = await fs.walk('/root', { deadlineMs: 2_000 }, (entry) => {
+      visited.push(entry.path);
+      clock = 2_000;
+    });
+
+    expect(visited).toEqual(phase === 'response' ? [] : ['first.ts']);
+    expect(result).toEqual({ truncated: true });
+  });
+
+  it('honors the caller deadline before and during a remote walk', async () => {
+    const calls: Array<{ method: string; timeoutMs?: number }> = [];
+    const fs = new RemoteFileSystem({
+      call: async (method, params) => {
+        calls.push({ method, timeoutMs: (params as { timeoutMs: number }).timeoutMs });
+        return { entries: [], truncated: false };
+      },
+      notify: () => {},
+      onNotification: () => () => {},
+      onDidClose: () => {},
+    });
+
+    const active = await fs.walk('/root', { deadlineMs: Date.now() + 1_000 }, () => {});
+    const expired = await fs.walk('/root', { deadlineMs: Date.now() }, () => {});
+
+    expect(active.truncated).toBe(false);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe(FS_WALK_METHOD);
+    expect(calls[0]?.timeoutMs).toBeGreaterThan(0);
+    expect(calls[0]?.timeoutMs).toBeLessThanOrEqual(1_000);
+    expect(expired).toEqual({ truncated: true });
+  });
+
+  it('walks nested directories depth-first in one rpc and prunes ignored subtrees', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'remote-exec-walk-'));
+    const { connection, loopback } = await connectInProcess();
+    const methods: string[] = [];
+    loopback.clientInput.on('data', (chunk: Buffer) => {
+      for (const line of chunk.toString('utf8').trim().split('\n')) {
+        if (line.length > 0) methods.push((JSON.parse(line) as { method?: string }).method ?? '');
+      }
+    });
+    try {
+      await mkdir(join(dir, 'src/nested'), { recursive: true });
+      await mkdir(join(dir, 'node_modules/pkg'), { recursive: true });
+      await writeFile(join(dir, 'src/nested/app.ts'), '');
+      await writeFile(join(dir, 'node_modules/pkg/index.ts'), '');
+      const fs = new RemoteFileSystem(connection);
+      const paths: string[] = [];
+      const result = await fs.walk(dir, { ignore: ['node_modules/'] }, (entry) => {
+        paths.push(entry.path);
+      });
+
+      expect(paths).toEqual(['src', 'src/nested', 'src/nested/app.ts']);
+      expect(result.truncated).toBe(false);
+      expect(methods.filter((method) => method === FS_WALK_METHOD)).toHaveLength(1);
+      expect(methods.filter((method) => method === FS_READ_DIRECTORY_METHOD)).toHaveLength(0);
+    } finally {
+      connection.close();
+      await loopback.host.done;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('reports capped directory listings on the wire and rejects them through the filesystem interface', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'remote-exec-readdir-cap-'));
     const smallDir = await mkdtemp(join(tmpdir(), 'remote-exec-readdir-small-'));
@@ -187,4 +331,19 @@ describe('fs protocol semantics', () => {
       await rm(smallDir, { recursive: true, force: true });
     }
   }, 60_000);
+});
+
+describe('requireAbsolutePath', () => {
+  it('asks Windows targets for a drive path', () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      for (const path of ['/c/work', '/tmp', '\\\\server\\share']) {
+        expect(() => requireAbsolutePath({ path }, 'path')).toThrow('path must be an absolute Windows drive path such as C:\\work');
+      }
+      expect(requireAbsolutePath({ path: 'C:\\work' }, 'path')).toBe('C:\\work');
+    } finally {
+      Object.defineProperty(process, 'platform', descriptor);
+    }
+  });
 });

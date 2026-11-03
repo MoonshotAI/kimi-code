@@ -233,7 +233,10 @@ function IdleGaps({ analysis }: { analysis: Analysis }) {
 
 function TurnCard({ turn }: { turn: TurnNode }) {
   const [open, setOpen] = useState(turn.index === 0);
-  const totalTokens = turn.tokens.inputOther + turn.tokens.output + turn.tokens.inputCacheRead + turn.tokens.inputCacheCreation;
+  const totalTokens =
+    turn.tokens.inputCacheRead === undefined
+      ? undefined
+      : turn.tokens.inputOther + turn.tokens.output + turn.tokens.inputCacheRead + turn.tokens.inputCacheCreation;
   return (
     <div className="border border-border bg-surface-0">
       <button

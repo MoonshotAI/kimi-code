@@ -173,7 +173,7 @@ export class AgentSkillService implements IAgentSkillService {
     );
     const handle = this.loop.promptHandle(id)!;
     if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
-      return { prompt_id: id, created_at: handle.createdAt, state: 'queued' };
+      return { prompt_id: id, created_at: handle.createdAt, state: 'queued', steered: false };
     }
     await Promise.race([handle.launched, handle.completion]);
     const turn = await handle.launched;
@@ -186,6 +186,7 @@ export class AgentSkillService implements IAgentSkillService {
       prompt_id: id,
       created_at: handle.createdAt,
       state: handle.state === 'blocked' ? 'blocked' : 'running',
+      steered: steerable && turn?.id === status.activeTurnId,
     };
   }
 

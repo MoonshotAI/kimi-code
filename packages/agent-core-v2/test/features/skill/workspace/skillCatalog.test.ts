@@ -13,11 +13,14 @@ import {
 } from '#/_base/di/scope';
 import { AsyncEmitter, Emitter, Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
+import { IRegionService } from '#/app/region/region';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginService } from '#/app/plugin/pluginService';
 import type { PluginReloadEvent } from '#/app/plugin/types';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IProviderService } from '#/llm-adapter/provider/provider';
+import type { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IAppStateService } from '#/app/state/appState';
 import { AppStateService } from '#/app/state/appStateService';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
@@ -146,6 +149,7 @@ function pluginStub(
     getPluginInfo: async () => {
       throw new Error('getPluginInfo is not used by these tests');
     },
+    previewPlugin: async () => ({ skills: [], mcpServers: [] }),
     listPluginCommands: async () => [],
     checkUpdates: async () => [],
     pluginSkillRoots: async () => skillRoots,
@@ -174,10 +178,11 @@ function workspaceContextStub(workDir: string): IWorkspaceContext {
 function workspaceDirsStub(
   sharedAdditionalDirs: readonly string[] = [],
   additionalDirs: readonly string[] = sharedAdditionalDirs,
+  ready: Promise<void> = Promise.resolve(),
 ): IWorkspaceDirs {
   return {
     _serviceBrand: undefined,
-    ready: Promise.resolve(),
+    ready,
     additionalDirs,
     sharedAdditionalDirs,
     primaryByWorkspace: {},
@@ -295,6 +300,25 @@ describe('WorkspaceSkillCatalogService', () => {
       'utf8',
     );
   }
+
+  it('keeps initial source failures observable for a late ready consumer', async () => {
+    const { host, workspace } = makeHost(
+      new FileSkillDiscovery(stubLog()),
+      workspaceContextStub('/work'),
+      [],
+      undefined,
+      undefined,
+      workspaceDirsStub([], [], Promise.reject(new Error('invalid workspace directories'))),
+    );
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await expect(catalog.ready).rejects.toThrow('invalid workspace directories');
+    } finally {
+      host.dispose();
+    }
+  });
 
   it('discovers all workspace directories with primary and earlier dirs winning collisions', async () => {
     const base = await mkdtemp(join(tmpdir(), 'skill-catalog-multi-root-'));
@@ -1042,8 +1066,18 @@ describe('WorkspaceSkillCatalogService', () => {
       stubPair(ISkillDiscovery, store),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IConfigService, configStub()),
+      stubPair(ILogService, stubLog()),
       stubPair(IProviderService, stubProviderService()),
+      stubPair(IRegionService, {
+        _serviceBrand: undefined,
+        current: () => ({ region: 'mainland-cn', source: 'default' }),
+        getRegionAsync: async () => 'mainland-cn',
+      } satisfies IRegionService),
       stubPair(ITelemetryService, noopTelemetryService),
+      stubPair(IMcpOAuthService, {
+        cancelAuthorization: async () => {},
+        invalidateFromConfiguration: async () => {},
+      } as unknown as McpOAuthService),
     ]);
     const ws = workspaceContextStub('/work');
     const workspace = host.child('program', 'w1', [

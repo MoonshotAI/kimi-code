@@ -67,6 +67,16 @@ deviations per the design spec, plus one forced addition:
 - `fs/readDirectory` preserves the symlink marker on each entry. The client
   rejects a truncated listing with `os.fs.directory_too_large` rather than
   exposing an incomplete directory; the current limit is 50,000 entries.
+- `fs/readFile` accepts `includeMetadata: true` and then returns the target's
+  metadata alongside the data, skipping the read for non-files, so a caller
+  can stat and sniff a file in one round trip.
+- `fs/walk` performs a recursive, depth-first listing in one call. It accepts
+  root ignore rules that prune ignored directories before traversal and
+  returns root-relative `/` paths with their kind. Unreadable directories are
+  skipped; a directory over the `fs/readDirectory` entry limit fails the call
+  with `os.fs.directory_too_large`. The response is capped at 8MiB and walks
+  default to a 55-second budget so they return a truncated result before the
+  60-second RPC deadline.
 - Added `fs/rename` (no codex counterpart).
 - `fs/remove` takes only `path` and always removes recursively and ignores a
   missing path, matching `IHostFileSystem.remove` (codex has `recursive`/`force`).
@@ -89,7 +99,7 @@ deviations per the design spec, plus one forced addition:
 - `environment` adds `osArch`/`osVersion`/`pathClass` over codex (rg artifact
   selection needs arch), plus `cwd`/`tempDir`.
 - No ws transport, no `resumeSessionId`, no sandbox parameter family, no
-  `fs/walk`/`fs/copy`/`capabilityRoots/discoverV1`/`environmentConfig/read`.
+  `fs/copy`/`capabilityRoots/discoverV1`/`environmentConfig/read`.
 
 Process output is delivered through notifications (`process/output`,
 `process/exited`, `process/closed`). The executor retains process handles until
@@ -174,7 +184,10 @@ handshake completes: any byte or unknown notification disconnects.
 
 ## Operational notes
 
-- The executor is posix-only; the client refuses non-posix environments and
-  executors below `MIN_EXECUTOR_VERSION` at the handshake gate.
+- The executor supports POSIX and Windows targets; Windows uses the same Git
+  Bash environment probe as the local Windows host. The client refuses unknown
+  path classes, executors below `MIN_EXECUTOR_VERSION`, and Windows executors
+  without `windowsProcessLifecycle`. Remote Windows path resolution rejects
+  unresolved MSYS paths instead of invoking cygpath on the controller.
 - `test/remote/e2e/` holds the real-machine (ssh/docker) acceptance driver and
   step-by-step docs; the vitest suite covers the local loopback.

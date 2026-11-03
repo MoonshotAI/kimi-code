@@ -5,12 +5,12 @@ const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
 
 export function toLlmTransportErrorMessage(message: string): LlmRemoteErrorMessage {
   if (TIMEOUT_RE.test(message)) {
-    return { kind: 'timeout', message };
+    return { kind: 'timeout', message, retryable: true };
   }
   if (NETWORK_RE.test(message)) {
-    return { kind: 'connection', message };
+    return { kind: 'connection', message, retryable: true };
   }
-  return { kind: 'provider', message: `Error: ${message}` };
+  return { kind: 'provider', message: `Error: ${message}`, retryable: true };
 }
 
 const CONTEXT_OVERFLOW_MESSAGE_PATTERNS = [
@@ -68,17 +68,6 @@ const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
 
 const MEDIA_TYPE_FIELD_PATTERN = /(?:media|mime)_?type/;
 
-const THINKING_EFFORT_CONFIG_DOCS_URL =
-  'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking';
-
-const THINKING_EFFORT_STATUS_MESSAGE_PATTERNS = [
-  /reasoning[_ .-]?effort/,
-  /thinking[_ .-]?effort/,
-  /output_config[\s\S]*effort/,
-  /unsupported[\s\S]*effort/,
-  /invalid[\s\S]*effort/,
-] as const;
-
 function matchesAny(message: string, patterns: readonly RegExp[]): boolean {
   const lowerMessage = message.toLowerCase();
   return patterns.some((pattern) => pattern.test(lowerMessage));
@@ -117,28 +106,48 @@ function isImageFormatStatusError(statusCode: number, message: string): boolean 
   );
 }
 
-function appendThinkingEffortConfigHint(statusCode: number, message: string): string {
-  if (statusCode !== 400 && statusCode !== 422) return message;
-  if (!matchesAny(message, THINKING_EFFORT_STATUS_MESSAGE_PATTERNS)) return message;
-  if (message.includes(THINKING_EFFORT_CONFIG_DOCS_URL)) return message;
-  return `${message}
-
-The provider rejected the configured thinking effort. Non-Kimi providers receive effort strings without client-side mapping; choose an effort supported by the selected model. For Kimi models, check support_efforts and default_effort. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`;
-}
-
-export function sanitizeStatusErrorMessage(message: string): string {
-  const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(message);
-  const extracted = titleMatch?.[1]?.trim();
-  const normalized = extracted !== undefined && extracted.length > 0 ? extracted : message;
-  return normalized.replaceAll('\r', '');
+export function withoutUndefinedStatusCode(error: LlmRemoteErrorMessage): LlmRemoteErrorMessage {
+  if (!('statusCode' in error) || error.statusCode !== undefined) return error;
+  const { statusCode: _statusCode, ...withoutStatus } = error;
+  return withoutStatus;
 }
 
 export interface LlmStatusErrorInput {
-  readonly statusCode: number;
+  readonly statusCode?: number;
   readonly message: string;
   readonly requestId?: string | null;
   readonly retryAfterMs?: number | null;
   readonly headers?: Record<string, string> | null;
+  readonly retryable?: boolean;
+}
+
+const RETRYABLE_HTTP_STATUS_CODES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
+
+export function toLlmStreamErrorMessage(
+  input: Omit<LlmStatusErrorInput, 'statusCode'> & { readonly businessCode?: number },
+): LlmRemoteErrorMessage {
+  const info = {
+    requestId: input.requestId ?? null,
+    retryAfterMs: input.retryAfterMs ?? null,
+    headers: input.headers ?? null,
+    retryable:
+      input.retryable ??
+      (input.businessCode === undefined || RETRYABLE_HTTP_STATUS_CODES.has(input.businessCode)),
+  };
+  if (input.businessCode === 429) {
+    return { kind: 'rate_limit', message: input.message, ...info };
+  }
+  if (input.businessCode === 529) {
+    return { kind: 'overloaded', message: input.message, ...info };
+  }
+  if (input.businessCode === 413) {
+    return { kind: 'request_too_large', message: input.message, ...info };
+  }
+  return {
+    kind: 'status',
+    message: input.message,
+    ...info,
+  };
 }
 
 export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteErrorMessage {
@@ -147,29 +156,29 @@ export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteEr
     requestId: input.requestId ?? null,
     retryAfterMs: input.retryAfterMs ?? null,
     headers: input.headers ?? null,
+    retryable:
+      input.retryable ??
+      (input.statusCode !== undefined && RETRYABLE_HTTP_STATUS_CODES.has(input.statusCode)),
   };
-  const message = sanitizeStatusErrorMessage(input.message);
   if (input.statusCode === 429) {
-    return { kind: 'rate_limit', message, ...info };
+    return { kind: 'rate_limit', message: input.message, ...info };
   }
-  if (isContextOverflowStatusError(input.statusCode, input.message)) {
-    return { kind: 'context_overflow', message, ...info };
+  if (input.statusCode !== undefined) {
+    if (isContextOverflowStatusError(input.statusCode, input.message)) {
+      return { kind: 'context_overflow', message: input.message, ...info };
+    }
+    if (isRequestTooLargeStatusError(input.statusCode, input.message)) {
+      return { kind: 'request_too_large', message: input.message, ...info };
+    }
+    if (isProviderOverloadStatusError(input.statusCode, input.message)) {
+      return { kind: 'overloaded', message: input.message, ...info };
+    }
+    if (isRequestStructureStatusError(input.statusCode, input.message)) {
+      return { kind: 'request_structure', message: input.message, ...info };
+    }
+    if (isImageFormatStatusError(input.statusCode, input.message)) {
+      return { kind: 'image_format', message: input.message, ...info };
+    }
   }
-  if (isRequestTooLargeStatusError(input.statusCode, input.message)) {
-    return { kind: 'request_too_large', message, ...info };
-  }
-  if (isProviderOverloadStatusError(input.statusCode, input.message)) {
-    return { kind: 'overloaded', message, ...info };
-  }
-  if (isRequestStructureStatusError(input.statusCode, input.message)) {
-    return { kind: 'request_structure', message, ...info };
-  }
-  if (isImageFormatStatusError(input.statusCode, input.message)) {
-    return { kind: 'image_format', message, ...info };
-  }
-  return {
-    kind: 'status',
-    message: appendThinkingEffortConfigHint(input.statusCode, message),
-    ...info,
-  };
+  return { kind: 'status', message: input.message, ...info };
 }

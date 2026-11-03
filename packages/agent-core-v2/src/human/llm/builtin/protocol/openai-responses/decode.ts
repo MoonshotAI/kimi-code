@@ -3,8 +3,14 @@ import { NO_FINISH, type FinishInfo } from '#/llm/response';
 import type { StreamedMessagePart } from '#/llm/message';
 import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
 import type { TokenUsage } from '#/llm/response';
+import { toLlmStreamErrorMessage } from '#/llm/protocol/rules/status';
 
-import { isContextOverflowErrorCode, isOpenAIInsufficientQuotaCode } from '../openai/decode';
+import {
+  isContextOverflowErrorCode,
+  isOpenAIInsufficientQuotaCode,
+  isOpenAIOverloadedErrorCode,
+  isOpenAIRateLimitErrorCode,
+} from '../openai/decode';
 
 export type RawChunk = Record<string, unknown>;
 
@@ -157,61 +163,40 @@ function functionCallId(callId: string | undefined): string {
   return callId === undefined || callId.length === 0 ? crypto.randomUUID() : callId;
 }
 
-function formatResponsesErrorEvent(
-  code: string | null,
-  message: string,
-  param: string | null,
-): string {
-  const codeText = code ?? 'unknown';
-  const paramText = param === null ? '' : ` (param: ${param})`;
-  return `${codeText}: ${message}${paramText}`;
-}
-
-const EMBEDDED_STATUS_CODE_RE = /\bstatus_code\s*[:=]\s*(\d{3})\b/;
-
-function readEmbeddedStatusCode(message: string): number | undefined {
-  const match = EMBEDDED_STATUS_CODE_RE.exec(message);
-  return match === null ? undefined : Number(match[1]);
-}
-
 function errorFromOpenAIResponsesEvent(
-  prefix: string,
   code: string | null,
   message: string,
-  param: string | null,
 ): LlmRemoteErrorMessage {
-  const formatted = formatResponsesErrorEvent(code, message, param);
-  const fullMessage = `${prefix}: ${formatted}`;
   const statusInfo = {
     requestId: null,
     retryAfterMs: null,
     headers: null,
   };
   if (isContextOverflowErrorCode(code)) {
-    return { kind: 'context_overflow', message: fullMessage, statusCode: 400, ...statusInfo };
+    return { kind: 'context_overflow', message, retryable: false, ...statusInfo };
   }
   if (isOpenAIInsufficientQuotaCode(code)) {
-    return { kind: 'quota_exhausted', message: fullMessage, statusCode: 429, ...statusInfo };
+    return { kind: 'quota_exhausted', message, retryable: false, ...statusInfo };
   }
-  if (code === 'rate_limit_exceeded' || readEmbeddedStatusCode(message) === 429) {
-    return { kind: 'rate_limit', message: fullMessage, statusCode: 429, ...statusInfo };
+  if (isOpenAIRateLimitErrorCode(code)) {
+    return { kind: 'rate_limit', message, retryable: true, ...statusInfo };
   }
-  return { kind: 'provider', message: fullMessage };
+  if (isOpenAIOverloadedErrorCode(code)) {
+    return { kind: 'overloaded', message, retryable: true, ...statusInfo };
+  }
+  return toLlmStreamErrorMessage({ message, ...statusInfo });
 }
 
 function parseNestedGatewayStreamError(message: string):
   | {
       code: string | null;
       message: string;
-      param: string | null;
     }
   | undefined {
   const marker = 'received error while streaming:';
   const markerIndex = message.indexOf(marker);
-  if (markerIndex === -1) return undefined;
-
-  const jsonText = message.slice(markerIndex + marker.length).trim();
-  if (jsonText.length === 0) return undefined;
+  const jsonText = markerIndex === -1 ? message.trim() : message.slice(markerIndex + marker.length).trim();
+  if (!jsonText.startsWith('{') || !jsonText.endsWith('}')) return undefined;
 
   let parsed: unknown;
   try {
@@ -229,27 +214,16 @@ function parseNestedGatewayStreamError(message: string):
   return {
     code: readNullableStringField(error, 'code') ?? null,
     message: nestedMessage,
-    param: readNullableStringField(error, 'param') ?? null,
   };
 }
 
 function malformedStreamErrorEvent(message: string): LlmRemoteErrorMessage {
   const nested = parseNestedGatewayStreamError(message);
   if (nested !== undefined) {
-    return errorFromOpenAIResponsesEvent(
-      'OpenAI Responses malformed stream error',
-      nested.code,
-      nested.message,
-      nested.param,
-    );
+    return errorFromOpenAIResponsesEvent(nested.code, nested.message);
   }
 
-  return errorFromOpenAIResponsesEvent(
-    'OpenAI Responses malformed stream error',
-    null,
-    message,
-    null,
-  );
+  return errorFromOpenAIResponsesEvent(null, message);
 }
 
 function readResponsesFailedResponseError(response: RawObject):
@@ -260,25 +234,11 @@ function readResponsesFailedResponseError(response: RawObject):
   | undefined {
   const error = readObjectField(response, 'error');
   if (error !== undefined) {
-    const code = readNullableStringField(error, 'code') ?? 'unknown';
-    const message = readStringField(error, 'message') ?? 'no message';
+    const code = readNullableStringField(error, 'code') ?? null;
+    const message = readStringField(error, 'message') ?? '';
     return { code, message };
   }
   return undefined;
-}
-
-function formatResponsesFailedResponse(response: RawObject): string {
-  const error = readResponsesFailedResponseError(response);
-  if (error !== undefined) {
-    return formatResponsesErrorEvent(error.code, error.message, null);
-  }
-
-  const incompleteDetails = readObjectField(response, 'incomplete_details');
-  const reason =
-    incompleteDetails === undefined ? undefined : readStringField(incompleteDetails, 'reason');
-  return reason === undefined
-    ? 'Unknown error (no error details in response)'
-    : `incomplete: ${reason}`;
 }
 
 function normalizeResponsesFinish(
@@ -303,16 +263,16 @@ function normalizeResponsesFinish(
   return NO_FINISH;
 }
 
-function parseUsage(usage: RawObject | null | undefined): TokenUsage | undefined {
+function parseUsage(usage: RawObject | null | undefined): Partial<TokenUsage> | undefined {
   if (usage === null || usage === undefined) {
     return undefined;
   }
   const inputTokens = readNumberField(usage, 'input_tokens') ?? 0;
   const outputTokens = readNumberField(usage, 'output_tokens') ?? 0;
   const details = readObjectField(usage, 'input_tokens_details');
-  const cached = details === undefined ? 0 : (readNumberField(details, 'cached_tokens') ?? 0);
+  const cached = details === undefined ? undefined : readNumberField(details, 'cached_tokens');
   return {
-    inputOther: inputTokens - cached,
+    inputOther: inputTokens - (cached ?? 0),
     output: outputTokens,
     inputCacheRead: cached,
     inputCacheCreation: 0,
@@ -323,17 +283,9 @@ function parseUsage(usage: RawObject | null | undefined): TokenUsage | undefined
 function failedResponseError(response: RawObject): LlmRemoteErrorMessage {
   const error = readResponsesFailedResponseError(response);
   if (error !== undefined) {
-    return errorFromOpenAIResponsesEvent(
-      'OpenAI Responses response.failed',
-      error.code,
-      error.message,
-      null,
-    );
+    return errorFromOpenAIResponsesEvent(error.code, error.message);
   }
-  return {
-    kind: 'provider',
-    message: `OpenAI Responses response.failed: ${formatResponsesFailedResponse(response)}`,
-  };
+  return { kind: 'provider', message: '', retryable: true };
 }
 
 function replayOutputItem(value: RawObject, outputIndex: number): RawChunk[] {
@@ -567,12 +519,7 @@ export function createDecoder(sink: DecodeSink): Decoder<RawChunk> {
       case 'error': {
         const message = requireStringField(event, 'message', type);
         sink.onError(
-          errorFromOpenAIResponsesEvent(
-            'OpenAI Responses stream error',
-            readNullableStringField(event, 'code') ?? null,
-            message,
-            readNullableStringField(event, 'param') ?? null,
-          ),
+          errorFromOpenAIResponsesEvent(readNullableStringField(event, 'code') ?? null, message),
         );
         return;
       }

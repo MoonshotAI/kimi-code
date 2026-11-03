@@ -358,6 +358,38 @@ describe('McpManagementService', () => {
       await expect(store.list()).resolves.toEqual([]);
     });
 
+    it('invalidates the previous OAuth identity when a global server URL changes without a workspace', async () => {
+      const previousUrl = 'https://mcp.example.test/mcp-a';
+      const nextUrl = 'https://mcp.example.test/mcp-b';
+      await management.addServer({ name: 'alpha', transport: 'http', url: previousUrl });
+      await seedTokens('alpha', previousUrl, { access_token: 'token' });
+
+      await management.updateServer({ name: 'alpha', transport: 'http', url: nextUrl });
+
+      expect((await oauth.tokenState('alpha', previousUrl)).hasTokens).toBe(false);
+    });
+
+    it('invalidates the OAuth identity when a global server is removed without a workspace', async () => {
+      const url = 'https://mcp.example.test/mcp';
+      await management.addServer({ name: 'alpha', transport: 'http', url });
+      await seedTokens('alpha', url, { access_token: 'token' });
+
+      await management.removeServer('alpha');
+
+      expect((await oauth.tokenState('alpha', url)).hasTokens).toBe(false);
+    });
+
+    it('retains a removed global server OAuth identity while another configuration uses it', async () => {
+      const url = 'https://mcp.example.test/mcp';
+      await management.addServer({ name: 'alpha', transport: 'http', url });
+      await seedTokens('alpha', url, { access_token: 'token' });
+      oauth.setConfigurationSource({}, [['alpha', url]]);
+
+      await management.removeServer('alpha');
+
+      expect((await oauth.tokenState('alpha', url)).hasTokens).toBe(true);
+    });
+
     it('waits for live config reconciliation listeners before returning', async () => {
       let resolveStarted!: () => void;
       const started = new Promise<void>((resolve) => {
@@ -1258,6 +1290,7 @@ describe('McpManagementService', () => {
       );
       const cancel = vi.fn(async () => undefined);
       const begin = vi.spyOn(oauth, 'beginAuthorization').mockResolvedValue({
+        waitId: 'project-auth-wait',
         authorizationUrl: new URL('https://project.example.test/authorize'),
         complete: vi.fn(async () => undefined),
         cancel,
@@ -1492,6 +1525,7 @@ describe('McpManagementService', () => {
       });
       const cancel = vi.fn(async () => undefined);
       const beginSpy = vi.spyOn(oauth, 'beginAuthorization').mockResolvedValue({
+        waitId: 'idle-auth-wait',
         authorizationUrl: new URL('https://oauthable.example.test/authorize'),
         complete: vi.fn(async () => undefined),
         cancel,
