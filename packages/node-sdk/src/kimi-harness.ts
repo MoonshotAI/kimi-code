@@ -42,6 +42,9 @@ import type {
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
+  GitPullRequest,
+  GitQueryInput,
+  GitStatusSummary,
   SuggestFilesInput,
   SuggestFilesResult,
   TelemetryClient,
@@ -351,6 +354,24 @@ export class KimiHarness {
    */
   async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
     return this.rpc.suggestFiles(workDir, input);
+  }
+
+  /**
+   * Git working-tree summary of `workDir` on this machine, or of a live
+   * session's working directory on the environment it runs on. `null` when
+   * the directory is not inside a git work tree or git is unavailable there.
+   */
+  async getGitStatus(workDir: string, input: GitQueryInput = {}): Promise<GitStatusSummary | null> {
+    return this.rpc.getGitStatus(workDir, input);
+  }
+
+  /**
+   * Pull request of the current branch, resolved the same way as
+   * {@link getGitStatus}. `null` when there is none, the HEAD is detached,
+   * or `gh` is unavailable.
+   */
+  async getGitPullRequest(workDir: string, input: GitQueryInput = {}): Promise<GitPullRequest | null> {
+    return this.rpc.getGitPullRequest(workDir, input);
   }
 
   /**

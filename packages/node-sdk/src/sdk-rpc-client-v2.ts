@@ -147,6 +147,7 @@ import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connect
 import { ITowerRateLimitService } from '@moonshot-ai/agent-core-v2/features/tower/towerRateLimit';
 import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/tower/tools/status/statusReader';
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
+import { IGitService } from '@moonshot-ai/agent-core-v2/app/git/git';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { ILogService } from '@moonshot-ai/agent-core-v2/_base/log/log';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
@@ -349,6 +350,9 @@ import type {
   SessionTodoItem,
   SessionUsage,
   SkillSummary,
+  GitPullRequest,
+  GitQueryInput,
+  GitStatusSummary,
   SuggestFilesInput,
   SuggestFilesResult,
   TelemetryClient,
@@ -787,6 +791,37 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       return suggest(this.requireLiveSession(input.sessionId).accessor.get(ISessionWorkdir).fs);
     }
     return this.withWorkspaceInstance('suggestFiles', workDir, (handler) => suggest(handler.program.fs));
+  }
+
+  /**
+   * The same engine git status the kap-server `fs:git_status` route serves:
+   * a live session's working directory on the session's own environment, or
+   * `workDir` on the local machine. The pull request is read separately so a
+   * slow `gh` never delays the status.
+   */
+  override async getGitStatus(workDir: string, input: GitQueryInput): Promise<GitStatusSummary | null> {
+    const status = await nullWhenGitUnavailable(
+      input.sessionId !== undefined
+        ? this.requireLiveSession(input.sessionId).accessor.get(ISessionWorkdir).fs.gitStatus({ include_pull_request: false })
+        : this.engineAccessor.get(IGitService).status(normalizeRequiredWorkDir('getGitStatus', workDir), { includePullRequest: false }),
+    );
+    if (status === null) return null;
+    return {
+      branch: status.branch,
+      dirty: Object.keys(status.entries).length > 0,
+      ahead: status.ahead,
+      behind: status.behind,
+      additions: status.additions,
+      deletions: status.deletions,
+    };
+  }
+
+  override async getGitPullRequest(workDir: string, input: GitQueryInput): Promise<GitPullRequest | null> {
+    return nullWhenGitUnavailable(
+      input.sessionId !== undefined
+        ? this.requireLiveSession(input.sessionId).accessor.get(ISessionWorkdir).fs.pullRequest({})
+        : this.engineAccessor.get(IGitService).pullRequest(normalizeRequiredWorkDir('getGitPullRequest', workDir)),
+    );
   }
 
   /**
@@ -3188,6 +3223,15 @@ async function assertUsableWorkDir(fs: IHostFileSystem, workDir: string): Promis
  * mint a `KimiError` that `toKimiErrorPayload` cannot serialize (its
  * `KIMI_ERROR_INFO` lookup throws on undeclared codes).
  */
+async function nullWhenGitUnavailable<T>(read: Promise<T>): Promise<T | null> {
+  try {
+    return await read;
+  } catch (error) {
+    if (isError2(error) && error.code === V2ErrorCodes.FS_GIT_UNAVAILABLE) return null;
+    throw error;
+  }
+}
+
 function restateEngineError(error: unknown): unknown {
   if (!isError2(error)) return error;
   const code: KimiErrorCode = isKimiErrorCode(error.code) ? error.code : ErrorCodes.INTERNAL;

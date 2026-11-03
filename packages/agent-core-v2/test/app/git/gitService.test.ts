@@ -209,6 +209,26 @@ describe('GitService', () => {
   });
 
   describe('pullRequest', () => {
+    it('re-reads the pull request after a branch switch and skips gh on a detached HEAD', async () => {
+      writeFileSync(join(repo, 'a.txt'), 'hello\n');
+      commitAll('init');
+      const spawn = vi.spyOn(HostProcessService.prototype, 'spawn');
+      const ghCalls = (): number => spawn.mock.calls.filter(([command]) => command === 'gh').length;
+
+      await service.pullRequest(repo);
+      await service.status(repo);
+      expect(ghCalls()).toBe(1);
+
+      git(repo, 'checkout', '-q', '-b', 'feature');
+      await service.pullRequest(repo);
+      expect(ghCalls()).toBe(2);
+
+      git(repo, 'checkout', '-q', '--detach');
+      await expect(service.pullRequest(repo)).resolves.toBeNull();
+      await expect(service.status(repo)).resolves.toMatchObject({ branch: '', pullRequest: null });
+      expect(ghCalls()).toBe(2);
+    }, 15000);
+
     it('throws FS_GIT_UNAVAILABLE when not a repo', async () => {
       const notRepo = mkdtempSync(join(tmpdir(), 'not-repo-'));
       try {

@@ -17,6 +17,7 @@ import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
+import type { FooterGitBinding } from '#/tui/components/chrome/footer';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import { maybeShowModelMigrationPrompt } from '#/tui/controllers/model-migration';
 import type { ApprovalPanelData, QuestionPanelData } from '#/tui/reverse-rpc/types';
@@ -243,6 +244,8 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
     getWorkspaceAdditionalDirs: vi.fn(async () => []),
+    getGitStatus: vi.fn(async () => null),
+    getGitPullRequest: vi.fn(async () => null),
     getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], additionalDirSources: [], warnings: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] } })),
     refreshProviderModels: vi.fn(async () => ({ changed: [], unchanged: [], failed: [] })),
     auth: {
@@ -938,6 +941,33 @@ describe('KimiTUI startup', () => {
       release();
       await (driver as unknown as { waitForSessionAssembly(): Promise<void> }).waitForSessionAssembly();
     }
+  });
+
+  it('reads footer git state through the engine, skipping a remote binding until its session exists', async () => {
+    type GitBindingDriver = { footerGitBinding(state: TUIState['appState']): FooterGitBinding | null };
+    const localHarness = makeHarness();
+    const local = makeDriver(localHarness, makeStartupInput());
+    const localBinding = (local as unknown as GitBindingDriver).footerGitBinding(local.state.appState);
+    expect(localBinding?.source.localWorkDir).toBe(local.state.appState.workDir);
+    await localBinding?.source.status();
+    expect(localHarness.getGitStatus).toHaveBeenCalledWith(local.state.appState.workDir, { sessionId: undefined });
+
+    const remoteHarness = makeHarness();
+    const remote = makeDriver(remoteHarness, makeStartupInput({ environment: 'dev-box' }));
+    const driver = remote as unknown as GitBindingDriver;
+    expect(driver.footerGitBinding(remote.state.appState)).toBeNull();
+
+    const connected = {
+      ...remote.state.appState,
+      sessionId: 'ses-remote',
+      environment: { environmentId: 'dev-box', type: 'ssh' as const, status: 'ready' as const, cwd: '/remote/work' },
+    };
+    const remoteBinding = driver.footerGitBinding(connected);
+    expect(remoteBinding?.source.localWorkDir).toBeUndefined();
+    await remoteBinding?.source.pullRequest();
+    expect(remoteHarness.getGitPullRequest).toHaveBeenCalledWith(remote.state.appState.workDir, { sessionId: 'ses-remote' });
+    expect(driver.footerGitBinding({ ...connected, environment: { ...connected.environment, status: 'connecting' } })?.key)
+      .not.toBe(remoteBinding?.key);
   });
 
   it('completes remote @ mentions through the live session', async () => {

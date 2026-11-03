@@ -73,6 +73,7 @@ import { promptSshPassword } from './commands/prompts';
 import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
+import type { FooterGitBinding } from './components/chrome/footer';
 import { GutterContainer } from './components/chrome/gutter-container';
 import { MoonLoader, type SpinnerStyle } from './components/chrome/moon-loader';
 import { WelcomeComponent } from './components/chrome/welcome';
@@ -507,6 +508,7 @@ export class KimiTUI {
     this.state = createTUIState(tuiOptions);
     this.programStatus = new ProgramStatusController(this.state, this.state.terminal);
     this.state.footer.setExpandHintProvider(() => this.toolOutputExpandHint());
+    this.state.footer.setGitBinding((state) => this.footerGitBinding(state));
     this.state.transcriptContainer.setUnhandledClick((index) =>
       this.toggleClickedFoldBlock(index),
     );
@@ -575,17 +577,8 @@ export class KimiTUI {
       };
     });
     const skillCommandNames = new Set(this.skillCommandMap.keys());
-    const environment = this.state.appState.environment;
-    const environmentBinding =
-      environment !== undefined
-        ? environment
-        : this.creationEnvironment ?? {
-            environmentId: this.options.startup.environment,
-            cwd: this.options.startup.environmentCwd,
-          };
-    const { environmentId } = environmentBinding;
     const remoteSuggest =
-      environmentId === undefined || environmentId === 'local'
+      this.environmentIdOf(this.state.appState.environment) === 'local'
         ? undefined
         : async (query: string) => {
             const session = this.session;
@@ -617,6 +610,35 @@ export class KimiTUI {
     }
     this.state.editor.setArgumentHints(argumentHints);
     this.state.editor.setSkillCommandNames(skillCommandNames);
+  }
+
+  /**
+   * The environment the current or next session runs on: the live binding,
+   * else the one a new session would be created with.
+   */
+  private environmentIdOf(environment: AppState['environment']): string {
+    return (environment ?? this.creationEnvironment)?.environmentId ?? this.options.startup.environment ?? 'local';
+  }
+
+  /**
+   * The footer reads git state through the engine: a live session's own
+   * environment, or the local work dir before the lazy session exists. A
+   * remote binding has nothing to read until its session does; a new
+   * environment status re-reads, so a connected remote shows up at once.
+   */
+  private footerGitBinding(state: AppState): FooterGitBinding | null {
+    const local = this.environmentIdOf(state.environment) === 'local';
+    const sessionId = state.sessionId === '' ? undefined : state.sessionId;
+    if (sessionId === undefined && !local) return null;
+    const { workDir } = state;
+    return {
+      key: [sessionId ?? '', workDir, state.environment?.status ?? ''].join('\0'),
+      source: {
+        status: () => this.harness.getGitStatus(workDir, { sessionId }),
+        pullRequest: () => this.harness.getGitPullRequest(workDir, { sessionId }),
+        localWorkDir: local ? workDir : undefined,
+      },
+    };
   }
 
   refreshSlashCommandAutocomplete(): void {
