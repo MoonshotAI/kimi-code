@@ -506,6 +506,55 @@ describe('FullCompaction', () => {
     expect(compaction.compacting).toBeNull();
   });
 
+  it('stops waiting for a running compaction once the queued compaction is withdrawn', async () => {
+    const autoRequested = deferred<void>();
+    const releaseAuto = deferred<void>();
+    let llmCallCount = 0;
+    const generate: GenerateFn = requesterFromGenerateFn(async () => {
+      llmCallCount += 1;
+      if (llmCallCount === 1) return textResult('Turn response.');
+      if (llmCallCount === 2) {
+        autoRequested.resolve();
+        await releaseAuto.promise;
+        return textResult('Background compacted summary.');
+      }
+      throw new Error(`Unexpected generate call ${String(llmCallCount)}`);
+    });
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      tools: SNAPSHOT_VISIBLE_TOOLS,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const loop = ctx.get(IAgentLoopService);
+    const compaction = ctx.get(IAgentFullCompactionService);
+    let requested: 'compact' | 'queue' | undefined;
+    loop.hooks.onDidFinishStep.register('test-auto-compaction', async (_step, next) => {
+      if (requested === undefined) {
+        requested = compaction.request({ id: 'compact-1' });
+        compaction.begin({ source: 'auto' });
+      }
+      await next();
+    });
+
+    const turnEnded = ctx.untilTurnEnd();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start background compaction' }] });
+    await autoRequested.promise;
+    await turnEnded;
+    expect(requested).toBe('queue');
+    await vi.waitFor(() => expect(loop.snapshot().startingPromptId).toBe('compact-1'));
+
+    expect(loop.cancel({ promptId: 'compact-1' })).toBe(true);
+    await expect(loop.promptHandle('compact-1')!.completion).resolves.toMatchObject({ state: 'cancelled' });
+    expect(loop.snapshot().startingPromptId).toBeUndefined();
+    expect(compaction.compacting).not.toBeNull();
+
+    releaseAuto.resolve();
+    await ctx.once('compaction.completed');
+  });
+
   it('checks for an empty history only when the compaction would start now', () => {
     const ctx = testAgent();
     ctx.configure({

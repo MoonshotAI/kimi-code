@@ -152,12 +152,7 @@ export class AgentSkillService implements IAgentSkillService {
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
     }
-    const status = this.loop.snapshot();
-    const steerable =
-      input.steerIfActive === true &&
-      status.state === 'running' &&
-      status.activePromptId !== undefined;
-    const { id } = this.loop.submit(
+    const { id, queued } = this.loop.submit(
       {
         message: {
           role: 'user',
@@ -177,12 +172,7 @@ export class AgentSkillService implements IAgentSkillService {
       { steerIfActive: input.steerIfActive },
     );
     const handle = this.loop.promptHandle(id)!;
-    if (
-      !steerable &&
-      (status.state === 'running' || status.paused || status.queuePaused || status.queue.length > 0)
-    ) {
-      return { prompt_id: id, created_at: handle.createdAt, state: 'queued' };
-    }
+    if (queued) return { prompt_id: id, created_at: handle.createdAt, state: 'queued' };
     await Promise.race([handle.launched, handle.completion]);
     const turn = await handle.launched;
     if (turn === undefined && handle.state !== 'blocked') {
@@ -273,13 +263,17 @@ export class AgentSkillService implements IAgentSkillService {
 
     if (input === undefined) return undefined;
     const steer = this.loop.snapshot().state === 'running';
-    const { id } = this.loop.submit(
+    const { id, queued } = this.loop.submit(
       {
         message: { role: 'user', content: [...input] },
         meta: { origin, tracked: !steer },
       },
       { steerIfActive: steer },
     );
+    if (queued) {
+      this.loop.cancel({ promptId: id });
+      return undefined;
+    }
     return this.loop.promptHandle(id)!.launched;
   }
 

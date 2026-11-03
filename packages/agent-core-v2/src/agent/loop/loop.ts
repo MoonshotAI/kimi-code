@@ -138,6 +138,7 @@ export interface LoopSubmitOptions {
 
 export interface LoopSubmitResult {
   readonly id: string;
+  readonly queued: boolean;
 }
 
 export interface LoopCancelTarget {

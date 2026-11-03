@@ -39,14 +39,11 @@ export class AgentPromptChannel implements IAgentPromptChannel {
 
   async submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
     await this.updateMetadata(promptMetadataTextFromContentParts(payload.input));
-    const status = this.loop.snapshot();
-    const { id } = this.loop.submit({
+    const { id, queued } = this.loop.submit({
       message: { role: 'user', content: [...payload.input] },
       meta: { promptId: payload.promptId, origin: { kind: 'user' }, tracked: true },
     });
-    if (status.state === 'running' || status.paused || status.queuePaused || status.queue.length > 0) {
-      return undefined;
-    }
+    if (queued) return undefined;
     return launchResult(this.loop, id);
   }
 
@@ -54,15 +51,14 @@ export class AgentPromptChannel implements IAgentPromptChannel {
     this.telemetry.track2('input_steer', { parts: payload.input.length });
     await this.updateMetadata(promptMetadataTextFromContentParts(payload.input));
     const status = this.loop.snapshot();
-    const { id } = this.loop.submit(
+    const { id, queued } = this.loop.submit(
       {
         message: { role: 'user', content: [...payload.input] },
         meta: { origin: { kind: 'user' }, tracked: true },
       },
       { steerIfActive: true },
     );
-    if (status.state === 'running' && status.activePromptId === undefined) return undefined;
-    if (this.loop.snapshot().queue.some((entry) => entry.meta?.promptId === id)) return undefined;
+    if (queued || (status.state === 'running' && status.activePromptId === undefined)) return undefined;
     return launchResult(this.loop, id);
   }
 

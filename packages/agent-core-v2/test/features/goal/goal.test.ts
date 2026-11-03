@@ -874,7 +874,7 @@ describe('AgentGoalService core workflow hooks', () => {
   ): Promise<ReturnType<typeof vi.fn<() => boolean>>> {
     const abort = vi.fn<() => boolean>(() => abortResult);
     const turn: StubTurn = { ...makeTurn(41), result: new Promise<never>(() => {}), cancel: () => abort() };
-    vi.spyOn(loopService, 'submit').mockReturnValue({ id: 'p' });
+    vi.spyOn(loopService, 'submit').mockReturnValue({ id: 'p', queued: false });
     vi.spyOn(loopService, 'promptHandle').mockReturnValue({
       launched: Promise.resolve(turn),
       completion: new Promise(() => {}),

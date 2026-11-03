@@ -137,6 +137,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const handles = new Map<string, PromptHandle>();
   let active: Turn | undefined; let nextId = typeof options.currentId === 'number' ? options.currentId : 0;
   let releaseActiveResult: ((result: TurnResult) => void) | undefined;
+  let queuePaused = false;
   const startTurn = () => {
     const turn = makeTurn(nextId++);
     const result = options.manualTurnResult === true
@@ -168,7 +169,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         launched: Promise.resolve(turn),
         completion: new Promise(() => {}),
       });
-      return { id };
+      return { id, queued: false };
     },
     steer: async () => {},
     remind(note: LoopNotify = {}): LoopNotifyHandle {
@@ -201,7 +202,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         queue: [],
         notificationCount: 0,
         paused: false,
-        queuePaused: false,
+        queuePaused,
         hasPendingRequests: hasPending(),
         turn: undefined,
         activeTraceId: undefined,
@@ -211,8 +212,8 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
     cancel(target, reason) { cancels.push({ turnId: target?.turnId, reason }); if (target?.promptId !== undefined) return true; if (active === undefined || (target?.turnId !== undefined && active.id !== target.turnId)) return false; active.cancel(reason); return true; },
     tryAcquireQuiescence: () => toDisposable(() => {}),
     onDidChangeQueue: Event.None as Event<void>,
-    pauseQueue: () => {},
-    resumeQueue: () => {},
+    pauseQueue: () => { queuePaused = true; },
+    resumeQueue: () => { queuePaused = false; },
     moveQueued: () => {},
     tryAcquireHistorySnapshot: () => toDisposable(() => {}),
     buildAttachBundle: () => stubAttachBundle(),

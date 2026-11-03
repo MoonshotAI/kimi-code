@@ -129,6 +129,13 @@ export const fullCompactionActiveTurnIdKey = defineState<number | undefined>(
   () => undefined as number | undefined,
 );
 
+function abortedOf(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) resolve();
+    else signal.addEventListener('abort', () => resolve(), { once: true });
+  });
+}
+
 export class AgentFullCompactionService extends Service implements IAgentFullCompactionService {
   declare readonly _serviceBrand: undefined;
   readonly hooks: IAgentFullCompactionService['hooks'] = {
@@ -374,7 +381,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private async runQueued(ctx: QueuedCompactionContext): Promise<void> {
     while (this._compacting !== null && !ctx.signal.aborted) {
-      await this._compacting.promise.catch(() => undefined);
+      await Promise.race([this._compacting.promise.catch(() => undefined), abortedOf(ctx.signal)]);
     }
     if (ctx.signal.aborted) return;
     let task: ActiveCompaction;

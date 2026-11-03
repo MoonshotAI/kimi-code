@@ -1133,7 +1133,7 @@ describe('Agent loop', () => {
     expect(loop.cancel({ promptId: 'compact-1' }, userCancellationReason())).toBe(true);
     expect(signal?.aborted).toBe(true);
     release.resolve();
-    await expect(loop.promptHandle('compact-1')!.completion).resolves.toMatchObject({ state: 'completed' });
+    await expect(loop.promptHandle('compact-1')!.completion).resolves.toMatchObject({ state: 'cancelled' });
     expect(loop.snapshot().queue).toEqual([]);
     expect(ctx.llmCalls).toHaveLength(2);
     hook.dispose();
@@ -1197,9 +1197,14 @@ describe('Agent loop', () => {
     stepHook.dispose();
   });
 
-  it('keeps the queue paused when the session went stale while it was paused', () => {
-    loop.pauseQueue();
+  it('refuses to pause or resume a queue whose session went stale', () => {
     const begin = vi.spyOn(ctx.get(ISessionRunGate), 'begin').mockImplementationOnce(() => {
+      throw new Error('session is stale');
+    });
+    expect(() => loop.pauseQueue()).toThrow('session is stale');
+    expect(loop.snapshot().queuePaused).toBe(false);
+    loop.pauseQueue();
+    begin.mockImplementationOnce(() => {
       throw new Error('session is stale');
     });
     expect(() => loop.resumeQueue()).toThrow('session is stale');
@@ -1213,6 +1218,13 @@ describe('Agent loop', () => {
     const started = deferred();
     const release = deferred();
     let hold = true;
+    const idleSubmit = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'not queued' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    });
+    expect(idleSubmit.queued).toBe(false);
+    loop.cancel({ promptId: idleSubmit.id });
+    await loop.promptHandle(idleSubmit.id)?.completion;
     const hook = loop.hooks.onWillBeginStep.register('test-hold-step', async (_step, next) => {
       if (hold) {
         hold = false;
@@ -1232,6 +1244,15 @@ describe('Agent loop', () => {
     }).id;
     const behind = submitTracked(loop, 'behind');
 
+    const steerBehindPlan = loop.submit(
+      {
+        message: { role: 'user', content: [{ type: 'text', text: 'steer behind plan' }] },
+        meta: { origin: { kind: 'user' }, tracked: true },
+      },
+      { steerIfActive: true },
+    );
+    expect(steerBehindPlan.queued).toBe(true);
+    loop.cancel({ promptId: steerBehindPlan.id });
     await expect(loop.steer([planned])).rejects.toMatchObject({ code: 'request.invalid' });
     await expect(loop.steer([behind])).rejects.toMatchObject({ code: 'request.invalid' });
     await loop.steer([ahead]);

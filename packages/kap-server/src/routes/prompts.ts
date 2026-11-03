@@ -396,8 +396,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             eventService: core.accessor.get(IEventService),
             sessionId: session_id,
           }, promptMetadataTextFromContentParts(parts, clientMetadata));
-          const status = resolved.prompt.snapshot();
-          const { id } = resolved.prompt.submit({
+          const { id, queued } = resolved.prompt.submit({
             message: { role: 'user', content: parts },
             meta: {
               promptId: reservation.id,
@@ -409,9 +408,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           reservation.submit();
           enqueued = true;
           const handle = resolved.prompt.promptHandle(id)!;
-          if (status.state === 'idle' && !status.paused && !status.queuePaused && status.queue.length === 0) {
-            await Promise.race([handle.launched, handle.completion]);
-          }
+          if (!queued) await Promise.race([handle.launched, handle.completion]);
           const staging = preparedMedia;
           void Promise.race([handle.launched, handle.completion]).then(
             () => (handle.state === 'cancelled' || handle.state === 'failed' ? staging?.discardStaged() : staging?.discard()),
@@ -523,7 +520,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id, agent_id } = req.params;
-        (await resolveQueue(core, session_id, agent_id)).prompt.pauseQueue();
+        await reloadOnStale(core.accessor, session_id, async () => {
+          (await resolveQueue(core, session_id, agent_id)).prompt.pauseQueue();
+        });
         reply.send(okEnvelope({ paused: true }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
