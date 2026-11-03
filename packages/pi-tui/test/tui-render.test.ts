@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -301,6 +302,29 @@ describe("TUI animation frames", () => {
 		assert.throws(() => queued[0]?.(), /first failure/);
 		clock.advance(120);
 		assert.deepStrictEqual(calls, ["frame 120", "frame 240"]);
+	});
+
+	it("lets the process exit while a callback keeps requesting frames", () => {
+		const scheduler = new URL("../src/animation-frame.ts", import.meta.url).href;
+		const script = `
+			import { AnimationFrameScheduler } from ${JSON.stringify(scheduler)};
+			const frames = new AnimationFrameScheduler();
+			let count = 0;
+			const step = () => {
+				count += 1;
+				frames.requestAnimationFrame(step);
+			};
+			frames.requestAnimationFrame(step);
+			setTimeout(() => console.log(count), 500);
+		`;
+		const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+			encoding: "utf8",
+			timeout: 10_000,
+		});
+
+		assert.strictEqual(child.signal, null, "the process kept running until the timeout killed it");
+		assert.strictEqual(child.status, 0, child.stderr);
+		assert.ok(Number(child.stdout) >= 1, `frames ran ${child.stdout.trim()} times`);
 	});
 });
 
