@@ -10,17 +10,17 @@ outline: 2
 
 ### 新功能
 
-- Agent 工作时也可通过 `/model` 和 `/effort` 调整模型和推理强度；若当前轮已发起模型请求，调整从下一轮生效，选择 Compact and continue 则在当前轮结束后执行。
-- 在 VS Code 中，可从已完成的 Assistant 回复创建分支会话；若另一回复仍在生成，确认后会先停止生成再创建分支。
-- 多目录工作区可合并主目录及已记住的附加目录中的项目级 Skills，同名时主目录优先；临时添加的目录不参与。
-- 在 `config.toml` 中声明 SSH、Docker 或自定义命令环境，并在目标环境安装 `kimi exec-server` 后，用 `kimi --environment <id>` 创建远程会话，可选 `--environment-cwd <path>` 覆盖工作目录。
-- 仅在所有工作区均可信时，才在用户级 `config.toml` 设置 `[workspace] require_trust = false`；这会将所有工作区视为可信并跳过启动信任提示，项目级 MCP 等配置会不经确认加载，`/reload` 后生效，工具审批和危险命令保护不变。
+- Agent 工作时也可通过 `/model` 和 `/effort` 调整模型和推理强度；当前轮已发起请求时，从下一轮生效。
+- VS Code 可从已完成回复创建分支会话；若有回复正在生成，会先停止再创建。
+- 多目录工作区可合并主目录和已记住的附加目录中的项目级 Skills，同名时主目录优先，临时目录不参与。
+- 声明 SSH、Docker 或自定义命令环境并在目标环境安装 `kimi exec-server` 后，可用 `kimi --environment <id>` 创建远程会话。
+- 新增 `[workspace] require_trust = false`，将所有工作区视为可信（`/reload` 后生效）；项目配置会不经确认加载，仅在全部工作区可信时使用。
 
 ### 优化
 
-- Web 跨会话全文搜索索引默认关闭，不再后台扫描历史会话；需要时可在 `[database]` 中设置 `global_search = true` 开启。
-- 仅配置 `default_model` 时，Agent 和 AgentSwarm 新派生的子 Agent 固定使用该模型；旧 `force` 配置会被忽略并给出警告，Tower Spawn 仍保留独立的 `primary` 选择。
-- Agent 和 AgentSwarm 不再提供隐式 `primary`：主模型需显式加入 `[secondary_model.models]`，多个别名时才可按需选择；未配置 `[secondary_model]` 时仍继承主会话模型。
+- Web 跨会话全文搜索默认关闭，可在 `[database]` 设置 `global_search = true` 开启。
+- 仅配置 `default_model` 时，Agent 和 AgentSwarm 新派生的子 Agent 固定使用该模型；旧 `force` 会被忽略并警告。
+- Agent 和 AgentSwarm 移除隐式 `primary`，主模型需显式加入模型池；多个别名时才可选择，未配置时仍继承主会话模型。
 
 ### 修复
 

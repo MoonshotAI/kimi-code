@@ -10,17 +10,17 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Use `/model` and `/effort` while the agent is working. If the current turn has already started a model request, changes apply from the next turn; Compact and continue runs after the current turn ends.
-- In VS Code, fork from a completed assistant response; if another response is still running, confirming the fork stops it before creating the branch.
-- Merge project-level Skills from the primary directory and remembered additional directories; the primary directory wins on name conflicts, and session-only directories are excluded.
-- Declare an SSH, Docker, or custom-command environment in `config.toml` and install `kimi exec-server` on the target, then create a session with `kimi --environment <id>`; optionally override the working directory with `--environment-cwd <path>`.
-- Only set `[workspace] require_trust = false` in the user-level `config.toml` when every workspace is trusted. This skips startup trust prompts and loads project-level MCP servers and other trust-gated configuration without confirmation; apply with `/reload`. Tool approvals and dangerous-command guards remain unchanged.
+- Use `/model` and `/effort` while the agent is working; if the current turn has already started a request, changes apply from the next turn.
+- In VS Code, fork from a completed response; if another response is running, it stops before the branch is created.
+- Merge project-level Skills from the primary and remembered additional directories; the primary wins name conflicts, and session-only directories are excluded.
+- Declare an SSH, Docker, or custom-command environment and install `kimi exec-server` on the target, then create a session with `kimi --environment <id>`.
+- `[workspace] require_trust = false` treats every workspace as trusted after `/reload`; project configuration loads without confirmation, so use it only when every workspace is trusted.
 
 ### Polish
 
-- The Web cross-session full-text search index is off by default and no longer scans past sessions; set `[database] global_search = true` to enable it.
-- With only `default_model` configured, newly spawned Agent and AgentSwarm subagents use that model; the legacy `force` key is ignored with a warning, while Tower Spawn retains its separate `primary` choice.
-- Agent and AgentSwarm no longer offer an implicit `primary`: list the main model explicitly in `[secondary_model.models]`; model selection is available only with multiple aliases. Without `[secondary_model]`, subagents still inherit the caller's model.
+- Web cross-session full-text search is off by default; set `[database] global_search = true` to enable it.
+- With only `default_model` configured, newly spawned Agent and AgentSwarm subagents use that model; the legacy `force` key is ignored with a warning.
+- Agent and AgentSwarm remove the implicit `primary`; list the main model explicitly in the pool, selection requires multiple aliases, and without `[secondary_model]` subagents still inherit the caller's model.
 
 ### Bug Fixes
 
