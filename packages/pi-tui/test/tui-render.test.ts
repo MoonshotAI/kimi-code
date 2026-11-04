@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
-import type { AnimationClock } from "../src/animation-frame.ts";
+import { type AnimationClock, AnimationFrameScheduler } from "../src/animation-frame.ts";
 import { Image } from "../src/components/image.ts";
 import { Input } from "../src/components/input.ts";
 import { Text } from "../src/components/text.ts";
@@ -325,6 +325,17 @@ describe("TUI animation frames", () => {
 		assert.strictEqual(child.signal, null, "the process kept running until the timeout killed it");
 		assert.strictEqual(child.status, 0, child.stderr);
 		assert.ok(Number(child.stdout) >= 1, `frames ran ${child.stdout.trim()} times`);
+	});
+
+	it("keeps the timers and clock it was created with when the globals are replaced later", async (t) => {
+		const frames = new AnimationFrameScheduler();
+		const replacedSetTimeout = t.mock.method(globalThis, "setTimeout");
+		const replacedNow = t.mock.method(performance, "now");
+
+		await new Promise((resolve) => frames.requestAnimationFrame(resolve));
+
+		assert.strictEqual(replacedSetTimeout.mock.callCount(), 0, "the frame was scheduled on the replaced setTimeout");
+		assert.strictEqual(replacedNow.mock.callCount(), 0, "the frame read the replaced performance.now");
 	});
 });
 

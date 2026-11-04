@@ -8,11 +8,17 @@ export interface AnimationClock {
 	clearTimeout(handle: unknown): void;
 }
 
-const systemClock: AnimationClock = {
-	now: () => performance.now(),
-	setTimeout: (callback, delayMs) => setTimeout(callback, delayMs).unref(),
-	clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
-};
+function systemClock(): AnimationClock {
+	// Each scheduler keeps the timers and time source that existed when it was created. Looking
+	// them up on every frame would move a running frame chain onto fake timers a later test installs.
+	const now = performance.now.bind(performance);
+	const { setTimeout, clearTimeout } = globalThis;
+	return {
+		now,
+		setTimeout: (callback, delayMs) => setTimeout(callback, delayMs).unref(),
+		clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
+	};
+}
 
 /**
  * Runs `requestAnimationFrame` callbacks the way a browser does, on one timer shared by every
@@ -26,7 +32,7 @@ export class AnimationFrameScheduler {
 	private paused = false;
 	private readonly clock: AnimationClock;
 
-	constructor(clock: AnimationClock = systemClock) {
+	constructor(clock: AnimationClock = systemClock()) {
 		this.clock = clock;
 	}
 
