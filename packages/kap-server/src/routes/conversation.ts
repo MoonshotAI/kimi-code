@@ -67,8 +67,8 @@ export function registerConversationRoutes(
       const { session_id, agent_id } = req.params;
       try {
         const feed = await conversations.feed(session_id, agent_id);
-        const page = feed.snapshot(req.query.before, req.query.limit ?? DEFAULT_PAGE_TURNS);
-        reply.send(okEnvelope({ agent_id, turns: await feed.hydrate(page.turns), has_more: page.has_more }, req.id));
+        const page = await feed.page(req.query.before, req.query.limit ?? DEFAULT_PAGE_TURNS);
+        reply.send(okEnvelope({ agent_id, ...page }, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
       }

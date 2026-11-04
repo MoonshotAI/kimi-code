@@ -1,14 +1,40 @@
+import {
+  IAgentBlobService,
+  IAgentFullCompactionService,
+  IAgentLoopService,
+  IEventBus,
+  IEventDispatcher,
+  ILogService,
+  InteractionRequestEvent,
+  makeAgentScopeContext,
+  type IAgentScopeHandle,
+} from '@moonshot-ai/agent-core-v2';
+import type { CollectionView } from '@moonshot-ai/agent-core-v2/_base/di/collection';
+import { ContextAppendLoopEvent, ContextAppendMessage } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
+import { AssistantDelta } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
+import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { AgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentStateService';
+import { EventBusService } from '@moonshot-ai/agent-core-v2/app/event/eventBusService';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import { EventDispatcherService } from '@moonshot-ai/agent-core-v2/state/eventDispatcherService';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
-import { describe, expect, it } from 'vitest';
+import type { IWireService } from '@moonshot-ai/agent-core-v2/wire/wire';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ConversationItem, ConversationTurn } from '../../src/protocol/conversation';
 import {
   applyConversationRecord,
   createConversationState,
+  settleOrphanTurns,
   undoConversationTurns,
   type ConversationState,
 } from '../../src/services/conversation/conversationFold';
-import { hasBlobRef } from '../../src/services/conversation/conversationFeed';
+import {
+  ConversationFeed,
+  hasBlobRef,
+  type ConversationEvent,
+} from '../../src/services/conversation/conversationFeed';
 import { parseWireRecords } from '../../src/services/conversation/conversationService';
 
 let clock = 1_000;
@@ -444,6 +470,236 @@ describe('conversation fold', () => {
 
     expect(state.turns.map(shape)).toEqual([['opener:two']]);
     expect(state.turns[0]?.ordinal).toBe(1);
+  });
+});
+
+describe('orphan turns', () => {
+  const unfinished = (): ConversationState => fold([
+    turnPrompt(0, 'p1'),
+    userMessage('p1', 'run it'),
+    stepBegin(0, 1, 's1'),
+    toolCall(0, 1, 's1', 'call-1', 'Bash', { command: 'ls' }),
+    record('interaction.request', { id: 'i1', kind: 'approval', toolCallId: 'call-1', request: {} }),
+  ]);
+
+  it('ends a running turn nothing runs anymore as interrupted, with its items, without touching the input', () => {
+    const state = unfinished();
+    const before = structuredClone(state);
+
+    const settled = settleOrphanTurns(state);
+
+    expect(state).toEqual(before);
+    expect(settled.turns[0]).toMatchObject({ status: 'ended', outcome: 'interrupted' });
+    expect(settled.turns[0]?.items[1]).toMatchObject({ status: 'ended', interaction: { status: 'ended' } });
+    expect(settled.openTurnId).toBeUndefined();
+  });
+
+  it('keeps the turn the loop is running and a system turn whose compaction still runs', () => {
+    const state = unfinished();
+    expect(settleOrphanTurns(state, { turnNumber: 0 })).toBe(state);
+
+    const compacting = fold([record('full_compaction.begin', { source: 'manual' })]);
+    expect(settleOrphanTurns(compacting, { compacting: true })).toBe(compacting);
+    const settled = settleOrphanTurns(compacting);
+    expect(settled.turns[0]).toMatchObject({ kind: 'system', status: 'ended', outcome: 'interrupted' });
+    expect(settled.compaction).toBeUndefined();
+  });
+
+  it('leaves an interrupted turn alone when the next prompt opens a turn', () => {
+    const settled = settleOrphanTurns(unfinished());
+
+    applyConversationRecord(settled, turnPrompt(1, 'p2'));
+    applyConversationRecord(settled, userMessage('p2', 'next'));
+
+    expect(settled.turns.map((turn) => `${turn.turn_number}:${turn.status}:${turn.outcome ?? ''}`)).toEqual([
+      '0:ended:interrupted',
+      '1:running:',
+    ]);
+  });
+});
+
+const passThroughBlobs = {
+  offloadParts: async (parts: readonly ContentPart[]) => parts,
+  loadParts: async (parts: readonly ContentPart[]) => parts,
+  isBlobRef: (url: string) => url.startsWith('blobref:'),
+} as unknown as IAgentBlobService;
+
+function emptyView<T>(): CollectionView<T> {
+  return { items: [], records: [], onDidChange: () => ({ dispose: () => {} }) } as unknown as CollectionView<T>;
+}
+
+interface FeedHarness {
+  readonly dispatcher: EventDispatcherService;
+  readonly feed: ConversationFeed;
+  readonly events: ConversationEvent[];
+  readonly warn: ReturnType<typeof vi.fn>;
+  failNextReplay(): void;
+}
+
+function feedHarness(records: readonly WireRecord[], blobs: IAgentBlobService = passThroughBlobs): FeedHarness {
+  const log = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() };
+  const logger = log as unknown as ILogService;
+  const journal = [...records];
+  let failReplay = false;
+  const wire = {
+    appendRecord: (entry: WireRecord) => {
+      journal.push(entry);
+    },
+    flush: async () => {},
+    readRestoreChains: async () => {
+      if (failReplay) {
+        failReplay = false;
+        throw new Error('wire read failed');
+      }
+      return { restorable: [...journal], journal: [...journal] };
+    },
+  } as unknown as IWireService;
+  const scope = makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' });
+  const bus = new EventBusService();
+  bus.activateAgent(scope.agentContext);
+  const dispatcher = new EventDispatcherService(wire, bus, scope, blobs, new AgentStateService(), logger, emptyView(), emptyView());
+  const services = new Map<unknown, unknown>([
+    [IEventBus, bus],
+    [IEventDispatcher, dispatcher],
+    [IAgentBlobService, blobs],
+    [IAgentLoopService, { snapshot: () => ({ state: 'idle' }) }],
+    [IAgentFullCompactionService, { compacting: null }],
+    [ILogService, logger],
+  ]);
+  const handle = { id: 'main', accessor: { get: (id: unknown) => services.get(id) } } as unknown as IAgentScopeHandle;
+  const feed = new ConversationFeed(handle);
+  const events: ConversationEvent[] = [];
+  feed.subscribe((event) => events.push(event));
+  return {
+    dispatcher,
+    feed,
+    events,
+    warn: log.warn,
+    failNextReplay: () => {
+      failReplay = true;
+    },
+  };
+}
+
+const prompt = (turnId: number, promptId: string): TurnPrompt =>
+  new TurnPrompt({ agentId: 'main', input: [], origin: { kind: 'user' }, promptId, turnId });
+
+const userPrompt = (id: string, text: string): ContextAppendMessage =>
+  new ContextAppendMessage({ agentId: 'main', message: { role: 'user', id, content: [{ type: 'text', text }], origin: { kind: 'user' } } });
+
+const loopEvent = (event: LoopRecordedEvent): ContextAppendLoopEvent => new ContextAppendLoopEvent({ agentId: 'main', event });
+
+const flushed = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+const turnSummary = (turn: ConversationTurn): string => `${turn.turn_number}:${turn.status}:${turn.outcome ?? ''}`;
+
+describe('conversation feed', () => {
+  it('shows a restored turn that never ended as interrupted and keeps it so when the next prompt runs', async () => {
+    const h = feedHarness([
+      prompt(0, 'p1').serialize(),
+      userPrompt('p1', 'run it').serialize(),
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }).serialize(),
+      loopEvent({ type: 'tool.call', stepUuid: 's1', toolCallId: 'call-1', name: 'Bash', turnId: '0', step: 1 }).serialize(),
+      new InteractionRequestEvent({ agentId: 'main', id: 'i1', kind: 'approval', toolCallId: 'call-1', request: {} }).serialize(),
+    ]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+
+    const [orphan] = (await h.feed.page(undefined, 20)).turns;
+    expect(orphan).toMatchObject({ turn_number: 0, status: 'ended', outcome: 'interrupted' });
+    expect(orphan?.items[1]).toMatchObject({ type: 'tool_call', status: 'ended', interaction: { status: 'ended' } });
+
+    await h.dispatcher.dispatch(prompt(1, 'p2'));
+    await h.dispatcher.dispatch(userPrompt('p2', 'next'));
+
+    expect((await h.feed.page(undefined, 20)).turns.map(turnSummary)).toEqual(['0:ended:interrupted', '1:running:']);
+    h.dispatcher.dispose();
+  });
+
+  it('keeps streaming after a rerun restore that no undo completion follows, failed reruns included', async () => {
+    const h = feedHarness([
+      prompt(0, 'p1').serialize(),
+      userPrompt('p1', 'first').serialize(),
+      new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }).serialize(),
+    ]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+
+    await h.dispatcher.restore();
+    expect(h.events.map((event) => event.type)).toEqual(['reset']);
+    await h.dispatcher.dispatch(prompt(1, 'p2'));
+    await h.dispatcher.dispatch(userPrompt('p2', 'second'));
+    await flushed();
+    expect(h.events.map((event) => event.type)).toEqual(['reset', 'turn.started', 'item.ended']);
+
+    h.failNextReplay();
+    await expect(h.dispatcher.restore()).rejects.toThrow('wire read failed');
+    h.events.length = 0;
+    await h.dispatcher.dispatch(prompt(2, 'p3'));
+    await h.dispatcher.dispatch(userPrompt('p3', 'third'));
+    await flushed();
+    expect(h.events.map((event) => event.type)).toEqual(['turn.started', 'item.ended']);
+    h.dispatcher.dispose();
+  });
+
+  it('announces a turn before the live items streamed into it', async () => {
+    const h = feedHarness([]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+
+    void h.dispatcher.dispatch(prompt(0, 'p1'));
+    void h.dispatcher.dispatch(userPrompt('p1', 'stream'));
+    void h.dispatcher.dispatch(loopEvent({ type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }));
+    void h.dispatcher.dispatch(new AssistantDelta({ agentId: 'main', turnId: 0, block: 0, delta: 'hi' }));
+
+    expect(h.events.map((event) => ('item' in event ? `${event.type}:${event.item.item_id}` : event.type))).toEqual([
+      'turn.started',
+      'item.ended:p1',
+      'item.started:s1:0',
+    ]);
+    h.dispatcher.dispose();
+  });
+
+  it('serves the stored reference of media that fails to load instead of failing the page', async () => {
+    const blobs = {
+      ...passThroughBlobs,
+      loadParts: async (parts: readonly ContentPart[]) => {
+        const [part] = parts;
+        if (part?.type === 'image_url' && part.imageUrl.url.endsWith(';broken')) throw new Error('blob store offline');
+        return parts.map(() => ({ type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } }));
+      },
+    } as unknown as IAgentBlobService;
+    const h = feedHarness([
+      prompt(0, 'p1').serialize(),
+      userPrompt('p1', 'look').serialize(),
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }).serialize(),
+      loopEvent({ type: 'tool.call', stepUuid: 's1', toolCallId: 'call-1', name: 'ReadMediaFile', turnId: '0', step: 1 }).serialize(),
+      loopEvent({
+        type: 'tool.result',
+        toolCallId: 'call-1',
+        result: {
+          output: [
+            { type: 'image_url', imageUrl: { url: 'blobref:image/png;stored' } },
+            { type: 'image_url', imageUrl: { url: 'blobref:image/png;broken' } },
+          ],
+        },
+      }).serialize(),
+      new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }).serialize(),
+    ], blobs);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+
+    const [turn] = (await h.feed.page(undefined, 20)).turns;
+
+    expect(turn?.items[1]).toMatchObject({
+      type: 'tool_call',
+      output: [
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        { type: 'image_url', imageUrl: { url: 'blobref:image/png;broken' } },
+      ],
+    });
+    expect(h.warn).toHaveBeenCalledTimes(1);
+    h.dispatcher.dispose();
   });
 });
 

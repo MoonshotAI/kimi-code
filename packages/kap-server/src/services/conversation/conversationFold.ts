@@ -130,6 +130,29 @@ export function applyConversationRecord(state: ConversationState, record: WireRe
   }
 }
 
+export interface RunningWork {
+  readonly turnNumber?: number;
+  readonly compacting?: boolean;
+}
+
+export function settleOrphanTurns(state: ConversationState, running: RunningWork = {}): ConversationState {
+  const live = (turn: ConversationTurn): boolean =>
+    turn.kind === 'system'
+      ? running.compacting === true
+      : turn.turn_number !== undefined && turn.turn_number === running.turnNumber;
+  const orphaned = (turn: ConversationTurn): boolean => turn.status === 'running' && !live(turn);
+  if (!state.turns.some(orphaned)) return state;
+  const next: ConversationState = { ...state, turns: [...state.turns], provisionalOutcomes: { ...state.provisionalOutcomes } };
+  next.turns.forEach((turn, index) => {
+    if (!orphaned(turn)) return;
+    const settled: ConversationTurn = { ...turn, items: turn.items.map((item) => ({ ...item })) };
+    next.turns[index] = settled;
+    endTurn(next, settled, 'interrupted', undefined);
+    if (next.compaction?.turnId === settled.turn_id) next.compaction = undefined;
+  });
+  return next;
+}
+
 export function undoConversationTurns(state: ConversationState, count: number): ConversationState {
   const anchor = state.anchors.at(-count);
   if (anchor === undefined) return state;
@@ -719,7 +742,7 @@ function parseArguments(raw: string | null): unknown {
   }
 }
 
-export function settleInteraction(item: ConversationItem): ConversationItem {
+function settleInteraction(item: ConversationItem): ConversationItem {
   if (item.type !== 'tool_call' || item.interaction?.status !== 'pending') return item;
   return { ...item, interaction: { ...item.interaction, status: 'ended' } };
 }

@@ -338,8 +338,7 @@ export class SessionEventBroadcaster {
   ): Promise<void> {
     const pending: ConversationEvent[] = [];
     attachment.pending = pending;
-    const page = attachment.feed.snapshot(undefined, CONVERSATION_PAGE_TURNS);
-    const turns = await attachment.feed.hydrate(page.turns).catch(() => page.turns);
+    const page = await attachment.feed.page(undefined, CONVERSATION_PAGE_TURNS);
     if (state.conversations.get(target)?.get(agentId) !== attachment || attachment.pending !== pending) return;
     attachment.pending = undefined;
     try {
@@ -348,8 +347,7 @@ export class SessionEventBroadcaster {
         session_id: state.sessionId,
         agent_id: agentId,
         event_created_at: new Date().toISOString(),
-        turns,
-        has_more: page.has_more,
+        ...page,
       });
     } catch {
     }

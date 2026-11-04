@@ -1,5 +1,4 @@
 import {
-  ContextUndone,
   FullCompactionBegin,
   FullCompactionCancel,
   FullCompactionComplete,
@@ -8,6 +7,7 @@ import {
   IAgentLoopService,
   IEventBus,
   IEventDispatcher,
+  ILogService,
   InteractionRequestEvent,
   InteractionResolvedEvent,
   PromptCompleted,
@@ -44,9 +44,10 @@ import type { MessageContent } from '../../protocol/message';
 import {
   applyConversationRecord,
   createConversationState,
-  settleInteraction,
+  settleOrphanTurns,
   undoConversationTurns,
   type ConversationState,
+  type RunningWork,
 } from './conversationFold';
 
 export type ConversationEvent =
@@ -95,13 +96,13 @@ const RECORD_EVENTS = [
 const BLOBREF_PREFIX = 'blobref:';
 
 export class ConversationFeed implements IDisposable {
-  private readonly initial = createConversationState();
-  private state: ConversationState = this.initial;
+  private state: ConversationState = createConversationState();
   private sent: readonly ConversationTurn[] = [];
   private started = false;
   private restoring = false;
   private flushQueued = false;
   private disposed = false;
+  private firstReplay: ((ok: boolean) => void) | undefined;
   private readonly live = new Map<string, LiveItem>();
   private readonly listeners = new Set<ConversationListener>();
   private readonly disposables: IDisposable[] = [];
@@ -117,10 +118,6 @@ export class ConversationFeed implements IDisposable {
     );
   }
 
-  get agentId(): string {
-    return this.handle.id;
-  }
-
   turns(): readonly ConversationTurn[] {
     return this.state.turns;
   }
@@ -130,21 +127,13 @@ export class ConversationFeed implements IDisposable {
     return { dispose: () => { this.listeners.delete(listener); } };
   }
 
-  snapshot(before: number | undefined, limit: number): Omit<ConversationTurnsPage, 'agent_id'> {
+  async page(before: number | undefined, limit: number): Promise<Omit<ConversationTurnsPage, 'agent_id'>> {
     const turns = this.state.turns;
     const end = before === undefined ? turns.length : turns.findIndex((turn) => turn.ordinal >= before);
     const stop = end === -1 ? turns.length : end;
     const start = Math.max(0, stop - limit);
-    return { turns: turns.slice(start, stop).map((turn) => this.present(turn)), has_more: start > 0 };
-  }
-
-  async hydrate(turns: readonly ConversationTurn[]): Promise<ConversationTurn[]> {
-    const blobs = this.handle.accessor.get(IAgentBlobService);
-    return Promise.all(turns.map(async (turn) => {
-      if (!turn.items.some(hasBlobRef)) return turn;
-      const items = await Promise.all(turn.items.map((item) => hydrateItem(item, blobs)));
-      return { ...turn, items };
-    }));
+    const page = turns.slice(start, stop).map((turn) => this.present(turn));
+    return { turns: await Promise.all(page.map((turn) => this.hydrate(turn))), has_more: start > 0 };
   }
 
   dispose(): void {
@@ -168,15 +157,15 @@ export class ConversationFeed implements IDisposable {
         this.onToolCallDelta(event.turnId, event.toolCallId, event.name);
       }),
       bus.subscribe(TurnStepStreamReset, (event) => {
+        this.flushPending();
         this.dropLive((entry) => entry.stepId === event.stepId);
       }),
-      bus.subscribe(ContextUndone, () => {
-        this.finishRestore();
-      }),
       bus.subscribe(WarningIssued, (event) => {
+        this.flushPending();
         this.emit({ type: 'notice', level: 'warning', message: event.message, code: event.code });
       }),
       bus.subscribe(AgentErrorEvent, (event) => {
+        this.flushPending();
         this.emit({
           type: 'notice',
           level: 'error',
@@ -201,25 +190,26 @@ export class ConversationFeed implements IDisposable {
         applyConversationRecord(draft, event.serialize());
       },
       onUndo: (draft, count) => undoConversationTurns(draft, count),
+      onWillReplay: () => {
+        this.willReplay();
+      },
+      onDidReplay: (state, { ok }) => this.didReplay(state, ok),
       getState: () => this.state,
       commit: (next) => {
         this.commit(next);
       },
     };
     if (dispatcher.restorePhase === 'new') {
-      this.disposables.push(dispatcher.attach(participant));
       await new Promise<void>((resolve, reject) => {
-        this.disposables.push(
-          dispatcher.hooks.onDidRestore.register('kap.conversation', async (_context, next) => {
-            await next();
-            resolve();
-          }),
-          {
-            dispose: () => {
-              reject(new Error(`agent ${this.handle.id} closed before its conversation was restored`));
-            },
+        this.firstReplay = (ok) => {
+          if (ok) resolve();
+          else reject(new Error(`agent ${this.handle.id} failed to restore its conversation`));
+        };
+        this.disposables.push(dispatcher.attach(participant), {
+          dispose: () => {
+            reject(new Error(`agent ${this.handle.id} closed before its conversation was restored`));
           },
-        );
+        });
       });
     } else {
       this.disposables.push(await dispatcher.attachLate(participant));
@@ -228,28 +218,44 @@ export class ConversationFeed implements IDisposable {
     this.started = true;
   }
 
+  private willReplay(): void {
+    this.restoring = true;
+    this.dropLive(() => true);
+  }
+
+  private didReplay(replayed: ConversationState, ok: boolean): ConversationState {
+    this.state = settleOrphanTurns(replayed, this.runningWork());
+    this.restoring = false;
+    this.sent = this.state.turns;
+    if (this.started) this.emit({ type: 'reset' });
+    this.firstReplay?.(ok);
+    this.firstReplay = undefined;
+    return this.state;
+  }
+
+  private runningWork(): RunningWork {
+    const loop = this.handle.accessor.get(IAgentLoopService).snapshot();
+    return {
+      turnNumber: loop.state === 'running' ? loop.activeTurnId : undefined,
+      compacting: this.handle.accessor.get(IAgentFullCompactionService).compacting !== null,
+    };
+  }
+
   private commit(next: ConversationState): void {
-    if (next === this.initial && this.started) {
-      this.restoring = true;
-      this.dropLive(() => true);
-    }
     this.state = next;
     if (!this.started || this.restoring || this.flushQueued) return;
     this.flushQueued = true;
     queueMicrotask(() => {
-      this.flushQueued = false;
-      this.flush();
+      this.flushPending();
     });
   }
 
-  private finishRestore(): void {
-    if (!this.restoring) return;
-    this.restoring = false;
-    this.sent = this.state.turns;
-    this.emit({ type: 'reset' });
+  private flushPending(): void {
+    if (this.flushQueued) this.flush();
   }
 
   private flush(): void {
+    this.flushQueued = false;
     if (this.disposed || this.restoring) return;
     const previous = this.sent;
     const next = this.state.turns;
@@ -300,6 +306,7 @@ export class ConversationFeed implements IDisposable {
     delta: string,
   ): void {
     if (block === undefined || delta.length === 0) return;
+    this.flushPending();
     const target = this.liveTarget(turnNumber);
     if (target === undefined) return;
     const itemId = `${target.stepId}:${block}`;
@@ -322,6 +329,7 @@ export class ConversationFeed implements IDisposable {
 
   private onToolCallDelta(turnNumber: number, toolCallId: string, name: string | undefined): void {
     if (name === undefined || this.live.has(toolCallId)) return;
+    this.flushPending();
     const target = this.liveTarget(turnNumber);
     if (target === undefined || target.turn.items.some((item) => item.item_id === toolCallId)) return;
     this.endLiveBlocks(target.stepId);
@@ -368,20 +376,26 @@ export class ConversationFeed implements IDisposable {
 
   private present(turn: ConversationTurn): ConversationTurn {
     const liveItems = [...this.live.values()].filter((entry) => entry.turnId === turn.turn_id).map((entry) => entry.item);
-    let presented = liveItems.length === 0 ? turn : { ...turn, items: [...turn.items, ...liveItems] };
-    if (presented.status === 'running' && !this.isActive(presented)) {
-      presented = { ...presented, status: 'ended', outcome: 'interrupted', items: presented.items.map(settleInteraction) };
-    }
-    return presented;
+    return liveItems.length === 0 ? turn : { ...turn, items: [...turn.items, ...liveItems] };
   }
 
-  private isActive(turn: ConversationTurn): boolean {
-    if (turn.kind === 'system') {
-      return this.handle.accessor.get(IAgentFullCompactionService).compacting !== null;
+  private async hydrate(turn: ConversationTurn): Promise<ConversationTurn> {
+    if (!turn.items.some(hasBlobRef)) return turn;
+    const items = await Promise.all(turn.items.map((item) => hydrateItem(item, (part) => this.loadPart(part))));
+    return { ...turn, items };
+  }
+
+  private async loadPart(part: ContentPart): Promise<ContentPart> {
+    try {
+      const [loaded] = await this.handle.accessor.get(IAgentBlobService).loadParts([part]);
+      return loaded ?? part;
+    } catch (error) {
+      this.handle.accessor.get(ILogService).warn('conversation media failed to load; serving its reference', {
+        agentId: this.handle.id,
+        error,
+      });
+      return part;
     }
-    const loop = this.handle.accessor.get(IAgentLoopService).snapshot();
-    if (loop.state !== 'running') return false;
-    return loop.activeTurnId === undefined || turn.turn_number === undefined || loop.activeTurnId === turn.turn_number;
   }
 
   private emit(event: ConversationEvent): void {
@@ -419,13 +433,15 @@ export function hasBlobRef(item: ConversationItem): boolean {
   return false;
 }
 
-async function hydrateItem(item: ConversationItem, blobs: IAgentBlobService): Promise<ConversationItem> {
+async function hydrateItem(
+  item: ConversationItem,
+  load: (part: ContentPart) => Promise<ContentPart>,
+): Promise<ConversationItem> {
   if (item.type === 'user_message') {
     const content = await Promise.all(item.content.map(async (part): Promise<MessageContent> => {
       const ref = blobRefOf(part);
       if (ref === undefined || (part.type !== 'image' && part.type !== 'video')) return part;
-      const [loaded] = await blobs.loadParts([{ type: 'image_url', imageUrl: { url: ref } }]);
-      const url = loaded === undefined ? undefined : mediaUrlOf(loaded);
+      const url = mediaUrlOf(await load({ type: 'image_url', imageUrl: { url: ref } }));
       const match = url === undefined ? null : /^data:([^;]+);base64,(.*)$/.exec(url);
       if (match === null) return part;
       return { ...part, source: { kind: 'base64', media_type: match[1]!, data: match[2]! } };
@@ -433,7 +449,10 @@ async function hydrateItem(item: ConversationItem, blobs: IAgentBlobService): Pr
     return { ...item, content };
   }
   if (item.type === 'tool_call' && Array.isArray(item.output)) {
-    return { ...item, output: await blobs.loadParts(item.output as ContentPart[]) };
+    const output = await Promise.all((item.output as ContentPart[]).map(async (part) =>
+      mediaUrlOf(part)?.startsWith(BLOBREF_PREFIX) === true ? load(part) : part,
+    ));
+    return { ...item, output };
   }
   return item;
 }

@@ -4,13 +4,14 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
   IAgentPlanService,
   IAgentTaskService,
   IConfigService,
+  IEventDispatcher,
   closeSessionById,
   MAIN_AGENT_ID,
   getLiveSessionById,
@@ -583,6 +584,41 @@ describe('conversation contract e2e', () => {
       expect(reopened.turns).toEqual(resent.turns);
       await rest(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { count: 1 } });
       expect((await getTurns(server!, base, sid)).turns).toEqual([]);
+    } finally {
+      channel.close();
+    }
+  }, 30000);
+
+  it('keeps streaming a conversation whose undo failed after the state was restored', async () => {
+    await boot([{ match: () => true, respond: () => sseText('answered') }]);
+    const sid = await createSession(server!, base);
+    await submitPrompt(server!, base, sid, 'first request');
+    await idle(server!, base, sid);
+    const channel = await subscribeConversation(server!, sid);
+    try {
+      const dispatcher = getLiveSessionById(server!.core.accessor, sid)!
+        .accessor.get(IAgentLifecycleService)
+        .handleOf(MAIN_AGENT_ID)!
+        .accessor.get(IEventDispatcher);
+      const pages = channel.conversation.filter((frame) => frame.type === 'turns').length;
+      const flush = vi.spyOn(dispatcher, 'flush').mockRejectedValue(new Error('wire flush failed'));
+      try {
+        const undo = await fetch(`${base}/api/v1/sessions/${encodeURIComponent(sid)}:undo`, {
+          method: 'POST',
+          headers: authHeaders(server!, { 'content-type': 'application/json' }),
+          body: JSON.stringify({ count: 1 }),
+        });
+        expect(((await undo.json()) as Envelope<unknown>).code).not.toBe(0);
+      } finally {
+        flush.mockRestore();
+      }
+      await until('fresh page after the restore', () => channel.conversation.filter((frame) => frame.type === 'turns').length > pages);
+
+      await submitPrompt(server!, base, sid, 'second request');
+      await idle(server!, base, sid);
+      await until('second turn reaches the subscriber', () =>
+        channel.turns().some((turn) => textOf(turn.items[0]) === 'second request' && turn.status === 'ended'));
+      expect(channel.turns()).toEqual((await getTurns(server!, base, sid)).turns);
     } finally {
       channel.close();
     }

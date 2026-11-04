@@ -31,7 +31,7 @@ import {
 import type { ConversationTurn } from '../../protocol/conversation';
 import { ensureMainAgent } from '../../transport/mainAgent';
 import { ConversationFeed } from './conversationFeed';
-import { applyConversationRecord, createConversationState } from './conversationFold';
+import { applyConversationRecord, createConversationState, settleOrphanTurns } from './conversationFold';
 
 export interface ConversationFeedCreated {
   readonly sessionId: string;
@@ -105,7 +105,7 @@ export class ConversationService implements IDisposable {
     assertWireRecordsReaderVersion(records);
     const state = createConversationState();
     for (const record of flattenChain(records)) applyConversationRecord(state, record);
-    return state.turns;
+    return settleOrphanTurns(state).turns;
   }
 
   onDidCreateFeed(listener: (created: ConversationFeedCreated) => void): IDisposable {
