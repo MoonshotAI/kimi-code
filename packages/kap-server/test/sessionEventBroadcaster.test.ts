@@ -16,6 +16,7 @@ import {
   LifecycleScope,
   IAgentLifecycleService,
   IAgentConversationUndoParticipantRegistry,
+  IAgentFullCompactionService,
   IAgentGoalService,
   IAgentLoopService,
   IAgentPermissionModeService,
@@ -2039,10 +2040,12 @@ describe('SessionEventBroadcaster', () => {
       expect(stateFramesOf(offView)).toEqual([]);
     });
 
-    it('follows turn events and request retries in the agent frame', async () => {
+    it('follows turns and compactions in the agent status and leaves request retries to the turn', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
       const state = withAgentState(main);
+      let compacting: { trigger: string } | null = null;
+      main.set(IAgentFullCompactionService, { get compacting() { return compacting; } });
       sessions.set('s1', lc);
       bc = makeBroadcasterForAgents();
 
@@ -2075,14 +2078,17 @@ describe('SessionEventBroadcaster', () => {
         }),
       );
       await settle();
-      expect(stateFramesOf(view).at(-1)).toMatchObject({
-        type: 'agent',
-        status: 'running',
-        retry: { attempt: 2, max_attempts: 3, delay_ms: 500, error_message: 'Request timed out.' },
-      });
-      main.bus.emit(agentEvent('turn.step.started', { turnId: 1, step: 2 }));
+      expect(stateFramesOf(view).filter((frame) => frame.type === 'agent')).toHaveLength(2);
+      expect(JSON.parse(JSON.stringify(stateFramesOf(view).at(-1)))).not.toHaveProperty('retry');
+
+      compacting = { trigger: 'auto' };
+      main.bus.emit(agentEvent('compaction.started', { trigger: 'auto' }));
       await settle();
-      expect(stateFramesOf(view).at(-1)).toMatchObject({ type: 'agent', status: 'running', retry: undefined });
+      expect(stateFramesOf(view).at(-1)).toMatchObject({ type: 'agent', status: 'compacting' });
+      compacting = null;
+      main.bus.emit(agentEvent('compaction.completed', {}));
+      await settle();
+      expect(stateFramesOf(view).at(-1)).toMatchObject({ type: 'agent', status: 'running' });
 
       const beforeEnd = view.envelopes.length;
       main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));

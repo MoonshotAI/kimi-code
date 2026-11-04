@@ -1,7 +1,6 @@
 import {
   IAgentFullCompactionService,
   IAgentGoalService,
-  IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
   IAgentStateService,
@@ -14,7 +13,6 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import type {
-  AgentRetryState,
   AgentState,
   GoalState,
   TodoItemState,
@@ -22,20 +20,12 @@ import type {
 } from '../../../protocol/ws-agent';
 import { readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
 
-export function readAgentState(
-  handle: IAgentScopeHandle,
-  running: boolean,
-  retry?: AgentRetryState,
-): AgentState {
+export function readAgentState(handle: IAgentScopeHandle, running: boolean): AgentState {
   const profile = optionalService(handle, IAgentProfileService);
   const model = profile?.getModel() ?? '';
-  const loop = running ? optionalService(handle, IAgentLoopService)?.snapshot() : undefined;
+  const compacting = (optionalService(handle, IAgentFullCompactionService)?.compacting ?? null) !== null;
   return {
-    status: running ? 'running' : 'idle',
-    turn_number: loop?.activeTurnId,
-    prompt_id: loop?.activePromptId,
-    compacting: optionalService(handle, IAgentFullCompactionService)?.compacting?.trigger,
-    retry: running ? retry : undefined,
+    status: compacting ? 'compacting' : running ? 'running' : 'idle',
     model: text(model),
     thinking: model === '' ? undefined : text(profile?.getEffectiveThinkingLevel()),
     permission_mode: optionalService(handle, IAgentPermissionModeService)?.mode,

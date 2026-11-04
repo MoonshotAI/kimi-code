@@ -501,7 +501,10 @@ describe('conversation contract e2e', () => {
     expect(channel.conversation.filter((frame) => frame.type === 'turn.updated').map((frame) => frame.step?.index)).toEqual([1]);
     expect(channel.turns()).toEqual(end.turns);
 
-    expect(channel.agents.some((frame) => frame.status === 'running' && frame.turn_number === 0 && frame.prompt_id === prompt_id)).toBe(true);
+    expect(channel.agents.some((frame) => frame.status === 'running')).toBe(true);
+    for (const field of ['turn_number', 'prompt_id', 'compacting', 'retry']) {
+      expect(channel.agents.every((frame) => !(field in frame))).toBe(true);
+    }
     await until('agent idle frame', () => channel.agents.at(-1)?.status === 'idle');
     const turnEndedAt = channel.frames.findIndex((frame) => frame.type === 'turn.ended' && frame.agent_id === MAIN_AGENT_ID);
     const idleAt = channel.frames.findIndex(
@@ -878,7 +881,7 @@ describe('conversation contract e2e', () => {
 
     const channel = await subscribeConversation(server!, sid);
     expect(channel.snapshot().turns).toEqual([expect.objectContaining({ status: 'running', turn_number: 0 })]);
-    expect(channel.agents[0]).toMatchObject({ status: 'running', turn_number: 0 });
+    expect(channel.agents[0]).toMatchObject({ status: 'running' });
     await idle(server!, base, sid);
     await until('agent idle frame', () => channel.agents.at(-1)?.status === 'idle');
     await until('turn ended on the channel', () => channel.turns()[0]?.status === 'ended');

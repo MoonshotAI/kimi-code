@@ -371,7 +371,7 @@ export const agentEventOperation = {
   kind: 'event',
   messageSchema: agentEventMessageSchema,
   description:
-    'Status (with the running turn and prompt), compaction and request retry state, model, thinking effort, permission mode and plan / swarm / tower mode switches of one subscribed agent, sent when a connection starts receiving that agent and on every change; it replaces the client copy.',
+    'Status (idle, running or compacting), model, thinking effort, permission mode and plan / swarm / tower mode switches of one subscribed agent, sent when a connection starts receiving that agent and on every change; it replaces the client copy. Request retries ride on the running turn.',
 } as const satisfies WsOperationDefinition;
 
 export const usageEventOperation = {
