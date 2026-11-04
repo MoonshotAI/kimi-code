@@ -5,7 +5,6 @@ import {
   ISessionIndex,
   ISessionIndexMirror,
   IWorkspaceAliases,
-  IWorkspaceService,
   setSessionArchivedBatch,
   type Scope,
   type SessionSummary,
@@ -16,6 +15,7 @@ import { z } from 'zod';
 import { defineRoute } from '../../middleware/defineRoute';
 import { errEnvelope, okEnvelope } from '../../protocol/envelope';
 import { ErrorCode } from '../../protocol/error-codes';
+import { loadWorkspaceVisibility } from '../../services/workspaceVisibility';
 import { resolveSessionFacts, type SessionFacts } from '../sessions';
 
 interface V2SessionsRouteHost {
@@ -517,6 +517,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         workspaceIds = [...new Set(sets.flat())];
       }
 
+      const { roots, visibleWorkspaceIds } = await loadWorkspaceVisibility(core);
       const page = await core.accessor.get(ISessionIndex).listRecent({
         workspaceIds,
         includeArchived: query.archived !== 'false',
@@ -533,6 +534,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
       };
 
       const filtered = page.items.filter((summary) => {
+        if (!visibleWorkspaceIds.has(summary.workspaceId)) return false;
         if (query.archived === 'true' && !summary.archived) return false;
         if (
           query.hasPrompt !== undefined &&
@@ -559,15 +561,8 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
       const sorted = filtered.toSorted(comparator);
       const keyOf = sortKeyOf(query.sort);
       const ascending = query.sort === 'meta.updated_at_asc';
-
-      const loadCwdOf = async (): Promise<(summary: SessionSummary) => string | null> => {
-        const roots = new Map(
-          (await core.accessor.get(IWorkspaceService).list()).map(
-            (workspace) => [workspace.id, workspace.root] as const,
-          ),
-        );
-        return (summary) => summary.cwd ?? roots.get(summary.workspaceId) ?? null;
-      };
+      const cwdOf = (summary: SessionSummary): string | null =>
+        summary.cwd ?? roots.get(summary.workspaceId) ?? null;
 
       const buildItems = async (
         summaries: readonly SessionSummary[],
@@ -673,7 +668,6 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
             ? encodePageToken(fingerprint, keyOf(lastGroup.rep), lastGroup.workspaceId)
             : null;
 
-        const cwdOf = await loadCwdOf();
         const groups = await Promise.all(
           windowGroups.map(async (group) => {
             const served = group.items.slice(0, query.groupPageSize);
@@ -733,7 +727,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         return;
       }
 
-      const items = await buildItems(window, await loadCwdOf());
+      const items = await buildItems(window, cwdOf);
 
       reply.send(
         okEnvelope(
