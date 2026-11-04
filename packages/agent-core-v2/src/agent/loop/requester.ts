@@ -543,7 +543,13 @@ export class AgentLoopRequester implements LoopRequester {
         });
       }
       const inputTokens = usage === undefined ? undefined : inputTotal(usage);
-      if (usage !== undefined && inputTokens !== undefined && inputTokens + usage.output > 0) {
+      const measuresTurnContext = request.source?.type !== 'operation' || request.source.requestKind !== 'auto_review';
+      if (
+        measuresTurnContext &&
+        usage !== undefined &&
+        inputTokens !== undefined &&
+        inputTokens + usage.output > 0
+      ) {
         const measured: MeasuredRequest = {
           modelAlias: request.modelAlias,
           contextRevision: request.contextRevision,
@@ -570,7 +576,7 @@ export class AgentLoopRequester implements LoopRequester {
         usage,
         request.source,
       );
-      if (usage !== undefined) {
+      if (usage !== undefined && measuresTurnContext) {
         this.tokenCounting.measured(this.scopeContext.agentContext, request.messages, [message], usage);
       }
       this.logResponse(request.logFields, usage ?? emptyUsage(), timing);

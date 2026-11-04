@@ -15,7 +15,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
 import { authorizationFingerprint, buildReviewMessages } from './context';
 import { REVIEW_POLICY } from './policy';
-import { IAutoReviewService, type AutoReviewDecision, type AutoReviewResult } from './review';
+import { IAutoReviewService, type AutoReviewResult } from './review';
 
 const AUTO_REVIEW_MODEL_NAME = 'kimi-k2.8';
 const AUTO_REVIEW_PROVIDER = 'managed:kimi-code';
@@ -23,15 +23,18 @@ const AUTO_REVIEW_PROVIDER = 'managed:kimi-code';
 const DecisionSchema = z.object({
   risk: z.enum(['low', 'medium', 'high']),
   decision: z.enum(['allow', 'deny']),
-  reason: z.string().max(1000).optional(),
+  reason: z.string().max(1000).nullable(),
 }).strict().superRefine((value, ctx) => {
-  if (value.decision === 'allow' && (value.risk === 'high' || value.reason !== undefined)) {
+  if (value.decision === 'allow' && (value.risk === 'high' || value.reason !== null)) {
     ctx.addIssue({ code: 'custom', message: 'invalid allow decision' });
   }
   if (value.decision === 'deny' && value.risk === 'low') {
     ctx.addIssue({ code: 'custom', message: 'invalid deny decision' });
   }
-});
+}).transform(({ reason, ...decision }) => ({
+  ...decision,
+  ...(reason === null ? {} : { reason }),
+}));
 
 export class AutoReviewService extends Service implements IAutoReviewService {
   declare readonly _serviceBrand: undefined;
@@ -85,9 +88,9 @@ export class AutoReviewService extends Service implements IAutoReviewService {
                 properties: {
                   risk: { type: 'string', enum: ['low', 'medium', 'high'] },
                   decision: { type: 'string', enum: ['allow', 'deny'] },
-                  reason: { type: 'string' },
+                  reason: { type: ['string', 'null'] },
                 },
-                required: ['risk', 'decision'],
+                required: ['risk', 'decision', 'reason'],
                 additionalProperties: false,
               },
             },
@@ -118,7 +121,14 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         const text = response.message.content.filter((part) => part.type === 'text').map((part) => part.text).join('');
         const parsed = DecisionSchema.safeParse(JSON.parse(text));
         if (!parsed.success) return { kind: 'failed', reason: 'The reviewer returned an invalid decision.' };
-        return { kind: 'decision', decision: parsed.data as AutoReviewDecision };
+        const { risk, decision, reason } = parsed.data;
+        if (decision === 'allow' && risk !== 'high') {
+          return { kind: 'decision', decision: { risk, decision } };
+        }
+        if (decision === 'deny' && risk !== 'low') {
+          return { kind: 'decision', decision: { risk, decision, reason } };
+        }
+        return { kind: 'failed', reason: 'The reviewer returned an invalid decision.' };
       } finally {
         deadline.clear();
       }

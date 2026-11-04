@@ -513,7 +513,7 @@ describe('AutoReviewService', () => {
     disposables = new DisposableStore();
     requestOverrides = undefined;
     response = {
-      message: { role: 'assistant', content: [{ type: 'text', text: '{"risk":"low","decision":"allow"}' }], toolCalls: [] },
+      message: { role: 'assistant', content: [{ type: 'text', text: '{"risk":"low","decision":"allow","reason":null}' }], toolCalls: [] },
       usage: emptyUsage(),
     };
     history = [
@@ -589,7 +589,10 @@ describe('AutoReviewService', () => {
     expect(result).toEqual({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });
     expect(requestOverrides?.modelAlias).toBe('kimi-code/kimi-k2.8');
     expect(requestOverrides?.tools).toEqual([]);
-    expect(requestOverrides?.responseFormat?.type).toBe('json_schema');
+    expect(requestOverrides?.responseFormat).toMatchObject({
+      type: 'json_schema',
+      jsonSchema: { strict: true, schema: { required: ['risk', 'decision', 'reason'] } },
+    });
     const content = JSON.stringify(requestOverrides?.messages);
     expect(content).toContain('human-instruction');
     expect(content).toContain('Do not delete user-data.');
@@ -624,6 +627,7 @@ describe('AutoReviewService', () => {
     '{"risk":"low","decision":"deny"}',
     '{"risk":"high","decision":"allow"}',
     '{"risk":"low","decision":"allow","extra":true}',
+    '{"risk":"low","decision":"allow"}',
   ])('fails invalid reviewer output: %s', async (text) => {
     response.message.content = [{ type: 'text', text }];
     await expect(service().review(policyContext({ toolName: 'Bash', args: { command: 'echo test' } }))).resolves.toMatchObject({ kind: 'failed' });

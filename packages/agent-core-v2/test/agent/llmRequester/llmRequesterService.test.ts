@@ -368,6 +368,27 @@ describe('AgentLoopRequester measured anchors', () => {
     expect(measuredCalls).toHaveLength(1);
     expect(measuredCalls[0]?.usage.inputOther).toBe(40);
   });
+
+  it('does not write the measured anchor for an independent operation', async () => {
+    const requester = createRequester({ value: 0 });
+    const base = requester.request.bind(requester);
+    requester.request = async function* (input, signal, options) {
+      yield {
+        type: 'usage',
+        usage: { inputOther: 40, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
+        model: 'wire-model',
+      };
+      yield* base(input, signal, options);
+    };
+    const { service, measuredCalls } = createService(requester);
+
+    await service.request({
+      messages: history,
+      source: { type: 'operation', requestKind: 'auto_review' },
+    });
+
+    expect(measuredCalls).toHaveLength(0);
+  });
 });
 
 function cacheUsage(inputCacheRead: number): TokenUsage {
