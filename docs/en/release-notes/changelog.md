@@ -20,7 +20,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Disable global full-text search by default and stop indexing past sessions in the background; set `[database] global_search = true` or `KIMI_CODE_GLOBAL_SEARCH=1` to turn it back on.
 - Remove support for `[secondary_model] force`, which is now ignored with a warning; to pin every subagent to one model, set only `default_model`.
-- When `[secondary_model]` is configured, subagents can only use pool aliases: one alias pins every subagent to that model, while two or more aliases in `[secondary_model.models]` enable selection; subagents no longer inherit the main agent's `/model` selection or effort, using `[secondary_model].default_effort` when set or the selected model's default effort instead.
+- Subagents no longer automatically follow model switches in the main session.
 
 ### Bug Fixes
 
