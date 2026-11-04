@@ -8,8 +8,9 @@ export const ReadMediaFileInputSchema = z.object({
   path: z
     .string()
     .describe(
-      'Path to an image, video, or UTF text file, or a kimi-file:// attachment reference in the current session. Relative filesystem paths resolve against the working directory; ' +
-        'a path outside the working directory must be absolute. Directories are not supported.',
+      'Path to an image or video file, or a kimi-file:// attachment reference in the current session. Relative filesystem paths resolve against the working directory; ' +
+        'a path outside the working directory must be absolute. ' +
+        'Directories and text files are not supported.',
     ),
   region: z
     .object({

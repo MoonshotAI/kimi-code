@@ -1,14 +1,4 @@
-import { posix as posixPath, win32 as win32Path } from 'pathe';
-
-import { detectTextEncoding, type UtfTextEncoding } from '#/_base/text/encoding';
 import type { ContentPart } from '#human/llm/message';
-import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentPlanService } from '#/features/plan/plan';
-import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
-import { isTaskOutputFilePath } from '#/agent/task/persist';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { isDaemonFileUrl } from '#/agent/media/mediaRef';
@@ -26,7 +16,6 @@ import { resolvePathAccessPath, type WorkspaceConfig } from '#/tool/path-access'
 import {
   MEDIA_SNIFF_BYTES,
   detectFileType,
-  sniffMediaFromMagic,
   sniffImageDimensions,
 } from '#/agent/media/file-type';
 import {
@@ -54,12 +43,8 @@ import readMediaDescriptionHead from './read-media.md?raw';
 function buildDescription(): string {
   return [
     renderPrompt(readMediaDescriptionHead, { MAX_MEDIA_MEGABYTES }),
-    '- This tool supports image, video, and UTF-8/UTF-16 text files.',
+    '- This tool supports image and video files.',
   ].join('\n');
-}
-
-function encodingName(encoding: UtfTextEncoding): string {
-  return encoding === 'utf-8' ? 'UTF-8' : encoding === 'utf-16le' ? 'UTF-16 LE' : 'UTF-16 BE';
 }
 
 interface ImageDelivery {
@@ -174,12 +159,6 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     private readonly workspace: WorkspaceConfig,
     private readonly attachmentStore: ISessionMediaStore,
     telemetry?: ITelemetryService,
-    @IAgentToolResultTruncationService private readonly resultTruncation?: IAgentToolResultTruncationService,
-    @IHostFileSystem private readonly hostFs?: IHostFileSystem,
-    @IHostEnvironment private readonly hostEnvironment?: IHostEnvironment,
-    @ISessionContext private readonly session?: ISessionContext,
-    @IAgentScopeContext private readonly agent?: IAgentScopeContext,
-    @IAgentPlanService private readonly planService?: IAgentPlanService,
   ) {
     this.description = buildDescription();
     this.telemetry = telemetry;
@@ -191,32 +170,6 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     }
     if (isDaemonFileUrl(args.path)) {
       return this.attachmentExecution(args);
-    }
-    const planTarget = await this.planService?.resolveFile(args.path, 'read');
-    if (planTarget !== undefined) {
-      return {
-        accesses: ToolAccesses.readFile(planTarget.path),
-        description: `Reading: ${args.path}`,
-        display: { kind: 'file_io', operation: 'read', path: planTarget.path },
-        approvalRule: literalRulePattern(this.name, planTarget.path),
-        execute: async ({ signal }) => {
-          const current = await this.planService?.resolveFile(planTarget.path, 'read');
-          if (current?.path !== planTarget.path) {
-            return { isError: true, output: 'The active plan changed before execution. Retry the tool call.' };
-          }
-          return this.execution(args, environmentFileSource(planTarget.fs, planTarget.path), signal);
-        },
-      };
-    }
-    const local = this.localOutputSource(args.path);
-    if (local !== undefined) {
-      return {
-        accesses: ToolAccesses.readFile(args.path),
-        description: `Reading: ${args.path}`,
-        display: { kind: 'file_io', operation: 'read', path: args.path },
-        approvalRule: literalRulePattern(this.name, args.path),
-        execute: ({ signal }) => this.execution(args, local, signal),
-      };
     }
     const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
     try {
@@ -262,19 +215,6 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     }
   }
 
-  private localOutputSource(path: string): FileReadSource | undefined {
-    if (this.hostFs === undefined || this.hostEnvironment === undefined || path.includes('\0')) return undefined;
-    const environmentPath = this.hostEnvironment.pathClass === 'win32' ? win32Path : posixPath;
-    if (!environmentPath.isAbsolute(path)) return undefined;
-    const normalized = environmentPath.normalize(path);
-    const taskOutput = this.session !== undefined && this.agent !== undefined && (
-      isTaskOutputFilePath(normalized, environmentPath.join(this.session.sessionDir, 'agents', this.agent.agentId), environmentPath) ||
-      (this.agent.agentId === 'main' && isTaskOutputFilePath(normalized, this.session.sessionDir, environmentPath))
-    );
-    if (!taskOutput && !this.resultTruncation?.isSpillFilePath(normalized)) return undefined;
-    return environmentFileSource(this.hostFs, normalized);
-  }
-
   private async attachmentExecution(args: ReadMediaFileInput): Promise<ToolExecution> {
     const source = await attachmentFileSource(args.path, this.attachmentStore);
     return {
@@ -302,38 +242,18 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       signal?.throwIfAborted();
       const safePath = source.name;
       const header = await source.readBytes(MEDIA_SNIFF_BYTES);
-      const fileType = sniffMediaFromMagic(header) ?? detectFileType(safePath, undefined, 'media');
+      const fileType = detectFileType(safePath, header, 'media');
 
       if (fileType.kind === 'text') {
-        if (args.region !== undefined || args.full_resolution === true) {
-          return { isError: true, output: 'region and full_resolution apply only to image files.' };
-        }
-        const stat = await source.stat();
-        if (stat.size > 10 * 1024 * 1024) {
-          return { isError: true, output: `"${args.path}" exceeds the 10 MiB text limit.` };
-        }
-        const detection = detectTextEncoding(header);
-        if (detection.seemsBinary) {
-          return { isError: true, output: `"${args.path}" is not a supported text or media file.` };
-        }
-        let text: string;
-        let lossy = false;
-        try {
-          text = new TextDecoder(detection.encoding, { fatal: true }).decode(await source.readBytes());
-        } catch (error) {
-          if (!(error instanceof TypeError)) throw error;
-          text = new TextDecoder(detection.encoding).decode(await source.readBytes());
-          lossy = true;
-        }
         return {
-          output: text,
-          note: lossy ? `<system>Malformed ${encodingName(detection.encoding)} bytes were replaced during decoding.</system>` : undefined,
+          isError: true,
+          output: `"${args.path}" is a text file. Read it with a bounded Bash command.`,
         };
       }
       if (fileType.kind === 'unknown') {
         return {
           isError: true,
-          output: `"${args.path}" is not a supported text or media file.`,
+          output: `"${args.path}" is not a supported image or video file. Read text with a bounded Bash command.`,
         };
       }
 

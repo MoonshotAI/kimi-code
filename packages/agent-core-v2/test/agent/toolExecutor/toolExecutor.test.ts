@@ -1086,16 +1086,6 @@ describe('truncation pipeline', () => {
       binding,
       { workspaceDir: homeDir, additionalDirs: [] },
       attachmentStore,
-      undefined,
-      truncation,
-      new HostFileSystem(),
-      host,
-      makeSessionContext({
-        sessionId: 'session', workspaceId: 'workspace', cwd: homeDir,
-        sessionDir: join(homeDir, 'sessions/workspace/session'),
-        sessionScope: 'sessions/workspace/session',
-      }),
-      makeAgentScopeContext({ agentId: 'main', agentScope: 'sessions/workspace/session/agents/main' }),
     ));
   });
 
@@ -1191,13 +1181,9 @@ describe('truncation pipeline', () => {
     if (result === undefined) throw new Error('expected batch output');
     const visible = renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
     expect(visible.length).toBeLessThan(50_000);
-    const encodedPath = /Attachment details reference: ("[^\n]+")/.exec(visible)?.[1];
+    const encodedPath = /MCP attachment details saved at: ("[^\n]+")/.exec(visible)?.[1];
     expect(encodedPath).toBeDefined();
-    const reference = JSON.parse(encodedPath!) as string;
-    const [read] = await execute([toolCall('read_batch', 'ReadMediaFile', { path: reference })]);
-    expect(read?.isError).not.toBe(true);
-    if (typeof read?.output !== 'string') throw new Error('expected text output');
-    const recovered = readFileSync(renderedOutputPath(read.output), 'utf8');
+    const recovered = readFileSync(JSON.parse(encodedPath!) as string, 'utf8');
     const paths = [...recovered.matchAll(/Original attachment saved at: ("[^\n]+")/g)].map((match) => JSON.parse(match[1]!) as string);
     expect(paths).toHaveLength(150);
     for (const [i, path] of paths.entries()) expect(readFileSync(path).equals(originals[i]!)).toBe(true);
@@ -1244,36 +1230,7 @@ describe('truncation pipeline', () => {
     expect(readFileSync(paths[1]!).equals(bytes[1]!)).toBe(true);
   });
 
-  it('reads session text from its owner while workspace text still uses the environment buffer', async () => {
-    const environmentFs = mediaEnvironment.inspect().fs!;
-    const clientRead = vi.spyOn(environmentFs, 'readBytes').mockImplementation(async (_path, n) => {
-      const bytes = Buffer.from('unsaved client buffer\n');
-      return n === undefined ? bytes : bytes.subarray(0, n);
-    });
-    const workspaceFile = join(homeDir, 'workspace.txt');
-    await writeFile(workspaceFile, 'disk content\n');
-    const bytes = Buffer.from('session attachment\n');
-    const client: MCPClient = {
-      async listTools() { return []; },
-      async callTool() { return { isError: false, content: [{ type: 'resource', resource: {
-        uri: 'example://text', mimeType: 'text/plain', blob: bytes.toString('base64'),
-      } }] }; },
-      async ping() {},
-    };
-    registry.register(createMcpTool('mcp__example__text', { name: 'text', description: 'Example text', parameters: {} }, client, { attachmentStore }), { source: 'mcp' });
-    const [result] = await execute([toolCall('text', 'mcp__example__text', {})]);
-    if (result === undefined) throw new Error('expected MCP output');
-    const text = renderToolResultForModel(result).map((part) => part.type === 'text' ? part.text : '').join('\n');
-    const reference = JSON.parse(/Attachment reference: ("[^\n]+")/.exec(text)![1]!) as string;
-    const [attachment] = await execute([toolCall('read_attachment', 'ReadMediaFile', { path: reference })]);
-    expect(attachment?.output).toBe('session attachment\n');
-    expect(clientRead).not.toHaveBeenCalled();
-    const [workspace] = await execute([toolCall('read_workspace', 'ReadMediaFile', { path: workspaceFile })]);
-    expect(workspace?.output).toBe('unsaved client buffer\n');
-    expect(clientRead).toHaveBeenCalledTimes(2);
-  });
-
-  it('recovers MCP structured records through spill and Read without repeating the MCP call', async () => {
+  it('persists structured MCP output for bounded Bash reads without repeating the call', async () => {
     const structuredContent = {
       rows: Array.from({ length: 1200 }, (_, index) => ({
         id: index + 1,
@@ -1304,11 +1261,7 @@ describe('truncation pipeline', () => {
     const visible = renderToolResultForModel(result)
       .map((part) => part.type === 'text' ? part.text : '').join('\n');
     expect(visible.length).toBeLessThan(50_000);
-    const path = renderedOutputPath(visible);
-    const [page] = await execute([toolCall('read_mcp', 'ReadMediaFile', { path })]);
-    expect(page?.isError).not.toBe(true);
-    if (typeof page?.output !== 'string') throw new Error('expected text output');
-    const recovered = readFileSync(renderedOutputPath(page.output), 'utf8');
+    const recovered = readFileSync(renderedOutputPath(visible), 'utf8');
     expect(recovered).toContain('Found 1200 rows.');
     const json = /<mcp-result-extras>\n([\s\S]*?)\n<\/mcp-result-extras>/.exec(recovered)?.[1];
     if (json === undefined) throw new Error('expected recovered MCP result extras');
@@ -1397,36 +1350,6 @@ describe('truncation pipeline', () => {
     expect(result?.truncated).toBeUndefined();
   });
 
-  it('recovers text above 50000 characters through the saved output path', async () => {
-    const content = `${'x'.repeat(100)}\n`.repeat(650);
-    const path = join(homeDir, 'paper.md');
-    await writeFile(path, content);
-
-    const [result] = await execute([toolCall('call_read_paper', 'ReadMediaFile', { path })]);
-    expect(result?.isError).not.toBe(true);
-    expect(result?.truncated).toBe(true);
-    if (typeof result?.output !== 'string') throw new Error('expected spill pointer');
-
-    expect(readFileSync(renderedOutputPath(result.output), 'utf8')).toBe(content);
-  });
-
-  it('keeps valid lines readable and exposes the warning when later UTF-16 bytes are malformed', async () => {
-    const path = join(homeDir, 'malformed.txt');
-    await writeFile(path, Buffer.concat([
-      Buffer.from([0xff, 0xfe]),
-      Buffer.from('good\n', 'utf16le'),
-      Buffer.from([0x00, 0xd8]),
-    ]));
-
-    const [result] = await execute([toolCall('read_lossy', 'ReadMediaFile', { path })]);
-
-    expect(result?.isError).not.toBe(true);
-    expect(result?.output).toBe('good\n�');
-    if (result === undefined) throw new Error('expected a text result');
-    const visible = renderToolResultForModel(result)
-      .map((part) => part.type === 'text' ? part.text : '').join('');
-    expect(visible).toContain('Malformed UTF-16 LE bytes were replaced during decoding');
-  });
 });
 
 function renderedOutputPath(output: string): string {

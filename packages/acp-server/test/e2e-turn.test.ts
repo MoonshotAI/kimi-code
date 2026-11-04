@@ -328,10 +328,10 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(result.stopReason).toBe('cancelled');
   }, 30_000);
 
-  it('attaches locations to a file tool call and its terminal update', async () => {
-    const c = await boot();
-    const filePath = join(homeDir!, 'note.txt');
-    await writeFile(filePath, 'location probe');
+  it('attaches locations to a ReadMediaFile tool call and its terminal update', async () => {
+    const c = await boot({}, true);
+    const filePath = join(homeDir!, 'note.png');
+    await writeFile(filePath, Buffer.from(solidPngBase64(32, 32), 'base64'));
     scripted!.mockNextResponse({
       type: 'function',
       id: 'call_read',
@@ -340,7 +340,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     });
     scripted!.mockNextText('read it');
 
-    // Auto-approve in case the manual permission mode gates the Read.
+    // Auto-approve in case the manual permission mode gates the media read.
     c.onRequest('session/request_permission', () => ({
       outcome: { outcome: 'selected', optionId: 'approve_once' },
     }));

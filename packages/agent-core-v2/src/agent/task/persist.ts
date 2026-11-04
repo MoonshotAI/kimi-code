@@ -40,8 +40,6 @@ export interface AgentTaskStoredOutputSnapshot {
   readonly previewBytes: number;
   readonly truncated: boolean;
   readonly preview: string;
-  readonly previewOffset: number;
-  readonly hasMore: boolean;
 }
 
 interface ListedTask {
@@ -195,16 +193,6 @@ export class AgentTaskPersistence {
     return (await this.readTaskOutputData(taskId)) !== undefined;
   }
 
-  async readTaskOutputBytes(taskId: string, offset: number, maxBytes: number): Promise<string> {
-    const start = Math.max(0, Math.trunc(offset));
-    const limit = Math.max(0, Math.trunc(maxBytes));
-    if (limit === 0) return '';
-    const output = await this.readTaskOutputData(taskId);
-    if (output === undefined || start >= output.data.byteLength) return '';
-    const end = Math.min(output.data.byteLength, start + limit);
-    return textDecoder.decode(output.data.subarray(start, end));
-  }
-
   async readTaskOutputTail(
     taskId: string,
     maxBytes: number,
@@ -228,26 +216,19 @@ export class AgentTaskPersistence {
   async readTaskOutputSnapshot(
     taskId: string,
     maxPreviewBytes: number,
-    offset?: number,
   ): Promise<AgentTaskStoredOutputSnapshot | undefined> {
     return this.serializeOutput(taskId, async () => {
       const output = await this.readTaskOutputData(taskId);
       if (output === undefined) return undefined;
       const previewLimit = Math.max(0, Math.trunc(maxPreviewBytes));
-      const previewOffset = Math.max(0, Math.min(
-        Math.trunc(offset ?? Math.max(0, output.data.byteLength - previewLimit)),
-        output.data.byteLength,
-      ));
-      const previewBytes = Math.min(previewLimit, output.data.byteLength - previewOffset);
-      const previewEnd = previewOffset + previewBytes;
+      const previewBytes = Math.min(previewLimit, output.data.byteLength);
+      const previewOffset = output.data.byteLength - previewBytes;
       return {
         outputPath: await this.outputPathFor(taskId, output),
         outputSizeBytes: output.data.byteLength,
         previewBytes,
         truncated: previewOffset > 0,
-        preview: textDecoder.decode(output.data.subarray(previewOffset, previewEnd)),
-        previewOffset,
-        hasMore: previewEnd < output.data.byteLength,
+        preview: textDecoder.decode(output.data.subarray(previewOffset)),
       };
     });
   }

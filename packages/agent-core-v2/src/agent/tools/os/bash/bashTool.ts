@@ -314,9 +314,14 @@ export class BashTool implements IBashTool {
     for (const command of commands) {
       const name = command.children.find((child) => child.type === 'command_name')?.children.find((child) => child.isNamed)?.text;
       if (name === undefined || !['cat', 'head', 'tail', 'sed', 'awk', 'rg', 'grep', 'find', 'ls', 'less', 'more'].includes(name)) continue;
+      let skipSearchPattern = name === 'rg' || name === 'grep';
       for (const child of command.children) {
         if (child.type !== 'word' && child.type !== 'string' && child.type !== 'raw_string') continue;
         let value = child.type === 'raw_string' ? child.text.slice(1, -1) : child.text;
+        if (skipSearchPattern && !value.startsWith('-')) {
+          skipSearchPattern = false;
+          continue;
+        }
         if (child.type === 'string' && child.children.some((part) => part.isNamed && part.type !== 'string_content')) continue;
         if (child.type === 'word') value = value.replaceAll(/\\(.)/gs, '$1');
         if (value.includes('$') || value.includes('*') || value.includes('`') || value === '-' || value.startsWith('--')) continue;

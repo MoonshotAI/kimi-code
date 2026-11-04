@@ -5,8 +5,6 @@ import { type AgentTool } from '#/tool/toolContract';
 
 export const TaskOutputInputSchema = z.object({
   task_id: z.string().describe('The background task ID to inspect.'),
-  offset: z.number().int().min(0).optional().describe('Byte offset at which to start reading the persisted output. Omit for the latest preview.'),
-  limit: z.number().int().positive().max(1_048_576).optional().describe('Maximum bytes to return. Defaults to 32768. The response includes the next offset when more output is available.'),
 });
 
 export type TaskOutputInput = z.infer<typeof TaskOutputInputSchema>;

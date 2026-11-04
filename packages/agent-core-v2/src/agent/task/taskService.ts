@@ -598,7 +598,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   async getOutputSnapshot(
     taskId: string,
     maxPreviewBytes: number,
-    offset?: number,
   ): Promise<AgentTaskOutputSnapshot> {
     if (this.getTask(taskId) === undefined) return emptyOutputSnapshot();
 
@@ -606,7 +605,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
     const previewLimit = Math.max(0, Math.trunc(maxPreviewBytes));
     const persistence = this.persistence;
-    const persisted = await persistence.readTaskOutputSnapshot(taskId, previewLimit, offset);
+    const persisted = await persistence.readTaskOutputSnapshot(taskId, previewLimit);
     if (persisted !== undefined) {
       return {
         ...persisted,
@@ -618,19 +617,14 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     if (entry === undefined) return emptyOutputSnapshot();
 
     const available = Buffer.from(entry.outputChunks.join(''), 'utf-8');
-    const previewOffset = Math.max(0, Math.min(
-      Math.trunc(offset ?? Math.max(0, available.byteLength - previewLimit)),
-      available.byteLength,
-    ));
-    const previewBytes = Math.min(previewLimit, available.byteLength - previewOffset, entry.outputSizeBytes);
+    const previewBytes = Math.min(previewLimit, available.byteLength, entry.outputSizeBytes);
+    const previewOffset = Math.max(0, available.byteLength - previewBytes);
     return {
       outputSizeBytes: entry.outputSizeBytes,
       previewBytes,
       truncated: entry.outputSizeBytes > previewBytes,
       fullOutputAvailable: false,
-      preview: available.subarray(previewOffset, previewOffset + previewBytes).toString('utf-8'),
-      previewOffset,
-      hasMore: previewOffset + previewBytes < entry.outputSizeBytes,
+      preview: available.subarray(previewOffset).toString('utf-8'),
     };
   }
 
@@ -1487,8 +1481,6 @@ function emptyOutputSnapshot(): AgentTaskOutputSnapshot {
     truncated: false,
     fullOutputAvailable: false,
     preview: '',
-    previewOffset: 0,
-    hasMore: false,
   };
 }
 
@@ -1501,7 +1493,7 @@ function agentTaskNotificationChildren(
     return output.preview.length === 0 ? undefined : [renderAnswerBlock(output.preview)];
   }
   if (output.fullOutputAvailable && output.outputPath !== undefined) {
-    return [renderOutputFileBlock(info.taskId, output.outputPath, output.outputSizeBytes)];
+    return [renderOutputFileBlock(output.outputPath, output.outputSizeBytes)];
   }
   if (output.preview.length === 0) return undefined;
   return [renderOutputPreviewBlock(output)];
@@ -1551,10 +1543,10 @@ function questionOutcome(output: string): 'answered' | 'dismissed' | undefined {
   return Object.keys(answers).length > 0 ? 'answered' : 'dismissed';
 }
 
-function renderOutputFileBlock(taskId: string, outputPath: string, outputSizeBytes: number): string {
+function renderOutputFileBlock(outputPath: string, outputSizeBytes: number): string {
   return [
     `<output-file path="${escapeXmlAttr(outputPath)}" bytes="${String(outputSizeBytes)}">`,
-    `Use TaskOutput(task_id=${JSON.stringify(taskId)}, offset=N) to retrieve the result.`,
+    `Read the output file to retrieve the result: ${escapeXml(outputPath)}`,
     '</output-file>',
   ].join('\n');
 }

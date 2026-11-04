@@ -3,41 +3,25 @@ import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionMediaStore } from './sessionMediaStore';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
+import type { WorkspaceConfig } from '#/tool/path-access';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import type { VideoUploader } from '#/llm-adapter/model/media';
 
 export interface RegisterMediaToolsDeps {
-  readonly workspace: ConstructorParameters<typeof ReadMediaFileTool>[1];
   readonly attachmentStore: ISessionMediaStore;
   readonly environment: IAgentEnvironmentService;
+  readonly workspace: WorkspaceConfig;
   readonly telemetry?: ITelemetryService;
-  readonly resultTruncation?: ConstructorParameters<typeof ReadMediaFileTool>[4];
-  readonly hostFs?: ConstructorParameters<typeof ReadMediaFileTool>[5];
-  readonly hostEnvironment?: ConstructorParameters<typeof ReadMediaFileTool>[6];
-  readonly session?: ConstructorParameters<typeof ReadMediaFileTool>[7];
-  readonly agent?: ConstructorParameters<typeof ReadMediaFileTool>[8];
-  readonly planService?: ConstructorParameters<typeof ReadMediaFileTool>[9];
-};
+}
 
 export function registerMediaTools(
   toolRegistry: IAgentToolRegistryService,
   deps: RegisterMediaToolsDeps,
 ): IDisposable {
   return toolRegistry.register(
-    new ReadMediaFileTool(
-      deps.environment,
-      deps.workspace,
-      deps.attachmentStore,
-      deps.telemetry,
-      deps.resultTruncation,
-      deps.hostFs,
-      deps.hostEnvironment,
-      deps.session,
-      deps.agent,
-      deps.planService,
-    ),
+    new ReadMediaFileTool(deps.environment, deps.workspace, deps.attachmentStore, deps.telemetry),
   );
 }
 

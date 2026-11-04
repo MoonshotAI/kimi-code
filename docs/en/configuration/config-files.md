@@ -76,7 +76,7 @@ api_key = ""
 
 [[permission.rules]]
 decision = "allow"
-pattern = "Read"
+pattern = "ReadMediaFile"
 
 [[permission.rules]]
 decision = "deny"
@@ -437,7 +437,7 @@ Like the `tools` / `disallowedTools` fields of an agent file, this section shape
 
 ## `read`
 
-`read` was removed together with the dedicated `Read`, `Grep`, and `Glob` tools. Existing `[read]` settings no longer affect file reads; use `Bash` for bounded text reads and `ReadMediaFile` for text attachments. See [Built-in tools](../reference/tools.md).
+`read` was removed together with the dedicated `Read`, `Grep`, and `Glob` tools. Existing `[read]` settings no longer affect file reads; use `Bash` for bounded text reads, including text attachments. `ReadMediaFile` handles supported images and videos. See [Built-in tools](../reference/tools.md).
 
 ## `image`
 
@@ -537,16 +537,16 @@ You can also set `dangerous_command_guard = false` under `[permission]` to turn 
 | `pattern` | `string` | Yes | Match pattern in the form `ToolName` or `ToolName(arg-pattern)`, e.g. `ReadMediaFile` or `Bash(rm -rf*)` |
 | `reason` | `string` | No | Rule description for debugging and auditing |
 
-Built-in tool names are listed in [Built-in tools](../reference/tools.md). Most built-in tools that accept rule arguments define their own matching subject, such as `Bash(command-pattern)` or `Read(path-pattern)`. `AgentSwarm`, MCP tools, and custom tools can only be matched by tool name; argument patterns are not supported for them.
+Built-in tool names are listed in [Built-in tools](../reference/tools.md). Most built-in tools that accept rule arguments define their own matching subject, such as `Bash(command-pattern)` or `ReadMediaFile(path-pattern)`. `AgentSwarm`, MCP tools, and custom tools can only be matched by tool name; argument patterns are not supported for them.
 
 ```toml
 [[permission.rules]]
 decision = "allow"
-pattern = "Read"
+pattern = "ReadMediaFile"
 
 [[permission.rules]]
 decision = "allow"
-pattern = "Grep"
+pattern = "Bash(rg*)"
 
 [[permission.rules]]
 decision = "deny"

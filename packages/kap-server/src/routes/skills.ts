@@ -280,7 +280,6 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
                 core.accessor.get(IFileService),
                 core.accessor.get(IBootstrapService).cacheDir,
                 {
-                  sessionMediaStore: resolved.handle.accessor.get(ISessionMediaStore),
                   telemetry,
                   providerType: mainAgent.accessor
                     .get(IAgentProfileService)

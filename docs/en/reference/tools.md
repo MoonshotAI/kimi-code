@@ -12,13 +12,13 @@ File tools handle reading, writing, and searching the local filesystem — the f
 | --- | --- | --- |
 | `Write` | Requires approval | Create or overwrite a file |
 | `Edit` | Requires approval | Precise string replacement |
-| `ReadMediaFile` | Auto-allow | Read an image, video, or UTF text file |
+| `ReadMediaFile` | Auto-allow | Read an image or video file |
 
 **`Write`** accepts `path`, `content`, and an optional `mode` (`overwrite` or `append`; defaults to overwrite). Missing parent directories are created automatically; `append` mode appends content to the end of the file without automatically adding a newline. Inspect an existing file before overwriting it.
 
 **`Edit`** accepts `path`, `old_string` (the exact text to replace), and `new_string` (the replacement text). By default it replaces only one unique match; if the same content appears multiple times in the file, the tool returns an error and suggests using `replace_all: true`. Inspect the current file content before editing and between consecutive edits to the same file.
 
-**`ReadMediaFile`** sends an image or video to the model as multimodal content. It also reads UTF-8/UTF-16 text files and session text attachments, preserving their original text without line-number prefixes. Text is capped at 10 MiB, and long lines are shortened by the standard tool-output limit with a saved-output path. It accepts `path`, plus optional image-detail controls such as `region` and `full_resolution`; media files are limited to 100 MB. Default image reads are compressed to the configured model limits. If automatic compression cannot meet those limits safely, the tool returns an error without sending the original image and directs the model to create and read a smaller copy. Availability depends on the current model's vision capabilities (`image_in` / `video_in`).
+**`ReadMediaFile`** sends an image or video to the model as multimodal content. It accepts `path`, plus optional image-detail controls such as `region` and `full_resolution`; media files are limited to 100 MB. Default image reads are compressed to the configured model limits. If automatic compression cannot meet those limits safely, the tool returns an error without sending the original image and directs the model to create and read a smaller copy. Availability depends on the current model's vision capabilities (`image_in` / `video_in`).
 
 ## Shell
 
@@ -111,7 +111,7 @@ Background task tools manage tasks started via `Bash`, `Agent`, or `AskUserQuest
 
 **`TaskList`** returns the list of background tasks. Optional parameters: `active_only` (defaults to true; lists only running tasks) and `limit` (defaults to 20; range 1–100).
 
-**`TaskOutput`** returns the status and output of a task given its `task_id`. By default, the inline preview includes at most the most recent 32 KB of content; the full log is saved to disk. Pass `offset` (byte offset) and `limit` (maximum bytes, up to 1 MiB) to read a range directly, including when the task runs in a remote environment. If `has_more` is true, use `next_offset` for the following page. The call is always non-blocking — it returns the current snapshot immediately, and task completion is delivered via automatic notification.
+**`TaskOutput`** returns the status and output of a task given its `task_id`. The inline preview includes at most the most recent 32 KB of content; the full log is saved to disk and returned as `output_path`. Read that path with a bounded Bash command when you need more of the log. The call is always non-blocking — it returns the current snapshot immediately, and task completion is delivered via automatic notification.
 
 **`TaskStop`** accepts a `task_id` and optional `reason` (defaults to `Stopped by TaskStop`). Safe to call on tasks that are already in a terminal state. Stopping a subagent task also returns the text the subagent wrote before it stopped, marked as incomplete, and its agent ID so the work can be resumed with `Agent`.
 

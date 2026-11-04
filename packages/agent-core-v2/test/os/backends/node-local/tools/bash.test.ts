@@ -594,8 +594,6 @@ function createFakeTaskService(
         truncated: false,
         fullOutputAvailable,
         preview,
-        previewOffset: 0,
-        hasMore: false,
       };
     },
 
@@ -817,6 +815,16 @@ describe('BashTool', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('sensitive-file');
     expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a search pattern as a sensitive file operand', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput());
+    const tool = bashTool(runner);
+
+    const result = await executeTool(tool, context({ command: 'rg credentials src && grep id_rsa file' }));
+
+    expect(result.isError).not.toBe(true);
+    expect(exec).toHaveBeenCalledTimes(1);
   });
 
   it('allows bounded file reads and searches', async () => {

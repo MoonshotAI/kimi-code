@@ -76,7 +76,7 @@ api_key = ""
 
 [[permission.rules]]
 decision = "allow"
-pattern = "Read"
+pattern = "ReadMediaFile"
 
 [[permission.rules]]
 decision = "deny"
@@ -436,7 +436,7 @@ disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 
 ## `read`
 
-`read` 已随专用的 `Read`、`Grep`、`Glob` 工具一并移除。已有的 `[read]` 设置不再影响文件读取；有界文本读取使用 `Bash`，文本附件使用 `ReadMediaFile`。详见[内置工具](../reference/tools.md)。
+`read` 已随专用的 `Read`、`Grep`、`Glob` 工具一并移除。已有的 `[read]` 设置不再影响文件读取；有界文本读取使用 `Bash`，包括文本附件；`ReadMediaFile` 用于支持的图片和视频。详见[内置工具](../reference/tools.md)。
 
 ## `image`
 
@@ -536,16 +536,16 @@ api_key = "sk-xxx"
 | `pattern` | `string` | 是 | 匹配模式，格式为 `工具名` 或 `工具名(参数模式)`，如 `ReadMediaFile`、`Bash(rm -rf*)` |
 | `reason` | `string` | 否 | 规则说明，仅用于调试和审计 |
 
-内置工具名见[内置工具](../reference/tools.md)。大多数支持规则参数的内置工具会定义自己的匹配对象，例如 `Bash(command-pattern)` 或 `Read(path-pattern)`。`AgentSwarm`、MCP 工具和自定义工具只能按工具名匹配，不支持参数模式。
+内置工具名见[内置工具](../reference/tools.md)。大多数支持规则参数的内置工具会定义自己的匹配对象，例如 `Bash(command-pattern)` 或 `ReadMediaFile(path-pattern)`。`AgentSwarm`、MCP 工具和自定义工具只能按工具名匹配，不支持参数模式。
 
 ```toml
 [[permission.rules]]
 decision = "allow"
-pattern = "Read"
+pattern = "ReadMediaFile"
 
 [[permission.rules]]
 decision = "allow"
-pattern = "Grep"
+pattern = "Bash(rg*)"
 
 [[permission.rules]]
 decision = "deny"

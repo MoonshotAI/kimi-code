@@ -309,35 +309,6 @@ describe('Plan service', () => {
       expect(toolResultText(remoteCtx.llmCalls[1]!.history)).toContain('Plan mode is active');
     });
 
-    it('reads a local plan through ReadMediaFile without a remote file copy', async () => {
-      useRemoteTools(['ReadMediaFile']);
-      await remotePlan.enter('local-plan', false);
-      const planPath = join(
-        remoteCtx.get(ISessionContext).sessionDir,
-        'agents',
-        remoteCtx.get(IAgentScopeContext).agentId,
-        'plans',
-        'local-plan.md',
-      );
-      localFiles.set(planPath, '# Local plan\n\n- Keep the plan local');
-      remoteCtx.mockNextResponse({
-        type: 'function',
-        id: 'call_read_plan',
-        name: 'ReadMediaFile',
-        arguments: JSON.stringify({ path: planPath }),
-      });
-      remoteCtx.mockNextResponse({ type: 'text', text: 'Read the local plan.' });
-
-      await remoteCtx.rpc.prompt({ input: [{ type: 'text', text: 'Read the plan' }] });
-      await remoteCtx.untilTurnEnd();
-
-      expect(remoteCtx.llmCalls.length).toBeGreaterThan(1);
-      expect(remoteCtx.allEvents).toContainEqual(expect.objectContaining({
-        event: 'tool.result',
-        args: expect.objectContaining({ output: '# Local plan\n\n- Keep the plan local' }),
-      }));
-      expect(remoteFiles.has(planPath)).toBe(false);
-    });
   });
 
   describe('plan clear', () => {

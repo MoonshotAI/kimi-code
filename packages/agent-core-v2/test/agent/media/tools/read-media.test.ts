@@ -306,7 +306,7 @@ describe('ReadMediaFileTool', () => {
 
   it('describes media support without model capability claims', () => {
     const description = makeTool({}).description;
-    expect(description).toContain('image, video, and UTF-8/UTF-16 text files');
+    expect(description).toContain('image and video files');
     expect(description).not.toContain('current model');
   });
 
@@ -316,33 +316,13 @@ describe('ReadMediaFileTool', () => {
     expect(result.output).toContain('File path cannot be empty');
   });
 
-  it('reads text files without line prefixes', async () => {
+  it('rejects text files with Bash read guidance', async () => {
     const result = await execute(
       makeTool({ '/workspace/note.txt': { data: Buffer.from('hello world') } }),
       { path: '/workspace/note.txt' },
     );
-    expect(result.isError).not.toBe(true);
-    expect(result.output).toBe('hello world');
-  });
-
-  it('reads a local plan file without workspace filesystem access', async () => {
-    const planFs = createTestFs({ '/session/plans/current.md': { data: Buffer.from('# Current plan') } });
-    const tool = new ReadMediaFileTool(
-      environmentFor(createTestFs({})),
-      WORKSPACE,
-      testMediaStore(),
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      {
-        _serviceBrand: undefined,
-        resolveFile: async () => ({ fs: planFs, path: '/session/plans/current.md' }),
-      } as never,
-    );
-    expect((await execute(tool, { path: '/session/plans/current.md' })).output).toBe('# Current plan');
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('bounded Bash command');
   });
 
   it('rejects unsupported binary formats', async () => {
@@ -351,7 +331,7 @@ describe('ReadMediaFileTool', () => {
       { path: '/workspace/archive.zip' },
     );
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('not a supported text or media file');
+    expect(result.output).toContain('not a supported image or video file');
   });
 
   it('returns a text/image/text wrap plus a <system> note for PNG files', async () => {

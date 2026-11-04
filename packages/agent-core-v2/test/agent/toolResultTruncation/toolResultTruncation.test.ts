@@ -228,7 +228,7 @@ describe('ToolResultTruncationService', () => {
     expect(rendered).toContain(`${'y'.repeat(1_984)}[...truncated]\n`);
     expect(rendered).toContain('last line');
     expect(rendered).toContain('[Per-line truncation occurred; the complete output was saved to a file.');
-    expect(rendered).toContain('next_step: Use ReadMediaFile with output_path');
+    expect(rendered).toContain('next_step: Use Bash with output_path');
     await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(full);
   });
 

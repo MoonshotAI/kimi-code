@@ -4,13 +4,18 @@ import { type ExecutableToolResult, type ToolExecution } from '#/tool/toolContra
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentTaskService } from '#/agent/task/task';
-import type { AgentTaskInfo } from '#/agent/task/task';
+import type {
+  AgentTaskInfo,
+  AgentTaskOutputSnapshot,
+} from '#/agent/task/task';
 import { type AgentTaskStatus, TERMINAL_STATUSES } from '#/agent/task/types';
 import { formatTaskRecord } from '#/agent/task/tools/format';
 import { ITaskOutputTool, TaskOutputInputSchema, type TaskOutputInput } from './task-output';
 import TASK_OUTPUT_DESCRIPTION from './task-output.md?raw';
 
 const OUTPUT_PREVIEW_BYTES = 32 * 1024;
+
+const PAGING_HINT_LINES = 300;
 
 function retrievalStatus(status: AgentTaskStatus): 'success' | 'not_ready' {
   return TERMINAL_STATUSES.has(status) ? 'success' : 'not_ready';
@@ -21,6 +26,17 @@ function terminalReason(info: AgentTaskInfo): 'timed_out' | 'stopped' | 'failed'
   if (info.status === 'killed' && info.stopReason !== undefined) return 'stopped';
   if (info.status === 'failed' && info.stopReason !== undefined) return 'failed';
   return undefined;
+}
+
+function fullOutputHint(output: AgentTaskOutputSnapshot): string | undefined {
+  if (!output.fullOutputAvailable || output.outputPath === undefined) return undefined;
+  if (output.truncated) {
+    return (
+      `Only the last ${String(OUTPUT_PREVIEW_BYTES)} bytes are shown above. ` +
+      `Read the full log with a bounded Bash command, for example sed -n '1,${String(PAGING_HINT_LINES)}p' output_path.`
+    );
+  }
+  return 'The preview above is the complete output. Re-read the output_path with a bounded Bash command if needed.';
 }
 
 export class TaskOutputTool implements ITaskOutputTool {
@@ -46,12 +62,7 @@ export class TaskOutputTool implements ITaskOutputTool {
       return { isError: true, output: `Task not found: ${args.task_id}` };
     }
 
-    const output = await this.tasks.getOutputSnapshot(
-      args.task_id,
-      args.limit ?? OUTPUT_PREVIEW_BYTES,
-      args.offset,
-    );
-    const nextOffset = output.previewOffset + output.previewBytes;
+    const output = await this.tasks.getOutputSnapshot(args.task_id, OUTPUT_PREVIEW_BYTES);
 
     const lines = [
       formatTaskRecord({
@@ -60,16 +71,12 @@ export class TaskOutputTool implements ITaskOutputTool {
         outputPath: output.outputPath,
         terminalReason: terminalReason(current),
         outputSizeBytes: output.outputSizeBytes,
-        outputOffset: output.previewOffset,
         outputPreviewBytes: output.previewBytes,
         outputTruncated: output.truncated,
         fullOutputAvailable: output.fullOutputAvailable,
-        hasMore: output.hasMore,
-        nextOffset: output.hasMore ? nextOffset : undefined,
-        fullOutputTool: output.fullOutputAvailable ? 'TaskOutput' : undefined,
-        fullOutputHint: output.fullOutputAvailable
-          ? `Use TaskOutput(task_id=${JSON.stringify(args.task_id)}, offset=N) to read persisted output directly.`
-          : undefined,
+        fullOutputTool:
+          output.fullOutputAvailable && output.outputPath !== undefined ? 'Bash' : undefined,
+        fullOutputHint: fullOutputHint(output),
       }),
       '',
     ];

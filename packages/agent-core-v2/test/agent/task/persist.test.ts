@@ -171,7 +171,7 @@ describe('AgentTaskPersistence', () => {
     expect(top.includes('tasks')).toBe(false);
   });
 
-  describe('readTaskOutputBytes / taskOutputSizeBytes', () => {
+  describe('taskOutputSizeBytes', () => {
     it('taskOutputSizeBytes reports the full byte size of output.log', async () => {
       await persistence.appendTaskOutput('bash-size0000', 'abcdefghij');
       expect(await persistence.taskOutputSizeBytes('bash-size0000')).toBe(10);
@@ -179,19 +179,6 @@ describe('AgentTaskPersistence', () => {
 
     it('taskOutputSizeBytes returns 0 when output.log is absent', async () => {
       expect(await persistence.taskOutputSizeBytes('bash-none0000')).toBe(0);
-    });
-
-    it('readTaskOutputBytes returns the exact byte window for offset + maxBytes', async () => {
-      await persistence.appendTaskOutput('bash-page0000', 'abcdefghijklmnopqrstuvwxyz');
-
-      expect(await persistence.readTaskOutputBytes('bash-page0000', 5, 10)).toBe('fghijklmno');
-      expect(await persistence.readTaskOutputBytes('bash-page0000', 0, 3)).toBe('abc');
-      expect(await persistence.readTaskOutputBytes('bash-page0000', 20, 100)).toBe('uvwxyz');
-      expect(await persistence.readTaskOutputBytes('bash-page0000', 26, 10)).toBe('');
-    });
-
-    it('readTaskOutputBytes returns empty string when output.log is absent', async () => {
-      expect(await persistence.readTaskOutputBytes('bash-none0001', 0, 100)).toBe('');
     });
   });
 
@@ -217,8 +204,6 @@ describe('AgentTaskPersistence', () => {
         previewBytes: 6,
         truncated: true,
         preview: 'output',
-        previewOffset: 7,
-        hasMore: false,
       });
     });
 
@@ -241,13 +226,11 @@ describe('AgentTaskPersistence', () => {
         previewBytes: 12,
         truncated: false,
         preview: 'local output',
-        previewOffset: 0,
-        hasMore: false,
       });
       expect(await primary.readTask(taskId)).toEqual(localTask);
       expect(await legacy.readTask(taskId)).toEqual(legacyTask);
-      expect(await legacy.readTaskOutputBytes(taskId, 0, 100)).toBe('legacy output');
-      expect(await primary.readTaskOutputBytes(taskId, 0, 100)).toBe('local output');
+      expect((await legacy.readTaskOutputSnapshot(taskId, 100))?.preview).toBe('legacy output');
+      expect((await primary.readTaskOutputSnapshot(taskId, 100))?.preview).toBe('local output');
     });
 
     it('treats a corrupt agent-local task key as authoritative over legacy data', async () => {
@@ -286,8 +269,6 @@ describe('AgentTaskPersistence', () => {
         previewBytes: 0,
         truncated: false,
         preview: '',
-        previewOffset: 0,
-        hasMore: false,
       });
     });
   });

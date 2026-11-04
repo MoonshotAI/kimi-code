@@ -6,9 +6,7 @@ import { inflateRawSync } from 'node:zlib';
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
 import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mcp/output';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
-import { ReadMediaFileTool } from '@moonshot-ai/agent-core-v2/agent/tools/read-media-file/readMediaFileTool';
 import { IBashTool } from '@moonshot-ai/agent-core-v2/agent/tools/os/bash/bash';
-import { IAgentEnvironmentService } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/agentEnvironment';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -1871,16 +1869,9 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(forked.body.code).toBe(0);
     await rm(sourcePath);
     const resumed = await resumeSessionById(core.accessor, forked.body.data.id);
-    const reader = new ReadMediaFileTool(
-      resumed!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentEnvironmentService),
-      { workspaceDir: home as string, additionalDirs: [] },
-      resumed!.accessor.get(ISessionMediaStore),
-    );
-    const execution = await reader.resolveExecution({ path: reference });
-    if (execution.isError === true) throw new Error(JSON.stringify(execution.output));
-    const read = await execution.execute({ turnId: 1, toolCallId: 'read-attachment', signal: new AbortController().signal });
-    expect(read.isError).not.toBe(true);
-    expect(read.output).toBe(body);
+    const attachment = await resumed!.accessor.get(ISessionMediaStore).get(reference);
+    expect(attachment).toBeDefined();
+    expect(Buffer.from(attachment!.bytes).toString('utf8')).toBe(body);
   });
 
   it('fork copies a corrupted source wire without healing it; the fork heals on resume', async () => {
