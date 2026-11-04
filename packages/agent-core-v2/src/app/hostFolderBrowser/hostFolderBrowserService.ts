@@ -5,7 +5,11 @@ import { dirname, isAbsolute, join } from 'node:path';
 import type { FsBrowseEntry, FsBrowseResponse, FsHomeResponse } from './hostFolderBrowser';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { IEnvironmentService } from '#/app/environment/environment';
 import { IWorkspaceService } from '#/app/workspace/workspace';
+import { LOCAL_ENVIRONMENT_ID, type EnvironmentPath } from '#/environment/environment';
+import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
+import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 
 import {
   HostFolderNotAbsoluteError,
@@ -18,9 +22,13 @@ import {
 export class HostFolderBrowser implements IHostFolderBrowser {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IWorkspaceService private readonly registry: IWorkspaceService) {}
+  constructor(
+    @IWorkspaceService private readonly registry: IWorkspaceService,
+    @IEnvironmentService private readonly environments: IEnvironmentService,
+  ) {}
 
-  async browse(absPath?: string): Promise<FsBrowseResponse> {
+  async browse(absPath?: string, environmentId = LOCAL_ENVIRONMENT_ID): Promise<FsBrowseResponse> {
+    if (environmentId !== LOCAL_ENVIRONMENT_ID) return this.browseEnvironment(absPath, environmentId);
     const target = absPath ?? homedir();
     if (!isAbsolute(target)) {
       throw new HostFolderNotAbsoluteError(target);
@@ -29,33 +37,41 @@ export class HostFolderBrowser implements IHostFolderBrowser {
     let realTarget: string;
     try {
       realTarget = await realpath(target);
-    } catch (err) {
-      throw mapFsError(err, target);
+    } catch (error) {
+      throw mapFsError(error, target);
     }
 
     let dirents;
     try {
       dirents = await readdir(realTarget, { withFileTypes: true });
-    } catch (err) {
-      throw mapFsError(err, realTarget);
+    } catch (error) {
+      throw mapFsError(error, realTarget);
     }
 
-    const entries: FsBrowseEntry[] = dirents
-      .filter((d) => d.isDirectory())
-      .map((d) => ({
-        name: d.name,
-        path: join(realTarget, d.name),
-        is_dir: true as const,
-      }));
+    return browseResponse(realTarget, dirents.filter((d) => d.isDirectory()).map((d) => d.name), { join, dirname });
+  }
 
-    entries.sort(compareBrowseEntries);
-
-    const parent = dirname(realTarget);
-    return {
-      path: realTarget,
-      parent: parent === realTarget ? null : parent,
-      entries,
-    };
+  private async browseEnvironment(absPath: string | undefined, environmentId: string): Promise<FsBrowseResponse> {
+    const lease = await this.environments.acquireWhenReady({ environmentId }, ['fs']);
+    try {
+      const { fs, host } = lease.environment;
+      const path = lease.environment.path ?? POSIX_ENVIRONMENT_PATH;
+      const target = absPath ?? host?.homeDir;
+      if (target === undefined || !path.isAbsolute(target)) {
+        throw new HostFolderNotAbsoluteError(target ?? '');
+      }
+      let realTarget: string;
+      let names: string[];
+      try {
+        realTarget = await fs!.realpath(target);
+        names = (await fs!.readdir(realTarget)).filter((entry) => entry.isDirectory).map((entry) => entry.name);
+      } catch (error) {
+        throw mapFsError(error, target);
+      }
+      return browseResponse(realTarget, names, path);
+    } finally {
+      lease.dispose();
+    }
   }
 
   async home(): Promise<FsHomeResponse> {
@@ -66,12 +82,31 @@ export class HostFolderBrowser implements IHostFolderBrowser {
   }
 }
 
+function browseResponse(
+  realTarget: string,
+  names: readonly string[],
+  path: Pick<EnvironmentPath, 'join' | 'dirname'>,
+): FsBrowseResponse {
+  const entries: FsBrowseEntry[] = names.map((name) => ({
+    name,
+    path: path.join(realTarget, name),
+    is_dir: true as const,
+  }));
+  entries.sort(compareBrowseEntries);
+  const parent = path.dirname(realTarget);
+  return {
+    path: realTarget,
+    parent: parent === realTarget ? null : parent,
+    entries,
+  };
+}
+
 function mapFsError(err: unknown, path: string): Error {
-  const code = (err as NodeJS.ErrnoException).code;
-  if (code === 'ENOENT' || code === 'ENOTDIR') {
+  const code = err instanceof HostFsError ? err.code : (err as NodeJS.ErrnoException).code;
+  if (code === 'ENOENT' || code === 'ENOTDIR' || code === OsFsErrors.codes.OS_FS_NOT_FOUND || code === OsFsErrors.codes.OS_FS_NOT_DIRECTORY) {
     return new HostFolderNotFoundError(path);
   }
-  if (code === 'EACCES' || code === 'EPERM') {
+  if (code === 'EACCES' || code === 'EPERM' || code === OsFsErrors.codes.OS_FS_PERMISSION_DENIED) {
     return new HostFolderPermissionError(path);
   }
   return err instanceof Error ? err : new Error(String(err));

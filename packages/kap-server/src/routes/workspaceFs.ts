@@ -71,15 +71,17 @@ export function registerWorkspaceFsRoutes(app: WorkspaceFsRouteHost, core: Scope
       path: '/fs::browse',
       querystring: fsBrowseQuerySchema,
       success: { data: fsBrowseResponseSchema },
-      description: 'Browse local directories (server folder picker backend)',
+      description:
+        'Browse directories for the server folder picker. `environment_id` selects the filesystem of a shared app-level environment and defaults to local; without `path`, a remote environment opens at its home directory.',
       tags: ['workspaces'],
       operationId: 'fsBrowse',
     },
     async (req, reply) => {
       try {
-        const data = await core.accessor.get(IHostFolderBrowser).browse(req.query.path);
+        const data = await core.accessor.get(IHostFolderBrowser).browse(req.query.path, req.query.environment_id);
         reply.send(okEnvelope(data, req.id));
       } catch (error) {
+        if (sendEnvironmentError(reply, req.id, error)) return;
         sendMappedError(reply, req.id, error);
       }
     },
