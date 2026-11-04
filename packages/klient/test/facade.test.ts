@@ -137,11 +137,24 @@ describe('facade routing', () => {
     channel.result = status;
     await expect(klient.global.capabilities.get('kimi-cu')).resolves.toEqual(status);
     await expect(klient.global.capabilities.install('kimi-cu')).resolves.toEqual(status);
+    const confirmation = {
+      ...status,
+      install: { running: false, confirmationRequired: 'stop-processes' },
+    };
+    channel.result = confirmation;
+    await expect(klient.global.capabilities.install('kimi-cu', { stopRunningProcesses: true }))
+      .resolves.toEqual(confirmation);
 
     expect(channel.calls).toEqual([
       { scope: {}, service: 'capabilityService', method: 'listCapabilities', args: [] },
       { scope: {}, service: 'capabilityService', method: 'getCapability', args: ['kimi-cu'] },
-      { scope: {}, service: 'capabilityService', method: 'installCapability', args: ['kimi-cu'] },
+      { scope: {}, service: 'capabilityService', method: 'installCapability', args: ['kimi-cu', undefined] },
+      {
+        scope: {},
+        service: 'capabilityService',
+        method: 'installCapability',
+        args: ['kimi-cu', { stopRunningProcesses: true }],
+      },
     ]);
   });
 

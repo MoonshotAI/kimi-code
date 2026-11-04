@@ -26,6 +26,7 @@ function pluginServiceStub(commands: readonly PluginCommandDef[]): IPluginServic
     _serviceBrand: undefined,
     onDidReload: () => ({ dispose: () => {} }),
     onDidMutate: () => ({ dispose: () => {} }),
+    withMcpServersSuspended: async (_id, task) => task(),
     listPlugins: async () => [],
     installPlugin: async () => ({ id: '' }) as never,
     setPluginEnabled: async () => {},

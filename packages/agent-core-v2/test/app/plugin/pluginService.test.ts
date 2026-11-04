@@ -191,6 +191,36 @@ describe('PluginService (plugin boundary)', () => {
     }
   });
 
+  it('suspends only the target plugin MCP servers across reloads and restores them on failure', async () => {
+    const home = await makeHome();
+    await writeValidInstalledFile(home);
+    const root = await makePluginDir('cu-test', { mcpServers: { win: { command: 'example.exe', args: [] } } });
+    const other = await makePluginDir('other-test', { mcpServers: { win: { command: 'other.exe', args: [] } } });
+    createdDirs.push(root, other);
+    const host = makeHost(home);
+    try {
+      const svc = host.app.accessor.get(IPluginService);
+      await svc.installPlugin({ source: root });
+      await svc.installPlugin({ source: other });
+      const before = await svc.enabledMcpServers();
+      const snapshots: string[][] = [];
+      const listener = svc.onDidReload((event) => {
+        event.waitUntil(svc.enabledMcpServers().then((servers) => { snapshots.push(Object.keys(servers)); }));
+      });
+      await expect(svc.withMcpServersSuspended('cu-test', async () => {
+        expect(Object.keys(await svc.enabledMcpServers())).toEqual(['plugin-other-test:win']);
+        expect((await svc.mcpServerEntries()).find((entry) => entry.pluginId === 'cu-test')?.config.enabled).toBe(false);
+        await svc.reloadPlugins();
+        expect(Object.keys(await svc.enabledMcpServers())).toEqual(['plugin-other-test:win']);
+        throw new Error('install failed');
+      })).rejects.toThrow('install failed');
+      expect(await svc.enabledMcpServers()).toEqual(before);
+      expect(snapshots[0]).toEqual(['plugin-other-test:win']);
+      expect(snapshots.at(-1)).toEqual(Object.keys(before));
+      listener.dispose();
+    } finally { host.dispose(); }
+  });
+
   it('degrades consumption-plane reads to empty when installed.json is corrupt', async () => {
     const home = await makeHome();
     await writeInstalledFile(home, '{ not json');
