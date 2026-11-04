@@ -79,7 +79,7 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - In public text and test data, replace real internal identifiers with neutral placeholders such as `example.com`, `example.test`, and `YOUR_API_KEY`. Before opening a PR, ask a read-only agent to audit the diff for context-specific internal identifiers.
 - When creating or updating a PR, use the `write-pr` skill.
 - Before submitting a PR, run the `gen-changesets` skill and follow its rules.
-- Before pushing, show any prompt-related changes to the user for review and get explicit confirmation.
+- Before pushing changes to agent-facing prompt text (`packages/agent-core-v2/src/**/*.md`: system prompt, tool descriptions, reminders, overlays, built-in skills), show the diff to the user and get explicit confirmation. If no user is available to confirm, do not push; report the pending prompt changes instead.
 - Prefer importing via `import ... from '#/...'`, which serves the same purpose as `import ... from '@/...'`.
 - Do not commit throwaway scratch or exploratory files. Never stage:
   - Agent working notes or handoff/summary documents (e.g. `HANDOVER-*.md`, `HANDOFF-*.md`, `handoff.md`).
@@ -88,4 +88,13 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 
 ## Code Review Rules
 
-- Before every pull request review, read and follow `.agents/skills/review-pr/SKILL.md`.
+These criteria apply to every pull request review, automated or human. For a full regression review, use the `review-pr` skill; populations and contract files are listed in `.agents/skills/review-pr/surfaces.md`.
+
+- Review only the PR's diff against its base. Pre-existing problems are non-blocking notes unless the PR directly triggers or amplifies them. Report a class of issues in one pass, tag every finding P0 / P1 / P2, keep re-reviews incremental (verify the current code before treating a resolved thread as settled), and skip pure style or personal-preference findings.
+- Domain-specific rules keep their own canonical homes — changesets (`gen-changesets` skill), comment-free zones (General Coding Rules), PR text (`write-pr` skill); review against those, not ad-hoc taste.
+- Any input that worked before — config key, env var, CLI flag, provider response shape, older session data, client request, hook payload — must behave the same unless the PR declares the change.
+- A flipped default or removed behavior needs the lost behavior named in the changeset, an escape hatch or explicit maintainer sign-off, and a test pinning the old behavior.
+- Prompt text under `packages/agent-core-v2/src/**/*.md` is behavior; "no test references the sentence" is not evidence of no impact.
+- Contract files listed in `surfaces.md` are consumed outside this repo; require the PR to name the consumers and how the previous release keeps working.
+- Ports and refactors must list what the old path did and where each item lives now.
+- Silent failure — ignored config, silent approval, dropped data — outranks a crash.
