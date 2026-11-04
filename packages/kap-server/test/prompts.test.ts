@@ -664,10 +664,10 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(saved?.origin).toMatchObject({ clientMetadata: [metadata] });
     expect(await session!.accessor.get(ISessionMetadata).read()).toMatchObject({ title: metadata.display_text, lastPrompt: metadata.display_text });
     expect(JSON.stringify(saved?.content)).not.toContain('ref-example');
-    const page = await call<{ turns: { items: { type: string; origin?: { clientMetadata?: unknown } }[] }[] }>('GET', `/api/v1/sessions/${id}/agents/main/turns`);
+    const page = await call<{ turns: { items: { type: string; client_metadata?: unknown }[] }[] }>('GET', `/api/v1/sessions/${id}/agents/main/turns`);
     expect(page.body.code).toBe(0);
     const opener = page.body.data.turns[0]?.items[0];
-    expect(opener).toMatchObject({ type: 'user_message', origin: { clientMetadata: [metadata] } });
+    expect(opener).toMatchObject({ type: 'user_message', origin: { kind: 'user' }, client_metadata: metadata });
   });
 
   it('updates session metadata for a bundled prompt routed to a non-main agent', async () => {

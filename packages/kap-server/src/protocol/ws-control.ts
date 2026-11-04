@@ -6,8 +6,10 @@ import {
   itemDeltaMessageSchema,
   itemMessageSchema,
   itemRemovedMessageSchema,
+  itemUpdatedMessageSchema,
   noticeMessageSchema,
   turnMessageSchema,
+  turnUpdatedMessageSchema,
   turnsFailedMessageSchema,
   turnsMessageSchema,
 } from './conversation';
@@ -422,7 +424,15 @@ export const conversationEventOperations = [
     kind: 'event',
     messageSchema: turnMessageSchema,
     description:
-      'turn.started, turn.updated or turn.ended with the full turn header; it replaces the client copy of the header.',
+      'turn.started or turn.ended with the turn without its items; it replaces the client copy of the turn and keeps its items. turn.ended is sent again when an ended turn is corrected.',
+  },
+  {
+    type: 'turn.updated',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: turnUpdatedMessageSchema,
+    description:
+      'A step of a running turn ended (step, written into steps by index) or its retry state changed; retry replaces the client copy and an absent retry clears it.',
   },
   {
     type: 'item',
@@ -430,14 +440,22 @@ export const conversationEventOperations = [
     kind: 'event',
     messageSchema: itemMessageSchema,
     description:
-      'item.started, item.updated or item.ended with the full item; it replaces the client copy of the item with the same item_id.',
+      'item.started or item.ended with the full item; it replaces the client copy of the item with the same item_id. item.ended is sent once per item, again only for a later authoritative replacement.',
+  },
+  {
+    type: 'item.updated',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: itemUpdatedMessageSchema,
+    description: 'Fields of a running tool_call item that changed; set is merged shallowly into the client copy.',
   },
   {
     type: 'item.delta',
     direction: 'server_to_client',
     kind: 'event',
     messageSchema: itemDeltaMessageSchema,
-    description: 'Text appended to a running assistant_message or reasoning item.',
+    description:
+      'Text appended to field of a running item: text of assistant_message and reasoning, input_text and output of tool_call.',
   },
   {
     type: 'item.removed',
@@ -452,7 +470,8 @@ export const conversationEventOperations = [
     direction: 'server_to_client',
     kind: 'event',
     messageSchema: noticeMessageSchema,
-    description: 'Live warning or error raised by an agent; not part of the turn history.',
+    description:
+      'Live warning or error raised by an agent, such as a context compaction that did not finish; not part of the turns and not sent again on subscribe.',
   },
 ] as const satisfies readonly WsOperationDefinition[];
 

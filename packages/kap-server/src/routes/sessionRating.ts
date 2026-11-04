@@ -1,4 +1,4 @@
-import { MAIN_AGENT_ID, getLiveSessionById, resumeSessionById, type Scope } from '@moonshot-ai/agent-core-v2';
+import { getLiveSessionById, resumeSessionById, type Scope } from '@moonshot-ai/agent-core-v2';
 import type { SessionRatingHost } from '@moonshot-ai/kimi-code-product/session-rating/node';
 import { z } from 'zod';
 
@@ -49,9 +49,9 @@ export function registerSessionRatingRoutes(
       const { session_id } = req.params;
       const request = req.body;
       if (request.op === 'evaluate') {
-        const turns = await conversations.turnsWithoutLoading(session_id, MAIN_AGENT_ID);
+        const turns = await conversations.mainTurnsWithoutLoading(session_id);
         const latest = turns?.findLast((turn) => turn.kind === 'agent');
-        const completed = latest?.turn_id === request.turn_id && latest.status === 'ended';
+        const completed = latest?.id === request.turn_id && latest.status === 'ended';
         if (completed && getLiveSessionById(core.accessor, session_id) === undefined) {
           await resumeSessionById(core.accessor, session_id);
           await sessionRating.whenReady(session_id);

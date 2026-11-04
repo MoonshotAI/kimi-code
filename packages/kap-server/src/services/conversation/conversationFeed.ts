@@ -1,9 +1,9 @@
 import {
+  CompactionCancelled,
   FullCompactionBegin,
   FullCompactionCancel,
   FullCompactionComplete,
   IAgentBlobService,
-  IAgentFullCompactionService,
   IAgentLoopService,
   IEventBus,
   IEventDispatcher,
@@ -15,6 +15,7 @@ import {
   type DurableAgentRuntimeParticipant,
   type IAgentScopeHandle,
   type IDisposable,
+  type ToolUpdate,
 } from '@moonshot-ai/agent-core-v2';
 import {
   ContextAppendLoopEvent,
@@ -27,50 +28,70 @@ import {
   ThinkingDelta,
   ToolCallDelta,
   TurnStepInterrupted,
+  TurnStepRetrying,
   TurnStepStreamReset,
 } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import { isMediaPart, type MediaPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 
 import type {
   ConversationItem,
-  ConversationTurn,
+  ConversationMessage,
   ConversationTurnHeader,
   ConversationTurnsPage,
+  Notice,
+  TurnsFailedMessage,
+  TurnsMessage,
 } from '../../protocol/conversation';
-import type { MessageContent } from '../../protocol/message';
 import {
   applyConversationRecord,
   createConversationState,
   settleOrphanTurns,
   undoConversationTurns,
+  type ConversationFork,
   type ConversationState,
+  type FoldItem,
+  type FoldReasoning,
+  type FoldText,
+  type FoldToolCall,
+  type FoldTurn,
+  type LiveToolFields,
+  type LiveToolProgress,
   type RunningWork,
 } from './conversationFold';
+import {
+  COMPACTION_CANCELLED_NOTICE,
+  errorNotice,
+  keepMediaUrl,
+  mediaPartsOf,
+  mediaUrl,
+  presentHeader,
+  presentItem,
+  presentTurn,
+  warningNotice,
+  type MediaResolver,
+} from './conversationProjection';
+
+type Unframed<T> = T extends unknown ? Omit<T, 'session_id' | 'agent_id' | 'event_created_at'> : never;
 
 export type ConversationEvent =
   | { readonly type: 'reset' }
-  | { readonly type: 'turn.started' | 'turn.updated' | 'turn.ended'; readonly turn: ConversationTurnHeader }
-  | { readonly type: 'item.started' | 'item.updated' | 'item.ended'; readonly turn_id: string; readonly item: ConversationItem }
-  | { readonly type: 'item.delta'; readonly turn_id: string; readonly item_id: string; readonly delta: string }
-  | { readonly type: 'item.removed'; readonly turn_id: string; readonly item_id: string }
-  | {
-      readonly type: 'notice';
-      readonly level: 'error' | 'warning';
-      readonly message: string;
-      readonly code?: string;
-      readonly payload?: Record<string, unknown>;
-    };
+  | Unframed<Exclude<ConversationMessage, TurnsMessage | TurnsFailedMessage>>;
 
 export type ConversationListener = (event: ConversationEvent) => void;
 
 interface LiveItem {
   readonly turnId: string;
   readonly stepId: string;
-  readonly startedAt: number;
-  item: ConversationItem;
+  item: FoldText | FoldReasoning | FoldToolCall;
+}
+
+interface LiveTool {
+  readonly turnId: string;
+  readonly fields: LiveToolFields;
 }
 
 const RECORD_EVENTS = [
@@ -80,6 +101,7 @@ const RECORD_EVENTS = [
   TurnSteer,
   TurnCancel,
   TurnStepInterrupted,
+  TurnStepRetrying,
   TurnEnded,
   PromptCompleted,
   InteractionRequestEvent,
@@ -95,19 +117,24 @@ const RECORD_EVENTS = [
 const BLOBREF_PREFIX = 'blobref:';
 
 export class ConversationFeed implements IDisposable {
-  private state: ConversationState = createConversationState();
-  private sent: readonly ConversationTurn[] = [];
+  private state: ConversationState;
+  private sent: readonly FoldTurn[] = [];
   private started = false;
   private replay: ReplayGate | undefined;
   private flushQueued = false;
   private disposed = false;
   private firstReplay: ((ok: boolean) => void) | undefined;
   private readonly live = new Map<string, LiveItem>();
+  private readonly tools = new Map<string, LiveTool>();
   private readonly listeners = new Set<ConversationListener>();
   private readonly disposables: IDisposable[] = [];
   readonly ready: Promise<ConversationFeed>;
 
-  constructor(private readonly handle: IAgentScopeHandle) {
+  constructor(
+    private readonly handle: IAgentScopeHandle,
+    fork?: ConversationFork,
+  ) {
+    this.state = createConversationState(handle.id, fork);
     this.ready = this.start().then(
       () => this,
       (error: unknown) => {
@@ -117,7 +144,7 @@ export class ConversationFeed implements IDisposable {
     );
   }
 
-  turns(): readonly ConversationTurn[] {
+  turns(): readonly FoldTurn[] {
     return this.state.turns;
   }
 
@@ -126,14 +153,15 @@ export class ConversationFeed implements IDisposable {
     return { dispose: () => { this.listeners.delete(listener); } };
   }
 
-  async page(before: number | undefined, limit: number): Promise<Omit<ConversationTurnsPage, 'agent_id'>> {
+  async page(before: number | undefined, limit: number): Promise<ConversationTurnsPage> {
     while (this.replay !== undefined) await this.replay.done;
     const turns = this.state.turns;
     const end = before === undefined ? turns.length : turns.findIndex((turn) => turn.ordinal >= before);
     const stop = end === -1 ? turns.length : end;
     const start = Math.max(0, stop - limit);
-    const page = turns.slice(start, stop).map((turn) => this.present(turn));
-    return { turns: await Promise.all(page.map((turn) => this.hydrate(turn))), has_more: start > 0 };
+    const selected = turns.slice(start, stop).map((turn) => ({ turn, items: this.itemsOf(turn) }));
+    const resolve = await this.loadMedia(selected.flatMap(({ items }) => items));
+    return { turns: selected.map(({ turn, items }) => presentTurn(turn, items, resolve)), has_more: start > 0 };
   }
 
   dispose(): void {
@@ -142,6 +170,7 @@ export class ConversationFeed implements IDisposable {
     for (const disposable of this.disposables.splice(0)) disposable.dispose();
     this.listeners.clear();
     this.live.clear();
+    this.tools.clear();
     this.finishReplay();
   }
 
@@ -155,31 +184,23 @@ export class ConversationFeed implements IDisposable {
         this.onTextDelta('reasoning', event.turnId, event.block, event.delta);
       }),
       bus.subscribe(ToolCallDelta, (event) => {
-        this.onToolCallDelta(event.turnId, event.toolCallId, event.name);
+        this.onToolCallDelta(event.turnId, event.toolCallId, event.name, event.argumentsPart);
+      }),
+      bus.subscribe(ToolProgress, (event) => {
+        this.onToolProgress(event.toolCallId, event.update);
       }),
       bus.subscribe(TurnStepStreamReset, (event) => {
         this.flushPending();
         this.dropLive((entry) => entry.stepId === event.stepId);
       }),
       bus.subscribe(WarningIssued, (event) => {
-        this.flushPending();
-        this.emit({ type: 'notice', level: 'warning', message: event.message, code: event.code });
+        this.notify(warningNotice(event.message, event.code));
       }),
       bus.subscribe(AgentErrorEvent, (event) => {
-        this.flushPending();
-        this.emit({
-          type: 'notice',
-          level: 'error',
-          message: event.message,
-          code: event.code,
-          payload: {
-            code: event.code,
-            message: event.message,
-            name: event.name,
-            retryable: event.retryable,
-            details: event.details,
-          },
-        });
+        this.notify(errorNotice(event));
+      }),
+      bus.subscribe(CompactionCancelled, () => {
+        this.notify(COMPACTION_CANCELLED_NOTICE);
       }),
     );
     const dispatcher = this.handle.accessor.get(IEventDispatcher);
@@ -222,6 +243,7 @@ export class ConversationFeed implements IDisposable {
   private willReplay(): void {
     this.replay ??= replayGate();
     this.dropLive(() => true);
+    this.tools.clear();
   }
 
   private didReplay(replayed: ConversationState, ok: boolean): ConversationState {
@@ -241,10 +263,7 @@ export class ConversationFeed implements IDisposable {
 
   private runningWork(): RunningWork {
     const loop = this.handle.accessor.get(IAgentLoopService).snapshot();
-    return {
-      turnNumber: loop.state === 'running' ? loop.activeTurnId : undefined,
-      compacting: this.handle.accessor.get(IAgentFullCompactionService).compacting !== null,
-    };
+    return { turnNumber: loop.state === 'running' ? loop.activeTurnId : undefined };
   }
 
   private commit(next: ConversationState): void {
@@ -267,41 +286,71 @@ export class ConversationFeed implements IDisposable {
     const next = this.state.turns;
     if (previous === next) return;
     this.sent = next;
-    const nextIds = new Set(next.map((turn) => turn.turn_id));
-    const removed = new Set(previous.filter((turn) => !nextIds.has(turn.turn_id)).map((turn) => turn.turn_id));
+    const nextIds = new Set(next.map((turn) => turn.id));
+    const removed = new Set(previous.filter((turn) => !nextIds.has(turn.id)).map((turn) => turn.id));
     if (removed.size > 0) {
       this.dropLive((entry) => removed.has(entry.turnId), false);
+      for (const [toolCallId, tool] of this.tools) {
+        if (removed.has(tool.turnId)) this.tools.delete(toolCallId);
+      }
       this.emit({ type: 'reset' });
       return;
     }
-    const previousById = new Map(previous.map((turn) => [turn.turn_id, turn]));
+    const previousById = new Map(previous.map((turn) => [turn.id, turn]));
     for (const turn of next) {
-      const before = previousById.get(turn.turn_id);
+      const before = previousById.get(turn.id);
       if (before !== turn) this.emitTurnChanges(before, turn);
     }
   }
 
-  private emitTurnChanges(before: ConversationTurn | undefined, turn: ConversationTurn): void {
-    if (before === undefined) this.emit({ type: 'turn.started', turn: headerOf(turn) });
-    const previousItems = new Map(before?.items.map((item) => [item.item_id, item]));
+  private emitTurnChanges(before: FoldTurn | undefined, turn: FoldTurn): void {
+    const header = presentHeader(turn);
+    const previous = before === undefined ? undefined : presentHeader(before);
+    if (previous === undefined || (previous.status === 'ended' && header.status === 'running')) {
+      this.emit({ type: 'turn.started', turn: header });
+    }
+    this.emitItemChanges(before, turn);
+    this.dropLive((entry) => entry.turnId === turn.id && !liveStepOpen(turn, entry.stepId));
+    if (previous !== undefined) this.emitTurnUpdates(previous, header);
+    if (header.status === 'ended' && (previous?.status !== 'ended' || !sameJson(previous, header))) {
+      this.emit({ type: 'turn.ended', turn: header });
+    }
+  }
+
+  private emitTurnUpdates(previous: ConversationTurnHeader, header: ConversationTurnHeader): void {
+    const earlier = new Map(previous.steps.map((step) => [step.index, step]));
+    const steps = header.steps.filter((step) => !sameJson(earlier.get(step.index), step));
+    for (const step of steps) this.emit({ type: 'turn.updated', turn_id: header.turn_id, step, retry: header.retry });
+    if (steps.length === 0 && header.status === 'running' && !sameJson(previous.retry, header.retry)) {
+      this.emit({ type: 'turn.updated', turn_id: header.turn_id, retry: header.retry });
+    }
+  }
+
+  private emitItemChanges(before: FoldTurn | undefined, turn: FoldTurn): void {
+    const previous = new Map(before?.items.map((item) => [item.id, item]));
     for (const item of turn.items) {
-      const previousItem = previousItems.get(item.item_id);
-      if (previousItem === item) continue;
-      const wasLive = this.live.delete(item.item_id);
-      const type = item.status === 'ended'
-        ? 'item.ended'
-        : previousItem === undefined && !wasLive
-          ? 'item.started'
-          : 'item.updated';
-      this.emit({ type, turn_id: turn.turn_id, item });
+      const old = previous.get(item.id);
+      if (old === item) continue;
+      const live = this.live.get(item.id);
+      this.live.delete(item.id);
+      const earlier = live?.item ?? (old === undefined ? undefined : this.withLiveFields(old));
+      this.emitItemChange(turn.id, earlier === undefined ? undefined : presentItem(earlier), presentItem(this.withLiveFields(item)));
+      if (item.type === 'tool_call' && item.status === 'ended') this.tools.delete(item.id);
     }
-    this.dropLive((entry) => entry.turnId === turn.turn_id && !this.liveStepOpen(turn, entry.stepId));
-    if (before !== undefined && headerUnchanged(before, turn)) return;
-    if (turn.status === 'ended' && before?.status !== 'ended') {
-      this.emit({ type: 'turn.ended', turn: headerOf(turn) });
-    } else if (before !== undefined) {
-      this.emit({ type: 'turn.updated', turn: headerOf(turn) });
+  }
+
+  private emitItemChange(turnId: string, before: ConversationItem | undefined, after: ConversationItem): void {
+    if (after.status === 'ended') {
+      if (before?.status !== 'ended' || !sameJson(before, after)) this.emit({ type: 'item.ended', turn_id: turnId, item: after });
+      return;
     }
+    if (before === undefined) {
+      this.emit({ type: 'item.started', turn_id: turnId, item: after });
+      return;
+    }
+    if (before.type !== 'tool_call' || after.type !== 'tool_call') return;
+    const set = changedFields(before, after);
+    if (Object.keys(set).length > 0) this.emit({ type: 'item.updated', turn_id: turnId, item_id: after.item_id, set });
   }
 
   private onTextDelta(
@@ -310,65 +359,124 @@ export class ConversationFeed implements IDisposable {
     block: number | undefined,
     delta: string,
   ): void {
-    if (block === undefined || delta.length === 0) return;
+    if (block === undefined || delta.length === 0 || this.replay !== undefined) return;
     this.flushPending();
     const target = this.liveTarget(turnNumber);
     if (target === undefined) return;
     const itemId = `${target.stepId}:${block}`;
     const entry = this.live.get(itemId);
     if (entry !== undefined) {
-      if (entry.item.type !== type) return;
+      if (entry.item.type === 'tool_call' || entry.item.type !== type) return;
       entry.item = { ...entry.item, text: entry.item.text + delta };
-      this.emit({ type: 'item.delta', turn_id: target.turn.turn_id, item_id: itemId, delta });
+      this.emit({ type: 'item.delta', turn_id: target.turn.id, item_id: itemId, field: 'text', delta });
       return;
     }
-    if (target.turn.items.some((item) => item.item_id === itemId)) return;
+    if (target.turn.items.some((item) => item.id === itemId)) return;
     this.endLiveBlocks(target.stepId);
-    const startedAt = Date.now();
-    const item: ConversationItem = type === 'reasoning'
-      ? { type, item_id: itemId, status: 'running', step_index: target.stepIndex, text: delta, started_at: new Date(startedAt).toISOString() }
-      : { type, item_id: itemId, status: 'running', step_index: target.stepIndex, text: delta };
-    this.live.set(itemId, { turnId: target.turn.turn_id, stepId: target.stepId, startedAt, item });
-    this.emit({ type: 'item.started', turn_id: target.turn.turn_id, item });
+    const now = Date.now();
+    const base = { id: itemId, stepIndex: target.stepIndex, createdAt: now, status: 'running', text: delta } as const;
+    const item: FoldText | FoldReasoning = type === 'reasoning' ? { ...base, type, startedAt: now } : { ...base, type };
+    this.live.set(itemId, { turnId: target.turn.id, stepId: target.stepId, item });
+    this.emit({ type: 'item.started', turn_id: target.turn.id, item: presentItem(item) });
   }
 
-  private onToolCallDelta(turnNumber: number, toolCallId: string, name: string | undefined): void {
-    if (name === undefined || this.live.has(toolCallId)) return;
+  private onToolCallDelta(
+    turnNumber: number,
+    toolCallId: string,
+    name: string | undefined,
+    argumentsPart: string | undefined,
+  ): void {
+    if (this.replay !== undefined) return;
     this.flushPending();
+    const entry = this.live.get(toolCallId);
+    if (entry?.item.type === 'tool_call') {
+      if (argumentsPart === undefined || argumentsPart.length === 0) return;
+      entry.item = { ...entry.item, live: { inputText: (entry.item.live?.inputText ?? '') + argumentsPart } };
+      this.emit({ type: 'item.delta', turn_id: entry.turnId, item_id: toolCallId, field: 'input_text', delta: argumentsPart });
+      return;
+    }
+    if (name === undefined || entry !== undefined) return;
     const target = this.liveTarget(turnNumber);
-    if (target === undefined || target.turn.items.some((item) => item.item_id === toolCallId)) return;
+    if (target === undefined || target.turn.items.some((item) => item.id === toolCallId)) return;
     this.endLiveBlocks(target.stepId);
-    const item: ConversationItem = { type: 'tool_call', item_id: toolCallId, status: 'running', step_index: target.stepIndex, name };
-    this.live.set(toolCallId, { turnId: target.turn.turn_id, stepId: target.stepId, startedAt: Date.now(), item });
-    this.emit({ type: 'item.started', turn_id: target.turn.turn_id, item });
+    const now = Date.now();
+    const item: FoldToolCall = {
+      type: 'tool_call',
+      id: toolCallId,
+      stepIndex: target.stepIndex,
+      createdAt: now,
+      startedAt: now,
+      name,
+      status: 'running',
+      streaming: true,
+      live: { inputText: argumentsPart ?? '' },
+    };
+    this.live.set(toolCallId, { turnId: target.turn.id, stepId: target.stepId, item });
+    this.emit({ type: 'item.started', turn_id: target.turn.id, item: presentItem(item) });
+  }
+
+  private onToolProgress(toolCallId: string, update: ToolUpdate): void {
+    if (this.replay !== undefined) return;
+    this.flushPending();
+    const target = this.runningTool(toolCallId);
+    if (target === undefined) return;
+    const fields = this.tools.get(toolCallId)?.fields ?? {};
+    if ((update.kind === 'stdout' || update.kind === 'stderr') && update.replace !== true) {
+      const text = update.text ?? '';
+      if (text.length === 0) return;
+      this.tools.set(toolCallId, { turnId: target.turn.id, fields: { ...fields, output: (fields.output ?? '') + text } });
+      this.emit({ type: 'item.delta', turn_id: target.turn.id, item_id: toolCallId, field: 'output', delta: text });
+      return;
+    }
+    const next: LiveToolFields = update.kind === 'stdout' || update.kind === 'stderr'
+      ? { ...fields, output: update.text ?? '' }
+      : { ...fields, progress: nextProgress(fields.progress, update) };
+    const before = presentItem(this.withLiveFields(target.item));
+    this.tools.set(toolCallId, { turnId: target.turn.id, fields: next });
+    this.emitItemChange(target.turn.id, before, presentItem(this.withLiveFields(target.item)));
+  }
+
+  private notify(notice: Notice): void {
+    this.flushPending();
+    this.emit({ type: 'notice', ...notice });
   }
 
   private endLiveBlocks(stepId: string): void {
     const now = Date.now();
     for (const entry of this.live.values()) {
-      if (entry.stepId !== stepId || entry.item.status !== 'running') continue;
-      if (entry.item.type === 'reasoning') {
-        entry.item = { ...entry.item, status: 'ended', duration_ms: now - entry.startedAt };
-      } else if (entry.item.type === 'assistant_message') {
-        entry.item = { ...entry.item, status: 'ended' };
-      } else {
-        continue;
-      }
-      this.emit({ type: 'item.ended', turn_id: entry.turnId, item: entry.item });
+      const item = entry.item;
+      if (entry.stepId !== stepId || item.status !== 'running' || item.type === 'tool_call') continue;
+      entry.item = item.type === 'reasoning'
+        ? { ...item, status: 'ended', durationMs: now - item.startedAt }
+        : { ...item, status: 'ended' };
+      this.emit({ type: 'item.ended', turn_id: entry.turnId, item: presentItem(entry.item) });
     }
   }
 
-  private liveTarget(turnNumber: number): { turn: ConversationTurn; stepId: string; stepIndex: number } | undefined {
-    const turn = this.state.turns.findLast((candidate) => candidate.turn_number === turnNumber && candidate.status === 'running');
+  private liveTarget(turnNumber: number): { turn: FoldTurn; stepId: string; stepIndex: number } | undefined {
+    const turn = this.state.turns.findLast((candidate) => candidate.turnNumber === turnNumber && candidate.status === 'running');
     const step = turn?.steps.at(-1);
-    if (turn === undefined || step === undefined || step.ended_at !== undefined) return undefined;
-    return { turn, stepId: step.step_id, stepIndex: step.index };
+    if (turn === undefined || step === undefined || step.endedAt !== undefined) return undefined;
+    return { turn, stepId: step.id, stepIndex: step.index };
   }
 
-  private liveStepOpen(turn: ConversationTurn, stepId: string): boolean {
-    if (turn.status !== 'running') return false;
-    const step = turn.steps.findLast((candidate) => candidate.step_id === stepId);
-    return step !== undefined && step.ended_at === undefined;
+  private runningTool(toolCallId: string): { turn: FoldTurn; item: FoldToolCall } | undefined {
+    const turnId = this.state.toolTurns[toolCallId];
+    const turn = turnId === undefined ? undefined : this.state.turns.findLast((candidate) => candidate.id === turnId);
+    const item = turn?.items.find((candidate) => candidate.id === toolCallId);
+    if (turn === undefined || item?.type !== 'tool_call' || item.status !== 'running') return undefined;
+    return { turn, item };
+  }
+
+  private withLiveFields(item: FoldItem): FoldItem {
+    if (item.type !== 'tool_call' || item.status !== 'running') return item;
+    const tool = this.tools.get(item.id);
+    return tool === undefined ? item : { ...item, live: tool.fields };
+  }
+
+  private itemsOf(turn: FoldTurn): FoldItem[] {
+    const live = [...this.live.values()].filter((entry) => entry.turnId === turn.id).map((entry) => entry.item);
+    return [...turn.items.map((item) => this.withLiveFields(item)), ...live];
   }
 
   private dropLive(match: (entry: LiveItem) => boolean, announce = true): void {
@@ -379,27 +487,31 @@ export class ConversationFeed implements IDisposable {
     }
   }
 
-  private present(turn: ConversationTurn): ConversationTurn {
-    const liveItems = [...this.live.values()].filter((entry) => entry.turnId === turn.turn_id).map((entry) => entry.item);
-    return liveItems.length === 0 ? turn : { ...turn, items: [...turn.items, ...liveItems] };
+  private async loadMedia(items: readonly FoldItem[]): Promise<MediaResolver> {
+    const refs = new Map<string, MediaPart>();
+    for (const part of items.flatMap((item) => mediaPartsOf(item))) {
+      const url = mediaUrl(part);
+      if (url?.startsWith(BLOBREF_PREFIX) === true) refs.set(url, part);
+    }
+    if (refs.size === 0) return keepMediaUrl;
+    const loaded = new Map<string, string>();
+    await Promise.all([...refs].map(async ([ref, part]) => {
+      const url = await this.loadBlob(part);
+      if (url !== undefined) loaded.set(ref, url);
+    }));
+    return (url) => loaded.get(url) ?? url;
   }
 
-  private async hydrate(turn: ConversationTurn): Promise<ConversationTurn> {
-    if (!turn.items.some(hasBlobRef)) return turn;
-    const items = await Promise.all(turn.items.map((item) => hydrateItem(item, (part) => this.loadPart(part))));
-    return { ...turn, items };
-  }
-
-  private async loadPart(part: ContentPart): Promise<ContentPart> {
+  private async loadBlob(part: MediaPart): Promise<string | undefined> {
     try {
       const [loaded] = await this.handle.accessor.get(IAgentBlobService).loadParts([part]);
-      return loaded ?? part;
+      return loaded === undefined || !isMediaPart(loaded) ? undefined : mediaUrl(loaded);
     } catch (error) {
       this.handle.accessor.get(ILogService).warn('conversation media failed to load; serving its reference', {
         agentId: this.handle.id,
         error,
       });
-      return part;
+      return undefined;
     }
   }
 
@@ -426,64 +538,31 @@ function replayGate(): ReplayGate {
   return { done, finish };
 }
 
-function headerOf(turn: ConversationTurn): ConversationTurnHeader {
-  const { items: _items, ...header } = turn;
-  return header;
+function liveStepOpen(turn: FoldTurn, stepId: string): boolean {
+  if (turn.status !== 'running') return false;
+  const step = turn.steps.findLast((candidate) => candidate.id === stepId);
+  return step !== undefined && step.endedAt === undefined;
 }
 
-function headerUnchanged(before: ConversationTurn, after: ConversationTurn): boolean {
-  return (
-    before.status === after.status &&
-    before.outcome === after.outcome &&
-    before.error === after.error &&
-    before.turn_number === after.turn_number &&
-    before.ended_at === after.ended_at &&
-    before.duration_ms === after.duration_ms &&
-    before.steps === after.steps
-  );
-}
-
-export function hasBlobRef(item: ConversationItem): boolean {
-  if (item.type === 'user_message') return item.content.some((part) => blobRefOf(part) !== undefined);
-  if (item.type === 'tool_call' && Array.isArray(item.output)) {
-    return (item.output as unknown[]).some((part) => mediaUrlOf(part)?.startsWith(BLOBREF_PREFIX) === true);
+function nextProgress(progress: LiveToolProgress | undefined, update: ToolUpdate): LiveToolProgress {
+  switch (update.kind) {
+    case 'progress':
+      return { ...progress, percent: update.percent ?? progress?.percent, status: update.text ?? progress?.status };
+    case 'status':
+      return { ...progress, status: update.text ?? progress?.status };
+    default:
+      return { ...progress, customKind: update.customKind, customData: update.customData };
   }
-  return false;
 }
 
-async function hydrateItem(
-  item: ConversationItem,
-  load: (part: ContentPart) => Promise<ContentPart>,
-): Promise<ConversationItem> {
-  if (item.type === 'user_message') {
-    const content = await Promise.all(item.content.map(async (part): Promise<MessageContent> => {
-      const ref = blobRefOf(part);
-      if (ref === undefined || (part.type !== 'image' && part.type !== 'video')) return part;
-      const url = mediaUrlOf(await load({ type: 'image_url', imageUrl: { url: ref } }));
-      const match = url === undefined ? null : /^data:([^;]+);base64,(.*)$/.exec(url);
-      if (match === null) return part;
-      return { ...part, source: { kind: 'base64', media_type: match[1]!, data: match[2]! } };
-    }));
-    return { ...item, content };
+function changedFields<T extends object>(before: T, after: T): Partial<T> {
+  const set: Partial<T> = {};
+  for (const key of Object.keys(after) as (keyof T)[]) {
+    if (after[key] !== undefined && !sameJson(before[key], after[key])) set[key] = after[key];
   }
-  if (item.type === 'tool_call' && Array.isArray(item.output)) {
-    const output = await Promise.all((item.output as ContentPart[]).map(async (part) =>
-      mediaUrlOf(part)?.startsWith(BLOBREF_PREFIX) === true ? load(part) : part,
-    ));
-    return { ...item, output };
-  }
-  return item;
+  return set;
 }
 
-function blobRefOf(part: MessageContent): string | undefined {
-  if (part.type !== 'image' && part.type !== 'video') return undefined;
-  const source = part.source;
-  return source.kind === 'url' && source.url.startsWith(BLOBREF_PREFIX) ? source.url : undefined;
-}
-
-function mediaUrlOf(part: unknown): string | undefined {
-  if (typeof part !== 'object' || part === null) return undefined;
-  const media = part as { imageUrl?: { url?: unknown }; videoUrl?: { url?: unknown }; audioUrl?: { url?: unknown } };
-  const url = (media.imageUrl ?? media.videoUrl ?? media.audioUrl)?.url;
-  return typeof url === 'string' ? url : undefined;
+function sameJson(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }

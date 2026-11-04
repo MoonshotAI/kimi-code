@@ -629,7 +629,16 @@ function conversationService(conversations = new FakeConversations()): Conversat
 }
 
 function endedTurn(turnId: string, ordinal: number): ConversationTurn {
-  return { turn_id: turnId, ordinal, kind: 'agent', status: 'ended', outcome: 'completed', steps: [], items: [] };
+  return {
+    turn_id: turnId,
+    ordinal,
+    kind: 'agent',
+    status: 'ended',
+    outcome: 'completed',
+    started_at: '2026-01-01T00:00:00.000Z',
+    steps: [],
+    items: [],
+  };
 }
 
 type RecordedFrame = { readonly type: string } & Record<string, unknown>;

@@ -2,12 +2,14 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
+  BTW_AGENT_LABEL,
   Error2,
   ErrorCodes,
   IAgentLifecycleService,
   IBootstrapService,
   ISessionIndex,
   ISessionManager,
+  ISessionStateService,
   MAIN_AGENT_ID,
   agentContextOf,
   flattenChain,
@@ -15,6 +17,7 @@ import {
   getOrRestoreAgent,
   resumeSessionById,
   sessionDirOf,
+  sessionMetadataDataKey,
   workspacePersistenceScope,
   type AgentContext,
   type IAgentScopeHandle,
@@ -28,10 +31,15 @@ import {
   type WireRecord,
 } from '@moonshot-ai/agent-core-v2/wire/record';
 
-import type { ConversationTurn } from '../../protocol/conversation';
 import { ensureMainAgent } from '../../transport/mainAgent';
 import { ConversationFeed } from './conversationFeed';
-import { applyConversationRecord, createConversationState, settleOrphanTurns } from './conversationFold';
+import {
+  applyConversationRecord,
+  createConversationState,
+  settleOrphanTurns,
+  type ConversationFork,
+  type FoldTurn,
+} from './conversationFold';
 
 export interface ConversationFeedCreated {
   readonly sessionId: string;
@@ -78,9 +86,9 @@ export class ConversationService implements IDisposable {
     return this.attach(sessionId, this.watch(sessionId, session), handle).ready;
   }
 
-  async turnsWithoutLoading(sessionId: string, agentId: string): Promise<readonly ConversationTurn[] | undefined> {
+  async mainTurnsWithoutLoading(sessionId: string): Promise<readonly FoldTurn[] | undefined> {
     const session = getLiveSessionById(this.core.accessor, sessionId);
-    const handle = session?.accessor.get(IAgentLifecycleService).handleOf(agentId);
+    const handle = session?.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
     if (session !== undefined && handle !== undefined) {
       return (await this.attach(sessionId, this.watch(sessionId, session), handle).ready).turns();
     }
@@ -92,7 +100,7 @@ export class ConversationService implements IDisposable {
       workspacePersistenceScope(bootstrap.scope('sessions'), summary.workspaceId),
       sessionId,
     );
-    const wirePath = join(sessionDir, 'agents', agentId, AGENT_WIRE_RECORD_KEY);
+    const wirePath = join(sessionDir, 'agents', MAIN_AGENT_ID, AGENT_WIRE_RECORD_KEY);
     let text: string;
     try {
       text = await readFile(wirePath, 'utf-8');
@@ -102,7 +110,7 @@ export class ConversationService implements IDisposable {
     }
     const records = parseWireRecords(text, wirePath);
     assertWireRecordsReaderVersion(records);
-    const state = createConversationState();
+    const state = createConversationState(MAIN_AGENT_ID);
     for (const record of flattenChain(records)) applyConversationRecord(state, record);
     return settleOrphanTurns(state).turns;
   }
@@ -148,7 +156,7 @@ export class ConversationService implements IDisposable {
     const previous = entry.feeds.get(handle.id);
     if (previous?.context === context) return previous.feed;
     previous?.feed.dispose();
-    const feed = new ConversationFeed(handle);
+    const feed = new ConversationFeed(handle, forkOf(entry.session, handle.id));
     entry.feeds.set(handle.id, { context, feed });
     feed.ready.catch(() => {
       if (entry.feeds.get(handle.id)?.feed === feed) entry.feeds.delete(handle.id);
@@ -164,6 +172,13 @@ export class ConversationService implements IDisposable {
     for (const watch of entry.watches) watch.dispose();
     for (const { feed } of entry.feeds.values()) feed.dispose();
   }
+}
+
+function forkOf(session: ISessionScopeHandle, agentId: string): ConversationFork | undefined {
+  const states = session.accessor.get(ISessionStateService);
+  const agent = states.has(sessionMetadataDataKey) ? states.get(sessionMetadataDataKey)?.agents?.[agentId] : undefined;
+  if (agent?.forkedFrom === undefined) return undefined;
+  return { forkedFrom: agent.forkedFrom, source: agent.labels?.[BTW_AGENT_LABEL] === 'true' ? 'btw' : 'fork' };
 }
 
 export function parseWireRecords(text: string, wirePath: string): WireRecord[] {

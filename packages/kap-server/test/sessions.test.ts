@@ -1638,8 +1638,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const turns = await getJson<unknown>(`/api/v1/sessions/${parentId}/agents/${MAIN_AGENT_ID}/turns`);
     expect(turns.body.code).toBe(40930);
     expect(turns.body.msg).toContain('Upgrade Kimi Code');
-    const plans = await getJson<unknown>(`/api/v1/sessions/${parentId}/agents/${MAIN_AGENT_ID}/plans`);
-    expect(plans.body.code).toBe(40930);
     const sliced = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
       turn_index: 999,
     });
@@ -1784,10 +1782,7 @@ describe('server-v2 /api/v1/sessions', () => {
     );
     await agent.accessor.get(IWireService).flush();
     const path = `/api/v1/sessions/${id}/agents/main/turns`;
-    const itemText = (item: ConversationItem): string =>
-      item.type === 'user_message'
-        ? item.content.map((part) => (part.type === 'text' ? part.text : '')).join('')
-        : 'text' in item ? item.text : '';
+    const itemText = (item: ConversationItem): string => ('text' in item ? item.text : '');
     const before = await getJson<ConversationTurnsPage>(path);
     expect(before.body.code).toBe(0);
     expect(before.body.data.turns).toHaveLength(1);

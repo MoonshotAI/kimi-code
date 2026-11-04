@@ -226,8 +226,12 @@ describe('server-v2 /api/v1 skills', () => {
       expect(input?.metadata?.origin?.clientMetadata).toEqual([metadata]);
       expect(JSON.stringify(input?.content)).not.toContain('client-only literal');
       await closeSessionById(server!.core.accessor, id);
-      const page = await getJson<{ turns: { items: { type: string; origin?: { clientMetadata?: unknown } }[] }[] }>(`/api/v1/sessions/${id}/agents/main/turns`);
-      expect(page.body.data.turns[0]?.items[0]).toMatchObject({ type: 'user_message', origin: { clientMetadata: [metadata] } });
+      const page = await getJson<{ turns: { items: { type: string; client_metadata?: unknown }[] }[] }>(`/api/v1/sessions/${id}/agents/main/turns`);
+      expect(page.body.data.turns[0]?.items[0]).toMatchObject({
+        type: 'user_message',
+        origin: { kind: 'skill', name: 'update-config', args: 'Example argument' },
+        client_metadata: metadata,
+      });
       const session = await getJson<{ title: string }>(`/api/v1/sessions/${id}`);
       expect(session.body.data.title).toBe(metadata.display_text);
     });
@@ -449,11 +453,11 @@ describe('server-v2 /api/v1 skills', () => {
       });
 
       const page = await getJson<{
-        turns: Array<{ items: Array<{ type: string; content?: Array<{ type: string; text?: string }> }> }>;
+        turns: Array<{ items: Array<{ type: string; text?: string }> }>;
       }>(`/api/v1/sessions/${id}/agents/main/turns`);
       const opener = page.body.data.turns[0]?.items[0];
       expect(opener?.type).toBe('user_message');
-      expect(opener?.content?.[1]).toEqual(notice);
+      expect(opener?.text?.split('\n')).toContain(notice?.text);
     });
 
     it('rejects a relative attachment path on skill activation (40001)', async () => {
