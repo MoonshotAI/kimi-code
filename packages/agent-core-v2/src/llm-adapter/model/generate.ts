@@ -170,7 +170,7 @@ async function runModel(
       },
     );
     if (outcome.type === 'aborted') {
-      throw errorFromLlmMessage({ kind: 'abort', message: 'The operation was aborted.' });
+      throw errorFromLlmMessage({ kind: 'abort', message: 'The operation was aborted.', retryable: false });
     }
     if (outcome.type === 'failed') {
       const classified =

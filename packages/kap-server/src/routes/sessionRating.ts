@@ -39,6 +39,7 @@ export function registerSessionRatingRoutes(
         [ErrorCode.VALIDATION_FAILED]: {
           detailsSchema: z.array(z.object({ path: z.string(), message: z.string() })),
         },
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description:
         'Evaluate the latest completed transcript turn, or report a displayed rating and its final answer',

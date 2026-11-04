@@ -61,7 +61,7 @@ While streaming output is active, the input box can still receive input and supp
 | `Esc` | Interrupt the current streaming output |
 | `Ctrl-C` | Interrupt the current streaming output |
 
-Pressing `Ctrl-S` causes the model to see your message at the next interruptible point, without waiting for the current turn to finish.
+Pressing `Ctrl-S` causes the model to see your message at the next interruptible point, without waiting for the current turn to finish. The message text stays faded until the agent reads it. If an interrupted turn carries the message into a later turn, it stays faded until that turn starts.
 
 ## Tool Output
 

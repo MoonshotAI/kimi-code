@@ -7,7 +7,12 @@ import type { WireRecord } from '#/wire/record';
 import { fromCoreMessage } from '#human/message';
 import { fromLlmMessage } from '#/llm-adapter/contract/message';
 
-const METADATA: WireRecord = { type: 'metadata', protocol_version: '1.5', created_at: 0 };
+const METADATA: WireRecord = {
+  type: 'metadata',
+  protocol_version: '1.5',
+  min_protocol_version: '1.0',
+  created_at: 0,
+};
 
 function fold(records: readonly WireRecord[]) {
   return foldWireRecords([METADATA, ...records]);
@@ -294,6 +299,20 @@ describe('foldWireRecords', () => {
     });
   });
 
+  it('carries an edited objective into later goal_updated records without a transcript entry', () => {
+    const folded = fold([
+      { type: 'goal.create', goalId: 'g1', objective: 'old task', time: 1 },
+      { type: 'goal.update', objective: 'new task', actor: 'user', time: 2 },
+      { type: 'goal.update', status: 'paused', reason: 'wait', time: 3 },
+    ]);
+    expect(folded.replay).toHaveLength(2);
+    expect(folded.replay[1]).toMatchObject({
+      type: 'goal_updated',
+      time: 3,
+      snapshot: { goalId: 'g1', objective: 'new task', status: 'paused' },
+    });
+  });
+
   it('clears the goal and appends the fork reminder on forked', () => {
     const folded = fold([
       { type: 'goal.create', goalId: 'g1', objective: 'ship it', time: 1 },
@@ -415,7 +434,7 @@ describe('foldWireRecords', () => {
     expect(messageRecords(ordered.replay).map((record) => record.type === 'message' ? record.turnId : undefined)).toEqual([undefined, 7]);
   });
 
-  it('migrates older protocol journals before folding', () => {
+  it('validates reader compatibility and migrates older protocol journals before folding', () => {
     const legacy: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.0', created_at: 0 },
       {
@@ -450,6 +469,16 @@ describe('foldWireRecords', () => {
     expect(decoded[2]?.['message']).toMatchObject({
       toolCalls: [{ id: 'call_legacy', name: 'Bash', arguments: '{}' }],
     });
+    expect(() =>
+      foldWireRecords([
+        {
+          type: 'metadata',
+          protocol_version: '9.9',
+          min_protocol_version: '9.9',
+          created_at: 0,
+        },
+      ]),
+    ).toThrow('Upgrade Kimi Code');
   });
 
   it('clears replay-visible state on context.clear without touching earlier replay records', () => {

@@ -236,7 +236,10 @@ describe('EditTool', () => {
     });
 
     expect(result.output).toContain('Replaced 1 occurrence');
-    expect(readText).toHaveBeenCalledWith('/home/test/notes/today.txt', { errors: 'strict' });
+    expect(readText).toHaveBeenCalledWith('/home/test/notes/today.txt', {
+      errors: 'strict',
+      preserveBOM: true,
+    });
     expect(writeText).toHaveBeenCalledWith('/home/test/notes/today.txt', 'alpha gamma');
   });
 
@@ -576,6 +579,30 @@ describe('EditTool', () => {
 
     expect(result.isError).toBeFalsy();
     expect(writeText).toHaveBeenCalledWith('/workspace-sneaky/test.txt', 'new');
+  });
+
+  it.each([true, false])('preserves UTF-8 BOM presence when editing: %s', async (hasBom) => {
+    const dir = await mkdtemp(join(tmpdir(), 'edit-bom-'));
+    const file = join(dir, 'sample.txt');
+    const bom = hasBom ? Buffer.from([0xef, 0xbb, 0xbf]) : Buffer.alloc(0);
+    const original = Buffer.concat([bom, Buffer.from('a\nb\n')]);
+    const expected = Buffer.concat([bom, Buffer.from('a\nc\n')]);
+    await writeFile(file, original);
+    try {
+      const service = new FileEditService(new HostFileSystem());
+      const result = await service.edit({
+        path: file,
+        displayPath: file,
+        old_string: 'b',
+        new_string: 'c',
+        replace_all: false,
+      });
+
+      expect(result).toEqual({ ok: true, count: 1 });
+      expect(Buffer.compare(await readFile(file), expected)).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('rejects editing a non-UTF-8 file and leaves its bytes untouched', async () => {

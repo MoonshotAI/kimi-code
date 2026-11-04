@@ -71,6 +71,7 @@ import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
+import { isTurnPromptEvent, isTurnSteerEvent, isUserSteerOrigin } from '../utils/steer-delivery';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
@@ -126,8 +127,13 @@ export interface SessionEventHost {
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
   steerQueuedMessagesIntoRunningTurn(): void;
+  acknowledgeSteerDelivery?(input: unknown, promptIds?: readonly string[]): void;
+  acknowledgeSteerTurnPrompt?(promptId: string | undefined, input: unknown, origin: unknown): void;
+  acknowledgeSteerTurnStarted?(promptId?: string): void;
+  releaseSteerDelivery?(promptId: string): void;
   lastCompactionTrigger: CompactionStartedEvent['trigger'] | undefined;
   autoCompactionSerial: number;
+  completedCompactionSerial: number;
   handleTurnStarted?(event: TurnStartedEvent): void;
   handleTurnEnded?(event: TurnEndedEvent): void;
   readonly btwPanelController: BtwPanelController;
@@ -287,6 +293,17 @@ export class SessionEventHandler {
     if ('turnId' in event && event.turnId !== undefined) {
       this.host.streamingUI.setTurnId(String(event.turnId));
     }
+    const rawEvent: object = event;
+    if (isTurnSteerEvent(rawEvent)) {
+      if (isUserSteerOrigin(rawEvent)) {
+        this.host.acknowledgeSteerDelivery?.(rawEvent.input, rawEvent.promptIds);
+      }
+      return;
+    }
+    if (isTurnPromptEvent(rawEvent)) {
+      this.host.acknowledgeSteerTurnPrompt?.(rawEvent.promptId, rawEvent.input, rawEvent.origin);
+      return;
+    }
 
     switch (event.type) {
       case 'turn.started': this.handleTurnBegin(event); break;
@@ -348,6 +365,7 @@ export class SessionEventHandler {
   // ---------------------------------------------------------------------------
 
   private handleTurnBegin(event: TurnStartedEvent): void {
+    this.host.acknowledgeSteerTurnStarted?.(event.promptId);
     this.host.handleTurnStarted?.(event);
     this.currentTurnHasAssistantText = false;
     if (event.origin?.kind === 'plugin_command') {
@@ -392,6 +410,9 @@ export class SessionEventHandler {
     event: Extract<Event, { type: 'prompt.completed' }>,
     sendQueued: (item: QueuedMessage) => void,
   ): void {
+    if (event.reason === 'blocked' || event.reason === 'failed') {
+      this.host.releaseSteerDelivery?.(event.promptId);
+    }
     if (event.reason !== 'blocked') return;
     this.host.programStatus?.failRequest('Turn blocked by a prompt hook');
     this.host.streamingUI.finalizeTurn(sendQueued);
@@ -1175,6 +1196,7 @@ export class SessionEventHandler {
     // Cancellations do not count: the context was not cut, so a queued
     // /compact must still fire.
     if (this.host.lastCompactionTrigger === 'auto') this.host.autoCompactionSerial += 1;
+    this.host.completedCompactionSerial += 1;
     this.host.streamingUI.endCompaction(
       event.result.tokensBefore,
       event.result.tokensAfter,
@@ -1200,7 +1222,7 @@ export class SessionEventHandler {
 
   private finishCompaction(sendQueued: (item: QueuedMessage) => void): void {
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
-    if (!hasActiveTurn) {
+    if (!hasActiveTurn && !this.host.state.queuedMessageDispatchPending) {
       const next = this.host.shiftQueuedMessage();
       if (next !== undefined) {
         this.host.state.queuedMessageDispatchPending = true;

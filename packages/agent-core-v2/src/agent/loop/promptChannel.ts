@@ -9,18 +9,20 @@ import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
+import { ErrorCodes, Error2 } from '#/errors';
 
 import {
   IAgentLoopService,
   type PromptLaunchResult,
   type PromptPayload,
   type SteerPayload,
+  type SteerResult,
 } from './loop';
 
 export interface IAgentPromptChannel {
   readonly _serviceBrand: undefined;
   submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined>;
-  submitSteer(payload: SteerPayload): Promise<PromptLaunchResult | undefined>;
+  submitSteer(payload: SteerPayload): Promise<SteerResult>;
 }
 
 export const IAgentPromptChannel = createDecorator<IAgentPromptChannel>('agentPromptService');
@@ -48,10 +50,11 @@ export class AgentPromptChannel implements IAgentPromptChannel {
     return launchResult(this.loop, id);
   }
 
-  async submitSteer(payload: SteerPayload): Promise<PromptLaunchResult | undefined> {
+  async submitSteer(payload: SteerPayload): Promise<SteerResult> {
     this.telemetry.track2('input_steer', { parts: payload.input.length });
     await this.updateMetadata(promptMetadataTextFromContentParts(payload.input));
     const status = this.loop.snapshot();
+    const steerable = status.state === 'running' && status.activePromptId !== undefined;
     const { id } = this.loop.submit(
       {
         message: { role: 'user', content: [...payload.input] },
@@ -59,8 +62,26 @@ export class AgentPromptChannel implements IAgentPromptChannel {
       },
       { steerIfActive: true },
     );
-    if (status.state === 'running' && status.activePromptId === undefined) return undefined;
-    return launchResult(this.loop, id);
+    const handle = this.loop.promptHandle(id)!;
+    if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
+      return { prompt_id: id, created_at: handle.createdAt, state: 'queued', steered: false };
+    }
+    await Promise.race([handle.launched, handle.completion]);
+    const turn = await handle.launched;
+    if (turn === undefined) {
+      if (handle.state === 'blocked') {
+        return { prompt_id: id, created_at: handle.createdAt, state: 'blocked', steered: false };
+      }
+      throw new Error2(ErrorCodes.INTERNAL, 'Steer failed to launch a turn');
+    }
+    await turn.ready.catch(() => undefined);
+    return {
+      turn_id: turn.id,
+      prompt_id: id,
+      created_at: handle.createdAt,
+      state: 'running',
+      steered: steerable && turn.id === status.activeTurnId,
+    };
   }
 
   private async updateMetadata(text: string | undefined): Promise<void> {

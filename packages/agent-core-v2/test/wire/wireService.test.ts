@@ -14,7 +14,7 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
-import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
+import { WIRE_MIN_READER_VERSION, WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { wireJournalBackupKey } from '#/wire/repair';
 import { WireError, WireErrors } from '#/wire/errors';
 import { IWireService } from '#/wire/wire';
@@ -86,6 +86,7 @@ describe('WireService seal', () => {
       {
         type: 'metadata',
         protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
         created_at: expect.any(Number),
       },
     ]);
@@ -263,7 +264,7 @@ describe('WireService readJournal', () => {
     const stub = wireOverLog(stubLog, 'legacy-plan', { telemetry });
 
     expect(await collect(stub.readJournal())).toEqual([
-      seeded[0],
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
       { type: 'wire.test.before', value: 1, time: 2 },
       {
         type: 'plan.revision',
@@ -344,6 +345,7 @@ describe('WireService readJournal', () => {
       {
         type: 'metadata',
         protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
         created_at: expect.any(Number),
       },
     ]);
@@ -373,6 +375,7 @@ describe('WireService readJournal', () => {
       {
         type: 'metadata',
         protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
         created_at: expect.any(Number),
       },
       ...yielded,
@@ -395,7 +398,12 @@ describe('WireService readJournal', () => {
     const yielded = await collect(wire.readJournal());
 
     expect(yielded).toEqual([
-      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
+        created_at: 1,
+      },
       { type: 'goal.create', goalId: 'g1', time: 9, wallClockResumedAt: 9 },
     ]);
     expect(await readRecords()).toEqual(yielded);
@@ -488,6 +496,21 @@ describe('WireService readJournal', () => {
     expect(failure).toMatchObject({
       code: StorageErrors.codes.STORAGE_CORRUPTED,
     });
+
+    const invalidMin = wireOverLog(
+      recordingWireLog([
+        {
+          type: 'metadata',
+          protocol_version: WIRE_PROTOCOL_VERSION,
+          min_protocol_version: 'next',
+          created_at: 1,
+        },
+      ]),
+      'malformed-min-metadata',
+    );
+    const minFailure = await collect(invalidMin.readJournal()).catch((error: unknown) => error);
+    expect(minFailure).toBeInstanceOf(StorageError);
+    expect(minFailure).toMatchObject({ code: StorageErrors.codes.STORAGE_CORRUPTED });
   });
 
   it('skips malformed lines and reports them through onUnexpectedError', async () => {
@@ -585,6 +608,7 @@ describe('WireService corruption repair', () => {
       type: 'metadata',
       protocol_version: WIRE_PROTOCOL_VERSION,
       created_at: createdAt,
+      min_protocol_version: WIRE_MIN_READER_VERSION,
     });
   }
 
@@ -596,7 +620,12 @@ describe('WireService corruption repair', () => {
     const yielded = await collect(wire.readJournal());
 
     expect(yielded).toEqual([
-      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
+        created_at: 1,
+      },
       { type: 'wire.test.ok', time: 3 },
     ]);
     expect(await rawBytes()).toBe(valid);
@@ -622,7 +651,12 @@ describe('WireService corruption repair', () => {
     const yielded = await collect(wire.readJournal());
 
     expect(yielded).toEqual([
-      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
+        created_at: 1,
+      },
       { type: 'wire.test.a', time: 1 },
       edge,
     ]);
@@ -631,7 +665,12 @@ describe('WireService corruption repair', () => {
 
     const journal = wire;
     expect(await collect(journal.read())).toEqual([
-      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
+        created_at: 1,
+      },
       { type: 'wire.test.a', time: 1 },
     ]);
     expect(journal.journalRef.branch).toBe('b1');
@@ -657,7 +696,12 @@ describe('WireService corruption repair', () => {
     const yielded = await collect(wire.readJournal());
 
     expect(yielded).toEqual([
-      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
+        created_at: 1,
+      },
       { type: 'wire.test.legacy', time: 9 },
     ]);
     expect(await rawBytes()).toBe(
@@ -682,7 +726,12 @@ describe('WireService corruption repair', () => {
     const yielded = await collect(wire.readJournal());
 
     expect(yielded).toEqual([
-      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
+        created_at: 1,
+      },
       {
         type: 'plan.revision',
         id: 'plan-1',
@@ -776,7 +825,12 @@ describe('WireService corruption repair', () => {
     const yielded = await collect(svc.readJournal());
 
     expect(yielded).toEqual([
-      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
+        created_at: 1,
+      },
     ]);
     expect(capture.events).toEqual([
       {
@@ -811,7 +865,12 @@ describe('WireService corruption repair', () => {
     expect(await rawBytes()).toBe(`${prefix}${JSON.stringify({ type: 'wire.test.new', time: 7 })}\n`);
     expect(await rawBytes(BACKUP_KEY)).toBe(raw);
     expect(await collect(svc.readJournal())).toEqual([
-      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'metadata',
+        protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
+        created_at: 1,
+      },
       { type: 'wire.test.new', time: 7 },
     ]);
     expect(capture.events).toEqual([
@@ -1273,6 +1332,7 @@ describe('WireService readRestoreChains', () => {
     const envelope = {
       type: 'metadata',
       protocol_version: WIRE_PROTOCOL_VERSION,
+      min_protocol_version: WIRE_MIN_READER_VERSION,
       created_at: expect.any(Number),
     };
     expect(chains).toEqual({ restorable: [envelope], journal: [envelope] });

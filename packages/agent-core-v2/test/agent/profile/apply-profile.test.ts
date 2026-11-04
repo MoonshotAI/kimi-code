@@ -557,6 +557,7 @@ function pluginStub(
     enabledSessionStarts: async () => [],
     enabledSystemPrompts: async () => sections.value,
     enabledMcpServers: async () => ({}),
+    mcpServerEntries: async () => [],
     enabledHooks: async () => [],
     listPluginCommands: async () => [],
   } as unknown as IPluginService;

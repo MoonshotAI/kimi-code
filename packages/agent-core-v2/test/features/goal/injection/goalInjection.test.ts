@@ -252,6 +252,23 @@ describe('GoalInjection content', () => {
     expect(sparse.length).toBeLessThan(full.length);
   });
 
+  it('sends the full reminder with the edited objective on the next new turn only', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    await injectDynamic(ctx, true);
+    await injectDynamic(ctx, true);
+    const sparse = lastGoalReminder(context)!;
+    expect(sparse).toContain('The full audit is in the earlier goal reminder.');
+
+    await goals.editGoalObjective({ objective: 'new task' });
+    await injectDynamic(ctx, false);
+    expect(lastGoalReminder(context)).toBe(sparse);
+
+    await injectDynamic(ctx, true);
+    const refreshed = lastGoalReminder(context)!;
+    expect(refreshed).toContain('<untrusted_objective>\nnew task\n</untrusted_objective>');
+    expect(refreshed).toContain('Blocked audit:');
+  });
+
   it('refreshes the full reminder when the goal resumes after being paused', async () => {
     await goals.createGoal({ objective: 'work' });
     await injectDynamic(ctx, true);

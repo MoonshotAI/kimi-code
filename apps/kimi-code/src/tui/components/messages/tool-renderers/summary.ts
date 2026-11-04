@@ -53,7 +53,7 @@ function withGlance(glance: GlanceFn | null): ResultRenderer {
         const tail = parts.moreCount > 0 ? `, +${String(parts.moreCount)} more` : '';
         out.push(
           ctx.expanded
-            ? new Text(`  ${currentTheme.dim(`${parts.samples}${tail}`)}`, 0, 0)
+            ? new Text(currentTheme.dim(`${parts.samples}${tail}`), 2, 0)
             : outcomeRow(OUTCOME_ROW_INDENT, parts.samples, tail),
         );
       }

@@ -62,7 +62,10 @@ export const promptWithSkillsResultSchema = z.object({
   prompt_id: z.string(),
   created_at: z.string(),
   state: z.enum(['running', 'queued', 'blocked']),
+  steered: z.boolean().optional(),
 });
+
+export const steerResultSchema = promptWithSkillsResultSchema;
 
 /** Same shape as `SteerPayload` in the engine. */
 export const steerPayloadSchema = z.object({

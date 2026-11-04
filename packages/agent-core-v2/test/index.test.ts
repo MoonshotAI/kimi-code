@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  WIRE_MIN_READER_VERSION,
   WIRE_PROTOCOL_VERSION,
   EVENT2_REGISTRY,
   IAgentContextMemoryService,
@@ -166,6 +167,7 @@ describe('v1 wire vocabulary', () => {
       {
         type: 'metadata',
         protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
         created_at: expect.any(Number),
       },
       {
@@ -208,6 +210,7 @@ describe('v1 wire vocabulary', () => {
       {
         type: 'metadata',
         protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
         created_at: expect.any(Number),
       },
       {
@@ -450,19 +453,31 @@ describe('AgentRecords persistence metadata', () => {
     expect(migrated.message.toolCalls[0]?.['function']).toBeUndefined();
   });
 
-  it('replays a newer wire version without rewriting its metadata', async () => {
+  it('rejects a wire journal that requires a newer reader', async () => {
     persistence.records.push(
       {
         type: 'metadata',
         protocol_version: '9.9',
+        min_protocol_version: '9.9',
         created_at: 1,
       },
     );
 
-    await expect(ctx.restorePersisted()).resolves.toBeUndefined();
+    expectResumeMatches = false;
+    const failure = await ctx.restorePersisted().catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: 'wire.version_too_low',
+      message:
+        'This session requires a newer version of Kimi Code. Upgrade Kimi Code to the latest version to read this session.',
+      details: {
+        minReaderVersion: '9.9',
+        readerVersion: WIRE_PROTOCOL_VERSION,
+      },
+    });
     expect(persistence.records[0]).toMatchObject({
       type: 'metadata',
       protocol_version: '9.9',
+      min_protocol_version: '9.9',
     });
   });
 
