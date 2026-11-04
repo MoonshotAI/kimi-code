@@ -47,6 +47,8 @@ function fakeHostProcess(
     spawn: (command: string, args: readonly string[] = []) => {
       const key = `${command} ${args.join(' ')}`;
       calls.push(key);
+      if (key.includes('$matched =')) return Promise.resolve(fakeProc(0, '0'));
+      if (key.includes('Get-FileHash') && !script.some((s) => s.match.includes('Get-FileHash'))) return Promise.resolve(fakeProc(0, 'PowerShell 5.1'));
       const hit = script.find((s) => key.includes(s.match));
       if (hit?.hang === true) {
         return Promise.resolve({
@@ -139,6 +141,7 @@ function fakePlugins(
           catalogId: p.catalogId,
         })),
       ),
+    withMcpServersSuspended: async <T>(_id: string, task: () => Promise<T>) => task(),
     getPluginInfo: (input: { id: string }) => {
       const existing = installed.find((p) => p.id === input.id);
       return Promise.resolve({
@@ -393,6 +396,7 @@ describe('kimi-cu entry', () => {
       _serviceBrand: undefined,
       spawn: (command: string, args: readonly string[] = []) => {
         calls.push(`${command} ${args.join(' ')}`);
+        if (args.some((arg) => arg.includes('$matched ='))) return Promise.resolve(fakeProc(0, '0'));
         if (args.some((arg) => arg.includes('Get-FileHash'))) {
           return Promise.resolve(fakeProc(0, 'PowerShell 5.1'));
         }
@@ -473,6 +477,7 @@ describe('kimi-cu entry', () => {
       _serviceBrand: undefined,
       spawn: (command: string, args: readonly string[] = []) => {
         calls.push(`${command} ${args.join(' ')}`);
+        if (args.some((arg) => arg.includes('$matched ='))) return Promise.resolve(fakeProc(0, '0'));
         if (args.some((arg) => arg.includes('Get-FileHash'))) {
           return Promise.resolve(
             command === windowsPowerShellPath()
@@ -528,6 +533,7 @@ describe('kimi-cu entry', () => {
         if (command === windowsPowerShellPath()) {
           return Promise.reject(new Error('Windows PowerShell cannot launch'));
         }
+        if (args.some((arg) => arg.includes('$matched ='))) return Promise.resolve(fakeProc(0, '0'));
         if (args.some((arg) => arg.includes('Get-FileHash'))) {
           return Promise.resolve(fakeProc(0, 'PowerShell 7.5.2'));
         }
@@ -583,6 +589,7 @@ describe('kimi-cu entry', () => {
     const hostProcess = {
       _serviceBrand: undefined,
       spawn: (command: string, args: readonly string[] = []) => {
+        if (args.some((arg) => arg.includes('$matched ='))) return Promise.resolve(fakeProc(0, '0'));
         if (args.some((arg) => arg.includes('Get-FileHash'))) {
           return Promise.resolve(
             fakeProc(2, '', `${command}: missing commands: Get-FileHash, Expand-Archive`),
@@ -625,6 +632,7 @@ describe('kimi-cu entry', () => {
     const hostProcess = {
       _serviceBrand: undefined,
       spawn: (_command: string, args: readonly string[] = []) => {
+        if (args.some((arg) => arg.includes('$matched ='))) return Promise.resolve(fakeProc(0, '0'));
         if (args.some((arg) => arg.includes('Get-FileHash'))) {
           return Promise.resolve(fakeProc(0, 'PowerShell 5.1'));
         }
@@ -675,6 +683,7 @@ describe('kimi-cu entry', () => {
     const hostProcess = {
       _serviceBrand: undefined,
       spawn: (_command: string, args: readonly string[] = []) => {
+        if (args.some((arg) => arg.includes('$matched ='))) return Promise.resolve(fakeProc(0, '0'));
         if (args.some((arg) => arg.includes('Get-FileHash'))) {
           return Promise.resolve(fakeProc(0, 'PowerShell 5.1'));
         }
@@ -710,6 +719,55 @@ describe('kimi-cu entry', () => {
     expect(doctorResults).toEqual([]);
   });
 
+  it.each([false, true])('only stops running Windows processes with consent: %s', async (confirmed) => {
+    const actions: string[] = [];
+    const plugins = fakePlugins([], async () => { actions.push('install'); });
+    plugins.service.withMcpServersSuspended = async (_id, task) => {
+      actions.push('suspend');
+      try { return await task(); } finally { actions.push('resume'); }
+    };
+    const hostProcess = {
+      spawn: async (_command: string, args: readonly string[]) => {
+        const script = args.join(' ');
+        if (script.includes('$matched =')) {
+          if (script.includes('$process.Kill()')) actions.push('stop');
+          return fakeProc(0, '1');
+        }
+        if (script.includes('Get-FileHash')) return fakeProc(0, 'PowerShell 5.1');
+        return fakeProc(0, 'version=0.2.14\nmcp=true\nhelper=embedded\n');
+      },
+    } as IHostProcessService;
+    const entry = createKimiCuEntry(makeCtx({ platform: 'win32', arch: 'x64', plugins: plugins.service, hostProcess }));
+    const pending = entry.install(() => undefined, { stopRunningProcesses: confirmed });
+    if (confirmed) {
+      await pending;
+      expect(actions).toEqual(['suspend', 'stop', 'install', 'resume']);
+    } else {
+      await expect(pending).rejects.toMatchObject({ code: 'capability.processes_running' });
+      expect(actions).toEqual([]);
+    }
+  });
+
+  it('restores MCP connections and aborts installation when process termination fails', async () => {
+    const actions: string[] = [];
+    const plugins = fakePlugins([]);
+    plugins.service.withMcpServersSuspended = async (_id, task) => {
+      actions.push('suspend');
+      try { return await task(); } finally { actions.push('resume'); }
+    };
+    const hostProcess = {
+      spawn: async (_command: string, args: readonly string[]) => {
+        const script = args.join(' ');
+        if (script.includes('$process.Kill()')) return fakeProc(1, '', 'Access denied');
+        return fakeProc(0, script.includes('$matched =') ? '1' : 'PowerShell 5.1');
+      },
+    } as IHostProcessService;
+    const entry = createKimiCuEntry(makeCtx({ platform: 'win32', arch: 'x64', plugins: plugins.service, hostProcess }));
+    await expect(entry.install(() => undefined, { stopRunningProcesses: true })).rejects.toThrow('Access denied');
+    expect(plugins.installs).toEqual([]);
+    expect(actions).toEqual(['suspend', 'resume']);
+  });
+
   it('explains how to recover when Windows plugin files are still in use', async () => {
     const busy = Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
     const plugins = fakePlugins([], () => {
@@ -732,7 +790,7 @@ describe('kimi-cu entry', () => {
     );
 
     await expect(entry.install(() => undefined)).rejects.toThrow(
-      'Kimi Computer Use plugin files are still in use by the current Kimi Code process. Restart Kimi Code, then install again.',
+      'Kimi Computer Use plugin files are still in use. Close other applications using the plugin, then install again.',
     );
   });
 
@@ -759,7 +817,7 @@ describe('kimi-cu entry', () => {
     await entry.install((step) => reports.push(step));
 
     expect(reports).toEqual(['plugin']);
-    expect(host.calls).toHaveLength(1);
+    expect(host.calls.filter((call) => call.includes('& $exe doctor'))).toHaveLength(1);
   });
 
   it('detects all four layers with details', async () => {
@@ -1242,7 +1300,7 @@ describe('kimi-cu entry', () => {
     expect(detected.steps.find((s) => s.id === 'app')?.state).toBe('missing');
   });
 
-  it('reads a non-executable leftover app binary as a broken install', async () => {
+  it.skipIf(process.platform === 'win32')('reads a non-executable leftover app binary as a broken install', async () => {
     const applicationsDir = await fakeAppBundle();
     await chmod(path.join(applicationsDir, 'KimiCU.app', 'Contents', 'MacOS', 'kimi-cu'), 0o644);
     const entry = createKimiCuEntry(makeCtx({ applicationsDir }));

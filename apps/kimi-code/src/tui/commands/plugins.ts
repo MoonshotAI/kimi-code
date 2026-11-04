@@ -16,6 +16,7 @@ import {
   PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
   PluginRemoveConfirmComponent,
+  PluginStopProcessesConfirmComponent,
   PluginsPanelComponent,
   type PluginInstallTrustConfirmResult,
   type PluginMcpSelection,
@@ -499,6 +500,30 @@ async function installCapabilityFromPanel(
   let result: CapabilityStatus | undefined;
   try {
     result = await pollCapabilityInstall(host, capabilityId);
+    if (result?.install.confirmationRequired === 'stop-processes') {
+      panel.clearInstalling();
+      const confirmed = await new Promise<boolean>((resolveConfirmed) => {
+        host.mountEditorReplacement(
+          new PluginStopProcessesConfirmComponent({ label, onDone: resolveConfirmed }),
+        );
+      });
+      if (!confirmed) {
+        host.restoreEditor();
+        host.showStatus(`Install cancelled: ${label}.`);
+        return;
+      }
+      panel.setInstalling(truncateForStatus(label));
+      host.mountEditorReplacement(panel);
+      try {
+        await api.installCapability(capabilityId, { stopRunningProcesses: true });
+      } catch (error) {
+        panel.clearInstalling();
+        host.restoreEditor();
+        host.showError(`Failed to install ${label}: ${formatErrorMessage(error)}`);
+        return;
+      }
+      result = await pollCapabilityInstall(host, capabilityId);
+    }
   } catch (error) {
     log.warn('capability install polling failed', { capabilityId, error });
     result = undefined;
@@ -510,6 +535,12 @@ async function installCapabilityFromPanel(
     return;
   }
   logCapabilityStatus(result);
+  if (result.install.confirmationRequired !== undefined) {
+    host.showError(
+      `${label} installation did not complete. Processes are still running; install again from /plugins.`,
+    );
+    return;
+  }
   if (result.install.error !== undefined) {
     host.showError(`${label} installation failed: ${result.install.error}`);
     host.showStatus('Fix the reported error, then install again from /plugins.', 'warning');

@@ -17,6 +17,11 @@ export interface CapabilityInstallProgress {
   readonly percent?: number;
   readonly error?: string;
   readonly note?: string;
+  readonly confirmationRequired?: 'stop-processes';
+}
+
+export interface CapabilityInstallOptions {
+  readonly stopRunningProcesses?: boolean;
 }
 
 export interface CapabilityDetectResult {
@@ -58,5 +63,5 @@ export interface CapabilityEntry {
   readonly description: string;
   readonly supported: boolean;
   detect(): Promise<CapabilityDetectResult>;
-  install(report: CapabilityInstallReporter): Promise<string | undefined>;
+  install(report: CapabilityInstallReporter, options?: CapabilityInstallOptions): Promise<string | undefined>;
 }

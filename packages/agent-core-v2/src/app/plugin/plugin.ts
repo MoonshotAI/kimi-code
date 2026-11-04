@@ -66,6 +66,7 @@ export interface IPluginService {
   setPluginMcpServerEnabled(input: SetPluginMcpServerEnabledInput): Promise<void>;
   removePlugin(input: RemovePluginInput): Promise<void>;
   reloadPlugins(): Promise<ReloadSummary>;
+  withMcpServersSuspended<T>(id: string, task: () => Promise<T>): Promise<T>;
   reconcileAvailability(marketplace: PluginMarketplace): Promise<void>;
   getPluginInfo(input: GetPluginInfoInput): Promise<PluginInfo>;
   previewPlugin(input: PreviewPluginInput): Promise<PluginCapabilities>;

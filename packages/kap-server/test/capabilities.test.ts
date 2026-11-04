@@ -21,11 +21,11 @@ describe('server-v2 /api/v1 capabilities', () => {
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
 
-  async function postJson<T>(path: string): Promise<{ status: number; body: Envelope<T> }> {
+  async function postJson<T>(path: string, body: unknown = {}): Promise<{ status: number; body: Envelope<T> }> {
     const res = await fetch(`${sharedServer().base}${path}`, {
       method: 'POST',
       headers: sharedAuthHeaders({ 'content-type': 'application/json' }),
-      body: '{}',
+      body: JSON.stringify(body),
     } as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
@@ -66,6 +66,13 @@ describe('server-v2 /api/v1 capabilities', () => {
   it('installs 40418 on an unknown id without side effects', async () => {
     const { body } = await postJson<unknown>('/api/v1/capabilities/nope:install');
     expect(body.code).toBe(40418);
+  });
+
+  it('validates process termination consent as a boolean', async () => {
+    const invalid = await postJson<unknown>('/api/v1/capabilities/nope:install', { stopRunningProcesses: 'true' });
+    expect(invalid.body.code).toBe(40001);
+    const valid = await postJson<unknown>('/api/v1/capabilities/nope:install', { stopRunningProcesses: true });
+    expect(valid.body.code).toBe(40418);
   });
 
   it('rejects bare ids and unknown actions with 40001', async () => {
