@@ -1345,6 +1345,29 @@ describe('conversation feed', () => {
     h.dispatcher.dispose();
   });
 
+  it('keeps a page within 1 MiB by dropping its oldest turns and always keeps the newest turn', async () => {
+    const turnRecords = (turnId: number, text: string): WireRecord[] => [
+      prompt(turnId, `p${turnId}`).serialize(),
+      userPrompt(`p${turnId}`, text).serialize(),
+      new TurnEnded({ agentId: 'main', turnId, reason: 'completed' }).serialize(),
+    ];
+    const large = feedHarness([0, 1, 2].flatMap((turnId) => turnRecords(turnId, `${turnId}:${'x'.repeat(400 * 1024)}`)));
+    await large.dispatcher.restore();
+    await large.feed.ready;
+
+    const page = await large.feed.page(undefined, 10);
+    expect(page.turns.map((turn) => turn.ordinal)).toEqual([1, 2]);
+    expect(page.has_more).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThan(1024 * 1024);
+    large.dispatcher.dispose();
+
+    const huge = feedHarness(turnRecords(0, 'y'.repeat(1200 * 1024)));
+    await huge.dispatcher.restore();
+    await huge.feed.ready;
+    expect(await huge.feed.page(undefined, 10)).toMatchObject({ turns: [{ ordinal: 0 }], has_more: false });
+    huge.dispatcher.dispose();
+  });
+
   it('serves the stored reference of media that fails to load instead of failing the page', async () => {
     const blobs = {
       ...passThroughBlobs,

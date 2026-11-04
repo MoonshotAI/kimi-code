@@ -24,13 +24,13 @@ const agentParamsSchema = z.object({
 });
 
 const turnsQuerySchema = z.object({
-  before: z.coerce.number().int().nonnegative().optional(),
-  limit: z.coerce.number().int().min(1).max(100).optional(),
+  before_ordinal: z.coerce.number().int().nonnegative().optional(),
+  page_size: z.coerce.number().int().min(1).max(200).optional(),
 });
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-const DEFAULT_PAGE_TURNS = 20;
+const DEFAULT_PAGE_TURNS = 50;
 
 export function registerConversationRoutes(
   app: ConversationRouteHost,
@@ -49,14 +49,15 @@ export function registerConversationRoutes(
         ...sessionConflictErrors,
       },
       description:
-        'One page of an agent\'s turns, oldest first: the latest page, or the turns whose ordinal is below before',
+        'One page of an agent\'s turns, oldest first: the latest page, or the turns whose ordinal is below before_ordinal. A page stays within 1 MiB, so it can hold fewer than page_size turns',
       tags: ['sessions'],
     },
     async (req, reply) => {
       const { session_id, agent_id } = req.params;
       try {
         const feed = await conversations.feed(session_id, agent_id);
-        reply.send(okEnvelope(await feed.page(req.query.before, req.query.limit ?? DEFAULT_PAGE_TURNS), req.id));
+        const page = await feed.page(req.query.before_ordinal, req.query.page_size ?? DEFAULT_PAGE_TURNS);
+        reply.send(okEnvelope(page, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
       }

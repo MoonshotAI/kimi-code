@@ -115,7 +115,7 @@ interface WorkTracker {
 }
 
 const GLOBAL_SESSION_ID = '__global__';
-const CONVERSATION_PAGE_TURNS = 20;
+const CONVERSATION_PAGE_TURNS = 10;
 
 function disposeSessionState(state: SessionState): void {
   for (const d of state.lifecycleDisposables) d.dispose();

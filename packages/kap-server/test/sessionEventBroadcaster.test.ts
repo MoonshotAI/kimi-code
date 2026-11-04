@@ -572,6 +572,7 @@ class FakeFeed {
   readonly listeners = new Set<(event: ConversationEvent) => void>();
   turns: ConversationTurn[] = [];
   pages = 0;
+  limits: number[] = [];
   private gate: Promise<void> = Promise.resolve();
 
   holdPages(): () => void {
@@ -589,6 +590,7 @@ class FakeFeed {
 
   async page(_before: number | undefined, limit: number): Promise<{ turns: ConversationTurn[]; has_more: boolean }> {
     this.pages += 1;
+    this.limits.push(limit);
     const turns = this.turns.slice(-limit);
     await this.gate;
     return { turns, has_more: false };
@@ -1693,6 +1695,7 @@ describe('SessionEventBroadcaster', () => {
       release();
       await vi.waitFor(() => expect(pagesOf(frames)).toHaveLength(1));
       expect(pagesOf(frames)[0]).toMatchObject({ session_id: 's1', agent_id: 'main', turns: [{ turn_id: 't0' }], has_more: false });
+      expect(feed.limits).toEqual([10]);
     });
 
     it('sends one page per attached feed however often the agent is subscribed again', async () => {

@@ -40,6 +40,7 @@ import { isMediaPart, type MediaPart } from '@moonshot-ai/agent-core-v2/human/ll
 import type {
   ConversationItem,
   ConversationMessage,
+  ConversationTurn,
   ConversationTurnHeader,
   ConversationTurnsPage,
   Notice,
@@ -115,6 +116,8 @@ const RECORD_EVENTS = [
 ];
 
 const BLOBREF_PREFIX = 'blobref:';
+const PAGE_BYTES = 1024 * 1024;
+const PAGE_ENVELOPE_BYTES = 4 * 1024;
 
 export class ConversationFeed implements IDisposable {
   private state: ConversationState;
@@ -161,7 +164,8 @@ export class ConversationFeed implements IDisposable {
     const start = Math.max(0, stop - limit);
     const selected = turns.slice(start, stop).map((turn) => ({ turn, items: this.itemsOf(turn) }));
     const resolve = await this.loadMedia(selected.flatMap(({ items }) => items));
-    return { turns: selected.map(({ turn, items }) => presentTurn(turn, items, resolve)), has_more: start > 0 };
+    const page = fitPageBudget(selected.map(({ turn, items }) => presentTurn(turn, items, resolve)));
+    return { turns: page, has_more: start > 0 || page.length < selected.length };
   }
 
   dispose(): void {
@@ -536,6 +540,18 @@ function replayGate(): ReplayGate {
     finish = resolve;
   });
   return { done, finish };
+}
+
+function fitPageBudget(turns: readonly ConversationTurn[]): ConversationTurn[] {
+  let bytes = 0;
+  let start = turns.length;
+  while (start > 0) {
+    const size = Buffer.byteLength(JSON.stringify(turns[start - 1])) + 1;
+    if (start < turns.length && bytes + size > PAGE_BYTES - PAGE_ENVELOPE_BYTES) break;
+    bytes += size;
+    start -= 1;
+  }
+  return turns.slice(start);
 }
 
 function liveStepOpen(turn: FoldTurn, stepId: string): boolean {

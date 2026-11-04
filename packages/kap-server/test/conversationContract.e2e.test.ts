@@ -944,6 +944,29 @@ describe('conversation contract e2e', () => {
     channel.close();
   });
 
+  it('S6b: REST pages turns by before_ordinal and page_size', async () => {
+    await boot([{ match: () => true, respond: () => sseText('ok') }]);
+    const sid = await createSession(server!, base);
+    for (const text of ['one', 'two', 'three']) {
+      await submitPrompt(server!, base, sid, text);
+      await idle(server!, base, sid);
+    }
+    await until('three turns ended', async () => {
+      const page = await getTurns(server!, base, sid);
+      return page.turns.length === 3 && page.turns.every((turn) => turn.status === 'ended');
+    });
+    const path = `/api/v1/sessions/${encodeURIComponent(sid)}/agents/${MAIN_AGENT_ID}/turns`;
+
+    const latest = await rest<TurnsPage>(server!, base, `${path}?page_size=2`);
+    expect(latest.turns.map((turn) => textOf(turn.items[0]))).toEqual(['two', 'three']);
+    expect(latest.has_more).toBe(true);
+    const older = await rest<TurnsPage>(server!, base, `${path}?before_ordinal=${latest.turns[0].ordinal}&page_size=2`);
+    expect(older.turns.map((turn) => textOf(turn.items[0]))).toEqual(['one']);
+    expect(older.has_more).toBe(false);
+    const tooLarge = await fetch(`${base}${path}?page_size=201`, { headers: authHeaders(server!) });
+    expect(((await tooLarge.json()) as Envelope<unknown>).code).toBe(40001);
+  });
+
   it('S6: the REST page and the WS turns frame agree', async () => {
     await boot([
       { match: (body) => !body.includes('echo s6'), respond: () => sseToolCall('call_s6', 'Bash', '{"command":"echo s6"}') },
