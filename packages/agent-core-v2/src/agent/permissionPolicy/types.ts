@@ -43,6 +43,7 @@ export type PermissionPolicyResult =
       readonly kind: 'approve';
       readonly reason?: PermissionDecisionReason;
       readonly executionMetadata?: unknown;
+      readonly approvedByUser?: boolean;
     }
   | {
       readonly kind: 'deny';

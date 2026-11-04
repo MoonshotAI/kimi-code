@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { IAutoReviewGate } from '#/features/autoReview/review';
 import { createReminderStub } from '../reminder/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -139,7 +138,6 @@ describe('AgentPlanService plan-guard listener', () => {
   let mode: PermissionMode;
   let files: Map<string, string>;
   let nonInteractive: boolean;
-  let autoReviewEnabled: boolean;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -147,7 +145,6 @@ describe('AgentPlanService plan-guard listener', () => {
     requests = [];
     approvalResponse = { decision: 'approved' };
     nonInteractive = false;
-    autoReviewEnabled = false;
     formatDenyMessage = vi.fn((message: string) => message);
     mode = 'manual';
     files = new Map();
@@ -219,12 +216,6 @@ describe('AgentPlanService plan-guard listener', () => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
         reg.defineInstance(IAgentStateService, new AgentStateService());
-        reg.defineInstance(IAutoReviewGate, {
-          _serviceBrand: undefined,
-          name: 'auto-review',
-          get enabled() { return autoReviewEnabled; },
-          evaluate: async () => undefined,
-        });
         reg.define(IAgentPlanService, AgentPlanService);
       },
     });
@@ -316,31 +307,6 @@ describe('AgentPlanService plan-guard listener', () => {
       expect(decision).toBeUndefined();
       expect(permissionRan).toBe(false);
     });
-
-    it.each(['before', 'after'] as const)(
-      'keeps a reviewer veto when the review listener is registered %s the plan guard',
-      async (order) => {
-        autoReviewEnabled = true;
-        const registerReview = (): void => {
-          permissionStandInRegistered = true;
-          disposables.add(executorEvents.executor.onBeforeExecuteTool((event) => {
-            permissionRan = true;
-            event.waitUntil(async () => ({ veto: { output: 'review denied', isError: true } }));
-          }));
-        };
-        if (order === 'before') registerReview();
-        await enterPlan();
-        if (order === 'after') registerReview();
-
-        const decision = await run(hookContext('Write', {
-          args: { path: PLAN_PATH },
-          accesses: ToolAccesses.writeFile(PLAN_PATH),
-        }));
-
-        expect(decision?.veto).toMatchObject({ output: 'review denied', isError: true });
-        expect(permissionRan).toBe(true);
-      },
-    );
 
     it('blocks a non-plan file addressed through the same tempDir alias prefix', async () => {
       await enterPlan();

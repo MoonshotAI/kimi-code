@@ -339,6 +339,28 @@ describe('AgentLoopRequester operation overrides', () => {
     });
     expect(selectedModels).toEqual(['review-model']);
   });
+
+  it('sends explicit sampling and the selected model thinking effort only when requested', async () => {
+    const requester = createRequester({ value: 0 }, null);
+    const base = requester.request.bind(requester);
+    const sent: Parameters<typeof base>[2][] = [];
+    requester.request = (input, signal, options) => {
+      sent.push(options);
+      return base(input, signal, options);
+    };
+    const { service } = createService(requester);
+
+    await service.request({ messages: history, modelAlias: 'review-model', sampling: { temperature: 0 } });
+    await service.request({ messages: history, modelAlias: 'review-model' });
+    await service.request({ messages: history });
+
+    expect(sent[0]).toMatchObject({ sampling: { temperature: 0 } });
+    expect(typeof sent[0]?.thinkingEffort).toBe('string');
+    expect(sent[1]?.sampling).toBeUndefined();
+    expect(sent[2]?.sampling).toBeUndefined();
+    expect(sent[2]?.thinkingEffort).toBeUndefined();
+    expect(sent).toHaveLength(3);
+  });
 });
 
 describe('AgentLoopRequester measured anchors', () => {
@@ -369,7 +391,7 @@ describe('AgentLoopRequester measured anchors', () => {
     expect(measuredCalls[0]?.usage.inputOther).toBe(40);
   });
 
-  it('does not write the measured anchor for an independent operation', async () => {
+  it('does not write the measured anchor for a detached request', async () => {
     const requester = createRequester({ value: 0 });
     const base = requester.request.bind(requester);
     requester.request = async function* (input, signal, options) {
@@ -384,6 +406,7 @@ describe('AgentLoopRequester measured anchors', () => {
 
     await service.request({
       messages: history,
+      detached: true,
       source: { type: 'operation', requestKind: 'auto_review' },
     });
 

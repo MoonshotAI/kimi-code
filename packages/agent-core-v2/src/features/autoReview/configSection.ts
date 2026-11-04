@@ -9,9 +9,6 @@ export const AutoReviewConfigSchema = z.object({
   timeoutMs: z.number().int().min(1000).max(120000).default(30000),
 });
 
-export interface AutoReviewConfig {
-  model?: string;
-  timeoutMs: number;
-}
+export type AutoReviewConfig = z.infer<typeof AutoReviewConfigSchema>;
 
 registerConfigSection(AUTO_REVIEW_SECTION, AutoReviewConfigSchema);

@@ -247,54 +247,92 @@ describe('AgentPermissionGate', () => {
     expect(decision).toBeUndefined();
   });
 
-  it('only reviews non-read-only calls in Ask When Needed and Never Ask', async () => {
-    autoReviewEnabled = true;
-    const gate = ix.get(IAutoReviewGate);
+  it('defers a static ask until every listener has voted', async () => {
+    policyResult = { policyName: 'p', result: { kind: 'ask' } };
+    const blocked: BeforeExecuteDecision = { veto: { output: 'hook denied', isError: true } };
+    make();
+    executorEvents.executor.onBeforeExecuteTool((event) => {
+      event.veto(blocked.veto!);
+    });
 
-    mode = 'manual';
-    expect(await gate.evaluate(makeContext('Write'))).toBeUndefined();
-    mode = 'yolo';
-    expect(await gate.evaluate(makeContext('Read'))).toBeUndefined();
-    expect(review).not.toHaveBeenCalled();
-
-    mode = 'auto';
-    expect(await gate.evaluate(makeContext('Write'))).toMatchObject({ kind: 'approve' });
-    expect(review).toHaveBeenCalledTimes(1);
+    expect(await executorEvents.fireBeforeExecute(makeContext('Write'))).toEqual(blocked);
+    expect(requestToolApproval).not.toHaveBeenCalled();
   });
 
-  it('exempts ExitPlanMode from Auto Review', async () => {
-    autoReviewEnabled = true;
-    mode = 'yolo';
+  it('only reviews non-read-only calls in Ask When Needed and Never Ask', () => {
+    const gate = ix.get(IAutoReviewGate);
+    const approve: PermissionPolicyEvaluation = { policyName: 'p', result: { kind: 'approve' } };
 
-    expect(await ix.get(IAutoReviewGate).evaluate(makeContext('ExitPlanMode'))).toBeUndefined();
+    expect(gate.applies(makeContext('Write'), approve)).toBe(false);
+    autoReviewEnabled = true;
+    mode = 'manual';
+    expect(gate.applies(makeContext('Write'), approve)).toBe(false);
+    mode = 'yolo';
+    expect(gate.applies(makeContext('Read'), approve)).toBe(false);
+    expect(gate.applies(makeContext('ExitPlanMode'), approve)).toBe(false);
+    expect(gate.applies(makeContext('Write'), { policyName: 'p', result: { kind: 'deny' } })).toBe(false);
+    expect(
+      gate.applies(makeContext('Write'), {
+        policyName: 'session-approval-history',
+        result: { kind: 'approve', approvedByUser: true },
+      }),
+    ).toBe(false);
+    expect(gate.applies(makeContext('Write'), approve)).toBe(true);
+    mode = 'auto';
+    expect(gate.applies(makeContext('Write'), { policyName: 'p', result: { kind: 'ask' } })).toBe(true);
+  });
+
+  it('does not review when another listener vetoes or finally allows', async () => {
+    autoReviewEnabled = true;
+    policyResult = { policyName: 'p', result: { kind: 'approve' } };
+    make();
+    let outcome: 'veto' | 'allow' = 'veto';
+    executorEvents.executor.onBeforeExecuteTool((event) => {
+      if (outcome === 'veto') event.veto({ output: 'hook denied', isError: true });
+      else event.allow();
+    });
+
+    await executorEvents.fireBeforeExecute(makeContext('Write'));
+    outcome = 'allow';
+    expect(await executorEvents.fireBeforeExecute(makeContext('Write'))).toBeUndefined();
+
     expect(review).not.toHaveBeenCalled();
   });
 
   it('honors session approval history without reviewing again', async () => {
     autoReviewEnabled = true;
     mode = 'yolo';
-    policyResult = { policyName: 'session-approval-history', result: { kind: 'approve' } };
+    policyResult = {
+      policyName: 'session-approval-history',
+      result: { kind: 'approve', approvedByUser: true },
+    };
     make();
 
     const decision = await executorEvents.fireBeforeExecute(makeContext('Write'));
 
     expect(decision).toBeUndefined();
     expect(review).not.toHaveBeenCalled();
-    expect(requestToolApproval).not.toHaveBeenCalled();
+    expect(resolvePermissionResolution).not.toHaveBeenCalled();
   });
 
   it.each([
     { mode: 'yolo', expected: 'ask' },
     { mode: 'auto', expected: 'deny' },
   ] as const)('maps reviewer denial and failure to $expected in $mode', async ({ mode: nextMode, expected }) => {
-    autoReviewEnabled = true;
     mode = nextMode;
     const gate = ix.get(IAutoReviewGate);
-    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
-    expect((await gate.evaluate(makeContext('Write')))?.kind).toBe(expected);
+    const approve: PermissionPolicyEvaluation = { policyName: 'p', result: { kind: 'approve' } };
 
+    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
+    expect(await gate.resolve(makeContext('Write'), approve)).toMatchObject({
+      policyName: 'auto-review',
+      result: { kind: expected },
+    });
     autoReviewResult = { kind: 'failed', reason: 'invalid JSON' };
-    expect((await gate.evaluate(makeContext('Write')))?.kind).toBe(expected);
+    expect(await gate.resolve(makeContext('Write'), approve)).toMatchObject({
+      policyName: 'auto-review',
+      result: { kind: expected },
+    });
   });
 
   it.each([
@@ -302,7 +340,6 @@ describe('AgentPermissionGate', () => {
     { from: 'auto', to: 'yolo', expected: 'ask' },
     { from: 'yolo', to: 'auto', expected: 'deny' },
   ] as const)('uses $to when reviewer denial finishes after a mode switch', async ({ from, to, expected }) => {
-    autoReviewEnabled = true;
     mode = from;
     autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
     review.mockImplementation(async () => {
@@ -310,28 +347,28 @@ describe('AgentPermissionGate', () => {
       return autoReviewResult;
     });
 
-    expect((await ix.get(IAutoReviewGate).evaluate(makeContext('Write')))?.kind).toBe(expected);
+    const resolved = await ix.get(IAutoReviewGate).resolve(makeContext('Write'), {
+      policyName: 'p',
+      result: { kind: 'approve' },
+    });
+
+    expect(resolved.result.kind).toBe(expected);
   });
 
   it('asks when Never Ask changes to Always Ask after a reviewer allow', async () => {
     autoReviewEnabled = true;
-    mode = 'auto';
     policyResult = { policyName: 'p', result: { kind: 'approve' } };
     review.mockImplementation(async () => {
       mode = 'manual';
       return autoReviewResult;
     });
     make();
-    executorEvents.executor.onBeforeExecuteTool((event) => {
-      event.allow();
-    });
 
     await executorEvents.fireBeforeExecute(makeContext('Write'));
 
-    expect(requestToolApproval).toHaveBeenCalledTimes(1);
-    expect(requestToolApproval).toHaveBeenCalledWith(
-      expect.anything(),
+    expect(resolvePermissionResolution).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'ask' }),
+      expect.anything(),
       'auto-review',
     );
   });
@@ -355,8 +392,8 @@ describe('AgentPermissionGate', () => {
     await executorEvents.fireBeforeExecute(makeContext('Write'));
 
     expect(review).toHaveBeenCalledTimes(1);
-    expect(requestToolApproval).toHaveBeenCalledTimes(1);
-    expect(requestToolApproval).toHaveBeenCalledWith(expect.anything(), ask, 'p');
+    expect(resolvePermissionResolution).toHaveBeenCalledTimes(1);
+    expect(resolvePermissionResolution).toHaveBeenCalledWith(ask, expect.anything(), 'p');
   });
 
   it('vetoes a statically approved call denied in Never Ask', async () => {
@@ -374,40 +411,48 @@ describe('AgentPermissionGate', () => {
       expect.objectContaining({ toolCall: ctx.toolCall }),
       'auto-review',
     );
-    expect(requestToolApproval).not.toHaveBeenCalled();
   });
 
-  it('preserves static metadata after human approval of a review denial in Ask When Needed', async () => {
+  it('reviews through authorize with the same resolution', async () => {
     autoReviewEnabled = true;
-    mode = 'yolo';
     autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
-    const executionMetadata = { marker: true };
-    policyResult = { policyName: 'p', result: { kind: 'approve', executionMetadata } };
-    make();
+    policyResult = { policyName: 'p', result: { kind: 'approve' } };
 
-    const decision = await executorEvents.fireBeforeExecute(makeContext('Write'));
+    await make().authorize(makeContext('Write'));
 
-    expect(decision).toEqual({ executionMetadata });
-    expect(requestToolApproval).toHaveBeenCalledTimes(1);
-    expect(requestToolApproval).toHaveBeenCalledWith(
+    expect(review).toHaveBeenCalledTimes(1);
+    expect(resolvePermissionResolution).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'deny' }),
       expect.anything(),
-      expect.objectContaining({ kind: 'ask' }),
       'auto-review',
     );
   });
 
+  it('preserves static metadata after human approval of a review denial in Ask When Needed', async () => {
+    mode = 'yolo';
+    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny', reason: 'Too broad.' } };
+    const approve = { kind: 'approve', executionMetadata: { marker: true } } as const;
+
+    const { result } = await ix.get(IAutoReviewGate).resolve(makeContext('Write'), {
+      policyName: 'p',
+      result: approve,
+    });
+
+    expect(result.kind).toBe('ask');
+    if (result.kind !== 'ask') return;
+    expect(result.resolveApproval?.({ decision: 'approved' })).toBe(approve);
+    expect(result.resolveApproval?.({ decision: 'rejected' })).toMatchObject({
+      kind: 'deny',
+      message: expect.stringContaining('Too broad.'),
+    });
+  });
+
   it('reuses a static approval prompt when the reviewer denies in Ask When Needed', async () => {
-    autoReviewEnabled = true;
     mode = 'yolo';
     autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
-    const ask: PermissionPolicyResolution = { kind: 'ask' };
-    policyResult = { policyName: 'p', result: ask };
-    make();
+    const evaluation: PermissionPolicyEvaluation = { policyName: 'p', result: { kind: 'ask' } };
 
-    await executorEvents.fireBeforeExecute(makeContext('Write'));
-
-    expect(requestToolApproval).toHaveBeenCalledTimes(1);
-    expect(requestToolApproval).toHaveBeenCalledWith(expect.anything(), ask, 'p');
+    expect(await ix.get(IAutoReviewGate).resolve(makeContext('Write'), evaluation)).toBe(evaluation);
   });
 
   it('data() reflects the mode and rules services', () => {

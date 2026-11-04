@@ -124,6 +124,7 @@ interface ResolvedLLMRequest {
   readonly tools?: readonly Tool[];
   readonly messages: Message[];
   readonly responseFormat: AgentLLMRequestOverrides['responseFormat'];
+  readonly detached: boolean;
   readonly contextRevision: number;
   readonly promptCacheProbe: 'compaction' | undefined;
   readonly source: AgentLLMRequestSource | undefined;
@@ -543,9 +544,8 @@ export class AgentLoopRequester implements LoopRequester {
         });
       }
       const inputTokens = usage === undefined ? undefined : inputTotal(usage);
-      const measuresTurnContext = request.source?.type !== 'operation' || request.source.requestKind !== 'auto_review';
       if (
-        measuresTurnContext &&
+        !request.detached &&
         usage !== undefined &&
         inputTokens !== undefined &&
         inputTokens + usage.output > 0
@@ -576,7 +576,7 @@ export class AgentLoopRequester implements LoopRequester {
         usage,
         request.source,
       );
-      if (usage !== undefined && measuresTurnContext) {
+      if (usage !== undefined && !request.detached) {
         this.tokenCounting.measured(this.scopeContext.agentContext, request.messages, [message], usage);
       }
       this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
@@ -737,8 +737,8 @@ export class AgentLoopRequester implements LoopRequester {
     const modelAlias = overrides.modelAlias ?? resolved.modelAlias;
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
     const model = this.modelCatalog.get(modelAlias);
-    const maxCompletionTokensCap =
-      this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens;
+    const modelOverrides = this.config.get<ModelOverrides>('modelOverrides');
+    const maxCompletionTokensCap = modelOverrides?.maxCompletionTokens;
     const usedContextTokens =
       overrides.usedContextTokens ??
       (overrides.messages === undefined
@@ -753,23 +753,34 @@ export class AgentLoopRequester implements LoopRequester {
       usedContextTokens,
     });
     const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
+    const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
+    const thinkingEffort = modelAlias === resolved.modelAlias
+      ? resolved.thinkingLevel
+      : resolveThinkingEffortForModel(
+          undefined,
+          thinkingConfig,
+          model,
+          requiresStrictThinkingValidation(this.protocolRegistry, model.protocol, model.providerType),
+        );
     const params: ModelRequestParams = {
       ...baseParams,
       ...budgetParams,
       ...(usedContextTokens === undefined ? {} : { usedContextTokens }),
       ...(optedOut ? { maxCompletionTokens: maxCompletionTokensCap } : {}),
-      ...(overrides.modelAlias !== undefined ? { sampling: { temperature: 0 } } : {}),
+      ...(modelAlias === resolved.modelAlias
+        ? {}
+        : {
+            thinkingEffort,
+            thinkingKeep: resolveThinkingKeep(
+              modelOverrides?.thinkingKeep,
+              thinkingConfig?.keep,
+              thinkingEffort,
+            ),
+          }),
+      sampling: overrides.sampling ?? baseParams.sampling,
     };
 
     const messages = overrides.messages ?? this.context.get();
-    const thinkingEffort = modelAlias === resolved.modelAlias
-      ? resolved.thinkingLevel
-      : resolveThinkingEffortForModel(
-          undefined,
-          this.config.get<ThinkingConfig>(THINKING_SECTION),
-          model,
-          requiresStrictThinkingValidation(this.protocolRegistry, model.protocol, model.providerType),
-        );
     return {
       request: this.protocolRegistry.request(model, params),
       model,
@@ -780,6 +791,7 @@ export class AgentLoopRequester implements LoopRequester {
       tools: overrides.tools === undefined ? undefined : [...overrides.tools],
       messages: [...messages],
       responseFormat: overrides.responseFormat,
+      detached: overrides.detached === true,
       contextRevision: this.context.prefixRevision(),
       promptCacheProbe: overrides.promptCacheProbe,
       source: overrides.source,

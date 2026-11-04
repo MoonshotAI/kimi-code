@@ -20,21 +20,18 @@ import { IAutoReviewService, type AutoReviewResult } from './review';
 const AUTO_REVIEW_MODEL_NAME = 'kimi-k2.8';
 const AUTO_REVIEW_PROVIDER = 'managed:kimi-code';
 
-const DecisionSchema = z.object({
-  risk: z.enum(['low', 'medium', 'high']),
-  decision: z.enum(['allow', 'deny']),
-  reason: z.string().max(1000).nullable(),
-}).strict().superRefine((value, ctx) => {
-  if (value.decision === 'allow' && (value.risk === 'high' || value.reason !== null)) {
-    ctx.addIssue({ code: 'custom', message: 'invalid allow decision' });
-  }
-  if (value.decision === 'deny' && value.risk === 'low') {
-    ctx.addIssue({ code: 'custom', message: 'invalid deny decision' });
-  }
-}).transform(({ reason, ...decision }) => ({
-  ...decision,
-  ...(reason === null ? {} : { reason }),
-}));
+const DecisionSchema = z.union([
+  z.object({
+    risk: z.enum(['low', 'medium']),
+    decision: z.literal('allow'),
+    reason: z.null(),
+  }).strict().transform(({ risk, decision }) => ({ risk, decision })),
+  z.object({
+    risk: z.enum(['medium', 'high']),
+    decision: z.literal('deny'),
+    reason: z.string().max(1000).nullable(),
+  }).strict().transform(({ risk, decision, reason }) => ({ risk, decision, reason: reason ?? undefined })),
+]);
 
 export class AutoReviewService extends Service implements IAutoReviewService {
   declare readonly _serviceBrand: undefined;
@@ -69,15 +66,13 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       const history = this.context.get();
       const fingerprint = authorizationFingerprint(history);
       const cwd = this.workspace.workDir;
-      const model = this.resolveModel();
       const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
-      const deadline = createDeadlineAbortSignal(
-        context.signal,
-        config?.timeoutMs ?? 30000,
-      );
+      const deadline = createDeadlineAbortSignal(context.signal, config.timeoutMs);
       try {
         const response = await abortable(this.loop.requester.request({
-          modelAlias: model,
+          modelAlias: config.model ?? this.defaultModel(),
+          sampling: { temperature: 0 },
+          detached: true,
           responseFormat: {
             type: 'json_schema',
             jsonSchema: {
@@ -121,14 +116,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         const text = response.message.content.filter((part) => part.type === 'text').map((part) => part.text).join('');
         const parsed = DecisionSchema.safeParse(JSON.parse(text));
         if (!parsed.success) return { kind: 'failed', reason: 'The reviewer returned an invalid decision.' };
-        const { risk, decision, reason } = parsed.data;
-        if (decision === 'allow' && risk !== 'high') {
-          return { kind: 'decision', decision: { risk, decision } };
-        }
-        if (decision === 'deny' && risk !== 'low') {
-          return { kind: 'decision', decision: { risk, decision, reason } };
-        }
-        return { kind: 'failed', reason: 'The reviewer returned an invalid decision.' };
+        return { kind: 'decision', decision: parsed.data };
       } finally {
         deadline.clear();
       }
@@ -143,9 +131,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     }
   }
 
-  private resolveModel(): string {
-    const configured = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION)?.model;
-    if (configured !== undefined) return configured;
+  private defaultModel(): string {
     const managed = this.models.findByName(AUTO_REVIEW_MODEL_NAME).find((alias) => {
       try {
         return this.models.get(alias).providerName === AUTO_REVIEW_PROVIDER;
