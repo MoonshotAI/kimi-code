@@ -21,7 +21,7 @@ import { AgentStateService } from '#/agent/state/agentStateService';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { Event2, event2FromRecord } from '#/app/event/event2';
-import { IEventDispatcher } from '#/state/eventDispatcher';
+import { IEventDispatcher, type ReplayOutcome } from '#/state/eventDispatcher';
 import { CycleError, EventDispatcherService } from '#/state/eventDispatcherService';
 import { SubagentSpawned, SubagentStarted, SubagentCompleted, SubagentFailed, SubagentCancelled } from '#/session/subagent/mirrorAgentRun';
 import { defineState } from '#/state/state';
@@ -724,6 +724,75 @@ describe('EventDispatcherService', () => {
 
     expect(state.items).toEqual(['a', 'c']);
     isolated.dispose();
+  });
+
+  it('brackets every restore pass with the replay hooks of runtime participants, failed passes included', async () => {
+    journal.push(new ItemAdd({ item: 'a' }).serialize());
+    const calls: string[] = [];
+    let state: CheckpointedState = { items: [] };
+    dispatcher.attach({
+      id: 'runtime.test.replay-hooks',
+      events: [ItemAdd],
+      undoable: true,
+      transition: (draft, event) => {
+        if (event instanceof ItemAdd) draft.items.push(event.item);
+      },
+      onWillReplay: () => {
+        calls.push(`will:${state.items.join(',')}`);
+      },
+      onDidReplay: (replayed, { ok }) => {
+        calls.push(`did:${ok}:${replayed.items.join(',')}`);
+        return ok ? { items: [...replayed.items, 'settled'] } : replayed;
+      },
+      getState: () => state,
+      commit: (next) => { state = next; },
+    });
+
+    await dispatcher.restore();
+    expect(calls).toEqual(['did:true:a']);
+    expect(state.items).toEqual(['a', 'settled']);
+
+    journal.push(new ItemAdd({ item: 'b' }).serialize());
+    await dispatcher.restore();
+    expect(calls).toEqual(['did:true:a', 'will:a,settled', 'did:true:a,b']);
+    expect(state.items).toEqual(['a', 'b', 'settled']);
+
+    journal.push(new FailingEvent({}).serialize());
+    await expect(dispatcher.restore()).rejects.toThrow('fold failure');
+    expect(calls.slice(3)).toEqual(['will:a,b,settled', 'did:false:a,b']);
+  });
+
+  it('runs only the catching-up participant through its replay hook on late attach, failed catch-ups included', async () => {
+    await dispatcher.dispatch(new ItemAdd({ item: 'a' }));
+    await dispatcher.restore();
+    const calls: string[] = [];
+    const participant = (id: string, failing = false) => {
+      let state: CheckpointedState = { items: [] };
+      return {
+        id,
+        events: [ItemAdd] as const,
+        undoable: false,
+        transition: (draft: CheckpointedState, event: unknown) => {
+          if (failing) throw new Error('catch-up failure');
+          if (event instanceof ItemAdd) draft.items.push(event.item);
+        },
+        onWillReplay: () => {
+          calls.push(`${id}:will`);
+        },
+        onDidReplay: (replayed: CheckpointedState, { ok }: ReplayOutcome) => {
+          calls.push(`${id}:did:${ok}:${replayed.items.join(',')}`);
+          return replayed;
+        },
+        getState: () => state,
+        commit: (next: CheckpointedState) => { state = next; },
+      };
+    };
+
+    await dispatcher.attachLate(participant('first'));
+    await dispatcher.attachLate(participant('second'));
+    await expect(dispatcher.attachLate(participant('failing', true))).rejects.toThrow('catch-up failure');
+
+    expect(calls).toEqual(['first:did:true:a', 'second:did:true:a', 'failing:did:false:']);
   });
 
   it('replays journal history into a late-attached participant and folds live events after', async () => {
