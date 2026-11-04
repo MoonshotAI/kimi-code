@@ -340,6 +340,7 @@ export class StreamingUIController {
     const existingComponent = this._pendingToolComponents.get(toolCall.id);
     if (existingComponent !== undefined) {
       existingComponent.updateToolCall(toolCall);
+      this.host.updateActivityPaneForTranscriptGrouping();
     } else if (existing === undefined) {
       this.finalizeLiveTextBuffers('tool');
       if (toolCall.name !== 'Agent' && toolCall.name !== 'AgentSwarm') {

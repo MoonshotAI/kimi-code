@@ -139,6 +139,7 @@ function host(viewportRows?: number) {
     }),
     viewportRows: () => viewportRows,
     track: vi.fn(),
+    foldingChanged: vi.fn(),
   };
 }
 

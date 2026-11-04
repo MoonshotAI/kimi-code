@@ -221,7 +221,6 @@ import {
   getTranscriptComponentEntry,
   markTranscriptComponent,
 } from './utils/transcript-component-metadata';
-import { foregroundBashHintAt } from './utils/transcript-items';
 import { isTurnBoundaryComponent } from './utils/transcript-turns';
 import { nextTranscriptId } from './utils/transcript-id';
 import {
@@ -545,6 +544,9 @@ export class KimiTUI {
       viewportRows: () => this.state.transcriptView?.viewportRows,
       track: (event, properties) => {
         this.track(event, properties);
+      },
+      foldingChanged: () => {
+        this.updateActivityPane();
       },
     });
     this.uninstallRainbowDance = installRainbowDance(() => {
@@ -4487,8 +4489,7 @@ export class KimiTUI {
     const retry = effectiveMode === 'waiting' ? this.state.appState.stepRetry : null;
     const retryKey =
       retry === null ? '' : `${formatStepRetryLabel(retry)}|${formatStepRetryDetail(retry)}`;
-    const grouping = transcriptGroupingActiveIn(this.state);
-    const hintAt = grouping ? foregroundBashHintAt(this.state.transcriptContainer.children) : undefined;
+    const hintAt = this.state.transcriptContainer.foldedBashHintAt();
     const showBackgroundHint = hintAt !== undefined && Date.now() >= hintAt;
     const activityModeKey = `${effectiveMode}:${placeSpinnerInAgentSwarm ? 'swarm' : 'pane'}:${retryKey}:${String(showBackgroundHint)}`;
 

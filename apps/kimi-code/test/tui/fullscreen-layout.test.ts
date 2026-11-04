@@ -166,6 +166,7 @@ function groupTranscript(state: ReturnType<typeof createTUIState>): void {
     },
     viewportRows: () => view.viewportRows,
     track: () => {},
+    foldingChanged: () => {},
   });
 }
 

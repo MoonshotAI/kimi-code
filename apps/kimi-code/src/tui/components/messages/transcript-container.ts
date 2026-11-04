@@ -29,6 +29,7 @@ import {
   isExpandedComponent,
 } from '#/tui/utils/component-capabilities';
 import {
+  foregroundBashHintAt,
   TranscriptItemInspector,
   transcriptProjectionVersion,
   type LogicalTranscriptItem,
@@ -53,6 +54,7 @@ export interface TranscriptGroupingHost {
   withBottomAnchor(toggle: () => void, removedLines: number): void;
   viewportRows(): number | undefined;
   track(event: string, properties: Record<string, string | number | boolean>): void;
+  foldingChanged(): void;
 }
 
 interface GroupSummaryCache {
@@ -116,6 +118,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
       this.projectionCache = undefined;
     }
     this.ui.requestRender();
+    this.host?.foldingChanged();
   }
 
   setTurnActive(active: boolean): void {
@@ -244,7 +247,18 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
       this.host?.track('transcript_expand_all', { expanded: this.globalExpanded });
     }
     this.ui.requestRender();
+    this.host?.foldingChanged();
     return this.globalExpanded;
+  }
+
+  foldedBashHintAt(): number | undefined {
+    if (!transcriptGroupingActive(this.options)) return undefined;
+    // projectTranscript always groups a foldable, unopened Bash call. Its command event
+    // gives the run a summary, and only running thinking stays outside the group.
+    return foregroundBashHintAt(this.sourceChildren, (call) => {
+      const [item] = this.inspector.read([call], this.options);
+      return item?.kind === 'logical' && canFoldItem(item, this.options) && !this.openedMembers.has(call);
+    });
   }
 
   toolOutputExpandHint(): 'expand' | 'collapse' | null {
@@ -400,6 +414,7 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
     }
     this.projectionCache = undefined;
     this.ui.requestRender();
+    this.host?.foldingChanged();
     return { handled: true };
   }
 

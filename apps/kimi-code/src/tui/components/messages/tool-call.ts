@@ -1583,7 +1583,7 @@ export class ToolCallComponent extends Container {
   private buildDetachHintBlock(): void {
     if (!this.detachHintVisible) return;
     if (this.result !== undefined) return;
-    this.addChild(new Text(currentTheme.dim(DETACH_HINT_TEXT), 2, 0));
+    this.addChild(new CardOnly(new Text(currentTheme.dim(DETACH_HINT_TEXT), 2, 0)));
   }
 
   private syncSubagentElapsedTimer(): void {

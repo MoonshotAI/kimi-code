@@ -157,7 +157,10 @@ const INTERRUPTION_TEXT = [
   'was not run because the approval request was cancelled',
 ] as const;
 
-export function foregroundBashHintAt(children: readonly Component[]): number | undefined {
+export function foregroundBashHintAt(
+  children: readonly Component[],
+  isFolded: (call: ToolCallComponent) => boolean,
+): number | undefined {
   let earliest: number | undefined;
   for (const child of children) {
     if (!(child instanceof ToolCallComponent)) continue;
@@ -166,7 +169,8 @@ export function foregroundBashHintAt(children: readonly Component[]): number | u
       toolCall.name !== 'Bash' ||
       toolCall.args['run_in_background'] === true ||
       toolCall.truncated === true ||
-      child.toolResultView !== undefined
+      child.toolResultView !== undefined ||
+      !isFolded(child)
     ) {
       continue;
     }
