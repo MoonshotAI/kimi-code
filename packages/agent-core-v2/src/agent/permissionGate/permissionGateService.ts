@@ -51,6 +51,19 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
       return;
     }
     const review = await this.autoReview.evaluate(event);
+    if (review?.kind === 'ask') {
+      const staticAsk = evaluation?.result.kind === 'ask' ? evaluation.result : undefined;
+      const result = staticAsk ?? review;
+      const origin = evaluation?.result.kind === 'ask' ? evaluation.policyName : this.autoReview.name;
+      const resolved = await this.toolApproval.requestToolApproval(event, result, origin);
+      if (resolved?.veto !== undefined) {
+        event.veto(resolved.veto);
+        return;
+      }
+      if (evaluation?.result.kind === 'approve') event.pass(evaluation.result.executionMetadata);
+      else event.pass(resolved?.executionMetadata);
+      return;
+    }
     if (evaluation?.result.kind === 'ask') {
       if (review?.kind === 'deny') {
         await this.veto(event, review, this.autoReview.name);
@@ -63,9 +76,6 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
     if (review?.kind === 'deny') {
       await this.veto(event, review, this.autoReview.name);
       return;
-    }
-    if (review?.kind === 'ask') {
-      event.waitUntil(() => this.toolApproval.requestToolApproval(event, review, this.autoReview.name));
     }
     if (evaluation?.result.kind === 'approve') event.pass(evaluation.result.executionMetadata);
   }

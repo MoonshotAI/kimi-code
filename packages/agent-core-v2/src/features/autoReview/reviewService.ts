@@ -18,7 +18,7 @@ import { REVIEW_POLICY } from './policy';
 import { IAutoReviewService, type AutoReviewDecision, type AutoReviewResult } from './review';
 
 const AUTO_REVIEW_MODEL_NAME = 'kimi-k2.8';
-const AUTO_REVIEW_PROVIDER = 'kimi-code';
+const AUTO_REVIEW_PROVIDER = 'managed:kimi-code';
 
 const DecisionSchema = z.object({
   risk: z.enum(['low', 'medium', 'high']),

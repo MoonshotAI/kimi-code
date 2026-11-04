@@ -540,7 +540,7 @@ describe('AutoReviewService', () => {
         });
         reg.definePartialInstance(IModelCatalog, {
           findByName: () => ['kimi-code/kimi-k2.8'],
-          get: () => ({ providerName: 'kimi-code' }) as Model,
+          get: () => ({ providerName: 'managed:kimi-code' }) as Model,
         });
         reg.definePartialInstance(IAgentProfileService, {
           resolveModelContext: () => ({

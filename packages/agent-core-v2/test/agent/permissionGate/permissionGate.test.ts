@@ -276,6 +276,45 @@ describe('AgentPermissionGate', () => {
     expect((await gate.evaluate(makeContext('Write')))?.kind).toBe(expected);
   });
 
+  it.each([
+    { from: 'auto', to: 'manual', expected: 'ask' },
+    { from: 'auto', to: 'yolo', expected: 'ask' },
+    { from: 'yolo', to: 'auto', expected: 'deny' },
+  ] as const)('uses $to when reviewer denial finishes after a mode switch', async ({ from, to, expected }) => {
+    autoReviewEnabled = true;
+    mode = from;
+    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
+    review.mockImplementation(async () => {
+      mode = to;
+      return autoReviewResult;
+    });
+
+    expect((await ix.get(IAutoReviewGate).evaluate(makeContext('Write')))?.kind).toBe(expected);
+  });
+
+  it('asks when Never Ask changes to Always Ask after a reviewer allow', async () => {
+    autoReviewEnabled = true;
+    mode = 'auto';
+    policyResult = { policyName: 'p', result: { kind: 'approve' } };
+    review.mockImplementation(async () => {
+      mode = 'manual';
+      return autoReviewResult;
+    });
+    make();
+    executorEvents.executor.onBeforeExecuteTool((event) => {
+      event.allow();
+    });
+
+    await executorEvents.fireBeforeExecute(makeContext('Write'));
+
+    expect(requestToolApproval).toHaveBeenCalledTimes(1);
+    expect(requestToolApproval).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ kind: 'ask' }),
+      'auto-review',
+    );
+  });
+
   it('does not consult the reviewer after a static denial', async () => {
     autoReviewEnabled = true;
     policyResult = { policyName: 'user-configured-deny', result: { kind: 'deny', message: 'nope' } };

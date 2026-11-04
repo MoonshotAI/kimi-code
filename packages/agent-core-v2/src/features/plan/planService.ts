@@ -9,6 +9,7 @@ import { Error2, ErrorCodes } from '#/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { IAutoReviewGate } from '#/features/autoReview/review';
 import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -65,6 +66,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly agentState: IAgentStateService,
+    @IAutoReviewGate private readonly autoReview: IAutoReviewGate,
   ) {
     super();
     this.agentState.contributeState(planKey);
@@ -112,7 +114,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     if (toolName === 'Write' || toolName === 'Edit') {
       const target = this.planFileTarget(plan.id);
       if (target !== undefined && (await this.writesOnlyPlanFile(event, target))) {
-        event.allow();
+        if (!this.autoReview.enabled) event.allow();
         return;
       }
       event.veto(

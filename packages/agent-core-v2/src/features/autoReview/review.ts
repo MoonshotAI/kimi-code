@@ -20,6 +20,7 @@ export const IAutoReviewService = createDecorator<IAutoReviewService>('autoRevie
 export interface IAutoReviewGate {
   readonly _serviceBrand: undefined;
   readonly name: string;
+  readonly enabled: boolean;
   evaluate(context: ResolvedToolExecutionHookContext): Promise<PermissionPolicyResult | undefined>;
 }
 

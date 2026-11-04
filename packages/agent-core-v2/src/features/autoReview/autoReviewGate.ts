@@ -32,15 +32,20 @@ export class AutoReviewGate implements IAutoReviewGate {
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
-  async evaluate(context: ResolvedToolExecutionHookContext): Promise<PermissionPolicyResult | undefined> {
+  get enabled(): boolean {
     const mode = this.modes.mode;
-    if (!this.flags.enabled(AUTO_REVIEW_FLAG_ID) || (mode !== 'auto' && mode !== 'yolo')) return undefined;
-    if (EXEMPT_TOOLS.has(context.toolCall.name)) return undefined;
+    return this.flags.enabled(AUTO_REVIEW_FLAG_ID) && (mode === 'auto' || mode === 'yolo');
+  }
+
+  async evaluate(context: ResolvedToolExecutionHookContext): Promise<PermissionPolicyResult | undefined> {
+    if (!this.enabled || EXEMPT_TOOLS.has(context.toolCall.name)) return undefined;
+    const mode = this.modes.mode;
     const startedAt = Date.now();
     const result = await this.reviewService.review(context);
+    const currentMode = this.modes.mode;
     if (result.kind === 'failed') {
       this.track(context, 'failed', startedAt);
-      if (mode === 'auto') {
+      if (currentMode === 'auto') {
         return {
           kind: 'deny',
           message: `Auto Review could not complete; the tool was not executed: ${result.reason} Resolve the review error or ask the user for guidance.`,
@@ -59,11 +64,14 @@ export class AutoReviewGate implements IAutoReviewGate {
     }
     const { decision } = result;
     this.track(context, decision.decision, startedAt, decision.risk);
+    if (currentMode !== mode && currentMode === 'manual') {
+      return { kind: 'ask', reason: { review_error: true } };
+    }
     if (decision.decision === 'allow') {
       return { kind: 'approve', reason: { review_risk: decision.risk } };
     }
     const suffix = decision.reason === undefined ? '' : ` ${decision.reason}`;
-    if (mode === 'auto') {
+    if (currentMode === 'auto') {
       return {
         kind: 'deny',
         message: `Auto Review denied tool "${context.toolCall.name}"; it was not executed.${suffix} Do not retry the same action or bypass the review.`,
