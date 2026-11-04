@@ -209,8 +209,8 @@ async function resolveWorkspaceFs(
   required: readonly EnvironmentCapability[],
   target?: WorkspaceDirectory,
 ): Promise<FsScope | undefined> {
-  if (target !== undefined && target.environmentId !== LOCAL_ENVIRONMENT_ID && target.path === ref) {
-    return acquireRootedFs(core, ref, { workDir: ref, additionalDirs: [] }, required, target.environmentId);
+  if (target !== undefined && target.environmentId !== LOCAL_ENVIRONMENT_ID) {
+    return acquireRootedFs(core, ref, { workDir: target.path, additionalDirs: [] }, required, target.environmentId);
   }
   const workspaces = core.accessor.get(IWorkspaceService);
   let ws = await workspaces.get(ref);

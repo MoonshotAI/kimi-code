@@ -1,10 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
+import { IEnvironmentService, IModelCatalog, ISessionManager, IWorkspaceInstanceManager, IWorkspaceService } from '@moonshot-ai/agent-core-v2';
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 
-import { IModelCatalog, ISessionManager, IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
@@ -1176,6 +1175,42 @@ describe('server-v2 /api/v1 fs routes', () => {
     });
     expect(body.code).toBe(0);
     expect(body.data.items.map((i) => i.path)).toContain('zeta.ts');
+  });
+
+  it('workspace fs:suggest searches a remote directory without registering it', async () => {
+    const remote = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-picker-')));
+    await mkdir(join(remote, 'apps', 'frontend'), { recursive: true });
+    await writeFile(join(remote, 'apps', 'frontend', 'package.json'), '{}');
+    const fake = new FakeEnvironment(
+      { environmentId: 'picker-remote', generation: 'picker-generation' },
+      { capabilities: ['fs', 'process'] },
+    );
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
+      id: 'picker-remote-provider',
+      attach: async (host) => {
+        const registration = host.registerEnvironment(
+          Object.assign(fake, { fs: new HostFileSystem(), process: new HostProcessService() }),
+        );
+        return { dispose: () => registration.remove() };
+      },
+    });
+    try {
+      const body = await postWorkspaceSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+        workspace: remote,
+        query: 'front',
+        environment_id: 'picker-remote',
+        environment_cwd: remote,
+        show_hidden: true,
+        limit: 150,
+      });
+      expect(body.code).toBe(0);
+      expect(body.data.items.some((item) => item.kind === 'directory' && item.path === 'apps/frontend')).toBe(true);
+      const workspaces = await server!.core.accessor.get(IWorkspaceService).list();
+      expect(workspaces.some((workspace) => workspace.root === remote)).toBe(false);
+    } finally {
+      await provider.dispose();
+      await rm(remote, { recursive: true, force: true });
+    }
   });
 
   it('workspace fs:suggest lists top-level entries for an empty query', async () => {
