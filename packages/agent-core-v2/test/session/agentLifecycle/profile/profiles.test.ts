@@ -18,6 +18,14 @@ describe('builtin agent profiles', () => {
     expect(agent.tools).toContain('TowerTeardown');
   });
 
+  it('wires session messaging tools into the default profile', () => {
+    const agent = profile('agent');
+    expect(agent.tools).toContain('session_create');
+    expect(agent.tools).toContain('session_list');
+    expect(agent.tools).toContain('session_read');
+    expect(agent.tools).toContain('session_send');
+  });
+
   it('caps the default profile delegation at non-spawning profiles', () => {
     const agent = profile('agent');
     expect(agent.subagents).toEqual(['coder', 'explore', 'plan']);

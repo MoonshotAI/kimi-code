@@ -110,6 +110,16 @@ export interface RetryOrigin {
   readonly trigger?: string;
 }
 
+export interface SessionMessageOrigin {
+  readonly kind: 'session_message';
+  readonly messageId: string;
+  readonly fromSessionId: string;
+  readonly fromTitle: string;
+  readonly replyTo?: string;
+  readonly chainId: string;
+  readonly expectReply: boolean;
+}
+
 export type PromptOrigin =
   | UserPromptOrigin
   | SkillActivationOrigin
@@ -122,7 +132,8 @@ export type PromptOrigin =
   | CronJobOrigin
   | CronMissedOrigin
   | HookResultOrigin
-  | RetryOrigin;
+  | RetryOrigin
+  | SessionMessageOrigin;
 
 export interface ContextMessageTiming {
   readonly llmFirstTokenLatencyMs?: number;

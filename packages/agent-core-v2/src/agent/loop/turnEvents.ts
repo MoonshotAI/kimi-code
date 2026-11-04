@@ -96,7 +96,7 @@ export function turnPromptAttachments(
 }
 
 export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {
-  if (origin.kind === 'user') return true;
+  if (origin.kind === 'user' || origin.kind === 'session_message') return true;
   if (origin.kind === 'system_trigger' && origin.name === 'subagent') return true;
   return (
     (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&

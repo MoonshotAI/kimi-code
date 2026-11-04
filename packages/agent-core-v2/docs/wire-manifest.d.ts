@@ -26,7 +26,7 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (69 record types)
+// Index (70 record types)
 //   changeNotifier.snapshot            changeNotifier.snapshot                                                        src/agent/changeNotifier/changeNotifierOps.ts
 //   config.update                      profile                                                                        src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                                            src/agent/contextMemory/contextEvents.ts
@@ -66,6 +66,7 @@
 //   prompt.aborted                     (none)                                                                         src/agent/prompt/promptEvents.ts
 //   prompt.completed                   (none)                                                                         src/agent/prompt/promptEvents.ts
 //   prompt.steered                     (none)                                                                         src/agent/prompt/promptEvents.ts
+//   session_message.sent               (none)                                                                         src/features/session2session/sessionMessageEvents.ts
 //   subagent.cancelled                 (none)                                                                         src/session/subagent/mirrorAgentRun.ts
 //   subagent.completed                 (none)                                                                         src/session/subagent/mirrorAgentRun.ts
 //   subagent.failed                    (none)                                                                         src/session/subagent/mirrorAgentRun.ts
@@ -163,7 +164,7 @@ interface ContextAppendMessagePayload {
     tools?: ToolDescription[];
     id?: string;
     providerMessageId?: string;
-    origin?: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry' | undefined;
+    origin?: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry' | 'session_message' | undefined;
     isError?: boolean;
     toolCallDisplays?: Record<string, ToolInputDisplay>;
     note?: string;
@@ -632,6 +633,27 @@ interface PromptSteeredPayload {
 
 /**
  * states: (none)
+ * owner: src/features/session2session/sessionMessageEvents.ts
+ */
+interface SessionMessageSentPayload {
+  _name: 'session_message.sent';
+  agentId: string;
+  toSessionId: string;
+  message: string;
+  /** SessionMessageOrigin */
+  origin: {
+    kind: 'session_message';
+    messageId: string;
+    fromSessionId: string;
+    fromTitle: string;
+    replyTo?: string;
+    chainId: string;
+    expectReply: boolean;
+  };
+}
+
+/**
+ * states: (none)
  * owner: src/session/subagent/mirrorAgentRun.ts
  */
 interface SubagentCancelledPayload {
@@ -960,7 +982,7 @@ interface TurnPromptPayload {
   agentId: string;
   input: readonly ContentPart[];
   /** PromptOrigin */
-  origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry';
+  origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry' | 'session_message';
   promptId?: string;
   turnId?: number;
 }
@@ -974,7 +996,7 @@ interface TurnSteerPayload {
   agentId: string;
   input: readonly ContentPart[];
   /** PromptOrigin */
-  origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry';
+  origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry' | 'session_message';
   messageId?: string;
   promptIds?: string[];
   turnId?: number;
@@ -1067,6 +1089,7 @@ interface WirePayloadMap {
   "prompt.aborted": PromptAbortedPayload;
   "prompt.completed": PromptCompletedPayload;
   "prompt.steered": PromptSteeredPayload;
+  "session_message.sent": SessionMessageSentPayload;
   "subagent.cancelled": SubagentCancelledPayload;
   "subagent.completed": SubagentCompletedPayload;
   "subagent.failed": SubagentFailedPayload;

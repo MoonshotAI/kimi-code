@@ -19,6 +19,7 @@ export interface AgentToolContributionOptions {
   readonly disclosure?: ToolDisclosure;
   readonly when?: (accessor: ServicesAccessor) => boolean;
   readonly requiredEnvironmentCapabilities?: readonly EnvironmentCapability[];
+  readonly activateWhenMissingFromProfile?: boolean;
   readonly domain?: string;
 }
 

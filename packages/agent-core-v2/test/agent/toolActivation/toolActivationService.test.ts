@@ -174,6 +174,12 @@ describe('AgentToolActivationService', () => {
       additionalServices: (reg) => {
         reg.definePartialInstance(IAgentProfileService, {
           data: () => profileData as ProfileData,
+          addActiveTool: (name: string) => {
+            const current = profileData.activeToolNames;
+            if (current !== undefined && !current.includes(name)) {
+              profileData.activeToolNames = [...current, name];
+            }
+          },
         });
         reg.definePartialInstance(IEventBus, {
           subscribe: () => toDisposable(() => {}),
@@ -416,6 +422,29 @@ describe('AgentToolActivationService', () => {
     expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
     expect(registry.resolve('Beta')).toBeUndefined();
     expect(registry.resolve(SELECT_TOOLS_TOOL_NAME)).toBeInstanceOf(SelectToolsStub);
+    expect(betaConstructions).toBe(0);
+  });
+
+  it('activates opt-in tools missing from a historical profile while honoring disallowedTools', async () => {
+    profileData.activeToolNames = ['Alpha'];
+    profileData.disallowedTools = ['Beta'];
+    registerAgentToolService(IAlphaTool, AlphaTool, {
+      name: 'Alpha',
+      activateWhenMissingFromProfile: true,
+    });
+    registerAgentToolService(IBetaTool, BetaTool, {
+      name: 'Beta',
+      activateWhenMissingFromProfile: true,
+    });
+    const ix = createActivationHost();
+
+    await ix.get(IAgentToolActivationService).activate();
+
+    const registry = ix.get(IAgentToolRegistryService);
+    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
+    expect(registry.resolve('Beta')).toBeUndefined();
+    expect(profileData.activeToolNames).toContain('Alpha');
+    expect(profileData.activeToolNames).not.toContain('Beta');
     expect(betaConstructions).toBe(0);
   });
 

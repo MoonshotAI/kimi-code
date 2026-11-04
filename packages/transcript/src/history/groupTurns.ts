@@ -591,7 +591,9 @@ function isUserSlashPrompt(message: HistoryMessage): boolean {
 function triggerPromptIdOf(message: HistoryMessage): string | undefined {
   if (typeof message.id !== 'string' || message.id.length === 0) return undefined;
   const origin = message.origin as { kind?: unknown; trigger?: unknown } | undefined;
-  if (origin?.kind === undefined || origin.kind === 'user') return message.id;
+  if (origin?.kind === undefined || origin.kind === 'user' || origin.kind === 'session_message') {
+    return message.id;
+  }
   return (
     (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
     origin.trigger === 'user-slash'
@@ -621,6 +623,8 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
       return { kind: 'user', payload: origin };
     case 'user':
       return projectTranscriptUserTurnOrigin(origin);
+    case 'session_message':
+      return { kind: 'other', payload: origin };
     case undefined:
       return { kind: 'user' };
     default:

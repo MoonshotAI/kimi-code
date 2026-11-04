@@ -235,6 +235,30 @@ describe('toProtocolMessage', () => {
     );
   });
 
+  it('passes through session message origins and their source metadata', () => {
+    const origin = {
+      kind: 'session_message',
+      messageId: 'msg_peer',
+      fromSessionId: 'session_peer',
+      fromTitle: 'Peer',
+      replyTo: 'msg_original',
+      chainId: 'chain_peer',
+      expectReply: true,
+    } as const;
+    const msg: ContextMessage = {
+      ...userText('[message_id: msg_peer][from: Peer(session_peer)]\nHello'),
+      id: 'msg_peer',
+      origin,
+    };
+
+    const projected = toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT);
+
+    expect(projected.metadata).toEqual({ origin });
+    expect(projected.content).toEqual([
+      { type: 'text', text: '[message_id: msg_peer][from: Peer(session_peer)]\nHello' },
+    ]);
+  });
+
   it('retains composer metadata separately from the projected model content', () => {
     const clientMetadata = [{ composer: { version: 1, refs: ['example-ref'] } }];
     const msg: ContextMessage = { ...userText('visible'), origin: { kind: 'user', clientMetadata } };

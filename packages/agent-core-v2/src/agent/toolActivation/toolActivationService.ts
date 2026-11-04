@@ -66,10 +66,13 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         if (this.toolRegistry.resolve(options.name) !== undefined) continue;
         if (!isToolActive(workspaceVeto, options.name, source)) continue;
         const activeByProfile =
-          options.name === SELECT_TOOLS_TOOL_NAME
+          options.activateWhenMissingFromProfile === true
             ? isToolActive(disclosurePolicy, options.name, source)
-            : isToolActive(policy, options.name, source);
+            : options.name === SELECT_TOOLS_TOOL_NAME
+              ? isToolActive(disclosurePolicy, options.name, source)
+              : isToolActive(policy, options.name, source);
         if (!activeByProfile) continue;
+        if (options.activateWhenMissingFromProfile === true) this.profile.addActiveTool(options.name);
         if (!isToolAvailable(options, accessor, this.environment)) continue;
         const tool = accessor.get(id);
         const registration = this.toolRegistry.register(tool, {

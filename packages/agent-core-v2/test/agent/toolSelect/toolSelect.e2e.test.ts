@@ -12,16 +12,25 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
-import { LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
-import { toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
+import { DYNAMIC_TOOL_SCHEMA_VARIANT, LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
+import { ToolSelectInitialized, toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
+import { LlmToolsSnapshot } from '#/agent/loop/llmRequestOps';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { createWireMetadataRecord } from '#/wire/record';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import '#/agent/tools/select-tools/selectToolsTool';
 
-import { createTestAgent, mcpServices, sessionService, type TestAgentContext } from '../../harness';
+import {
+  createTestAgent,
+  InMemoryWireRecordPersistence,
+  mcpServices,
+  sessionService,
+  wireRecordPersistenceServices,
+  type TestAgentContext,
+} from '../../harness';
 import { createMemoryMcpOAuthStore, startInProcessHttpMcpServer } from '../../mcpCore/stubs';
 import type { Message } from '#human/llm/message';
 
@@ -537,6 +546,77 @@ describe('same-turn MCP tool replacement', () => {
       await oauthService.shutdown();
       await server.close();
       vi.restoreAllMocks();
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+
+describe('tool snapshot refresh after resume', () => {
+  it('makes newly registered builtin tools available and records each distinct tool table once', async () => {
+    vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
+    const oldTool = {
+      name: 'OldTool',
+      description: 'Old tool',
+      parameters: {},
+      source: 'builtin' as const,
+      origin: 'initial' as const,
+    };
+    const persistence = new InMemoryWireRecordPersistence([
+      createWireMetadataRecord(),
+      new ToolSelectInitialized({ agentId: 'main', tools: [oldTool] }).serialize(),
+      new LlmToolsSnapshot({
+        agentId: 'main',
+        hash: 'old-tools-hash',
+        tools: [{ name: oldTool.name, description: oldTool.description, parameters: oldTool.parameters }],
+      }).serialize(),
+    ]);
+    const ctx = createTestAgent(wireRecordPersistenceServices(persistence));
+    try {
+      ctx.get(IAgentToolSelectService);
+      ctx.get(IAgentToolExecutorService);
+      ctx.configure({
+        modelCapabilities: { ...DISCLOSURE_CAPABILITIES, dynamically_loaded_tools: false },
+      });
+      await ctx.restorePersisted();
+      const historicalInitial = ctx.get(IAgentStateService).get(toolSelectKey).initial;
+      ctx.get(IAgentToolRegistryService).register(new StubMcpTool('session_send'), { source: 'builtin' });
+      await ctx.get(IAgentToolSelectService).prepareForRequest();
+
+      const refreshed = ctx.get(IAgentToolSelectService).defaultTools(false);
+      expect(toolNames(refreshed)).toContain('session_send');
+      expect(toolNames(refreshed)).not.toContain('OldTool');
+      expect(ctx.get(IAgentStateService).get(toolSelectKey).initial).toEqual(historicalInitial);
+
+      const selected = new StubMcpTool('mcp__srv__selected');
+      ctx.get(IAgentToolRegistryService).register(selected, { source: 'mcp', disclosure: 'deferred' });
+      await ctx.get(IAgentToolSelectService).prepareForRequest();
+      expect(toolNames(ctx.get(IAgentToolSelectService).defaultTools(false))).not.toContain(selected.name);
+      ctx.get(IAgentContextMemoryService).append({
+        role: 'system',
+        content: [],
+        tools: [{ name: selected.name, description: selected.description, parameters: selected.parameters }],
+        origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+      });
+      expect(toolNames(ctx.get(IAgentToolSelectService).defaultTools(false))).toContain(selected.name);
+
+      ctx.mockNextResponse({ type: 'text', text: 'done' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use the new tool' }] });
+      await ctx.untilTurnEnd();
+
+      const snapshots = persistence.records.filter((record) => record.type === 'llm.tools_snapshot');
+      expect(snapshots).toHaveLength(2);
+      expect(snapshots[1]?.['hash']).not.toBe('old-tools-hash');
+      const snapshotTools = snapshots[1]?.['tools'] as { name: string }[];
+      expect(toolNames(snapshotTools)).toContain('session_send');
+      expect(toolNames(snapshotTools)).not.toContain('OldTool');
+
+      ctx.mockNextResponse({ type: 'text', text: 'done again' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue with the same tools' }] });
+      await ctx.untilTurnEnd();
+      expect(persistence.records.filter((record) => record.type === 'llm.tools_snapshot')).toHaveLength(2);
+    } finally {
+      await ctx.dispose();
       vi.unstubAllEnvs();
     }
   });

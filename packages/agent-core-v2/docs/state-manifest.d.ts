@@ -870,6 +870,14 @@ export interface AgentStateSnapshot {
     } | /* RetryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'retry';
       readonly trigger?: string;
+    } | /* SessionMessageOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'session_message';
+      readonly messageId: string;
+      readonly fromSessionId: string;
+      readonly fromTitle: string;
+      readonly replyTo?: string;
+      readonly chainId: string;
+      readonly expectReply: boolean;
     };
     readonly isError?: boolean;
     readonly partial?: boolean;
@@ -1083,6 +1091,14 @@ export interface AgentStateSnapshot {
     } | /* RetryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'retry';
       readonly trigger?: string;
+    } | /* SessionMessageOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'session_message';
+      readonly messageId: string;
+      readonly fromSessionId: string;
+      readonly fromTitle: string;
+      readonly replyTo?: string;
+      readonly chainId: string;
+      readonly expectReply: boolean;
     };
     readonly isError?: boolean;
     readonly partial?: boolean;
@@ -1305,6 +1321,14 @@ export interface AgentStateSnapshot {
     } | /* RetryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'retry';
       readonly trigger?: string;
+    } | /* SessionMessageOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'session_message';
+      readonly messageId: string;
+      readonly fromSessionId: string;
+      readonly fromTitle: string;
+      readonly replyTo?: string;
+      readonly chainId: string;
+      readonly expectReply: boolean;
     };
     readonly isError?: boolean;
     readonly partial?: boolean;
@@ -1519,6 +1543,14 @@ export interface AgentStateSnapshot {
     } | /* RetryOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
       readonly kind: 'retry';
       readonly trigger?: string;
+    } | /* SessionMessageOrigin — packages/agent-core-v2/src/agent/contextMemory/types.ts */ {
+      readonly kind: 'session_message';
+      readonly messageId: string;
+      readonly fromSessionId: string;
+      readonly fromTitle: string;
+      readonly replyTo?: string;
+      readonly chainId: string;
+      readonly expectReply: boolean;
     };
     readonly isError?: boolean;
     readonly partial?: boolean;

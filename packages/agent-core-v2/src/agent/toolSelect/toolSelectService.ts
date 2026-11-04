@@ -274,6 +274,19 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return this.modelState().initial ?? this.liveTools('initial');
   }
 
+  private staticTools(): readonly ToolSelectTool[] {
+    const state = this.modelState();
+    const historical = state.initial;
+    if (historical === undefined) return this.liveTools('initial');
+    const historicalNames = new Set(historical.map((tool) => tool.name));
+    const loaded = collectLoadedDynamicTools(this.context.get(), state.current);
+    return state.current.filter((tool) => {
+      if (historicalNames.has(tool.name)) return true;
+      if (tool.source === 'mcp' || tool.disclosure === 'deferred') return loaded.has(tool.name);
+      return true;
+    });
+  }
+
   private liveTools(origin: ToolSelectTool['origin']): readonly ToolSelectTool[] {
     return this.toolRegistry.list()
       .map((info) => normalizeTool(info, origin))
@@ -314,7 +327,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private defaultToolsForDisclosure(disclosure: boolean): readonly Tool[] {
-    const entries = disclosure ? this.capableTools() : this.initialTools();
+    const entries = disclosure ? this.capableTools() : this.staticTools();
     return this.shapeToolsForDisclosure(entries, disclosure).map((tool) => ({
       name: tool.name,
       description: tool.description,

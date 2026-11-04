@@ -186,6 +186,7 @@ export function compactionUserMessageDisposition(
   if (origin === undefined) return 'keep';
   switch (origin.kind) {
     case 'user':
+    case 'session_message':
       return 'keep';
     case 'skill_activation':
     case 'plugin_command':

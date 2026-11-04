@@ -115,6 +115,7 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'mcp.server_failure_resolved',
   'tool_select.initialized',
   'tool_select.tools_changed',
+  'session_message.sent',
 ]);
 
 describe('v1 wire vocabulary', () => {

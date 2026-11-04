@@ -56,6 +56,34 @@ describe('client metadata in transcript user origins', () => {
     expect(turn?.prompt).toBe('visible prompt');
   });
 
+  it('passes through session message source metadata on the rebuilt turn', () => {
+    const origin = {
+      kind: 'session_message',
+      messageId: 'msg_peer',
+      fromSessionId: 'session_peer',
+      fromTitle: 'Peer',
+      chainId: 'chain_peer',
+      expectReply: false,
+    };
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        id: 'msg_peer',
+        role: 'user',
+        content: [{ type: 'text', text: '[message_id: msg_peer][from: Peer(session_peer)]\nHello' }],
+        toolCalls: [],
+        origin,
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'reply' }], toolCalls: [] },
+    ]);
+
+    const turn = snapshot.items.find((item) => item.kind === 'turn');
+    expect(turn).toMatchObject({
+      triggerPromptId: 'msg_peer',
+      origin: { kind: 'other', payload: origin },
+      prompt: '[message_id: msg_peer][from: Peer(session_peer)]\nHello',
+    });
+  });
+
   it('projects and validates independent document snapshots without losing their nested fields', () => {
     const clientMetadata = [
       { kimi_code_composer: { version: 1, doc: { type: 'doc', content: [{ type: 'paragraph' }] }, captureIds: ['capture-a'] } },
