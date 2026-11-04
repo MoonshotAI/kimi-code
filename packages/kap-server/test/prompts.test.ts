@@ -554,6 +554,52 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(projected.metadata).toEqual(metadata);
   });
 
+  it.each([
+    ['pending', 'queued'],
+    ['running', 'running'],
+    ['steered', 'running'],
+    ['blocked', 'blocked'],
+    ['failed', 'failed'],
+  ] as const)('projects the engine prompt state %s as the %s status', (state, status) => {
+    const projected = projectPromptSnapshot({
+      id: 'msg_state',
+      userMessageId: 'msg_state',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      state,
+      message: { role: 'user', content: [{ type: 'text', text: 'hello' }], origin: { kind: 'user' } },
+    });
+    expect(projected.status).toBe(status);
+  });
+
+  it.each([
+    ['blocked', async (ctx: { block: boolean }) => {
+      ctx.block = true;
+    }],
+    ['failed', async () => {
+      throw new Error('prompt hook crashed');
+    }],
+  ] as const)('reports an idle submission whose prompt gate ends it without a turn as %s', async (status, gate) => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const loop = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentLoopService);
+    const hook = loop.hooks.onBeforeSubmitPrompt.register('prompts-test-gate', async (ctx, next) => {
+      await gate(ctx);
+      await next();
+    });
+    try {
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'hello' }],
+      });
+      expect(submitted.body.code).toBe(0);
+      expect(submitted.body.data.status).toBe(status);
+    } finally {
+      hook.dispose();
+    }
+  });
+
   it('honors a client-chosen prompt_id on submit', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);

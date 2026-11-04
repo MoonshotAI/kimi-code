@@ -538,7 +538,7 @@ export function projectPromptSnapshot(prompt: {
 }) {
   const status = prompt.state === 'running' || prompt.state === 'steered'
     ? 'running'
-    : prompt.state === 'blocked' ? 'blocked' : 'queued';
+    : prompt.state === 'blocked' || prompt.state === 'failed' ? prompt.state : 'queued';
   const origin = prompt.message.origin;
   return {
     prompt_id: prompt.id,
