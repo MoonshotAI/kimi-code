@@ -65,6 +65,7 @@ function authorizationEntry(message: ContextMessage): ReviewText[] {
 function authorizationRole(
   message: ContextMessage,
 ): 'human-instruction' | 'direct-parent-instruction' | undefined {
+  if (message.origin === undefined) return 'human-instruction';
   if (message.origin?.kind === 'user' || message.origin?.kind === 'plugin_command') {
     return 'human-instruction';
   }

@@ -262,6 +262,27 @@ describe('AgentPermissionGate', () => {
     expect(review).toHaveBeenCalledTimes(1);
   });
 
+  it('exempts ExitPlanMode from Auto Review', async () => {
+    autoReviewEnabled = true;
+    mode = 'yolo';
+
+    expect(await ix.get(IAutoReviewGate).evaluate(makeContext('ExitPlanMode'))).toBeUndefined();
+    expect(review).not.toHaveBeenCalled();
+  });
+
+  it('honors session approval history without reviewing again', async () => {
+    autoReviewEnabled = true;
+    mode = 'yolo';
+    policyResult = { policyName: 'session-approval-history', result: { kind: 'approve' } };
+    make();
+
+    const decision = await executorEvents.fireBeforeExecute(makeContext('Write'));
+
+    expect(decision).toBeUndefined();
+    expect(review).not.toHaveBeenCalled();
+    expect(requestToolApproval).not.toHaveBeenCalled();
+  });
+
   it.each([
     { mode: 'yolo', expected: 'ask' },
     { mode: 'auto', expected: 'deny' },

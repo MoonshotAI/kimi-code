@@ -50,6 +50,10 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
       await this.veto(event, evaluation.result, evaluation.policyName);
       return;
     }
+    if (evaluation?.policyName === 'session-approval-history' && evaluation.result.kind === 'approve') {
+      event.pass(evaluation.result.executionMetadata);
+      return;
+    }
     const review = await this.autoReview.evaluate(event);
     if (review?.kind === 'ask') {
       const staticAsk = evaluation?.result.kind === 'ask' ? evaluation.result : undefined;
@@ -90,6 +94,13 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
       evaluation.result.kind !== 'ask' &&
       evaluation.result.kind !== 'approve'
     ) {
+      return this.toolApproval.resolvePermissionResolution(
+        evaluation.result,
+        context,
+        evaluation.policyName,
+      );
+    }
+    if (evaluation?.policyName === 'session-approval-history') {
       return this.toolApproval.resolvePermissionResolution(
         evaluation.result,
         context,

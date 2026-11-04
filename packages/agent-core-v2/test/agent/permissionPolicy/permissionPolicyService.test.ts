@@ -597,6 +597,16 @@ describe('AutoReviewService', () => {
     expect(content).toContain('rm generated/file');
   });
 
+  it('treats originless legacy user messages as human instructions', async () => {
+    history = [{ role: 'user', content: [{ type: 'text', text: 'Remove only generated files.' }] }];
+
+    await service().review(policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' } }));
+
+    const content = JSON.stringify(requestOverrides?.messages);
+    expect(content).toContain('human-instruction');
+    expect(content).toContain('Remove only generated files.');
+  });
+
   it('reuses the frozen project instructions across reviews', async () => {
     const reviewer = service();
     await reviewer.review(policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' } }));

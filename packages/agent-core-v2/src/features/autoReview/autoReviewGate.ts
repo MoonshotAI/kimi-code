@@ -19,6 +19,7 @@ const EXEMPT_TOOLS = new Set([
   'TaskOutput',
   'CronList',
   'GetGoal',
+  'ExitPlanMode',
 ]);
 
 export class AutoReviewGate implements IAutoReviewGate {
