@@ -335,7 +335,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     scripted!.mockNextResponse({
       type: 'function',
       id: 'call_read',
-      name: 'Read',
+      name: 'ReadMediaFile',
       arguments: JSON.stringify({ path: filePath }),
     });
     scripted!.mockNextText('read it');
@@ -498,7 +498,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(mediaUpdates[0]?.sessionUpdate).toBe('tool_call');
     expect(mediaUpdates[0]?.status).toBe('pending');
     expect(mediaUpdates[0]?.title).toBe('ReadMediaFile');
-    expect(mediaUpdates[0]?.kind).toBe('other');
+    expect(mediaUpdates[0]?.kind).toBe('read');
     expect(mediaUpdates[0]?.rawInput).toBeUndefined();
     expect(textOf(mediaUpdates[0])).toBe(args.slice(0, splitAt));
     expect(mediaUpdates[1]?.sessionUpdate).toBe('tool_call_update');
@@ -506,7 +506,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(textOf(mediaUpdates[1])).toBe(args);
     expect(mediaUpdates[2]?.sessionUpdate).toBe('tool_call_update');
     expect(mediaUpdates[2]?.status).toBe('in_progress');
-    expect(mediaUpdates[2]?.kind).toBe('other');
+    expect(mediaUpdates[2]?.kind).toBe('read');
     expect(mediaUpdates[2]?.rawInput).toEqual({ path: mediaPath });
 
     const terminal = mediaUpdates.at(-1);

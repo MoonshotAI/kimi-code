@@ -44,9 +44,6 @@ import '#/agent/tools/ask-user-question/askUserQuestionTool';
 import '#/agent/tools/edit/editTool';
 import '#/agent/tools/fetch-url/fetchUrlTool';
 import '#/agent/tools/os/bash/bashTool';
-import '#/agent/tools/os/glob/globTool';
-import '#/agent/tools/os/grep/grepTool';
-import '#/agent/tools/os/read/readTool';
 import '#/agent/tools/os/write/writeTool';
 import '#/agent/tools/select-tools/selectToolsTool';
 import '#/features/skill/tools/skillTool';
@@ -226,6 +223,17 @@ describe('AgentToolActivationService', () => {
     }
   });
 
+  it('does not register the removed file inspection tools', async () => {
+    const ix = createActivationHost();
+
+    await ix.get(IAgentToolActivationService).activate();
+
+    const registry = ix.get(IAgentToolRegistryService);
+    for (const name of ['Read', 'Grep', 'Glob']) {
+      expect(registry.resolve(name)).toBeUndefined();
+    }
+  });
+
   it('keeps an AgentTool unconstructed during scope creation and resolves a real instance', () => {
     _clearScopedRegistryForTests();
     registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
@@ -263,12 +271,9 @@ describe('AgentToolActivationService', () => {
 
     expect(requirements).toMatchObject({
       Agent: ['process'],
-      Read: undefined,
       Write: ['fs'],
       Edit: ['fs'],
       Bash: ['process'],
-      Grep: ['fs', 'process'],
-      Glob: ['fs', 'process'],
     });
   });
 
@@ -607,7 +612,7 @@ describe('AgentToolActivationService', () => {
     });
 
     it('feeds every built-in contribution through the App-scope assembly unchanged', async () => {
-      expect(savedContributions).toHaveLength(14);
+      expect(savedContributions).toHaveLength(11);
       for (const contribution of savedContributions) {
         registerAgentToolService(contribution.id, contribution.ctor, contribution.options);
       }

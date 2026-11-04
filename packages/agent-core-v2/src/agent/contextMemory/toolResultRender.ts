@@ -20,8 +20,6 @@ const WALL_TIME_TOOL_NAMES: ReadonlySet<string> = new Set([
   'AgentSwarm',
   'Bash',
   'FetchURL',
-  'Glob',
-  'Grep',
   'WebSearch',
 ]);
 

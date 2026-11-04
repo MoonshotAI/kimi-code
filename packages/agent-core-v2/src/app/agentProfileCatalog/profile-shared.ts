@@ -104,7 +104,7 @@ export function subagentTypeNotAllowedMessage(
 }
 
 const WINDOWS_NOTES =
-  'IMPORTANT: You are on Windows. The Bash tool runs through Git Bash, so use Unix shell syntax inside Bash commands — `/dev/null` not `NUL`, and forward slashes in paths. For file operations, always prefer the built-in tools (Read, Write, Edit, Glob, Grep) over Bash commands — they work reliably across all platforms.';
+  'IMPORTANT: You are on Windows. The Bash tool runs through Git Bash, so use Unix shell syntax inside Bash commands — `/dev/null` not `NUL`, and forward slashes in paths. Use Write and Edit for file modifications and Bash for file searches and text reads.';
 
 export const DEFAULT_PRODUCT_NAME = 'Kimi Code CLI';
 

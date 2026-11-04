@@ -269,6 +269,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               core.accessor.get(IFileService),
               core.accessor.get(IBootstrapService).cacheDir,
               {
+                sessionMediaStore: session.accessor.get(ISessionMediaStore),
                 telemetry,
                 providerType: resolved.profile.getModelProviderType(req.body.model),
                 resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => {

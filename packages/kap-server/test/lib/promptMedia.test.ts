@@ -129,7 +129,7 @@ describe('resolvePromptMediaFiles with an environment attachments target', () =>
     expectStoredBytes(fake.files, target, data);
     expect(result.content[0]).toEqual({
       type: 'text',
-      text: `Attached file "big.bin" (application/octet-stream, ${String(size)} bytes): ${target} — open it with the Read tool`,
+      text: `Attached file "big.bin" (application/octet-stream, ${String(size)} bytes): ${target} — open it with ReadMediaFile for text, or use Bash`,
     });
   });
 

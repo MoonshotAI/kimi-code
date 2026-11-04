@@ -6,7 +6,9 @@ import { inflateRawSync } from 'node:zlib';
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
 import { mcpResultToExecutableOutput } from '@moonshot-ai/agent-core-v2/agent/mcp/output';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
-import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-core-v2/agent/tools/os/read/read';
+import { ReadMediaFileTool } from '@moonshot-ai/agent-core-v2/agent/tools/read-media-file/readMediaFileTool';
+import { IBashTool } from '@moonshot-ai/agent-core-v2/agent/tools/os/bash/bash';
+import { IAgentEnvironmentService } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/agentEnvironment';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -1850,7 +1852,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(messageText(forkedContext.get())).toEqual(sourceText);
   });
 
-  it('continues a paginated attachment read after forking and removing the source file', async () => {
+  it('reads a text attachment after forking and removing the source file', async () => {
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
     const parentId = parent.body.data.id;
     const core = (server as RunningServer).core;
@@ -1865,41 +1867,20 @@ describe('server-v2 /api/v1/sessions', () => {
     const text = renderToolResultForModel(output).map((part) => part.type === 'text' ? part.text : '').join('\n');
     const sourcePath = JSON.parse(/Original attachment saved at: ("[^\n]+")/.exec(text)![1]!) as string;
     const reference = JSON.parse(/Attachment reference: ("[^\n]+")/.exec(text)![1]!) as string;
-    const sourceAgents = session.accessor.get(IAgentLifecycleService);
-    await sourceAgents.create({ agentId: MAIN_AGENT_ID });
-    let reader = sourceAgents.handleOf(MAIN_AGENT_ID)!.accessor.get(IReadTool);
-    let args: ReadInput | undefined = { path: reference, max_chars: 1000 };
-    const firstExecution = await reader.resolveExecution(args);
-    if (firstExecution.isError === true) throw new Error(JSON.stringify(firstExecution.output));
-    const first = await firstExecution.execute({ turnId: 1, toolCallId: 'read-first', signal: new AbortController().signal });
-    expect(first.isError).not.toBe(true);
-    let recovered = (first.output as string).replaceAll(/^\d+\t/gm, '');
-    const firstNext = /Next Read: (\{[^\n]*\})/.exec(first.note ?? '')?.[1];
-    expect(firstNext).toBeDefined();
-    args = ReadInputSchema.parse(JSON.parse(firstNext!));
-    expect(args.path).toBe(reference);
-    expect(args.column_offset).toBeGreaterThan(0);
     const forked = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
     expect(forked.body.code).toBe(0);
     await rm(sourcePath);
     const resumed = await resumeSessionById(core.accessor, forked.body.data.id);
-    const agents = resumed!.accessor.get(IAgentLifecycleService);
-    await agents.create({ agentId: MAIN_AGENT_ID });
-    reader = agents.handleOf(MAIN_AGENT_ID)!.accessor.get(IReadTool);
-    let pages = 0;
-    while (args !== undefined && pages < 80) {
-      expect(args.path).toBe(reference);
-      const execution = await reader.resolveExecution(args);
-      if (execution.isError === true) throw new Error(JSON.stringify(execution.output));
-      const read = await execution.execute({ turnId: 1, toolCallId: `read-${String(pages++)}`, signal: new AbortController().signal });
-      expect(read.isError).not.toBe(true);
-      if ((args.column_offset ?? 0) === 0) recovered += '\n';
-      recovered += (read.output as string).replaceAll(/^\d+\t/gm, '');
-      const next = /Next Read: (\{[^\n]*\})/.exec(read.note ?? '')?.[1];
-      args = next === undefined ? undefined : ReadInputSchema.parse(JSON.parse(next));
-    }
-    expect(args).toBeUndefined();
-    expect(recovered).toBe(body);
+    const reader = new ReadMediaFileTool(
+      resumed!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentEnvironmentService),
+      { workspaceDir: home as string, additionalDirs: [] },
+      resumed!.accessor.get(ISessionMediaStore),
+    );
+    const execution = await reader.resolveExecution({ path: reference });
+    if (execution.isError === true) throw new Error(JSON.stringify(execution.output));
+    const read = await execution.execute({ turnId: 1, toolCallId: 'read-attachment', signal: new AbortController().signal });
+    expect(read.isError).not.toBe(true);
+    expect(read.output).toBe(body);
   });
 
   it('fork copies a corrupted source wire without healing it; the fork heals on resume', async () => {
@@ -2139,7 +2120,7 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const resumed = await resumeSessionById((server as RunningServer).core.accessor, sessionId);
     const resumedMain = resumed!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
-    const execution = await resumedMain.accessor.get(IReadTool).resolveExecution({ path: filePath });
+    const execution = await resumedMain.accessor.get(IBashTool).resolveExecution({ command: `cat ${filePath}` });
     expect(execution.isError, JSON.stringify(execution)).not.toBe(true);
     if (execution.isError) return;
     const read = await execution.execute({

@@ -112,6 +112,8 @@ function outputSnapshot(
     truncated: false,
     fullOutputAvailable: false,
     preview,
+    previewOffset: 0,
+    hasMore: false,
     ...overrides,
   };
 }
@@ -190,10 +192,23 @@ class FakeTaskService implements IAgentTaskService {
 
   async getOutputSnapshot(
     taskId: string,
-    _maxPreviewBytes: number,
+    maxPreviewBytes: number,
+    offset?: number,
   ): Promise<AgentTaskOutputSnapshot> {
     if (this.failSnapshotTaskIds.has(taskId)) throw new Error('snapshot read failed');
-    return this.entries.get(taskId)?.output ?? outputSnapshot();
+    const output = this.entries.get(taskId)?.output ?? outputSnapshot();
+    if (offset === undefined) return output;
+    const data = Buffer.from(output.preview);
+    const previewOffset = Math.min(offset, data.byteLength);
+    const previewBytes = Math.min(maxPreviewBytes, data.byteLength - previewOffset);
+    return {
+      ...output,
+      previewBytes,
+      truncated: previewOffset > 0,
+      preview: data.subarray(previewOffset, previewOffset + previewBytes).toString(),
+      previewOffset,
+      hasMore: previewOffset + previewBytes < output.outputSizeBytes,
+    };
   }
 
   async readOutput(taskId: string, tail?: number): Promise<string> {
@@ -504,9 +519,26 @@ describe('TaskOutputTool', () => {
     expect(output).toContain('status: completed');
     expect(output).toContain('output_path: /tmp/session/tasks/bash-persist1/output.log');
     expect(output).toContain('full_output_available: true');
-    expect(output).toContain('full_output_tool: Read');
+    expect(output).toContain('full_output_tool: TaskOutput');
     expect(output).toContain('full_output_hint:');
     expect(output).toContain('[output]\nSTDOUT-PAYLOAD-LINE');
+  });
+
+  it('reads a requested byte range and returns the next offset', async () => {
+    const tasks = new FakeTaskService();
+    const taskId = tasks.add(processTask(), outputSnapshot('abcdef', {
+      outputSizeBytes: 6,
+      fullOutputAvailable: true,
+    }));
+    const result = await executeTool(
+      new TaskOutputTool(tasks),
+      context('task_output_page', { task_id: taskId, offset: 2, limit: 3 }),
+    );
+    const output = outputString(result);
+    expect(output).toContain('output_offset: 2');
+    expect(output).toContain('has_more: true');
+    expect(output).toContain('next_offset: 5');
+    expect(output).toContain('[output]\ncde');
   });
 
   it('returns agent metadata and final summary without process fields', async () => {
@@ -638,6 +670,8 @@ describe('TaskOutputTool', () => {
         previewBytes: 32 * 1024,
         truncated: true,
         fullOutputAvailable: true,
+        previewOffset: 200 * 1024 - 32 * 1024,
+        hasMore: false,
       }),
     );
 
@@ -650,7 +684,7 @@ describe('TaskOutputTool', () => {
     expect(output).toContain('output_truncated: true');
     expect(output).toContain('output_size_bytes: 204800');
     expect(output).toContain('full_output_available: true');
-    expect(output).toContain('full_output_tool: Read');
+    expect(output).toContain('full_output_tool: TaskOutput');
     expect(output).toContain(
       '[Truncated. Full output: /tmp/session/tasks/bash-trunc001/output.log]',
     );

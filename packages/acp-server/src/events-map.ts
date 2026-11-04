@@ -116,6 +116,7 @@ export function acpToolCallId(turnId: number, toolCallId: string): string {
 export function inferToolKind(name: string): ToolKind {
   switch (name) {
     case 'Read':
+    case 'ReadMediaFile':
     case 'Glob':
     case 'Grep':
       return 'read';
@@ -151,7 +152,7 @@ export function stringifyArgs(args: unknown): string {
  * File tools whose raw args carry a path worth advertising as a location.
  * v2 tools use `path`; `file_path` is accepted too for legacy-style args.
  */
-const FILE_TOOL_NAMES: ReadonlySet<string> = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep']);
+const FILE_TOOL_NAMES: ReadonlySet<string> = new Set(['Read', 'ReadMediaFile', 'Write', 'Edit', 'Glob', 'Grep']);
 
 function argsPath(name: string, args: unknown): string | undefined {
   if (!FILE_TOOL_NAMES.has(name) || typeof args !== 'object' || args === null) return undefined;

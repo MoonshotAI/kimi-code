@@ -10,7 +10,7 @@ Kimi Code CLI includes three built-in sub-agents, ready to use out of the box, e
 
 - **`coder`**: The default sub-agent, a general-purpose software engineering assistant that can read and write files, execute commands, search code, and land concrete changes.
 - **`explore`**: Dedicated to codebase exploration; performs read-only operations only and does not modify any files. Ideal for quickly searching, reading, and summarizing a repository without touching files.
-- **`plan`**: Dedicated to implementation planning and architecture design; even shell commands are not available, keeping the focus on "figuring out how to do something" rather than "actually doing it."
+- **`plan`**: Dedicated to implementation planning and architecture design; it can use Bash only for read-only file searches and text reads, and cannot modify files.
 
 Beyond the three types, three conventions govern how sub-agents work: tool boundaries, delegation depth, and completion timing.
 
@@ -94,9 +94,8 @@ description: Strict code reviewer that reports severity-ranked findings
 whenToUse: Code reviews and PR checks
 override: false
 tools:
-  - Read
-  - Grep
-  - Glob
+  - ReadMediaFile
+  - Bash
   - mcp__github__*
 disallowedTools:
   - Bash
@@ -113,7 +112,7 @@ Frontmatter fields:
 | `description` | yes | What the agent does, shown to the main Agent when it picks a sub-agent. Write it to guide delegation decisions |
 | `whenToUse` | no | Extra hint describing when the agent should be used |
 | `override` | no | Whether the file may replace a same-name built-in Agent; defaults to `false`. `--agent-file` does not need it |
-| `tools` | no | Tool allowlist (`Read`, `Bash`); MCP tools match as globs (`mcp__github__*`). YAML list or comma-separated string; omit or use a lone `*` to allow all tools, `tools: []` disables all tools |
+| `tools` | no | Tool allowlist (`ReadMediaFile`, `Bash`); MCP tools match as globs (`mcp__github__*`). YAML list or comma-separated string; omit or use a lone `*` to allow all tools, `tools: []` disables all tools |
 | `disallowedTools` | no | Denylist with the same syntax and matching rules, applied after `tools` |
 | `subagents` | no | Sub-agent allowlist, same syntax as `tools`. Omit to inherit the built-in default (`coder`, `explore`, `plan`); a lone `*` allows every type. The main agent's effective list also includes every discovered custom agent |
 
@@ -121,7 +120,7 @@ Built-in and user tools match by exact, case-sensitive name; entries starting wi
 
 - A wildcard outside an `mcp__` pattern: a bare `*` in `disallowedTools` disables nothing.
 - An incomplete `mcp__` literal: `mcp__github` matches nothing; use `mcp__github__*` for the whole server.
-- A name no registered or built-in tool has, usually a typo such as `read` instead of `Read`.
+- A name no registered or built-in tool has, usually a typo such as `readmediafile` instead of `ReadMediaFile`.
 
 The body is the agent's system prompt, and it is rendered as a template each time the prompt is built: `${var}` placeholders substitute live context values. Unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. `${base_prompt}` embeds the effective default system prompt (the built-in default, or your `SYSTEM.md` override when present), so a file can wrap the default behavior instead of replacing it. If the file replaces the default prompt but should still honor instructions contributed by enabled plugins, place `${plugin_sections}` where those instructions should appear. The available variables are listed in the [SYSTEM.md section](#overriding-the-main-agents-system-prompt-with-systemmd).
 

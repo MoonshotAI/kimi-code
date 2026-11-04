@@ -40,6 +40,8 @@ export interface AgentTaskStoredOutputSnapshot {
   readonly previewBytes: number;
   readonly truncated: boolean;
   readonly preview: string;
+  readonly previewOffset: number;
+  readonly hasMore: boolean;
 }
 
 interface ListedTask {
@@ -226,19 +228,26 @@ export class AgentTaskPersistence {
   async readTaskOutputSnapshot(
     taskId: string,
     maxPreviewBytes: number,
+    offset?: number,
   ): Promise<AgentTaskStoredOutputSnapshot | undefined> {
     return this.serializeOutput(taskId, async () => {
       const output = await this.readTaskOutputData(taskId);
       if (output === undefined) return undefined;
       const previewLimit = Math.max(0, Math.trunc(maxPreviewBytes));
-      const previewBytes = Math.min(previewLimit, output.data.byteLength);
-      const previewOffset = output.data.byteLength - previewBytes;
+      const previewOffset = Math.max(0, Math.min(
+        Math.trunc(offset ?? Math.max(0, output.data.byteLength - previewLimit)),
+        output.data.byteLength,
+      ));
+      const previewBytes = Math.min(previewLimit, output.data.byteLength - previewOffset);
+      const previewEnd = previewOffset + previewBytes;
       return {
         outputPath: await this.outputPathFor(taskId, output),
         outputSizeBytes: output.data.byteLength,
         previewBytes,
         truncated: previewOffset > 0,
-        preview: textDecoder.decode(output.data.subarray(previewOffset)),
+        preview: textDecoder.decode(output.data.subarray(previewOffset, previewEnd)),
+        previewOffset,
+        hasMore: previewEnd < output.data.byteLength,
       };
     });
   }

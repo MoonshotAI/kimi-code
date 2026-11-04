@@ -1,4 +1,4 @@
-Read media content from a file.
+Read media content or UTF text from a file or session attachment.
 
 Any reported local attachment path belongs to the server; external converters must be able to access that filesystem.
 

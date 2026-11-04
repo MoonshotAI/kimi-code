@@ -7,10 +7,8 @@ import {
 
 const PLAN_TOOLS = [
   'NotifyUser',
-  'Read',
+  'Bash',
   'ReadMediaFile',
-  'Glob',
-  'Grep',
   'WebSearch',
   'FetchURL',
 ] as const;
@@ -21,7 +19,7 @@ const PLAN_ROLE =
   '1. What you know\n' +
   '2. Unanswered questions for explore\n' +
   '3. A preliminary plan if questions remain, otherwise a final implementation plan\n\n' +
-  'You are read-only: do not run commands or modify files, even when general instructions say to make changes. ' +
+  'You are read-only: use Bash only for file searches, bounded text reads, and other commands that cannot modify state. Do not modify files. ' +
   'Return the plan as your final message.';
 
 registerAgentProfile({

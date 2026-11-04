@@ -5,9 +5,6 @@ import type {
 } from '#/agent/permissionPolicy/types';
 
 const DEFAULT_APPROVE_TOOLS = new Set([
-  'Read',
-  'Grep',
-  'Glob',
   'ReadMediaFile',
   'SetTodoList',
   'TodoList',

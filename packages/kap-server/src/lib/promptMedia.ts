@@ -140,6 +140,7 @@ export interface ResolvePromptMediaOptions {
   readonly resolveAttachmentsTarget?: () => Promise<PromptAttachmentsTarget | undefined>;
   readonly telemetry?: ITelemetryService;
   readonly providerType?: string;
+  readonly sessionMediaStore?: ISessionMediaStore;
 }
 
 export interface PromptAttachmentsTarget {
@@ -384,9 +385,18 @@ export async function resolvePromptMediaFiles(
         }
         const file = await store.get(part.file_id);
         const attachedPath = await materializeAttachment(file, await resolveAttachmentsSink());
+        let reference: string | undefined;
+        if (options.sessionMediaStore !== undefined) {
+          reference = await options.sessionMediaStore.put({
+            bytes: await readFileOrStream(file),
+            mimeType: file.meta.media_type,
+            filename: file.meta.name,
+          });
+        }
+        const notice = buildAttachedFileNotice(file.meta.name, file.meta.media_type, file.meta.size, attachedPath);
         content.push({
           type: 'text',
-          text: buildAttachedFileNotice(file.meta.name, file.meta.media_type, file.meta.size, attachedPath),
+          text: reference === undefined ? notice : `${notice} — read ${reference} with ReadMediaFile`,
         });
         attachments.push({
           name: file.meta.name,
@@ -649,7 +659,7 @@ function pathMediaMime(
 }
 
 function buildAttachedFileNotice(name: string, mediaType: string, size: number, path: string): string {
-  return `Attached file "${name}" (${mediaType}, ${size} bytes): ${path} — open it with the Read tool`;
+  return `Attached file "${name}" (${mediaType}, ${size} bytes): ${path} — open it with ReadMediaFile for text, or use Bash`;
 }
 
 async function readFileOrStream(file: GetResult): Promise<Buffer> {

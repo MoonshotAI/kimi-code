@@ -217,6 +217,8 @@ describe('AgentTaskPersistence', () => {
         previewBytes: 6,
         truncated: true,
         preview: 'output',
+        previewOffset: 7,
+        hasMore: false,
       });
     });
 
@@ -239,6 +241,8 @@ describe('AgentTaskPersistence', () => {
         previewBytes: 12,
         truncated: false,
         preview: 'local output',
+        previewOffset: 0,
+        hasMore: false,
       });
       expect(await primary.readTask(taskId)).toEqual(localTask);
       expect(await legacy.readTask(taskId)).toEqual(legacyTask);
@@ -282,6 +286,8 @@ describe('AgentTaskPersistence', () => {
         previewBytes: 0,
         truncated: false,
         preview: '',
+        previewOffset: 0,
+        hasMore: false,
       });
     });
   });

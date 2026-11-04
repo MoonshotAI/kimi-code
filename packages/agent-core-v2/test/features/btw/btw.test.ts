@@ -9,7 +9,6 @@ import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import {
   BTW_AGENT_LABEL,
-  BTW_READONLY_TOOLS,
   ISessionBtwService,
   SIDE_QUESTION_SYSTEM_REMINDER,
   TOOL_CALL_DISABLED_MESSAGE,
@@ -144,14 +143,19 @@ describe('SessionBtwService', () => {
     expect(formatDenyMessage).toHaveBeenCalledWith(TOOL_CALL_DISABLED_MESSAGE);
   });
 
-  it('allows read-only tool calls (Read, Grep, Glob) on the child', async () => {
+  it('rejects former read-only tool calls on the child', async () => {
     const svc = ix.get(ISessionBtwService);
     await svc.start();
 
-    for (const name of BTW_READONLY_TOOLS) {
+    for (const name of ['Read', 'Grep', 'Glob']) {
       const decision = await bashDecision(executorEvents, name);
 
-      expect(decision).toBeUndefined();
+      expect(decision).toEqual({
+        veto: {
+          output: `${TOOL_CALL_DISABLED_MESSAGE} [worker guidance]`,
+          isError: true,
+        },
+      });
     }
   });
 
@@ -177,7 +181,12 @@ describe('SessionBtwService', () => {
         isError: true,
       },
     });
-    expect(await bashDecision(rebuiltEvents, 'Read')).toBeUndefined();
+    expect(await bashDecision(rebuiltEvents, 'Read')).toEqual({
+      veto: {
+        output: `${TOOL_CALL_DISABLED_MESSAGE} [worker guidance]`,
+        isError: true,
+      },
+    });
   });
 
   it('leaves agent scopes without the btw label unrestricted', async () => {

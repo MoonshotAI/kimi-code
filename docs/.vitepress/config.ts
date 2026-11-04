@@ -105,6 +105,7 @@ const config = withMermaid(defineConfig({
               text: '发布说明',
               items: [
                 { text: '变更记录', link: '/zh/release-notes/changelog' },
+                { text: '不兼容变更', link: '/zh/release-notes/breaking-changes' },
               ],
             },
           ],
@@ -186,6 +187,7 @@ const config = withMermaid(defineConfig({
               text: 'Release Notes',
               items: [
                 { text: 'Changelog', link: '/en/release-notes/changelog' },
+                { text: 'Breaking changes', link: '/en/release-notes/breaking-changes' },
               ],
             },
           ],

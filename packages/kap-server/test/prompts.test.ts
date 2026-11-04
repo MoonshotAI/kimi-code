@@ -16,6 +16,7 @@ import {
   IAgentStateService,
   IAgentSwarmService,
   IAgentToolPolicyService,
+  IAgentToolRegistryService,
   IBootstrapService,
   IConfigService,
   IEventBus,
@@ -1379,7 +1380,7 @@ describe('server-v2 /api/v1 prompts', () => {
   }
 
   function attachedPathFrom(notice: string): string {
-    const match = /bytes\): (.+) — open it with the Read tool$/.exec(notice);
+    const match = /bytes\): (.+) — open it with ReadMediaFile/.exec(notice);
     expect(match).not.toBeNull();
     return match![1]!;
   }
@@ -1411,6 +1412,17 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(attachedPath.endsWith(`${uploaded.id}-report.pdf`)).toBe(true);
     expect((await realpath(attachedPath)).startsWith(await realpath(home as string))).toBe(true);
     expect(await readFile(attachedPath)).toEqual(pdfBytes);
+    expect(notice?.text).toContain('kimi-file://');
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const reader = session.accessor.get(IAgentLifecycleService).handleOf('main')!.accessor
+      .get(IAgentToolRegistryService).resolve('ReadMediaFile')!;
+    const reference = /read (kimi-file:\/\/\S+) with ReadMediaFile/.exec(notice?.text ?? '')?.[1];
+    expect(reference).toBeDefined();
+    const execution = await reader.resolveExecution({ path: reference! });
+    expect(execution.isError).not.toBe(true);
+    expect('accesses' in execution ? execution.accesses : undefined).toEqual([
+      expect.objectContaining({ operation: 'read' }),
+    ]);
   });
 
   it('materializes an uploaded SVG image as a path-referenced attachment', async () => {
@@ -1513,7 +1525,7 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(content[0]).toEqual({ type: 'text', text: 'read this' });
       expect(content[1]).toEqual({
         type: 'text',
-        text: `Attached file "notes.txt" (application/octet-stream, ${bytes.length} bytes): ${sourcePath} — open it with the Read tool`,
+        text: `Attached file "notes.txt" (application/octet-stream, ${bytes.length} bytes): ${sourcePath} — open it with ReadMediaFile for text, or use Bash`,
       });
 
       const session = getLiveSessionById(server!.core.accessor, id);
@@ -2140,7 +2152,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const toolPolicy = session.accessor.get(IAgentLifecycleService).handleOf('main')?.accessor
       .get(IAgentToolPolicyService);
     expect(toolPolicy?.isToolActive('Bash')).toBe(false);
-    expect(toolPolicy?.isToolActive('Read')).toBe(true);
+    expect(toolPolicy?.isToolActive('ReadMediaFile')).toBe(true);
 
     const replaced = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'again' }],
@@ -2183,7 +2195,7 @@ describe('server-v2 /api/v1 prompts', () => {
       .handleOf(child!.agentId)!
       .accessor.get(IAgentToolPolicyService);
     expect(childToolPolicy.isToolActive('Bash')).toBe(false);
-    expect(childToolPolicy.isToolActive('Read')).toBe(true);
+    expect(childToolPolicy.isToolActive('ReadMediaFile')).toBe(true);
   });
 
   it('rejects disabled_tools before the agent profile is bound', async () => {
@@ -2221,6 +2233,6 @@ describe('server-v2 /api/v1 prompts', () => {
     const toolPolicy = session.accessor.get(IAgentLifecycleService).handleOf('main')?.accessor
       .get(IAgentToolPolicyService);
     expect(toolPolicy?.isToolActive('Bash')).toBe(false);
-    expect(toolPolicy?.isToolActive('Read')).toBe(true);
+    expect(toolPolicy?.isToolActive('ReadMediaFile')).toBe(true);
   });
 });

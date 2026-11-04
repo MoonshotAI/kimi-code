@@ -6,7 +6,6 @@ import { join } from 'pathe';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
-import { IReadTool } from '#/agent/tools/os/read/read';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { createMapFs, stubPlanEnvironment } from '../../features/plan/stubs';
@@ -160,7 +159,7 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     expect(snapshot.fullOutputAvailable).toBe(true);
   });
 
-  it('reads the actual server-local fallback under a remote binding without exposing unrelated host files', async () => {
+  it('reads the server-local fallback under a remote binding through TaskOutput', async () => {
     const remoteFiles = new Map<string, string>();
     const remoteFs = createMapFs(remoteFiles, {
       mkdir: async () => { throw new Error('remote offline'); },
@@ -178,27 +177,15 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
       const snapshot = await remoteManager.getOutputSnapshot(id, 1_000);
       expect(snapshot.outputPath).toBe(join(remoteCtx.get(ISessionContext).sessionDir, 'agents', 'main', 'tasks', id, 'output.log'));
       const acquire = vi.spyOn(environment, 'acquire').mockImplementation(() => { throw new Error('remote disconnected'); });
-      const read = remoteCtx.get(IReadTool);
-      const result = await executeTool(read, toolContext('read_local_fallback', { path: snapshot.outputPath! }));
+      const result = await executeTool(
+        new TaskOutputTool(remoteManager),
+        toolContext('read_local_fallback', { task_id: id, offset: 0, limit: 9 }),
+      );
       expect(result.isError ?? false).toBe(false);
-      expect(outputString(result)).toContain('retained local output');
-      expect(acquire).not.toHaveBeenCalled();
+      expect(outputString(result)).toContain('retained');
+      expect(outputString(result)).toContain('next_offset: 9');
+      expect(outputString(result)).not.toContain('host secret');
       acquire.mockRestore();
-      const current = remoteCtx.get(ISessionContext).sessionDir;
-      const unrelated = [
-        join(current, 'private.txt'),
-        join(current, 'agents', 'another-agent', 'tasks', id, 'output.log'),
-        join(current, '..', 'another-session', 'agents', 'main', 'tasks', id, 'output.log'),
-      ];
-      const host = remoteCtx.get(IHostFileSystem);
-      for (const path of unrelated) {
-        await host.mkdir(path.slice(0, path.lastIndexOf('/')), { recursive: true });
-        await host.writeText(path, 'host secret');
-        remoteFiles.set(path, 'remote counterpart');
-        const other = await executeTool(read, toolContext('read_not_local', { path }));
-        expect(outputString(other)).toContain('remote counterpart');
-        expect(outputString(other)).not.toContain('host secret');
-      }
     } finally {
       await waitForTaskNotifications(remoteCtx, remoteManager);
       await remoteCtx.dispose();
@@ -240,6 +227,8 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
       truncated: false,
       fullOutputAvailable: false,
       preview: '',
+      previewOffset: 0,
+      hasMore: false,
     });
   });
 

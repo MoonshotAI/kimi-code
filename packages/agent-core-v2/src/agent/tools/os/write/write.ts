@@ -12,7 +12,7 @@ export const WriteInputSchema = z.object({
   content: z
     .string()
     .describe(
-      'Raw full file content to write exactly as provided. This does not use the Read/Edit text view.',
+      'Raw full file content to write exactly as provided.',
     ),
   mode: z
     .enum(['overwrite', 'append'])

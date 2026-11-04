@@ -942,6 +942,8 @@ describe('AgentTaskService', () => {
       truncated: false,
       fullOutputAvailable: true,
       preview: 'legacy output',
+      previewOffset: 0,
+      hasMore: false,
     });
   });
 

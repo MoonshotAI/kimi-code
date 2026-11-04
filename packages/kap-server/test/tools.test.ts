@@ -192,7 +192,7 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       expect(body.code).toBe(0);
       const tools = listToolsResponseSchema.parse(body.data).tools;
       expect(tools.find((t) => t.name === 'Bash')).toMatchObject({ active: false });
-      expect(tools.find((t) => t.name === 'Read')).toMatchObject({ active: true });
+      expect(tools.find((t) => t.name === 'ReadMediaFile')).toMatchObject({ active: true });
     });
 
     it('rejects an empty session_id with 40001', async () => {

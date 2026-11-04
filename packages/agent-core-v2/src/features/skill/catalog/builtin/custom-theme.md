@@ -92,8 +92,8 @@ Only set tokens from this set — unknown keys are silently ignored at load. If 
 
 2. **Resolve the actual theme directory and current theme(s).**
    - Resolve the data root by checking `echo "$KIMI_CODE_HOME"`; if empty, use `echo "$HOME/.kimi-code"`. Use `<root>/themes` for every subsequent step.
-   - If tweaking an existing custom theme, **Read** `<KIMI_CODE_HOME>/themes/<name>.json` first — never overwrite a theme you haven't read.
-   - Starting fresh: build a `colors` object from the token table. You can `ls <KIMI_CODE_HOME>/themes/` and Read one of the user's existing themes as a reference for the format.
+   - If tweaking an existing custom theme, inspect `<KIMI_CODE_HOME>/themes/<name>.json` first — never overwrite a theme you haven't read.
+   - Starting fresh: build a `colors` object from the token table. You can `ls <KIMI_CODE_HOME>/themes/` and inspect one of the user's existing themes as a reference for the format.
 
 3. **Pick a starting point and choose colors deliberately.**
    - Every value is a 6-digit hex `#RRGGBB` (not 3-digit, not a named color).
@@ -106,7 +106,7 @@ Only set tokens from this set — unknown keys are silently ignored at load. If 
    - Use **Edit** on the candidate to change only the intended keys. Keep every existing entry, comment, and formatting intact.
 
 5. **Validate the candidate before overwriting.**
-   - Read the candidate with **Read** to visually confirm it is well-formed JSON and that every `colors` value is a full 6-digit hex `#RRGGBB` (not 3-digit, not a named color).
+   - Inspect the candidate to confirm it is well-formed JSON and that every `colors` value is a full 6-digit hex `#RRGGBB` (not 3-digit, not a named color).
    - Invalid hex values are silently skipped at load (they fall back to the base palette), but fix them so the theme renders as intended.
 
 6. **Back up and overwrite.**

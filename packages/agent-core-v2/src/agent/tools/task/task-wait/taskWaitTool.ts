@@ -10,7 +10,7 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
-import type { AgentTaskInfo, AgentTaskOutputSnapshot } from '#/agent/task/task';
+import type { AgentTaskInfo } from '#/agent/task/task';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { formatPlainObject, formatTaskRecord } from '#/agent/task/tools/format';
 import { formatTaskList } from '#/agent/tools/task/task-list/taskListTool';
@@ -24,8 +24,6 @@ import { IWaitForTool, WaitForInputSchema, type WaitForInput } from './task-wait
 import WAIT_FOR_DESCRIPTION from './task-wait.md?raw';
 
 const OUTPUT_PREVIEW_BYTES = 32 * 1024;
-
-const PAGING_HINT_LINES = 300;
 
 const PROGRESS_INTERVAL_MS = 1_000;
 
@@ -42,24 +40,6 @@ function terminalReason(info: AgentTaskInfo): 'timed_out' | 'stopped' | 'failed'
   if (info.status === 'killed' && info.stopReason !== undefined) return 'stopped';
   if (info.status === 'failed' && info.stopReason !== undefined) return 'failed';
   return undefined;
-}
-
-function fullOutputHint(output: AgentTaskOutputSnapshot): string | undefined {
-  if (!output.fullOutputAvailable || output.outputPath === undefined) return undefined;
-  if (output.truncated) {
-    return (
-      `Only the last ${String(OUTPUT_PREVIEW_BYTES)} bytes are shown above. ` +
-      'Use the Read tool with the output_path to page through the full log ' +
-      `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
-      'lines per page).'
-    );
-  }
-  return (
-    'The preview above is the complete output. Use the Read tool with the output_path ' +
-    'if you need to re-read the full log later ' +
-    `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
-    'lines per page).'
-  );
 }
 
 export function waitForProgressUpdate(
@@ -379,9 +359,10 @@ export class WaitForTool implements IWaitForTool {
         outputPreviewBytes: output.previewBytes,
         outputTruncated: output.truncated,
         fullOutputAvailable: output.fullOutputAvailable,
-        fullOutputTool:
-          output.fullOutputAvailable && output.outputPath !== undefined ? 'Read' : undefined,
-        fullOutputHint: fullOutputHint(output),
+        fullOutputTool: output.fullOutputAvailable ? 'TaskOutput' : undefined,
+        fullOutputHint: output.fullOutputAvailable
+          ? `Use TaskOutput(task_id=${JSON.stringify(info.taskId)}, offset=N) to read persisted output directly.`
+          : undefined,
       }),
       '',
     ];

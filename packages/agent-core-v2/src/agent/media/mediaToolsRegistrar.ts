@@ -11,7 +11,13 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { IAgentPlanService } from '#/features/plan/plan';
+import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
 
 import { IAgentMediaToolsRegistrar } from './mediaTools';
@@ -37,7 +43,13 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
     @ISessionMediaStore private readonly attachmentStore: ISessionMediaStore,
-    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog | undefined,
+    @IHostFileSystem private readonly hostFs?: IHostFileSystem,
+    @IHostEnvironment private readonly hostEnvironment?: IHostEnvironment,
+    @ISessionContext private readonly session?: ISessionContext,
+    @IAgentScopeContext private readonly agent?: IAgentScopeContext,
+    @IAgentToolResultTruncationService private readonly resultTruncation?: IAgentToolResultTruncationService,
+    @IAgentPlanService private readonly planService?: IAgentPlanService,
   ) {
     super();
     this.states.contributeState(mediaRegisteredKeyKey);
@@ -97,6 +109,12 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
         },
       },
       telemetry: this.telemetry,
+      resultTruncation: this.resultTruncation,
+      hostFs: this.hostFs,
+      hostEnvironment: this.hostEnvironment,
+      session: this.session,
+      agent: this.agent,
+      planService: this.planService,
     });
   }
 }

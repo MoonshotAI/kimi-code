@@ -1,3 +1,4 @@
+import { IBashParserService, type BashSyntaxNode } from '#/app/bashParser/bashParser';
 import { IAgentTaskService } from '#/agent/task/task';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IConfigService } from '#/app/config/config';
@@ -19,6 +20,7 @@ import {
 } from '#/tool/output-accumulator';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
+import { resolvePathAccessPath } from '#/tool/path-access';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import { userCancellationReason } from '#/_base/utils/abort';
@@ -79,6 +81,7 @@ export class BashTool implements IBashTool {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
+    @IBashParserService private readonly bashParser?: IBashParserService,
   ) {}
 
   private allowBackground(): boolean {
@@ -190,6 +193,11 @@ export class BashTool implements IBashTool {
     }
     const view = new EnvironmentWorkspaceView(lease.environment, this.workspaceCtx);
     const env = view.host;
+    const pathError = this.validateFileAccess(args, view);
+    if (pathError !== undefined) {
+      lease.dispose();
+      return { isError: true, output: pathError };
+    }
     const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
     const timeoutMs = startsInBackground
@@ -290,6 +298,42 @@ export class BashTool implements IBashTool {
     } finally {
       collectForegroundOutput = false;
     }
+  }
+
+  private validateFileAccess(args: BashInput, view: EnvironmentWorkspaceView): string | undefined {
+    if (this.bashParser === undefined) return undefined;
+    const parsed = this.bashParser.parse(args.command, { timeoutMs: 500, maxNodes: 10_000 });
+    if (!parsed.ok || parsed.hasError) return undefined;
+    const commands: BashSyntaxNode[] = [];
+    const collect = (node: BashSyntaxNode): void => {
+      if (node.type === 'command') commands.push(node);
+      for (const child of node.children) collect(child);
+    };
+    collect(parsed.root);
+    const env = view.host;
+    for (const command of commands) {
+      const name = command.children.find((child) => child.type === 'command_name')?.children.find((child) => child.isNamed)?.text;
+      if (name === undefined || !['cat', 'head', 'tail', 'sed', 'awk', 'rg', 'grep', 'find', 'ls', 'less', 'more'].includes(name)) continue;
+      for (const child of command.children) {
+        if (child.type !== 'word' && child.type !== 'string' && child.type !== 'raw_string') continue;
+        let value = child.type === 'raw_string' ? child.text.slice(1, -1) : child.text;
+        if (child.type === 'string' && child.children.some((part) => part.isNamed && part.type !== 'string_content')) continue;
+        if (child.type === 'word') value = value.replaceAll(/\\(.)/gs, '$1');
+        if (value.includes('$') || value.includes('*') || value.includes('`') || value === '-' || value.startsWith('--')) continue;
+        try {
+          resolvePathAccessPath(value, {
+            env,
+            shellPathBridge: view.shellPathBridge,
+            workspace: { workspaceDir: view.resolve(args.cwd ?? view.workDir), additionalDirs: view.additionalDirs },
+            operation: 'read',
+            expandHome: true,
+          });
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+      }
+    }
+    return undefined;
   }
 
   private validateRunRequest(

@@ -28,6 +28,8 @@ export interface AgentTaskOutputSnapshot {
   readonly truncated: boolean;
   readonly fullOutputAvailable: boolean;
   readonly preview: string;
+  readonly previewOffset: number;
+  readonly hasMore: boolean;
 }
 
 export interface AgentTaskOutputChunk {
@@ -99,6 +101,7 @@ export interface IAgentTaskService {
   getOutputSnapshot(
     taskId: string,
     maxPreviewBytes: number,
+    offset?: number,
   ): Promise<AgentTaskOutputSnapshot>;
   readOutput(taskId: string, tail?: number): Promise<string>;
   readOutputTail(taskId: string, maxBytes: number): Promise<AgentTaskOutputTail>;
