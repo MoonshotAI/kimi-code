@@ -20,7 +20,7 @@ outline: 2
 
 - 默认关闭全局全文搜索，不再在后台为历史会话建立索引；如需启用，请在 `[database]` 中设置 `global_search = true`，或使用 `KIMI_CODE_GLOBAL_SEARCH=1`。
 - 不再支持 `[secondary_model] force`，配置后只会收到警告；如需让所有子 Agent 固定使用同一个模型，请只配置 `default_model`。
-- Agent 和 AgentSwarm 不再提供隐式 `primary` 模型选项，只配置一个 secondary model 时隐藏选择；在 `[secondary_model.models]` 配置两个及以上别名可恢复选择，其中主模型使用 `default_effort` 且不跟随 `/model` 切换。
+- 配置 `[secondary_model]` 后，子 Agent 只能使用模型池中的别名：只有一个别名时固定使用该模型，在 `[secondary_model.models]` 配置多个别名后才可选择；子 Agent 不再自动跟随主会话的 `/model` 和 effort，effort 优先使用 `[secondary_model].default_effort`，未设置时按所选模型自己的默认值确定。
 
 ### 修复
 
