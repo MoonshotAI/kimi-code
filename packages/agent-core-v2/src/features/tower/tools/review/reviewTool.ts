@@ -45,6 +45,7 @@ export class TowerReviewTool implements ITowerReviewTool {
             findings: args.findings,
             checks: args.checks,
             decision: args.decision,
+            acceptanceTip: args.acceptance_tip,
           });
           const delivery = result.storedMessages
             .map((message) =>

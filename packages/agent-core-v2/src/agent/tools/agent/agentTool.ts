@@ -127,6 +127,8 @@ export class SubagentTool implements ISubagentTool {
       : stripSubagentForkParameter(parameters);
   }
 
+  private static readonly resumeChains = new Map<string, Promise<void>>();
+
   private readonly callerAgentId: string;
   private readonly canRunInBackground: () => boolean;
   private catalogReady = false;
@@ -474,6 +476,20 @@ export class SubagentTool implements ISubagentTool {
     return rebuilt;
   }
 
+  private serializeResume<T>(agentId: string, work: () => Promise<T>): Promise<T> {
+    const previous = SubagentTool.resumeChains.get(agentId) ?? Promise.resolve();
+    const run = previous.then(work, work);
+    const next = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    SubagentTool.resumeChains.set(agentId, next);
+    void next.finally(() => {
+      if (SubagentTool.resumeChains.get(agentId) === next) SubagentTool.resumeChains.delete(agentId);
+    });
+    return run;
+  }
+
   private async execution(
     args: SubagentToolInput,
     { toolCallId, signal }: ExecutableToolContext,
@@ -515,7 +531,9 @@ export class SubagentTool implements ISubagentTool {
 
       let handle: SubagentHandle;
       try {
-        handle = await this.launch(args, toolCallId, controller);
+        handle = isResume
+          ? await this.serializeResume(resumeAgentId, () => this.launch(args, toolCallId, controller))
+          : await this.launch(args, toolCallId, controller);
       } catch (error) {
         signal.removeEventListener('abort', abortBeforeRegister);
         this.log.warn('subagent launch failed', {

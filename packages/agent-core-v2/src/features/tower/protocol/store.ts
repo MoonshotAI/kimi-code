@@ -174,6 +174,7 @@ export interface TowerReviewInput {
   readonly findings: string;
   readonly checks?: readonly string[];
   readonly decision: string;
+  readonly acceptanceTip?: string;
 }
 
 export interface TowerReviewResult {
@@ -1762,7 +1763,7 @@ export class TowerStore {
     }
     const completionReport =
       beforeMission.kind === 'artifact' && completionTip !== undefined && completionBase !== undefined
-        ? artifactAcceptanceReport(report, keyArtifacts, completionChanged)
+        ? artifactAcceptanceReport(report, keyArtifacts, completionChanged, completionTip)
         : report;
     const sameCompletion =
       beforeMission.kind !== 'artifact' ||
@@ -2170,6 +2171,16 @@ export class TowerStore {
       if (reviewMission.completionTip === undefined) {
         throw new TowerProtocolError(
           `artifact mission ${reviewMission.id} has no completion tip recorded — its acceptance-request cannot be bound to an exact branch tip. Ask the worker to run TowerComplete at the current tip with key_artifacts, present those key artifacts and the whole-tip approval scope for explicit human approval, then record TowerReview again.`,
+        );
+      }
+      if (input.acceptanceTip === undefined) {
+        throw new TowerProtocolError(
+          `artifact mission ${reviewMission.id} requires acceptance_tip from the TowerComplete acceptance-request the human approved — present the latest request and pass its completion tip explicitly`,
+        );
+      }
+      if (input.acceptanceTip !== reviewMission.completionTip) {
+        throw new TowerProtocolError(
+          `artifact acceptance references ${input.acceptanceTip.slice(0, 7)}, but the latest acceptance-request for mission ${reviewMission.id} covers ${reviewMission.completionTip.slice(0, 7)} — the approval is tied to a different presentation; present the latest request and pass its acceptance_tip`,
         );
       }
       if (reviewedCommit !== reviewMission.completionTip) {
@@ -3381,6 +3392,7 @@ function artifactAcceptanceReport(
   report: string,
   keyArtifacts: readonly string[],
   changed: readonly string[],
+  completionTip: string,
 ): string {
   const key = new Set(keyArtifacts);
   const additional = changed.filter((path) => !key.has(path));
@@ -3388,6 +3400,7 @@ function artifactAcceptanceReport(
     'Key artifacts for human acceptance:',
     ...keyArtifacts.map((path) => `- ${path}`),
     '',
+    `Completion tip: ${completionTip}`,
     'Approval authorizes the entire current mission tip presented for acceptance, not only these key artifacts.',
     `Additional committed files included in this approval: ${String(additional.length)}.`,
     'Optional full manifest: inspect the current mission branch diff on request; reading every path is not required.',

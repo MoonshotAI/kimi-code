@@ -148,6 +148,14 @@ async function completeMission(mission: TowerMission): Promise<void> {
 }
 
 async function cleanReview(reviewer: string, target: string): Promise<void> {
+  const state = await store.load();
+  const acceptanceTip = state.missions.find(
+    (mission) =>
+      mission.branch === target &&
+      mission.kind === 'artifact' &&
+      mission.status !== 'merged' &&
+      mission.status !== 'abandoned',
+  )?.completionTip;
   await store.submitReview(reviewer, {
     target,
     status: 'clean',
@@ -155,6 +163,7 @@ async function cleanReview(reviewer: string, target: string): Promise<void> {
     findings: 'none',
     checks: ['tests pass'],
     decision: 'looks good',
+    acceptanceTip,
   });
 }
 
@@ -1568,6 +1577,7 @@ describe('merge gate', () => {
       merge: 'merge',
       findings: 'none',
       decision: 'fresh explicit approval for this mission',
+      acceptanceTip: (await store.load()).missions.find((m) => m.id === mission.id)!.completionTip,
     });
     await store.merge(mission.branch, { activeAgentIds: new Set() });
     expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('merged');
@@ -1739,7 +1749,7 @@ describe('merge gate', () => {
     expect((await store.load()).missions.find((m) => m.id === mission!.id)?.status).toBe('merged');
   });
 
-  it('refreshes the completion tip when an identical artifact report is re-completed at a new tip', async () => {
+  it('refreshes the completion tip and rejects an older acceptance request identity', async () => {
     const mission = await setupMission({
       title: 'render revised summary',
       scope: 'reports/**',
@@ -1751,6 +1761,9 @@ describe('merge gate', () => {
     const keyArtifacts = ['reports/revised.html'];
     const initialTip = (await store.load()).missions.find((m) => m.id === mission.id)!
       .completionTip;
+    const initialRequest = (await store.readInbox('tower', 20)).find(
+      (item) => item.subject === 'acceptance-request',
+    );
     await commitFile(worktreeOf(mission), 'reports/revised.html', '<h1>Revised</h1>\n', 'revise');
     const currentTip = await git(repo, 'rev-parse', mission.branch);
     expect(currentTip).not.toBe(initialTip);
@@ -1759,6 +1772,27 @@ describe('merge gate', () => {
 
     expect(completed.notificationCreated).toBe(true);
     expect(completed.mission?.completionTip).toBe(currentTip);
+    expect(completed.message?.item.body).toContain(`Completion tip: ${currentTip}`);
+    expect(completed.message?.item.body).not.toBe(initialRequest?.body);
+    await expect(
+      store.submitReview('tower', {
+        target: mission.branch,
+        status: 'clean',
+        merge: 'merge',
+        findings: 'none',
+        decision: 'stale approval',
+        acceptanceTip: initialTip,
+      }),
+    ).rejects.toThrow(/acceptance references.*latest acceptance-request/s);
+    await expect(
+      store.submitReview('tower', {
+        target: mission.branch,
+        status: 'clean',
+        merge: 'merge',
+        findings: 'none',
+        decision: 'missing request identity',
+      }),
+    ).rejects.toThrow(/requires acceptance_tip/);
     await cleanReview('tower', mission.branch);
     await store.merge(mission.branch, { activeAgentIds: new Set() });
     expect(await readFile(join(repo, 'reports/revised.html'), 'utf8')).toBe('<h1>Revised</h1>\n');
@@ -3975,6 +4009,8 @@ describe('review round cap', () => {
         merge: 'merge',
         findings: 'none',
         decision: `human acceptance round ${String(round)}`,
+        acceptanceTip: (await store.load()).missions.find((m) => m.id === mission.id)!
+          .completionTip,
       });
     }
 

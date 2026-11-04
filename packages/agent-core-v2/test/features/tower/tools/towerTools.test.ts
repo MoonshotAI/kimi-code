@@ -1666,6 +1666,7 @@ describe('TowerReviewTool', () => {
       merge: 'merge',
       findings: 'none',
       decision: 'the user explicitly approved the entire committed tip',
+      acceptance_tip: await git(repo, 'rev-parse', 'feat/artifact-engine'),
     });
     expect(accepted.isError).toBeFalsy();
     expect(accepted.output).toContain('explicit human acceptance for feat/artifact-engine');
@@ -1874,6 +1875,7 @@ describe('TowerMergeTool', () => {
       merge: 'merge',
       findings: 'none',
       decision: 'user approved the initial artifact paths',
+      acceptanceTip: await git(repo, 'rev-parse', 'feat/artifact-engine'),
     });
     await git(repo, 'checkout', 'feat/artifact-engine');
     await commitFile(repo, 'src/engine/data.csv', 'name,value\na,1\n', 'add report data');
@@ -1890,9 +1892,10 @@ describe('TowerMergeTool', () => {
       merge: 'merge',
       findings: 'none',
       decision: 'user approved the entire current tip',
+      acceptanceTip: await git(repo, 'rev-parse', 'feat/artifact-engine'),
     } as const;
     await expect(store.submitReview('tower', freshAcceptance)).rejects.toThrow(
-      /advanced after the artifact acceptance-request/,
+      /latest acceptance-request/,
     );
     await store.complete('w1', 'Updated key artifact: src/engine/report.html', [
       'src/engine/report.html',

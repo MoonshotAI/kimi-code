@@ -3326,6 +3326,101 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
 
+  it('serializes concurrent resumes of the same stopped agent before rebinding', async () => {
+    const completion = deferred<AgentRunCompletion>();
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: () => completion.promise,
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+      ),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+          },
+        },
+      },
+    );
+    const targetProfile = resumedProfileStub({
+      profileName: 'explore',
+      modelAlias: 'provider/fast',
+    });
+    let loopState: 'idle' | 'running' = 'idle';
+    lifecycle.addHandle(
+      'agent-existing',
+      'explore',
+      new Map<unknown, unknown>([
+        [IAgentProfileService, targetProfile],
+        [
+          IAgentLoopService,
+          {
+            _serviceBrand: undefined,
+            snapshot: () => ({ state: loopState }),
+          },
+        ],
+      ]),
+    );
+    const firstSetModelStarted = deferred<boolean>();
+    const releaseFirstSetModel = deferred<boolean>();
+    const originalSetModel = vi.mocked(targetProfile.setModel).getMockImplementation()!;
+    vi.mocked(targetProfile.setModel).mockImplementationOnce(async (modelAlias) => {
+      firstSetModelStarted.resolve(true);
+      await releaseFirstSetModel.promise;
+      return originalSetModel(modelAlias);
+    });
+    vi.mocked(lifecycle.run).mockImplementation(async (agent) => {
+      loopState = 'running';
+      return {
+        agentId: agent.agentId,
+        turn: {} as AgentRunHandle['turn'],
+        completion: completion.promise,
+        partialOutput: () => '',
+      };
+    });
+
+    const first = executeAgentTool(context, {
+      prompt: 'First resume',
+      description: 'First resume',
+      resume: 'agent-existing',
+      model: 'provider/smart',
+      run_in_background: true,
+    });
+    await firstSetModelStarted.promise;
+    const second = executeAgentTool(context, {
+      prompt: 'Second resume',
+      description: 'Second resume',
+      resume: 'agent-existing',
+      model: 'provider/fast',
+      run_in_background: true,
+    });
+    await Promise.resolve();
+    expect(targetProfile.setModel).toHaveBeenCalledOnce();
+
+    releaseFirstSetModel.resolve(true);
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(firstResult.isError).not.toBe(true);
+    expect(secondResult).toMatchObject({
+      isError: true,
+      output:
+        'subagent error: Agent instance "agent-existing" is already running and cannot run concurrently',
+    });
+    expect(targetProfile.setModel).toHaveBeenCalledOnce();
+    expect(targetProfile.setModel).toHaveBeenCalledWith('provider/smart');
+    expect(lifecycle.run).toHaveBeenCalledOnce();
+    expect(lifecycle.run).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'agent-existing' }),
+      { kind: 'prompt', prompt: 'First resume' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    completion.resolve({ summary: 'first resume finished' });
+  });
+
   it.each([
     {
       name: 'pool default',
