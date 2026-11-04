@@ -38,13 +38,13 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
   },
   {
     value: 'groupTools',
-    label: 'Tool grouping',
-    description: 'Choose which tool calls to fold. Fullscreen only.',
+    label: 'Tool call folding',
+    description: 'Choose which tool calls to fold into summary groups.',
   },
   {
     value: 'groupThinking',
-    label: 'Group thinking',
-    description: 'Include thinking in transcript groups. Fullscreen only.',
+    label: 'Thinking folding',
+    description: 'Choose whether to fold finished thinking.',
   },
   {
     value: 'mermaid',
@@ -121,31 +121,31 @@ export class SettingsSelectorComponent extends ChoicePickerComponent {
 const GROUP_TOOLS_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'auto',
-    label: 'Auto',
+    label: 'Fold most tools',
     description: 'Fold all tools except subagents and communication tools.',
   },
   {
     value: 'explore',
-    label: 'Explore',
-    description: 'Fold reads, searches, and read-only commands.',
+    label: 'Fold read-only tools',
+    description: 'Fold reads, searches, and other read-only commands.',
   },
   {
     value: 'off',
-    label: 'Off',
-    description: 'Keep every tool call as its own card.',
+    label: 'Show every tool call separately',
+    description: 'Keep each tool call as its own card.',
   },
 ];
 
 const GROUP_THINKING_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'on',
-    label: 'On',
-    description: 'Include finished thinking in transcript groups.',
+    label: 'Fold thinking',
+    description: 'Fold finished thinking into summary groups.',
   },
   {
     value: 'off',
-    label: 'Off',
-    description: 'Show a two-line preview of each thinking block.',
+    label: "Don't fold thinking",
+    description: 'Show each thinking block as a two-line preview.',
   },
 ];
 
@@ -158,7 +158,7 @@ export interface TranscriptGroupToolsSelectorOptions {
 export class TranscriptGroupToolsSelectorComponent extends ChoicePickerComponent {
   constructor(opts: TranscriptGroupToolsSelectorOptions) {
     super({
-      title: 'Tool grouping (fullscreen only)',
+      title: 'Tool call folding',
       options: GROUP_TOOLS_OPTIONS,
       currentValue: opts.currentValue,
       onSelect: (value) => {
@@ -178,7 +178,7 @@ export interface TranscriptGroupThinkingSelectorOptions {
 export class TranscriptGroupThinkingSelectorComponent extends ChoicePickerComponent {
   constructor(opts: TranscriptGroupThinkingSelectorOptions) {
     super({
-      title: 'Group thinking (fullscreen only)',
+      title: 'Thinking folding',
       options: GROUP_THINKING_OPTIONS,
       currentValue: opts.currentValue ? 'on' : 'off',
       onSelect: (value) => {

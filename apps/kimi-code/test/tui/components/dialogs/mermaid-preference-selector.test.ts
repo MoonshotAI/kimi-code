@@ -56,24 +56,24 @@ describe('transcript display selectors', () => {
 
     const regular = settingsText(false);
     expect(regular).toContain('Usage');
-    expect(regular).not.toContain('Tool grouping');
-    expect(regular).not.toContain('Group thinking');
+    expect(regular).not.toContain('Tool call folding');
+    expect(regular).not.toContain('Thinking folding');
 
     const fullscreen = settingsText(true);
-    expect(fullscreen).toContain('Tool grouping');
-    expect(fullscreen).toContain('Choose which tool calls to fold. Fullscreen only.');
-    expect(fullscreen).toContain('Group thinking');
-    expect(fullscreen).toContain('Include thinking in transcript groups. Fullscreen only.');
+    expect(fullscreen).toContain('Tool call folding');
+    expect(fullscreen).toContain('Choose which tool calls to fold into summary groups.');
+    expect(fullscreen).toContain('Thinking folding');
+    expect(fullscreen).toContain('Choose whether to fold finished thinking.');
   });
 
-  it('selects tool grouping and thinking values with current markers', () => {
+  it('selects tool call folding and thinking folding values with current markers', () => {
     const onGroupTools = vi.fn();
     const groupTools = new TranscriptGroupToolsSelectorComponent({
       currentValue: 'auto',
       onSelect: onGroupTools,
       onCancel: () => {},
     });
-    expect(strip(groupTools.render(90).join('\n'))).toContain('Auto ← current');
+    expect(strip(groupTools.render(90).join('\n'))).toContain('Fold most tools ← current');
     groupTools.handleInput('\r');
     expect(onGroupTools).toHaveBeenCalledWith('auto');
 
@@ -84,8 +84,8 @@ describe('transcript display selectors', () => {
       onCancel: () => {},
     });
     const text = strip(thinking.render(100).join('\n'));
-    expect(text).toContain('On ← current');
-    expect(text).toContain('Include finished thinking in transcript groups.');
+    expect(text).toContain('Fold thinking ← current');
+    expect(text).toContain('Fold finished thinking into summary groups.');
     thinking.handleInput('\r');
     expect(onThinking).toHaveBeenCalledWith(true);
   });
