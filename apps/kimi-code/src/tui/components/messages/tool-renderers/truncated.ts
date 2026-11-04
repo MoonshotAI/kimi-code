@@ -2,6 +2,7 @@ import { Text, truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import { outcomeRows } from './outcome';
 import type { ResultRenderer } from './types';
@@ -96,12 +97,12 @@ export class TruncatedOutputComponent implements Component {
       return contentLines;
     }
 
-    if (this.renderCache?.width === width && this.renderCache.source === contentLines) {
+    if (isRenderCacheEnabled() && this.renderCache?.width === width && this.renderCache.source === contentLines) {
       return this.renderCache.lines;
     }
 
     const lines = this.collapse(width, contentLines);
-    this.renderCache = { width, source: contentLines, lines };
+    if (isRenderCacheEnabled()) this.renderCache = { width, source: contentLines, lines };
     return lines;
   }
 

@@ -790,6 +790,7 @@ class StableSpacer extends Spacer {
   private cache: { width: number; lines: string[] } | undefined;
 
   override render(width: number): string[] {
+    if (!isRenderCacheEnabled()) return super.render(width);
     if (this.cache?.width !== width) this.cache = { width, lines: super.render(width) };
     return this.cache.lines;
   }
@@ -1062,7 +1063,10 @@ export class ToolCallComponent extends Container {
   private collapsedOutcomeClipCache: { width: number; clips: boolean } | undefined;
 
   private collapsedOutcomeClips(width: number): boolean {
-    if (this.collapsedOutcomeClipCache?.width === width) return this.collapsedOutcomeClipCache.clips;
+    const cacheEnabled = isRenderCacheEnabled();
+    if (cacheEnabled && this.collapsedOutcomeClipCache?.width === width) {
+      return this.collapsedOutcomeClipCache.clips;
+    }
     const result = this.result;
     if (result === undefined || result.output.length === 0 || result.is_error === true) {
       return false;
@@ -1082,7 +1086,7 @@ export class ToolCallComponent extends Container {
       row.render(width);
       if (row.wasTruncated()) clips = true;
     }
-    this.collapsedOutcomeClipCache = { width, clips };
+    if (cacheEnabled) this.collapsedOutcomeClipCache = { width, clips };
     return clips;
   }
 

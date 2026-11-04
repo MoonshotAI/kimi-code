@@ -1,10 +1,11 @@
 import { Container } from '@moonshot-ai/pi-tui';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   ShellExecutionComponent,
   shellExecutionResultRenderer,
 } from '#/tui/components/messages/shell-execution';
+import { setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -262,5 +263,18 @@ describe('ShellExecutionComponent render cache', () => {
     expect(second).not.toBe(first);
     expect(second).toEqual(first);
     expect(second).toEqual(Container.prototype.render.call(component, 80));
+  });
+
+  describe('with the render cache disabled', () => {
+    afterEach(() => setRenderCacheEnabled(true));
+
+    it('renders again with equal text', () => {
+      setRenderCacheEnabled(false);
+      const component = new ShellExecutionComponent(options);
+      const first = component.render(80);
+      const second = component.render(80);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+    });
   });
 });

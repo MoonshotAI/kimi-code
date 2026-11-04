@@ -12,6 +12,7 @@ import {
   setMarkdownMermaidMode,
   setMarkdownRenderRequester,
 } from '#/tui/utils/markdown-options';
+import { setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 chalk.level = 3;
 
@@ -533,5 +534,18 @@ describe('Markdown child render cache', () => {
     expect(light).not.toBe(dark);
     expect(light).not.toEqual(dark);
     expect(light).toEqual(new PiMarkdown(source, 0, 0, createMarkdownTheme()).render(80));
+  });
+
+  describe('with the render cache disabled', () => {
+    afterEach(() => setRenderCacheEnabled(true));
+
+    it('renders again with equal text', () => {
+      setRenderCacheEnabled(false);
+      const markdown = new Markdown(source, 0, 0, createMarkdownTheme());
+      const first = markdown.render(80);
+      const second = markdown.render(80);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+    });
   });
 });

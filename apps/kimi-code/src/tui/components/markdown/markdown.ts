@@ -13,6 +13,7 @@ import {
 
 import type { KimiMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import { getMarkdownMermaidMode, type MermaidRenderMode } from '#/tui/utils/markdown-options';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import { MermaidBlock } from './mermaid-block';
 
@@ -112,6 +113,7 @@ export class Markdown extends Container {
     const refs = this.children;
     const childLines = refs.map((child) => child.render(width));
     if (
+      isRenderCacheEnabled() &&
       cache?.width === width &&
       cache.refs.length === refs.length &&
       cache.refs.every((child, index) => child === refs[index] && cache.childLines[index] === childLines[index])
@@ -119,7 +121,7 @@ export class Markdown extends Container {
       return cache.lines;
     }
     const lines = childLines.flat();
-    this.childCache = { width, refs: [...refs], childLines, lines };
+    if (isRenderCacheEnabled()) this.childCache = { width, refs: [...refs], childLines, lines };
     return lines;
   }
 

@@ -3,6 +3,7 @@ import { Container, Text } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
+import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 
 import type { ResultRenderer } from './tool-renderers/types';
@@ -51,6 +52,7 @@ export class ShellExecutionComponent extends Container {
     const childRefs = this.children;
     const childLines = childRefs.map((child) => child.render(width));
     if (
+      isRenderCacheEnabled() &&
       cache?.width === width &&
       cache.childRefs.length === childRefs.length &&
       cache.childRefs.every(
@@ -60,7 +62,7 @@ export class ShellExecutionComponent extends Container {
       return cache.lines;
     }
     const lines = childLines.flat();
-    this.renderCache = { width, lines, childRefs: [...childRefs], childLines };
+    if (isRenderCacheEnabled()) this.renderCache = { width, lines, childRefs: [...childRefs], childLines };
     return lines;
   }
 

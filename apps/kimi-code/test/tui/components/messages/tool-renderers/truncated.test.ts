@@ -1,7 +1,8 @@
 import { visibleWidth } from '@moonshot-ai/pi-tui';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { TruncatedOutputComponent } from '#/tui/components/messages/tool-renderers/truncated';
+import { setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 
 function strip(text: string): string {
@@ -143,5 +144,20 @@ describe('TruncatedOutputComponent render cache', () => {
     const second = component.render(80);
     expect(second).not.toBe(first);
     expect(second).toEqual(first);
+  });
+
+  describe('with the render cache disabled', () => {
+    afterEach(() => setRenderCacheEnabled(true));
+
+    it('renders again with equal text', () => {
+      setRenderCacheEnabled(false);
+      for (const tail of [false, true]) {
+        const component = make(tail);
+        const first = component.render(80);
+        const second = component.render(80);
+        expect(second).not.toBe(first);
+        expect(second).toEqual(first);
+      }
+    });
   });
 });
