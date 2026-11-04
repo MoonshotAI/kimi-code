@@ -98,7 +98,7 @@ export class ConversationFeed implements IDisposable {
   private state: ConversationState = createConversationState();
   private sent: readonly ConversationTurn[] = [];
   private started = false;
-  private restoring = false;
+  private replay: ReplayGate | undefined;
   private flushQueued = false;
   private disposed = false;
   private firstReplay: ((ok: boolean) => void) | undefined;
@@ -127,6 +127,7 @@ export class ConversationFeed implements IDisposable {
   }
 
   async page(before: number | undefined, limit: number): Promise<Omit<ConversationTurnsPage, 'agent_id'>> {
+    while (this.replay !== undefined) await this.replay.done;
     const turns = this.state.turns;
     const end = before === undefined ? turns.length : turns.findIndex((turn) => turn.ordinal >= before);
     const stop = end === -1 ? turns.length : end;
@@ -141,6 +142,7 @@ export class ConversationFeed implements IDisposable {
     for (const disposable of this.disposables.splice(0)) disposable.dispose();
     this.listeners.clear();
     this.live.clear();
+    this.finishReplay();
   }
 
   private async start(): Promise<void> {
@@ -218,18 +220,23 @@ export class ConversationFeed implements IDisposable {
   }
 
   private willReplay(): void {
-    this.restoring = true;
+    this.replay ??= replayGate();
     this.dropLive(() => true);
   }
 
   private didReplay(replayed: ConversationState, ok: boolean): ConversationState {
     this.state = settleOrphanTurns(replayed, this.runningWork());
-    this.restoring = false;
     this.sent = this.state.turns;
+    this.finishReplay();
     if (this.started) this.emit({ type: 'reset' });
     this.firstReplay?.(ok);
     this.firstReplay = undefined;
     return this.state;
+  }
+
+  private finishReplay(): void {
+    this.replay?.finish();
+    this.replay = undefined;
   }
 
   private runningWork(): RunningWork {
@@ -242,7 +249,7 @@ export class ConversationFeed implements IDisposable {
 
   private commit(next: ConversationState): void {
     this.state = next;
-    if (!this.started || this.restoring || this.flushQueued) return;
+    if (!this.started || this.replay !== undefined || this.flushQueued) return;
     this.flushQueued = true;
     queueMicrotask(() => {
       this.flushPending();
@@ -255,7 +262,7 @@ export class ConversationFeed implements IDisposable {
 
   private flush(): void {
     this.flushQueued = false;
-    if (this.disposed || this.restoring) return;
+    if (this.disposed || this.replay !== undefined) return;
     const previous = this.sent;
     const next = this.state.turns;
     if (previous === next) return;
@@ -404,6 +411,19 @@ export class ConversationFeed implements IDisposable {
       }
     }
   }
+}
+
+interface ReplayGate {
+  readonly done: Promise<void>;
+  readonly finish: () => void;
+}
+
+function replayGate(): ReplayGate {
+  let finish!: () => void;
+  const done = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  return { done, finish };
 }
 
 function headerOf(turn: ConversationTurn): ConversationTurnHeader {

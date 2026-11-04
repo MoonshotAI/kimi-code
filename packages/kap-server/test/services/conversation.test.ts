@@ -620,6 +620,7 @@ interface FeedHarness {
   readonly events: ConversationEvent[];
   readonly warn: ReturnType<typeof vi.fn>;
   failNextReplay(): void;
+  holdNextReplay(): { readonly reached: Promise<void>; readonly release: () => void };
 }
 
 function feedHarness(records: readonly WireRecord[], blobs: IAgentBlobService = passThroughBlobs): FeedHarness {
@@ -627,12 +628,19 @@ function feedHarness(records: readonly WireRecord[], blobs: IAgentBlobService = 
   const logger = log as unknown as ILogService;
   const journal = [...records];
   let failReplay = false;
+  let hold: { readonly reach: () => void; readonly released: Promise<void> } | undefined;
   const wire = {
     appendRecord: (entry: WireRecord) => {
       journal.push(entry);
     },
     flush: async () => {},
     readRestoreChains: async () => {
+      const held = hold;
+      hold = undefined;
+      if (held !== undefined) {
+        held.reach();
+        await held.released;
+      }
       if (failReplay) {
         failReplay = false;
         throw new Error('wire read failed');
@@ -663,6 +671,18 @@ function feedHarness(records: readonly WireRecord[], blobs: IAgentBlobService = 
     warn: log.warn,
     failNextReplay: () => {
       failReplay = true;
+    },
+    holdNextReplay: () => {
+      let reach!: () => void;
+      let release!: () => void;
+      const reached = new Promise<void>((resolve) => {
+        reach = resolve;
+      });
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      hold = { reach, released };
+      return { reached, release };
     },
   };
 }
@@ -736,6 +756,32 @@ describe('conversation feed', () => {
     await h.dispatcher.dispatch(userPrompt('p3', 'third'));
     await flushed();
     expect(h.events.map((event) => event.type)).toEqual(['turn.started', 'item.ended']);
+    h.dispatcher.dispose();
+  });
+
+  it('serves a page only once a rerun replay has rebuilt the conversation', async () => {
+    const h = feedHarness([
+      prompt(0, 'p1').serialize(),
+      userPrompt('p1', 'first').serialize(),
+      new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }).serialize(),
+    ]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+
+    const held = h.holdNextReplay();
+    const rerun = h.dispatcher.restore();
+    await held.reached;
+    let served = false;
+    const page = h.feed.page(undefined, 20).then((result) => {
+      served = true;
+      return result;
+    });
+    await flushed();
+    expect(served).toBe(false);
+
+    held.release();
+    await rerun;
+    expect((await page).turns.map(turnSummary)).toEqual(['0:ended:completed']);
     h.dispatcher.dispose();
   });
 
