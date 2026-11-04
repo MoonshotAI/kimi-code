@@ -10,7 +10,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Use `/model` and `/effort` while the agent is working; if the current turn has already started a request, changes apply from the next turn.
+- Use `/model` and `/effort` while the agent is working; changes apply from the next turn.
 - In VS Code, fork from a completed response; if another response is running, it stops before the branch is created.
 - Merge project-level Skills from the primary and remembered additional directories; the primary wins name conflicts, and session-only directories are excluded.
 - Declare an SSH, Docker, or custom-command environment and install `kimi exec-server` on the target, then create a session with `kimi --environment <id>`.

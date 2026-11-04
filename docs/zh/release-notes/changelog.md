@@ -10,7 +10,7 @@ outline: 2
 
 ### 新功能
 
-- Agent 工作时也可通过 `/model` 和 `/effort` 调整模型和推理强度；当前轮已发起请求时，从下一轮生效。
+- 支持在 Agent 工作时使用 `/model` 和 `/effort`，设置从下一轮生效。
 - VS Code 可从已完成回复创建分支会话；若有回复正在生成，会先停止再创建。
 - 多目录工作区可合并主目录和已记住的附加目录中的项目级 Skills，同名时主目录优先，临时目录不参与。
 - 声明 SSH、Docker 或自定义命令环境并在目标环境安装 `kimi exec-server` 后，可用 `kimi --environment <id>` 创建远程会话。
