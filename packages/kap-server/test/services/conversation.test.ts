@@ -19,10 +19,11 @@ import {
   ContextAppendMessage,
   ContextApplyCompaction,
   ContextClear,
+  ContextUndo,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { AssistantDelta, ToolCallDelta, TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
 import { AgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentStateService';
@@ -1177,6 +1178,23 @@ describe('conversation feed', () => {
 
     expect(h.events.map((event) => event.type)).toEqual(['reset']);
     expect((await h.feed.page(undefined, 20)).turns).toEqual([]);
+    h.dispatcher.dispose();
+  });
+
+  it('resends the turns page when an undo cuts items from a turn that stays', async () => {
+    const h = feedHarness([]);
+    await runningTurn(h);
+    await h.dispatcher.dispatch(new TurnSteer({ agentId: 'main', input: [{ type: 'text', text: 'wait' }], origin: { kind: 'user' } }));
+    await h.dispatcher.dispatch(userPrompt('c', 'wait'));
+    await flushed();
+    expect((await h.feed.page(undefined, 20)).turns[0]?.items).toHaveLength(2);
+    h.events.length = 0;
+
+    await h.dispatcher.dispatch(new ContextUndo({ agentId: 'main', count: 1 }));
+    await flushed();
+
+    expect(h.events.map((event) => event.type)).toEqual(['reset']);
+    expect((await h.feed.page(undefined, 20)).turns[0]?.items.map((item) => item.item_id)).toEqual(['p1']);
     h.dispatcher.dispose();
   });
 

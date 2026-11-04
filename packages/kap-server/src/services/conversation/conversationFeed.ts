@@ -290,9 +290,13 @@ export class ConversationFeed implements IDisposable {
     const next = this.state.turns;
     if (previous === next) return;
     this.sent = next;
-    const nextIds = new Set(next.map((turn) => turn.id));
-    const removed = new Set(previous.filter((turn) => !nextIds.has(turn.id)).map((turn) => turn.id));
-    if (removed.size > 0) {
+    const nextById = new Map(next.map((turn) => [turn.id, turn]));
+    const removed = new Set(previous.filter((turn) => !nextById.has(turn.id)).map((turn) => turn.id));
+    const shrunk = previous.some((turn) => {
+      const after = nextById.get(turn.id);
+      return after !== undefined && (after.items.length < turn.items.length || after.steps.length < turn.steps.length);
+    });
+    if (removed.size > 0 || shrunk) {
       this.dropLive((entry) => removed.has(entry.turnId), false);
       for (const [toolCallId, tool] of this.tools) {
         if (removed.has(tool.turnId)) this.tools.delete(toolCallId);
