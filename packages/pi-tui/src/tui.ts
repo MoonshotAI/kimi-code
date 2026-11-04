@@ -15,6 +15,10 @@ import {
 import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.ts";
 import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.ts";
 
+const TERMINAL_STATUS_RESPONSE_PATTERN =
+	/^(?:\x1b\[[?>=][\d;]*c|\x1b(?:P.*\x1b\\|_.*\x1b\\))$/s;
+const OSC_STATUS_RESPONSE_PATTERN = /^\x1b\].*(?:\x07|\x1b\\)$/s;
+
 /**
  * Component interface - all components must implement this
  */
@@ -537,6 +541,7 @@ export abstract class TuiBase extends Container implements TUI {
 	private pendingTerminalColorQueries: PendingTerminalColorQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
+	private filterTerminalStatusResponses = false;
 	/** Directory for debug/crash logs. When undefined, debug logging is disabled and crash dumps fall back to the OS temp directory. */
 	protected readonly logDirectory: string | undefined;
 
@@ -557,6 +562,10 @@ export abstract class TuiBase extends Container implements TUI {
 		if (showHardwareCursor !== undefined) {
 			this.showHardwareCursor = showHardwareCursor;
 		}
+	}
+
+	public setFilterTerminalStatusResponses(enabled: boolean): void {
+		this.filterTerminalStatusResponses = enabled;
 	}
 
 	protected abstract doRender(): void;
@@ -1095,6 +1104,12 @@ export abstract class TuiBase extends Container implements TUI {
 		if (this.consumeTerminalColorSchemeReport(data)) {
 			return;
 		}
+		// Terminal query replies are control traffic, not keyboard input. Consume
+		// known replies before global listeners can interpret them as user intent.
+		if (this.filterTerminalStatusResponses &&
+			(this.consumeCellSizeResponse(data) || TERMINAL_STATUS_RESPONSE_PATTERN.test(data))) {
+			return;
+		}
 
 		if (this.inputListeners.size > 0) {
 			let current = data;
@@ -1112,9 +1127,12 @@ export abstract class TuiBase extends Container implements TUI {
 			}
 			data = current;
 		}
-
-		// Consume terminal cell size responses without blocking unrelated input.
+		// Preserve upstream dispatch order unless the host opts in to filtering.
 		if (this.consumeCellSizeResponse(data)) {
+			return;
+		}
+		// OSC reports may be consumed by application listeners (for example, live theme tracking).
+		if (this.filterTerminalStatusResponses && OSC_STATUS_RESPONSE_PATTERN.test(data)) {
 			return;
 		}
 
