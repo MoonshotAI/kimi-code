@@ -702,6 +702,17 @@ describe('conversation feed', () => {
     h.dispatcher.dispose();
   });
 
+  it('rejects ready when the first replay fails', async () => {
+    const h = feedHarness([prompt(0, 'p1').serialize()]);
+    h.failNextReplay();
+    const ready = expect(h.feed.ready).rejects.toThrow('agent main failed to restore its conversation');
+
+    await expect(h.dispatcher.restore()).rejects.toThrow('wire read failed');
+
+    await ready;
+    h.dispatcher.dispose();
+  });
+
   it('keeps streaming after a rerun restore that no undo completion follows, failed reruns included', async () => {
     const h = feedHarness([
       prompt(0, 'p1').serialize(),
