@@ -1508,6 +1508,7 @@ Workspaces are the registered project directories sessions live in. These endpoi
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/workspaces` | List registered workspaces |
+| `GET /api/v1/default-workspace` | Read the default root and inherited trust root without creating directories |
 | `POST /api/v1/workspaces` | Register a workspace (fresh entry per call; retries deduped via `idempotency_key`) |
 | `PATCH /api/v1/workspaces/{workspace_id}` | Rename or replace source folders |
 | `POST /api/v1/workspaces/{workspace_id}/primary` | Promote a source folder to the primary directory |
@@ -1529,9 +1530,14 @@ Every endpoint that returns a workspace uses this wire shape. Registration and u
 | `kind` | string | Workspace kind: `managed` (explicitly created, `wm_` id; sessions do not merge the project `local.toml`) or `implicit` (registered by directory, `wd_` id; sessions merge the project `local.toml` for legacy compatibility) |
 | `additional_dirs` | string[] | Registry-managed extra source folders as absolute paths (excludes project `local.toml` and ephemeral sources) |
 | `is_default` | boolean | Whether this is the default parent directory or one of its direct session subdirectories |
+| `default_root` | string? | Default parent directory for this default session workspace; omitted for ordinary workspaces |
 | `created_at` | string | Registration time, ISO 8601 |
 | `last_opened_at` | string | Last time the workspace was opened or re-registered, ISO 8601 |
 | `session_count` | integer | Number of sessions in the workspace |
+
+#### `GET /api/v1/default-workspace`
+
+Reads the default workspace root and inherited trust root without creating any directory. On success, `data` is `{ root, trust_root }`. Default session subdirectories inherit trust from `trust_root`, so clients do not need to trust each new dated session directory independently.
 
 #### `GET /api/v1/workspaces`
 

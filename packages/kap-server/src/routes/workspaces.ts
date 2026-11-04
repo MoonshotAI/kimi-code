@@ -17,6 +17,10 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import {
+  defaultWorkspaceStatusSchema,
+  defaultWorkspaceUnavailableDataSchema,
+} from '../protocol/default-workspace';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   createWorkspaceRequestSchema,
@@ -33,6 +37,7 @@ import {
   workspaceTrustResponseSchema,
 } from '../protocol/rest-workspace';
 import type { Workspace as WorkspaceWire } from '../protocol/workspace';
+import { sendMappedError } from './sessionErrors';
 
 interface WorkspaceRouteHost {
   get(
@@ -72,6 +77,34 @@ interface WorkspaceRouteHost {
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
 export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): void {
+  const defaultWorkspaceRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/default-workspace',
+      success: { data: defaultWorkspaceStatusSchema },
+      errors: {
+        [ErrorCode.DEFAULT_WORKSPACE_UNAVAILABLE]: {
+          dataSchema: defaultWorkspaceUnavailableDataSchema,
+        },
+      },
+      description: 'Read the default workspace root and inherited trust root without creating directories',
+      tags: ['workspaces'],
+    },
+    async (req, reply) => {
+      try {
+        const root = await core.accessor.get(IDefaultWorkspace).getBaseRoot();
+        reply.send(okEnvelope({ root, trust_root: root }, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.get(
+    defaultWorkspaceRoute.path,
+    defaultWorkspaceRoute.options,
+    defaultWorkspaceRoute.handler as Parameters<WorkspaceRouteHost['get']>[2],
+  );
+
   const listRoute = defineRoute(
     {
       method: 'GET',
@@ -482,13 +515,14 @@ async function resolveTrust(
     );
     return undefined;
   }
-  return core.accessor.get(IWorkspaceTrustStore).forRoot(ws.root);
+  const trustRoot = (await core.accessor.get(IDefaultWorkspace).baseRootFor(ws.root)) ?? ws.root;
+  return core.accessor.get(IWorkspaceTrustStore).forRoot(trustRoot);
 }
 
 export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
-  const [sessionCount, isDefault] = await Promise.all([
+  const [sessionCount, defaultRoot] = await Promise.all([
     core.accessor.get(IWorkspaceSessions).count(ws.id),
-    core.accessor.get(IDefaultWorkspace).isDefault(ws.root),
+    core.accessor.get(IDefaultWorkspace).baseRootFor(ws.root),
   ]);
   return {
     id: ws.id,
@@ -496,7 +530,8 @@ export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<Works
     name: ws.name,
     kind: ws.kind,
     additional_dirs: [...ws.additionalDirs],
-    is_default: isDefault,
+    is_default: defaultRoot !== undefined,
+    default_root: defaultRoot,
     created_at: new Date(ws.createdAt).toISOString(),
     last_opened_at: new Date(ws.lastOpenedAt).toISOString(),
     session_count: sessionCount,

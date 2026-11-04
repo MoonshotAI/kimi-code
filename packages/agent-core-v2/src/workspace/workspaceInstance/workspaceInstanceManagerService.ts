@@ -40,6 +40,7 @@ import type { RuntimeProviderFactory } from '#/runtime/runtimeProvider';
 import { SharedRuntimeUnitHostFactory, type RuntimeUnitHandle, type RuntimeUnitHostFactory } from '#/runtime/runtimeUnitHost';
 import { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
+import { IDefaultWorkspace } from '#/app/defaultWorkspace/defaultWorkspace';
 
 import { WorkspaceInstance } from './workspaceInstance';
 import { IRuntimeResolver, IWorkspaceInstanceManager, type WorkspaceInstanceLease, type WorkspaceInstanceRef } from './workspaceInstanceManager';
@@ -90,6 +91,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     @IWorkspacePersistence private readonly workspaceStore: IWorkspacePersistence,
     @IWorkspaceTrustStore private readonly trustStore: IWorkspaceTrustStore,
+    @IDefaultWorkspace private readonly defaultWorkspace: IDefaultWorkspace,
     private readonly unitHostFactory: RuntimeUnitHostFactory = new SharedRuntimeUnitHostFactory(),
   ) {
     this.providers.set('local', new LocalRuntimeProviderFactory());
@@ -294,6 +296,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
         workspaces: this.workspaces,
         workspaceStore: this.workspaceStore,
         trustStore: this.trustStore,
+        defaultWorkspace: this.defaultWorkspace,
         createSessionController: (input) => new SessionLifecycleService(
           this.instantiation,
           input.context,

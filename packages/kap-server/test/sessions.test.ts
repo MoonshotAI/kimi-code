@@ -405,6 +405,8 @@ describe('server-v2 /api/v1/sessions', () => {
           await mkdir(sessionRoot, { recursive: true });
           return sessionRoot;
         }),
+        getBaseRoot: async () => root,
+        baseRootFor: async (candidate) => candidate === root || candidate.startsWith(`${root}/`) ? root : undefined,
         isDefault: async (candidate) => candidate === root || candidate.startsWith(`${root}/`),
       };
       return [[IDefaultWorkspace, stub]];
@@ -422,19 +424,29 @@ describe('server-v2 /api/v1/sessions', () => {
         expect(second.body.data.metadata.cwd).toBe(join(root, '2026-11-04-00000002'));
         expect(second.body.data.workspace_id).not.toBe(first.body.data.workspace_id);
 
-        const workspaces = await getJson<{ items: { id: string; is_default: boolean }[] }>(
+        const workspaces = await getJson<{ items: { id: string; is_default: boolean; default_root?: string }[] }>(
           '/api/v1/workspaces',
         );
         expect(workspaces.body.data.items).toHaveLength(2);
         expect(workspaces.body.data.items).toEqual(
           expect.arrayContaining([
-            expect.objectContaining({ id: first.body.data.workspace_id, is_default: true }),
-            expect.objectContaining({ id: second.body.data.workspace_id, is_default: true }),
+            expect.objectContaining({ id: first.body.data.workspace_id, is_default: true, default_root: root }),
+            expect.objectContaining({ id: second.body.data.workspace_id, is_default: true, default_root: root }),
           ]),
         );
       } finally {
         await rm(root, { recursive: true, force: true });
       }
+    });
+
+    it('reads the default workspace root and inherited trust root without creating directories', async () => {
+      const root = join(tmpdir(), `kimi-default-workspace-${randomBytes(4).toString('hex')}`);
+      await restartWithFreshHome(defaultWorkspaceStub(root));
+
+      const { body } = await getJson<{ root: string; trust_root: string }>('/api/v1/default-workspace');
+
+      expect(body.code).toBe(0);
+      expect(body.data).toEqual({ root, trust_root: root });
     });
 
     it.each([

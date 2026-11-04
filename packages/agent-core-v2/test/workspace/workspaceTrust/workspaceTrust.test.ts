@@ -1,7 +1,8 @@
 import { mkdtempSync } from 'node:fs';
 import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'pathe';
+import { dirname, join } from 'pathe';
+import { IDefaultWorkspace } from '#/app/defaultWorkspace/defaultWorkspace';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -61,6 +62,7 @@ describe('WorkspaceTrustService', () => {
     events?: WorkspaceTrustChange[],
     env: NodeJS.ProcessEnv = {},
     sharedStore?: IWorkspaceTrustStore,
+    defaultWorkspaceRoot = root,
   ): { service: IWorkspaceTrust; states: IWorkspaceStateService; trustStore: IWorkspaceTrustStore } {
     const ix = createServices(disposables, {
       strict: true,
@@ -73,6 +75,17 @@ describe('WorkspaceTrustService', () => {
           new JsonAtomicDocumentStore(new FileStorageService(homeDir)),
         );
         reg.defineInstance(ITelemetryService, noopTelemetryService);
+        reg.defineInstance(IDefaultWorkspace, {
+          _serviceBrand: undefined,
+          ensure: async () => defaultWorkspaceRoot,
+          getBaseRoot: async () => defaultWorkspaceRoot,
+          baseRootFor: async (candidate) =>
+            candidate === defaultWorkspaceRoot || dirname(candidate) === defaultWorkspaceRoot
+              ? defaultWorkspaceRoot
+              : undefined,
+          isDefault: async (candidate) =>
+            candidate === defaultWorkspaceRoot || dirname(candidate) === defaultWorkspaceRoot,
+        });
         if (sharedStore === undefined) {
           reg.define(IWorkspaceTrustStore, WorkspaceTrustStore);
         } else {
@@ -438,5 +451,19 @@ describe('WorkspaceTrustService', () => {
     await entry.untrust();
 
     expect(changes).toEqual([{ trusted: true }, { trusted: false }]);
+  });
+
+  it('shares default workspace trust across session subdirectories', async () => {
+    const defaultRoot = cwd;
+    const first = createService(join(defaultRoot, '2026-11-05-a'), undefined, {}, undefined, defaultRoot);
+    await first.service.ready;
+    await first.service.trust();
+
+    const second = createService(join(defaultRoot, '2026-11-05-b'), undefined, {}, undefined, defaultRoot);
+    await second.service.ready;
+
+    expect(second.service.isTrusted()).toBe(true);
+    expect(await second.service.get()).toBe(true);
+    expect(await readWorkspaceTrust(new JsonAtomicDocumentStore(new FileStorageService(homeDir)), defaultRoot)).toBe(true);
   });
 });

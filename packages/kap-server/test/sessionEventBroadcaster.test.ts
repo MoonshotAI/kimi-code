@@ -480,7 +480,11 @@ function makeCore(
         return { listRecent: async () => [], count: async () => 3 };
       }
       if (token === IDefaultWorkspace) {
-        return { isDefault: async () => false };
+        return {
+          getBaseRoot: async () => '/default',
+          baseRootFor: async () => undefined,
+          isDefault: async () => false,
+        };
       }
       return undefined;
     },

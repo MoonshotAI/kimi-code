@@ -14,3 +14,8 @@ export const defaultWorkspaceUnavailableDataSchema = z.object({
   path: z.string(),
   reason: defaultWorkspaceUnavailableReasonSchema,
 });
+
+export const defaultWorkspaceStatusSchema = z.object({
+  root: z.string().min(1),
+  trust_root: z.string().min(1),
+});

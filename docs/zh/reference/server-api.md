@@ -1508,6 +1508,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/workspaces` | 列出已注册工作区 |
+| `GET /api/v1/default-workspace` | 只读获取默认根目录与继承信任根，不创建目录 |
 | `POST /api/v1/workspaces` | 注册工作区（每次调用创建新条目；重试经 `idempotency_key` 去重） |
 | `PATCH /api/v1/workspaces/{workspace_id}` | 重命名或整体替换源文件夹 |
 | `POST /api/v1/workspaces/{workspace_id}/primary` | 将某个源文件夹提升为主目录 |
@@ -1529,9 +1530,14 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `kind` | string | 工作区类别：`managed`（经显式创建，`wm_` id；会话不合并项目 `local.toml`）或 `implicit`（按目录隐式注册，`wd_` id；会话合并项目 `local.toml` 以兼容旧配置） |
 | `additional_dirs` | string[] | 注册表管理的额外源文件夹绝对路径（不含项目 `local.toml` 与临时来源） |
 | `is_default` | boolean | 是否为默认父目录或其直接子目录中的默认会话目录 |
+| `default_root` | string? | 默认会话工作区所属的默认父目录；普通工作区不返回此字段 |
 | `created_at` | string | 注册时间，ISO 8601 |
 | `last_opened_at` | string | 最近一次打开或重新注册工作区的时间，ISO 8601 |
 | `session_count` | integer | 工作区内的会话数 |
+
+#### `GET /api/v1/default-workspace`
+
+只读获取默认工作区根目录与继承信任根，不创建任何目录。成功时 `data` 为 `{ root, trust_root }`。默认 session 子目录会继承 `trust_root` 的信任状态，因此客户端无需为每个日期子目录重复确认信任。
 
 #### `GET /api/v1/workspaces`
 

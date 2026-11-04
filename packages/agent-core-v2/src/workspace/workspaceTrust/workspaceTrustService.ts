@@ -1,6 +1,7 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
 import { defineState } from '#/state/state';
+import { IDefaultWorkspace } from '#/app/defaultWorkspace/defaultWorkspace';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
@@ -21,22 +22,18 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
   declare readonly _serviceBrand: undefined;
 
   private initialization?: Promise<void>;
-  private readonly inner: IWorkspaceTrustEntry;
+  private inner?: IWorkspaceTrustEntry;
   private readonly changeEmitter = this._register(new Emitter<WorkspaceTrustChange>());
   readonly onDidChange = this.changeEmitter.event;
 
   constructor(
-    @IWorkspaceContext workspace: IWorkspaceContext,
-    @IWorkspaceTrustStore trustStore: IWorkspaceTrustStore,
+    @IWorkspaceContext private readonly workspace: IWorkspaceContext,
+    @IWorkspaceTrustStore private readonly trustStore: IWorkspaceTrustStore,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
+    @IDefaultWorkspace private readonly defaultWorkspace: IDefaultWorkspace,
   ) {
     super();
     this.states.contributeState(workspaceTrustTrustedKey);
-    this.inner = trustStore.forRoot(workspace.cwd);
-    this._register(this.inner.onDidChange((change) => {
-      this.trusted = change.trusted;
-      this.changeEmitter.fire(change);
-    }));
   }
 
   get ready(): Promise<void> {
@@ -58,24 +55,31 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
   }
 
   isTrusted(): boolean {
-    return this.inner.isTrusted();
+    return this.inner?.isTrusted() ?? false;
   }
 
   async get(): Promise<boolean> {
     await this.ready;
-    return this.inner.get();
+    return this.inner!.get();
   }
 
   trust(): Promise<void> {
-    return this.inner.trust();
+    return this.inner!.trust();
   }
 
   untrust(): Promise<void> {
-    return this.inner.untrust();
+    return this.inner!.untrust();
   }
 
   private async initialize(): Promise<void> {
-    await this.inner.ready;
-    this.trusted = this.inner.isPersistedTrusted();
+    const trustRoot = (await this.defaultWorkspace.baseRootFor(this.workspace.cwd)) ?? this.workspace.cwd;
+    const inner = this.trustStore.forRoot(trustRoot);
+    this.inner = inner;
+    this._register(inner.onDidChange((change) => {
+      this.trusted = change.trusted;
+      this.changeEmitter.fire(change);
+    }));
+    await inner.ready;
+    this.trusted = inner.isPersistedTrusted();
   }
 }

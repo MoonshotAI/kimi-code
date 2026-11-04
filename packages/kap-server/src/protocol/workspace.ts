@@ -17,6 +17,7 @@ export const workspaceSchema = z.object({
   kind: z.enum(['managed', 'implicit']),
   additional_dirs: z.array(z.string()),
   is_default: z.boolean(),
+  default_root: z.string().min(1).optional(),
   created_at: isoDateTimeSchema,
   last_opened_at: isoDateTimeSchema,
   session_count: z.number().int().nonnegative(),

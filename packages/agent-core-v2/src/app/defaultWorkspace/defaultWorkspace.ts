@@ -4,6 +4,8 @@ export interface IDefaultWorkspace {
   readonly _serviceBrand: undefined;
 
   ensure(): Promise<string>;
+  getBaseRoot(): Promise<string>;
+  baseRootFor(root: string): Promise<string | undefined>;
   isDefault(root: string): Promise<boolean>;
 }
 
