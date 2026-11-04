@@ -12,7 +12,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Use `/model` and `/effort` while the agent is working; changes apply from the next turn.
 - Merge project-level Skills from the primary and remembered additional directories; the primary wins name conflicts, and session-only directories are excluded.
-- Declare an SSH, Docker, or custom-command environment and install `kimi exec-server` on the target, then create a session with `kimi --environment <id>`.
+- Create remote sessions in SSH, Docker, or custom-command environments.
 - `[workspace] require_trust = false` treats every workspace as trusted after `/reload`; project configuration loads without confirmation, so use it only when every workspace is trusted.
 
 ### Polish
