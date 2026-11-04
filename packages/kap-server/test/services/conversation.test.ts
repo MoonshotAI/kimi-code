@@ -1,13 +1,14 @@
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 import { describe, expect, it } from 'vitest';
 
-import type { ConversationTurn } from '../../src/protocol/conversation';
+import type { ConversationItem, ConversationTurn } from '../../src/protocol/conversation';
 import {
   applyConversationRecord,
   createConversationState,
   undoConversationTurns,
   type ConversationState,
 } from '../../src/services/conversation/conversationFold';
+import { hasBlobRef } from '../../src/services/conversation/conversationFeed';
 import { parseWireRecords } from '../../src/services/conversation/conversationService';
 
 let clock = 1_000;
@@ -435,6 +436,23 @@ describe('conversation fold', () => {
 
     expect(state.turns.map(shape)).toEqual([['opener:two']]);
     expect(state.turns[0]?.ordinal).toBe(1);
+  });
+});
+
+describe('blob-backed media', () => {
+  it('finds offloaded image, video and audio in tool output', () => {
+    const tool = (part: Record<string, unknown>): ConversationItem => ({
+      type: 'tool_call',
+      item_id: 'call-1',
+      status: 'ended',
+      name: 'ReadMediaFile',
+      output: [part],
+    });
+
+    expect(hasBlobRef(tool({ type: 'image_url', imageUrl: { url: 'blobref:a' } }))).toBe(true);
+    expect(hasBlobRef(tool({ type: 'video_url', videoUrl: { url: 'blobref:b' } }))).toBe(true);
+    expect(hasBlobRef(tool({ type: 'audio_url', audioUrl: { url: 'blobref:c' } }))).toBe(true);
+    expect(hasBlobRef(tool({ type: 'video_url', videoUrl: { url: 'https://example.com/clip.mp4' } }))).toBe(false);
   });
 });
 

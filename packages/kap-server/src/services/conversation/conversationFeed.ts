@@ -411,10 +411,10 @@ function headerUnchanged(before: ConversationTurn, after: ConversationTurn): boo
   );
 }
 
-function hasBlobRef(item: ConversationItem): boolean {
+export function hasBlobRef(item: ConversationItem): boolean {
   if (item.type === 'user_message') return item.content.some((part) => blobRefOf(part) !== undefined);
   if (item.type === 'tool_call' && Array.isArray(item.output)) {
-    return (item.output as unknown[]).some((part) => imageUrlOf(part)?.startsWith(BLOBREF_PREFIX) === true);
+    return (item.output as unknown[]).some((part) => mediaUrlOf(part)?.startsWith(BLOBREF_PREFIX) === true);
   }
   return false;
 }
@@ -425,7 +425,7 @@ async function hydrateItem(item: ConversationItem, blobs: IAgentBlobService): Pr
       const ref = blobRefOf(part);
       if (ref === undefined || (part.type !== 'image' && part.type !== 'video')) return part;
       const [loaded] = await blobs.loadParts([{ type: 'image_url', imageUrl: { url: ref } }]);
-      const url = loaded === undefined ? undefined : imageUrlOf(loaded);
+      const url = loaded === undefined ? undefined : mediaUrlOf(loaded);
       const match = url === undefined ? null : /^data:([^;]+);base64,(.*)$/.exec(url);
       if (match === null) return part;
       return { ...part, source: { kind: 'base64', media_type: match[1]!, data: match[2]! } };
@@ -444,8 +444,9 @@ function blobRefOf(part: MessageContent): string | undefined {
   return source.kind === 'url' && source.url.startsWith(BLOBREF_PREFIX) ? source.url : undefined;
 }
 
-function imageUrlOf(part: unknown): string | undefined {
+function mediaUrlOf(part: unknown): string | undefined {
   if (typeof part !== 'object' || part === null) return undefined;
-  const url = (part as { imageUrl?: { url?: unknown } }).imageUrl?.url;
+  const media = part as { imageUrl?: { url?: unknown }; videoUrl?: { url?: unknown }; audioUrl?: { url?: unknown } };
+  const url = (media.imageUrl ?? media.videoUrl ?? media.audioUrl)?.url;
   return typeof url === 'string' ? url : undefined;
 }
