@@ -957,6 +957,16 @@ describe('task notifications', () => {
     });
   });
 
+  it('reads the inline answer of a question task as its output preview', () => {
+    const [notification] = parseTaskNotifications(
+      '<notification id="task:question-1:completed" category="task" type="task.completed" source_kind="agent_task" source_id="question-1">\n' +
+        'Title: Question answered\nSeverity: info\nThe user answered.\n' +
+        '<answer>\n{"answers":{"q":"a &amp; &lt;b&gt;"}}\n</answer>\n</notification>',
+    );
+
+    expect(notification?.output).toEqual({ preview: '{"answers":{"q":"a &amp; <b>"}}', truncated: false });
+  });
+
   it('ignores text without a well-formed block and runs in linear time on malformed input', () => {
     expect(parseTaskNotifications('plain user text')).toEqual([]);
     expect(parseTaskNotifications('<notification id="x">unclosed')).toEqual([]);

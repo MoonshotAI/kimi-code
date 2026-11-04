@@ -57,6 +57,11 @@ function bodyOf(content: string): string {
 }
 
 function outputOf(content: string): TaskNotificationOutput | undefined {
+  const answer = xmlElements(content, 'answer').next().value;
+  if (answer !== undefined) {
+    const text = answer.content.replace(/^\n/, '').replace(/\n$/, '');
+    return { preview: text.replaceAll('&lt;', '<').replaceAll('&gt;', '>'), truncated: false };
+  }
   const file = xmlElements(content, 'output-file').next().value;
   const preview = xmlElements(content, 'output-preview').next().value;
   if (file === undefined && preview === undefined) return undefined;
