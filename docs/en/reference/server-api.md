@@ -1085,7 +1085,7 @@ Submits a user prompt to the session. Media references are validated first, then
 | `session_id` | path | string | **Required.** Session id |
 | `content` | body | array | **Required.** Non-empty array of content parts; variants below |
 | `agent_id` | body | string | Target agent. Default the main agent |
-| `prompt_id` | body | string | Client-chosen prompt id for idempotent submission; an id already reserved by an in-flight prompt fails `40927`, one that has already completed fails `40903`. Cannot be combined with `skills` |
+| `prompt_id` | body | string | Client-chosen prompt id for idempotent submission, also with `skills`; an id already reserved by an in-flight prompt fails `40927`, one that has already completed fails `40903` |
 | `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, args? }`; every skill must exist and be user-activatable |
 | `profile` | body | string | Agent profile to bind before submitting |
 | `model` | body | string | Model alias to switch the agent to |
@@ -1105,7 +1105,7 @@ The schema also accepts the `tool_use`, `tool_result`, and `thinking` parts of t
 
 On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status, content, created_at }`.
 
-- `40001`: validation failure — for example `prompt_id` combined with `skills`, or an unknown `profile`
+- `40001`: validation failure — for example an unknown `profile`
 - `40110`: no provider configured yet — finish login first
 - `40111`: the resolved provider has no credential (`details.provider_id`)
 - `40112`: the provider's credential was rejected (`details.provider_id`)
@@ -1311,6 +1311,7 @@ Activates a skill in the session — the REST analogue of the `/<skill>` slash c
 | `session_id` | path | string | **Required.** Session id |
 | `skill_name` | path | string | **Required.** Name of the skill to activate |
 | `args` | body | string | Free-form arguments handed to the skill, like the text after a slash command |
+| `prompt_id` | body | string | Client-chosen id of the activation message; it shows up in the `prompt_ids` of the conversation's `user_message` item |
 | `attachments` | body | array | Media parts attached to the activation. Image and video parts carry a `source` object whose `kind` is `url` / `base64` / `file` / `session_media` (same shapes as the prompt content parts); file parts carry the top-level `file_id`, `name`, `media_type`, and `size` |
 
 On success, `data` is `{ activated: true, skill_name }`.
@@ -1320,6 +1321,7 @@ On success, `data` is `{ activated: true, skill_name }`.
 - `40407`: a referenced attachment file does not exist
 - `40415`: no skill with that name
 - `40912`: the skill exists but its type cannot be activated by the user
+- `40927`: `prompt_id` is already reserved by another prompt
 
 #### `GET /api/v1/tools`
 
@@ -2166,7 +2168,7 @@ On success, `data` is `null`.
 
 #### `POST /api/v1/search`
 
-Cross-session full-text search over user messages, assistant replies, and session titles, backed by the server's persistent search index. When `container.session_id` names a session live in this server process, the search instead scans that session's live conversation directly, and the response's `source` field (`index` or `live`) reports which path served the page.
+Cross-session full-text search over user messages, assistant replies, and session titles, backed by the server's persistent search index. Searches scoped to one session with `container.session_id` use the same index, so text a running step is still generating becomes searchable once the step is saved and the index catches up; `index_state.stale` marks a view that is still catching up. The response's `source` field is always `index`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -2389,7 +2391,7 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 
 | Frame | payload | Description |
 | --- | --- | --- |
-| `subscribe_v2` | `{ session_id, agent_ids? }` | Subscribe to a session (the only session subscription) and start receiving the listed agents; `agent_ids` defaults to `["main"]`, and a later `subscribe_v2` for the same session adds agents |
+| `subscribe_v2` | `{ session_id, agent_ids? }` | Subscribe to a session (the only session subscription) and start receiving the listed agents; `agent_ids` defaults to `["main"]`, and a later `subscribe_v2` for the same session adds agents. When the session cannot be opened, the ack carries the error code — `40401` lists the session in `not_found`, others such as `40930` or `40931` say why it cannot be opened — and nothing is subscribed |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | Stop receiving agents; omitting `agent_ids`, or removing the last agent, drops the whole session subscription |
 | `client_hello` | `{ client_id }` | Handshake frame; other fields are ignored |
 | `task.watch` | flat: `{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | Stream one task's output to this connection, no session subscription needed; `agent_id` is the agent that owns the task (the `agent_id` of its `task` frame), `since_offset` resumes after output the client already has, and `tail_bytes` caps the size of the first chunk |
@@ -2404,11 +2406,11 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 Global events are envelopes `{ "type", "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself; session frames are flat `{ "type", "session_id", "agent_id", ... }`. Two delivery scopes:
 
 - **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
-- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2`, and only for the agents they receive — `turns`, `turn.*`, `item.*`, `turns.removed`, and `notice` (see [Conversation protocol](#conversation-protocol)), `task.list`, `task`, `agent`, `usage`, `goal`, `todo`; `interaction` frames go to every subscriber of the session. `task.output` goes only to connections watching that task with `task.watch`.
+- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2`, and only for the agents they receive — `turns`, `turns.failed`, `turn.*`, `item.*`, `turns.removed`, and `notice` (see [Conversation protocol](#conversation-protocol)), `task.list`, `task`, `agent`, `usage`, `goal`, `todo`; `interaction` frames go to every subscriber of the session. `task.output` goes only to connections watching that task with `task.watch`.
 
 Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 
-Each agent's running tasks — shell commands in the foreground and background, subagents (swarm members included), and other asynchronous work — are synced by two flat frames, `task.list` and `task`, never replayed like `interaction`. When a connection starts receiving an agent's tasks (an agent listed in `subscribe_v2`'s `agent_ids` that it was not receiving yet), it first gets `{ type: "task.list", session_id, agent_id, tasks }`, where `tasks` is every task the agent is running right now and replaces the client's list; after that it gets `{ type: "task", session_id, agent_id, event_created_at, ...task state }` on every change. An agent listed before it joins the session starts directly with `task` frames. The task state is `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`, and every frame carries the full state. `detached` means the tool call that started the task no longer waits for it, so it runs in the background; `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`, with the reason in `state_reason`; `child_agent_id` is a subagent task's agent id; `swarm_index` is a swarm member's position in its swarm; `command` is a shell task's command. When a task ends, its last `task` frame (`status: "ended"`) is sent and it no longer appears in `task.list`: the outcome of an ended task lives in the session history (tool results and task notifications), and `task.watch` on it replies with its exact final state. Tasks are independent of turns: `turns.removed` after an undo does not touch tasks. Task output streams separately as `{ type: "task.output", session_id, agent_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
+Each agent's running tasks — shell commands in the foreground and background, subagents (swarm members included), and other asynchronous work — are synced by two flat frames, `task.list` and `task`, never replayed like `interaction`. When a connection starts receiving an agent's tasks (an agent listed in `subscribe_v2`'s `agent_ids` that it was not receiving yet), it first gets `{ type: "task.list", session_id, agent_id, tasks }`, where `tasks` is every task the agent is running right now and replaces the client's list; after that it gets `{ type: "task", session_id, agent_id, event_created_at, ...task state }` on every change. An agent listed before it joins the session starts directly with `task` frames. The task state is `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`, and every frame carries the full state. `detached` means the tool call that started the task no longer waits for it, so it runs in the background; `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`, with the reason in `state_reason`; `child_agent_id` is a subagent task's agent id; `swarm_index` is a swarm member's position in its swarm; `command` is a shell task's command. When a task ends, its last `task` frame (`status: "ended"`) is sent and it no longer appears in `task.list`: the outcome of an ended task lives in the session history (tool results and task notifications), and `task.watch` on it replies with its exact final state. Tasks are independent of turns: undoing turns does not touch tasks. Task output streams separately as `{ type: "task.output", session_id, agent_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
 
 An agent's own state is synced by four more flat frames, each carrying the full value and replacing the client copy; like the task frames they are never replayed. When a connection starts receiving an agent (the same rule as `task.list`), it first gets the current `agent`, `usage` (when the agent has a model context), `goal` (main agent only), and `todo` frames, and after that each frame again whenever its value changes; a listed agent that joins the session later announces itself with the same frames. Subscribing to a session creates its main agent if it does not exist yet, so the main agent's frames always follow the subscription. All four are `{ type, session_id, agent_id, event_created_at, ... }`:
 
@@ -2434,20 +2436,20 @@ A turn is `{ turn_id, ordinal, turn_number?, kind, status, outcome?, error?, sta
 
 Every item has `item_id`, `type`, and `status`:
 
-- `user_message`: `{ placement: "opener" | "steer", prompt_ids, origin?, content, created_at? }`. `content` uses the content-part format of [Prompts](#prompts); `prompt_ids` lists the prompt ids it carries, so a client can retire its optimistic bubble; `origin` is the engine's prompt origin as recorded, including the `clientMetadata` sent with the prompt.
+- `user_message`: `{ placement: "opener" | "steer", prompt_ids, origin?, content, created_at? }`. `content` uses the content-part format of [Prompts](#prompts) without bundled skill instructions; it is empty for retries and internal triggers such as a goal continuation. `prompt_ids` lists the prompt ids it carries — including the `prompt_id` of a bundled skill submission or a skill activation — so a client can retire its optimistic bubble. `origin` keeps the display fields of the engine's prompt origin, such as `kind`, the `clientMetadata` sent with the prompt, and the skill names and arguments, but never server paths.
 - `assistant_message`: `{ step_index?, text }`.
 - `reasoning`: `{ step_index?, text, started_at?, duration_ms? }`. `started_at` is when the reasoning began streaming and `duration_ms` how long it streamed, present once the item has ended. Hidden reasoning is never sent.
-- `tool_call`: `{ item_id: tool call id, step_index?, name, input?, display?, output?, is_error?, duration_ms?, agent_refs?, interaction? }`. `agent_refs` lists subagents the call started as `{ agent_id, name?, description?, swarm_index?, run_in_background? }`; `interaction` is the approval or question raised for the call, `{ interaction_id, kind, status: "pending" | "ended", request?, response? }`.
+- `tool_call`: `{ item_id: tool call id, step_index?, name, input?, display?, output?, is_error?, duration_ms?, agent_refs?, interaction? }`. `agent_refs` lists subagents the call started as `{ agent_id, name?, description?, swarm_index?, run_in_background? }`; `interaction` is the approval or question raised for the call, `{ interaction_id, kind, status: "pending" | "ended", request?, response? }`. An interaction still pending when its turn ends, or when the agent stopped without ending the turn, is `ended` without a `response`.
 - `notification`: `{ origin?, text }`, a background task notification delivered into the conversation.
 - `compaction`: `{ trigger?, outcome?, summary?, tokens_before?, tokens_after? }`.
 
-When a connection starts receiving an agent it gets `{ type: "turns", session_id, agent_id, event_created_at, turns, has_more }` with the latest page, including the running turn and what its current step has streamed so far. After that:
+When a connection starts receiving an agent it gets `{ type: "turns", session_id, agent_id, event_created_at, turns, has_more }` with the latest page, including the running turn and what its current step has streamed so far. When the agent's conversation cannot be loaded, it gets `{ type: "turns.failed", session_id, agent_id, event_created_at, code, msg }` instead — for example `40401` for an agent that is not in the session — and the agent stays subscribed. A later `turns` frame replaces the client's latest turns: it is sent again after an undo, and when the agent is loaded again after it was closed. After that:
 
 - `turn.started`, `turn.updated`, `turn.ended` carry `turn`, the full turn header without `items`, and replace the client copy of the header.
 - `item.started`, `item.updated`, `item.ended` carry `turn_id` and the full `item`, and replace the client copy with the same `item_id`. Running text items start with the text generated so far. A running `assistant_message` or `reasoning` item ends as soon as the next text, reasoning, or tool call of its step starts, and its `item.ended` is sent again with the persisted values when the step completes.
 - `item.delta` carries `turn_id`, `item_id`, and `delta`, text to append to a running `assistant_message` or `reasoning` item.
 - `item.removed` carries `turn_id` and `item_id`: a running item that will not be finished, for example after a request retry restarts the step.
-- `turns.removed` carries `turn_ids`: turns that left the conversation after an undo or a context clear.
+- `turns.removed` carries `turn_ids`: turns that left the conversation after a context clear.
 - `notice` is `{ level: "error" | "warning", message, code?, payload? }`, a live warning or error raised by the agent; notices are not part of the turns.
 
 Events may repeat what the `turns` frame already contains; applying them as replacements keeps the result correct.

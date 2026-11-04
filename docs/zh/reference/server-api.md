@@ -1085,7 +1085,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | `session_id` | path | string | **必填。** 会话 id |
 | `content` | body | array | **必填。** 非空的内容块数组；变体见下 |
 | `agent_id` | body | string | 目标 Agent。默认为 main agent |
-| `prompt_id` | body | string | 客户端选定的提示词 id，用于幂等提交；已被进行中提示词占用的 id 返回 `40927`，已完成的返回 `40903`。不能与 `skills` 同用 |
+| `prompt_id` | body | string | 客户端选定的提示词 id，用于幂等提交，带 `skills` 时同样可用；已被进行中提示词占用的 id 返回 `40927`，已完成的返回 `40903` |
 | `skills` | body | array | 打包的 Skill 激活，至少 1 个 `{ name, args? }` 条目；每个 Skill 必须存在且可由用户激活 |
 | `profile` | body | string | 提交前要绑定的 Agent 档案 |
 | `model` | body | string | 要切换到的模型别名 |
@@ -1105,7 +1105,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 成功时，`data` 为被接受的提示词 `{ prompt_id, user_message_id, status, content, created_at }`。
 
-- `40001`：校验失败——例如 `prompt_id` 与 `skills` 同用，或未知的 `profile`
+- `40001`：校验失败——例如未知的 `profile`
 - `40110`：尚未配置供应商——请先完成登录
 - `40111`：解析出的供应商没有凭据（`details.provider_id`）
 - `40112`：供应商的凭据被拒绝（`details.provider_id`）
@@ -1311,6 +1311,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `session_id` | path | string | **必填。** 会话 id |
 | `skill_name` | path | string | **必填。** 要激活的技能名 |
 | `args` | body | string | 传给技能的自由文本参数，相当于斜杠命令后的文本 |
+| `prompt_id` | body | string | 客户端选定的激活消息 id，会出现在对话中对应 `user_message` 条目的 `prompt_ids` 里 |
 | `attachments` | body | array | 随激活携带的媒体块。`image` / `video` 块带 `source` 对象（`kind` 为 `url` / `base64` / `file` / `session_media`，与提示词内容块同形）；`file` 块带顶层 `file_id`、`name`、`media_type`、`size` |
 
 成功时 `data` 为 `{ activated: true, skill_name }`。
@@ -1320,6 +1321,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 - `40407`：引用的附件文件不存在
 - `40415`：没有该名称的技能
 - `40912`：技能存在，但其类型不允许用户激活
+- `40927`：`prompt_id` 已被其他提示词占用
 
 #### `GET /api/v1/tools`
 
@@ -2167,7 +2169,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/search`
 
-跨会话全文搜索，覆盖 User 消息、Assistant 回复与会话标题，由服务端的持久搜索索引支撑。当 `container.session_id` 指向本服务进程中存活的会话时，搜索改为直接扫描该会话的实时对话，响应的 `source` 字段（`index` 或 `live`）会报告本页结果由哪条路径提供。
+跨会话全文搜索，覆盖 User 消息、Assistant 回复与会话标题，由服务端的持久搜索索引支撑。用 `container.session_id` 限定在单个会话内的搜索同样走索引，因此正在运行的步骤还在生成的文本，要等该步骤保存、索引追上之后才能搜到；`index_state.stale` 标记仍在追赶的视图。响应的 `source` 字段恒为 `index`。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -2390,7 +2392,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 | 帧 | payload | 说明 |
 | --- | --- | --- |
-| `subscribe_v2` | `{ session_id, agent_ids? }` | 订阅会话（唯一的会话订阅方式），开始接收所列 agent；`agent_ids` 默认为 `["main"]`，之后对同一会话再发 `subscribe_v2` 会追加 agent |
+| `subscribe_v2` | `{ session_id, agent_ids? }` | 订阅会话（唯一的会话订阅方式），开始接收所列 agent；`agent_ids` 默认为 `["main"]`，之后对同一会话再发 `subscribe_v2` 会追加 agent。会话无法打开时，ack 带上错误码——`40401` 会把会话列在 `not_found` 里，`40930`、`40931` 等其他错误码说明无法打开的原因——且不建立任何订阅 |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | 停止接收 agent；省略 `agent_ids` 或移除最后一个 agent 时取消整个会话订阅 |
 | `client_hello` | `{ client_id }` | 握手帧，其余字段会被忽略 |
 | `task.watch` | 平铺：`{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | 把某个任务的输出流式推送到本连接，无需订阅会话；`agent_id` 是任务所属的 agent（即该任务 `task` 帧上的 `agent_id`），`since_offset` 从客户端已有输出之后续传，`tail_bytes` 是首段输出最多包含的字节数 |
@@ -2405,11 +2407,11 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 全局事件是事件帧 `{ "type", "session_id"?, "timestamp", "payload" }`，`type` 即事件类型；会话帧是平铺帧 `{ "type", "session_id", "agent_id", ... }`。按投递范围分两类：
 
 - **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
-- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接，且只包含其接收的 agent——`turns`、`turn.*`、`item.*`、`turns.removed` 与 `notice`（见 [对话协议](#对话协议)），以及 `task.list`、`task`、`agent`、`usage`、`goal`、`todo`；`interaction` 帧发给该会话的所有订阅者。`task.output` 只发给用 `task.watch` 订阅了该任务输出的连接。
+- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接，且只包含其接收的 agent——`turns`、`turns.failed`、`turn.*`、`item.*`、`turns.removed` 与 `notice`（见 [对话协议](#对话协议)），以及 `task.list`、`task`、`agent`、`usage`、`goal`、`todo`；`interaction` 帧发给该会话的所有订阅者。`task.output` 只发给用 `task.watch` 订阅了该任务输出的连接。
 
 有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
-每个 agent 正在跑的任务——Shell 命令（前台与后台）、subagent（含 swarm 成员）及其他异步工作——由 `task.list` 与 `task` 两种平铺帧同步，和 `interaction` 一样不回放。连接开始接收某个 agent 的任务时（`subscribe_v2` 的 `agent_ids` 中列出、且此前未接收的 agent），先收到一帧 `{ type: "task.list", session_id, agent_id, tasks }`，`tasks` 是该 agent 此刻正在跑的全部任务，客户端用它整份替换本地列表；之后每次变化收到一帧 `{ type: "task", session_id, agent_id, event_created_at, ...任务状态 }`，列出时尚未加入会话的 agent 直接从 `task` 帧开始。任务状态为 `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`，每帧都携带完整状态。`detached` 表示发起它的工具调用已不再等它，即后台任务；`outcome`（仅已结束的任务）为 `completed` / `failed` / `timed_out` / `killed` / `lost`；`phase`（仅运行中的 subagent）为 `working` / `suspended`，挂起原因在 `state_reason`；`child_agent_id` 是 subagent 任务的 agent id；`swarm_index` 是 swarm 成员在其 swarm 中的序号；`command` 是 Shell 任务的命令。任务结束时推送它最后一帧 `task`（`status: "ended"`），之后不再出现在 `task.list` 里：已结束任务的结果在会话历史中（工具结果与完成通知），需要精确的最终状态时对它发送 `task.watch`，应答带有其状态。任务与轮次互相独立：撤销后的 `turns.removed` 不影响任务。任务输出单独推送，形状为 `{ type: "task.output", session_id, agent_id, task_id, offset, text }`，`offset` 是 `text` 在任务输出中的 UTF-8 字节偏移。
+每个 agent 正在跑的任务——Shell 命令（前台与后台）、subagent（含 swarm 成员）及其他异步工作——由 `task.list` 与 `task` 两种平铺帧同步，和 `interaction` 一样不回放。连接开始接收某个 agent 的任务时（`subscribe_v2` 的 `agent_ids` 中列出、且此前未接收的 agent），先收到一帧 `{ type: "task.list", session_id, agent_id, tasks }`，`tasks` 是该 agent 此刻正在跑的全部任务，客户端用它整份替换本地列表；之后每次变化收到一帧 `{ type: "task", session_id, agent_id, event_created_at, ...任务状态 }`，列出时尚未加入会话的 agent 直接从 `task` 帧开始。任务状态为 `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`，每帧都携带完整状态。`detached` 表示发起它的工具调用已不再等它，即后台任务；`outcome`（仅已结束的任务）为 `completed` / `failed` / `timed_out` / `killed` / `lost`；`phase`（仅运行中的 subagent）为 `working` / `suspended`，挂起原因在 `state_reason`；`child_agent_id` 是 subagent 任务的 agent id；`swarm_index` 是 swarm 成员在其 swarm 中的序号；`command` 是 Shell 任务的命令。任务结束时推送它最后一帧 `task`（`status: "ended"`），之后不再出现在 `task.list` 里：已结束任务的结果在会话历史中（工具结果与完成通知），需要精确的最终状态时对它发送 `task.watch`，应答带有其状态。任务与轮次互相独立：撤销轮次不影响任务。任务输出单独推送，形状为 `{ type: "task.output", session_id, agent_id, task_id, offset, text }`，`offset` 是 `text` 在任务输出中的 UTF-8 字节偏移。
 
 Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的值，客户端整份替换本地副本；和任务帧一样不回放。连接开始接收某个 agent 时（规则同 `task.list`），先收到当前的 `agent`、`usage`（该 agent 有模型上下文时）、`goal`（仅主 agent）与 `todo` 帧，之后每当某个值变化就再收到对应的帧；已列出、之后才加入会话的 agent 也会用这几种帧通告自己。订阅会话时如果主 agent 还不存在，服务端会先创建它，所以订阅之后总能收到主 agent 的这几种帧。四种帧都是 `{ type, session_id, agent_id, event_created_at, ... }`：
 
@@ -2435,20 +2437,20 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 
 每个条目都有 `item_id`、`type` 与 `status`：
 
-- `user_message`：`{ placement: "opener" | "steer", prompt_ids, origin?, content, created_at? }`。`content` 使用 [提示词](#提示词) 中的内容块格式；`prompt_ids` 列出它承载的 prompt id，客户端可据此撤下本地的乐观气泡；`origin` 是引擎记录的 prompt 来源，包含随 prompt 发送的 `clientMetadata`。
+- `user_message`：`{ placement: "opener" | "steer", prompt_ids, origin?, content, created_at? }`。`content` 使用 [提示词](#提示词) 中的内容块格式，不含打包技能的说明；重试和目标续跑等内部触发的消息 `content` 为空。`prompt_ids` 列出它承载的 prompt id——包括打包技能提交和技能激活带的 `prompt_id`——客户端可据此撤下本地的乐观气泡。`origin` 只保留引擎 prompt 来源中用于展示的字段，例如 `kind`、随 prompt 发送的 `clientMetadata`、技能名和参数，不含服务端路径。
 - `assistant_message`：`{ step_index?, text }`。
 - `reasoning`：`{ step_index?, text, started_at?, duration_ms? }`。`started_at` 是思考开始输出的时间，`duration_ms` 是思考输出的时长，条目结束后才有。隐藏的思考不会下发。
-- `tool_call`：`{ item_id: 工具调用 id, step_index?, name, input?, display?, output?, is_error?, duration_ms?, agent_refs?, interaction? }`。`agent_refs` 列出该调用启动的 subagent，形如 `{ agent_id, name?, description?, swarm_index?, run_in_background? }`；`interaction` 是为该调用发起的审批或提问，形如 `{ interaction_id, kind, status: "pending" | "ended", request?, response? }`。
+- `tool_call`：`{ item_id: 工具调用 id, step_index?, name, input?, display?, output?, is_error?, duration_ms?, agent_refs?, interaction? }`。`agent_refs` 列出该调用启动的 subagent，形如 `{ agent_id, name?, description?, swarm_index?, run_in_background? }`；`interaction` 是为该调用发起的审批或提问，形如 `{ interaction_id, kind, status: "pending" | "ended", request?, response? }`。轮次结束时、或 agent 未结束该轮就停了时仍未处理的交互，会以不带 `response` 的 `ended` 出现。
 - `notification`：`{ origin?, text }`，投递进对话的后台任务通知。
 - `compaction`：`{ trigger?, outcome?, summary?, tokens_before?, tokens_after? }`。
 
-连接开始接收某个 agent 时，先收到 `{ type: "turns", session_id, agent_id, event_created_at, turns, has_more }`，携带最新的一页，包括运行中的轮次以及当前步骤已经生成的内容。之后：
+连接开始接收某个 agent 时，先收到 `{ type: "turns", session_id, agent_id, event_created_at, turns, has_more }`，携带最新的一页，包括运行中的轮次以及当前步骤已经生成的内容。该 agent 的对话无法加载时，改为收到 `{ type: "turns.failed", session_id, agent_id, event_created_at, code, msg }`——例如 agent 不在该会话中时为 `40401`——该 agent 仍保持订阅。之后再收到的 `turns` 帧会替换客户端最新的这些轮次：撤销之后、以及 agent 关闭后被重新加载时都会再发一次。之后：
 
 - `turn.started`、`turn.updated`、`turn.ended` 携带 `turn`，即不含 `items` 的完整轮次头部，客户端用它替换本地的轮次头部。
 - `item.started`、`item.updated`、`item.ended` 携带 `turn_id` 与完整的 `item`，客户端用它替换本地同 `item_id` 的条目。运行中的文本条目开始时带有已生成的文本。运行中的 `assistant_message` 或 `reasoning` 条目在同一步骤的下一段文本、思考或工具调用开始时即结束；该步骤完成后，会以落盘后的值再发一次它的 `item.ended`。
 - `item.delta` 携带 `turn_id`、`item_id` 与 `delta`，是追加到运行中的 `assistant_message` 或 `reasoning` 条目的文本。
 - `item.removed` 携带 `turn_id` 与 `item_id`：一个不会完成的运行中条目，例如请求重试导致该步骤重新开始。
-- `turns.removed` 携带 `turn_ids`：撤销或清空上下文后离开对话的轮次。
+- `turns.removed` 携带 `turn_ids`：清空上下文后离开对话的轮次。
 - `notice` 为 `{ level: "error" | "warning", message, code?, payload? }`，是 agent 实时发出的警告或错误，不属于轮次。
 
 事件可能重复 `turns` 帧中已有的内容；按替换的方式应用即可保证结果正确。
