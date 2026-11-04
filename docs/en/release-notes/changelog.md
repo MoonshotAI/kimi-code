@@ -11,15 +11,15 @@ This page documents the changes in each Kimi Code CLI release.
 ### Features
 
 - Use `/model` and `/effort` while the agent is working; changes apply from the next turn.
-- Merge project-level Skills from the primary and remembered additional directories; the primary wins name conflicts, and session-only directories are excluded.
+- Merge project-level Skills from the primary and remembered additional directories; the primary wins name conflicts.
 - Create remote sessions in SSH, Docker, or custom-command environments.
-- `[workspace] require_trust = false` treats every workspace as trusted after `/reload`; project configuration loads without confirmation, so use it only when every workspace is trusted.
+- `[workspace] require_trust = false` treats every workspace as trusted and skips trust prompts after `/reload`; use it only when every workspace is trusted.
 
 ### Polish
 
 - Web cross-session full-text search is off by default; set `[database] global_search = true` to enable it.
 - With only `default_model` configured, newly spawned Agent and AgentSwarm subagents use that model; the legacy `force` key is ignored with a warning.
-- Agent and AgentSwarm remove the implicit `primary`; list the main model explicitly in the pool, selection requires multiple aliases, and without `[secondary_model]` subagents still inherit the caller's model.
+- Agent and AgentSwarm remove the implicit `primary`; list the main model explicitly in the pool to use it. Without `[secondary_model]`, subagents still inherit the caller's model.
 
 ### Bug Fixes
 
