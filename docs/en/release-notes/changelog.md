@@ -10,17 +10,17 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Allow `/model` and `/effort` while the agent is working; changes apply from the next turn.
-- Add support for forking running sessions and forking from a selected historical turn.
-- Merge skills from every configured directory in multi-directory projects, with the primary directory taking precedence on name conflicts.
-- Add creation-time SSH, Docker, and custom-command environments; use `--environment <id>` and optionally `--environment-cwd <path>` when creating a session.
-- Set `[workspace] require_trust = false` to skip workspace trust prompts.
+- Use `/model` and `/effort` while the agent is working to adjust the model and reasoning effort; changes apply from the next turn.
+- Create a branch session from a running session or a selected historical turn.
+- Use skills from every configured directory in multi-directory projects; the primary directory wins on name conflicts.
+- Choose an SSH, Docker, or custom-command environment when creating a session.
+- After confirming a workspace is trusted, set `[workspace] require_trust = false` to skip trust prompts.
 
 ### Polish
 
-- Disable global full-text search by default and stop indexing past sessions in the background; set `[database] global_search = true` or `KIMI_CODE_GLOBAL_SEARCH=1` to turn it back on.
-- Remove support for `[secondary_model] force`, which is now ignored with a warning; to pin every subagent to one model, set only `default_model`.
-- Subagents no longer automatically follow model switches in the main session.
+- Global full-text search is off by default; set `[database] global_search = true` to turn it on when needed.
+- Set only `default_model` under `[secondary_model]` to use one model for all subagents; the old `force` option is no longer supported.
+- Use `/secondary-model` to choose subagent models separately; if only one is configured, subagents use it automatically.
 
 ### Bug Fixes
 

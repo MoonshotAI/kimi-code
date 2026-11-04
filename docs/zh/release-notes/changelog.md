@@ -10,17 +10,17 @@ outline: 2
 
 ### 新功能
 
-- 支持在 Agent 工作时使用 `/model` 和 `/effort`，设置从下一轮生效。
-- 支持 fork 正在运行的会话，也可从指定历史轮次创建分支会话。
-- 多目录项目现在会合并所有配置目录中的 skills，同名时以主目录为准。
-- 新增创建会话时选择 SSH、Docker 和自定义命令环境的能力，可用 `--environment <id>` 指定环境，并通过 `--environment-cwd <path>` 覆盖默认工作目录。
-- 新增 `[workspace] require_trust = false` 配置，可跳过工作区信任提示。
+- Agent 工作时也可通过 `/model` 和 `/effort` 调整模型和推理强度，调整从下一轮生效。
+- 可从正在运行的会话或指定历史轮次创建分支会话。
+- 多目录项目可合并使用各目录的 skills，同名时以主目录为准。
+- 创建会话时可选择 SSH、Docker 或自定义命令运行环境。
+- 确认工作区可信后，可设置 `[workspace] require_trust = false` 跳过信任提示。
 
 ### 优化
 
-- 默认关闭全局全文搜索，不再在后台为历史会话建立索引；如需启用，请在 `[database]` 中设置 `global_search = true`，或使用 `KIMI_CODE_GLOBAL_SEARCH=1`。
-- 不再支持 `[secondary_model] force`，配置后只会收到警告；如需让所有子 Agent 固定使用同一个模型，请只配置 `default_model`。
-- 主会话切换模型时，子 Agent 不再自动跟随。
+- 默认关闭全局全文搜索，需要时可在 `[database]` 中设置 `global_search = true` 重新开启。
+- 在 `[secondary_model]` 中只配置 `default_model`，即可统一子 Agent 使用的模型；旧 `force` 配置不再支持。
+- 可通过 `/secondary-model` 单独选择子 Agent 的模型；只配置一个时自动使用。
 
 ### 修复
 
