@@ -485,7 +485,6 @@ export class GlobalSearchService implements IGlobalSearchService {
         : undefined,
       incomplete: result.incomplete,
       indexState: this.composeIndexState(result.index),
-      source: 'index',
     };
   }
 
@@ -542,7 +541,6 @@ export class GlobalSearchService implements IGlobalSearchService {
         stale: true,
         degraded: this.lastRefreshError?.message ?? view?.degraded,
       },
-      source: 'index',
     };
   }
 

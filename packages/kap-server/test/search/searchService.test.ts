@@ -2913,7 +2913,6 @@ describe('search lifecycle diagnostics (stage 5)', () => {
 
     const page = await service.search({ query: 'anything' });
     expect(page.items).toEqual([]);
-    expect(page.source).toBe('index');
     expect(page.indexState.state).toBe('building');
     expect(page.indexState.degraded).toContain('threads unavailable');
     await expect(stat(join(home!, 'search-index'))).rejects.toThrow();
