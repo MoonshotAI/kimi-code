@@ -183,7 +183,10 @@ export async function showStatusReport(host: SlashCommandHost): Promise<void> {
   const reportArgs = {
     version: appState.version,
     model: appState.model,
-    workDir: appState.workDir,
+    workDir:
+      appState.environment?.environmentId !== 'local' && appState.environment?.cwd !== undefined
+        ? appState.environment.cwd
+        : appState.workDir,
     sessionId: appState.sessionId,
     sessionTitle: appState.sessionTitle,
     thinkingEffort: appState.thinkingEffort,

@@ -2,15 +2,19 @@
 import { createHash } from 'node:crypto';
 
 import {
+  IEnvironmentService,
   ISessionIndex,
   ISessionIndexMirror,
   IWorkspaceAliases,
   IWorkspaceService,
+  environmentBindingId,
+  LOCAL_ENVIRONMENT_ID,
   setSessionArchivedBatch,
   type Scope,
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { IGitService, type FsPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
+import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
 import { z } from 'zod';
 
 import { defineRoute } from '../../middleware/defineRoute';
@@ -390,36 +394,72 @@ function mapPullRequest(pr: FsPullRequest | null): V2GitDomain['pull_request'] {
   return { number: pr.number, state: pr.state === 'draft' ? 'open' : pr.state, url: pr.url };
 }
 
+interface GitTarget {
+  readonly key: string;
+  readonly environmentId: string;
+  readonly cwd: string;
+}
+
+function gitTarget(summary: SessionSummary, workspaceCwd: string | null): GitTarget | undefined {
+  const environmentId = summary.environmentId ?? LOCAL_ENVIRONMENT_ID;
+  const cwd = environmentId === LOCAL_ENVIRONMENT_ID ? (workspaceCwd ?? undefined) : summary.environmentCwd;
+  if (cwd === undefined) return undefined;
+  return { key: environmentBindingId(environmentId, cwd), environmentId, cwd };
+}
+
 class GitDomainResolver {
   private readonly cache = new Map<string, { value: V2GitDomain; fetchedAt: number }>();
 
   constructor(private readonly core: Scope) {}
 
-  async resolveAll(cwds: ReadonlySet<string>): Promise<ReadonlyMap<string, V2GitDomain>> {
+  async resolveAll(
+    summaries: readonly SessionSummary[],
+    cwdOf: (summary: SessionSummary) => string | null,
+  ): Promise<ReadonlyMap<string, V2GitDomain>> {
+    const targets = summaries.flatMap((summary) => {
+      const target = gitTarget(summary, cwdOf(summary));
+      return target === undefined ? [] : [{ sessionId: summary.id, target }];
+    });
     const now = Date.now();
-    const resolved = new Map<string, V2GitDomain>();
-    const misses: string[] = [];
-    for (const cwd of cwds) {
-      const hit = this.cache.get(cwd);
+    const resolvedByKey = new Map<string, V2GitDomain>();
+    const misses = new Map<string, GitTarget>();
+    for (const { target } of targets) {
+      const hit = this.cache.get(target.key);
       if (hit !== undefined && now - hit.fetchedAt < GIT_DOMAIN_TTL_MS) {
-        resolved.set(cwd, hit.value);
+        resolvedByKey.set(target.key, hit.value);
       } else {
-        misses.push(cwd);
+        misses.set(target.key, target);
       }
     }
     await Promise.all(
-      misses.map(async (cwd) => {
-        const value = await this.fetch(cwd);
-        this.cache.set(cwd, { value, fetchedAt: now });
-        resolved.set(cwd, value);
+      [...misses].map(async ([key, target]) => {
+        const value = await this.fetch(target);
+        this.cache.set(key, { value, fetchedAt: now });
+        resolvedByKey.set(key, value);
       }),
     );
-    return resolved;
+    return new Map(
+      targets.map(({ sessionId, target }) => [
+        sessionId,
+        resolvedByKey.get(target.key) ?? GIT_DOMAIN_UNAVAILABLE,
+      ]),
+    );
   }
 
-  private async fetch(cwd: string): Promise<V2GitDomain> {
+  private async fetch(target: GitTarget): Promise<V2GitDomain> {
     try {
-      const status = await this.core.accessor.get(IGitService).status(cwd);
+      let status: Awaited<ReturnType<IGitService['status']>>;
+      if (target.environmentId === LOCAL_ENVIRONMENT_ID) {
+        status = await this.core.accessor.get(IGitService).status(target.cwd);
+      } else {
+        const environments = this.core.accessor.get(IEnvironmentService);
+        const lease = environments.acquire({ environmentId: target.environmentId }, ['fs']);
+        try {
+          status = await new GitService(environments, lease.environment.fs!, target.environmentId).status(target.cwd);
+        } finally {
+          lease.dispose();
+        }
+      }
       return {
         branch: status.branch.length === 0 ? null : status.branch,
         pull_request: mapPullRequest(status.pullRequest),
@@ -573,14 +613,9 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         summaries: readonly SessionSummary[],
         cwdOf: (summary: SessionSummary) => string | null,
       ): Promise<V2SessionWire[]> => {
-        let gitByCwd: ReadonlyMap<string, V2GitDomain> | undefined;
+        let gitBySession: ReadonlyMap<string, V2GitDomain> | undefined;
         if (query.includeGit) {
-          const cwds = new Set<string>();
-          for (const summary of summaries) {
-            const cwd = cwdOf(summary);
-            if (cwd !== null) cwds.add(cwd);
-          }
-          gitByCwd = await gitResolver.resolveAll(cwds);
+          gitBySession = await gitResolver.resolveAll(summaries, cwdOf);
         }
         return summaries.map((summary) => {
           const cwd = cwdOf(summary);
@@ -600,10 +635,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
               status: mapActivityStatus(facts, summary.lastTurnReason),
               model: facts.model ?? null,
             },
-            git:
-              gitByCwd === undefined
-                ? undefined
-                : ((cwd !== null ? gitByCwd.get(cwd) : undefined) ?? GIT_DOMAIN_UNAVAILABLE),
+            git: gitBySession === undefined ? undefined : (gitBySession.get(summary.id) ?? GIT_DOMAIN_UNAVAILABLE),
           };
         });
       };

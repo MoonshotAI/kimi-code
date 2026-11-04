@@ -130,9 +130,13 @@ export async function handleExportMdCommand(host: SlashCommandHost, args: string
       ? resolve(trimmedArgs)
       : resolve(host.state.appState.workDir, defaultName);
 
+    const environment = host.state.appState.environment;
     const md = buildExportMarkdown({
       sessionId: session.id,
-      workDir: host.state.appState.workDir,
+      workDir:
+        environment?.environmentId !== 'local' && environment?.cwd !== undefined
+          ? environment.cwd
+          : host.state.appState.workDir,
       history: context.history,
       tokenCount: context.tokenCount,
       now,
