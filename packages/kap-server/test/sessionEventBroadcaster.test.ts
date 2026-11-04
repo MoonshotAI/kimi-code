@@ -1713,12 +1713,12 @@ describe('SessionEventBroadcaster', () => {
 
       feed.turns = [endedTurn('t0', 0), endedTurn('t1', 1)];
       feed.emit({ type: 'reset' });
-      feed.emit({ type: 'turns.removed', turn_ids: ['t0'] });
+      feed.emit({ type: 'item.removed', turn_id: 't1', item_id: 'i1' });
       release();
 
-      await vi.waitFor(() => expect(types(frames)).toContain('turns.removed'));
-      const conversation = frames.filter((frame) => frame.type === 'turns' || frame.type === 'turns.removed');
-      expect(types(conversation)).toEqual(['turns', 'turns.removed']);
+      await vi.waitFor(() => expect(types(frames)).toContain('item.removed'));
+      const conversation = frames.filter((frame) => frame.type === 'turns' || frame.type === 'item.removed');
+      expect(types(conversation)).toEqual(['turns', 'item.removed']);
       expect((conversation[0]!['turns'] as ConversationTurn[]).map((turn) => turn.turn_id)).toEqual(['t0', 't1']);
     });
 

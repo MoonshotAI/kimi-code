@@ -10,7 +10,7 @@ import {
   type IAgentScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 import type { CollectionView } from '@moonshot-ai/agent-core-v2/_base/di/collection';
-import { ContextAppendLoopEvent, ContextAppendMessage } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { AssistantDelta } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
@@ -736,6 +736,24 @@ describe('conversation feed', () => {
     await h.dispatcher.dispatch(userPrompt('p3', 'third'));
     await flushed();
     expect(h.events.map((event) => event.type)).toEqual(['turn.started', 'item.ended']);
+    h.dispatcher.dispose();
+  });
+
+  it('resends the turns page instead of removing turns when the context is cleared', async () => {
+    const h = feedHarness([]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+    await h.dispatcher.dispatch(prompt(0, 'p1'));
+    await h.dispatcher.dispatch(userPrompt('p1', 'before the clear'));
+    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }));
+    await flushed();
+    h.events.length = 0;
+
+    await h.dispatcher.dispatch(new ContextClear({ agentId: 'main' }));
+    await flushed();
+
+    expect(h.events.map((event) => event.type)).toEqual(['reset']);
+    expect((await h.feed.page(undefined, 20)).turns).toEqual([]);
     h.dispatcher.dispose();
   });
 

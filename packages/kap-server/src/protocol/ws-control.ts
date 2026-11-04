@@ -10,7 +10,6 @@ import {
   turnMessageSchema,
   turnsFailedMessageSchema,
   turnsMessageSchema,
-  turnsRemovedMessageSchema,
 } from './conversation';
 import { pushEventSchema } from './events-zod';
 import { interactionEventMessageSchema } from './interaction';
@@ -407,7 +406,7 @@ export const conversationEventOperations = [
     kind: 'event',
     messageSchema: turnsMessageSchema,
     description:
-      'Latest page of turns of an agent, sent when a connection starts receiving that agent, when the agent is loaded again and after an undo; it replaces the client copy of those turns. Older pages come from GET /sessions/{session_id}/agents/{agent_id}/turns.',
+      'Latest page of turns of an agent, sent when a connection starts receiving that agent and again after an undo, a context clear or when the agent is loaded again; it replaces the client copy of those turns. Older pages come from GET /sessions/{session_id}/agents/{agent_id}/turns.',
   },
   {
     type: 'turns.failed',
@@ -447,13 +446,6 @@ export const conversationEventOperations = [
     messageSchema: itemRemovedMessageSchema,
     description:
       'A running item that will not be finished, for example after a request retry restarts the step.',
-  },
-  {
-    type: 'turns.removed',
-    direction: 'server_to_client',
-    kind: 'event',
-    messageSchema: turnsRemovedMessageSchema,
-    description: 'Turns that left the conversation, for example after clear.',
   },
   {
     type: 'notice',

@@ -257,9 +257,6 @@ function replayFrames(frames: readonly any[]): any[] {
         if (turn !== undefined) turn.items = turn.items.filter((item: any) => item.item_id !== frame.item_id);
         break;
       }
-      case 'turns.removed':
-        turns = turns.filter((turn) => !frame.turn_ids.includes(turn.turn_id));
-        break;
     }
   }
   return turns;
@@ -313,7 +310,6 @@ const CONVERSATION_FRAME_TYPES = new Set([
   'item.ended',
   'item.delta',
   'item.removed',
-  'turns.removed',
   'turns.failed',
   'notice',
 ]);

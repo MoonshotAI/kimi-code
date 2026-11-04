@@ -56,7 +56,6 @@ export type ConversationEvent =
   | { readonly type: 'item.started' | 'item.updated' | 'item.ended'; readonly turn_id: string; readonly item: ConversationItem }
   | { readonly type: 'item.delta'; readonly turn_id: string; readonly item_id: string; readonly delta: string }
   | { readonly type: 'item.removed'; readonly turn_id: string; readonly item_id: string }
-  | { readonly type: 'turns.removed'; readonly turn_ids: string[] }
   | {
       readonly type: 'notice';
       readonly level: 'error' | 'warning';
@@ -261,18 +260,17 @@ export class ConversationFeed implements IDisposable {
     const next = this.state.turns;
     if (previous === next) return;
     this.sent = next;
+    const nextIds = new Set(next.map((turn) => turn.turn_id));
+    const removed = new Set(previous.filter((turn) => !nextIds.has(turn.turn_id)).map((turn) => turn.turn_id));
+    if (removed.size > 0) {
+      this.dropLive((entry) => removed.has(entry.turnId), false);
+      this.emit({ type: 'reset' });
+      return;
+    }
     const previousById = new Map(previous.map((turn) => [turn.turn_id, turn]));
-    const nextIds = new Set<string>();
     for (const turn of next) {
-      nextIds.add(turn.turn_id);
       const before = previousById.get(turn.turn_id);
       if (before !== turn) this.emitTurnChanges(before, turn);
-    }
-    const removed = previous.filter((turn) => !nextIds.has(turn.turn_id)).map((turn) => turn.turn_id);
-    if (removed.length > 0) {
-      const gone = new Set(removed);
-      this.dropLive((entry) => gone.has(entry.turnId), false);
-      this.emit({ type: 'turns.removed', turn_ids: removed });
     }
   }
 
