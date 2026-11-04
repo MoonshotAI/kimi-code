@@ -111,6 +111,10 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   setPresentationOptions(options: TranscriptPresentationOptions): void {
     if (samePresentation(this.options, options)) return;
     this.options = options;
+    if (this.globalExpanded) {
+      this.applyGlobalExpansion();
+      this.projectionCache = undefined;
+    }
     this.ui.requestRender();
   }
 
@@ -233,29 +237,8 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
   }
 
   toggleToolOutputExpansion(): boolean {
-    const cache = this.ensureProjection();
     this.globalExpanded = !this.globalExpanded;
-    const cutoff = this.firstExpandableSourceIndex();
-    if (this.globalExpanded) {
-      for (const projection of cache.projections) {
-        if (projection.kind === 'group') {
-          this.expandedGroups.set(projection.anchor, projection.sourceIndex >= cutoff);
-        }
-      }
-    } else {
-      this.expandedGroups = new WeakMap();
-    }
-    const visited = new Set<Component>();
-    for (const projection of cache.projections) {
-      for (const item of projectionItems(projection)) {
-        const component = item.display;
-        if (visited.has(component)) continue;
-        visited.add(component);
-        if (!isExpandable(component)) continue;
-        component.setExpanded(this.globalExpanded && item.sourceIndex >= cutoff);
-        if (!this.globalExpanded) this.openedMembers.delete(component);
-      }
-    }
+    this.applyGlobalExpansion();
     this.projectionCache = undefined;
     if (transcriptGroupingActive(this.options)) {
       this.host?.track('transcript_expand_all', { expanded: this.globalExpanded });
@@ -442,6 +425,31 @@ export class TranscriptContainer implements Component, TranscriptGroupInteractio
       this.options,
       (component) => this.openedMembers.has(component),
     );
+  }
+
+  private applyGlobalExpansion(): void {
+    const cache = this.ensureProjection();
+    const cutoff = this.firstExpandableSourceIndex();
+    if (this.globalExpanded) {
+      for (const projection of cache.projections) {
+        if (projection.kind === 'group') {
+          this.expandedGroups.set(projection.anchor, projection.sourceIndex >= cutoff);
+        }
+      }
+    } else {
+      this.expandedGroups = new WeakMap();
+    }
+    const visited = new Set<Component>();
+    for (const projection of cache.projections) {
+      for (const item of projectionItems(projection)) {
+        const component = item.display;
+        if (visited.has(component)) continue;
+        visited.add(component);
+        if (!isExpandable(component)) continue;
+        component.setExpanded(this.globalExpanded && item.sourceIndex >= cutoff);
+        if (!this.globalExpanded) this.openedMembers.delete(component);
+      }
+    }
   }
 
   private initializeChild(child: Component, sourceIndex: number): void {

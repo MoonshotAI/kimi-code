@@ -10,6 +10,7 @@ import chalk from 'chalk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TitleSweep } from '#/tui/components/messages/running-title';
+import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 import { SkillActivationComponent } from '#/tui/components/messages/skill-activation';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
@@ -1270,6 +1271,65 @@ describe('TranscriptGroupComponent', () => {
     const second = setModel.mock.calls[1]?.[0];
     expect(first).toBeDefined();
     expect(second?.summary).toBe(first?.summary);
+  });
+});
+
+describe('Ctrl+O expansion across presentation changes', () => {
+  function sameStepReads(): { group: ReadGroupComponent; reads: ToolCallComponent[] } {
+    const reads = [
+      tool('Read', { path: '/work/a.ts' }),
+      tool('Read', { path: '/work/b.ts' }),
+    ];
+    const group = new ReadGroupComponent(undefined);
+    reads.forEach((read, index) => {
+      group.attach(`read-${index}`, read);
+    });
+    return { group, reads };
+  }
+
+  const groupingOff = options({ groupTools: 'off', groupThinking: false });
+
+  it('keeps the read group card expanded when grouping is turned off after Ctrl+O', () => {
+    const { container } = makeContainer();
+    const { group } = sameStepReads();
+    container.addChild(group);
+
+    container.toggleToolOutputExpansion();
+    container.setPresentationOptions(groupingOff);
+
+    expect(plain(container.render(80))).toContain('a.ts');
+    expect(group.isExpanded()).toBe(true);
+
+    container.toggleToolOutputExpansion();
+    expect(group.isExpanded()).toBe(false);
+    expect(plain(container.render(80))).not.toContain('a.ts');
+  });
+
+  it('expands the rows of a split read group when grouping is turned on after Ctrl+O', () => {
+    const { container } = makeContainer(groupingOff);
+    const { group, reads } = sameStepReads();
+    container.addChild(group);
+
+    container.toggleToolOutputExpansion();
+    container.setPresentationOptions(options());
+
+    expect(onlyGroup(container)).toMatchObject({ title: '● Read 2 files', expanded: true });
+    expect(reads.map((read) => read.isExpanded())).toEqual([true, true]);
+  });
+
+  it('leaves expansion alone when the presentation changes without Ctrl+O', () => {
+    const { container } = makeContainer();
+    const { group } = sameStepReads();
+    const opened = tool('Bash', { command: 'ls' });
+    container.addChild(group);
+    container.addChild(opened);
+    opened.setExpanded(true);
+
+    container.setPresentationOptions(groupingOff);
+
+    expect(group.isExpanded()).toBe(false);
+    expect(opened.isExpanded()).toBe(true);
+    expect(container.toolOutputExpanded).toBe(false);
   });
 });
 
