@@ -1072,7 +1072,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 
-成功时，`data` 为 `{ active, queued }`：`active` 是运行中的提示词（空闲时为 `null`），`queued` 按顺序列出等待中的提示词。提示词为 `{ prompt_id, user_message_id, status, content, created_at }`，其中 `status` 为 `running` / `queued` / `blocked` 之一，`content` 采用 `POST /api/v1/sessions/{session_id}/prompts` 接受的内容块格式。
+成功时，`data` 为 `{ active, queued }`：`active` 是运行中的提示词（空闲时为 `null`），`queued` 按顺序列出等待中的提示词。提示词为 `{ prompt_id, user_message_id, status, content, created_at }`，其中 `status` 为 `running` / `queued` / `blocked` / `failed` 之一，`content` 采用 `POST /api/v1/sessions/{session_id}/prompts` 接受的内容块格式。
 
 - `40401`：会话不存在
 
@@ -1103,7 +1103,7 @@ schema 还接受 `metadata`、`plan_mode`、`swarm_mode`、`goal_objective` 和 
 
 schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinking` 内容块，但它们在用户提示词中没有意义。未知或 kind 不匹配的 `file_id` 引用会在提示词创建之前、任何覆盖项应用之前被拒绝。
 
-成功时，`data` 为被接受的提示词 `{ prompt_id, user_message_id, status, content, created_at }`。
+成功时，`data` 为被接受的提示词 `{ prompt_id, user_message_id, status, content, created_at }`。会话空闲时，响应会等到提示词开始执行轮次或未开始轮次就结束：hook 拒绝了该提示词时 `status` 为 `blocked`，提交在轮次开始前失败时为 `failed`，例如提示词 hook 出错或附件无法准备。
 
 - `40001`：校验失败——例如未知的 `profile`
 - `40110`：尚未配置供应商——请先完成登录
@@ -2392,7 +2392,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 | 帧 | payload | 说明 |
 | --- | --- | --- |
-| `subscribe_v2` | `{ session_id, agent_ids? }` | 订阅会话（唯一的会话订阅方式），开始接收所列 agent；`agent_ids` 默认为 `["main"]`，之后对同一会话再发 `subscribe_v2` 会追加 agent。会话无法打开时，ack 带上错误码——`40401` 会把会话列在 `not_found` 里，`40930`、`40931` 等其他错误码说明无法打开的原因——且不建立任何订阅 |
+| `subscribe_v2` | `{ session_id, agent_ids? }` | 订阅会话（唯一的会话订阅方式），开始接收所列 agent；`agent_ids` 默认为 `["main"]`，之后对同一会话再发 `subscribe_v2` 会追加 agent。会话无法打开时，ack 带上错误码——`40401` 会把会话列在 `not_found` 里，`40930`、`40931` 等其他错误码说明无法打开的原因——且不建立任何订阅。会话打开后立即发送 ack，先于该订阅的任何帧；各 agent 的对话在 ack 之后加载 |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | 停止接收 agent；省略 `agent_ids` 或移除最后一个 agent 时取消整个会话订阅 |
 | `client_hello` | `{ client_id }` | 握手帧，其余字段会被忽略 |
 | `task.watch` | 平铺：`{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | 把某个任务的输出流式推送到本连接，无需订阅会话；`agent_id` 是任务所属的 agent（即该任务 `task` 帧上的 `agent_id`），`since_offset` 从客户端已有输出之后续传，`tail_bytes` 是首段输出最多包含的字节数 |
@@ -2432,7 +2432,7 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 
 - `turn_id` 在该 agent 内唯一，`ordinal` 决定轮次顺序；更早的分页用 `before=<ordinal>` 读取。`turn_number` 是引擎的轮次编号，只在 agent 自己运行的轮次上出现（侧边对话分叉时复制来的历史没有）。
 - `kind` 为 `agent`，agent 空闲时执行的压缩为 `system`。
-- `status` 为 `running` 或 `ended`；`outcome` 为 `completed` / `cancelled` / `failed` / `blocked`（输入被 hook 拦下）/ `interrupted`（agent 未结束该轮就停了）。失败的轮次带 `error`，形如 `{ code, message, name?, retryable?, status_code?, request_id? }`。
+- `status` 为 `running` 或 `ended`；只有 agent 或压缩正在处理的轮次才是 `running`，agent 不运行的轮次（例如 CLI shell 命令、被 hook 拒绝的提示词）一出现就是 `ended`。`outcome` 为 `completed` / `cancelled` / `failed` / `blocked`（输入被 hook 拦下）/ `interrupted`（agent 未结束该轮就停了）。失败的轮次带 `error`，形如 `{ code, message, name?, retryable?, status_code?, request_id? }`。
 - `steps` 列出该轮的各次模型请求，形如 `{ step_id, index, started_at?, ended_at?, finish_reason?, usage?, llm_timing? }`。
 
 每个条目都有 `item_id`、`type` 与 `status`：
@@ -2444,7 +2444,7 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 - `notification`：`{ origin?, text }`，投递进对话的后台任务通知。
 - `compaction`：`{ trigger?, outcome?, summary?, tokens_before?, tokens_after? }`。
 
-连接开始接收某个 agent 时，先收到 `{ type: "turns", session_id, agent_id, event_created_at, turns, has_more }`，携带最新的一页，包括运行中的轮次以及当前步骤已经生成的内容。该 agent 的对话无法加载时，改为收到 `{ type: "turns.failed", session_id, agent_id, event_created_at, code, msg }`——例如 agent 不在该会话中时为 `40401`——该 agent 仍保持订阅。之后再收到的 `turns` 帧会替换客户端最新的这些轮次：撤销之后、以及 agent 关闭后被重新加载时都会再发一次。之后：
+连接开始接收某个 agent 时，先收到 `{ type: "turns", session_id, agent_id, event_created_at, turns, has_more }`，携带最新的一页，包括运行中的轮次以及当前步骤已经生成的内容。该 agent 的对话无法加载时，改为收到 `{ type: "turns.failed", session_id, agent_id, event_created_at, code, msg }`——例如 agent 不在该会话中时为 `40401`，或 agent 关闭后被重新加载时恢复失败——该 agent 仍保持订阅。之后再收到的 `turns` 帧会替换客户端最新的这些轮次：撤销之后、以及 agent 关闭后被重新加载时都会再发一次。之后：
 
 - `turn.started`、`turn.updated`、`turn.ended` 携带 `turn`，即不含 `items` 的完整轮次头部，客户端用它替换本地的轮次头部。
 - `item.started`、`item.updated`、`item.ended` 携带 `turn_id` 与完整的 `item`，客户端用它替换本地同 `item_id` 的条目。运行中的文本条目开始时带有已生成的文本。运行中的 `assistant_message` 或 `reasoning` 条目在同一步骤的下一段文本、思考或工具调用开始时即结束；该步骤完成后，会以落盘后的值再发一次它的 `item.ended`。

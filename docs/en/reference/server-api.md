@@ -1072,7 +1072,7 @@ Reads the main agent's prompt queue snapshot.
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ active, queued }`: `active` is the running prompt (`null` when idle) and `queued` lists the pending prompts in order. A prompt is `{ prompt_id, user_message_id, status, content, created_at }` with `status` one of `running` / `queued` / `blocked` and `content` in the content-part format accepted by `POST /api/v1/sessions/{session_id}/prompts`.
+On success, `data` is `{ active, queued }`: `active` is the running prompt (`null` when idle) and `queued` lists the pending prompts in order. A prompt is `{ prompt_id, user_message_id, status, content, created_at }` with `status` one of `running` / `queued` / `blocked` / `failed` and `content` in the content-part format accepted by `POST /api/v1/sessions/{session_id}/prompts`.
 
 - `40401`: session not found
 
@@ -1103,7 +1103,7 @@ The schema also accepts `metadata`, `plan_mode`, `swarm_mode`, `goal_objective`,
 
 The schema also accepts the `tool_use`, `tool_result`, and `thinking` parts of the shared message format, but they are not meaningful in a user prompt. Unknown or mis-kinded `file_id` references are rejected before the prompt is created and before any override is applied.
 
-On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status, content, created_at }`.
+On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status, content, created_at }`. On an idle session the response waits until the prompt starts its turn or ends without one: `status` is `blocked` when a hook rejected the prompt, and `failed` when its submission failed before a turn started, for example because a prompt hook failed or an attachment could not be prepared.
 
 - `40001`: validation failure — for example an unknown `profile`
 - `40110`: no provider configured yet — finish login first
@@ -2391,7 +2391,7 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 
 | Frame | payload | Description |
 | --- | --- | --- |
-| `subscribe_v2` | `{ session_id, agent_ids? }` | Subscribe to a session (the only session subscription) and start receiving the listed agents; `agent_ids` defaults to `["main"]`, and a later `subscribe_v2` for the same session adds agents. When the session cannot be opened, the ack carries the error code — `40401` lists the session in `not_found`, others such as `40930` or `40931` say why it cannot be opened — and nothing is subscribed |
+| `subscribe_v2` | `{ session_id, agent_ids? }` | Subscribe to a session (the only session subscription) and start receiving the listed agents; `agent_ids` defaults to `["main"]`, and a later `subscribe_v2` for the same session adds agents. When the session cannot be opened, the ack carries the error code — `40401` lists the session in `not_found`, others such as `40930` or `40931` say why it cannot be opened — and nothing is subscribed. Once the session is open the ack is sent right away, before any frame of the subscription; agent conversations load after it |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | Stop receiving agents; omitting `agent_ids`, or removing the last agent, drops the whole session subscription |
 | `client_hello` | `{ client_id }` | Handshake frame; other fields are ignored |
 | `task.watch` | flat: `{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | Stream one task's output to this connection, no session subscription needed; `agent_id` is the agent that owns the task (the `agent_id` of its `task` frame), `since_offset` resumes after output the client already has, and `tail_bytes` caps the size of the first chunk |
@@ -2431,7 +2431,7 @@ A turn is `{ turn_id, ordinal, turn_number?, kind, status, outcome?, error?, sta
 
 - `turn_id` is unique within the agent and `ordinal` orders the turns; older pages are read with `before=<ordinal>`. `turn_number` is the engine's turn number, present on turns the agent ran itself (history copied into a side chat at fork time has none).
 - `kind` is `agent`, or `system` for compaction that ran while the agent was idle.
-- `status` is `running` or `ended`; `outcome` is `completed` / `cancelled` / `failed` / `blocked` (a hook rejected the input) / `interrupted` (the agent stopped without ending the turn). `error` is `{ code, message, name?, retryable?, status_code?, request_id? }` on failed turns.
+- `status` is `running` or `ended`; a turn is `running` only while the agent or a compaction works on it, so turns the agent does not run, such as CLI shell commands or a prompt a hook rejected, are already `ended`. `outcome` is `completed` / `cancelled` / `failed` / `blocked` (a hook rejected the input) / `interrupted` (the agent stopped without ending the turn). `error` is `{ code, message, name?, retryable?, status_code?, request_id? }` on failed turns.
 - `steps` lists the model requests of the turn as `{ step_id, index, started_at?, ended_at?, finish_reason?, usage?, llm_timing? }`.
 
 Every item has `item_id`, `type`, and `status`:
@@ -2443,7 +2443,7 @@ Every item has `item_id`, `type`, and `status`:
 - `notification`: `{ origin?, text }`, a background task notification delivered into the conversation.
 - `compaction`: `{ trigger?, outcome?, summary?, tokens_before?, tokens_after? }`.
 
-When a connection starts receiving an agent it gets `{ type: "turns", session_id, agent_id, event_created_at, turns, has_more }` with the latest page, including the running turn and what its current step has streamed so far. When the agent's conversation cannot be loaded, it gets `{ type: "turns.failed", session_id, agent_id, event_created_at, code, msg }` instead — for example `40401` for an agent that is not in the session — and the agent stays subscribed. A later `turns` frame replaces the client's latest turns: it is sent again after an undo, and when the agent is loaded again after it was closed. After that:
+When a connection starts receiving an agent it gets `{ type: "turns", session_id, agent_id, event_created_at, turns, has_more }` with the latest page, including the running turn and what its current step has streamed so far. When the agent's conversation cannot be loaded, it gets `{ type: "turns.failed", session_id, agent_id, event_created_at, code, msg }` instead — for example `40401` for an agent that is not in the session, or when an agent loaded again after it was closed fails to restore — and the agent stays subscribed. A later `turns` frame replaces the client's latest turns: it is sent again after an undo, and when the agent is loaded again after it was closed. After that:
 
 - `turn.started`, `turn.updated`, `turn.ended` carry `turn`, the full turn header without `items`, and replace the client copy of the header.
 - `item.started`, `item.updated`, `item.ended` carry `turn_id` and the full `item`, and replace the client copy with the same `item_id`. Running text items start with the text generated so far. A running `assistant_message` or `reasoning` item ends as soon as the next text, reasoning, or tool call of its step starts, and its `item.ended` is sent again with the persisted values when the step completes.
