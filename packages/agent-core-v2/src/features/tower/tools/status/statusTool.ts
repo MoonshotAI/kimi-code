@@ -274,30 +274,31 @@ function renderDeathWarnings(state: TowerStatusState, limit: number): string[] {
   const deadByName = new Map(
     state.roster.agents.filter((a) => a.diedAt !== undefined).map((a) => [a.name, a]),
   );
-  const lines: string[] = [];
+  const warnings: { diedAt: string; text: string }[] = [];
   for (const mission of state.missions) {
     if (mission.owner === undefined) continue;
     if (mission.status === 'merged' || mission.status === 'abandoned') continue;
     const entry = deadByName.get(mission.owner);
     if (entry === undefined) continue;
-    lines.push(
-      isStoppedByUser(entry)
+    warnings.push({
+      diedAt: entry.diedAt ?? '',
+      text: isStoppedByUser(entry)
         ? `- 🛑 ${mission.id} owner ${entry.name} was stopped by the user (${entry.deathStatus ?? 'unknown'}) — dead by intent: never resume it and do not reassign the mission unless the human asks`
         : entry.kind === 'reviewer'
           ? `- ⚠️ ${mission.id} reviewer ${entry.name} died (${entry.deathStatus ?? 'unknown'}) — diagnose first: check the death status/reason and task state. A reviewer is one-shot: do not resume it or another roster agent; after diagnosis, spawn a fresh reviewer only if the mission still needs one`
           : `- ⚠️ ${mission.id} owner ${entry.name} died (${entry.deathStatus ?? 'unknown'}) — diagnose first: check why it died (the died entry's status/reason, its task state) before reviving anything. Resume with Agent(resume="${entry.agentId}", run_in_background=true, prompt="...") (foreground only when background task tools are unavailable) or reassign the mission only when the cause is transient (lost contact, timeout, OOM); a systematic cause (code or environment defect) is fixed or escalated to the human before any revive`,
-    );
+    });
   }
-  if (lines.length === 0) return lines;
-  const visible = lines.slice(-limit).toReversed();
+  if (warnings.length === 0) return [];
+  const visible = warnings.toSorted((a, b) => b.diedAt.localeCompare(a.diedAt)).slice(0, limit);
   return [
     '',
     '## Dead workers',
     '',
-    `Showing ${String(visible.length)} of ${String(lines.length)} death warning(s), newest mission first.`,
+    `Showing ${String(visible.length)} of ${String(warnings.length)} death warning(s), newest death first.`,
     '',
-    ...visible,
-    ...renderOmission(lines.length - visible.length, 'death warnings'),
+    ...visible.map((warning) => warning.text),
+    ...renderOmission(warnings.length - visible.length, 'death warnings'),
   ];
 }
 

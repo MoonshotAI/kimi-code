@@ -20,9 +20,11 @@ import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
 import {
+  STATE_FILE,
   TOWER_GIT_CONCURRENCY,
   TowerStore,
   parseFrontmatter,
+  type TowerState,
 } from '#/features/tower/protocol/index';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -964,6 +966,46 @@ describe('TowerStatusTool', () => {
     expect(result.output).toMatch(
       /died \(failed\) — diagnose first[\s\S]*Agent\(resume="agent-w1", run_in_background=true/,
     );
+  });
+
+  it('orders death warnings by death time before applying the detail limit', async () => {
+    await initViaTool();
+    const store = new TowerStore(repo);
+    const missions = await store.plan(
+      Array.from({ length: 21 }, (_, index) => ({
+        title: `Mission ${String(index + 1)}`,
+        scope: [`src/m${String(index + 1)}/**`],
+      })),
+    );
+    for (const mission of missions) {
+      const name = `w-${mission.id.toLowerCase()}`;
+      await store.registerAgent({
+        name,
+        kind: 'worker',
+        agentId: `agent-${mission.id}`,
+        missionId: mission.id,
+        spawnedAt: new Date(Date.UTC(2026, 0, 1)).toISOString(),
+      });
+      await store.updateMission('tower', mission.id, { status: 'active', owner: name }, { silent: true });
+    }
+    const stateFile = store.abs(STATE_FILE);
+    const state = JSON.parse(await readFile(stateFile, 'utf8')) as TowerState;
+    state.roster = {
+      ...state.roster,
+      agents: state.roster.agents.map((agent, index) => {
+        const seconds = index === 0 ? 100 : index === 20 ? 0 : index;
+        return { ...agent, diedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, seconds)).toISOString() };
+      }),
+    };
+    await writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+
+    const result = await run(ix.get(ITowerStatusTool), {});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('Showing 20 of 21 death warning(s), newest death first.');
+    expect(result.output).toContain('M1 owner w-m1 died');
+    expect(result.output).not.toContain('M21 owner w-m21 died');
+    expect(result.output).toContain('1 earlier death warnings omitted');
   });
 
   it('advises fixing or escalating a systematic death cause before any revive', async () => {

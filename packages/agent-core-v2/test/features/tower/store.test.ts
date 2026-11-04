@@ -1601,7 +1601,7 @@ describe('merge gate', () => {
     );
   });
 
-  it('requires fresh artifact acceptance after a tip move and a clean rebase', async () => {
+  it('requires fresh completion and artifact acceptance after a tip move and a clean rebase', async () => {
     const mission = await setupMission({
       title: 'render rebased summary',
       scope: 'reports/**',
@@ -1622,6 +1622,8 @@ describe('merge gate', () => {
 
     await completeMission(mission);
     await cleanReview('tower', mission.branch);
+    const completionTip = (await store.load()).missions.find((m) => m.id === mission.id)!
+      .completionTip;
     await commitFile(repo, 'docs/base.md', 'base moves\n', 'base moves on');
     await expect(store.merge(mission.branch, { activeAgentIds: new Set() })).rejects.toThrow(
       /behind base "main"/,
@@ -1636,9 +1638,15 @@ describe('merge gate', () => {
     );
     const state = await store.load();
     const current = state.missions.find((m) => m.id === mission.id)!;
+    expect(current.completionTip).toBe(completionTip);
+    expect(current.completionTip).not.toBe(rebased.toCommit);
     const gate = await store.missionGate(state, current);
     expect(gate.reviewBinding).toBe('stale-tip');
+    await expect(cleanReview('tower', mission.branch)).rejects.toThrow(
+      /advanced after the artifact acceptance-request/,
+    );
 
+    await completeMission(mission);
     await cleanReview('tower', mission.branch);
     await store.merge(mission.branch, { activeAgentIds: new Set() });
     expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('merged');
@@ -3835,6 +3843,31 @@ describe('completion invariants', () => {
     const messages = await store.readInbox('tower', 20);
     expect(messages.filter((item) => item.action === 'complete')).toHaveLength(1);
     expect(messages.some((item) => item.subject === 'review-request')).toBe(false);
+  });
+
+  it('rejects a deleted file as a key artifact at the completion tip', async () => {
+    await commitFile(repo, 'src/remove-report/old.html', '<h1>Old</h1>\n', 'seed old artifact');
+    const mission = await seedMission('remove report', { kind: 'artifact', withWorktree: true });
+    await store.registerAgent(
+      rosterEntry({
+        name: 'w1',
+        kind: 'worker',
+        missionId: mission.id,
+        worktree: mission.worktree,
+        branch: mission.branch,
+      }),
+    );
+    await rm(join(worktreeOf(mission), 'src/remove-report/old.html'));
+    await git(worktreeOf(mission), 'add', '-A');
+    await git(worktreeOf(mission), 'commit', '-m', 'remove old artifact');
+
+    await expect(
+      store.complete('w1', 'Deleted the old artifact', ['src/remove-report/old.html']),
+    ).rejects.toThrow(/must name files present at completion tip.*old\.html/s);
+    expect((await store.load()).missions.find((m) => m.id === mission.id)?.status).toBe('planned');
+    expect((await store.readInbox('tower', 20)).some((item) => item.action === 'complete')).toBe(
+      false,
+    );
   });
 
   it('lets a survey mission complete with no branch and no diff', async () => {

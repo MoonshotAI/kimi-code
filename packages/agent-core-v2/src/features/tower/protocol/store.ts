@@ -1748,6 +1748,16 @@ export class TowerStore {
             `TowerComplete key_artifacts for artifact mission ${beforeMission.id} must stay inside its scope (${beforeMission.scope.join(', ')}): ${outOfScope.join(', ')}`,
           );
         }
+        const missingAtTip: string[] = [];
+        for (const path of keyArtifacts) {
+          const type = await tryGit(this.repoRoot, ['cat-file', '-t', `${completionTip}:${path}`]);
+          if (type !== 'blob') missingAtTip.push(path);
+        }
+        if (missingAtTip.length > 0) {
+          throw new TowerProtocolError(
+            `TowerComplete key_artifacts for artifact mission ${beforeMission.id} must name files present at completion tip ${completionTip.slice(0, 7)}; missing or not files: ${missingAtTip.join(', ')}`,
+          );
+        }
       }
     }
     const completionReport =
@@ -2983,7 +2993,7 @@ export class TowerStore {
         if (inProgress && files.length > 0) {
           mission.blockers.push(
             mission.kind === 'artifact'
-              ? `tower rebase onto ${state.base} conflicted in: ${files.join(', ')} — the rebase was aborted and your worktree is back to the pre-rebase state. Resolve it yourself: run \`git rebase ${state.base}\` in your worktree, fix the listed conflicts, \`git add\` the resolved files, then continue with \`GIT_EDITOR=true git rebase --continue\` (a plain \`git rebase --continue\` opens an editor and hangs a non-interactive shell). Re-run your checks, then clear this blocker (TowerMission clear_blockers) and TowerSend the tower so it can present the current key artifacts for fresh explicit human acceptance of the entire tip — the moved tip cannot reuse the old acceptance`
+              ? `tower rebase onto ${state.base} conflicted in: ${files.join(', ')} — the rebase was aborted and your worktree is back to the pre-rebase state. Resolve it yourself: run \`git rebase ${state.base}\` in your worktree, fix the listed conflicts, \`git add\` the resolved files, then continue with \`GIT_EDITOR=true git rebase --continue\` (a plain \`git rebase --continue\` opens an editor and hangs a non-interactive shell). Re-run your checks, clear this blocker (TowerMission clear_blockers), then run TowerComplete with the current report and key_artifacts so the tower can present the new acceptance-request for fresh explicit human acceptance of the entire tip — the moved tip cannot reuse the old acceptance`
               : `tower rebase onto ${state.base} conflicted in: ${files.join(', ')} — the rebase was aborted and your worktree is back to the pre-rebase state. Resolve it yourself: run \`git rebase ${state.base}\` in your worktree, fix the listed conflicts, \`git add\` the resolved files, then continue with \`GIT_EDITOR=true git rebase --continue\` (a plain \`git rebase --continue\` opens an editor and hangs a non-interactive shell). Re-run your tests, then clear this blocker (TowerMission clear_blockers) and TowerSend the tower asking for a fresh review — a worker-run rebase is not covered by the clean-rebase waiver, so the moved tip needs a new clean review before the merge can land`,
           );
           mission.status = 'blocked';
@@ -3027,9 +3037,6 @@ export class TowerStore {
         );
       }
       mission.lastRebase = { fromCommit, toCommit };
-      if (mission.kind === 'artifact' && mission.completionTip === fromCommit) {
-        mission.completionTip = toCommit;
-      }
       await this.save(state);
       await this.renderMissionsIndex(state);
       await this.renderMissionFile(mission);

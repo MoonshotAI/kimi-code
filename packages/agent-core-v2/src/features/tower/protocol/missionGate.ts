@@ -176,7 +176,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     return block(
       'stale-base',
       mission.kind === 'artifact'
-        ? `${mission.branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land artifacts that were never produced or accepted against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree and refuses while the worker is mid-turn or the worktree is dirty), then present the rebased key artifacts for fresh explicit human acceptance of the entire tip before retrying the merge`
+        ? `${mission.branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land artifacts that were never produced or accepted against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree and refuses while the worker is mid-turn or the worktree is dirty), then have the worker run TowerComplete with the current report and key_artifacts at the rebased tip, present that new request for fresh explicit human acceptance of the entire tip, and retry the merge`
         : `${mission.branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land code that was never built or reviewed against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree, refuses while the worker is mid-turn or the worktree is dirty, and a conflict-free rebase waives the re-review), then retry the merge`,
     );
   }
@@ -226,7 +226,7 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
     return block(
       'tip-moved',
       mission.kind === 'artifact'
-        ? `${mission.branch} moved since the human acceptance (accepted ${selectedReview.reviewedCommit.slice(0, 7)}, tip ${branch.tip.slice(0, 7)}) — present the current key artifacts for fresh explicit human acceptance of the entire tip; rebase never waives artifact acceptance`
+        ? `${mission.branch} moved since the human acceptance (accepted ${selectedReview.reviewedCommit.slice(0, 7)}, tip ${branch.tip.slice(0, 7)}) — have the worker run TowerComplete with the current report and key_artifacts at the moved tip, present that new request for fresh explicit human acceptance of the entire tip, and retry the merge; rebase never waives artifact acceptance`
         : `${mission.branch} moved since the clean review (reviewed ${selectedReview.reviewedCommit.slice(0, 7)}, tip ${branch.tip.slice(0, 7)}) — re-review required`,
     );
   }
