@@ -2,9 +2,11 @@ import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 import { describe, expect, it } from 'vitest';
 
 import type { ConversationTurn } from '../../src/protocol/conversation';
+import { restoredTurnEvents } from '../../src/services/conversation/conversationFeed';
 import {
   applyConversationRecord,
   createConversationState,
+  undoConversationTurns,
   type ConversationState,
 } from '../../src/services/conversation/conversationFold';
 
@@ -129,6 +131,26 @@ describe('conversation fold', () => {
 
     expect(shape(state.turns[0])).toEqual(['opener:hello', 'reasoning:s1:0:a', 'assistant_message:s1:1:b']);
     expect(state.turns[0]?.status).toBe('running');
+  });
+
+  it('drops bundled skill instructions from user content', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      record('context.append_message', {
+        message: {
+          role: 'user',
+          id: 'p1',
+          origin: { kind: 'user', skillActivations: [{ activationId: 'act-1', skillName: 'review' }] },
+          content: [
+            { type: 'text', text: 'full review skill instructions' },
+            { type: 'text', text: 'check this diff' },
+          ],
+          toolCalls: [],
+        },
+      }),
+    ]);
+
+    expect(shape(state.turns[0])).toEqual(['opener:check this diff']);
   });
 
   it('times reasoning by its streamed block and falls back to the step span for untimed records', () => {
@@ -299,6 +321,25 @@ describe('conversation fold', () => {
       ['opener:first', 'assistant_message:t0#1:one'],
       ['opener:third'],
     ]);
+  });
+
+  it('reports the items an undo cut from a turn that stays', () => {
+    const records = [
+      userMessage('a', 'first'),
+      message('assistant', 'one'),
+      record('turn.steer', { input: [{ type: 'text', text: 'wait' }], origin: { kind: 'user' } }),
+      userMessage('c', 'wait'),
+      message('assistant', 'two'),
+    ];
+    const before = fold(records).turns[0]!;
+    const after = undoConversationTurns(fold(records), 1).turns[0]!;
+
+    expect(shape(after)).toEqual(['opener:first', 'assistant_message:t0#1:one']);
+    expect(restoredTurnEvents(before, after)).toEqual([
+      { type: 'item.removed', turn_id: 't0', item_id: 'c' },
+      { type: 'item.removed', turn_id: 't0', item_id: 't0#3' },
+    ]);
+    expect(restoredTurnEvents(after, structuredClone(after))).toEqual([]);
   });
 
   it('folds legacy assistant and tool messages', () => {

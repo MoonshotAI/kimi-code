@@ -226,10 +226,16 @@ export class ConversationFeed implements IDisposable {
   private finishRestore(): void {
     if (!this.restoring) return;
     this.restoring = false;
+    const previous = new Map(this.sent.map((turn) => [turn.turn_id, turn]));
     const current = new Set(this.state.turns.map((turn) => turn.turn_id));
     const removed = this.sent.filter((turn) => !current.has(turn.turn_id)).map((turn) => turn.turn_id);
     this.sent = this.state.turns;
     if (removed.length > 0) this.emit({ type: 'turns.removed', turn_ids: removed });
+    for (const turn of this.state.turns) {
+      const before = previous.get(turn.turn_id);
+      if (before === undefined) continue;
+      for (const event of restoredTurnEvents(before, turn)) this.emit(event);
+    }
   }
 
   private flush(): void {
@@ -380,6 +386,23 @@ export class ConversationFeed implements IDisposable {
 function headerOf(turn: ConversationTurn): ConversationTurnHeader {
   const { items: _items, ...header } = turn;
   return header;
+}
+
+export function restoredTurnEvents(before: ConversationTurn, after: ConversationTurn): ConversationEvent[] {
+  if (JSON.stringify(before) === JSON.stringify(after)) return [];
+  const turnId = after.turn_id;
+  const kept = new Set(after.items.map((item) => item.item_id));
+  const previousItems = new Map(before.items.map((item) => [item.item_id, JSON.stringify(item)]));
+  const events: ConversationEvent[] = before.items
+    .filter((item) => !kept.has(item.item_id))
+    .map((item) => ({ type: 'item.removed', turn_id: turnId, item_id: item.item_id }));
+  for (const item of after.items) {
+    if (previousItems.get(item.item_id) === JSON.stringify(item)) continue;
+    events.push({ type: item.status === 'ended' ? 'item.ended' : 'item.updated', turn_id: turnId, item });
+  }
+  const header = headerOf(after);
+  if (JSON.stringify(headerOf(before)) !== JSON.stringify(header)) events.push({ type: 'turn.updated', turn: header });
+  return events;
 }
 
 function headerUnchanged(before: ConversationTurn, after: ConversationTurn): boolean {

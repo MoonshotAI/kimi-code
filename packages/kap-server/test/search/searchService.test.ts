@@ -2018,7 +2018,7 @@ describe('GlobalSearchService', () => {
       calls?: LiveSourceCalls,
     ): LiveConversationSource {
       return {
-        liveAgentIds: (sessionId) => {
+        liveAgentIds: async (sessionId) => {
           const session = sessions.get(sessionId);
           return session === undefined ? undefined : [...session.keys()];
         },
@@ -2372,7 +2372,7 @@ describe('GlobalSearchService', () => {
       await service.reindex();
 
       service.setLiveConversationSource({
-        liveAgentIds: (sessionId) => (sessionId === 's1' ? ['main'] : undefined),
+        liveAgentIds: async (sessionId) => (sessionId === 's1' ? ['main'] : undefined),
         liveTurns: async () => {
           throw new Error('live read boom');
         },

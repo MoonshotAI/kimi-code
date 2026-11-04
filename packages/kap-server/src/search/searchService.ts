@@ -108,7 +108,7 @@ export interface IGlobalSearchService {
 export const IGlobalSearchService = createDecorator<IGlobalSearchService>('globalSearch');
 
 export interface LiveConversationSource {
-  liveAgentIds(sessionId: string): readonly string[] | undefined;
+  liveAgentIds(sessionId: string): Promise<readonly string[] | undefined>;
   liveTurns(sessionId: string, agentId: string): Promise<readonly ConversationTurn[] | undefined>;
 }
 
@@ -422,7 +422,7 @@ export class GlobalSearchService implements IGlobalSearchService {
       throw new GlobalSearchError('index_unavailable', GLOBAL_SEARCH_DISABLED_DETAIL);
     }
     const sessionId = q.container?.sessionId;
-    const liveAgentIds = sessionId !== undefined ? this.liveSource?.liveAgentIds(sessionId) : undefined;
+    const liveAgentIds = sessionId !== undefined ? await this.liveSource?.liveAgentIds(sessionId) : undefined;
     if (liveAgentIds !== undefined && sessionId !== undefined) {
       return this.searchLive(q, sessionId, liveAgentIds, input.pageToken);
     }

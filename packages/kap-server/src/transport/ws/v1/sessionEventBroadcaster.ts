@@ -24,6 +24,8 @@ import {
   interactions,
   toDisposable,
 } from '@moonshot-ai/agent-core-v2';
+import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import { SubagentStarted } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 import type {
   ConfigWarningItem,
   DiUnitChangedEvent,
@@ -86,12 +88,17 @@ interface SessionState {
   readonly sessionId: string;
   detached?: true;
   readonly targets: Map<BroadcastTarget, Set<string>>;
-  readonly conversations: Map<BroadcastTarget, Map<string, IDisposable>>;
+  readonly conversations: Map<BroadcastTarget, Map<string, ConversationAttachment>>;
   readonly lifecycleDisposables: IDisposable[];
   readonly knownInteractions: Map<string, Interaction>;
   tasks?: SessionTaskFeed;
   agents?: SessionAgentFeed;
   readonly listedAgents: Map<BroadcastTarget, Set<string>>;
+}
+
+interface ConversationAttachment {
+  readonly feed: ConversationFeed;
+  readonly subscription: IDisposable;
 }
 
 interface WorkTracker {
@@ -105,8 +112,8 @@ const CONVERSATION_PAGE_TURNS = 20;
 function disposeSessionState(state: SessionState): void {
   for (const d of state.lifecycleDisposables) d.dispose();
   state.lifecycleDisposables.length = 0;
-  for (const subscriptions of state.conversations.values()) {
-    for (const subscription of subscriptions.values()) subscription.dispose();
+  for (const attachments of state.conversations.values()) {
+    for (const attachment of attachments.values()) attachment.subscription.dispose();
   }
   state.conversations.clear();
 }
@@ -207,10 +214,9 @@ export class SessionEventBroadcaster {
     if (state === undefined || this.sessions.get(sessionId) !== state) return false;
     const subscribed = state.targets.get(target) ?? new Set<string>();
     state.targets.set(target, subscribed);
-    const added = agentIds.filter((agentId) => !subscribed.has(agentId));
-    for (const agentId of added) subscribed.add(agentId);
+    for (const agentId of agentIds) subscribed.add(agentId);
     this.sendAgentLists(state, target, subscribed);
-    await Promise.all(added.map((agentId) => this.attachConversation(state, target, agentId)));
+    await Promise.all(agentIds.map((agentId) => this.attachConversation(state, target, agentId)));
     return true;
   }
 
@@ -251,6 +257,7 @@ export class SessionEventBroadcaster {
       return;
     }
     if (feed === undefined || state.targets.get(target)?.has(agentId) !== true) return;
+    if (state.conversations.get(target)?.get(agentId)?.feed === feed) return;
     const buffered: ConversationEvent[] = [];
     let ready = false;
     const subscription = feed.subscribe((event) => {
@@ -263,10 +270,11 @@ export class SessionEventBroadcaster {
       byAgent = new Map();
       state.conversations.set(target, byAgent);
     }
-    byAgent.set(agentId, subscription);
+    const attachment: ConversationAttachment = { feed, subscription };
+    byAgent.set(agentId, attachment);
     const snapshot = feed.snapshot(undefined, CONVERSATION_PAGE_TURNS);
     const turns = await feed.hydrate(snapshot.turns).catch(() => snapshot.turns);
-    if (state.conversations.get(target)?.get(agentId) !== subscription) return;
+    if (state.conversations.get(target)?.get(agentId) !== attachment) return;
     try {
       target.send({
         type: 'turns',
@@ -285,7 +293,7 @@ export class SessionEventBroadcaster {
 
   private detachConversation(state: SessionState, target: BroadcastTarget, agentId: string): void {
     const byAgent = state.conversations.get(target);
-    byAgent?.get(agentId)?.dispose();
+    byAgent?.get(agentId)?.subscription.dispose();
     byAgent?.delete(agentId);
   }
 
@@ -388,19 +396,23 @@ export class SessionEventBroadcaster {
   }
 
   private attachAgentFeeds(sessionId: string, state: SessionState): void {
-    const agents = getLiveSessionById(this.opts.core.accessor, sessionId)?.accessor.get(
-      IAgentLifecycleService,
-    );
-    if (agents === undefined) return;
+    const session = getLiveSessionById(this.opts.core.accessor, sessionId);
+    if (session === undefined) return;
+    const agents = session.accessor.get(IAgentLifecycleService);
     const tasks = new SessionTaskFeed(agents, (agentId, info) => {
       this.sendAgentFrame(state, agentId, toTaskMessage(state.sessionId, agentId, info));
     });
     const agentStates = new SessionAgentFeed(sessionId, agents, (agentId, message) => {
       this.sendAgentFrame(state, agentId, message);
     });
+    const restarts = session.accessor.get(ISessionEventBus).subscribe(SubagentStarted, (event) => {
+      for (const [target, agentIds] of state.targets) {
+        if (agentIds.has(event.subagentId)) void this.attachConversation(state, target, event.subagentId);
+      }
+    });
     state.tasks = tasks;
     state.agents = agentStates;
-    state.lifecycleDisposables.push(tasks, agentStates);
+    state.lifecycleDisposables.push(tasks, agentStates, restarts);
   }
 
   private sendAgentLists(

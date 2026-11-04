@@ -5,6 +5,7 @@ import {
   IAgentLifecycleService,
   IBootstrapService,
   ISessionIndex,
+  ISessionMetadata,
   MAIN_AGENT_ID,
   flattenChain,
   getLiveSessionById,
@@ -55,16 +56,20 @@ export class ConversationService implements IDisposable, LiveConversationSource 
     return this.feedFor(sessionId, session, handle);
   }
 
-  liveAgentIds(sessionId: string): readonly string[] | undefined {
+  async liveAgentIds(sessionId: string): Promise<readonly string[] | undefined> {
     const session = getLiveSessionById(this.core.accessor, sessionId);
-    return session?.accessor.get(IAgentLifecycleService).list().map((agent) => agent.agentId);
+    if (session === undefined) return undefined;
+    const loaded = session.accessor.get(IAgentLifecycleService).list().map((agent) => agent.agentId);
+    const meta = await session.accessor.get(ISessionMetadata).read();
+    return [...new Set([...loaded, ...Object.keys(meta.agents ?? {})])];
   }
 
   async liveTurns(sessionId: string, agentId: string): Promise<readonly ConversationTurn[] | undefined> {
     const session = getLiveSessionById(this.core.accessor, sessionId);
-    const handle = session?.accessor.get(IAgentLifecycleService).handleOf(agentId);
-    if (session === undefined || handle === undefined) return undefined;
+    if (session === undefined) return undefined;
+    const handle = session.accessor.get(IAgentLifecycleService).handleOf(agentId);
     try {
+      if (handle === undefined) return await this.coldTurns(sessionId, agentId);
       return (await this.feedFor(sessionId, session, handle)).turns();
     } catch {
       return undefined;
@@ -75,8 +80,10 @@ export class ConversationService implements IDisposable, LiveConversationSource 
     sessionId: string,
     agentId: string,
   ): Promise<readonly ConversationTurn[] | undefined> {
-    const live = await this.liveTurns(sessionId, agentId);
-    if (live !== undefined) return live;
+    return (await this.liveTurns(sessionId, agentId)) ?? this.coldTurns(sessionId, agentId);
+  }
+
+  private async coldTurns(sessionId: string, agentId: string): Promise<readonly ConversationTurn[] | undefined> {
     const summary = await this.core.accessor.get(ISessionIndex).get(sessionId);
     if (summary === undefined) return undefined;
     const bootstrap = this.core.accessor.get(IBootstrapService);

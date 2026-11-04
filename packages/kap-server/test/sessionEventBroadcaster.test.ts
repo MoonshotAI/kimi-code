@@ -39,6 +39,7 @@ import {
   makeAgentScopeContext,
 } from '@moonshot-ai/agent-core-v2';
 import { Event2 } from '@moonshot-ai/agent-core-v2/app/event/event2';
+import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import {
   AgentEventBusView,
   EventBusService,
@@ -465,6 +466,7 @@ function makeCore(
         if (t === IAgentLifecycleService) return lifecycle;
         if (t === ISessionActivityView) return lifecycle.workView;
         if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
+        if (t === ISessionEventBus) return { subscribe: () => ({ dispose: () => {} }) };
         return undefined;
       },
     };

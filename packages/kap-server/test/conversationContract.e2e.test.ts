@@ -20,6 +20,7 @@ import {
   type ApprovalRequest,
 } from '@moonshot-ai/agent-core-v2';
 
+import { ConversationService } from '../src/services/conversation/conversationService';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders, bearerToken } from './helpers/auth';
@@ -312,7 +313,11 @@ function rawToString(data: RawData): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
-async function subscribeConversation(server: RunningServer, sid: string): Promise<ConversationChannel> {
+async function subscribeConversation(
+  server: RunningServer,
+  sid: string,
+  agentId: string = MAIN_AGENT_ID,
+): Promise<ConversationChannel> {
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/ws`, [`kimi-code.bearer.${bearerToken(server)}`]);
   const frames: any[] = [];
   const conversation: any[] = [];
@@ -327,7 +332,7 @@ async function subscribeConversation(server: RunningServer, sid: string): Promis
       return;
     }
     frames.push(frame);
-    if (CONVERSATION_FRAME_TYPES.has(frame.type) && frame.agent_id === MAIN_AGENT_ID) conversation.push(frame);
+    if (CONVERSATION_FRAME_TYPES.has(frame.type) && frame.agent_id === agentId) conversation.push(frame);
     if (frame.type === 'task') tasks.push(frame);
     if (frame.type === 'agent' && frame.agent_id === MAIN_AGENT_ID) agents.push(frame);
     if (frame.type === 'todo' && frame.agent_id === MAIN_AGENT_ID) todos.push(frame);
@@ -338,7 +343,7 @@ async function subscribeConversation(server: RunningServer, sid: string): Promis
     });
     ws.once('error', reject);
   });
-  ws.send(JSON.stringify({ type: 'subscribe_v2', id: 'sub-1', payload: { session_id: sid } }));
+  ws.send(JSON.stringify({ type: 'subscribe_v2', id: 'sub-1', payload: { session_id: sid, agent_ids: [agentId] } }));
   await until('turns frame', () => conversation.some((frame) => frame.type === 'turns'), 15000);
   return {
     frames,
@@ -726,6 +731,67 @@ describe('conversation contract e2e', () => {
     await until('notification turn ended on the channel', () => channel.turns().length === end.turns.length && channel.turns().every((turn) => turn.status === 'ended'));
     expect(channel.turns()).toEqual(end.turns);
     channel.close();
+  });
+
+  it('S4b: a live session lists and reads subagents that are not loaded', async () => {
+    await boot([
+      {
+        match: (body) => body.includes('spawn-fg') && !body.includes('"role":"tool"'),
+        respond: () => sseToolCall('call_fg', 'Agent', '{"prompt":"fg-answer-7","description":"fg ans"}'),
+      },
+      { match: (body) => body.includes('fg-answer-7') && !body.includes('spawn-fg'), respond: () => sseText('seven') },
+      { match: () => true, respond: () => sseText('done') },
+    ]);
+    const sid = await createSession(server!, base);
+    await submitPrompt(server!, base, sid, 'spawn-fg one foreground agent');
+    await idleOrDump(server!, base, sid);
+    const [agentTool] = toolItems(await getTurns(server!, base, sid), 'Agent');
+    const childId: string = agentTool.agent_refs[0].agent_id;
+    const lifecycle = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(IAgentLifecycleService);
+    await lifecycle.remove(lifecycle.get(childId)!);
+
+    const conversations = new ConversationService(server!.core);
+    expect(await conversations.liveAgentIds(sid)).toEqual(expect.arrayContaining([MAIN_AGENT_ID, childId]));
+    const turns = await conversations.liveTurns(sid, childId);
+    expect(turns?.some((turn) => turn.items.some((item) => item.type === 'assistant_message' && item.text === 'seven'))).toBe(true);
+    expect(lifecycle.handleOf(childId)).toBeUndefined();
+    conversations.dispose();
+  });
+
+  it('S4c: a subscribed subagent keeps streaming after it is evicted and resumed', async () => {
+    let childId = '';
+    let resumed = false;
+    await boot([
+      { match: (body) => body.includes('fg-second-2') && !body.includes('resume-it'), respond: () => sseText('second answer') },
+      {
+        match: (body) => body.includes('resume-it') && !resumed,
+        respond: () => {
+          resumed = true;
+          return sseToolCall('call_resume', 'Agent', JSON.stringify({ resume: childId, prompt: 'fg-second-2', description: 'fg again' }));
+        },
+      },
+      { match: (body) => body.includes('fg-first-1') && !body.includes('spawn-fg2'), respond: () => sseText('first answer') },
+      {
+        match: (body) => body.includes('spawn-fg2') && !body.includes('"role":"tool"'),
+        respond: () => sseToolCall('call_spawn', 'Agent', '{"prompt":"fg-first-1","description":"fg one"}'),
+      },
+      { match: () => true, respond: () => sseText('done') },
+    ]);
+    const sid = await createSession(server!, base);
+    await submitPrompt(server!, base, sid, 'spawn-fg2 one foreground agent');
+    await idleOrDump(server!, base, sid);
+    childId = toolItems(await getTurns(server!, base, sid), 'Agent')[0].agent_refs[0].agent_id;
+    const child = await subscribeConversation(server!, sid, childId);
+    const lifecycle = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(IAgentLifecycleService);
+    await lifecycle.remove(lifecycle.get(childId)!);
+
+    await submitPrompt(server!, base, sid, 'resume-it please');
+    await idleOrDump(server!, base, sid);
+    const answered = (turns: readonly any[]): boolean =>
+      turns.some((turn) => turn.items.some((item: any) => item.type === 'assistant_message' && item.text === 'second answer'));
+    await until('resumed subagent answer on the channel', () => answered(child.turns()), 30000);
+    expect(child.turns()).toEqual((await getTurns(server!, base, sid, childId)).turns);
+    child.close();
   });
 
   it('S5: subscribing to a running turn shows what the step has streamed so far', async () => {

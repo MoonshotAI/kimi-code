@@ -1,5 +1,6 @@
 import { isUndoAnchor, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
+import { stripBundledSkillBlocks } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 
@@ -244,7 +245,7 @@ function applyMessage(state: ConversationState, message: ContextMessage | undefi
       placement: 'steer',
       prompt_ids: message.id === undefined ? [] : [message.id],
       origin: plainOrigin(origin),
-      content: userContent(message.content),
+      content: userContent(message),
       created_at: time,
     });
     return;
@@ -267,7 +268,7 @@ function applyMessage(state: ConversationState, message: ContextMessage | undefi
     placement: 'opener',
     prompt_ids: promptId === undefined ? [] : [promptId],
     origin: plainOrigin(origin),
-    content: userContent(message.content),
+    content: userContent(message),
     created_at: time,
   });
 }
@@ -686,8 +687,10 @@ function contentItem(
   return undefined;
 }
 
-function userContent(content: readonly ContentPart[]): ReturnType<typeof projectPromptContentParts> {
-  return projectPromptContentParts(content.filter((part) => !isUserPromptSubmitHookPart(part)));
+function userContent(message: ContextMessage): ReturnType<typeof projectPromptContentParts> {
+  return projectPromptContentParts(
+    stripBundledSkillBlocks(message).filter((part) => !isUserPromptSubmitHookPart(part)),
+  );
 }
 
 function toolOutput(output: string | readonly ContentPart[]): unknown {
