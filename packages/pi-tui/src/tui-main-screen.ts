@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { Terminal } from "./terminal.ts";
 import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
 import { SEGMENT_RESET, type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
 import { asciiVisibleWidthWithinLimit, normalizeTerminalOutput, sliceByColumn, visibleWidth } from "./utils.ts";
@@ -113,6 +114,11 @@ function isTermuxSession(): boolean {
 	return Boolean(process.env['TERMUX_VERSION']);
 }
 
+export interface TuiMainScreenOptions {
+	/** Preserve terminal scrollback for safe above-viewport changes (default: false). */
+	preserveScrollbackOnAboveViewportChange?: boolean;
+}
+
 export interface TuiMainScreenRenderState {
 	previousLines: string[];
 	previousWidth: number;
@@ -127,6 +133,7 @@ export interface TuiMainScreenRenderState {
 /** TUI implementation that renders into the terminal's main screen and scrollback. */
 export class TuiMainScreen extends TuiBase implements TUI {
 	readonly mode = "regular" as const;
+	private readonly preserveScrollbackOnAboveViewportChange: boolean;
 	private previousLines: string[] = [];
 	/**
 	 * Raw (pre-processing) lines of the previous frame, aligned with
@@ -147,6 +154,16 @@ export class TuiMainScreen extends TuiBase implements TUI {
 	private previousViewportTop = 0;
 	/** Lowest logical row that may be stale after an above-viewport skip. */
 	private aboveViewportStaleTop: number | null = null;
+
+	constructor(
+		terminal: Terminal,
+		showHardwareCursor?: boolean,
+		logDirectory?: string,
+		options: TuiMainScreenOptions = {},
+	) {
+		super(terminal, showHardwareCursor, logDirectory);
+		this.preserveScrollbackOnAboveViewportChange = options.preserveScrollbackOnAboveViewportChange ?? false;
+	}
 
 	captureRenderState(): TuiMainScreenRenderState {
 		return {
@@ -564,6 +581,11 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// thinking/spinner line pushed above the viewport). Visible shrinks or
 		// image involvement keep the full redraw.
 		if (firstChanged < prevViewportTop) {
+			if (!this.preserveScrollbackOnAboveViewportChange) {
+				logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
+				fullRender(true);
+				return;
+			}
 			const aboveEnd = Math.min(lastChanged, prevViewportTop - 1);
 			const previousTailStart = this.previousLines.length - height;
 			const newTailStart = newLines.length - height;

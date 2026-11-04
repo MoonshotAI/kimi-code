@@ -1138,9 +1138,35 @@ describe("TUI above-viewport in-place changes", () => {
 		return Array.from({ length: count }, (_, i) => `line ${i}`);
 	}
 
-	it("skips the destructive full redraw when a line above the viewport changes in place", async () => {
+	it("keeps the destructive upstream redraw by default", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
 		const tui: TUI = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = makeLines(30);
+		tui.start();
+		await terminal.waitForRender();
+		const initialRedraws = tui.fullRedraws;
+
+		const lines = makeLines(30);
+		lines[3] = "changed above viewport";
+		component.lines = lines;
+		terminal.clearWrites();
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.ok(tui.fullRedraws > initialRedraws, "default behavior must match upstream");
+		assert.ok(terminal.getWrites().includes("\x1b[3J"), "default redraw clears scrollback");
+		tui.stop();
+	});
+
+	function makeScrollbackPreservingTui(terminal: LoggingVirtualTerminal): TUI {
+		return new TuiMainScreen(terminal, undefined, undefined, { preserveScrollbackOnAboveViewportChange: true });
+	}
+
+	it("skips the destructive full redraw when a line above the viewport changes in place", async () => {
+		const terminal = new LoggingVirtualTerminal(40, 10);
+		const tui = makeScrollbackPreservingTui(terminal);
 		const component = new TestComponent();
 		tui.addChild(component);
 		// 30 lines on a 10-row terminal -> viewport top sits at row 20.
@@ -1176,7 +1202,7 @@ describe("TUI above-viewport in-place changes", () => {
 
 	it("repaints only the visible part when an in-place change spans the viewport boundary", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
-		const tui: TUI = new TuiMainScreen(terminal);
+		const tui = makeScrollbackPreservingTui(terminal);
 		const component = new TestComponent();
 		tui.addChild(component);
 		component.lines = makeLines(30);
@@ -1209,7 +1235,7 @@ describe("TUI above-viewport in-place changes", () => {
 
 	it("repaints appended lines when a row above the viewport changes", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
-		const tui: TUI = new TuiMainScreen(terminal);
+		const tui = makeScrollbackPreservingTui(terminal);
 		const component = new TestComponent();
 		tui.addChild(component);
 		component.lines = makeLines(30);
@@ -1237,7 +1263,7 @@ describe("TUI above-viewport in-place changes", () => {
 	it("repaints skipped rows that a Termux height increase re-exposes", async () => {
 		await withEnv({ TERMUX_VERSION: "1" }, async () => {
 			const terminal = new LoggingVirtualTerminal(40, 10);
-			const tui: TUI = new TuiMainScreen(terminal);
+			const tui = makeScrollbackPreservingTui(terminal);
 			const component = new TestComponent();
 			tui.addChild(component);
 			component.lines = makeLines(30);
@@ -1271,7 +1297,7 @@ describe("TUI above-viewport in-place changes", () => {
 
 	it("skips the destructive redraw when an above-viewport fold preserves the visible tail", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
-		const tui: TUI = new TuiMainScreen(terminal);
+		const tui = makeScrollbackPreservingTui(terminal);
 		const component = new TestComponent();
 		tui.addChild(component);
 		component.lines = makeLines(30);
@@ -1299,7 +1325,7 @@ describe("TUI above-viewport in-place changes", () => {
 
 	it("preserves the live viewport offset when an invisible shrink follows a tail shrink", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
-		const tui: TUI = new TuiMainScreen(terminal);
+		const tui = makeScrollbackPreservingTui(terminal);
 		const component = new TestComponent();
 		tui.addChild(component);
 		component.lines = makeLines(30);
@@ -1334,7 +1360,7 @@ describe("TUI above-viewport in-place changes", () => {
 
 	it("keeps Kitty-bearing above-viewport shrinks on the full-redraw path", async () => {
 		const terminal = new LoggingVirtualTerminal(40, 10);
-		const tui: TUI = new TuiMainScreen(terminal);
+		const tui = makeScrollbackPreservingTui(terminal);
 		const component = new TestComponent();
 		tui.addChild(component);
 		const lines = makeLines(30);
@@ -1358,7 +1384,7 @@ describe("TUI above-viewport in-place changes", () => {
 	it("repaints pre-fold rows after consecutive Termux height increases", async () => {
 		await withEnv({ TERMUX_VERSION: "1" }, async () => {
 			const terminal = new LoggingVirtualTerminal(40, 10);
-			const tui: TUI = new TuiMainScreen(terminal);
+			const tui = makeScrollbackPreservingTui(terminal);
 			const component = new TestComponent();
 			tui.addChild(component);
 			component.lines = makeLines(30);
@@ -1387,7 +1413,7 @@ describe("TUI above-viewport in-place changes", () => {
 	it("preserves the skipped-row marker across render-state capture/restore", async () => {
 		await withEnv({ TERMUX_VERSION: "1" }, async () => {
 			const terminal = new LoggingVirtualTerminal(40, 10);
-			const tui = new TuiMainScreen(terminal);
+			const tui = makeScrollbackPreservingTui(terminal);
 			const component = new TestComponent();
 			tui.addChild(component);
 			component.lines = makeLines(30);

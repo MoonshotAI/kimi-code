@@ -144,7 +144,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
           // scrolled away from the end.
           scrollToEndIndicator: () => currentTheme.fg('primary', ' ↓ Jump to bottom '),
         })
-      : new TuiMainScreen(terminal);
+      : new TuiMainScreen(terminal, undefined, undefined, { preserveScrollbackOnAboveViewportChange: true });
 
   setMarkdownAltScreenActive(ui instanceof TuiAltScreen);
   setMarkdownRenderRequester(() => {

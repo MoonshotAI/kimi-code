@@ -38,7 +38,9 @@ export async function runImportSessionsCommand(): Promise<number> {
     const budget = importBudget(await harness.getConfig().catch(() => ({})));
     const now = Date.now();
     const homes = sourceHomes();
-    const ui = new TuiMainScreen(new ProcessTerminal());
+    const ui = new TuiMainScreen(new ProcessTerminal(), undefined, undefined, {
+      preserveScrollbackOnAboveViewportChange: true,
+    });
     await new Promise<void>((resolve) => {
       const screen = new ImportSessionsScreenComponent({
         now,
