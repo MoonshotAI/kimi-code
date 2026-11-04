@@ -10,17 +10,17 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Use `/model` and `/effort` while the agent is working to adjust the model and reasoning effort; changes apply from the next turn.
-- Create a branch session from a running session or a selected historical turn.
-- Use skills from every configured directory in multi-directory projects; the primary directory wins on name conflicts.
-- Choose an SSH, Docker, or custom-command environment when creating a session.
-- After confirming a workspace is trusted, set `[workspace] require_trust = false` to skip trust prompts.
+- Use `/model` and `/effort` while the agent is working. If the current turn has already started a model request, changes apply from the next turn; Compact and continue runs after the current turn ends.
+- In VS Code, fork from a completed assistant response; if another response is still running, confirming the fork stops it before creating the branch.
+- Merge project-level Skills from the primary directory and remembered additional directories; the primary directory wins on name conflicts, and session-only directories are excluded.
+- Declare an SSH, Docker, or custom-command environment in `config.toml` and install `kimi exec-server` on the target, then create a session with `kimi --environment <id>`; optionally override the working directory with `--environment-cwd <path>`.
+- Only set `[workspace] require_trust = false` in the user-level `config.toml` when every workspace is trusted. This skips startup trust prompts and loads project-level MCP servers and other trust-gated configuration without confirmation; apply with `/reload`. Tool approvals and dangerous-command guards remain unchanged.
 
 ### Polish
 
-- Global full-text search is off by default; set `[database] global_search = true` to turn it on when needed.
-- Set only `default_model` under `[secondary_model]` to use one model for all subagents; the old `force` option is no longer supported.
-- Set a default model for subagents with `/secondary-model`; it no longer follows `/model` switches in the main session.
+- The Web cross-session full-text search index is off by default and no longer scans past sessions; set `[database] global_search = true` to enable it.
+- With only `default_model` configured, newly spawned Agent and AgentSwarm subagents use that model; the legacy `force` key is ignored with a warning, while Tower Spawn retains its separate `primary` choice.
+- Agent and AgentSwarm no longer offer an implicit `primary`: list the main model explicitly in `[secondary_model.models]`; model selection is available only with multiple aliases. Without `[secondary_model]`, subagents still inherit the caller's model.
 
 ### Bug Fixes
 
