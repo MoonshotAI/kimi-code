@@ -6,6 +6,33 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.5.0 (2026-11-04)
+
+### Features
+
+- Allow `/model` and `/effort` while the agent is working; a turn that has already started calling the model keeps its settings, the switch applies from the next turn, and choosing Compact and continue runs after the current turn ends.
+- Add support for forking running sessions and forking from a selected historical turn.
+- Merge skills from every configured directory in multi-directory projects, with the primary directory taking precedence on name conflicts.
+- Add creation-time SSH, Docker, and custom-command environments; use `--environment <id>` and optionally `--environment-cwd <path>` when creating a session.
+- Set `[workspace] require_trust = false` to skip workspace trust prompts.
+
+### Polish
+
+- Stop building the global full-text search index by default and stop scanning past sessions in the background; set `[database] global_search = true` or `KIMI_CODE_GLOBAL_SEARCH=1` to turn it back on.
+- Remove `[secondary_model] force`, which is now ignored with a warning: a lone `default_model` still pins every subagent to that model.
+- Stop offering Agent and AgentSwarm subagents an implicit `primary` choice, and hide the model choice when `[secondary_model]` names only one model; list two or more aliases in `[secondary_model.models]` to choose again, noting a listed main model uses `default_effort` and does not follow `/model` switches.
+
+### Bug Fixes
+
+- Fix several known issues and make various refinements.
+
+See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+### Other
+
+- Migrate session subscriptions and state reads in server API clients: use `subscribe_v2` and send it again after reconnecting, and read state from WebSocket `agent`, `usage`, `goal`, and `todo` frames; the old `subscribe` / `unsubscribe`, `GET /sessions/{id}/snapshot`, `GET /sessions/{id}/status`, `status` in the `:undo` response, and transcript `meta` / `todos` / `last_seq` have been removed.
+- Migrate task lists and output to WebSocket `task.list` / `task` / `task.watch` / `task.unwatch`, and use `task.stop` / `task.background` to stop or background tasks; the old REST task endpoints and transcript tasks field have been removed.
+
 ## 2.4.1 (2026-10-30)
 
 ### Polish

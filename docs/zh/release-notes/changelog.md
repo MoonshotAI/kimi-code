@@ -6,6 +6,33 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.5.0（2026-11-04）
+
+### 新功能
+
+- 支持在 Agent 工作时使用 `/model` 和 `/effort`；已开始调用模型的当前轮次保持原设置，新设置从下一轮生效，选择 Compact and continue 会在当前轮结束后执行。
+- 支持 fork 正在运行的会话，也可从指定历史轮次创建分支会话。
+- 多目录项目现在会合并所有配置目录中的 skills，同名时以主目录为准。
+- 新增创建会话时选择 SSH、Docker 和自定义命令环境的能力，可用 `--environment <id>` 指定环境，并通过 `--environment-cwd <path>` 覆盖默认工作目录。
+- 新增 `[workspace] require_trust = false` 配置，可跳过工作区信任提示。
+
+### 优化
+
+- 默认不再构建全局全文搜索索引或后台扫描历史会话；如需启用，请在 `[database]` 中设置 `global_search = true`，或使用 `KIMI_CODE_GLOBAL_SEARCH=1`。
+- 移除 `[secondary_model] force`（配置将被忽略并给出警告）；只配置 `default_model` 时，所有子 Agent 仍固定使用该模型。
+- Agent 和 AgentSwarm 不再提供隐式 `primary` 模型选项，只配置一个 secondary model 时隐藏选择；在 `[secondary_model.models]` 配置两个及以上别名可恢复选择，其中主模型使用 `default_effort` 且不跟随 `/model` 切换。
+
+### 修复
+
+- 修复了一些已知问题，并做了若干细节优化。
+
+更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+### 其他
+
+- 使用服务端 API 的客户端需迁移会话订阅与状态读取：订阅改用 `subscribe_v2` 并在重连后重新发送，状态改读 WebSocket `agent` / `usage` / `goal` / `todo` 帧；旧 `subscribe` / `unsubscribe`、`GET /sessions/{id}/snapshot`、`GET /sessions/{id}/status`、`:undo` 响应的 `status`，以及 transcript 的 `meta` / `todos` / `last_seq` 已移除。
+- 任务列表与输出改用 WebSocket `task.list` / `task` / `task.watch` / `task.unwatch`，停止或后台运行使用 `task.stop` / `task.background`；旧 REST tasks 端点及 transcript 的 tasks 字段已移除。
+
 ## 2.4.1（2026-10-30）
 
 ### 优化
