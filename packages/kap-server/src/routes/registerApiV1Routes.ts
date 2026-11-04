@@ -157,7 +157,6 @@ export async function registerApiV1Routes(
       registerPromptsRoutes(
         apiV1 as unknown as Parameters<typeof registerPromptsRoutes>[0],
         core,
-        opts.transcriptService,
       );
       registerRemoteControlRoutes(
         apiV1 as unknown as Parameters<typeof registerRemoteControlRoutes>[0],

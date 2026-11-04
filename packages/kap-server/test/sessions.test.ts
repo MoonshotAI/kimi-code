@@ -2986,31 +2986,40 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     return (await res.json()) as Envelope<T>;
   }
 
-  async function transcriptTurns(sessionId: string, agentId: string) {
-    const res = await fetch(`${base}/api/v1/sessions/${sessionId}/transcript?agent_id=${agentId}`, {
+  async function agentTurns(sessionId: string, agentId: string) {
+    const res = await fetch(`${base}/api/v1/sessions/${sessionId}/agents/${agentId}/turns`, {
       headers: authHeaders(server as RunningServer),
     } as never);
-    const body = (await res.json()) as Envelope<AgentTranscriptSnapshot>;
-    return body.data.items.flatMap((item) => (item.kind === 'turn' ? [item] : []));
+    const body = (await res.json()) as Envelope<ConversationTurnsPage>;
+    return body.data.turns.filter((turn) => turn.kind === 'agent');
   }
 
-  function answerOf(turn: Awaited<ReturnType<typeof transcriptTurns>>[number]): string[] {
-    return turn.steps.flatMap((step) =>
-      step.frames.flatMap((frame) => (frame.kind === 'text' && frame.role === 'assistant' ? [frame.text] : [])),
-    );
+  type AgentTurn = Awaited<ReturnType<typeof agentTurns>>[number];
+
+  function promptOf(turn: AgentTurn): string | undefined {
+    const opener = turn.items[0];
+    return opener?.type === 'user_message' ? opener.text : undefined;
+  }
+
+  function answerOf(turn: AgentTurn): string[] {
+    return turn.items.flatMap((item) => (item.type === 'assistant_message' ? [item.text] : []));
+  }
+
+  function endOf(turn: AgentTurn): string {
+    return turn.status === 'ended' ? turn.outcome ?? 'ended' : turn.status;
   }
 
   it('keeps the first side chat answer when its prompt starts before anyone reads the fork', async () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const sessionId = created.data.id;
-    await transcriptTurns(sessionId, 'main');
+    await agentTurns(sessionId, 'main');
     await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
       content: [{ type: 'text', text: 'main question' }],
       model: 'fake',
     });
     await vi.waitFor(
       async () => {
-        expect((await transcriptTurns(sessionId, 'main')).map((turn) => turn.state)).toEqual(['completed']);
+        expect((await agentTurns(sessionId, 'main')).map(endOf)).toEqual(['completed']);
       },
       { timeout: 10_000 },
     );
@@ -3025,21 +3034,21 @@ describe('server-v2 /api/v1/sessions:btw', () => {
       agent_id: agentId,
       model: 'fake',
     });
-    await transcriptTurns(sessionId, agentId);
+    await agentTurns(sessionId, agentId);
     releaseSideAnswer();
 
     await vi.waitFor(
       async () => {
-        const own = (await transcriptTurns(sessionId, agentId)).filter((turn) => turn.prompt === 'side question');
-        expect(own.map((turn) => turn.state)).toEqual(['completed']);
+        const own = (await agentTurns(sessionId, agentId)).filter((turn) => promptOf(turn) === 'side question');
+        expect(own.map(endOf)).toEqual(['completed']);
       },
       { timeout: 10_000 },
     );
     await new Promise((resolve) => setTimeout(resolve, 400));
-    const turns = await transcriptTurns(sessionId, agentId);
-    const own = turns.filter((turn) => turn.prompt === 'side question');
+    const turns = await agentTurns(sessionId, agentId);
+    const own = turns.filter((turn) => promptOf(turn) === 'side question');
     expect(own).toHaveLength(1);
     expect(answerOf(own[0]!)).toEqual([sideAnswer]);
-    expect(new Set(turns.map((turn) => turn.turnId)).size).toBe(turns.length);
+    expect(new Set(turns.map((turn) => turn.turn_id)).size).toBe(turns.length);
   });
 });
