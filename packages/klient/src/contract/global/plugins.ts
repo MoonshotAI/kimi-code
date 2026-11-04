@@ -135,6 +135,9 @@ export const pluginGithubMetadataSchema = z.object({
 export const pluginSummarySchema = z.object({
   id: z.string(),
   displayName: z.string(),
+  description: z.string().optional(),
+  shortDescription: z.string().optional(),
+  longDescription: z.string().optional(),
   version: z.string().optional(),
   enabled: z.boolean(),
   state: pluginStateSchema,

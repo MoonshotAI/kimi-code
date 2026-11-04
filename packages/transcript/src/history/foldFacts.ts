@@ -621,23 +621,32 @@ export function foldWireRecordFacts(
     wireIdByOrdinal.size === 0
       ? items
       : (() => {
-          const keptOrdinals = new Set<number>();
+          const claimedOrdinals = new Set<number>();
           for (const item of items) {
-            if (item.kind === 'turn' && !wireIdByOrdinal.has(item.ordinal)) {
-              keptOrdinals.add(item.ordinal);
-            }
+            if (item.kind !== 'turn') continue;
+            const wireId = wireIdByOrdinal.get(item.ordinal);
+            if (wireId === undefined || wireId === item.ordinal) claimedOrdinals.add(item.ordinal);
           }
           return items.map((item) => {
             if (item.kind !== 'turn') return item;
             const wireId = wireIdByOrdinal.get(item.ordinal);
             if (wireId === undefined) return item;
-            const renumber = wireId !== item.ordinal && !keptOrdinals.has(wireId);
-            const nextTurnId = renumber ? exportTurnKey(wireId) : item.turnId;
+            let ordinal = item.ordinal;
+            if (wireId !== item.ordinal) {
+              if (!claimedOrdinals.has(wireId)) {
+                ordinal = wireId;
+              } else {
+                while (claimedOrdinals.has(ordinal)) ordinal += 1;
+              }
+              claimedOrdinals.add(ordinal);
+            }
+            const renumber = ordinal !== item.ordinal;
+            const nextTurnId = renumber ? exportTurnKey(ordinal) : item.turnId;
             const wedged = wedgedTurnIds.has(wireId);
             return {
               ...item,
               turnId: nextTurnId,
-              ordinal: renumber ? wireId : item.ordinal,
+              ordinal,
               startedAt: item.startedAt ?? turnStartedTimes.get(wireId) ?? turnPromptTimes.get(wireId),
               state: wedged ? 'failed' : item.state,
               wedged: wedged ? true : item.wedged,

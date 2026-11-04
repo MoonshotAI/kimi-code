@@ -112,6 +112,7 @@ export const capabilityChangedEventSchema = z.object({
     percent: z.number().optional(),
     error: z.string().optional(),
     note: z.string().optional(),
+    confirmationRequired: z.literal('stop-processes').optional(),
   }),
 });
 

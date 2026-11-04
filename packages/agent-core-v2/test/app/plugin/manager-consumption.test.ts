@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -6,6 +7,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { PluginAvailabilityStore } from '#/app/plugin/availability';
 import { PluginManager } from '#/app/plugin/manager';
 
 import { stubSkill } from '../../features/skill/catalog/stubs';
@@ -935,5 +937,261 @@ describe('PluginManager consumption plane', () => {
       }),
     );
     expect(JSON.stringify(server)).not.toContain('ELECTRON_RUN_AS_NODE');
+  });
+
+  it('isolates shared installations by client and reconciles availability changes without reinstalling', async () => {
+    const home = await makeKimiHome();
+    const source = 'https://marketplace.test/plugins/marketplace';
+    const root = await makePlugin('host-only', {
+      skills: true,
+      agents: true,
+      sessionStartSkill: 'demo-skill',
+      systemPrompt: 'from plugin',
+      mcpServers: { docs: { transport: 'stdio', command: 'node', args: ['server.js'] } },
+      hooks: [{ event: 'PreToolUse', command: './guard.sh', timeout: 10 }],
+      commands: { 'demo.md': '---\ndescription: Demo command\n---\nRun demo' },
+    });
+    const availability = new PluginAvailabilityStore(home);
+    const desktop = new PluginManager({ kimiHomeDir: home, client: 'desktop', availability });
+    await desktop.load();
+    await desktop.install(root, {
+      origin: 'marketplace',
+      catalogId: 'host-only',
+      marketplaceSource: source,
+    });
+    const catalog = (clients: readonly ('desktop' | 'cli')[]) => ({
+      source,
+      plugins: [{
+        id: 'host-only',
+        displayName: 'Host only',
+        source: 'https://cdn.example.test/host-only.zip',
+        clients,
+      }],
+    });
+    const expectVisibility = async (manager: PluginManager, visible: boolean): Promise<void> => {
+      const count = visible ? 1 : 0;
+      expect(manager.summaries()).toHaveLength(count);
+      expect(manager.get('host-only') !== undefined).toBe(visible);
+      expect(manager.info('host-only') !== undefined).toBe(visible);
+      expect(manager.pluginSkillRoots()).toHaveLength(count);
+      expect(manager.pluginAgentRoots()).toHaveLength(count);
+      expect(manager.enabledHooks()).toHaveLength(count);
+      expect(await manager.enabledCommands()).toHaveLength(count);
+      expect(manager.enabledSessionStarts()).toHaveLength(count);
+      expect(manager.enabledSystemPrompts()).toHaveLength(count);
+      expect(Object.keys(manager.enabledMcpServers())).toHaveLength(count);
+      expect(manager.mcpServerEntries()).toHaveLength(count);
+    };
+
+    await availability.update(catalog(['desktop']));
+    await desktop.reload();
+    await expectVisibility(desktop, true);
+    const cli = new PluginManager({ kimiHomeDir: home, client: 'cli' });
+    await cli.load();
+    await expectVisibility(cli, false);
+    await expect(cli.setEnabled('host-only', false)).rejects.toThrow('not installed');
+    await expect(cli.remove('host-only')).rejects.toThrow('not installed');
+
+    await availability.update(catalog(['desktop', 'cli']));
+    await cli.reload();
+    await expectVisibility(cli, true);
+
+    await availability.update(catalog(['desktop']));
+    await cli.reload();
+    await expectVisibility(cli, false);
+    await desktop.reload();
+    await expectVisibility(desktop, true);
+
+    await availability.update(catalog(['desktop', 'cli']));
+    await cli.reload();
+    await expectVisibility(cli, true);
+    const persisted = JSON.parse(
+      await readFile(path.join(home, 'plugins', 'installed.json'), 'utf8'),
+    ) as { plugins: Array<{ id: string; enabled: boolean }> };
+    expect(persisted.plugins).toEqual([
+      expect.objectContaining({ id: 'host-only', enabled: true }),
+    ]);
+  });
+
+  it('preserves provenance when cached catalogs reuse a plugin id', async () => {
+    const home = await makeKimiHome();
+    const availability = new PluginAvailabilityStore(home);
+    const artifactSource = 'https://cdn.example.test/default/plugin.zip';
+    await availability.update({
+      source: 'https://marketplace.test/default',
+      plugins: [{
+        id: 'shared-plugin',
+        displayName: 'Default',
+        source: artifactSource,
+        clients: ['desktop'],
+      }],
+    });
+    await availability.update({
+      source: 'https://marketplace.test/custom',
+      plugins: [{
+        id: 'shared-plugin',
+        displayName: 'Custom',
+        source: 'https://cdn.example.test/custom/plugin.zip',
+        clients: ['cli'],
+      }],
+    });
+    const record = {
+      id: 'shared-plugin',
+      origin: 'marketplace' as const,
+      catalogId: 'shared-plugin',
+      originalSource: artifactSource,
+    };
+    expect(availability.supports(record, 'desktop', process.platform)).toBe(true);
+    expect(availability.supports(record, 'cli', process.platform)).toBe(false);
+    expect(availability.supports(
+      { ...record, originalSource: 'https://cdn.example.test/unknown/plugin.zip' },
+      'desktop',
+      process.platform,
+    )).toBe(false);
+  });
+
+  it('requires artifact provenance before applying availability to legacy unknown installs', async () => {
+    const home = await makeKimiHome();
+    const availability = new PluginAvailabilityStore(home);
+    const artifactSource = 'https://cdn.example.test/official/plugin.zip';
+    await availability.update({
+      source: 'https://marketplace.test/default',
+      plugins: [{
+        id: 'shared-plugin',
+        displayName: 'Official',
+        source: artifactSource,
+        clients: ['desktop'],
+      }],
+    });
+    const record = {
+      id: 'shared-plugin',
+      origin: 'unknown' as const,
+      originalSource: artifactSource,
+    };
+    expect(availability.supports(record, 'desktop', process.platform)).toBe(true);
+    expect(availability.supports(record, 'cli', process.platform)).toBe(false);
+    expect(availability.supports(
+      { ...record, originalSource: '/tmp/shared-plugin' },
+      'cli',
+      process.platform,
+    )).toBe(true);
+    expect(availability.supports(
+      { ...record, originalSource: undefined },
+      'cli',
+      process.platform,
+    )).toBe(true);
+  });
+
+  it('serializes availability writes from independent stores', async () => {
+    const home = await makeKimiHome();
+    const first = new PluginAvailabilityStore(home);
+    const second = new PluginAvailabilityStore(home);
+    await Promise.all([
+      first.update({
+        source: 'https://marketplace.test/first',
+        plugins: [{ id: 'first', displayName: 'First', source: 'https://cdn.example.test/first.zip' }],
+      }),
+      second.update({
+        source: 'https://marketplace.test/second',
+        plugins: [{ id: 'second', displayName: 'Second', source: 'https://cdn.example.test/second.zip' }],
+      }),
+    ]);
+    const persisted = JSON.parse(
+      await readFile(path.join(home, 'plugins', 'availability.json'), 'utf8'),
+    ) as { sources: Record<string, unknown> };
+    expect(Object.keys(persisted.sources).toSorted()).toEqual([
+      `sha256:${createHash('sha256').update('https://marketplace.test/first').digest('hex')}`,
+      `sha256:${createHash('sha256').update('https://marketplace.test/second').digest('hex')}`,
+    ].toSorted());
+  });
+
+  it('reports invalid availability caches and retains the last valid policy', async () => {
+    const home = await makeKimiHome();
+    const source = 'https://marketplace.test/default';
+    const artifactSource = 'https://cdn.example.test/demo.zip';
+    const availability = new PluginAvailabilityStore(home);
+    await availability.update({
+      source,
+      plugins: [{ id: 'demo', displayName: 'Demo', source: artifactSource, clients: ['desktop'] }],
+    });
+    const record = {
+      id: 'demo',
+      origin: 'marketplace' as const,
+      catalogId: 'demo',
+      marketplaceSource: source,
+      originalSource: artifactSource,
+    };
+    expect(availability.supports(record, 'cli', process.platform)).toBe(false);
+
+    const filePath = path.join(home, 'plugins', 'availability.json');
+    await writeFile(filePath, '{', 'utf8');
+    await expect(availability.refresh()).rejects.toThrow();
+    expect(availability.supports(record, 'cli', process.platform)).toBe(false);
+    await writeFile(filePath, JSON.stringify({
+      version: 1,
+      sources: { [source]: { demo: { clients: 'desktop', checkedAt: '2026-01-01T00:00:00.000Z' } } },
+    }), 'utf8');
+    await expect(availability.refresh()).rejects.toThrow('Invalid plugin availability cache');
+    expect(availability.supports(record, 'cli', process.platform)).toBe(false);
+  });
+
+  it('propagates availability persistence failures', async () => {
+    const home = await makeKimiHome();
+    await mkdir(path.join(home, 'plugins', 'availability.json'), { recursive: true });
+    const availability = new PluginAvailabilityStore(home);
+    await expect(availability.update({
+      source: 'https://marketplace.test/default',
+      plugins: [{ id: 'demo', displayName: 'Demo', source: 'https://cdn.example.test/demo.zip' }],
+    })).rejects.toThrow();
+  });
+
+  it('hashes authenticated provenance and migrates plaintext availability entries', async () => {
+    const home = await makeKimiHome();
+    await mkdir(path.join(home, 'plugins'), { recursive: true });
+    const marketplaceSource = 'https://marketplace.test/catalog?token=legacy-secret';
+    const artifactSource = 'https://cdn.example.test/plugin.zip?signature=legacy-signature';
+    await writeFile(
+      path.join(home, 'plugins', 'availability.json'),
+      JSON.stringify({
+        version: 1,
+        sources: {
+          [marketplaceSource]: {
+            demo: { clients: ['desktop'], artifactSource, checkedAt: '2026-01-01T00:00:00.000Z' },
+          },
+        },
+      }),
+      'utf8',
+    );
+    const availability = new PluginAvailabilityStore(home);
+    await availability.refresh();
+    const record = {
+      id: 'demo',
+      origin: 'marketplace' as const,
+      catalogId: 'demo',
+      marketplaceSource,
+      originalSource: artifactSource,
+    };
+    expect(availability.supports(record, 'desktop', process.platform)).toBe(true);
+    expect(availability.supports(record, 'cli', process.platform)).toBe(false);
+
+    await availability.update({
+      source: marketplaceSource,
+      plugins: [{ id: 'demo', displayName: 'Demo', source: artifactSource, clients: ['desktop', 'cli'] }],
+    });
+    const text = await readFile(path.join(home, 'plugins', 'availability.json'), 'utf8');
+    expect(text).not.toContain('legacy-secret');
+    expect(text).not.toContain('legacy-signature');
+    expect(text).not.toContain('marketplace.test');
+    expect(text).not.toContain('cdn.example.test');
+    const persisted = JSON.parse(text) as {
+      sources: Record<string, { demo: { artifactSourceKey: string; artifactSource?: string } }>;
+    };
+    const sourceKey = `sha256:${createHash('sha256').update(marketplaceSource).digest('hex')}`;
+    expect(Object.keys(persisted.sources)).toEqual([sourceKey]);
+    expect(persisted.sources[sourceKey]?.demo.artifactSourceKey).toBe(
+      `sha256:${createHash('sha256').update(artifactSource).digest('hex')}`,
+    );
+    expect(persisted.sources[sourceKey]?.demo.artifactSource).toBeUndefined();
+    expect(availability.supports(record, 'cli', process.platform)).toBe(true);
   });
 });

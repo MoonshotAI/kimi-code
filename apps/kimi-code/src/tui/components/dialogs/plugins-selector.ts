@@ -7,11 +7,12 @@ import {
   visibleWidth,
   type Focusable,
 } from '@moonshot-ai/pi-tui';
-import type {
-  CapabilityStatus,
-  PluginInfo,
-  PluginMcpServerInfo,
-  PluginSummary,
+import {
+  marketplaceEntryVisibleOnHost,
+  type CapabilityStatus,
+  type PluginInfo,
+  type PluginMcpServerInfo,
+  type PluginSummary,
 } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 
@@ -254,6 +255,30 @@ export class PluginInstallTrustConfirmComponent extends ChoicePickerComponent {
   }
 }
 
+export class PluginStopProcessesConfirmComponent extends ChoicePickerComponent {
+  constructor(opts: { readonly label: string; readonly onDone: (confirmed: boolean) => void }) {
+    super({
+      title: `Stop running processes for ${opts.label}?`,
+      hint: '↑↓ navigate · Enter select · Esc cancel',
+      formatHint: mutedHintLine,
+      notice:
+        'Continuing will stop the running plugin processes and interrupt any computer operations in progress.',
+      noticeTone: 'warning',
+      spaceSelect: false,
+      options: [
+        { value: 'cancel', label: 'Cancel', description: 'Leave running processes untouched.' },
+        { value: 'confirm', label: 'Stop processes and continue', tone: 'danger' },
+      ],
+      onSelect: (value) => {
+        opts.onDone(value === 'confirm');
+      },
+      onCancel: () => {
+        opts.onDone(false);
+      },
+    });
+  }
+}
+
 function overviewPluginDescription(plugin: PluginSummary): string {
   const state = plugin.state === 'ok' ? '' : ` · state ${plugin.state}`;
   const skills = `${plugin.skillCount} skill${plugin.skillCount === 1 ? '' : 's'}`;
@@ -321,7 +346,7 @@ export type PluginsPanelSelection =
   | { readonly kind: 'install-source'; readonly source: string };
 
 export interface PluginsPanelOptions {
-  readonly installed: readonly PluginSummary[];
+  installed: readonly PluginSummary[];
   readonly capabilities?: readonly CapabilityStatus[];
   readonly catalogIsDefault?: boolean;
   readonly initialTab?: PluginsPanelTabId;
@@ -385,6 +410,10 @@ export class PluginsPanelComponent extends Container implements Focusable {
 
   setMarketplaceLoading(): void {
     this.market = { status: 'loading' };
+  }
+
+  setInstalled(plugins: readonly PluginSummary[]): void {
+    this.opts.installed = plugins;
   }
 
   setMarketplace(entries: readonly PluginMarketplaceEntry[], source: string): void {
@@ -849,11 +878,7 @@ function marketplaceTierLabel(tier: PluginMarketplaceEntry['tier']): string {
 }
 
 function marketplaceEntryIsVisible(entry: PluginMarketplaceEntry): boolean {
-  const platforms: readonly string[] | undefined = entry.platforms;
-  if (platforms === undefined) return true;
-  const supportsLocal = platforms.includes(process.platform);
-  const cloudOnly = platforms.every((platform) => platform === 'cloud');
-  return supportsLocal || cloudOnly;
+  return marketplaceEntryVisibleOnHost(entry, 'cli', process.platform);
 }
 
 function marketplaceEntryIsCloudOnly(entry: PluginMarketplaceEntry): boolean {

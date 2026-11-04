@@ -1,16 +1,17 @@
-import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
-import {
-  KIMI_CODE_PROVIDER_NAME,
-  KimiOAuthToolkit,
-} from '@moonshot-ai/kimi-code-oauth';
 import {
   isMissingMarketplaceTokenError,
   parsePluginMarketplace,
+  PluginAvailabilityStore,
   readPluginMarketplace,
+  resolveKimiHome,
   withLatestVersions,
   type PluginMarketplace,
   type PluginMarketplaceEntry,
 } from '@moonshot-ai/kimi-code-sdk';
+import {
+  KIMI_CODE_PROVIDER_NAME,
+  KimiOAuthToolkit,
+} from '@moonshot-ai/kimi-code-oauth';
 
 import {
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
@@ -35,6 +36,8 @@ export interface LoadPluginMarketplaceOptions {
   readonly source?: string;
   readonly fetchImpl?: typeof fetch;
   readonly getAccessToken?: () => Promise<string | undefined>;
+  readonly kimiHomeDir?: string;
+  readonly reconcileAvailability?: (changed: boolean) => Promise<void>;
 }
 
 export async function withMarketplaceLatestVersions(
@@ -73,7 +76,12 @@ export async function loadPluginMarketplace(
       return fetchImpl(input, { ...init, headers });
     },
   });
-  return parsePluginMarketplace(read.raw, read.location);
+  const marketplace = parsePluginMarketplace(read.raw, read.location);
+  const availability = new PluginAvailabilityStore(options.kimiHomeDir ?? resolveKimiHome());
+  await availability.refresh();
+  const changed = await availability.update(marketplace);
+  await options.reconcileAvailability?.(changed);
+  return marketplace;
 }
 
 export function pluginMarketplaceCliDescription(

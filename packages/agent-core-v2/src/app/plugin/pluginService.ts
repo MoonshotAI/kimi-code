@@ -18,7 +18,13 @@ import { IProviderService } from '#/llm-adapter/provider/provider';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { McpOAuthService } from '#/mcpCore/oauth/service';
 
+import { PluginAvailabilityStore, pluginAvailabilitySourceKey } from './availability';
 import { PluginManager } from './manager';
+import {
+  pluginClientForIdentity,
+  type PluginClient,
+  type PluginMarketplace,
+} from './marketplace';
 import {
   type MarketplacePluginInstall,
   PluginMarketplaceService,
@@ -77,10 +83,15 @@ export class PluginService extends Service implements IPluginService {
   private readonly envOAuthHost: string | undefined;
   private readonly manager: PluginManager;
   private readonly marketplace: PluginMarketplaceService;
+  private readonly availability: PluginAvailabilityStore;
+  private readonly client: PluginClient;
+  private readonly platform: NodeJS.Platform;
   private initialLoadPromise: Promise<void> | undefined;
+  private appliedAvailabilityGeneration = 0;
   private snapshotLoaded = false;
   private loadError: Error | undefined;
   private mutationQueue: Promise<void> = Promise.resolve();
+  private readonly mcpSuspensions = new Map<string, number>();
   private readonly onDidReloadEmitter = this._register(new AsyncEmitter<PluginReloadEvent>());
   private readonly onDidMutateEmitter = this._register(new Emitter<PluginMutationSummary>());
 
@@ -101,15 +112,43 @@ export class PluginService extends Service implements IPluginService {
     this.envBaseUrl = bootstrap.getEnv(KIMI_CODE_BASE_URL_ENV);
     this.envOAuthHost =
       bootstrap.getEnv(KIMI_CODE_OAUTH_HOST_ENV) ?? bootstrap.getEnv(KIMI_OAUTH_HOST_ENV);
+    this.availability = new PluginAvailabilityStore(this.homeDir);
+    this.client = pluginClientForIdentity(bootstrap.clientIdentity.platform);
+    this.platform = bootstrap.platform;
     this.manager = new PluginManager({
       kimiHomeDir: this.homeDir,
+      client: this.client,
+      platform: this.platform,
+      availability: this.availability,
       discoverSkills: (roots) => discovery.discover(roots),
     });
-    this.marketplace = new PluginMarketplaceService(bootstrap, providers, regions);
+    this.marketplace = new PluginMarketplaceService(bootstrap, providers, regions, this.availability);
   }
 
   listPlugins(): Promise<readonly PluginSummary[]> {
     return this.runManagementRead(async () => this.manager.summaries());
+  }
+
+  async withMcpServersSuspended<T>(id: string, task: () => Promise<T>): Promise<T> {
+    const key = normalizePluginId(id);
+    let suspended = false;
+    try {
+      await this.runNotifiedMutation(async () => {
+        this.mcpSuspensions.set(key, (this.mcpSuspensions.get(key) ?? 0) + 1);
+        suspended = true;
+        return { result: undefined, notification: await this.reloadAndNotify() };
+      });
+      return await task();
+    } finally {
+      if (suspended) {
+        await this.runNotifiedMutation(async () => {
+          const remaining = (this.mcpSuspensions.get(key) ?? 1) - 1;
+          if (remaining === 0) this.mcpSuspensions.delete(key);
+          else this.mcpSuspensions.set(key, remaining);
+          return { result: undefined, notification: await this.reloadAndNotify() };
+        });
+      }
+    }
   }
 
   installPlugin(
@@ -129,11 +168,30 @@ export class PluginService extends Service implements IPluginService {
                   input.expectedSha256,
                   input.marketplaceSource,
                 ));
+              await this.availability.refresh();
+              const installation = {
+                id: resolved.expectedPluginId,
+                origin: 'marketplace' as const,
+                catalogId: resolved.catalogId,
+                marketplaceSource: resolved.marketplaceSource === undefined
+                  ? undefined
+                  : pluginAvailabilitySourceKey(resolved.marketplaceSource),
+              };
+              if (!this.availability.supports(installation, this.client, this.platform)) {
+                throw new Error2(
+                  ErrorCodes.VALIDATION_FAILED,
+                  `Marketplace plugin "${resolved.catalogId}" does not support ${this.client} on ${this.platform}`,
+                  { details: { marketplaceId: resolved.catalogId, client: this.client, platform: this.platform } },
+                );
+              }
               return this.manager.installAndReload(resolved.source, {
                 expectedSha256: resolved.sha256sum,
                 expectedPluginId: resolved.expectedPluginId,
                 origin: resolved.origin,
                 catalogId: resolved.catalogId,
+                marketplaceSource: resolved.marketplaceSource === undefined
+                  ? undefined
+                  : pluginAvailabilitySourceKey(resolved.marketplaceSource),
                 migrateFrom: input.migrateFrom,
                 requiredSkill: resolvedInstall?.requiredSkill,
                 fetchImpl: resolved.fetchImpl,
@@ -225,6 +283,23 @@ export class PluginService extends Service implements IPluginService {
     return reload;
   }
 
+  reconcileAvailability(marketplace: PluginMarketplace): Promise<void> {
+    return this.runNotifiedMutation(async () => {
+      await this.availability.update(marketplace);
+      if (this.availability.generation === this.appliedAvailabilityGeneration) {
+        return {
+          result: undefined,
+          notification: {
+            summary: { added: [], removed: [], errors: [] },
+            delivery: Promise.resolve(),
+          },
+        };
+      }
+      const notification = await this.reloadAndNotify();
+      return { result: undefined, notification };
+    });
+  }
+
   private async reloadAndNotify(options?: {
     readonly mutation: PluginMutation;
   }): Promise<PluginReloadNotification> {
@@ -235,6 +310,7 @@ export class PluginService extends Service implements IPluginService {
     summary: ReloadSummary,
     options?: { readonly mutation: PluginMutation },
   ): PluginReloadNotification {
+    this.appliedAvailabilityGeneration = this.availability.generation;
     this.snapshotLoaded = true;
     this.loadError = undefined;
     const delivery = this.onDidReloadEmitter.fireAsyncConcurrent(summary, NO_ABORT);
@@ -317,6 +393,9 @@ export class PluginService extends Service implements IPluginService {
   enabledMcpServers(): Promise<Record<string, McpServerConfig>> {
     return this.runConsumptionRead({}, async () => {
       const pluginServers = this.manager.enabledMcpServers();
+      for (const entry of this.manager.mcpServerEntries()) {
+        if (this.mcpSuspensions.has(entry.pluginId)) delete pluginServers[entry.name];
+      }
       if (!Object.values(pluginServers).some((server) => server.transport === 'stdio')) {
         return pluginServers;
       }
@@ -327,7 +406,11 @@ export class PluginService extends Service implements IPluginService {
 
   mcpServerEntries(): Promise<readonly PluginMcpServerEntry[]> {
     return this.runManagementRead(async () => {
-      const entries = this.manager.mcpServerEntries();
+      const entries = this.manager.mcpServerEntries().map((entry) =>
+        this.mcpSuspensions.has(entry.pluginId)
+          ? { ...entry, config: { ...entry.config, enabled: false } }
+          : entry,
+      );
       if (!entries.some((entry) => entry.config.transport === 'stdio')) {
         return entries;
       }
