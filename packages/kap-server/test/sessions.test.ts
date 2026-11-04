@@ -1594,10 +1594,15 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(childChildren.body.data.items.some((s) => s.id === grandchildId)).toBe(true);
   });
 
-  it('does not list a plain fork as a child (kind must be "child")', async () => {
+  it('does not list a plain fork as a child and rejects an incompatible source', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    await main.accessor.get(IWireService).flush();
     const invalid = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
       turn_index: -1,
     });
@@ -1608,6 +1613,34 @@ describe('server-v2 /api/v1/sessions', () => {
     const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
     expect(children.body.code).toBe(0);
     expect(children.body.data.items.some((s) => s.id === forked.body.data.id)).toBe(false);
+
+    const sessionDir = sessionDirOf(
+      (server as RunningServer).core.accessor.get(IBootstrapService).homeDir,
+      `sessions/${parent.body.data.workspace_id}`,
+      parentId,
+    );
+    const wirePath = join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl');
+    const sourceWire = await readFile(wirePath, 'utf8');
+    expect(sourceWire).toContain('"min_protocol_version":"1.5"');
+    await writeFile(
+      wirePath,
+      sourceWire
+        .replace('"protocol_version":"1.5"', '"protocol_version":"9.9"')
+        .replace('"min_protocol_version":"1.5"', '"min_protocol_version":"9.9"'),
+    );
+    await closeSessionById((server as RunningServer).core.accessor, parentId);
+    const messages = await getJson<unknown>(`/api/v1/sessions/${parentId}/messages`);
+    expect(messages.body.code).toBe(40930);
+    const message = await getJson<unknown>(`/api/v1/sessions/${parentId}/messages/msg_incompatible`);
+    expect(message.body.code).toBe(40930);
+    const sliced = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
+      turn_index: 999,
+    });
+    expect(sliced.body.code).toBe(40930);
+    expect(sliced.body.msg).toContain('Upgrade Kimi Code');
+    const incompatible = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    expect(incompatible.body.code).toBe(40930);
+    expect(incompatible.body.msg).toContain('Upgrade Kimi Code');
   });
 
   it('fork clears inherited cron tasks while the source keeps them', async () => {

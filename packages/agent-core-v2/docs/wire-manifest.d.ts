@@ -4,6 +4,7 @@
 // Regenerate with: pnpm --filter @moonshot-ai/agent-core-v2 gen:wire-manifest
 //
 // protocol_version: "1.5" (migrations: 1.0 -> 1.1 -> 1.2 -> 1.3 -> 1.4 -> 1.5)
+// min_protocol_version: "1.5"
 //
 // One declaration per durable record type — an Event2 subclass declaring
 // `static type` + `static durable = true` + `static schema` — drained from the
@@ -14,7 +15,8 @@
 // ContextMessage, …) refer to the real types in src/ — they are intentionally
 // not resolved here. On disk (wire.jsonl)
 // the journal opens with a metadata line {"type": "metadata",
-// "protocol_version", "created_at"}; each record is {"type", ...payload,
+// "protocol_version", "min_protocol_version", "created_at"}; each record is
+// {"type", ...payload,
 // "time"} — object payloads spread at the top level.
 //
 // Every listed type is durable by construction — transient Event2 classes

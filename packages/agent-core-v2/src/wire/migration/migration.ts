@@ -17,6 +17,25 @@ export {
 };
 
 export const WIRE_PROTOCOL_VERSION = '1.5';
+export const WIRE_MIN_READER_VERSION = '1.5';
+
+export function assertWireReaderVersion(minReaderVersion: string | undefined): void {
+  if (
+    minReaderVersion !== undefined &&
+    compareWireVersions(WIRE_PROTOCOL_VERSION, minReaderVersion) < 0
+  ) {
+    throw new WireError(
+      WireErrors.codes.WIRE_VERSION_TOO_LOW,
+      `This wire.jsonl requires reader protocol ${minReaderVersion}; current Kimi Code supports ${WIRE_PROTOCOL_VERSION}. Upgrade Kimi Code to read this session.`,
+      {
+        details: {
+          minReaderVersion,
+          readerVersion: WIRE_PROTOCOL_VERSION,
+        },
+      },
+    );
+  }
+}
 
 export type WireMigrationRecord = WireRecord;
 

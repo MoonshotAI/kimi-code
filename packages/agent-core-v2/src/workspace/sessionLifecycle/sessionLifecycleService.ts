@@ -79,6 +79,7 @@ import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   AGENT_WIRE_RECORD_KEY,
+  assertWireRecordsReaderVersion,
   createWireMetadataRecord,
   type WireRecord,
 } from '#/wire/record';
@@ -864,6 +865,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       ...(args.records ??
         (await this.readSourceWireRecords(args.sourceHandle, args.sourceSessionId, args.agentId))),
     ];
+    assertWireRecordsReaderVersion(records);
     if (records.length === 0) {
       records.push(createWireMetadataRecord());
     } else if (records[0]?.type !== 'metadata') {
@@ -896,6 +898,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       return;
     }
     if (first.type === 'metadata') {
+      assertWireRecordsReaderVersion([first]);
       this.appendLogStore.append(scope, AGENT_WIRE_RECORD_KEY, forkedRecord(agentId));
       return;
     }
@@ -933,6 +936,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         },
       }),
     );
+    assertWireRecordsReaderVersion(records);
     if (truncation !== undefined) {
       await repairWireJournal(
         {

@@ -1156,12 +1156,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     action: () => Promise<T>,
   ): Promise<T> {
     if (this.liveSession(sessionId) !== undefined) return action();
-    const handle = await resumeSessionById(this.engineAccessor, sessionId);
-    if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
     try {
-      return await action();
-    } finally {
-      await closeSessionById(this.engineAccessor, sessionId);
+      const handle = await resumeSessionById(this.engineAccessor, sessionId);
+      if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
+      try {
+        return await action();
+      } finally {
+        await closeSessionById(this.engineAccessor, sessionId);
+      }
+    } catch (error) {
+      throw restateEngineError(error);
     }
   }
 
@@ -1329,7 +1333,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
             'sub',
             replay.replayTurnLimit,
           );
-        } catch {
+        } catch (error) {
+          if (isError2(error) && error.code === ErrorCodes.WIRE_VERSION_TOO_LOW) throw error;
           // Best-effort, same as v1: a subagent whose restore fails is left
           // out of the map (v1 logs a warning and continues with the rest).
         }
@@ -1737,22 +1742,29 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // session scope is materialized. Unlike v1, the v2 engine has no caller
     // `mcpServers` channel on create/resume (caller
     // servers are an ACP-side concern to be designed separately).
-    return this.runSessionAccess(input.id, async () => {
-      // The main agent's fold depends only on the persisted wire, never on
-      // the restore outcome, so it starts as soon as the wire path is known
-      // and overlaps the engine's materialization.
-      const mainWireFold = this.startMainWireFold(input.id, input.replayTurnLimit);
-      const handle = await resumeSessionById(this.engineAccessor, input.id, {
-        additionalDirs: input.additionalDirs,
+    let wasLive = false;
+    try {
+      return await this.runSessionAccess(input.id, async () => {
+        wasLive = this.liveSession(input.id) !== undefined;
+        // The main agent's fold depends only on the persisted wire, never on
+        // the restore outcome, so it starts as soon as the wire path is known
+        // and overlaps the engine's materialization.
+        const mainWireFold = this.startMainWireFold(input.id, input.replayTurnLimit);
+        const handle = await resumeSessionById(this.engineAccessor, input.id, {
+          additionalDirs: input.additionalDirs,
+        });
+        if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
+        this.wireSession(handle);
+        return this.resumedSessionSummary(handle, {
+          includeSubagents: input.includeSubagents,
+          replayTurnLimit: input.replayTurnLimit,
+          mainWireFold,
+        });
       });
-      if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
-      this.wireSession(handle);
-      return this.resumedSessionSummary(handle, {
-        includeSubagents: input.includeSubagents,
-        replayTurnLimit: input.replayTurnLimit,
-        mainWireFold,
-      });
-    });
+    } catch (error) {
+      if (!wasLive) await closeSessionById(this.engineAccessor, input.id).catch(() => {});
+      throw restateEngineError(error);
+    }
   }
 
   /**

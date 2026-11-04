@@ -1573,18 +1573,57 @@ key = "${titleOAuthRef.key}"
         source: "session 'source-a'",
       });
       await client.closeSession({ sessionId: 'ses_resume_fail' });
-      // Malform the wire's metadata record: the engine's cold restore throws,
-      // while the index entry (and thus the overlapped fold's wire path)
-      // stays intact.
+      // Require a newer reader: the engine's cold restore throws, while the
+      // index entry (and thus the overlapped fold's wire path) stays intact.
       const sessionDir = await findSessionDir(homeDir, 'ses_resume_fail');
+      const mainWirePath = join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl');
       await writeFile(
-        join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'),
-        '{"type":"metadata"}\n',
+        mainWirePath,
+        '{"type":"metadata","protocol_version":"9.9","created_at":1,"min_protocol_version":"9.9"}\n',
         'utf-8',
       );
-      await expect(client.resumeSession({ id: 'ses_resume_fail' })).rejects.toThrow(
-        'Agent wire metadata is malformed',
+      const mainFailure = await client.resumeSession({ id: 'ses_resume_fail' }).catch((error: unknown) => error);
+      expect(isKimiError(mainFailure)).toBe(true);
+      expect(mainFailure).toMatchObject({ code: ErrorCodes.WIRE_VERSION_TOO_LOW });
+      expect(toKimiErrorPayload(mainFailure)).toMatchObject({
+        code: ErrorCodes.WIRE_VERSION_TOO_LOW,
+        message: expect.stringContaining('Upgrade Kimi Code'),
+      });
+      await expect(client.reloadSession({ sessionId: 'ses_resume_fail' })).rejects.toMatchObject({
+        code: ErrorCodes.WIRE_VERSION_TOO_LOW,
+      });
+      await expect(
+        client.renameSession({ id: 'ses_resume_fail', title: 'incompatible' }),
+      ).rejects.toMatchObject({ code: ErrorCodes.WIRE_VERSION_TOO_LOW });
+
+      await writeFile(
+        mainWirePath,
+        '{"type":"metadata","protocol_version":"1.5","created_at":1,"min_protocol_version":"1.5"}\n',
+        'utf-8',
       );
+      const subagentDir = join(sessionDir, 'agents', 'sub-incompatible');
+      await mkdir(subagentDir, { recursive: true });
+      await writeFile(
+        join(subagentDir, 'wire.jsonl'),
+        '{"type":"metadata","protocol_version":"9.9","created_at":1,"min_protocol_version":"9.9"}\n',
+        'utf-8',
+      );
+      await expect(
+        client.resumeSession({ id: 'ses_resume_fail', includeSubagents: true }),
+      ).rejects.toMatchObject({ code: ErrorCodes.WIRE_VERSION_TOO_LOW });
+      await expect(client.getStatus({ sessionId: 'ses_resume_fail' })).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+      const [successful, failed] = await Promise.allSettled([
+        client.resumeSession({ id: 'ses_resume_fail' }),
+        client.resumeSession({ id: 'ses_resume_fail', includeSubagents: true }),
+      ]);
+      expect(successful.status).toBe('fulfilled');
+      expect(failed.status).toBe('rejected');
+      expect(failed).toMatchObject({
+        reason: { code: ErrorCodes.WIRE_VERSION_TOO_LOW },
+      });
+      await expect(client.getStatus({ sessionId: 'ses_resume_fail' })).resolves.toBeDefined();
       // The abandoned fold promise must settle quietly.
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(unhandled).toEqual([]);
