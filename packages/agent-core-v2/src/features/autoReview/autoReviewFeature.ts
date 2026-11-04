@@ -1,7 +1,8 @@
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
 
-import { IAutoReviewService } from './review';
+import { AutoReviewGate } from './autoReviewGate';
+import { IAutoReviewGate, IAutoReviewService } from './review';
 import { AutoReviewService } from './reviewService';
 
 export class AutoReviewFeature extends Feature {
@@ -10,6 +11,7 @@ export class AutoReviewFeature extends Feature {
   constructor() {
     super();
     this.contributeAgentService(IAutoReviewService, AutoReviewService);
+    this.contributeAgentService(IAutoReviewGate, AutoReviewGate);
   }
 }
 

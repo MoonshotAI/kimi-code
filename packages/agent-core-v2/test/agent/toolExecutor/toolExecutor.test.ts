@@ -69,7 +69,8 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IFlagService } from '#/app/flag/flag';
 import { IGitService } from '#/app/git/git';
 import { IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
-import { IAutoReviewService } from '#/features/autoReview/review';
+import { AutoReviewGate } from '#/features/autoReview/autoReviewGate';
+import { IAutoReviewGate, IAutoReviewService } from '#/features/autoReview/review';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
 import { AgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicyService';
@@ -199,10 +200,17 @@ function installAutoReview(result: import('#/features/autoReview/review').AutoRe
     permissions,
     permissions.get(IBootstrapService),
   ));
+  permissions.set(IAutoReviewGate, new AutoReviewGate(
+    permissions.get(IFlagService),
+    permissions.get(IAgentPermissionModeService),
+    permissions.get(IAutoReviewService),
+    permissions.get(ITelemetryService),
+  ));
   permissions.set(IAgentPermissionGate, new AgentPermissionGate(
     permissions.get(IAgentPermissionModeService),
     permissions.get(IAgentPermissionRulesService),
     permissions.get(IAgentPermissionPolicyService),
+    permissions.get(IAutoReviewGate),
     permissions.get(IAgentToolApprovalService),
     permissions.get(ITelemetryService),
     executor,

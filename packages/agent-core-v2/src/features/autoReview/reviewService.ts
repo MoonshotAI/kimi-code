@@ -35,6 +35,10 @@ const DecisionSchema = z.object({
 
 export class AutoReviewService extends Service implements IAutoReviewService {
   declare readonly _serviceBrand: undefined;
+  private readonly projectInstructions: Promise<{
+    agentsMd: string | undefined;
+    agentsMdPaths: readonly string[] | undefined;
+  }>;
 
   constructor(
     @IConfigService private readonly configService: IConfigService,
@@ -47,14 +51,20 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
   ) {
     super();
+    this.projectInstructions = this.instructions.ready.then(() => ({
+      agentsMd: this.instructions.agentsMd,
+      agentsMdPaths: this.instructions.agentsMdPaths === undefined
+        ? undefined
+        : [...this.instructions.agentsMdPaths],
+    }));
+    void this.projectInstructions.catch(() => undefined);
   }
 
   async review(context: ResolvedToolExecutionHookContext): Promise<AutoReviewResult> {
     try {
-      await this.instructions.ready;
+      const projectInstructions = await this.projectInstructions;
       const history = this.context.get();
       const fingerprint = authorizationFingerprint(history);
-      const agentsMd = this.instructions.agentsMd;
       const cwd = this.workspace.workDir;
       const model = this.resolveModel();
       const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
@@ -86,8 +96,8 @@ export class AutoReviewService extends Service implements IAutoReviewService {
           tools: [],
           messages: buildReviewMessages(
             history,
-            agentsMd,
-            this.instructions.agentsMdPaths,
+            projectInstructions.agentsMd,
+            projectInstructions.agentsMdPaths,
             cwd,
             this.tools.resolve(context.toolCall.name),
             context,
@@ -98,7 +108,6 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         if (deadline.timedOut()) return { kind: 'failed', reason: 'Review timed out.' };
         if (
           authorizationFingerprint(this.context.get()) !== fingerprint ||
-          this.instructions.agentsMd !== agentsMd ||
           this.workspace.workDir !== cwd
         ) {
           return { kind: 'failed', reason: 'Authorization changed during review.' };

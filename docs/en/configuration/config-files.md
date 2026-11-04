@@ -109,7 +109,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`models`](#models) | `table` | — | Model alias table |
 | [`thinking`](#thinking) | `table` | — | Default parameters for Thinking mode |
 | [`loop_control`](#loop_control) | `table` | — | Agent loop control parameters |
-| [`auto_review`](#auto_review) | `table` | — | Experimental LLM review in `auto` permission mode |
+| [`auto_review`](#auto_review) | `table` | — | Experimental LLM review in Ask When Needed and Never Ask modes |
 | [`task`](#task) | `table` | — | Background task and Tower agent runtime parameters; `background` is the legacy section name |
 | [`tools`](#tools) | `table` | — | Global tool switch |
 | [`image`](#image) | `table` | — | Image compression parameters |
@@ -328,16 +328,16 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 
 ## `auto_review`
 
-`auto_review` configures the experimental LLM reviewer for tool calls in `auto` permission mode. It is disabled by default. Set `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` or `[experimental] auto_review = true` to enable it.
+`auto_review` configures the experimental LLM reviewer for tool calls in Ask When Needed and Never Ask modes. It is disabled by default. Set `KIMI_CODE_EXPERIMENTAL_AUTO_REVIEW=1` or `[experimental] auto_review = true` to enable it.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `model` | `string` | managed K2.8 when configured; otherwise the main model | Model alias used for independent review requests |
 | `timeout_ms` | `integer` | `30000` | Review deadline in milliseconds, from `1000` to `120000` |
 
-Explicit permission `deny` rules take precedence over the reviewer. Read-only tools such as `Read`, `Grep`, and `Glob` skip review. A reviewer `allow` executes the action; a `deny` asks for user approval in interactive sessions and returns an error without executing the tool in non-interactive sessions. Review failures also ask for approval interactively and fail closed in non-interactive sessions.
+Explicit permission `deny` rules take precedence over review, and read-only tools such as `Read`, `Grep`, and `Glob` skip it. A reviewer `allow` leaves the existing permission outcome unchanged. A `deny` asks for user approval in Ask When Needed mode; in Never Ask mode, the tool returns an error without executing and the main agent can continue. Review failures use the same mode-specific fallback. When a static rule already requires approval, the same prompt handles both decisions instead of asking twice.
 
-The reviewer receives the working directory, AGENTS.md instructions, retained user and parent instructions, recent tool arguments and execution status, and the pending tool's schema and complete arguments. Tool output text and media are not sent. If authorization instructions, AGENTS.md, or the working directory change during review, the result is not used to execute the action.
+The reviewer receives the current working directory, the AGENTS.md snapshot frozen at agent initialization, retained user and parent instructions, recent tool arguments and execution status, and the pending tool's schema and complete arguments. Tool output text and media are not sent. If retained authorization instructions or the working directory change during review, the result is not used to execute the action.
 
 ```toml
 [auto_review]

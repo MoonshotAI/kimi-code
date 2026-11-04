@@ -20,6 +20,13 @@ import {
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IFlagService } from '#/app/flag/flag';
+import { AutoReviewGate } from '#/features/autoReview/autoReviewGate';
+import {
+  IAutoReviewGate,
+  IAutoReviewService,
+  type AutoReviewResult,
+} from '#/features/autoReview/review';
 import type { ToolCall } from '#human/message';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
@@ -58,6 +65,9 @@ describe('AgentPermissionGate', () => {
   let mode: PermissionMode;
   let rules: readonly PermissionRule[];
   let policyResult: PermissionPolicyEvaluation | undefined;
+  let autoReviewEnabled: boolean;
+  let autoReviewResult: AutoReviewResult;
+  let review: ReturnType<typeof vi.fn<IAutoReviewService['review']>>;
   let records: TelemetryRecord[];
   let executorEvents: ToolExecutorEventStubs;
   let resolvePermissionResolution: ReturnType<
@@ -72,6 +82,9 @@ describe('AgentPermissionGate', () => {
     mode = 'auto';
     rules = [];
     policyResult = undefined;
+    autoReviewEnabled = false;
+    autoReviewResult = { kind: 'decision', decision: { risk: 'low', decision: 'allow' } };
+    review = vi.fn(async () => autoReviewResult);
     records = [];
     executorEvents = stubToolExecutorEvents();
     resolvePermissionResolution = vi.fn(async () => undefined);
@@ -91,6 +104,9 @@ describe('AgentPermissionGate', () => {
           IAgentPermissionPolicyService,
           stubPermissionPolicyService(() => policyResult),
         );
+        reg.definePartialInstance(IFlagService, { enabled: () => autoReviewEnabled });
+        reg.defineInstance(IAutoReviewService, { _serviceBrand: undefined, review });
+        reg.define(IAutoReviewGate, AutoReviewGate);
         reg.defineInstance(IAgentToolApprovalService, toolApproval);
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
@@ -229,6 +245,109 @@ describe('AgentPermissionGate', () => {
     const decision = await executorEvents.fireBeforeExecute(makeContext('bash'));
 
     expect(decision).toBeUndefined();
+  });
+
+  it('only reviews non-read-only calls in Ask When Needed and Never Ask', async () => {
+    autoReviewEnabled = true;
+    const gate = ix.get(IAutoReviewGate);
+
+    mode = 'manual';
+    expect(await gate.evaluate(makeContext('Write'))).toBeUndefined();
+    mode = 'yolo';
+    expect(await gate.evaluate(makeContext('Read'))).toBeUndefined();
+    expect(review).not.toHaveBeenCalled();
+
+    mode = 'auto';
+    expect(await gate.evaluate(makeContext('Write'))).toMatchObject({ kind: 'approve' });
+    expect(review).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { mode: 'yolo', expected: 'ask' },
+    { mode: 'auto', expected: 'deny' },
+  ] as const)('maps reviewer denial and failure to $expected in $mode', async ({ mode: nextMode, expected }) => {
+    autoReviewEnabled = true;
+    mode = nextMode;
+    const gate = ix.get(IAutoReviewGate);
+    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
+    expect((await gate.evaluate(makeContext('Write')))?.kind).toBe(expected);
+
+    autoReviewResult = { kind: 'failed', reason: 'invalid JSON' };
+    expect((await gate.evaluate(makeContext('Write')))?.kind).toBe(expected);
+  });
+
+  it('does not consult the reviewer after a static denial', async () => {
+    autoReviewEnabled = true;
+    policyResult = { policyName: 'user-configured-deny', result: { kind: 'deny', message: 'nope' } };
+
+    await make().authorize(makeContext('Write'));
+
+    expect(review).not.toHaveBeenCalled();
+  });
+
+  it('keeps a static approval prompt when the reviewer allows', async () => {
+    autoReviewEnabled = true;
+    mode = 'yolo';
+    const ask: PermissionPolicyResolution = { kind: 'ask' };
+    policyResult = { policyName: 'p', result: ask };
+    make();
+
+    await executorEvents.fireBeforeExecute(makeContext('Write'));
+
+    expect(review).toHaveBeenCalledTimes(1);
+    expect(requestToolApproval).toHaveBeenCalledTimes(1);
+    expect(requestToolApproval).toHaveBeenCalledWith(expect.anything(), ask, 'p');
+  });
+
+  it('vetoes a statically approved call denied in Never Ask', async () => {
+    autoReviewEnabled = true;
+    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
+    policyResult = { policyName: 'p', result: { kind: 'approve' } };
+    const blocked: BeforeExecuteDecision = { veto: { output: 'review denied', isError: true } };
+    resolvePermissionResolution.mockResolvedValue(blocked);
+    make();
+    const ctx = makeContext('Write');
+
+    expect(await executorEvents.fireBeforeExecute(ctx)).toEqual(blocked);
+    expect(resolvePermissionResolution).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'deny' }),
+      expect.objectContaining({ toolCall: ctx.toolCall }),
+      'auto-review',
+    );
+    expect(requestToolApproval).not.toHaveBeenCalled();
+  });
+
+  it('preserves static metadata after human approval of a review denial in Ask When Needed', async () => {
+    autoReviewEnabled = true;
+    mode = 'yolo';
+    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
+    const executionMetadata = { marker: true };
+    policyResult = { policyName: 'p', result: { kind: 'approve', executionMetadata } };
+    make();
+
+    const decision = await executorEvents.fireBeforeExecute(makeContext('Write'));
+
+    expect(decision).toEqual({ executionMetadata });
+    expect(requestToolApproval).toHaveBeenCalledTimes(1);
+    expect(requestToolApproval).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ kind: 'ask' }),
+      'auto-review',
+    );
+  });
+
+  it('reuses a static approval prompt when the reviewer denies in Ask When Needed', async () => {
+    autoReviewEnabled = true;
+    mode = 'yolo';
+    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
+    const ask: PermissionPolicyResolution = { kind: 'ask' };
+    policyResult = { policyName: 'p', result: ask };
+    make();
+
+    await executorEvents.fireBeforeExecute(makeContext('Write'));
+
+    expect(requestToolApproval).toHaveBeenCalledTimes(1);
+    expect(requestToolApproval).toHaveBeenCalledWith(expect.anything(), ask, 'p');
   });
 
   it('data() reflects the mode and rules services', () => {
