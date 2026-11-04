@@ -20,7 +20,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 - Global full-text search is off by default; set `[database] global_search = true` to turn it on when needed.
 - Set only `default_model` under `[secondary_model]` to use one model for all subagents; the old `force` option is no longer supported.
-- Use `/secondary-model` to choose subagent models separately; if only one is configured, subagents use it automatically.
+- Set a default model for subagents with `/secondary-model`; it no longer follows `/model` switches in the main session.
 
 ### Bug Fixes
 

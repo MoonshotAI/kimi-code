@@ -20,7 +20,7 @@ outline: 2
 
 - 默认关闭全局全文搜索，需要时可在 `[database]` 中设置 `global_search = true` 重新开启。
 - 在 `[secondary_model]` 中只配置 `default_model`，即可统一子 Agent 使用的模型；旧 `force` 配置不再支持。
-- 可通过 `/secondary-model` 单独选择子 Agent 的模型；只配置一个时自动使用。
+- 可通过 `/secondary-model` 设置子 Agent 的默认模型，不再跟随主会话 `/model` 切换。
 
 ### 修复
 
