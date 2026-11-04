@@ -31,6 +31,10 @@ export function parseTaskNotifications(text: string): TaskNotification[] {
   return [...xmlElements(text, 'notification')].map(({ attributes, content }) => notificationOf(attributes, content));
 }
 
+export function plainTaskNotification(sourceKind: string, sourceId: string, body: string): TaskNotification {
+  return { id: '', type: '', sourceKind, sourceId, title: '', severity: 'info', body };
+}
+
 function notificationOf(rawAttributes: string, content: string): TaskNotification {
   const attributes = xmlAttributes(rawAttributes);
   const severity = SEVERITY_RE.exec(content)?.[1]?.trim();

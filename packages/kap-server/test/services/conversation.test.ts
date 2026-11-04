@@ -550,6 +550,29 @@ describe('conversation fold', () => {
     });
   });
 
+  it('keeps a plain-text task message of an older session as the body of a notification', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'work'),
+      stepBegin(0, 1, 's1'),
+      userMessage(undefined, 'Background task bg-1 finished: all tests passed', { kind: 'background_task', taskId: 'bg-1' }),
+      turnEnded(0, 'completed'),
+      userMessage('n2', 'Task t-2 completed.', { kind: 'task_notification' }),
+    ]);
+
+    expect(turnsOf(state)[0]?.items[1]).toMatchObject({
+      type: 'notification',
+      title: '',
+      body: 'Background task bg-1 finished: all tests passed',
+      severity: 'info',
+      source: { kind: 'background_task', id: 'bg-1' },
+      task_id: 'bg-1',
+    });
+    expect(turnsOf(state)[1]?.items).toEqual([
+      expect.objectContaining({ type: 'notification', item_id: 'n2', body: 'Task t-2 completed.', source: { kind: 'task_notification', id: '' } }),
+    ]);
+  });
+
   it('opens turns for user-slash skills and goal continuations but not for model-loaded skills', () => {
     const state = fold([
       userMessage('k1', 'User activated the skill', { kind: 'skill_activation', trigger: 'user-slash' }),

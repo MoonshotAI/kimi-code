@@ -18,7 +18,7 @@ import type {
   ConversationStatus,
   TurnEndReason,
 } from '../../protocol/conversation';
-import { parseTaskNotifications, type TaskNotification } from './taskNotifications';
+import { parseTaskNotifications, plainTaskNotification, type TaskNotification } from './taskNotifications';
 
 export interface TurnError {
   readonly code: string;
@@ -463,7 +463,13 @@ function visibleContent(message: ContextMessage): ContentPart[] {
 
 function notificationItems(turn: FoldTurn, message: ContextMessage, time: number): FoldNotification[] {
   const baseId = message.id ?? nextItemId(turn);
-  return parseTaskNotifications(textOf(message.content, '\n')).map((notification, index) => ({
+  const text = textOf(message.content, '\n');
+  const parsed = parseTaskNotifications(text);
+  const origin = message.origin as { readonly kind?: string; readonly taskId?: unknown } | undefined;
+  const notifications = parsed.length > 0 || text.trim() === ''
+    ? parsed
+    : [plainTaskNotification(origin?.kind ?? 'task', stringField(origin?.taskId) ?? '', text.trim())];
+  return notifications.map((notification, index) => ({
     type: 'notification',
     id: index === 0 ? baseId : `${baseId}:${index}`,
     createdAt: time,
