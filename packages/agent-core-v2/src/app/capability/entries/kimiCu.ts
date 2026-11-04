@@ -18,7 +18,7 @@ import type {
   CapabilityStep,
 } from '../types';
 import type { CapabilityEntryContext } from './context';
-import { manageWindowsCuProcesses } from './windowsCuProcesses';
+import { findWindowsCuProcesses, manageWindowsCuProcesses } from './windowsCuProcesses';
 
 const MAC_PLUGIN_ID = 'kimi-cu';
 const WINDOWS_PLUGIN_ID = 'kimi-cu-win';
@@ -748,9 +748,8 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
     detect,
     install: async (report, options: CapabilityInstallOptions = {}) => {
       if (!supported) return install(report);
-      const powershell = await installerPowerShell();
-      async function checkProcesses(): Promise<number> {
-        const count = await manageWindowsCuProcesses(ctx, powershell, false);
+      const { powershell, count } = await findWindowsCuProcesses(ctx, [powershellPath, powershell7Path]);
+      function checkProcessConsent(count: number): number {
         if (count > 0 && options.stopRunningProcesses !== true) {
           throw new Error2(
             CapabilityErrors.codes.CAPABILITY_PROCESSES_RUNNING,
@@ -759,9 +758,9 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
         }
         return count;
       }
-      await checkProcesses();
+      checkProcessConsent(count);
       return ctx.plugins.withMcpServersSuspended(WINDOWS_PLUGIN_ID, async () => {
-        if (await checkProcesses() > 0) {
+        if (checkProcessConsent(await manageWindowsCuProcesses(ctx, powershell, false)) > 0) {
           report('stop-processes');
           await manageWindowsCuProcesses(ctx, powershell, true);
         }

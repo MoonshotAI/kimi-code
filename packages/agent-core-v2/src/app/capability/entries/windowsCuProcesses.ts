@@ -61,3 +61,22 @@ export async function manageWindowsCuProcesses(
   }
   return Number(result.stdout.trim());
 }
+
+export async function findWindowsCuProcesses(
+  ctx: CapabilityEntryContext,
+  powershellCandidates: readonly string[],
+): Promise<{ powershell: string; count: number }> {
+  const failures: string[] = [];
+  for (const powershell of powershellCandidates) {
+    try {
+      const count = await manageWindowsCuProcesses(ctx, powershell, false);
+      return { powershell, count };
+    } catch (error) {
+      failures.push(`${powershell}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  throw new Error2(
+    CapabilityErrors.codes.CAPABILITY_PROCESS_CONTROL_FAILED,
+    `Failed to check Kimi Computer Use processes: ${failures.join('; ')}`,
+  );
+}

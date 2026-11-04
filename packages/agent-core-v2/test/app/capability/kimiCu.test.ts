@@ -619,6 +619,62 @@ describe('kimi-cu entry', () => {
     expect(downloads).toBe(0);
   });
 
+  it.each([false, true])('repairs only the Windows plugin without installer cmdlets, process fallback: %s', async (fallback) => {
+    const plugins = fakePlugins([]);
+    const calls: string[] = [];
+    let downloads = 0;
+    const hostProcess = {
+      _serviceBrand: undefined,
+      spawn: async (command: string, args: readonly string[] = []) => {
+        const script = args.join(' ');
+        calls.push(`${command} ${script}`);
+        if (script.includes('$matched =')) {
+          return fallback && command === windowsPowerShellPath()
+            ? fakeProc(1, '', 'Get-CimInstance unavailable')
+            : fakeProc(0, '0');
+        }
+        if (script.includes('Get-FileHash')) {
+          return fakeProc(2, '', 'missing commands: Expand-Archive, Invoke-WebRequest');
+        }
+        return fakeProc(0, 'version=0.2.14\nmcp=true\nhelper=embedded\n');
+      },
+    } as IHostProcessService;
+    const entry = createKimiCuEntry(makeCtx({
+      platform: 'win32',
+      arch: 'x64',
+      plugins: plugins.service,
+      hostProcess,
+      fetchImpl: (() => {
+        downloads += 1;
+        return Promise.reject(new Error('runtime download should not start'));
+      }) as typeof fetch,
+    }));
+
+    await entry.install(() => undefined);
+
+    expect(plugins.installs).toEqual([{ marketplaceId: 'kimi-cu-win', expectedVersion: '0.2.14' }]);
+    expect(downloads).toBe(0);
+    expect(calls.some((call) => call.includes('Get-FileHash') || call.includes('setup_windows.ps1'))).toBe(false);
+    expect(calls.findLast((call) => call.includes('$matched ='))?.startsWith(
+      fallback ? windowsPowerShell7Path() : windowsPowerShellPath(),
+    )).toBe(true);
+  });
+
+  it('does not install when neither PowerShell can inspect running processes', async () => {
+    const plugins = fakePlugins([]);
+    const hostProcess = {
+      _serviceBrand: undefined,
+      spawn: async () => fakeProc(1, '', 'Get-CimInstance unavailable'),
+    } as IHostProcessService;
+    const entry = createKimiCuEntry(makeCtx({ platform: 'win32', arch: 'x64', plugins: plugins.service, hostProcess }));
+
+    await expect(entry.install(() => undefined)).rejects.toMatchObject({
+      code: 'capability.process_control_failed',
+      message: expect.stringContaining('Get-CimInstance unavailable'),
+    });
+    expect(plugins.installs).toEqual([]);
+  });
+
   it('repairs a missing Windows runtime without replacing a healthy plugin', async () => {
     const plugins = fakePlugins([{ id: 'kimi-cu-win', enabled: true, state: 'ok' }]);
     const doctorResults = [
