@@ -744,6 +744,31 @@ describe('conversation fold', () => {
     expect(JSON.stringify(turns)).not.toContain('inherited');
   });
 
+  it('keeps the turns of a fork unique and in order when its own turn numbers start from zero', () => {
+    const ownIds = [0, 1, 2, 3];
+    const state = fold([
+      userMessage('inherited', 'inherited prompt'),
+      message('assistant', 'inherited answer'),
+      ...ownIds.flatMap((id) => [
+        turnPrompt(id, `p${id}`),
+        userMessage(`p${id}`, `prompt ${id}`),
+        message('assistant', `answer ${id}`),
+        turnEnded(id, 'completed'),
+      ]),
+    ], { source: 'fork', forkedFrom: 'main' });
+
+    const turns = turnsOf(state);
+    const own = turns.filter((turn) => turn.kind === 'agent');
+    expect(own.map((turn) => shape(turn))).toEqual(
+      ownIds.map((id) => [`opener:prompt ${id}`, `assistant_message:answer ${id}`]),
+    );
+    expect(own.map((turn) => turn.turn_number)).toEqual(ownIds);
+    expect(new Set(turns.map((turn) => turn.turn_id)).size).toBe(turns.length);
+    const ordinals = turns.map((turn) => turn.ordinal);
+    expect(ordinals).toEqual(ordinals.toSorted((a, b) => a - b));
+    expect(new Set(ordinals).size).toBe(ordinals.length);
+  });
+
   it('ends a prompt a hook blocked as blocked and the hook result before it as completed', () => {
     const hookResult = (text: string): WireRecord =>
       message('assistant', text, { origin: { kind: 'hook_result', event: 'UserPromptSubmit', blocked: true } });
