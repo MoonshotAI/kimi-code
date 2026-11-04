@@ -165,7 +165,7 @@ async function acquireSessionFs(
   if (session === undefined) throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   const workdir = session.accessor.get(ISessionWorkdir);
   if (target === undefined || (target.environmentId === workdir.environmentId && target.path === workdir.cwd)) {
-    const lease = core.accessor.get(IEnvironmentService).acquire({ environmentId: workdir.environmentId, cwd: workdir.cwd }, required);
+    const lease = await core.accessor.get(IEnvironmentService).acquireWhenReady({ environmentId: workdir.environmentId, cwd: workdir.cwd }, required);
     return { fs: workdir.fs, hostFs: lease.environment.fs!, lease, environmentId: workdir.environmentId };
   }
   const candidates = (workdir.environmentDirs.directories ?? workdir.environmentDirs.dirs).filter((dir) => dir.environmentId === target.environmentId);
