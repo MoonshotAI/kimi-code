@@ -82,5 +82,5 @@ export function shownSeconds(startedAtMs: number, now: number): number | undefin
 
 export function elapsedSuffix(startedAtMs: number, now: number): string {
   const seconds = shownSeconds(startedAtMs, now);
-  return seconds === undefined ? '' : chalk.hex(currentTheme.faintForeground())(` · ${String(seconds)}s`);
+  return seconds === undefined ? '' : currentTheme.dim(` · ${String(seconds)}s`);
 }

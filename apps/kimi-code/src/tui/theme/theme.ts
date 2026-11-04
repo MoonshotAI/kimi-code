@@ -14,7 +14,7 @@ import { SGR_FAINT, SGR_NORMAL_INTENSITY, SGR_SEQUENCE } from '#/tui/constant/te
 
 import type { ColorPalette } from './colors';
 import { darkColors } from './colors';
-import { colorDistance, mixColors } from './color-mix';
+import { colorDistance } from './color-mix';
 import { deriveHoverBackground } from './hover-color';
 
 export type ColorToken = keyof ColorPalette;
@@ -56,10 +56,6 @@ export class Theme {
     return this._terminalBackground === undefined
       ? undefined
       : deriveHoverBackground(this._terminalBackground, this.color('textStrong'));
-  }
-
-  faintForeground(): string {
-    return mixColors(this.color('textDim'), this.terminalBackground(), 0.35);
   }
 
   /* ── Foreground helpers ── */

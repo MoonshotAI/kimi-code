@@ -204,7 +204,7 @@ export class TranscriptGroupComponent implements Component {
     }
     if (showLess) {
       const start = lines.length;
-      lines.push(`${chalk.hex(this.guideColor())('└ ')}${chalk.hex(currentTheme.faintForeground())('Show less')}`);
+      lines.push(`${chalk.hex(this.guideColor())('└ ')}${currentTheme.fg('textDim', 'Show less')}`);
       regions.push({
         start,
         end: lines.length,
@@ -490,7 +490,7 @@ function tailLine(item: LogicalTranscriptItem, branch: string, width: number, no
     flex: { text: itemText(item), keep: 'head' },
     tail: seconds === undefined ? '' : ` · ${String(seconds)}s`,
   }, width);
-  return chalk.hex(currentTheme.faintForeground())(line);
+  return currentTheme.dim(line);
 }
 
 function sameFrameKey(left: FrameKey, right: FrameKey): boolean {

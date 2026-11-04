@@ -319,7 +319,7 @@ describe('TranscriptGroupComponent', () => {
 
     vi.advanceTimersByTime(2_000);
     expect(onlyGroup(container).rows).toEqual(['├ Read a.ts', '└ Search "needle" · 2s']);
-    expect(container.render(80).join('\n')).toContain(chalk.hex(currentTheme.faintForeground())(' · 2s'));
+    expect(container.render(80).join('\n')).toContain(currentTheme.dim(' · 2s'));
 
     grep.setResult({ tool_call_id: grep.toolCallView.id, output: 'src/a.ts', is_error: false }, { known: true, ms: 2_000 });
     expect(onlyGroup(container).rows).toEqual(['├ Read a.ts', '└ Search "needle" · 1 file']);
@@ -508,7 +508,7 @@ describe('TranscriptGroupComponent', () => {
     vi.advanceTimersByTime(2_500);
 
     expect(requestRender).toHaveBeenCalled();
-    expect(container.render(80).join('\n')).toContain(chalk.hex(currentTheme.faintForeground())(' · 2s'));
+    expect(container.render(80).join('\n')).toContain(currentTheme.dim(' · 2s'));
 
     bash.setResult({ tool_call_id: bash.toolCallView.id, output: 'done', is_error: false }, { known: true, ms: 3_000 });
     container.render(80);
@@ -762,8 +762,7 @@ describe('TranscriptGroupComponent', () => {
 
     const initial = container.render(100);
     expect(onlyGroup(container, 100).tail).toEqual(['├ Read a.ts', '└ $ sleep 5']);
-    const tailColor = mixColors(currentTheme.color('textDim'), '#1E1E1E', 0.35);
-    expect(initial.join('\n')).toContain(chalk.hex(tailColor)('└ $ sleep 5'));
+    expect(initial.join('\n')).toContain(currentTheme.dim('└ $ sleep 5'));
 
     vi.advanceTimersByTime(2_000);
     expect(onlyGroup(container, 100).tail).toEqual(['├ Read a.ts · 2s', '└ $ sleep 5 · 2s']);
@@ -791,7 +790,7 @@ describe('TranscriptGroupComponent', () => {
     container.clear();
   });
 
-  it('draws the Show less row in the tail color and follows theme and background changes', () => {
+  it('draws the Show less row in the textDim color and follows theme changes', () => {
     chalk.level = 3;
     const previousPalette = currentTheme.palette;
     currentTheme.setTerminalBackground('#FFFFFF');
@@ -802,17 +801,18 @@ describe('TranscriptGroupComponent', () => {
     group.setTurnActive(true);
     group.toggleGroup(read);
     group.render(100);
-    const tailColor = (background: string): string => mixColors(lightColors.textDim, background, 0.35);
 
     try {
       currentTheme.setPalette(lightColors);
-      expect(group.render(100).join('\n')).toContain(chalk.hex(tailColor('#FFFFFF'))('Show less'));
+      expect(group.render(100).join('\n')).toContain(chalk.hex(lightColors.textDim)('Show less'));
 
+      currentTheme.setPalette(darkColors);
+      expect(group.render(100).join('\n')).toContain(chalk.hex(darkColors.textDim)('Show less'));
+
+      currentTheme.setPalette(lightColors);
       currentTheme.setTerminalBackground('#FAFBFC');
-      expect(group.render(100).join('\n')).toContain(chalk.hex(tailColor('#FAFBFC'))('Show less'));
-
       group.toggleGroup(read);
-      expect(group.render(100).join('\n')).toContain(chalk.hex(tailColor('#FAFBFC'))('└ Read a.ts'));
+      expect(group.render(100).join('\n')).toContain(currentTheme.dim('└ Read a.ts'));
     } finally {
       currentTheme.setPalette(previousPalette);
       group.clear();
