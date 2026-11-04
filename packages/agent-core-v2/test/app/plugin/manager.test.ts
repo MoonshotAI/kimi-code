@@ -292,6 +292,86 @@ describe('PluginManager', () => {
     );
   });
 
+  it('matches language-only locales to regional translations and preserves the manifest default', async () => {
+    await mkdir(join(root, 'skills', 'directory-skill'), { recursive: true });
+    await writeFile(
+      join(root, 'skills', 'directory-skill', 'SKILL.md'),
+      '---\nname: runtime-skill\ndescription: Original skill description\n---\n\nBody',
+      'utf8',
+    );
+    await writeFile(
+      join(root, 'kimi.plugin.json'),
+      JSON.stringify({
+        name: 'demo',
+        skills: ['./skills'],
+        interface: {
+          defaultLocale: 'zh-CN',
+          locales: './locales/',
+          mcpOverrides: {
+            mac: { displayName: '中文 MCP', description: '中文 MCP 描述' },
+          },
+          skillOverrides: {
+            'directory-skill': { displayName: '中文技能', description: '中文技能描述' },
+          },
+        },
+        mcpServers: {
+          mac: { command: 'sh', args: ['./bin/kimi-cu-mcp'] },
+        },
+      }),
+      'utf8',
+    );
+    await mkdir(join(root, 'locales'), { recursive: true });
+    await writeFile(
+      join(root, 'locales', 'en-US.json'),
+      JSON.stringify({
+        mcpOverrides: {
+          mac: { displayName: 'English MCP', description: 'English MCP description' },
+        },
+        skillOverrides: {
+          'directory-skill': {
+            displayName: 'English skill',
+            description: 'English skill description',
+          },
+        },
+      }),
+      'utf8',
+    );
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+
+    for (const locale of ['en', 'en-US', 'en-GB']) {
+      const info = manager.info('demo', locale);
+      expect(info?.skills).toEqual([
+        {
+          name: 'runtime-skill',
+          displayName: 'English skill',
+          description: 'English skill description',
+        },
+      ]);
+      expect(info?.mcpServers[0]).toMatchObject({
+        name: 'mac',
+        displayName: 'English MCP',
+        description: 'English MCP description',
+      });
+    }
+
+    for (const locale of [undefined, 'zh', 'zh-CN']) {
+      const info = manager.info('demo', locale);
+      expect(info?.skills).toEqual([
+        {
+          name: 'runtime-skill',
+          displayName: '中文技能',
+          description: '中文技能描述',
+        },
+      ]);
+      expect(info?.mcpServers[0]).toMatchObject({
+        name: 'mac',
+        displayName: '中文 MCP',
+        description: '中文 MCP 描述',
+      });
+    }
+  });
+
   it('reuses cached archives and inspections across locales, restarts, and installation', async () => {
     const fixture = await makeZip('cache-demo', '1.0.0', 'cache-skill', async (sourceRoot) => {
       await mkdir(join(sourceRoot, 'locales'), { recursive: true });
@@ -329,7 +409,7 @@ describe('PluginManager', () => {
       const manager = new PluginManager({ kimiHomeDir: home, discoverSkills });
 
       const chinese = await manager.inspect(source, { ...options, locale: 'zh-CN' });
-      const english = await manager.inspect(source, { ...options, locale: 'en-US' });
+      const english = await manager.inspect(source, { ...options, locale: 'en' });
 
       expect(chinese.skills[0]).toMatchObject({ displayName: '默认技能', description: '默认描述' });
       expect(english.skills[0]).toMatchObject({

@@ -1027,16 +1027,25 @@ function pluginSkillsInfo(record: PluginInspection, locale?: string): readonly P
 
 function pluginInterfaceForLocale(record: PluginInspection, locale?: string): PluginInterface | undefined {
   if (locale === undefined) return undefined;
+  const entries = Object.entries(record.interfaceLocales ?? {}).map(
+    ([key, value]) => [normalizedLocale(key), value] as const,
+  );
   const normalized = normalizedLocale(locale);
   const base = normalized.split('-')[0];
-  const candidates = base === normalized ? [normalized] : [normalized, base];
-  for (const candidate of candidates) {
-    const localized = Object.entries(record.interfaceLocales ?? {}).find(
-      ([key]) => normalizedLocale(key) === candidate,
-    );
-    if (localized !== undefined) return localized[1];
+  const exact = entries.find(([key]) => key === normalized);
+  if (exact !== undefined) return exact[1];
+  if (base !== normalized) {
+    const baseEntry = entries.find(([key]) => key === base);
+    if (baseEntry !== undefined) return baseEntry[1];
   }
-  return undefined;
+  const defaultLocale = record.manifest?.interface?.defaultLocale;
+  if (defaultLocale !== undefined && normalizedLocale(defaultLocale).split('-')[0] === base) {
+    const normalizedDefault = normalizedLocale(defaultLocale);
+    return entries.find(([key]) => key === normalizedDefault)?.[1];
+  }
+  return entries
+    .filter(([key]) => key.split('-')[0] === base)
+    .toSorted(([a], [b]) => a.localeCompare(b))[0]?.[1];
 }
 
 function normalizedLocale(value: string): string {
