@@ -431,6 +431,7 @@ function markProvisionalOutcome(state: ConversationState, turnId: unknown, outco
 
 function applyTurnEnded(state: ConversationState, record: WireRecord, time: string | undefined): void {
   const turnNumber = numberField(record['turnId']);
+  if (turnNumber !== undefined && state.pendingPrompt?.turnNumber === turnNumber) state.pendingPrompt = undefined;
   const turn = findTurnByNumber(state, turnNumber) ?? unnumberedOpenTurn(state);
   if (turn === undefined) return;
   if (turn.turn_number === undefined && turnNumber !== undefined) turn.turn_number = turnNumber;

@@ -403,6 +403,24 @@ describe('conversation fold', () => {
     ]);
   });
 
+  it('drops the turn prompt of a turn that ended before anything opened it', () => {
+    const injection = { kind: 'injection', variant: 'shell_command_backgrounded' };
+    const state = fold([
+      turnPrompt(3, 'p3', injection),
+      userMessage('p3', 'task_id: bash-1', injection),
+      turnEnded(3, 'failed'),
+      message('assistant', 'Blocked by policy', { origin: { kind: 'hook_result', event: 'UserPromptSubmit', blocked: true } }),
+      userMessage('p4', 'do the thing'),
+      record('prompt.completed', { promptId: 'p4', reason: 'blocked' }),
+    ]);
+
+    expect(state.turns.map((turn) => `${turn.turn_number}:${turn.status}:${turn.outcome}`)).toEqual([
+      'undefined:ended:completed',
+      'undefined:ended:blocked',
+    ]);
+    expect(state.pendingPrompt).toBeUndefined();
+  });
+
   it('keeps a running turn open while ownerless messages land beside it', () => {
     const state = fold([
       turnPrompt(0, 'p1'),
