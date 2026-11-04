@@ -255,6 +255,30 @@ export class PluginInstallTrustConfirmComponent extends ChoicePickerComponent {
   }
 }
 
+export class PluginStopProcessesConfirmComponent extends ChoicePickerComponent {
+  constructor(opts: { readonly label: string; readonly onDone: (confirmed: boolean) => void }) {
+    super({
+      title: `Stop running processes for ${opts.label}?`,
+      hint: '↑↓ navigate · Enter select · Esc cancel',
+      formatHint: mutedHintLine,
+      notice:
+        'Continuing will stop the running plugin processes and interrupt any computer operations in progress.',
+      noticeTone: 'warning',
+      spaceSelect: false,
+      options: [
+        { value: 'cancel', label: 'Cancel', description: 'Leave running processes untouched.' },
+        { value: 'confirm', label: 'Stop processes and continue', tone: 'danger' },
+      ],
+      onSelect: (value) => {
+        opts.onDone(value === 'confirm');
+      },
+      onCancel: () => {
+        opts.onDone(false);
+      },
+    });
+  }
+}
+
 function overviewPluginDescription(plugin: PluginSummary): string {
   const state = plugin.state === 'ok' ? '' : ` · state ${plugin.state}`;
   const skills = `${plugin.skillCount} skill${plugin.skillCount === 1 ? '' : 's'}`;

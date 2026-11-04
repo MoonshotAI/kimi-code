@@ -6,6 +6,7 @@ import {
   PluginInstallTrustConfirmComponent,
   PluginMcpSelectorComponent,
   PluginRemoveConfirmComponent,
+  PluginStopProcessesConfirmComponent,
   PluginsPanelComponent,
   type PluginInstallTrustConfirmResult,
   type PluginMcpSelection,
@@ -1229,6 +1230,33 @@ describe('plugins selector dialogs', () => {
     expect(selections).toEqual([
       { kind: 'toggle', pluginId: 'kimi-datasource', server: 'data', enabled: false },
     ]);
+  });
+
+  it('defaults process confirmation to cancel and shows the interruption warning', () => {
+    const onDone = vi.fn();
+    const picker = new PluginStopProcessesConfirmComponent({ label: 'Kimi Computer Use', onDone });
+    const out = renderRaw(picker);
+    expect(strip(out)).toContain('Stop running processes for Kimi Computer Use?');
+    expect(strip(out)).toContain('  ? Cancel');
+    expect(strip(out)).toContain('interrupt any computer operations in progress');
+    picker.handleInput('\r');
+    expect(onDone).toHaveBeenCalledWith(false);
+  });
+
+  it('requires selecting the stop option and pressing Enter; Escape cancels', () => {
+    const onDone = vi.fn();
+    const picker = new PluginStopProcessesConfirmComponent({ label: 'Kimi Computer Use', onDone });
+    picker.focused = true;
+    picker.handleInput('\u001B[B');
+    expect(renderRaw(picker)).toContain(dangerShortcut('Stop processes and continue'));
+    picker.handleInput(' ');
+    expect(onDone).not.toHaveBeenCalled();
+    picker.handleInput('\r');
+    expect(onDone).toHaveBeenCalledWith(true);
+    onDone.mockClear();
+    picker.handleInput('\u001B');
+    expect(onDone).toHaveBeenCalledWith(false);
+    expect(picker.render(30).every((line) => strip(line).length <= 30)).toBe(true);
   });
 
   it('defaults plugin removal confirmation to cancel', () => {

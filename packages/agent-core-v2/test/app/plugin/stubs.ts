@@ -19,6 +19,7 @@ export function stubPluginService(options: StubPluginServiceOptions): IPluginSer
     _serviceBrand: undefined,
     onDidReload: options.reloadEmitter?.event ?? (Event.None as IPluginService['onDidReload']),
     onDidMutate: options.mutateEmitter?.event ?? (Event.None as IPluginService['onDidMutate']),
+    withMcpServersSuspended: async (_id, task) => task(),
     listPlugins: async () => [],
     installPlugin: async () => ({ id: '' }) as never,
     setPluginEnabled: async () => {},
