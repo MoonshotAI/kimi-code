@@ -539,6 +539,29 @@ describe('shutdown of a process that is still starting', () => {
 });
 
 describe('finished process-group ownership', () => {
+  it('skips POSIX group polling on Windows', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const manager = new ProcessManager(() => {}, new HostProcessService());
+    const internals = manager as unknown as {
+      processes: Map<string, unknown>;
+      exitedGroups: Map<string, unknown>;
+      maybeClose(entry: unknown): void;
+    };
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      const entry = { processId: 'windows', pid: 1, exitCode: 0, openStreams: 0, closed: false };
+      internals.processes.set(entry.processId, entry);
+      internals.maybeClose(entry);
+      expect(internals.exitedGroups.size).toBe(0);
+      expect(kill).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, 'platform', descriptor);
+      manager.dispose();
+      kill.mockRestore();
+    }
+  });
+
   it('does not evict live groups at the former cache limit and reaps missing groups', async () => {
     vi.useFakeTimers();
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);

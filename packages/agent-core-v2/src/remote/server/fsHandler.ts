@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path';
+import { isAbsolute, win32 } from 'node:path';
 
 import type { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsError, OsFsErrors, toHostFsError } from '#/os/interface/hostFsErrors';
@@ -33,7 +33,7 @@ export function requireString(params: Params, name: string): string {
 
 export function requireAbsolutePath(params: Params, name: string): string {
   const value = requireString(params, name);
-  if (!isAbsolute(value)) {
+  if (!isAbsolute(value) && (process.platform !== 'win32' || !win32.isAbsolute(value))) {
     throw new RpcError(RpcErrorCode.InvalidRequest, `${name} must be an absolute path`);
   }
   return value;

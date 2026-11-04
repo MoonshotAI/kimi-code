@@ -102,6 +102,22 @@ function execServerShellCommand(remoteBin: string): string {
   return [bin, ...EXEC_SERVER_ARGV.map(shQuote)].join(' ');
 }
 
+function windowsExecutorPath(remoteBin: string): string {
+  const path = remoteBin === DEFAULT_REMOTE_BIN ? '~/.kimi-code/bin/kimi.exe' : remoteBin;
+  return path.replace(/^~(?=[\\/])/, '$env:USERPROFILE');
+}
+
+function execServerPowerShellCommand(remoteBin: string): string {
+  const path = windowsExecutorPath(remoteBin).replaceAll('"', '`"');
+  return `& \\"${path}\\" ${EXEC_SERVER_ARGV.join(' ')}`;
+}
+
+function sshRemoteCommand(remoteBin: string): string {
+  const posix = shQuote(execServerShellCommand(remoteBin));
+  const windows = `"${execServerPowerShellCommand(remoteBin)}"`;
+  return `sh -c exit && sh -c ${posix} || powershell -NoLogo -NoProfile -NonInteractive -Command ${windows}`;
+}
+
 const COMMAND_LAUNCHER_ENV_KEYS: ReadonlySet<string> = new Set([
   'PATH',
   'HOME',
@@ -144,7 +160,7 @@ export function resolveLauncher(spec: LauncherSpec, interactiveSshAuth = false):
         : ['-o', 'BatchMode=yes'];
       return {
         program: 'ssh',
-        args: ['-T', ...authOptions, ...SSH_CONFIG_OPTIONS.slice(2), spec.host, execServerShellCommand(spec.remoteBin ?? DEFAULT_REMOTE_BIN)],
+        args: ['-T', ...authOptions, ...SSH_CONFIG_OPTIONS.slice(2), spec.host, sshRemoteCommand(spec.remoteBin ?? DEFAULT_REMOTE_BIN)],
       };
     }
     case 'docker':

@@ -62,6 +62,11 @@ function makeSessionManager(
       if (registry === undefined) throw new Error('environment registry is not stubbed');
       return registry.acquire(binding, required);
     },
+    acquireWhenReady: (binding: { environmentId: string }, required: never) => {
+      const registry = environmentRegistryOf(workspaces);
+      if (registry === undefined) throw new Error('environment registry is not stubbed');
+      return registry.acquireWhenReady(binding, required);
+    },
   } as unknown as IEnvironmentService;
   return new SessionManager(
     workspaces,
@@ -955,17 +960,24 @@ describe('SessionManager creation environment', () => {
     } as unknown as IConfigService;
   }
 
-  function setup(config: IConfigService, remote = false) {
+  function setup(config: IConfigService, remote: boolean | 'win32' = false) {
     registry = new EnvironmentRegistry();
     registry.register(Object.assign(new FakeEnvironment(
       { environmentId: 'local', generation: 'local-one' },
       { capabilities: ['fs', 'process'] },
     ), { fs: {}, process: {} }));
     if (remote) {
-      registry.register(Object.assign(new FakeEnvironment(
+      const environment = new FakeEnvironment(
         { environmentId: 'sandbox', generation: 'sandbox-one' },
-        { status: 'disconnected', capabilities: ['fs', 'process'] },
-      ), { fs: {}, process: {} }));
+        { status: 'disconnected', capabilities: ['fs', 'process'], pathClass: remote === 'win32' ? 'win32' : 'posix' },
+      );
+      registry.register(Object.assign(environment, {
+        fs: {},
+        process: {},
+        connect: async () => {
+          environment.setStatus('ready');
+        },
+      }));
     }
     const options: unknown[] = [];
     const service = {
@@ -1054,6 +1066,12 @@ describe('SessionManager creation environment', () => {
     const { options } = setup(configWith({ sandbox: { command: 'sandbox', defaultCwd: '/remote//project/./sub/..' } }), true);
     await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
     expect(options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: '/remote/project' });
+  });
+
+  it('normalizes a declared Windows cwd using the connected environment', async () => {
+    const { options } = setup(configWith({ sandbox: { command: 'sandbox', defaultCwd: 'C:\\Users\\example\\project\\sub\\..' } }), 'win32');
+    await manager.create({ workDir: '/workspace', environmentId: 'sandbox' });
+    expect(options[0]).toMatchObject({ environmentId: 'sandbox', environmentCwd: 'C:\\Users\\example\\project' });
   });
 
   it('requires a cwd for a registered environment that is not declared', async () => {

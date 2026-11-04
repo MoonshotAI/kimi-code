@@ -143,10 +143,11 @@ error. **The executor is never installed automatically**: a missing or too-old
 executor fails the connect, and the error text tells the user where to get the
 binary and where to put it. Both typed launchers go through a remote shell, so
 a `~`-prefixed `remoteBin` (the default `~/.kimi-code/bin/kimi` is) expands on
-the target: ssh runs the command line in the remote shell, and docker runs
-`docker exec -i <container> sh -c 'exec <remoteBin> exec-server --listen
-stdio'` — the same word-initial tilde expansion on both, with the remainder of
-`remoteBin` single-quoted against shell re-parsing.
+the target: ssh probes for `sh` and uses the POSIX command when available,
+otherwise it invokes the default Windows executor (`kimi.exe`) through
+PowerShell; docker runs `docker exec -i <container> sh -c 'exec <remoteBin>
+exec-server --listen stdio'`. The remainder of `remoteBin` is quoted against
+shell re-parsing.
 
 - **Missing executor** — the launcher exited 127 (the remote shell could not
   find the executor binary) or 126 (the remote shell found the executor but
@@ -174,7 +175,9 @@ handshake completes: any byte or unknown notification disconnects.
 
 ## Operational notes
 
-- The executor is posix-only; the client refuses non-posix environments and
-  executors below `MIN_EXECUTOR_VERSION` at the handshake gate.
+- The executor supports POSIX and Windows environments; the client rejects
+  unsupported path classes and executors below `MIN_EXECUTOR_VERSION` at the
+  handshake gate. Windows targets use the node-local Git Bash and `taskkill`
+  implementations, without POSIX process-group polling.
 - `test/remote/e2e/` holds the real-machine (ssh/docker) acceptance driver and
   step-by-step docs; the vitest suite covers the local loopback.

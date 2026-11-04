@@ -26,7 +26,7 @@ describe('launcher lowering', () => {
         '-o',
         'StrictHostKeyChecking=accept-new',
         'dev-box',
-        `"$HOME"'/.kimi-code/bin/kimi' 'exec-server' '--listen' 'stdio'`,
+        remoteCommand(),
       ],
     });
   });
@@ -48,7 +48,7 @@ describe('launcher lowering', () => {
       '-o',
       'StrictHostKeyChecking=accept-new',
       'dev-box',
-      `"$HOME"'/.kimi-code/bin/kimi' 'exec-server' '--listen' 'stdio'`,
+      remoteCommand(),
     ]);
   });
 });
@@ -71,30 +71,48 @@ describe('launcher operand validation', () => {
   });
 });
 
+function remoteCommand(remoteBin?: string): string {
+  return resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin }).args.at(-1)!;
+}
+
+function posixCommand(remoteBin?: string): string {
+  const match = /&& sh -c '(.*)' \|\| powershell/.exec(remoteCommand(remoteBin));
+  if (match === null) throw new Error(`missing POSIX branch: ${remoteCommand(remoteBin)}`);
+  return match[1]!.replaceAll("'\\''", "'");
+}
+
+function windowsCommand(remoteBin?: string): string {
+  const match = /\|\| powershell .* -Command "(.*)"$/.exec(remoteCommand(remoteBin));
+  if (match === null) throw new Error(`missing PowerShell branch: ${remoteCommand(remoteBin)}`);
+  return match[1]!;
+}
+
 describe('ssh remote command quoting', () => {
+  it('selects POSIX shell or PowerShell on the remote host', () => {
+    expect(remoteCommand()).toContain('sh -c exit && sh -c');
+    expect(remoteCommand()).toContain('powershell -NoLogo -NoProfile -NonInteractive -Command "& \\"');
+    expect(remoteCommand()).toContain('$env:USERPROFILE/.kimi-code/bin/kimi.exe');
+    expect(remoteCommand()).toContain('exec-server --listen stdio');
+  });
+
+  it('preserves tilde expansion and quotes executable paths on Windows', () => {
+    expect(windowsCommand('~deploy/bin/kimi.exe')).toContain('& \\"~deploy/bin/kimi.exe\\"');
+    expect(windowsCommand('C:\\Program Files\\Kimi\\kimi.exe')).toContain('& \\"C:\\Program Files\\Kimi\\kimi.exe\\"');
+  });
+
   it('quotes shell metacharacters in remoteBin against remote re-parsing', () => {
-    const resolved = resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '/opt/$(whoami)/kimi' });
-    expect(resolved.args.at(-1)).toBe(`'/opt/$(whoami)/kimi' 'exec-server' '--listen' 'stdio'`);
+    expect(posixCommand('/opt/$(whoami)/kimi')).toBe(`'/opt/$(whoami)/kimi' 'exec-server' '--listen' 'stdio'`);
   });
 
   it('keeps tilde prefixes expandable while quoting the remainder', () => {
-    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '~/bin/kimi' }).args.at(-1)).toBe(
-      `"$HOME"'/bin/kimi' 'exec-server' '--listen' 'stdio'`,
-    );
-    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '~/bin dir/kimi' }).args.at(-1)).toBe(
-      `"$HOME"'/bin dir/kimi' 'exec-server' '--listen' 'stdio'`,
-    );
-    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '~deploy/bin/kimi' }).args.at(-1)).toBe(
-      `~deploy/'bin/kimi' 'exec-server' '--listen' 'stdio'`,
-    );
-    expect(resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: '~' }).args.at(-1)).toBe(
-      `"$HOME" 'exec-server' '--listen' 'stdio'`,
-    );
+    expect(posixCommand('~/bin/kimi')).toBe(`"$HOME"'/bin/kimi' 'exec-server' '--listen' 'stdio'`);
+    expect(posixCommand('~/bin dir/kimi')).toBe(`"$HOME"'/bin dir/kimi' 'exec-server' '--listen' 'stdio'`);
+    expect(posixCommand('~deploy/bin/kimi')).toBe(`~deploy/'bin/kimi' 'exec-server' '--listen' 'stdio'`);
+    expect(posixCommand('~')).toBe(`"$HOME" 'exec-server' '--listen' 'stdio'`);
   });
 
   it('escapes single quotes inside remoteBin', () => {
-    const resolved = resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: `/opt/it's/kimi` });
-    expect(resolved.args.at(-1)).toBe(`'/opt/it'\\''s/kimi' 'exec-server' '--listen' 'stdio'`);
+    expect(posixCommand(`/opt/it's/kimi`)).toBe(`'/opt/it'\\''s/kimi' 'exec-server' '--listen' 'stdio'`);
   });
 });
 
@@ -105,14 +123,12 @@ describe('ssh remote command tilde expansion through a local shell', () => {
   }
 
   it('expands the default remoteBin via $HOME', () => {
-    const command = resolveLauncher({ type: 'ssh', host: 'dev-box' }).args.at(-1)!;
-    expect(expandBinWord(command)).toBe(`${process.env['HOME']}/.kimi-code/bin/kimi`);
+    expect(expandBinWord(posixCommand())).toBe(`${process.env['HOME']}/.kimi-code/bin/kimi`);
   });
 
   it('expands a ~user remoteBin via tilde expansion', () => {
     const username = userInfo().username;
-    const command = resolveLauncher({ type: 'ssh', host: 'dev-box', remoteBin: `~${username}/bin/kimi` }).args.at(-1)!;
-    expect(expandBinWord(command)).toBe(`${userInfo().homedir}/bin/kimi`);
+    expect(expandBinWord(posixCommand(`~${username}/bin/kimi`))).toBe(`${userInfo().homedir}/bin/kimi`);
   });
 });
 

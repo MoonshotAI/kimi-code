@@ -237,6 +237,11 @@ export class ProcessManager {
   }
 
   private scheduleGroupReap(processId: string, group: ExitedProcessGroup): void {
+    if (process.platform === 'win32') {
+      this.exitedGroups.delete(processId);
+      if (group.killTimer !== undefined) clearTimeout(group.killTimer);
+      return;
+    }
     group.expiryTimer = setTimeout(() => {
       if (this.exitedGroups.get(processId) !== group) return;
       try {

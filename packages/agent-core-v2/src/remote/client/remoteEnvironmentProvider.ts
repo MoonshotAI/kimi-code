@@ -21,7 +21,7 @@ import type {
 } from '#/environment/environmentProvider';
 
 import { EnvironmentError, type EnvironmentRegistrationHandle } from '#/environment/environmentRegistry';
-import { POSIX_ENVIRONMENT_PATH, POSIX_ENVIRONMENT_WORKSPACE } from '#/environment/environmentDefaults';
+import { POSIX_ENVIRONMENT_PATH, POSIX_ENVIRONMENT_WORKSPACE, WIN32_ENVIRONMENT_PATH, WIN32_ENVIRONMENT_WORKSPACE } from '#/environment/environmentDefaults';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { classifyHandshakeFailure, connectWithGuidance } from './connectGuidance';
@@ -113,11 +113,13 @@ class DeclaredRemoteEnvironment implements Environment {
   }
 
   get path(): Environment['path'] {
-    return this.session === undefined ? undefined : POSIX_ENVIRONMENT_PATH;
+    if (this.session === undefined) return undefined;
+    return this.session.host.pathClass === 'win32' ? WIN32_ENVIRONMENT_PATH : POSIX_ENVIRONMENT_PATH;
   }
 
   get workspace(): Environment['workspace'] {
-    return this.session === undefined ? undefined : POSIX_ENVIRONMENT_WORKSPACE;
+    if (this.session === undefined) return undefined;
+    return this.session.host.pathClass === 'win32' ? WIN32_ENVIRONMENT_WORKSPACE : POSIX_ENVIRONMENT_WORKSPACE;
   }
 
   private connected(): RemoteSession {

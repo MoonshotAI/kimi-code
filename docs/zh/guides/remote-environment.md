@@ -15,7 +15,7 @@ Kimi Code 把 Agent 循环、模型请求、凭据、审批和会话状态全部
 - **Hooks 与 MCP server 默认留在本机**：生命周期钩子和未显式设置 `environment_id` 的 stdio MCP server 在本机运行，详见 [限制](#限制)。
 - **SSH 走系统 `ssh`**：SSH 启动器调用系统 `ssh`，因此 `~/.ssh/config`（用户、端口、密钥、`ProxyJump`、`ControlMaster`）和 ssh-agent 照常生效——密码、口令与主机密钥的处理详见 [SSH 认证](#ssh-认证)。
 
-仅支持 POSIX 目标，不支持 Windows 目标。
+支持 Linux、macOS 和 Windows 目标。SSH 启动器会自动适配目标上的 POSIX shell 或 Windows PowerShell；Windows 目标需要安装 Git Bash，供 Agent 执行 Shell 命令。
 
 ::: info 远程环境 vs. 远程控制
 [远程控制](./remote-control.md) 是相反方向：它让另一台设备（比如手机）查看和操控运行在**本机**的会话。远程环境则相反——由本机的 CLI 驱动工具在**另一台**机器或容器里执行。
@@ -50,7 +50,7 @@ defaultCwd = "/home/me/kimi-code"
 关键规则：
 
 - `type` 与 `command` 在同一条目内互斥：`type = "ssh"` 和 `type = "docker"` 是内置启动器，`command` + `args` 是通用形式（与 `.mcp.json` 的 stdio 条目形态一致）。通用形式下，Kimi Code 会在 `args` 之后追加 `<remoteBin> exec-server`（默认 `~/.kimi-code/bin/kimi`），`args` 已经调用 `exec-server` 时不追加；`kubectl exec` 这类不经 shell、原样传递参数的启动器不会展开 `~`，需要把 `remoteBin` 设为绝对路径。`env` 设置的是本机启动器进程的环境，**不会**传播到 Agent 在目标环境执行的命令里。
-- `defaultCwd` 是在该环境上创建会话时使用的工作目录，可被 `--environment-cwd` 覆盖。它必须是目标环境上的 POSIX 绝对路径；相对路径和 `~` 不会按本机目录或目标机器的 home 展开。系统先规范化重复分隔符、`.` 和 `..`，再在目标环境上校验目录，并保存同一个规范化路径。符号链接名称会保留，不会用 realpath 改写；因此 `symlink/..` 使用路径拼写中的父目录，而不是符号链接目标的物理父目录。
+- `defaultCwd` 是在该环境上创建会话时使用的工作目录，可被 `--environment-cwd` 覆盖。它必须是目标平台上的绝对路径，例如 POSIX 目标上的 `/home/me/project` 或 Windows 目标上的 `C:\Users\me\project`；相对路径和 `~` 不会按本机目录或目标机器的 home 展开。系统先规范化重复分隔符、`.` 和 `..`，再在目标环境上校验目录，并保存同一个规范化路径。符号链接名称会保留，不会用 realpath 改写；因此 `symlink/..` 使用路径拼写中的父目录，而不是符号链接目标的物理父目录。
 - 可选的顶层 `default` 指定创建会话时未显式给出绑定时使用的环境——冷启动、print 模式，或 API 创建。它指向的条目必须设置 `defaultCwd`。未设置 `default` 时，这些会话从 `local` 开始。TUI 里的 `/new` 不属于这种情况：它保留当前会话的环境和工作目录。还没有会话时，`/new` 使用进程启动时的 `--environment`；没有该参数时才用解析后的 default。
 - 配置文件无法读取或 `[environments]` 节无效时，创建会话会以 `config.invalid` 失败，不会将其视为未设置 default。显式选择 `local` 仍可创建本地会话。
 - 环境 id 即条目的键名：不超过 64 个字符，首尾不能有空白；`local` 和 `default` 是保留字。
@@ -122,7 +122,7 @@ Host dev-box
 
 执行器是 Kimi Code 自身的轻量构建，在目标环境以 `kimi exec-server` 启动。它只响应文件系统、进程请求——不接触模型 API、凭据和会话状态。stdio 是默认且唯一支持的传输方式，显式写法 `kimi exec-server --listen stdio` 与之等价且依然可用。
 
-固定安装路径是目标环境上的 `~/.kimi-code/bin/kimi`（执行器位于其他位置时——例如预装的容器镜像——可用条目里的 `remoteBin` 覆盖）。
+固定安装路径是 POSIX 目标上的 `~/.kimi-code/bin/kimi`，或 Windows 目标上的 `~/.kimi-code/bin/kimi.exe`（执行器位于其他位置时——例如预装的容器镜像——可用条目里的 `remoteBin` 覆盖）。
 
 ### 安装执行器
 
@@ -130,7 +130,7 @@ Kimi Code 不会自动安装执行器。连接在预期路径上找不到执行�
 
 ### 版本兼容
 
-连接握手会校验执行器的最低版本和 POSIX 目标。版本过旧的执行器会被拒绝接入并给出升级指引——安装当前构建覆盖旧版本，然后重新连接。
+连接握手会校验执行器的最低版本和目标平台的路径类型。版本过旧的执行器会被拒绝接入并给出升级指引——安装当前构建覆盖旧版本，然后重新连接。
 
 ## 限制
 

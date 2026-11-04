@@ -132,10 +132,10 @@ function fakeHost(services: HostServices, registry: EnvironmentRegistry): Enviro
 
 type FakeSession = RemoteSession & { released: boolean; close(info: ConnectionCloseInfo): void };
 
-function connectedSession(): FakeSession {
+function connectedSession(pathClass: 'posix' | 'win32' = 'posix'): FakeSession {
   const listeners = new Set<(info: ConnectionCloseInfo) => void>();
   const session = {
-    host: { osKind: 'linux', osArch: 'x64', osVersion: '', shellName: 'sh', shellPath: '/bin/sh', pathClass: 'posix', homeDir: '/home/me', cwd: '/home/me', tempDir: '/tmp' },
+    host: { osKind: 'linux', osArch: 'x64', osVersion: '', shellName: 'sh', shellPath: '/bin/sh', pathClass, homeDir: '/home/me', cwd: '/home/me', tempDir: '/tmp' },
     fs: {},
     process: {},
     executorVersion: 'test',
@@ -224,6 +224,19 @@ describe('RemoteEnvironmentProviderFactory', () => {
     expect(placeholder.workspace?.mapRoots({ workDir: 'rel' }).workDir).toBe(placeholder.path?.resolve('rel'));
     expect(statuses[0]).toBe('connecting');
 
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('uses Windows path semantics after connecting to a Windows executor', async () => {
+    const registry = new EnvironmentRegistry();
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect: async () => connectedSession('win32') }));
+    const attachment = await factory.attach(fakeHost(baseServices(registry), registry));
+    const placeholder = registry.current('dev-box')!;
+    await placeholder.connect!();
+    expect(placeholder.path?.delimiter).toBe(';');
+    expect(placeholder.path?.join('C:\\Users\\example', 'project')).toBe('C:\\Users\\example\\project');
+    expect(placeholder.workspace?.mapRoots({ workDir: 'C:\\Users\\example\\project\\sub\\..' }).workDir).toBe('C:\\Users\\example\\project');
     await attachment.dispose();
     await registry.dispose();
   });
