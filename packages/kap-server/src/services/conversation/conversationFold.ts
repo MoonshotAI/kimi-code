@@ -30,6 +30,7 @@ interface PendingToolPatch {
 interface UndoAnchor {
   readonly turnId: string;
   readonly itemCount: number;
+  readonly stepCount: number;
 }
 
 export interface ConversationState {
@@ -135,7 +136,11 @@ export function undoConversationTurns(state: ConversationState, count: number): 
   state.anchors.splice(state.anchors.length - count);
   const anchorIndex = state.turns.findIndex((turn) => turn.turn_id === anchor.turnId);
   if (anchorIndex === -1) return state;
-  if (anchor.itemCount > 0) state.turns[anchorIndex]!.items.splice(anchor.itemCount);
+  if (anchor.itemCount > 0) {
+    const turn = state.turns[anchorIndex]!;
+    turn.items.splice(anchor.itemCount);
+    turn.steps.splice(anchor.stepCount);
+  }
   const cutIndex = anchor.itemCount > 0 ? anchorIndex + 1 : anchorIndex;
   const removed = new Set(state.turns.splice(cutIndex).map((turn) => turn.turn_id));
   if (state.openTurnId !== undefined && removed.has(state.openTurnId)) state.openTurnId = undefined;
@@ -235,7 +240,7 @@ function applyMessage(state: ConversationState, message: ContextMessage | undefi
   const inTurn = origin !== undefined && 'inTurn' in origin && origin.inTurn === true;
   if (inTurn || (steered && state.pendingPrompt === undefined && open !== undefined)) {
     const turn = open ?? startTurn(state, time);
-    if (isUndoAnchor(message)) state.anchors.push({ turnId: turn.turn_id, itemCount: turn.items.length });
+    if (isUndoAnchor(message)) state.anchors.push({ turnId: turn.turn_id, itemCount: turn.items.length, stepCount: turn.steps.length });
     turn.items.push({
       type: 'user_message',
       item_id: message.id ?? nextItemId(turn),
@@ -254,7 +259,7 @@ function applyMessage(state: ConversationState, message: ContextMessage | undefi
   }
   const promptId = message.id ?? state.pendingPrompt?.promptId;
   const turn = startTurn(state, time);
-  if (isUndoAnchor(message)) state.anchors.push({ turnId: turn.turn_id, itemCount: 0 });
+  if (isUndoAnchor(message)) state.anchors.push({ turnId: turn.turn_id, itemCount: 0, stepCount: 0 });
   if (notification) {
     turn.items.push(notificationItem(turn, message));
     return;

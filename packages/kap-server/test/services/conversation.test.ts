@@ -382,16 +382,24 @@ describe('conversation fold', () => {
     ]);
   });
 
-  it('cuts an undone steer and what followed it from a turn that stays', () => {
+  it('cuts an undone steer and the steps that followed it from a turn that stays', () => {
     const state = fold([
-      userMessage('a', 'first'),
-      message('assistant', 'one'),
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'first'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'one' }, 0),
+      stepEnd(0, 1, 's1'),
       record('turn.steer', { input: [{ type: 'text', text: 'wait' }], origin: { kind: 'user' } }),
       userMessage('c', 'wait'),
-      message('assistant', 'two'),
+      stepBegin(0, 2, 's2'),
+      contentPart(0, 2, 's2', { type: 'text', text: 'two' }, 0),
+      stepEnd(0, 2, 's2'),
+      turnEnded(0, 'completed'),
     ]);
 
-    expect(shape(undoConversationTurns(state, 1).turns[0])).toEqual(['opener:first', 'assistant_message:t0#1:one']);
+    const [turn] = undoConversationTurns(state, 1).turns;
+    expect(shape(turn)).toEqual(['opener:first', 'assistant_message:s1:0:one']);
+    expect(turn?.steps.map((step) => step.step_id)).toEqual(['s1']);
   });
 
   it('folds legacy assistant and tool messages', () => {
