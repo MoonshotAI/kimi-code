@@ -74,6 +74,7 @@ import { promptSshPassword } from './commands/prompts';
 import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
+import type { FooterGitBinding } from './components/chrome/footer';
 import { GutterContainer } from './components/chrome/gutter-container';
 import { MoonLoader, type SpinnerStyle } from './components/chrome/moon-loader';
 import { WelcomeComponent } from './components/chrome/welcome';
@@ -523,6 +524,7 @@ export class KimiTUI {
     this.state = createTUIState(tuiOptions);
     this.programStatus = new ProgramStatusController(this.state, this.state.terminal);
     this.state.footer.setExpandHintProvider(() => this.toolOutputExpandHint());
+    this.state.footer.setGitBinding((state) => this.footerGitBinding(state));
     this.state.transcriptContainer.setUnhandledClick((index) =>
       this.toggleClickedFoldBlock(index),
     );
@@ -591,17 +593,8 @@ export class KimiTUI {
       };
     });
     const skillCommandNames = new Set(this.skillCommandMap.keys());
-    const environment = this.state.appState.environment;
-    const environmentBinding =
-      environment !== undefined
-        ? environment
-        : this.creationEnvironment ?? {
-            environmentId: this.options.startup.environment,
-            cwd: this.options.startup.environmentCwd,
-          };
-    const { environmentId } = environmentBinding;
     const remoteSuggest =
-      environmentId === undefined || environmentId === 'local'
+      this.environmentIdOf(this.state.appState.environment) === 'local'
         ? undefined
         : async (query: string) => {
             const session = this.session;
@@ -633,6 +626,36 @@ export class KimiTUI {
     }
     this.state.editor.setArgumentHints(argumentHints);
     this.state.editor.setSkillCommandNames(skillCommandNames);
+  }
+
+  /**
+   * The environment the current or next session runs on: the live binding,
+   * else the one a new session would be created with.
+   */
+  private environmentIdOf(environment: AppState['environment']): string {
+    return (environment ?? this.creationEnvironment)?.environmentId ?? this.options.startup.environment ?? 'local';
+  }
+
+  /**
+   * The footer reads git state through the engine: a live session's own
+   * environment, or the local work dir before the lazy session exists. A
+   * remote binding has nothing to read until its session does. The key
+   * ignores the connection status so a transient disconnect keeps the last
+   * badge; the footer re-reads when the environment turns ready.
+   */
+  private footerGitBinding(state: AppState): FooterGitBinding | null {
+    const local = this.environmentIdOf(state.environment) === 'local';
+    const sessionId = state.sessionId === '' ? undefined : state.sessionId;
+    if (sessionId === undefined && !local) return null;
+    const { workDir } = state;
+    return {
+      key: [sessionId ?? '', workDir, local ? 'local' : 'remote'].join('\0'),
+      source: {
+        status: () => this.harness.getGitStatus(workDir, { sessionId }),
+        pullRequest: () => this.harness.getGitPullRequest(workDir, { sessionId }),
+        localWorkDir: local ? workDir : undefined,
+      },
+    };
   }
 
   refreshSlashCommandAutocomplete(): void {
@@ -737,7 +760,7 @@ export class KimiTUI {
           const startupSpinner = this.showProgressSpinner(this.startupProgressLabel());
           const shouldReplayHistory = await this.initMainTui().then(
             (result) => {
-              startupSpinner.stop({ ok: true, label: 'Ready.' });
+              startupSpinner.dismiss();
               return result;
             },
             (error: unknown) => {
@@ -771,7 +794,7 @@ export class KimiTUI {
         }
         throw error;
       }
-      startupSpinner.stop({ ok: true, label: 'Ready.' });
+      startupSpinner.dismiss();
       startupTrace('initMainTui:end');
       // Debug-only input→render latency overlay (KIMI_TUI_INPUT_LATENCY=1).
       if (process.env['KIMI_TUI_INPUT_LATENCY']) installInputLatencyProbe(this.state.ui);
@@ -3991,7 +4014,7 @@ export class KimiTUI {
       return;
     }
     const welcome = new WelcomeComponent(this.state.appState);
-    // Startup progress rows (e.g. the "Ready." spinner) are added before
+    // Startup progress rows (e.g. the startup spinner) are added before
     // initMainTui() reaches this point; the welcome stays on top of them.
     this.state.transcriptContainer.children.unshift(welcome);
     this.state.transcriptContainer.invalidate();
@@ -4349,13 +4372,21 @@ export class KimiTUI {
     return this.showProgressSpinner(label);
   }
 
-  showProgressSpinner(label: string): LoginProgressSpinnerHandle {
+  showProgressSpinner(label: string): LoginProgressSpinnerHandle & { dismiss(): void } {
     const tint = (s: string): string => currentTheme.fg('primary', s);
     const spinner = new MoonLoader(this.state.ui, 'braille', tint, label);
-    this.state.transcriptContainer.addChild(new Spacer(1));
+    const spacer = new Spacer(1);
+    this.state.transcriptContainer.addChild(spacer);
     this.state.transcriptContainer.addChild(spinner);
     this.state.ui.requestRender();
     return {
+      dismiss: () => {
+        spinner.stop();
+        this.state.transcriptContainer.removeChild(spacer);
+        this.state.transcriptContainer.removeChild(spinner);
+        this.state.transcriptContainer.invalidate();
+        this.state.ui.requestRender();
+      },
       stop: ({ ok, label: finalLabel }) => {
         spinner.stop();
         const tone = ok ? 'success' : 'error';

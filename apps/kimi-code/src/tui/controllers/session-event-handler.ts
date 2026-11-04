@@ -108,6 +108,7 @@ export interface SessionEventHost {
   showError(msg: string): void;
   showStatus(msg: string, color?: ColorToken): void;
   showNotice(title: string, detail?: string): void;
+  refreshPluginCommands(session?: Session): Promise<void>;
   refreshEnvironmentSlot(): Promise<void>;
   updateActivityPane(): void;
   track(event: string, props?: Record<string, unknown>): void;
@@ -164,6 +165,8 @@ export class SessionEventHandler {
       new PluginUpdateNotifier({
         getSession: () => this.host.session,
         workDir: host.state.appState.workDir,
+        reloadPlugins: async () => host.session?.reloadPlugins(),
+        refreshPluginCommands: async () => host.refreshPluginCommands(host.session),
         notify: (message) => {
           this.host.showStatus(message, 'warning');
         },

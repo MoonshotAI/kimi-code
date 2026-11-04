@@ -213,8 +213,10 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     const resolved = marketplace === undefined
       ? {
           source: `${kimiRegionProfile((await ctx.resolveRegion?.()) ?? resolveKimiRegion()).cdnBase}/${PLUGIN_ZIP_PATH}`,
+          version: undefined,
           sha256sum: undefined,
           catalogId: PLUGIN_ID,
+          marketplaceSource: undefined,
           origin: 'marketplace' as const,
           expectedPluginId: PLUGIN_ID,
           fetchImpl: fetch,

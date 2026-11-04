@@ -1435,7 +1435,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 列出已安装插件。
 
-成功时 `data` 为 `{ plugins }`，每项为 `{ id, displayName, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`：`state` 为 `ok` / `error`（加载失败也会置 `hasErrors`）；`source` 为 `local-path` / `zip-url` / `github`；GitHub 来源的插件由 `github` 携带来源信息 `{ owner, repo, ref, installedSha? }`，其中 `ref` 为 `{ kind: branch|tag|sha, value }`。每项还包含 `origin`（`marketplace` / `custom` / `unknown`）、可选的 `catalogId`，以及 ISO 时间戳 `installedAt`。
+成功时 `data` 为 `{ plugins }`，每项为 `{ id, displayName, description?, shortDescription?, longDescription?, version?, enabled, state, skillCount, mcpServerCount, enabledMcpServerCount, hookCount, commandCount, hasErrors, source, originalSource?, github? }`：`state` 为 `ok` / `error`（加载失败也会置 `hasErrors`）；`source` 为 `local-path` / `zip-url` / `github`；GitHub 来源的插件由 `github` 携带来源信息 `{ owner, repo, ref, installedSha? }`，其中 `ref` 为 `{ kind: branch|tag|sha, value }`。每项还包含 `origin`（`marketplace` / `custom` / `unknown`）、可选的 `catalogId`，以及 ISO 时间戳 `installedAt`。
 
 #### `POST /api/v1/plugins`
 
@@ -1452,9 +1452,11 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `GET /api/v1/plugins/marketplace`
 
-列出插件市场目录并合并实时安装状态。默认目录 URL 由当前 managed `baseURL` 派生为 `${baseURL}/plugins/marketplace`，不再注入内置能力条目。`platforms` 包含 daemon 所在平台或全部为 `cloud` 时保留条目；包含 `cloud` 但本机平台为其他平台的条目会被过滤。cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回，Computer Use 只返回当前平台对应的接线插件。
+列出插件市场目录并合并实时安装状态。默认目录 URL 由当前 managed `baseURL` 派生为 `${baseURL}/plugins/marketplace`，不再注入内置能力条目。目录中的 `clients` 将条目限制为 `desktop`、`cli` 或两者；缺省时两种宿主均可用。Web 和 Remote Control 使用所连接 server 的宿主身份。`platforms` 独立按 daemon 操作系统过滤：包含 daemon 所在平台或全部为 `cloud` 时保留条目；包含 `cloud` 但本机平台为其他平台的条目会被过滤。客户端与操作系统条件必须同时满足。cloud-only 条目不能在本机安装。旧 `kimi-webbridge` 条目不再返回，Computer Use 只返回当前平台对应的接线插件。
 
-成功时 `data` 为 `{ entries }`，每项包含 `id`、`tier`、`classification`、`displayName`、`description?`、`cliDescription?`、`homepage?`、`keywords?`、`version?`、`source`、`iconUrl?`、`sha256sum?`、`filename?`、`locale?`、`defaultLocale?`、`platforms?`、`distribution?`、`billing?`、`installed?`、`updateAvailable?` 和 `capabilityId?`。`defaultLocale` 声明顶层 `description` / `cliDescription` 的语言，`locale` 存放各语言的 `shortDescription`、`longDescription` 和 `cliDescription` 翻译。`distribution.category` 为 `official` 或 `third_party`；`platforms` 使用 `darwin` / `win32` / `linux` / `cloud`。市场安装传 `marketplaceId`、可用时的 `expectedVersion`，以及带摘要 ZIP 的 `expectedSha256`，不直接传 `source`；自定义安装传 `source`。capability 只由 daemon 标注：`kimi-browser-extension` 映射到 `kimi-webbridge` capability，`kimi-cu` / `kimi-cu-win` 映射到 `kimi-cu`。
+安装记录和托管文件仍共享在 daemon 的数据目录下。当前宿主不可用的条目也会从该宿主的已安装列表和运行能力中隐藏。daemon 将最近一次成功获取的可用性配置缓存到 `plugins/availability.json`；目录刷新成功后，客户端规则变化会隐藏或恢复已有安装，无需重新安装，也不会删除插件文件。
+
+成功时 `data` 为 `{ entries }`，每项包含 `id`、`tier`、`classification`、`displayName`、`description?`、`shortDescription?`、`longDescription?`、`cliDescription?`、`homepage?`、`keywords?`、`version?`、`source`、`iconUrl?`、`sha256sum?`、`filename?`、`locale?`、`defaultLocale?`、`platforms?`、`distribution?`、`billing?`、`installed?`、`updateAvailable?` 和 `capabilityId?`。`defaultLocale` 声明顶层 `description` / `cliDescription` 的语言，`locale` 存放各语言的 `displayName`、`shortDescription`、`longDescription` 和 `cliDescription` 翻译。`distribution.category` 为 `official` 或 `third_party`；`platforms` 使用 `darwin` / `win32` / `linux` / `cloud`。市场安装传 `marketplaceId`、可用时的 `expectedVersion`，以及带摘要 ZIP 的 `expectedSha256`，不直接传 `source`；自定义安装传 `source`。capability 只由 daemon 标注：`kimi-browser-extension` 映射到 `kimi-webbridge` capability，`kimi-cu` / `kimi-cu-win` 映射到 `kimi-cu`。
 
 - `50001`：市场不可达或返回了非法目录
 

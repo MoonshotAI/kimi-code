@@ -67,7 +67,7 @@ defaultCwd = "/home/me/kimi-code"
 
 Windows 目标通过 Git Bash 执行 `Bash` 工具，与本机 Windows 会话一致。在目标机器上安装 [Git for Windows](https://gitforwindows.org/) 和 Windows 版 `kimi` 二进制文件。不支持原生 PowerShell 工具命令和 Windows Docker 容器。
 
-使用 SSH 时，把二进制文件放到目标账户的 `PATH` 中，并确认 `ssh windows-dev kimi --version` 可以无提示成功执行。`remoteBin` 应设为裸名称 `kimi` 或 `kimi.exe`，不要设为 Windows 绝对路径，这样无论 SSH 默认 Shell 是 cmd、PowerShell 还是 Git Bash，都能使用同一条调用命令。`defaultCwd` 使用原生驱动器路径，不要使用 `/c/work/project` 这类 Git Bash 路径，也不支持 UNC 路径。工具参数可以使用 `/c/work/file.txt` 这类驱动器路径形式，但 `/tmp`、`/usr`、`/dev`、`/proc` 等其他 MSYS 路径会由于无法在目标上确认挂载映射而被拒绝；控制端不会运行本机 `cygpath` 进行猜测。
+使用 SSH 时，默认执行器路径是 `~/.kimi-code/bin/kimi.exe`，其中 `~` 展开为目标账户的主目录。也可以把 `remoteBin` 设为 Windows 绝对路径，路径中可以包含空格。启动器会先识别目标系统，再运行执行器，支持 cmd、Windows PowerShell 5.1 和 Git Bash 作为 SSH 默认 Shell。也可以把二进制文件放到目标账户的 `PATH` 中，将 `remoteBin` 设为 `kimi` 或 `kimi.exe`；裸名称直接执行，无需探测系统。`defaultCwd` 使用原生驱动器路径，不要使用 `/c/work/project` 这类 Git Bash 路径，也不支持 UNC 路径。工具参数可以使用 `/c/work/file.txt` 这类驱动器路径形式，但 `/tmp`、`/usr`、`/dev`、`/proc` 等其他 MSYS 路径会由于无法在目标上确认挂载映射而被拒绝；控制端不会运行本机 `cygpath` 进行猜测。
 
 ```toml
 [environments.windows-dev]
@@ -103,7 +103,7 @@ kimi --environment dev-box --environment-cwd /home/me/projects -p "Run the test 
 
 连接断开后**不会静默回退到本地环境**：本该落在远程机器上的 `rm` 或 `git` 命令绝不能落到你的本机。下一个工具调用会重新打开这条管道。目标持续不可达时，工具调用会以 `environment.unavailable` 错误失败。已经在旧连接上执行的调用会失败，不会在新连接上自动重试。
 
-每次连接尝试最多等待 10 秒：目标一直不应答握手时，会以 `initialize timed out` 错误失败，而不是无声地一直等待；如果启动器曾向 stderr 写入内容——卡住的密码提示、`npx` 下载的进度——错误信息会带上这段尾部输出，让失败原因直接可见。
+每次 SSH 平台探测和执行器握手各有 10 秒等待上限。使用执行器路径的 SSH 连接会在握手前最多运行两次探测；裸可执行文件名会跳过探测。目标一直不应答握手时，会以 `initialize timed out` 错误失败，而不是无声地一直等待；如果启动器曾向 stderr 写入内容——卡住的密码提示、`npx` 下载的进度——错误信息会带上这段尾部输出，让失败原因直接可见。
 
 ## SSH 认证
 
@@ -138,7 +138,7 @@ Host dev-box
 
 执行器是 Kimi Code 自身的轻量构建，在目标环境以 `kimi exec-server` 启动。它只响应文件系统、进程请求——不接触模型 API、凭据和会话状态。stdio 是默认且唯一支持的传输方式，显式写法 `kimi exec-server --listen stdio` 与之等价且依然可用。
 
-POSIX 目标的默认安装路径是目标环境上的 `~/.kimi-code/bin/kimi`（执行器位于其他位置时——例如预装的容器镜像——可用条目里的 `remoteBin` 覆盖）。[Windows 目标](#windows-目标)则使用目标 `PATH` 中的裸可执行文件名。
+POSIX 目标的默认安装路径是目标环境上的 `~/.kimi-code/bin/kimi`（执行器位于其他位置时——例如预装的容器镜像——可用条目里的 `remoteBin` 覆盖）。[Windows SSH 目标](#windows-目标)的默认路径为 `~/.kimi-code/bin/kimi.exe`，可用 Windows 绝对路径或目标 `PATH` 中的裸可执行文件名覆盖。
 
 ### 安装执行器
 
