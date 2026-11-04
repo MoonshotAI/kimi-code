@@ -4,7 +4,7 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import { ErrorCodes, log } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes, isKimiError, log } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -3635,6 +3635,14 @@ export class KimiTUI {
         replayTurnLimit: REPLAY_FETCH_TURN_LIMIT,
       });
     } catch (error) {
+      log.error('failed to resume session', {
+        sessionId: targetSessionId,
+        error,
+        details:
+          isKimiError(error) && error.code === ErrorCodes.WIRE_VERSION_TOO_LOW
+            ? error.details
+            : undefined,
+      });
       const msg = formatErrorMessage(error);
       this.showError(`Failed to resume session ${targetSessionId}: ${msg}`);
       return false;

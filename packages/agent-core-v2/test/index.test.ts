@@ -465,13 +465,15 @@ describe('AgentRecords persistence metadata', () => {
 
     expectResumeMatches = false;
     const failure = await ctx.restorePersisted().catch((error: unknown) => error);
-    expect(failure).toMatchObject({ code: 'wire.version_too_low' });
-    expect(failure).toHaveProperty(
-      'message',
-      expect.stringContaining(`current Kimi Code supports ${WIRE_PROTOCOL_VERSION}`),
-    );
-    expect(failure).toHaveProperty('message', expect.stringContaining('requires reader protocol 9.9'));
-    expect(failure).toHaveProperty('message', expect.stringContaining('Upgrade Kimi Code'));
+    expect(failure).toMatchObject({
+      code: 'wire.version_too_low',
+      message:
+        'This session requires a newer version of Kimi Code. Upgrade Kimi Code to the latest version to read this session.',
+      details: {
+        minReaderVersion: '9.9',
+        readerVersion: WIRE_PROTOCOL_VERSION,
+      },
+    });
     expect(persistence.records[0]).toMatchObject({
       type: 'metadata',
       protocol_version: '9.9',

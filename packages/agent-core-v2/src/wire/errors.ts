@@ -10,10 +10,10 @@ export const WireErrors = {
   },
   info: {
     'wire.version_too_low': {
-      title: 'Wire reader upgrade required',
+      title: 'Kimi Code upgrade required',
       retryable: false,
       public: true,
-      action: 'Upgrade Kimi Code to read this session.',
+      action: 'Upgrade Kimi Code to the latest version to read this session.',
     },
     'wire.unknown_record': {
       title: 'Unknown wire record',

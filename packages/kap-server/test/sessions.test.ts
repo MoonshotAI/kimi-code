@@ -1640,7 +1640,10 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(sliced.body.msg).toContain('Upgrade Kimi Code');
     const incompatible = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
     expect(incompatible.body.code).toBe(40930);
-    expect(incompatible.body.msg).toContain('Upgrade Kimi Code');
+    expect(incompatible.body.msg).toBe(
+      'This session requires a newer version of Kimi Code. Upgrade Kimi Code to the latest version to read this session.',
+    );
+    expect(incompatible.body.details).toEqual({ minReaderVersion: '9.9', readerVersion: '1.5' });
   });
 
   it('fork clears inherited cron tasks while the source keeps them', async () => {

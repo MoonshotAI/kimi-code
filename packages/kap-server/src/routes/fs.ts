@@ -913,7 +913,15 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
         return;
       case ErrorCodes.WIRE_VERSION_TOO_LOW:
-        reply.send(errEnvelope(ErrorCode.WIRE_VERSION_TOO_LOW, err.message, requestId, err.stack));
+        reply.send(
+          errEnvelope(
+            ErrorCode.WIRE_VERSION_TOO_LOW,
+            err.message,
+            requestId,
+            err.stack,
+            err.details,
+          ),
+        );
         return;
       case ErrorCodes.OS_FS_NOT_FOUND:
       case ErrorCodes.OS_FS_NOT_DIRECTORY:
