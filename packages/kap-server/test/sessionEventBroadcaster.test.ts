@@ -48,17 +48,28 @@ import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loo
 import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { WebSocket } from 'ws';
+
+import type { ConversationTurn } from '../src/protocol/conversation';
 import {
   interactionEventMessageSchema,
   type InteractionEventMessage,
 } from '../src/protocol/interaction';
 import { sessionEventMessageSchema } from '../src/protocol/ws-control';
+import type { ConversationEvent, ConversationFeed } from '../src/services/conversation/conversationFeed';
+import type {
+  ConversationFeedCreated,
+  ConversationService,
+} from '../src/services/conversation/conversationService';
+import { mapError } from '../src/transport/errors';
+import type { IConnectionRegistry } from '../src/transport/ws/connectionRegistry';
 import {
   type BroadcastDelivery,
   type BroadcastTarget,
   type EventEnvelope,
   SessionEventBroadcaster,
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
+import { WsConnectionV1 } from '../src/transport/ws/v1/wsConnectionV1';
 import { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { USAGE_FRAME_INTERVAL_MS } from '../src/transport/ws/v1/sessionAgentFeed';
 
@@ -557,12 +568,107 @@ function collectingTarget(): {
   };
 }
 
+class FakeFeed {
+  readonly listeners = new Set<(event: ConversationEvent) => void>();
+  turns: ConversationTurn[] = [];
+  pages = 0;
+  private gate: Promise<void> = Promise.resolve();
+
+  holdPages(): () => void {
+    let release!: () => void;
+    this.gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }
+
+  subscribe(listener: (event: ConversationEvent) => void): { dispose(): void } {
+    this.listeners.add(listener);
+    return { dispose: () => this.listeners.delete(listener) };
+  }
+
+  async page(_before: number | undefined, limit: number): Promise<{ turns: ConversationTurn[]; has_more: boolean }> {
+    this.pages += 1;
+    const turns = this.turns.slice(-limit);
+    await this.gate;
+    return { turns, has_more: false };
+  }
+
+  emit(event: ConversationEvent): void {
+    for (const listener of [...this.listeners]) listener(event);
+  }
+}
+
+class FakeConversations {
+  private readonly outcomes = new Map<string, FakeFeed | Error | Promise<FakeFeed>>();
+  private readonly listeners = new Set<(created: ConversationFeedCreated) => void>();
+
+  serve(sessionId: string, agentId: string, outcome: FakeFeed | Error | Promise<FakeFeed>): void {
+    this.outcomes.set(`${sessionId}/${agentId}`, outcome);
+  }
+
+  async feed(sessionId: string, agentId: string): Promise<ConversationFeed> {
+    const outcome = this.outcomes.get(`${sessionId}/${agentId}`);
+    if (outcome === undefined) return new Promise<never>(() => {});
+    if (outcome instanceof Error) throw outcome;
+    return (await outcome) as unknown as ConversationFeed;
+  }
+
+  onDidCreateFeed(listener: (created: ConversationFeedCreated) => void): { dispose(): void } {
+    this.listeners.add(listener);
+    return { dispose: () => this.listeners.delete(listener) };
+  }
+
+  announce(sessionId: string, agentId: string): void {
+    for (const listener of [...this.listeners]) listener({ sessionId, agentId });
+  }
+}
+
+function conversationService(conversations = new FakeConversations()): ConversationService {
+  return conversations as unknown as ConversationService;
+}
+
+function endedTurn(turnId: string, ordinal: number): ConversationTurn {
+  return { turn_id: turnId, ordinal, kind: 'agent', status: 'ended', outcome: 'completed', steps: [], items: [] };
+}
+
+type RecordedFrame = { readonly type: string } & Record<string, unknown>;
+
+function recordingTarget(): { target: BroadcastTarget; frames: RecordedFrame[] } {
+  const frames: RecordedFrame[] = [];
+  return { target: { send: (frame) => frames.push(frame as unknown as RecordedFrame) }, frames };
+}
+
+class FakeSocket {
+  readonly OPEN = 1;
+  readyState = 1;
+  bufferedAmount = 0;
+  private readonly handlers = new Map<string, Array<(...args: unknown[]) => void>>();
+
+  on(event: string, handler: (...args: unknown[]) => void): this {
+    this.handlers.set(event, [...(this.handlers.get(event) ?? []), handler]);
+    return this;
+  }
+
+  send(): void {}
+
+  close(): void {
+    this.readyState = 3;
+    this.emit('close');
+  }
+
+  emit(event: string, ...args: unknown[]): void {
+    for (const handler of this.handlers.get(event) ?? []) handler(...args);
+  }
+}
+
 describe('SessionEventBroadcaster', () => {
   let dir: string;
   let sessions: Map<string, FakeLifecycle>;
   let eventBus: FakeEventBus;
   let managerEvents: FakeManagerEvents;
   let core: Scope;
+  let conversations: FakeConversations;
   let bc: SessionEventBroadcaster;
 
   beforeEach(async () => {
@@ -571,7 +677,8 @@ describe('SessionEventBroadcaster', () => {
     eventBus = new FakeEventBus();
     managerEvents = new FakeManagerEvents();
     core = makeCore(sessions, eventBus, {}, managerEvents);
-    bc = new SessionEventBroadcaster({ core });
+    conversations = new FakeConversations();
+    bc = new SessionEventBroadcaster({ core, conversations: conversationService(conversations) });
   });
 
   afterEach(async () => {
@@ -1215,7 +1322,7 @@ describe('SessionEventBroadcaster', () => {
       const main = lc.addAgent('main');
       sessions.set('s1', lc);
       await bc.close();
-      bc = new SessionEventBroadcaster({ core });
+      bc = new SessionEventBroadcaster({ core, conversations: conversationService() });
       const globalView = collectingTarget();
       bc.addGlobalTarget(globalView.target);
 
@@ -1551,11 +1658,149 @@ describe('SessionEventBroadcaster', () => {
     expect(interactionMessages).toHaveLength(0);
   });
 
+  describe('conversation subscriptions', () => {
+    function openMainAgent(): void {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      sessions.set('s1', lc);
+    }
+
+    const types = (frames: readonly RecordedFrame[]): string[] => frames.map((frame) => frame.type);
+    const pagesOf = (frames: readonly RecordedFrame[]): RecordedFrame[] => frames.filter((frame) => frame.type === 'turns');
+
+    it('acks a subscription before its content and resolves before its conversations load', async () => {
+      openMainAgent();
+      const feed = new FakeFeed();
+      feed.turns = [endedTurn('t0', 0)];
+      const release = feed.holdPages();
+      conversations.serve('s1', 'main', feed);
+      const { target, frames } = recordingTarget();
+
+      await bc.subscribe('s1', target, ['main'], () => frames.push({ type: 'ack' }));
+
+      expect(types(frames)[0]).toBe('ack');
+      expect(types(frames)).toContain('task.list');
+      expect(pagesOf(frames)).toEqual([]);
+      release();
+      await vi.waitFor(() => expect(pagesOf(frames)).toHaveLength(1));
+      expect(pagesOf(frames)[0]).toMatchObject({ session_id: 's1', agent_id: 'main', turns: [{ turn_id: 't0' }], has_more: false });
+    });
+
+    it('sends one page per attached feed however often the agent is subscribed again', async () => {
+      openMainAgent();
+      const feed = new FakeFeed();
+      conversations.serve('s1', 'main', feed);
+      const { target, frames } = recordingTarget();
+
+      await bc.subscribe('s1', target, ['main']);
+      await vi.waitFor(() => expect(pagesOf(frames)).toHaveLength(1));
+      await bc.subscribe('s1', target, ['main', 'main']);
+      await settle();
+
+      expect(pagesOf(frames)).toHaveLength(1);
+      expect(feed.listeners.size).toBe(1);
+    });
+
+    it('drops a page that a reset overtakes and sends the fresh page with the events after the reset', async () => {
+      openMainAgent();
+      const feed = new FakeFeed();
+      feed.turns = [endedTurn('t0', 0)];
+      const release = feed.holdPages();
+      conversations.serve('s1', 'main', feed);
+      const { target, frames } = recordingTarget();
+      await bc.subscribe('s1', target, ['main']);
+      await vi.waitFor(() => expect(feed.pages).toBe(1));
+
+      feed.turns = [endedTurn('t0', 0), endedTurn('t1', 1)];
+      feed.emit({ type: 'reset' });
+      feed.emit({ type: 'turns.removed', turn_ids: ['t0'] });
+      release();
+
+      await vi.waitFor(() => expect(types(frames)).toContain('turns.removed'));
+      const conversation = frames.filter((frame) => frame.type === 'turns' || frame.type === 'turns.removed');
+      expect(types(conversation)).toEqual(['turns', 'turns.removed']);
+      expect((conversation[0]!['turns'] as ConversationTurn[]).map((turn) => turn.turn_id)).toEqual(['t0', 't1']);
+    });
+
+    it('lets an unsubscribe win over a conversation that is still loading', async () => {
+      openMainAgent();
+      let resolveFeed!: (feed: FakeFeed) => void;
+      conversations.serve('s1', 'main', new Promise<FakeFeed>((resolve) => {
+        resolveFeed = resolve;
+      }));
+      const { target, frames } = recordingTarget();
+      await bc.subscribe('s1', target, ['main']);
+
+      bc.unsubscribe('s1', target, ['main']);
+      const feed = new FakeFeed();
+      resolveFeed(feed);
+      await settle();
+
+      expect(feed.listeners.size).toBe(0);
+      expect(types(frames).filter((type) => type.startsWith('turns'))).toEqual([]);
+      expect(bc.sessionsOf(target)).toEqual([]);
+    });
+
+    it('follows the replacement feed of a recreated agent and reports one that fails to load', async () => {
+      openMainAgent();
+      const first = new FakeFeed();
+      conversations.serve('s1', 'main', first);
+      const { target, frames } = recordingTarget();
+      await bc.subscribe('s1', target, ['main']);
+      await vi.waitFor(() => expect(pagesOf(frames)).toHaveLength(1));
+
+      const second = new FakeFeed();
+      second.turns = [endedTurn('t0', 0)];
+      conversations.serve('s1', 'main', second);
+      conversations.announce('s1', 'main');
+      await vi.waitFor(() => expect(pagesOf(frames)).toHaveLength(2));
+      expect(first.listeners.size).toBe(0);
+      expect(second.listeners.size).toBe(1);
+
+      const failure = new Error('conversation restore failed');
+      conversations.serve('s1', 'main', failure);
+      conversations.announce('s1', 'main');
+      await vi.waitFor(() => expect(types(frames)).toContain('turns.failed'));
+      expect(frames.at(-1)).toMatchObject({
+        type: 'turns.failed',
+        session_id: 's1',
+        agent_id: 'main',
+        code: mapError(failure, '').code,
+        msg: mapError(failure, '').msg,
+      });
+      expect(second.listeners.size).toBe(0);
+    });
+
+    it('releases the subscription of a socket that closed before its session finished opening', async () => {
+      openMainAgent();
+      const feed = new FakeFeed();
+      conversations.serve('s1', 'main', feed);
+      const socket = new FakeSocket();
+      const conn = new WsConnectionV1({
+        socket: socket as unknown as WebSocket,
+        broadcaster: bc,
+        taskSource: async () => ({ kind: 'session_not_found' }),
+        connectionRegistry: { add: () => {}, remove: () => {} } as unknown as IConnectionRegistry,
+        remoteAddress: null,
+        userAgent: null,
+      });
+
+      socket.emit('message', JSON.stringify({ type: 'subscribe_v2', id: 'sub-1', payload: { session_id: 's1' } }));
+      socket.emit('close');
+      await settle();
+      await settle();
+
+      expect(bc.sessionsOf(conn)).toEqual([]);
+      expect(feed.listeners.size).toBe(0);
+      expect(feed.pages).toBe(0);
+    });
+  });
+
   describe('agent frames', () => {
     function makeBroadcasterForAgents(
       metaAgents?: Record<string, { type?: string; parentAgentId?: string }>,
     ): SessionEventBroadcaster {
-      return new SessionEventBroadcaster({ core: makeCore(sessions, eventBus, metaAgents) });
+      return new SessionEventBroadcaster({ core: makeCore(sessions, eventBus, metaAgents), conversations: conversationService() });
     }
 
     function shellTask(taskId: string, status: AgentTaskInfo['status']): AgentTaskInfo {
@@ -1965,14 +2210,14 @@ describe('SessionEventBroadcaster', () => {
       expect(agentFrames()).toEqual(['main', 'agent-0']);
 
       bc.unsubscribe('s1', view.target, ['main']);
-      expect(bc.isSubscribed('s1', view.target)).toBe(true);
+      expect(bc.sessionsOf(view.target)).toEqual(['s1']);
       main.bus.emit(agentEvent('turn.started', { turnId: 2, origin: { kind: 'user' } }));
       sub.bus.emit(agentEvent('turn.started', { turnId: 2, origin: { kind: 'user' } }));
       await settle();
       expect(agentFrames()).toEqual(['main', 'agent-0', 'agent-0']);
 
       bc.unsubscribe('s1', view.target, ['agent-0']);
-      expect(bc.isSubscribed('s1', view.target)).toBe(false);
+      expect(bc.sessionsOf(view.target)).toEqual([]);
       sub.bus.emit(agentEvent('turn.ended', { turnId: 2, reason: 'completed' }));
       await settle();
       expect(agentFrames()).toEqual(['main', 'agent-0', 'agent-0']);

@@ -6,7 +6,7 @@ import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types'
 
 import { TASK_OUTPUT_DEFAULT_TAIL_BYTES, TASK_OUTPUT_MAX_TAIL_BYTES } from '../src/protocol/ws-task';
 import type { IConnectionRegistry } from '../src/transport/ws/connectionRegistry';
-import type { SessionEventBroadcaster } from '../src/transport/ws/v1/sessionEventBroadcaster';
+import type { BroadcastTarget, SessionEventBroadcaster } from '../src/transport/ws/v1/sessionEventBroadcaster';
 import type { TaskSource } from '../src/transport/ws/v1/taskRequests';
 import { type WsConnectionV1Options, WsConnectionV1 } from '../src/transport/ws/v1/wsConnectionV1';
 
@@ -52,9 +52,12 @@ class FakeSocket {
 
 function makeBroadcaster(overrides: Record<string, unknown> = {}): SessionEventBroadcaster {
   return {
-    subscribe: async () => true,
+    subscribe: async (_sessionId: string, _target: unknown, _agentIds: readonly string[], accepted?: () => void) => {
+      accepted?.();
+    },
     unsubscribe: () => {},
-    isSubscribed: () => false,
+    sessionsOf: () => [],
+    removeTarget: () => {},
     addGlobalTarget: () => {},
     removeGlobalTarget: () => {},
     addDiEventTarget: () => {},
@@ -124,16 +127,19 @@ describe('WsConnectionV1 control frames', () => {
     broadcaster: SessionEventBroadcaster;
     calls: SubscribeCall[];
     unsubscribes: UnsubscribeCall[];
+    removals: unknown[];
   } {
     const calls: SubscribeCall[] = [];
     const unsubscribes: UnsubscribeCall[] = [];
+    const removals: unknown[] = [];
     const subscribed = new Map<string, Set<string>>();
     const broadcaster = makeBroadcaster({
-      subscribe: async (sessionId: string, _target: unknown, agentIds: readonly string[]) => {
+      subscribe: async (sessionId: string, _target: unknown, agentIds: readonly string[], accepted?: () => void) => {
         calls.push({ sessionId, agentIds });
         const agents = subscribed.get(sessionId) ?? new Set<string>();
         for (const agentId of agentIds) agents.add(agentId);
         subscribed.set(sessionId, agents);
+        accepted?.();
       },
       unsubscribe: (sessionId: string, _target: unknown, agentIds?: readonly string[]) => {
         unsubscribes.push(agentIds === undefined ? { sessionId } : { sessionId, agentIds });
@@ -141,9 +147,13 @@ describe('WsConnectionV1 control frames', () => {
         for (const agentId of agentIds ?? [...(agents ?? [])]) agents?.delete(agentId);
         if (agents?.size === 0) subscribed.delete(sessionId);
       },
-      isSubscribed: (sessionId: string) => subscribed.has(sessionId),
+      sessionsOf: () => [...subscribed.keys()].toSorted(),
+      removeTarget: (target: unknown) => {
+        removals.push(target);
+        subscribed.clear();
+      },
     });
-    return { broadcaster, calls, unsubscribes };
+    return { broadcaster, calls, unsubscribes, removals };
   }
 
   it('acks client_hello with an empty payload and attaches nothing, ignoring legacy fields', async () => {
@@ -164,7 +174,7 @@ describe('WsConnectionV1 control frames', () => {
 
     expect(acks(socket)[0]).toMatchObject({ id: 'req-1', code: 0, payload: {} });
     expect(calls).toHaveLength(0);
-    expect(conn.subscriptions.size).toBe(0);
+    expect(conn.subscriptionSessionIds).toEqual([]);
     expect(conn.hasClientHello).toBe(true);
     conn.close();
   });
@@ -206,6 +216,47 @@ describe('WsConnectionV1 control frames', () => {
     conn.close();
   });
 
+  it('acks a subscription before the broadcaster sends its content', async () => {
+    const socket = new FakeSocket();
+    const broadcaster = makeBroadcaster({
+      subscribe: async (sessionId: string, target: BroadcastTarget, _agentIds: readonly string[], accepted?: () => void) => {
+        accepted?.();
+        target.send({ type: 'task.list', session_id: sessionId, agent_id: 'main', tasks: [] });
+      },
+    });
+    const conn = makeConn(socket, { broadcaster, flushIntervalMs: 1 });
+
+    socket.emit('message', controlFrame('subscribe_v2', { session_id: 's1' }));
+
+    await vi.waitFor(() =>
+      expect(socket.frames().map((f) => (f as { type: string }).type)).toEqual(['server_hello', 'ack', 'task.list']));
+    conn.close();
+  });
+
+  it('removes its target again when the socket closed while a subscribe was opening the session', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster, removals } = makeCapturingBroadcaster();
+    let open!: () => void;
+    const subscribe = broadcaster.subscribe.bind(broadcaster);
+    broadcaster.subscribe = async (...args) => {
+      await new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      await subscribe(...args);
+    };
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit('message', controlFrame('subscribe_v2', { session_id: 's1' }));
+    await vi.waitFor(() => expect(open).toBeTypeOf('function'));
+    socket.emit('close');
+    expect(removals).toEqual([conn]);
+    open();
+
+    await vi.waitFor(() => expect(removals).toEqual([conn, conn]));
+    expect(conn.subscriptionSessionIds).toEqual([]);
+    expect(acks(socket)).toEqual([]);
+  });
+
   it('forwards subscribe_v2 agent ids to the broadcaster, defaulting to the main agent', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls } = makeCapturingBroadcaster();
@@ -239,7 +290,7 @@ describe('WsConnectionV1 control frames', () => {
     await vi.waitFor(() => expect(acks(socket)).toHaveLength(1));
 
     expect(calls).toHaveLength(0);
-    expect(conn.subscriptions.size).toBe(0);
+    expect(conn.subscriptionSessionIds).toEqual([]);
     expect(acks(socket)[0]!.code).toBe(1);
     conn.close();
   });
@@ -259,7 +310,7 @@ describe('WsConnectionV1 control frames', () => {
       code: 40401,
       payload: { accepted: [], not_found: ['gone'] },
     });
-    expect(conn.subscriptions.size).toBe(0);
+    expect(conn.subscriptionSessionIds).toEqual([]);
     conn.close();
   });
 
@@ -279,7 +330,7 @@ describe('WsConnectionV1 control frames', () => {
       msg: 'upgrade to read this session',
       payload: { accepted: [], not_found: [] },
     });
-    expect(conn.subscriptions.size).toBe(0);
+    expect(conn.subscriptionSessionIds).toEqual([]);
     conn.close();
   });
 
@@ -322,11 +373,11 @@ describe('WsConnectionV1 control frames', () => {
     await vi.waitFor(() => expect(acks(socket)).toHaveLength(4));
 
     expect(unsubscribes).toEqual([{ sessionId: 's1', agentIds: ['main'] }, { sessionId: 's2' }]);
-    expect(conn.subscriptions.size).toBe(0);
+    expect(conn.subscriptionSessionIds).toEqual([]);
     conn.close();
   });
 
-  it('unsubscribe_v2 is idempotent for an unsubscribed session and never touches the broadcaster', async () => {
+  it('unsubscribe_v2 acks an unsubscribed session and leaves the no-op to the broadcaster', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls, unsubscribes } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
@@ -335,7 +386,8 @@ describe('WsConnectionV1 control frames', () => {
     await vi.waitFor(() => expect(acks(socket)).toHaveLength(1));
 
     expect(calls).toHaveLength(0);
-    expect(unsubscribes).toHaveLength(0);
+    expect(unsubscribes).toEqual([{ sessionId: 's1' }]);
+    expect(conn.subscriptionSessionIds).toEqual([]);
     expect(acks(socket)[0]).toMatchObject({ code: 0, payload: { accepted: ['s1'] } });
     conn.close();
   });
@@ -372,17 +424,18 @@ describe('WsConnectionV1 control frames', () => {
     conn.close();
   });
 
-  it('unsubscribes every session from the broadcaster when the socket closes', async () => {
+  it('removes itself from the broadcaster when the socket closes', async () => {
     const socket = new FakeSocket();
-    const { broadcaster, unsubscribes } = makeCapturingBroadcaster();
+    const { broadcaster, removals } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
     socket.emit('message', controlFrame('subscribe_v2', { session_id: 's1' }));
     socket.emit('message', controlFrame('subscribe_v2', { session_id: 's2' }));
-    await vi.waitFor(() => expect(conn.subscriptions.size).toBe(2));
+    await vi.waitFor(() => expect(conn.subscriptionSessionIds).toEqual(['s1', 's2']));
 
     socket.emit('close');
-    expect(unsubscribes.map((call) => call.sessionId).toSorted()).toEqual(['s1', 's2']);
+    expect(removals).toEqual([conn]);
+    expect(conn.subscriptionSessionIds).toEqual([]);
   });
 });
 
@@ -611,7 +664,7 @@ describe('WsConnectionV1 global target registration', () => {
     const removed: unknown[] = [];
     const broadcaster = makeBroadcaster({
       addGlobalTarget: (target: unknown) => added.push(target),
-      removeGlobalTarget: (target: unknown) => removed.push(target),
+      removeTarget: (target: unknown) => removed.push(target),
     });
     return { broadcaster, added, removed };
   }

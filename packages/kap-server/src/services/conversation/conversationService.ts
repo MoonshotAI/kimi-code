@@ -36,7 +36,6 @@ import { applyConversationRecord, createConversationState, settleOrphanTurns } f
 export interface ConversationFeedCreated {
   readonly sessionId: string;
   readonly agentId: string;
-  readonly feed: ConversationFeed;
 }
 
 interface SessionFeeds {
@@ -154,7 +153,7 @@ export class ConversationService implements IDisposable {
     feed.ready.catch(() => {
       if (entry.feeds.get(handle.id)?.feed === feed) entry.feeds.delete(handle.id);
     });
-    for (const listener of this.listeners) listener({ sessionId, agentId: handle.id, feed });
+    for (const listener of this.listeners) listener({ sessionId, agentId: handle.id });
     return feed;
   }
 
