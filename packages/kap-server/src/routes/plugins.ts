@@ -1,17 +1,14 @@
-import { stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
-
 import {
   computeUpdateStatus,
   ErrorCodes as DomainErrorCodes,
+  IBootstrapService,
   ICapabilityService,
+  IPluginMarketplaceService,
   IPluginService,
   PluginErrors,
   isError2,
-  parsePluginMarketplace,
-  readPluginMarketplace,
-  withLatestVersions,
-  type MarketplaceLocation,
+  marketplaceEntryVisibleOnHost,
+  pluginClientForIdentity,
   type PluginMarketplace,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -23,9 +20,13 @@ import { ErrorCode } from '../protocol/error-codes';
 import {
   installPluginRequestSchema,
   listPluginsResponseSchema,
+  pluginCapabilitiesSchema,
+  pluginInfoSchema,
   pluginMarketplaceResponseSchema,
   pluginIdParamSchema,
+  pluginInfoQuerySchema,
   pluginSummarySchema,
+  previewPluginRequestSchema,
   type PluginMarketplaceEntryWire,
 } from '../protocol/rest-plugin';
 import { type ActionTable, dispatchAction } from './action-dispatch';
@@ -73,45 +74,15 @@ async function removePluginAction(ctx: PluginActionCtx): Promise<void> {
   await ctx.plugins.removePlugin({ id: ctx.id });
 }
 
-const CAPABILITY_ROW_IDS: Readonly<
-  Record<string, { capabilityId: string; wiringPluginIds: readonly string[] }>
-> = {
-  'kimi-cu': { capabilityId: 'kimi-cu', wiringPluginIds: ['kimi-cu', 'kimi-cu-win'] },
-  'kimi-cu-win': { capabilityId: 'kimi-cu', wiringPluginIds: ['kimi-cu', 'kimi-cu-win'] },
-  'kimi-webbridge': { capabilityId: 'kimi-webbridge', wiringPluginIds: ['kimi-webbridge'] },
+const CAPABILITY_ROW_IDS: Readonly<Record<string, string>> = {
+  'kimi-cu': 'kimi-cu',
+  'kimi-cu-win': 'kimi-cu',
+  'kimi-browser-extension': 'kimi-webbridge',
 };
-
-function orderedWiringPluginIds(ids: readonly string[]): readonly string[] {
-  if (process.platform === 'win32' && process.arch === 'x64' && ids.includes('kimi-cu-win')) {
-    return ['kimi-cu-win', ...ids.filter((id) => id !== 'kimi-cu-win')];
-  }
-  return ids;
-}
-
-const MARKETPLACE_FETCH_TIMEOUT_MS = 10_000;
-
-function fetchWithTimeout(...args: Parameters<typeof fetch>): Promise<Response> {
-  const [input, init] = args;
-  return fetch(input, { ...init, signal: AbortSignal.timeout(MARKETPLACE_FETCH_TIMEOUT_MS) });
-}
-
-async function getSourceCheckoutLocation(): Promise<MarketplaceLocation | undefined> {
-  const candidate = resolve(import.meta.dirname, '../../../../plugins/marketplace.json');
-  const info = await stat(candidate).catch(() => undefined);
-  if (info?.isFile() !== true) return undefined;
-  return { raw: candidate, kind: 'local', resolved: candidate };
-}
-
-export interface PluginsRouteOptions {
-  readonly marketplaceUrl: () => string | Promise<string>;
-  readonly marketplaceIsDefault?: boolean;
-  readonly fetchImpl?: typeof fetch;
-}
 
 export function registerPluginsRoutes(
   app: PluginsRouteHost,
   core: Scope,
-  opts: PluginsRouteOptions,
 ): void {
   const marketplaceRoute = defineRoute(
     {
@@ -124,83 +95,52 @@ export function registerPluginsRoutes(
       operationId: 'listPluginMarketplace',
     },
     async (req, reply) => {
-      const fetchImpl = opts.fetchImpl ?? fetchWithTimeout;
-      let read: { raw: string; location: MarketplaceLocation };
-      try {
-        read = await readPluginMarketplace({
-          source: await opts.marketplaceUrl(),
-          workDir: process.cwd(),
-          fetchImpl,
-          sourceCheckoutLocation:
-            opts.marketplaceIsDefault === true ? getSourceCheckoutLocation : undefined,
-        });
-      } catch (error) {
-        reply.send(
-          errEnvelope(
-            ErrorCode.INTERNAL_ERROR,
-            `Plugin marketplace is unreachable: ${error instanceof Error ? error.message : String(error)}`,
-            req.id,
-          ),
-        );
-        return;
-      }
       let marketplace: PluginMarketplace;
       try {
-        marketplace = parsePluginMarketplace(read.raw, read.location);
+        marketplace = await core.accessor.get(IPluginMarketplaceService).listMarketplace();
       } catch (error) {
         reply.send(
           errEnvelope(
             ErrorCode.INTERNAL_ERROR,
-            `Plugin marketplace returned an invalid catalog: ${error instanceof Error ? error.message : String(error)}`,
+            `Plugin marketplace is unavailable: ${error instanceof Error ? error.message : String(error)}`,
             req.id,
           ),
         );
         return;
       }
-      if (opts.marketplaceIsDefault === true) {
-        const presentIds = new Set(marketplace.plugins.map((entry) => entry.id));
-        const missing = core.accessor
-          .get(ICapabilityService)
-          .describeCapabilities()
-          .filter((descriptor) => descriptor.supported && !presentIds.has(descriptor.id))
-          .map((descriptor) => ({
-            id: descriptor.id,
-            tier: 'official' as const,
-            displayName: descriptor.displayName,
-            description: descriptor.description,
-            source: `capability:${descriptor.id}`,
-          }));
-        if (missing.length > 0) {
-          marketplace = { ...marketplace, plugins: [...marketplace.plugins, ...missing] };
-        }
-      }
-      marketplace = await withLatestVersions(marketplace, fetchImpl);
-      const installed = await core.accessor.get(IPluginService).listPlugins();
+      const marketplaceIsDefault = await core.accessor.get(IPluginMarketplaceService).isDefaultMarketplace();
+      const plugins = core.accessor.get(IPluginService);
+      await plugins.reconcileAvailability(marketplace);
+      const installed = await plugins.listPlugins();
       const byId = new Map(installed.map((p) => [p.id, p]));
-      const supportedCapabilityIds = new Set<string>(
-        core.accessor
-          .get(ICapabilityService)
-          .describeCapabilities()
-          .filter((descriptor) => descriptor.supported)
-          .map((descriptor) => descriptor.id),
+      const byCatalogId = new Map(
+        installed.filter((p) => p.catalogId !== undefined).map((p) => [p.catalogId, p]),
       );
+      const capabilities = core.accessor.get(ICapabilityService).describeCapabilities();
+      const bootstrap = core.accessor.get(IBootstrapService);
+      const client = pluginClientForIdentity(bootstrap.clientIdentity.platform);
       const entries: PluginMarketplaceEntryWire[] = [];
       for (const entry of marketplace.plugins) {
-        const capabilityRow =
-          opts.marketplaceIsDefault === true ? CAPABILITY_ROW_IDS[entry.id] : undefined;
-        if (
-          capabilityRow !== undefined &&
-          !supportedCapabilityIds.has(capabilityRow.capabilityId)
-        ) {
-          continue;
-        }
+        if (entry.id === 'kimi-webbridge') continue;
+        if (!marketplaceEntryVisibleOnHost(entry, client, bootstrap.platform)) continue;
+        const capabilityId =
+          marketplaceIsDefault ? CAPABILITY_ROW_IDS[entry.id] : undefined;
+        const capability = capabilities.find(
+          (descriptor) =>
+            descriptor.supported &&
+            descriptor.id === capabilityId &&
+            descriptor.pluginId === entry.id,
+        );
+        if (capabilityId !== undefined && capability === undefined) continue;
 
+        const byIdRecord = byId.get(entry.id);
         const record =
-          capabilityRow !== undefined
-            ? (orderedWiringPluginIds(capabilityRow.wiringPluginIds)
-                .map((id) => byId.get(id))
-                .find((candidate) => candidate !== undefined) ?? byId.get(entry.id))
-            : byId.get(entry.id);
+          capability !== undefined
+            ? capability.id === 'kimi-webbridge'
+              ? (byIdRecord ?? byId.get('kimi-webbridge'))
+              : byIdRecord
+            : (byCatalogId.get(entry.id) ??
+              (byIdRecord?.origin === 'unknown' ? byIdRecord : undefined));
         const installedInfo =
           record === undefined
             ? undefined
@@ -210,16 +150,28 @@ export function registerPluginsRoutes(
           'update';
         entries.push({
           id: entry.id,
+          classification: entry.classification ?? (entry.tier === 'official' ? 'official' : 'third_party'),
           tier: entry.tier ?? 'third-party',
           displayName: entry.displayName,
           description: entry.description,
+          shortDescription: entry.shortDescription,
+          longDescription: entry.longDescription,
           homepage: entry.homepage,
           keywords: entry.keywords === undefined ? undefined : [...entry.keywords],
           version: entry.version,
           source: entry.source,
+          iconUrl: entry.iconUrl,
+          sha256sum: entry.sha256sum,
+          filename: entry.filename,
+          cliDescription: entry.cliDescription,
+          locale: entry.locale,
+          defaultLocale: entry.locale?.defaultLocale,
+          platforms: entry.platforms === undefined ? undefined : [...entry.platforms],
+          distribution: entry.distribution,
+          billing: entry.billing,
           installed: installedInfo,
           updateAvailable: updateAvailable ? true : undefined,
-          capabilityId: capabilityRow?.capabilityId,
+          capabilityId: capability?.id,
         });
       }
       reply.send(okEnvelope({ entries }, req.id));
@@ -252,6 +204,66 @@ export function registerPluginsRoutes(
     listRoute.handler as Parameters<PluginsRouteHost['get']>[2],
   );
 
+  const infoRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/plugins/{tail}',
+      params: pluginIdParamSchema,
+      querystring: pluginInfoQuerySchema,
+      success: { data: pluginInfoSchema },
+      errors: { [ErrorCode.PLUGIN_NOT_FOUND]: {} },
+      description: 'Get an installed plugin and its declared capabilities',
+      tags: ['plugins'],
+      operationId: 'getPluginInfo',
+    },
+    async (req, reply) => {
+      try {
+        const info = await core.accessor.get(IPluginService).getPluginInfo({
+          id: req.params.tail,
+          locale: req.query.locale,
+        });
+        reply.send(okEnvelope({ ...info, manifest: undefined }, req.id));
+      } catch (error) {
+        reply.send(mapPluginError(error, req.id));
+      }
+    },
+  );
+  app.get(
+    infoRoute.path,
+    infoRoute.options,
+    infoRoute.handler as Parameters<PluginsRouteHost['get']>[2],
+  );
+
+  const previewRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/plugins/preview',
+      body: previewPluginRequestSchema,
+      success: { data: pluginCapabilitiesSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.PLUGIN_NOT_FOUND]: {},
+        [ErrorCode.PLUGIN_CATALOG_CHANGED]: {},
+      },
+      description: 'Inspect marketplace capabilities without installing the plugin',
+      tags: ['plugins'],
+      operationId: 'previewPlugin',
+    },
+    async (req, reply) => {
+      try {
+        const capabilities = await core.accessor.get(IPluginService).previewPlugin(req.body);
+        reply.send(okEnvelope(capabilities, req.id));
+      } catch (error) {
+        reply.send(mapPluginError(error, req.id));
+      }
+    },
+  );
+  app.post(
+    previewRoute.path,
+    previewRoute.options,
+    previewRoute.handler as Parameters<PluginsRouteHost['post']>[2],
+  );
+
   const installRoute = defineRoute(
     {
       method: 'POST',
@@ -261,8 +273,10 @@ export function registerPluginsRoutes(
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.PLUGIN_NOT_FOUND]: {},
+        [ErrorCode.PLUGIN_CATALOG_CHANGED]: {},
       },
-      description: 'Install a plugin from a local path, zip URL, or GitHub repo',
+      description: 'Install a custom plugin or a marketplace entry at an expected version',
       tags: ['plugins'],
       operationId: 'installPlugin',
     },
@@ -325,6 +339,7 @@ export function registerPluginsRoutes(
 const PLUGIN_ERROR_MAP: Readonly<Record<string, ErrorCode>> = {
   [PluginErrors.codes.PLUGIN_NOT_FOUND]: ErrorCode.PLUGIN_NOT_FOUND,
   [PluginErrors.codes.PLUGIN_LOAD_FAILED]: ErrorCode.VALIDATION_FAILED,
+  [PluginErrors.codes.PLUGIN_CATALOG_CHANGED]: ErrorCode.PLUGIN_CATALOG_CHANGED,
   [DomainErrorCodes.VALIDATION_FAILED]: ErrorCode.VALIDATION_FAILED,
   [DomainErrorCodes.FS_PATH_NOT_FOUND]: ErrorCode.FS_PATH_NOT_FOUND,
 };

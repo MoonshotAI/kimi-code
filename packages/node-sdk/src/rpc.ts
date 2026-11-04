@@ -31,6 +31,7 @@ import type {
   ExportSessionInput,
   ExportSessionResult,
   CreateGoalInput,
+  EditGoalObjectiveInput,
   FileMeta,
   ForkSessionInput,
   GenerateSessionTitleInput,
@@ -38,6 +39,7 @@ import type {
   ImportCustomRegistryOptions,
   ImportCustomRegistryResult,
   GetCronTasksResult,
+  InstallPluginInput,
   GlobalMcpServerAuthStatus,
   McpManagedServerInfo,
   McpServerConfig,
@@ -62,6 +64,7 @@ import type {
   SessionUsage,
   PromptInput,
   PromptSkillActivation,
+  PromptSubmissionResult,
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
@@ -73,6 +76,9 @@ import type {
   SessionEnvironmentState,
   SkillSummary,
   PluginCommandDef,
+  GitPullRequest,
+  GitQueryInput,
+  GitStatusSummary,
   SuggestFilesInput,
   SuggestFilesResult,
   Unsubscribe,
@@ -336,7 +342,7 @@ export abstract class SDKRpcClientBase {
 
   abstract prompt(input: SessionPromptRpcInput): Promise<void>;
 
-  abstract promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void>;
+  abstract promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<PromptSubmissionResult>;
 
   abstract runShellCommand(input: {
     sessionId: string;
@@ -346,7 +352,7 @@ export abstract class SDKRpcClientBase {
 
   abstract cancelShellCommand(input: { sessionId: string; commandId: string }): Promise<void>;
 
-  abstract steer(input: SessionPromptRpcInput): Promise<void>;
+  abstract steer(input: SessionPromptRpcInput): Promise<PromptSubmissionResult>;
 
   abstract generateAgentsMd(input: SessionIdRpcInput): Promise<void>;
 
@@ -416,6 +422,10 @@ export abstract class SDKRpcClientBase {
     input: SuggestFilesInput,
   ): Promise<SuggestFilesResult | undefined>;
 
+  abstract getGitStatus(workDir: string, input: GitQueryInput): Promise<GitStatusSummary | null>;
+
+  abstract getGitPullRequest(workDir: string, input: GitQueryInput): Promise<GitPullRequest | null>;
+
   abstract listBackgroundTasks(
     input: SessionIdRpcInput & { activeOnly?: boolean; limit?: number },
   ): Promise<readonly BackgroundTaskInfo[]>;
@@ -439,6 +449,8 @@ export abstract class SDKRpcClientBase {
   abstract createGoal(input: SessionIdRpcInput & CreateGoalInput): Promise<GoalSnapshot>;
 
   abstract getGoal(input: SessionIdRpcInput): Promise<GoalToolResult>;
+
+  abstract editGoalObjective(input: SessionIdRpcInput & EditGoalObjectiveInput): Promise<GoalSnapshot>;
 
   abstract pauseGoal(input: SessionIdRpcInput): Promise<GoalSnapshot>;
 
@@ -464,7 +476,7 @@ export abstract class SDKRpcClientBase {
 
   abstract listPlugins(): Promise<readonly PluginSummary[]>;
 
-  abstract installPlugin(source: string): Promise<PluginSummary>;
+  abstract installPlugin(input: string | InstallPluginInput): Promise<PluginSummary>;
 
   abstract setPluginEnabled(id: string, enabled: boolean): Promise<void>;
 

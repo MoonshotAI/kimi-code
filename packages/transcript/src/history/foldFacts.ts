@@ -2,8 +2,6 @@ import type { AgentRef } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import { turnId as exportTurnKey } from '../model/ids';
-import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
-import type { TodoItem, TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 import type { AgentTranscriptSnapshot } from '../ops/operation';
 
@@ -11,19 +9,6 @@ export interface HistoryWireRecord {
   readonly type: string;
   readonly time?: number;
   readonly [key: string]: unknown;
-}
-
-interface UpdateStorePayload {
-  readonly key?: unknown;
-  readonly value?: unknown;
-}
-
-interface GoalPayload {
-  readonly objective?: unknown;
-  readonly completionCriterion?: unknown;
-  readonly status?: unknown;
-  readonly tokensUsed?: unknown;
-  readonly budgetLimits?: { readonly tokenBudget?: unknown };
 }
 
 interface InteractionRequestPayload {
@@ -112,8 +97,6 @@ function turnOriginKind(origin: unknown): TranscriptTurn['origin']['kind'] {
   }
 }
 
-const GOAL_STATUSES = new Set<GoalStatus>(['active', 'paused', 'blocked', 'complete']);
-
 function mapInteractionEndState(
   kind: TranscriptInteraction['interactionKind'],
   response: unknown,
@@ -165,19 +148,6 @@ function payloadOf(record: HistoryWireRecord): Record<string, unknown> {
   return payload;
 }
 
-function readTodoItems(raw: unknown): TodoItem[] {
-  if (!Array.isArray(raw)) return [];
-  const items: TodoItem[] = [];
-  for (const entry of raw) {
-    const title = (entry as { title?: unknown } | undefined)?.title;
-    const status = (entry as { status?: unknown } | undefined)?.status;
-    if (typeof title !== 'string') continue;
-    if (status !== 'pending' && status !== 'in_progress' && status !== 'done') continue;
-    items.push({ title, status });
-  }
-  return items;
-}
-
 export function foldWireRecordFacts(
   records: Iterable<HistoryWireRecord>,
   base: AgentTranscriptSnapshot,
@@ -209,13 +179,6 @@ export function foldWireRecordFacts(
       nextTurnId += 1;
     }
   };
-  let todo: TranscriptTodo | undefined;
-  let goal: GoalMeta | undefined;
-  let goalTouched = false;
-  let planActive: boolean | undefined;
-  let planRevision: { readonly reviewPath?: string; readonly version?: number } | undefined;
-  let swarmActive: boolean | undefined;
-  let towerActive: boolean | undefined;
 
   const appended: TranscriptItem[] = [];
   const activeCancelTurnIds = new Set<number>();
@@ -252,66 +215,17 @@ export function foldWireRecordFacts(
         subagentRefs.set(toolCallId, refs);
         break;
       }
-      case 'tools.update_store': {
-        const payload = record as UpdateStorePayload;
-        if (payload.key !== 'todo') break;
-        todo = {
-          todoId: 'todo',
-          items: readTodoItems(payload.value),
-          updatedAt: recordTimeIso(record),
-        };
-        break;
-      }
-      case 'goal.create': {
-        const payload = record as GoalPayload;
-        goalTouched = true;
-        goal = {
-          objective: typeof payload.objective === 'string' ? payload.objective : '',
-          status: 'active',
-          completionCriterion:
-            typeof payload.completionCriterion === 'string'
-              ? payload.completionCriterion
-              : undefined,
-          budgetUsed: 0,
-        };
-        pushMarker('goal', record);
-        break;
-      }
+      case 'goal.create':
       case 'goal.update': {
-        const payload = record as GoalPayload;
-        goalTouched = true;
-        if (goal !== undefined) {
-          const tokenBudget = payload.budgetLimits?.tokenBudget;
-          goal = {
-            ...goal,
-            status:
-              typeof payload.status === 'string' &&
-              GOAL_STATUSES.has(payload.status as GoalStatus)
-                ? (payload.status as GoalStatus)
-                : goal.status,
-            budgetUsed:
-              typeof payload.tokensUsed === 'number' ? payload.tokensUsed : goal.budgetUsed,
-            budgetLimit: typeof tokenBudget === 'number' ? tokenBudget : goal.budgetLimit,
-          };
-        }
         pushMarker('goal', record);
-        break;
-      }
-      case 'goal.clear': {
-        goalTouched = true;
-        goal = undefined;
         break;
       }
       case 'plan_mode.enter': {
-        planActive = true;
-        planRevision = undefined;
         pushMarker('plan.enter', record);
         break;
       }
       case 'plan_mode.exit':
       case 'plan_mode.cancel': {
-        planActive = false;
-        planRevision = undefined;
         pushMarker('plan.exit', record);
         break;
       }
@@ -323,11 +237,6 @@ export function foldWireRecordFacts(
             : typeof payload.path === 'string'
               ? payload.path
               : undefined;
-        planActive = true;
-        planRevision = {
-          reviewPath: path,
-          version: typeof payload.version === 'number' ? payload.version : undefined,
-        };
         if (path === undefined) {
           pushMarker('plan.revision', record);
         } else {
@@ -337,21 +246,11 @@ export function foldWireRecordFacts(
         break;
       }
       case 'swarm_mode.enter': {
-        if (record['trigger'] !== 'tool') swarmActive = true;
         pushMarker('swarm.enter', record);
         break;
       }
       case 'swarm_mode.exit': {
-        swarmActive = false;
         pushMarker('swarm.exit', record);
-        break;
-      }
-      case 'tower_mode.enter': {
-        towerActive = true;
-        break;
-      }
-      case 'tower_mode.exit': {
-        towerActive = false;
         break;
       }
       case 'turn.cancel': {
@@ -722,23 +621,32 @@ export function foldWireRecordFacts(
     wireIdByOrdinal.size === 0
       ? items
       : (() => {
-          const keptOrdinals = new Set<number>();
+          const claimedOrdinals = new Set<number>();
           for (const item of items) {
-            if (item.kind === 'turn' && !wireIdByOrdinal.has(item.ordinal)) {
-              keptOrdinals.add(item.ordinal);
-            }
+            if (item.kind !== 'turn') continue;
+            const wireId = wireIdByOrdinal.get(item.ordinal);
+            if (wireId === undefined || wireId === item.ordinal) claimedOrdinals.add(item.ordinal);
           }
           return items.map((item) => {
             if (item.kind !== 'turn') return item;
             const wireId = wireIdByOrdinal.get(item.ordinal);
             if (wireId === undefined) return item;
-            const renumber = wireId !== item.ordinal && !keptOrdinals.has(wireId);
-            const nextTurnId = renumber ? exportTurnKey(wireId) : item.turnId;
+            let ordinal = item.ordinal;
+            if (wireId !== item.ordinal) {
+              if (!claimedOrdinals.has(wireId)) {
+                ordinal = wireId;
+              } else {
+                while (claimedOrdinals.has(ordinal)) ordinal += 1;
+              }
+              claimedOrdinals.add(ordinal);
+            }
+            const renumber = ordinal !== item.ordinal;
+            const nextTurnId = renumber ? exportTurnKey(ordinal) : item.turnId;
             const wedged = wedgedTurnIds.has(wireId);
             return {
               ...item,
               turnId: nextTurnId,
-              ordinal: renumber ? wireId : item.ordinal,
+              ordinal,
               startedAt: item.startedAt ?? turnStartedTimes.get(wireId) ?? turnPromptTimes.get(wireId),
               state: wedged ? 'failed' : item.state,
               wedged: wedged ? true : item.wedged,
@@ -786,25 +694,6 @@ export function foldWireRecordFacts(
     realignedItems.splice(insertAt === -1 ? realignedItems.length : insertAt, 0, turn);
   }
 
-  const modesTouched = planActive !== undefined || swarmActive !== undefined || towerActive !== undefined;
-  const meta: TranscriptMeta = {
-    ...base.meta,
-    goal: goalTouched ? goal : base.meta.goal,
-    modes: modesTouched
-      ? {
-          ...base.meta.modes,
-          plan:
-            planActive === undefined
-              ? base.meta.modes?.plan
-              : planActive
-                ? (planRevision ?? {})
-                : undefined,
-          swarm: swarmActive === undefined ? base.meta.modes?.swarm : swarmActive ? {} : undefined,
-          tower: towerActive === undefined ? base.meta.modes?.tower : towerActive ? {} : undefined,
-        }
-      : base.meta.modes,
-  };
-
   let restoredItems = appended.length > 0 ? [...realignedItems, ...appended] : realignedItems;
   if (subagentRefs.size > 0) {
     restoredItems = restoredItems.map((item) => {
@@ -833,8 +722,6 @@ export function foldWireRecordFacts(
     ...base,
     items: restoredItems,
     interactions: [...interactions.values()],
-    todos: todo !== undefined ? [todo] : base.todos,
-    meta,
   };
 }
 

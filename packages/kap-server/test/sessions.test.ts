@@ -55,6 +55,8 @@ import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
+import { ensureMainAgent } from '../src/transport/mainAgent';
+import { readAgentState, readUsageState } from '../src/transport/ws/v1/agentState';
 
 interface Envelope<T> {
   code: number;
@@ -63,6 +65,14 @@ interface Envelope<T> {
   request_id: string;
   details?: { path: string; message: string }[];
   stack?: string;
+}
+
+interface GoalWire {
+  goalId: string;
+  objective: string;
+  status: string;
+  turnsUsed: number;
+  tokensUsed: number;
 }
 
 interface SessionWire {
@@ -177,6 +187,18 @@ describe('server-v2 /api/v1/sessions', () => {
   async function getJson<T>(path: string): Promise<{ status: number; body: Envelope<T> }> {
     const res = await fetch(`${base}${path}`, {
       headers: authHeaders(server as RunningServer),
+    } as never);
+    return { status: res.status, body: (await res.json()) as Envelope<T> };
+  }
+
+  async function patchJson<T>(
+    path: string,
+    body: unknown,
+  ): Promise<{ status: number; body: Envelope<T> }> {
+    const res = await fetch(`${base}${path}`, {
+      method: 'PATCH',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
     } as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
@@ -843,47 +865,35 @@ describe('server-v2 /api/v1/sessions', () => {
     createChild.mockRestore();
   });
 
-  it('returns best-effort status for a live session', async () => {
+  it('no longer serves GET /status', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    const { body } = await getJson<{
-      busy: boolean;
-      thinking_level: string;
-      plan_mode: boolean;
-      context_tokens: number;
-    }>(`/api/v1/sessions/${created.body.data.id}/status`);
-    expect(body.code).toBe(0);
-    expect(body.data.busy).toBe(false);
-    expect(typeof body.data.thinking_level).toBe('string');
-    expect(typeof body.data.plan_mode).toBe('boolean');
-    expect(body.data.context_tokens).toBe(0);
+    const res = await getJson<unknown>(`/api/v1/sessions/${created.body.data.id}/status`);
+    expect(res.status).toBe(404);
   });
 
-  it('reflects plan/swarm/permission agent_config in GET /status', async () => {
+  async function mainAgentOf(id: string) {
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id)!;
+    return ensureMainAgent(session);
+  }
+
+  it('applies plan/swarm/permission agent_config to the main agent state', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
 
-    const before = await getJson<{
-      plan_mode: boolean;
-      swarm_mode: boolean;
-      permission: string;
-    }>(`/api/v1/sessions/${id}/status`);
-    expect(before.body.data.plan_mode).toBe(false);
-    expect(before.body.data.swarm_mode).toBe(false);
+    const before = readAgentState(await mainAgentOf(id), false);
+    expect(before.plan_mode).toBe(false);
+    expect(before.swarm_mode).toBe(false);
 
     await postJson(`/api/v1/sessions/${id}/profile`, {
       agent_config: { plan_mode: true, swarm_mode: true, permission_mode: 'yolo' },
     });
 
-    const after = await getJson<{
-      plan_mode: boolean;
-      swarm_mode: boolean;
-      permission: string;
-    }>(`/api/v1/sessions/${id}/status`);
-    expect(after.body.data.plan_mode).toBe(true);
-    expect(after.body.data.swarm_mode).toBe(true);
-    expect(after.body.data.permission).toBe('yolo');
+    const after = readAgentState(await mainAgentOf(id), false);
+    expect(after.plan_mode).toBe(true);
+    expect(after.swarm_mode).toBe(true);
+    expect(after.permission_mode).toBe('yolo');
   });
 
   it('rejects tower_mode agent_config when the tower feature is unavailable', async () => {
@@ -891,10 +901,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
 
-    const before = await getJson<{
-      tower_mode?: boolean;
-    }>(`/api/v1/sessions/${id}/status`);
-    expect(before.body.data.tower_mode).toBe(false);
+    expect(readAgentState(await mainAgentOf(id), false).tower_mode).toBe(false);
 
     const on = await postJson(`/api/v1/sessions/${id}/profile`, {
       agent_config: { tower_mode: true },
@@ -902,19 +909,13 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(on.body.code).toBe(50001);
     expect(on.body.msg).toContain('the tower experiment is disabled');
     expect(on.body.msg).toContain('KIMI_CODE_EXPERIMENTAL_TOWER=1');
-    const after = await getJson<{
-      tower_mode?: boolean;
-    }>(`/api/v1/sessions/${id}/status`);
-    expect(after.body.data.tower_mode).toBe(false);
+    expect(readAgentState(await mainAgentOf(id), false).tower_mode).toBe(false);
 
     const off = await postJson(`/api/v1/sessions/${id}/profile`, {
       agent_config: { tower_mode: false },
     });
     expect(off.body.code).toBe(0);
-    const settled = await getJson<{
-      tower_mode?: boolean;
-    }>(`/api/v1/sessions/${id}/status`);
-    expect(settled.body.data.tower_mode).toBe(false);
+    expect(readAgentState(await mainAgentOf(id), false).tower_mode).toBe(false);
   });
 
   it('returns the current goal via GET /goal', async () => {
@@ -934,6 +935,50 @@ describe('server-v2 /api/v1/sessions', () => {
     );
     expect(after.body.data?.objective).toBe('fix all lint warnings');
     expect(after.body.data?.status).toBe('active');
+  });
+
+  it('edits the goal objective via PATCH /goal and publishes goal.updated', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
+    const id = created.body.data.id;
+    await postJson(`/api/v1/sessions/${id}/profile`, {
+      agent_config: { goal_objective: 'fix all lint warnings' },
+    });
+    const agent = getLiveSessionById((server as RunningServer).core.accessor, id)
+      ?.accessor.get(IAgentLifecycleService)
+      .handleOf(MAIN_AGENT_ID);
+    if (agent === undefined) throw new Error('expected a live main agent');
+    const events: Event2<any>[] = [];
+    const subscription = agent.accessor.get(IEventBus).subscribe((event) => events.push(event));
+
+    try {
+      const edited = await patchJson<GoalWire>(`/api/v1/sessions/${id}/goal`, {
+        objective: 'fix all type errors',
+      });
+
+      expect(edited.body.code).toBe(0);
+      expect(edited.body.data.objective).toBe('fix all type errors');
+      const updated = events.filter((event) => event.type === 'goal.updated');
+      expect(updated).toHaveLength(1);
+      expect(updated[0]).toMatchObject({ snapshot: { objective: 'fix all type errors' } });
+    } finally {
+      subscription.dispose();
+    }
+  });
+
+  it('maps goal edit failures to typed errors', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home as string } });
+    const id = created.body.data.id;
+
+    const missing = await patchJson<null>(`/api/v1/sessions/${id}/goal`, { objective: 'work' });
+    expect(missing.body.code).toBe(40914);
+
+    await postJson(`/api/v1/sessions/${id}/profile`, {
+      agent_config: { goal_objective: 'fix all lint warnings' },
+    });
+    const invalid = await patchJson<null>(`/api/v1/sessions/${id}/goal`, {});
+    expect(invalid.body.code).toBe(40001);
+    const unknown = await patchJson<null>('/api/v1/sessions/ses_missing/goal', { objective: 'work' });
+    expect(unknown.body.code).toBe(40401);
   });
 
   it('starts one continuation when the Web profile resumes a blocked goal', async () => {
@@ -2656,17 +2701,10 @@ describe('server-v2 /api/v1/sessions status context window', () => {
   it('reports the default model context window before any model is bound', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    const { body } = await getJson<{
-      status: string;
-      model?: string;
-      context_tokens: number;
-      max_context_tokens: number;
-      context_usage: number;
-    }>(`/api/v1/sessions/${created.body.data.id}/status`);
-    expect(body.code).toBe(0);
-    expect(body.data.max_context_tokens).toBe(131072);
-    expect(body.data.context_tokens).toBe(0);
-    expect(body.data.context_usage).toBe(0);
+    const session = getLiveSessionById((server as RunningServer).core.accessor, created.body.data.id)!;
+    const usage = readUsageState(await ensureMainAgent(session));
+    expect(usage?.max_context_tokens).toBe(131072);
+    expect(usage?.context_tokens).toBe(0);
   });
 });
 
@@ -2821,5 +2859,150 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     expect(listed.body.data.items.some((s) => s.id === id)).toBe(true);
     const fetched = await getJson<{ id: string }>(`/api/v1/sessions/${id}`);
     expect(fetched.body.data.id).toBe(id);
+  });
+});
+
+describe('server-v2 /api/v1/sessions:btw', () => {
+  const modelBase = 'https://model.example.test/v1';
+  const mainAnswer = 'The main agent answered with a much longer explanation than the side chat.';
+  const sideAnswer = 'Short side answer.';
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+  let releaseSideAnswer: () => void = () => {};
+  let sideAnswerGate: Promise<void> = Promise.resolve();
+
+  function sseBody(text: string): string {
+    const chunk = (delta: Record<string, unknown>, finishReason: string | null) =>
+      `data: ${JSON.stringify({
+        id: 'chatcmpl-test',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'fake-model',
+        choices: [{ index: 0, delta, finish_reason: finishReason }],
+      })}\n\n`;
+    return `${chunk({ role: 'assistant', content: text }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`;
+  }
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-btw-'));
+    await writeFile(
+      join(home, 'config.toml'),
+      [
+        'default_model = "fake"',
+        '',
+        '[providers.fake]',
+        'type = "openai"',
+        'api_key = "sk-test"',
+        `base_url = "${modelBase}"`,
+        '',
+        '[models.fake]',
+        'provider = "fake"',
+        'model = "fake-model"',
+        'max_context_size = 131072',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const realFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!url.startsWith(modelBase)) return realFetch(input, init);
+      const messages = JSON.stringify(JSON.parse(typeof init?.body === 'string' ? init.body : '{}').messages ?? []);
+      const side = messages.includes('side question');
+      if (side) await sideAnswerGate;
+      return new Response(sseBody(side ? sideAnswer : mainAnswer), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterAll(async () => {
+    vi.restoreAllMocks();
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+      home = undefined;
+    }
+  });
+
+  async function postJson<T>(path: string, body: unknown): Promise<Envelope<T>> {
+    const res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    } as never);
+    return (await res.json()) as Envelope<T>;
+  }
+
+  async function transcriptTurns(sessionId: string, agentId: string) {
+    const res = await fetch(`${base}/api/v1/sessions/${sessionId}/transcript?agent_id=${agentId}`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    const body = (await res.json()) as Envelope<AgentTranscriptSnapshot>;
+    return body.data.items.flatMap((item) => (item.kind === 'turn' ? [item] : []));
+  }
+
+  function answerOf(turn: Awaited<ReturnType<typeof transcriptTurns>>[number]): string[] {
+    return turn.steps.flatMap((step) =>
+      step.frames.flatMap((frame) => (frame.kind === 'text' && frame.role === 'assistant' ? [frame.text] : [])),
+    );
+  }
+
+  it('keeps the first side chat answer when its prompt starts before anyone reads the fork', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
+    const sessionId = created.data.id;
+    await transcriptTurns(sessionId, 'main');
+    await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
+      content: [{ type: 'text', text: 'main question' }],
+      model: 'fake',
+    });
+    await vi.waitFor(
+      async () => {
+        expect((await transcriptTurns(sessionId, 'main')).map((turn) => turn.state)).toEqual(['completed']);
+      },
+      { timeout: 10_000 },
+    );
+
+    sideAnswerGate = new Promise((resolve) => {
+      releaseSideAnswer = resolve;
+    });
+    const btw = await postJson<{ agent_id: string }>(`/api/v1/sessions/${sessionId}:btw`, {});
+    const agentId = btw.data.agent_id;
+    await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
+      content: [{ type: 'text', text: 'side question' }],
+      agent_id: agentId,
+      model: 'fake',
+    });
+    await transcriptTurns(sessionId, agentId);
+    releaseSideAnswer();
+
+    await vi.waitFor(
+      async () => {
+        const own = (await transcriptTurns(sessionId, agentId)).filter((turn) => turn.prompt === 'side question');
+        expect(own.map((turn) => turn.state)).toEqual(['completed']);
+      },
+      { timeout: 10_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const turns = await transcriptTurns(sessionId, agentId);
+    const own = turns.filter((turn) => turn.prompt === 'side question');
+    expect(own).toHaveLength(1);
+    expect(answerOf(own[0]!)).toEqual([sideAnswer]);
+    expect(new Set(turns.map((turn) => turn.turnId)).size).toBe(turns.length);
   });
 });

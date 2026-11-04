@@ -245,6 +245,7 @@ export { resolveAgentPath } from '#/workspace/workspaceAgentProfileLoader/intern
 export * from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 export * from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
 export * from '#/app/plugin/types';
+export * from '#/app/plugin/availability';
 export * from '#/app/plugin/commands';
 export * from '#/app/plugin/manifest';
 export * from '#/app/plugin/store';
@@ -253,6 +254,7 @@ export * from '#/app/plugin/github-resolver';
 export * from '#/app/plugin/archive';
 export * from '#/app/plugin/manager';
 export * from '#/app/plugin/marketplace';
+export * from '#/app/plugin/marketplaceService';
 export * from '#/app/plugin/plugin';
 export * from '#/app/plugin/pluginEvents';
 export * from '#/app/plugin/pluginService';

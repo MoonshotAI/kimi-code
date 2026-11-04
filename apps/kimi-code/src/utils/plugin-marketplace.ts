@@ -1,67 +1,45 @@
-/**
- * `#/utils/plugin-marketplace` — CLI-side wrapper over the shared plugin
- * marketplace client/parser (`@moonshot-ai/agent-core-v2`,
- * `app/plugin/marketplace`). The shared module owns catalog reading, the
- * lenient entry normalization, source resolution, and version derivation;
- * this wrapper adds only the CLI's configured-source resolution (option →
- * env → production default), the source-checkout fallback for offline dev,
- * and the caller-supplied built-in capability entry injection.
- */
-
-import { stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
-
 import {
+  isMissingMarketplaceTokenError,
   parsePluginMarketplace,
+  PluginAvailabilityStore,
   readPluginMarketplace,
-  withBuiltInEntries,
+  resolveKimiHome,
   withLatestVersions,
-  type MarketplaceLocation,
   type PluginMarketplace,
   type PluginMarketplaceEntry,
-} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+} from '@moonshot-ai/kimi-code-sdk';
+import {
+  KIMI_CODE_PROVIDER_NAME,
+  KimiOAuthToolkit,
+} from '@moonshot-ai/kimi-code-oauth';
 
 import {
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
   kimiCodePluginMarketplaceUrl,
   MARKETPLACE_VERSION_LOOKUP_TIMEOUT_MS,
 } from '#/constant/app';
+import { currentKimiManagedRuntimeAuth } from '#/utils/region';
 
 export {
   computeUpdateStatus,
+  PLUGIN_MARKETPLACE_CLASSIFICATIONS,
   PLUGIN_MARKETPLACE_TIERS,
-  withBuiltInEntries,
   type PluginMarketplace,
+  type PluginMarketplaceClassification,
   type PluginMarketplaceEntry,
   type PluginMarketplaceTier,
   type MarketplaceUpdateStatus,
-} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+} from '@moonshot-ai/kimi-code-sdk';
 
 export interface LoadPluginMarketplaceOptions {
   readonly workDir: string;
   readonly source?: string;
   readonly fetchImpl?: typeof fetch;
-  /**
-   * Built-in capability rows to inject, supplied by the caller from the
-   * engine's capability registry (this util owns no product knowledge).
-   * Undefined means no injection.
-   */
-  readonly builtInEntries?: readonly PluginMarketplaceEntry[];
-  /**
-   * Skip the per-entry "latest GitHub release" lookups so the catalog can be
-   * rendered as soon as it is parsed; the caller resolves versions in the
-   * background via {@link withMarketplaceLatestVersions} and re-renders.
-   */
-  readonly skipLatestVersions?: boolean;
+  readonly getAccessToken?: () => Promise<string | undefined>;
+  readonly kimiHomeDir?: string;
+  readonly reconcileAvailability?: (changed: boolean) => Promise<void>;
 }
 
-/**
- * Second phase of the marketplace load: fill in `version` for entries that
- * need a GitHub `releases/latest` lookup. Every lookup gets a hard timeout
- * (MARKETPLACE_VERSION_LOOKUP_TIMEOUT_MS) and per-entry failures degrade to
- * a missing version (badge-less row), so this never throws for network
- * reasons and never blocks the first paint.
- */
 export async function withMarketplaceLatestVersions(
   marketplace: PluginMarketplace,
   fetchImpl: typeof fetch = fetch,
@@ -80,34 +58,81 @@ export async function loadPluginMarketplace(
   const configuredSource = options.source ?? process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV];
   const source = configuredSource ?? kimiCodePluginMarketplaceUrl();
   const fetchImpl = options.fetchImpl ?? fetch;
-  let read: { raw: string; location: MarketplaceLocation };
-  try {
-    read = await readPluginMarketplace({
-      source,
-      workDir: options.workDir,
-      fetchImpl,
-      sourceCheckoutLocation:
-        configuredSource === undefined ? getSourceCheckoutMarketplaceLocation : undefined,
-    });
-  } catch (error) {
-    if (options.builtInEntries !== undefined) {
-      // The built-in entries do not come from the catalog — keep them
-      // visible when the catalog itself is unreachable.
-      return withBuiltInEntries({ source, plugins: [] }, options.builtInEntries);
-    }
-    throw error;
-  }
-  const marketplace = options.skipLatestVersions === true
-    ? parsePluginMarketplace(read.raw, read.location)
-    : await withLatestVersions(parsePluginMarketplace(read.raw, read.location), fetchImpl);
-  return options.builtInEntries !== undefined
-    ? withBuiltInEntries(marketplace, options.builtInEntries)
-    : marketplace;
+  const read = await readPluginMarketplace({
+    source,
+    workDir: options.workDir,
+    fetchImpl: async (input, init) => {
+      if (configuredSource !== undefined) return fetchImpl(input, init);
+      const getAccessToken = options.getAccessToken ?? defaultManagedAccessToken;
+      const headers = new Headers(init?.headers);
+      let token: string | undefined;
+      try {
+        token = await getAccessToken();
+      } catch (error) {
+        if (!isMissingMarketplaceTokenError(error)) throw error;
+      }
+      if (token !== undefined) headers.set('Authorization', `Bearer ${token}`);
+      headers.set('Accept', 'application/json');
+      return fetchImpl(input, { ...init, headers });
+    },
+  });
+  const marketplace = parsePluginMarketplace(read.raw, read.location);
+  const availability = new PluginAvailabilityStore(options.kimiHomeDir ?? resolveKimiHome());
+  await availability.refresh();
+  const changed = await availability.update(marketplace);
+  await options.reconcileAvailability?.(changed);
+  return marketplace;
 }
 
-async function getSourceCheckoutMarketplaceLocation(): Promise<MarketplaceLocation | undefined> {
-  const marketplacePath = resolve(import.meta.dirname, '../../../../plugins/marketplace.json');
-  const info = await stat(marketplacePath).catch(() => undefined);
-  if (info?.isFile() !== true) return undefined;
-  return { raw: marketplacePath, kind: 'local', resolved: marketplacePath };
+export function pluginMarketplaceCliDescription(
+  entry: PluginMarketplaceEntry,
+  locale = 'en-US',
+): string | undefined {
+  const block = findLocaleBlock(entry, locale);
+  const description = entry.locale === undefined || sameLocale(locale, entry.locale.defaultLocale)
+    ? (entry.cliDescription ?? nonEmptyString(block?.['cliDescription']))
+    : nonEmptyString(block?.['cliDescription']);
+  return description ?? nonEmptyString(entry.description);
+}
+
+function findLocaleBlock(
+  entry: PluginMarketplaceEntry,
+  locale: string,
+): Record<string, unknown> | undefined {
+  if (entry.locale === undefined) return undefined;
+  const normalized = normalizedLocale(locale);
+  const base = normalized.split('-')[0];
+  const candidates = base === normalized ? [normalized] : [normalized, base];
+  const entries = Object.entries(entry.locale);
+  for (const candidate of candidates) {
+    const match = entries.find(([key]) => normalizedLocale(key) === candidate);
+    if (match === undefined) continue;
+    const value = match[1];
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+  }
+  return undefined;
+}
+
+function sameLocale(a: string, b: string | undefined): boolean {
+  if (b === undefined) return false;
+  const normalizedA = normalizedLocale(a);
+  const normalizedB = normalizedLocale(b);
+  return normalizedA === normalizedB || normalizedA.split('-')[0] === normalizedB.split('-')[0];
+}
+
+function normalizedLocale(value: string): string {
+  return value.replaceAll('_', '-').toLowerCase();
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+async function defaultManagedAccessToken(): Promise<string> {
+  const auth = currentKimiManagedRuntimeAuth();
+  return new KimiOAuthToolkit({ homeDir: resolveKimiHome() })
+    .tokenProvider(KIMI_CODE_PROVIDER_NAME, auth.oauthRef)
+    .getAccessToken();
 }

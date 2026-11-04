@@ -120,10 +120,26 @@ export type {
   PluginGithubRef,
   PluginInfo,
   PluginMcpServerInfo,
+  PluginOrigin,
   PluginSource,
   PluginSummary,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
+export type {
+  MarketplaceLocation,
+  MarketplaceUpdateStatus,
+  PluginMarketplace,
+  PluginClient,
+  PluginMarketplaceClassification,
+  PluginMarketplaceDistribution,
+  PluginMarketplaceEntry,
+  PluginMarketplaceLocale,
+  PluginMarketplaceLocalizedText,
+  PluginMarketplacePlatform,
+  PluginMarketplaceTier,
+  ReadPluginMarketplaceOptions,
+} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+export type { InstallPluginInput } from '@moonshot-ai/agent-core-v2/app/plugin/plugin';
 export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 export type { ToolInfo } from '#/tool';
 export type {
@@ -223,6 +239,28 @@ export interface SuggestFilesResult {
   readonly truncated: boolean;
 }
 
+/** Git query against a workspace root, or a live session's working directory. */
+export interface GitQueryInput {
+  /** Query this live session's working directory, on the environment the session runs on. */
+  readonly sessionId?: string;
+}
+
+/** Working-tree summary of the repository containing the queried directory. */
+export interface GitStatusSummary {
+  /** Current branch; empty on a detached HEAD. */
+  readonly branch: string;
+  readonly dirty: boolean;
+  readonly ahead: number;
+  readonly behind: number;
+  /** Uncommitted line additions against HEAD. */
+  readonly additions: number;
+  /** Uncommitted line deletions against HEAD. */
+  readonly deletions: number;
+}
+
+/** Pull request of the current branch, as reported by `gh`. */
+export type { FsPullRequest as GitPullRequest } from '@moonshot-ai/agent-core-v2/app/git/git';
+
 /** Metadata of one upload in the engine's daemon file store. */
 export type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 
@@ -232,6 +270,10 @@ export interface UploadFileOptions {
   readonly mimeType?: string;
   /** Optional daemon-side TTL for staging uploads. */
   readonly expiresInSec?: number;
+}
+
+export interface EditGoalObjectiveInput {
+  readonly objective: string;
 }
 
 export interface CreateGoalInput {
@@ -247,6 +289,14 @@ export type PromptInput = readonly PromptPart[];
 export interface PromptSkillActivation {
   readonly name: string;
   readonly args?: string;
+}
+
+export interface PromptSubmissionResult {
+  readonly promptId: string;
+  readonly createdAt: string;
+  readonly state: 'running' | 'queued' | 'blocked';
+  readonly turnId?: number;
+  readonly steered: boolean;
 }
 
 export interface KimiHarnessOptions {

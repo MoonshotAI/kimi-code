@@ -6,10 +6,10 @@ import type { HostEnvironmentInfo, PathClass } from '#/os/interface/hostEnvironm
 import type { EnvironmentPath, EnvironmentWorkspaceMapper } from './environment';
 import { EnvironmentError } from './environmentRegistry';
 
-export function normalizeRemoteCwd(cwd: string, pathClass: PathClass = 'posix'): string {
-  const path = pathClass === 'win32' ? win32Path : posixPath;
-  if (!path.isAbsolute(cwd) || cwd.includes('\0')) {
-    throw new EnvironmentError('environment.invalid_cwd', `remote cwd must be an absolute ${pathClass} path; relative paths and ~ are not expanded`);
+export function normalizeRemoteCwd(cwd: string): string {
+  const path = /^[A-Za-z]:[\\/]/.test(cwd) ? win32Path : posixPath;
+  if (cwd.includes('\0') || !path.isAbsolute(cwd)) {
+    throw new EnvironmentError('environment.invalid_cwd', 'remote cwd must be an absolute POSIX or Windows path; relative paths and ~ are not expanded');
   }
   return path.resolve(cwd);
 }
@@ -24,7 +24,7 @@ export const DEFAULT_ENVIRONMENT_HOST: HostEnvironmentInfo = {
   homeDir: '/',
 };
 
-function environmentPath(pathClass: PathClass): EnvironmentPath {
+function createEnvironmentPath(pathClass: PathClass): EnvironmentPath {
   const path = pathClass === 'win32' ? win32Path : posixPath;
   return {
     separator: path.sep,
@@ -38,10 +38,7 @@ function environmentPath(pathClass: PathClass): EnvironmentPath {
   };
 }
 
-export const POSIX_ENVIRONMENT_PATH = environmentPath('posix');
-export const WIN32_ENVIRONMENT_PATH = environmentPath('win32');
-
-export function environmentWorkspace(pathClass: PathClass): EnvironmentWorkspaceMapper {
+function createEnvironmentWorkspace(pathClass: PathClass): EnvironmentWorkspaceMapper {
   const path = pathClass === 'win32' ? win32Path : posixPath;
   return {
     mapRoots: (roots) => ({
@@ -51,5 +48,15 @@ export function environmentWorkspace(pathClass: PathClass): EnvironmentWorkspace
   };
 }
 
-export const POSIX_ENVIRONMENT_WORKSPACE = environmentWorkspace('posix');
-export const WIN32_ENVIRONMENT_WORKSPACE = environmentWorkspace('win32');
+export const ENVIRONMENT_PATHS: Readonly<Record<PathClass, EnvironmentPath>> = {
+  posix: createEnvironmentPath('posix'),
+  win32: createEnvironmentPath('win32'),
+};
+
+export const ENVIRONMENT_WORKSPACES: Readonly<Record<PathClass, EnvironmentWorkspaceMapper>> = {
+  posix: createEnvironmentWorkspace('posix'),
+  win32: createEnvironmentWorkspace('win32'),
+};
+
+export const POSIX_ENVIRONMENT_PATH = ENVIRONMENT_PATHS.posix;
+export const POSIX_ENVIRONMENT_WORKSPACE = ENVIRONMENT_WORKSPACES.posix;

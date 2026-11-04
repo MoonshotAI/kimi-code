@@ -67,8 +67,6 @@ export interface RegisterApiV1RoutesOptions {
   readonly connectionRegistry: IConnectionRegistry;
   readonly transcriptService: TranscriptService;
   readonly sessionRating: SessionRatingHost;
-  readonly pluginMarketplaceUrl: () => string | Promise<string>;
-  readonly pluginMarketplaceIsDefault: boolean;
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;
   readonly webTitle?: string;
@@ -146,10 +144,7 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerCapabilitiesRoutes>[0],
         core,
       );
-      registerPluginsRoutes(apiV1 as unknown as Parameters<typeof registerPluginsRoutes>[0], core, {
-        marketplaceUrl: opts.pluginMarketplaceUrl,
-        marketplaceIsDefault: opts.pluginMarketplaceIsDefault,
-      });
+      registerPluginsRoutes(apiV1 as unknown as Parameters<typeof registerPluginsRoutes>[0], core);
       registerMessagesRoutes(
         apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0],
         core,
@@ -162,6 +157,7 @@ export async function registerApiV1Routes(
       registerPromptsRoutes(
         apiV1 as unknown as Parameters<typeof registerPromptsRoutes>[0],
         core,
+        opts.transcriptService,
       );
       registerRemoteControlRoutes(
         apiV1 as unknown as Parameters<typeof registerRemoteControlRoutes>[0],

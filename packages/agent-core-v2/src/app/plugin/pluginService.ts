@@ -3,21 +3,36 @@ import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Service } from '#/_base/di/service';
 import { AsyncEmitter, Emitter, type Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import type { HookDef } from '#/features/externalHooks/internal/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
+import { IRegionService } from '#/app/region/region';
 import { LifecycleScope } from '#/app/scopes';
 import type { PluginToggleEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 import type { SkillRoot } from '#/features/skill/catalog/types';
-import { BugIndicatingError, Error2, PluginErrors } from '#/errors';
+import { BugIndicatingError, Error2, ErrorCodes, PluginErrors } from '#/errors';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
+import type { McpOAuthService } from '#/mcpCore/oauth/service';
 
+import { PluginAvailabilityStore, pluginAvailabilitySourceKey } from './availability';
 import { PluginManager } from './manager';
+import {
+  pluginClientForIdentity,
+  type PluginClient,
+  type PluginMarketplace,
+} from './marketplace';
+import {
+  type MarketplacePluginInstall,
+  PluginMarketplaceService,
+} from './marketplaceService';
 import {
   type GetPluginInfoInput,
   type InstallPluginInput,
+  type PreviewPluginInput,
   IPluginService,
   type RemovePluginInput,
   type SetPluginEnabledInput,
@@ -27,6 +42,7 @@ import { normalizePluginId } from './types';
 import type {
   EnabledPluginSessionStart,
   EnabledPluginSystemPrompt,
+  PluginCapabilities,
   PluginCommandDef,
   PluginInfo,
   PluginAgentRoot,
@@ -54,6 +70,11 @@ interface PluginMutationOutcome<T> {
   readonly notification: PluginReloadNotification;
 }
 
+export interface ResolvedMarketplacePluginInstallOptions {
+  readonly resolved: MarketplacePluginInstall;
+  readonly requiredSkill?: string;
+}
+
 export class PluginService extends Service implements IPluginService {
   declare readonly _serviceBrand: undefined;
 
@@ -61,7 +82,12 @@ export class PluginService extends Service implements IPluginService {
   private readonly envBaseUrl: string | undefined;
   private readonly envOAuthHost: string | undefined;
   private readonly manager: PluginManager;
+  private readonly marketplace: PluginMarketplaceService;
+  private readonly availability: PluginAvailabilityStore;
+  private readonly client: PluginClient;
+  private readonly platform: NodeJS.Platform;
   private initialLoadPromise: Promise<void> | undefined;
+  private appliedAvailabilityGeneration = 0;
   private snapshotLoaded = false;
   private loadError: Error | undefined;
   private mutationQueue: Promise<void> = Promise.resolve();
@@ -75,30 +101,83 @@ export class PluginService extends Service implements IPluginService {
     @IBootstrapService bootstrap: IBootstrapService,
     @ISkillDiscovery discovery: ISkillDiscovery,
     @IProviderService private readonly providers: IProviderService,
+    @IRegionService regions: IRegionService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IMcpOAuthService private readonly oauth: McpOAuthService,
+    @ILogService private readonly log: ILogService,
   ) {
     super();
     this.homeDir = bootstrap.homeDir;
     this.envBaseUrl = bootstrap.getEnv(KIMI_CODE_BASE_URL_ENV);
     this.envOAuthHost =
       bootstrap.getEnv(KIMI_CODE_OAUTH_HOST_ENV) ?? bootstrap.getEnv(KIMI_OAUTH_HOST_ENV);
+    this.availability = new PluginAvailabilityStore(this.homeDir);
+    this.client = pluginClientForIdentity(bootstrap.clientIdentity.platform);
+    this.platform = bootstrap.platform;
     this.manager = new PluginManager({
       kimiHomeDir: this.homeDir,
+      client: this.client,
+      platform: this.platform,
+      availability: this.availability,
       discoverSkills: (roots) => discovery.discover(roots),
     });
+    this.marketplace = new PluginMarketplaceService(bootstrap, providers, regions, this.availability);
   }
 
   listPlugins(): Promise<readonly PluginSummary[]> {
     return this.runManagementRead(async () => this.manager.summaries());
   }
 
-  installPlugin(input: InstallPluginInput): Promise<PluginSummary> {
+  installPlugin(
+    input: InstallPluginInput,
+    resolvedInstall?: ResolvedMarketplacePluginInstallOptions,
+  ): Promise<PluginSummary> {
     return this.runNotifiedMutation(async () => {
-      const record = await this.manager.install(input.source);
+      const { record, summary } =
+        'source' in input
+          ? await this.manager.installAndReload(input.source, { origin: 'custom' })
+          : await (async () => {
+              const resolved =
+                resolvedInstall?.resolved ??
+                (await this.marketplace.resolveInstall(
+                  input.marketplaceId,
+                  input.expectedVersion,
+                  input.expectedSha256,
+                  input.marketplaceSource,
+                ));
+              await this.availability.refresh();
+              const installation = {
+                id: resolved.expectedPluginId,
+                origin: 'marketplace' as const,
+                catalogId: resolved.catalogId,
+                marketplaceSource: resolved.marketplaceSource === undefined
+                  ? undefined
+                  : pluginAvailabilitySourceKey(resolved.marketplaceSource),
+              };
+              if (!this.availability.supports(installation, this.client, this.platform)) {
+                throw new Error2(
+                  ErrorCodes.VALIDATION_FAILED,
+                  `Marketplace plugin "${resolved.catalogId}" does not support ${this.client} on ${this.platform}`,
+                  { details: { marketplaceId: resolved.catalogId, client: this.client, platform: this.platform } },
+                );
+              }
+              return this.manager.installAndReload(resolved.source, {
+                expectedSha256: resolved.sha256sum,
+                expectedPluginId: resolved.expectedPluginId,
+                origin: resolved.origin,
+                catalogId: resolved.catalogId,
+                marketplaceSource: resolved.marketplaceSource === undefined
+                  ? undefined
+                  : pluginAvailabilitySourceKey(resolved.marketplaceSource),
+                migrateFrom: input.migrateFrom,
+                requiredSkill: resolvedInstall?.requiredSkill,
+                fetchImpl: resolved.fetchImpl,
+              });
+            })();
       const info = this.manager.info(record.id);
       if (info === undefined)
         throw new BugIndicatingError(`Plugin "${record.id}" missing right after install`);
-      const notification = await this.reloadAndNotify({
+      const notification = this.notifyReload(summary, {
         mutation: { kind: 'install', id: record.id },
       });
       return { result: info, notification };
@@ -132,14 +211,30 @@ export class PluginService extends Service implements IPluginService {
     });
   }
 
-  removePlugin(input: RemovePluginInput): Promise<void> {
-    return this.runNotifiedMutation(async () => {
+  async removePlugin(input: RemovePluginInput): Promise<void> {
+    const id = normalizePluginId(input.id);
+    let removedServers: readonly PluginMcpServerEntry[] = [];
+    await this.runNotifiedMutation(async () => {
+      removedServers = this.manager.mcpServerEntries().filter((entry) => entry.pluginId === id);
       await this.manager.remove(input.id);
       const notification = await this.reloadAndNotify({
         mutation: { kind: 'remove', id: input.id },
       });
       return { result: undefined, notification };
     });
+    for (const entry of removedServers) {
+      if (!('url' in entry.config)) continue;
+      try {
+        await this.oauth.cancelAuthorizationFromConfiguration(undefined, entry.name, entry.config.url);
+        await this.oauth.invalidateFromConfiguration(undefined, entry.name, entry.config.url);
+      } catch (error) {
+        this.log.warn('plugin oauth credential cleanup failed', {
+          pluginId: id,
+          name: entry.name,
+          error,
+        });
+      }
+    }
   }
 
   reloadPlugins(): Promise<ReloadSummary> {
@@ -165,10 +260,34 @@ export class PluginService extends Service implements IPluginService {
     return reload;
   }
 
+  reconcileAvailability(marketplace: PluginMarketplace): Promise<void> {
+    return this.runNotifiedMutation(async () => {
+      await this.availability.update(marketplace);
+      if (this.availability.generation === this.appliedAvailabilityGeneration) {
+        return {
+          result: undefined,
+          notification: {
+            summary: { added: [], removed: [], errors: [] },
+            delivery: Promise.resolve(),
+          },
+        };
+      }
+      const notification = await this.reloadAndNotify();
+      return { result: undefined, notification };
+    });
+  }
+
   private async reloadAndNotify(options?: {
     readonly mutation: PluginMutation;
   }): Promise<PluginReloadNotification> {
-    const summary = await this.manager.reload();
+    return this.notifyReload(await this.manager.reload(), options);
+  }
+
+  private notifyReload(
+    summary: ReloadSummary,
+    options?: { readonly mutation: PluginMutation },
+  ): PluginReloadNotification {
+    this.appliedAvailabilityGeneration = this.availability.generation;
     this.snapshotLoaded = true;
     this.loadError = undefined;
     const delivery = this.onDidReloadEmitter.fireAsyncConcurrent(summary, NO_ABORT);
@@ -189,7 +308,7 @@ export class PluginService extends Service implements IPluginService {
 
   getPluginInfo(input: GetPluginInfoInput): Promise<PluginInfo> {
     return this.runManagementRead(async () => {
-      const info = this.manager.info(input.id);
+      const info = this.manager.info(input.id, input.locale);
       if (info === undefined) {
         throw new Error2(
           PluginErrors.codes.PLUGIN_NOT_FOUND,
@@ -198,6 +317,29 @@ export class PluginService extends Service implements IPluginService {
         );
       }
       return info;
+    });
+  }
+
+  previewPlugin(input: PreviewPluginInput): Promise<PluginCapabilities> {
+    return this.runManagementRead(async () => {
+      const resolved = await this.marketplace.resolveInstall(
+        input.marketplaceId,
+        input.expectedVersion,
+        input.expectedSha256,
+      );
+      if (resolved.sha256sum === undefined) {
+        throw new Error2(
+          ErrorCodes.VALIDATION_FAILED,
+          `Marketplace plugin "${input.marketplaceId}" preview requires a SHA-256 digest`,
+          { details: { marketplaceId: input.marketplaceId } },
+        );
+      }
+      return this.manager.inspect(resolved.source, {
+        expectedSha256: resolved.sha256sum,
+        expectedPluginId: resolved.expectedPluginId,
+        locale: input.locale,
+        fetchImpl: resolved.fetchImpl,
+      });
     });
   }
 
@@ -338,6 +480,21 @@ export class PluginService extends Service implements IPluginService {
     if (oauthHost !== undefined) env[KIMI_CODE_OAUTH_HOST_ENV] = oauthHost;
     return env;
   }
+}
+
+export function installResolvedMarketplacePlugin(
+  plugins: IPluginService,
+  input: Extract<InstallPluginInput, { readonly marketplaceId: string }>,
+  resolved: MarketplacePluginInstall,
+  requiredSkill?: string,
+): Promise<PluginSummary> {
+  const service = plugins as {
+    installPlugin(
+      input: InstallPluginInput,
+      options?: ResolvedMarketplacePluginInstallOptions,
+    ): Promise<PluginSummary>;
+  };
+  return service.installPlugin(input, { resolved, requiredSkill });
 }
 
 function withManagedKimiPluginEnv(

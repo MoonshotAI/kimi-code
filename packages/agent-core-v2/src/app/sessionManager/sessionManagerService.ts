@@ -150,16 +150,12 @@ export class SessionManager implements ISessionManager {
             : `environment "${environmentId}" does not set defaultCwd in [environments]`,
         );
       }
-      if (declared === undefined) {
-        return { workspaceId: lease.instance.id, environmentId, environmentCwd: cwd, lease };
-      }
-      const environmentLease = await this.environments.acquireWhenReady({ environmentId });
-      try {
-        const environmentCwd = normalizeRemoteCwd(cwd, environmentLease.environment.host?.pathClass);
-        return { workspaceId: lease.instance.id, environmentId, environmentCwd, lease };
-      } finally {
-        environmentLease.dispose();
-      }
+      return {
+        workspaceId: lease.instance.id,
+        environmentId,
+        environmentCwd: declared === undefined ? cwd : normalizeRemoteCwd(cwd),
+        lease,
+      };
     } catch (error) {
       lease.dispose();
       throw error;

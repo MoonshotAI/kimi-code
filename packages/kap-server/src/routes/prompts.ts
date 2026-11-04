@@ -72,6 +72,7 @@ import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
 import { sendEnvironmentError } from './environment';
+import type { TranscriptService } from '../services/transcript/transcriptService';
 
 interface PromptRouteHost {
   get(
@@ -173,7 +174,11 @@ async function applyProfileSelection(
   return true;
 }
 
-export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
+export function registerPromptsRoutes(
+  app: PromptRouteHost,
+  core: Scope,
+  transcriptService: TranscriptService,
+): void {
   const listRoute = defineRoute(
     {
       method: 'GET',
@@ -256,6 +261,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             session.accessor.get(ISessionMediaStore),
           );
           resolved ??= await resolvePromptFromSession(session, req.body.agent_id);
+          if (req.body.agent_id !== undefined && req.body.agent_id !== MAIN_AGENT_ID) {
+            await transcriptService.ensureAgentHistory(session_id, req.body.agent_id);
+          }
           reservation = reservePromptId(session_id, req.body.prompt_id);
 
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
