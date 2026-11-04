@@ -45,7 +45,7 @@ import {
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
-import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { ConversationItem, ConversationTurnsPage } from '../src/protocol/conversation';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { EnvironmentSetBinding } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBindingOps';
@@ -1755,6 +1755,11 @@ describe('server-v2 /api/v1/sessions', () => {
     await session.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
     const context = agent.accessor.get(IAgentContextMemoryService);
+    await agent.accessor.get(IEventDispatcher).dispatch(new TurnPrompt({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'original prompt' }],
+      origin: { kind: 'user' },
+    }));
     context.append(
       { role: 'user', content: [{ type: 'text', text: 'original prompt' }], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer before steer' }], toolCalls: [] },

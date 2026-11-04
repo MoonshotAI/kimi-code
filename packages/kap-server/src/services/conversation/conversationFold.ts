@@ -255,14 +255,14 @@ function applyMessage(state: ConversationState, message: ContextMessage | undefi
   const notification = kind !== undefined && TASK_ORIGIN_KINDS.has(kind);
   const open = openTurn(state);
   if (notification && (state.pendingPrompt === undefined || steered)) {
-    const turn = open ?? startTurn(state, time);
+    const turn = open ?? addTurn(state, time);
     turn.items.push(notificationItem(turn, message));
     if (open === undefined) endTurn(state, turn, 'completed', time);
     return;
   }
   const inTurn = origin !== undefined && 'inTurn' in origin && origin.inTurn === true;
   if (inTurn || (steered && state.pendingPrompt === undefined && open !== undefined)) {
-    const turn = open ?? startTurn(state, time);
+    const turn = open ?? addTurn(state, time);
     if (isUndoAnchor(message)) state.anchors.push({ turnId: turn.turn_id, itemCount: turn.items.length, stepCount: turn.steps.length });
     turn.items.push({
       type: 'user_message',
@@ -274,29 +274,32 @@ function applyMessage(state: ConversationState, message: ContextMessage | undefi
       content: projectUserContent(message),
       created_at: time,
     });
+    if (open === undefined) endTurn(state, turn, 'completed', time);
     return;
   }
   if ((kind === 'system_trigger' || kind === 'retry') && state.pendingPrompt === undefined) {
     const name = (origin as { name?: unknown } | undefined)?.name;
     if (typeof name !== 'string' || !TURN_OPENING_SYSTEM_TRIGGERS.has(name)) return;
   }
+  const owned = state.pendingPrompt !== undefined;
   const promptId = message.id ?? state.pendingPrompt?.promptId;
-  const turn = startTurn(state, time);
+  const turn = owned ? startTurn(state, time) : addTurn(state, time);
   if (isUndoAnchor(message)) state.anchors.push({ turnId: turn.turn_id, itemCount: 0, stepCount: 0 });
   if (notification) {
     turn.items.push(notificationItem(turn, message));
-    return;
+  } else {
+    turn.items.push({
+      type: 'user_message',
+      item_id: promptId ?? nextItemId(turn),
+      status: 'ended',
+      placement: 'opener',
+      prompt_ids: promptId === undefined ? [] : [promptId],
+      origin: projectOrigin(origin),
+      content: projectUserContent(message),
+      created_at: time,
+    });
   }
-  turn.items.push({
-    type: 'user_message',
-    item_id: promptId ?? nextItemId(turn),
-    status: 'ended',
-    placement: 'opener',
-    prompt_ids: promptId === undefined ? [] : [promptId],
-    origin: projectOrigin(origin),
-    content: projectUserContent(message),
-    created_at: time,
-  });
+  if (!owned) endTurn(state, turn, 'completed', time);
 }
 
 function notificationItem(turn: ConversationTurn, message: ContextMessage): ConversationItem {
@@ -314,7 +317,9 @@ function applyLegacyAssistant(
   message: Extract<ContextMessage, { role: 'assistant' }>,
   time: string | undefined,
 ): void {
-  const turn = openTurn(state) ?? startTurn(state, time);
+  const open = openTurn(state);
+  const ownerless = open === undefined && state.pendingPrompt === undefined;
+  const turn = open ?? (ownerless ? addTurn(state, time) : startTurn(state, time));
   for (const part of message.content) {
     const item = contentItem(part, nextItemId(turn), undefined);
     if (item !== undefined) turn.items.push(item);
@@ -329,6 +334,7 @@ function applyLegacyAssistant(
       display: message.toolCallDisplays?.[call.id],
     });
   }
+  if (ownerless) endTurn(state, turn, 'completed', time);
 }
 
 function applyLegacyToolResult(
@@ -443,7 +449,7 @@ function applyPromptBlocked(state: ConversationState, promptId: string | undefin
     const turn = state.turns[index]!;
     const opener = turn.items[0];
     if (opener?.type !== 'user_message' || !opener.prompt_ids.includes(promptId)) continue;
-    if (turn.status === 'running') endTurn(state, turn, 'blocked', time);
+    endTurn(state, turn, 'blocked', time);
     return;
   }
 }
@@ -521,7 +527,7 @@ function endCompaction(state: ConversationState, outcome: 'completed' | 'cancell
 
 function appendLegacyCompaction(state: ConversationState, summary: string | undefined, time: string | undefined): void {
   const open = openTurn(state);
-  const turn = open ?? startTurn(state, time, 'system');
+  const turn = open ?? addTurn(state, time, 'system');
   turn.items.push({
     type: 'compaction',
     item_id: nextItemId(turn),
@@ -562,8 +568,19 @@ function startTurn(state: ConversationState, time: string | undefined, kind: 'ag
     endTurn(state, previous, state.provisionalOutcomes[previous.turn_id] ?? 'completed', time);
     state.implicitlyEnded[previous.turn_id] = true;
   }
+  const turn = addTurn(state, time, kind, kind === 'agent' ? state.pendingPrompt?.turnNumber : undefined);
+  if (kind === 'agent') state.pendingPrompt = undefined;
+  state.openTurnId = turn.turn_id;
+  return turn;
+}
+
+function addTurn(
+  state: ConversationState,
+  time: string | undefined,
+  kind: 'agent' | 'system' = 'agent',
+  turnNumber?: number,
+): ConversationTurn {
   const ordinal = state.nextOrdinal++;
-  const turnNumber = kind === 'agent' ? state.pendingPrompt?.turnNumber : undefined;
   const turn: ConversationTurn = {
     turn_id: `t${ordinal}`,
     ordinal,
@@ -574,9 +591,7 @@ function startTurn(state: ConversationState, time: string | undefined, kind: 'ag
     steps: [],
     items: [],
   };
-  if (kind === 'agent') state.pendingPrompt = undefined;
   state.turns.push(turn);
-  state.openTurnId = turn.turn_id;
   return turn;
 }
 

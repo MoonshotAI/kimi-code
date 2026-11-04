@@ -375,6 +375,70 @@ describe('conversation fold', () => {
     });
   });
 
+  it('ends the turns of CLI shell commands at once instead of leaving the last one running', () => {
+    const state = fold([
+      userMessage(undefined, '<bash-input>\nls\n</bash-input>', { kind: 'shell_command', phase: 'input' }),
+      userMessage(undefined, '<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>', { kind: 'shell_command', phase: 'output' }),
+    ]);
+
+    expect(state.turns.map((turn) => `${turn.status}:${turn.outcome}`)).toEqual(['ended:completed', 'ended:completed']);
+    expect(state.openTurnId).toBeUndefined();
+  });
+
+  it('ends a prompt a hook blocked as blocked and the hook result before it as completed', () => {
+    const hookResult = (text: string): WireRecord =>
+      message('assistant', text, { origin: { kind: 'hook_result', event: 'UserPromptSubmit', blocked: true } });
+    const state = fold([
+      hookResult('Blocked by policy'),
+      userMessage('p1', 'do the thing'),
+      record('prompt.completed', { promptId: 'p1', reason: 'blocked' }),
+      hookResult('Blocked again'),
+      record('prompt.completed', { promptId: 'p2', reason: 'blocked' }),
+    ]);
+
+    expect(state.turns.map((turn) => `${shape(turn).join('|')}:${turn.status}:${turn.outcome}`)).toEqual([
+      'assistant_message:t0#0:Blocked by policy:ended:completed',
+      'opener:do the thing:ended:blocked',
+      'assistant_message:t2#0:Blocked again:ended:completed',
+    ]);
+  });
+
+  it('keeps a running turn open while ownerless messages land beside it', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'work'),
+      stepBegin(0, 1, 's1'),
+      userMessage(undefined, '<bash-input>\nls\n</bash-input>', { kind: 'shell_command', phase: 'input' }),
+      userMessage(undefined, '<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>', { kind: 'shell_command', phase: 'output' }),
+    ]);
+    expect(state.turns.map((turn) => turn.status)).toEqual(['running', 'ended', 'ended']);
+    expect(state.openTurnId).toBe('t0');
+
+    for (const entry of [contentPart(0, 1, 's1', { type: 'text', text: 'done' }, 0), stepEnd(0, 1, 's1'), turnEnded(0, 'completed')]) {
+      applyConversationRecord(state, entry);
+    }
+
+    expect(state.turns.map((turn) => `${turn.turn_number}:${turn.outcome}`)).toEqual([
+      '0:completed',
+      'undefined:completed',
+      'undefined:completed',
+    ]);
+    expect(shape(state.turns[0])).toEqual(['opener:work', 'assistant_message:s1:0:done']);
+  });
+
+  it('keeps the assistant run of an imported session in the turn its synthesized prompt opened', () => {
+    const state = fold([
+      turnPrompt(undefined, undefined, { kind: 'system_trigger', name: 'imported_orphan' }),
+      message('assistant', 'carried over'),
+      message('assistant', 'still the same turn'),
+      turnEnded(0, 'completed'),
+    ]);
+
+    expect(state.turns).toHaveLength(1);
+    expect(shape(state.turns[0])).toEqual(['assistant_message:t0#0:carried over', 'assistant_message:t0#1:still the same turn']);
+    expect(state.turns[0]).toMatchObject({ turn_number: 0, status: 'ended', outcome: 'completed' });
+  });
+
   it('drops a dangling turn prompt that does not match the next message', () => {
     const state = fold([
       turnPrompt(4, 'p-undone'),
@@ -390,8 +454,10 @@ describe('conversation fold', () => {
 
   it('applies legacy undo records at message granularity', () => {
     const state = fold([
+      turnPrompt(undefined, undefined),
       userMessage('a', 'first'),
       message('assistant', 'one'),
+      turnPrompt(undefined, undefined),
       userMessage('b', 'second'),
       message('assistant', 'two'),
       record('turn.steer', { input: [{ type: 'text', text: 'wait' }], origin: { kind: 'user' } }),
@@ -399,6 +465,7 @@ describe('conversation fold', () => {
       message('assistant', 'three'),
       record('context.undo', { count: 1 }),
       record('context.undo', { count: 1 }),
+      turnPrompt(undefined, undefined),
       userMessage('d', 'third'),
     ]);
 
@@ -430,6 +497,7 @@ describe('conversation fold', () => {
 
   it('folds legacy assistant and tool messages', () => {
     const state = fold([
+      turnPrompt(undefined, undefined),
       userMessage('a', 'read it'),
       record('context.append_message', {
         message: {
