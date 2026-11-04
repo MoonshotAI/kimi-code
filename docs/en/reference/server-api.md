@@ -620,7 +620,7 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 
 | Method and path | Description |
 | --- | --- |
-| `POST /api/v1/sessions` | Create a session (requires `workspace_id` or `metadata.cwd`) |
+| `POST /api/v1/sessions` | Create a session (requires `workspace_id`, `metadata.cwd`, or `default_workspace=true`) |
 | `GET /api/v1/sessions` | List sessions; cursor pagination with filters such as `busy` and `archived_only` |
 | `GET /api/v1/sessions/{session_id}` | Read one session |
 | `GET /api/v1/sessions/{session_id}/profile` | Read the session profile |
@@ -662,20 +662,22 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 
 #### `POST /api/v1/sessions`
 
-Creates a session and returns it. The target directory comes from `workspace_id` (an already-registered workspace) or from `metadata.cwd` (the workspace is registered on first use); passing both requires them to agree. Creation broadcasts the global `event.session.created` event.
+Creates a session and returns it. The target directory comes from `workspace_id` (an already-registered workspace), from `metadata.cwd` (the workspace is registered on first use), or from `default_workspace=true` (a new dated, random-id subdirectory is created below the default parent directory). Passing `workspace_id` and `metadata.cwd` together requires them to agree. Creation broadcasts the global `event.session.created` event.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `workspace_id` | body | string | **Required** when `metadata.cwd` is absent. Registered workspace id; the session is created at that workspace's root |
-| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root |
+| `workspace_id` | body | string | **Required** when neither `metadata.cwd` nor `default_workspace` is given. Registered workspace id; the session is created at that workspace's root |
+| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when neither `workspace_id` nor `default_workspace` is given; with both given, it must equal the workspace root |
+| `default_workspace` | body | boolean | When `true`, creates a `YYYY-MM-DD-<random-id>` subdirectory below `~/KimiCode/Default` (or [`default_workspace.path`](../configuration/config-files.md#default-workspace)) and uses it as the session's isolated working directory. Cannot be combined with `workspace_id` or `metadata` |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
 | `agent_config` | body | object | Accepted by the schema but currently not applied — set the model and modes through `POST /api/v1/sessions/{session_id}/profile` |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40001`: neither `workspace_id` nor `metadata.cwd` given, or `metadata.cwd` does not match the workspace root (`details` lists the field)
+- `40001`: none of `workspace_id`, `metadata.cwd`, and `default_workspace` given, `default_workspace` combined with `workspace_id` or `metadata`, or `metadata.cwd` does not match the workspace root (`details` lists the field)
 - `40409`: the working directory does not exist or is not a directory
 - `40410`: no registered workspace with that `workspace_id`
+- `40930`: the default workspace folder cannot be created or used. `data` is `{ path, reason }`, where `reason` is one of `blocked_by_file` (a file sits where a folder is needed), `permission_denied`, `missing_parent` (a parent folder or drive is unavailable), `no_space`, `read_only`, `invalid_path` (not absolute, or too long), or `unknown`
 
 #### `GET /api/v1/sessions`
 
@@ -1526,6 +1528,7 @@ Every endpoint that returns a workspace uses this wire shape. Registration and u
 | `name` | string | Display name, 1–100 characters; defaults to the primary directory's base name |
 | `kind` | string | Workspace kind: `managed` (explicitly created, `wm_` id; sessions do not merge the project `local.toml`) or `implicit` (registered by directory, `wd_` id; sessions merge the project `local.toml` for legacy compatibility) |
 | `additional_dirs` | string[] | Registry-managed extra source folders as absolute paths (excludes project `local.toml` and ephemeral sources) |
+| `is_default` | boolean | Whether this is the default parent directory or one of its direct session subdirectories |
 | `created_at` | string | Registration time, ISO 8601 |
 | `last_opened_at` | string | Last time the workspace was opened or re-registered, ISO 8601 |
 | `session_count` | integer | Number of sessions in the workspace |

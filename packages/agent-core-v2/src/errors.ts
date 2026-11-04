@@ -31,6 +31,7 @@ import { UsageErrors } from '#/agent/usage/errors';
 import { WebErrors } from '#/app/web/errors';
 import { WireErrors } from '#/wire/errors';
 import { WorkspaceErrors } from '#/app/workspace/errors';
+import { DefaultWorkspaceErrors } from '#/app/defaultWorkspace/errors';
 
 export * from '#/_base/errors/codes';
 export * from '#/_base/errors/errorMessage';
@@ -66,6 +67,7 @@ export { UsageErrors } from '#/agent/usage/errors';
 export { WebErrors } from '#/app/web/errors';
 export { WireErrors } from '#/wire/errors';
 export { WorkspaceErrors } from '#/app/workspace/errors';
+export { DefaultWorkspaceErrors } from '#/app/defaultWorkspace/errors';
 export { EventErrors } from '#/app/event/errors';
 export { StateErrors } from '#/state/errors';
 
@@ -100,6 +102,7 @@ export const ErrorCodes = {
   ...WebErrors.codes,
   ...WireErrors.codes,
   ...WorkspaceErrors.codes,
+  ...DefaultWorkspaceErrors.codes,
   ...EventErrors.codes,
   ...StateErrors.codes,
 } as const;
@@ -196,6 +199,7 @@ export type KimiErrorCode =
   | 'prompt.not_found'
   | 'session.busy'
   | 'shell.git_bash_not_found'
+  | 'default_workspace.unavailable'
   | 'workspace.not_found'
   | 'file.not_found'
   | 'file.too_large'

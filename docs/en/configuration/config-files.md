@@ -482,6 +482,14 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 `enabled` can be overridden by the `KIMI_CODE_WATCH` environment variable, which takes higher priority than `config.toml`.
 
+## `default_workspace`
+
+`default_workspace` sets the parent directory for chats created without selecting a project. New users with no sessions start in this workspace. Each new session gets its own subdirectory named `YYYY-MM-DD-<random-id>`, so session files are isolated instead of sharing one working directory. The default parent directory is `~/KimiCode/Default`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `path` | `string` | `~/KimiCode/Default` | Parent directory for default-workspace sessions. Use an absolute path or a leading `~/`; every new session creates a dated, random-id subdirectory below it |
+
 <!--
 ## `experimental`
 

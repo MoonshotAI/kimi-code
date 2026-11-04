@@ -620,7 +620,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `POST /api/v1/sessions` | 创建会话（需 `workspace_id` 或 `metadata.cwd`） |
+| `POST /api/v1/sessions` | 创建会话（需 `workspace_id`、`metadata.cwd` 或 `default_workspace=true`） |
 | `GET /api/v1/sessions` | 列出会话，游标分页，支持 `busy` / `archived_only` 等过滤 |
 | `GET /api/v1/sessions/{session_id}` | 读取单个会话 |
 | `GET /api/v1/sessions/{session_id}/profile` | 读取会话档案 |
@@ -662,20 +662,22 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `POST /api/v1/sessions`
 
-创建会话并返回。目标目录来自 `workspace_id`（已注册的工作区）或 `metadata.cwd`（首次使用时注册该工作区）；两者同时提供时必须一致。创建时会广播全局 `event.session.created` 事件。
+创建会话并返回。目标目录来自 `workspace_id`（已注册的工作区）、`metadata.cwd`（首次使用时注册该工作区），或 `default_workspace=true`（在默认父目录下创建日期加随机 id 的子目录）。同时提供 `workspace_id` 与 `metadata.cwd` 时必须一致。创建时会广播全局 `event.session.created` 事件。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `workspace_id` | body | string | 未提供 `metadata.cwd` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
-| `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录 |
+| `workspace_id` | body | string | 未提供 `metadata.cwd` 和 `default_workspace` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
+| `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 和 `default_workspace` 时**必填**；与 `workspace_id` 同时提供时必须等于工作区根目录 |
+| `default_workspace` | body | boolean | 为 `true` 时，在 `~/KimiCode/Default`（或 [`default_workspace.path`](../configuration/config-files.md#default-workspace)）下创建 `YYYY-MM-DD-<随机 id>` 子目录，作为会话的独立工作目录。不能与 `workspace_id` 或 `metadata` 同时提供 |
 | `title` | body | string | 初始标题（至少 1 个字符）；否则会话无标题 |
 | `agent_config` | body | object | schema 接受该字段但当前不会应用——模型与各模式请通过 `POST /api/v1/sessions/{session_id}/profile` 设置 |
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
-- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供，或 `metadata.cwd` 与工作区根目录不一致（`details` 会列出该字段）
+- `40001`：`workspace_id`、`metadata.cwd`、`default_workspace` 都未提供，`default_workspace` 与 `workspace_id` 或 `metadata` 同时提供，或 `metadata.cwd` 与工作区根目录不一致（`details` 会列出该字段）
 - `40409`：工作目录不存在或不是目录
 - `40410`：没有以该 `workspace_id` 注册的工作区
+- `40930`：默认工作区目录无法创建或使用。`data` 为 `{ path, reason }`，`reason` 取值：`blocked_by_file`（需要目录的位置被文件占用）、`permission_denied`、`missing_parent`（上级目录或盘符不可用）、`no_space`、`read_only`、`invalid_path`（非绝对路径或过长）、`unknown`
 
 #### `GET /api/v1/sessions`
 
@@ -1526,6 +1528,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `name` | string | 显示名，1–100 个字符；默认取主目录的基名 |
 | `kind` | string | 工作区类别：`managed`（经显式创建，`wm_` id；会话不合并项目 `local.toml`）或 `implicit`（按目录隐式注册，`wd_` id；会话合并项目 `local.toml` 以兼容旧配置） |
 | `additional_dirs` | string[] | 注册表管理的额外源文件夹绝对路径（不含项目 `local.toml` 与临时来源） |
+| `is_default` | boolean | 是否为默认父目录或其直接子目录中的默认会话目录 |
 | `created_at` | string | 注册时间，ISO 8601 |
 | `last_opened_at` | string | 最近一次打开或重新注册工作区的时间，ISO 8601 |
 | `session_count` | integer | 工作区内的会话数 |

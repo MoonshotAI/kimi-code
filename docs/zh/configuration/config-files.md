@@ -481,6 +481,14 @@ max_chars = 500000
 
 `enabled` 可被环境变量 `KIMI_CODE_WATCH` 覆盖，优先级高于配置文件。
 
+## `default_workspace`
+
+`default_workspace` 设置未选择项目时聊天所使用的父目录。没有任何会话的新用户会进入这个工作区。每个新会话都会创建名为 `YYYY-MM-DD-<随机 id>` 的独立子目录，避免不同会话共用同一个工作目录。默认父目录为 `~/KimiCode/Default`。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `path` | `string` | `~/KimiCode/Default` | 默认工作区会话的父目录。使用绝对路径或以 `~/` 开头；每个新会话都会在其下创建日期加随机 id 的子目录 |
+
 <!--
 ## `experimental`
 
