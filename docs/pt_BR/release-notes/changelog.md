@@ -6,6 +6,118 @@ outline: 2
 
 Esta página documenta as alterações em cada versão do Kimi Code CLI.
 
+## 2.4.1 (2026-10-30)
+
+### Melhorias
+
+- Agora, uma única leitura de arquivo feita pelo agente retorna no máximo 100.000 caracteres ou aproximadamente 25.000 tokens, o que ocorrer primeiro, em vez de até 500.000 caracteres. Defina `max_chars` em `[read]` no `config.toml` para aumentar novamente ambos os limites.
+- Otimizar os prompts integrados.
+
+### Correções de bugs
+
+- web: Melhorias nas interações e correção de bugs conhecidos.
+
+## 2.4.0 (2026-10-28)
+
+### Funcionalidades
+
+- Adicionar `/import-sessions` e `kimi import-sessions` para importar sessões do Claude Code e do Codex dos últimos 15 ou 30 dias. Execute qualquer um dos comandos e escolha o período.
+- Adicionar `/provider refresh [providerId]` para atualizar as listas de modelos dos provedores durante a execução.
+- Expandir o raciocínio em streaming com `Ctrl-O`.
+- Informar o status da sessão principal e dos subagentes a terminais compatíveis por meio de OSC 7501, incluindo interações pendentes e resultados mantidos.
+- Oferecer suporte à seleção de modelos por tarefa e ao limite `max_running_tasks` no Tower, além de aumentar o limite padrão de concorrência de agentes de 16 para 256.
+
+### Melhorias
+
+- O modo de planejamento agora só pode ser ativado pelo usuário, em vez de ser iniciado automaticamente pelo agente. Todos os planos exigem revisão do usuário, Never Ask não aprova mais planos automaticamente e `kimi -p` ignora `default_plan_mode` e não pode aprovar um plano em uma sessão que já esteja no modo Plan.
+- As sessões web agora são descarregadas da memória após 30 minutos de inatividade e retomadas automaticamente no próximo acesso.
+- Melhorar o layout e a experiência de interação de alguns componentes em tela cheia, incluindo a exibição das opções de aprovação, a seleção com o mouse e a alternância de foco.
+- Mover as listas de tarefas para cartões expansíveis no histórico da conversa e remover o antigo painel da área de entrada e o atalho `Ctrl-T`.
+- Melhorar a skill integrada `/import-from-cc-codex`.
+
+### Correções de bugs
+
+- Reconectar automaticamente os servidores MCP do workspace, com intervalos progressivos, quando a conexão inicial falhar ou for interrompida. Ajuste o intervalo usando `reconnect_initial_delay_ms` e `reconnect_max_delay_ms` em `[mcp]`.
+- Corrigir vários problemas conhecidos e implementar diversos refinamentos. Consulte o [changelog no GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) para ver mais detalhes técnicos.
+
+## 2.3.3 (2026-10-26)
+
+### Melhorias
+
+- Exibir um aviso de alto consumo ao ativar o modo swarm com `/swarm`.
+- Atualizar os prompts de confirmação de troca de modelo.
+- Unificar em uma única frase cada os dois avisos repetidos sobre o modo de permissões nos prompts de confirmação de início do swarm e da meta.
+
+### Correções de bugs
+
+- Não exibir um swarm com falha para chamadas de `AgentSwarm` rejeitadas antes do início de qualquer subagente, como quando o modo swarm está desativado. Após uma rejeição desse tipo, o agente indica `/swarm` caso você tenha solicitado um swarm.
+- web: Melhorias nas interações e correção de bugs conhecidos.
+
+## 2.3.2 (2026-10-25)
+
+### Correções de bugs
+
+- Executar as tarefas diretamente por padrão, em vez de iniciar subagentes proativamente. Solicite explicitamente a delegação na sua mensagem, em `AGENTS.md`, em uma skill ou em um modo multiagente ativado.
+- Os swarms de agentes agora só são iniciados quando você ativa o modo swarm: o agente não pode mais iniciar `AgentSwarm` por conta própria. Assim, os swarms deixam de estar disponíveis em `kimi -p` ou em clientes ACP, como o Zed.
+
+## 2.3.1 (2026-10-23)
+
+### Funcionalidades
+
+- Oferecer a opção de assumir uma sessão que ainda está em uso após uma nova tentativa, permitindo reutilizar sessões que ficaram bloqueadas por um processo encerrado, e adicionar a opção `KIMI_CODE_SESSION_LOCK=0` para desativar o bloqueio de sessão.
+
+### Melhorias
+
+- Exibir o nome do cliente que está mantendo a sessão em uso nas mensagens de erro de sessão ocupada.
+
+### Correções de bugs
+
+- Corrigir sessões que ocasionalmente permaneciam ocupadas após uma falha do aplicativo no macOS e no Linux.
+- Corrigir falhas de confiança do workspace quando o Git Bash não está disponível no Windows.
+- web: Melhorias nas interações e correção de bugs conhecidos.
+
+## 2.3.0 (2026-10-21)
+
+### Funcionalidades
+
+- As skills de plugins agora são invocadas por nomes qualificados no formato `<pluginID>:<skillName>`, evitando que skills com o mesmo nome de plugins diferentes entrem em conflito. A invocação apenas pelo nome não funciona mais.
+- Quando a mesma sessão está aberta em vários clientes, o envio de uma mensagem por outro cliente agora exibe um aviso de sessão em uso, com opções para tentar novamente ou cancelar.
+- O título da sessão agora é gerado automaticamente após o primeiro turno e exibido como título da janela do terminal.
+- A troca de modelos durante uma sessão agora exibe uma caixa de diálogo de confirmação com três opções: iniciar uma nova sessão, compactar e continuar ou continuar diretamente.
+- O controle remoto agora oferece suporte a streaming, e o limite foi aumentado de 10 MiB para 100 MiB.
+
+### Melhorias
+
+- `/compact` agora entra na fila enquanto o agente está ocupado, em vez de falhar com um erro.
+- A opção de ativar ou desativar avaliações de sessões foi movida de `tui.toml` para `config.toml`.
+- `dangerous_command_guard = false` agora desativa todas as proteções integradas que exigem confirmação, e não apenas as relacionadas a comandos perigosos.
+
+### Correções de bugs
+
+- Os hooks agora são executados no diretório do projeto da sessão, em vez do diretório de inicialização do servidor.
+- Corrigir vários problemas conhecidos e implementar diversos refinamentos. Consulte o [changelog no GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) para ver mais detalhes técnicos.
+
+## 2.2.0 (2026-10-14)
+
+### Funcionalidades
+
+- Adicionar o recurso opcional de atualização de progresso `NotifyUser` (desativado por padrão): novas sessões podem exibir atualizações de progresso do agente durante a execução de um turno. Ative-o no painel `/experiments` da TUI.
+- Adicionar `kimi app [path]` para abrir um novo chat no aplicativo desktop, no diretório atual ou em um diretório especificado.
+- Adicionar resumos fixos das mensagens do usuário no modo de tela cheia: quando uma mensagem do usuário sai da área visível durante a rolagem, um resumo de uma linha permanece na tela. Ao clicar nele, a visualização retorna à mensagem original. O modo de tela cheia pode ser ativado pela configuração de modo da TUI em `/settings` ou por meio de `tui_mode = "fullscreen"` em `~/.kimi-code/tui.toml`.
+
+### Melhorias
+
+- Substituir os cartões de skills do usuário por prompts destacados e adicionar suporte a Ctrl-S para prompts de skills.
+- Modo Tower: uma mensagem enviada enquanto o agente está em execução interrompe o turno em andamento e é executada em seu próprio turno.
+- Exibir uma indicação de status "Shutting down" enquanto os hooks de encerramento são executados durante a saída. Pressione Ctrl+C durante esse período para forçar a saída imediata, sem aguardar o timeout do hook.
+
+### Correções de bugs
+
+- Corrigir turnos deslocados, respostas perdidas e renderização fora de posição em sessões nas quais um hook `UserPromptSubmit` injeta texto. A saída JSON dos hooks sem um campo `"message"` não é mais adicionada à conversa.
+- Remover a opção `executor = "kaos"`, que nunca foi implementada, da configuração de servidores MCP stdio. Configurações que a utilizarem agora falharão na validação durante o carregamento.
+- Tarefas Cron da sessão de origem não são mais executadas dentro de uma sessão criada por fork.
+- Corrigir vários problemas conhecidos e implementar diversos refinamentos. Consulte o [changelog no GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) para ver mais detalhes técnicos.
+
 ## 2.1.1 (2026-09-24)
 
 ### Melhorias
@@ -1562,289 +1674,287 @@ Consulte a [documentação do pool de modelos de subagentes](https://moonshotai.
 
 ## 0.10.1 (2026-06-05)
 
-### Bug Fixes
+### Correções de bugs
 
-- Fix a crash when starting a goal in the TUI.
+- Corrigir uma falha que ocorria ao iniciar um objetivo na TUI.
 
 ## 0.10.0 (2026-06-04)
 
-### Features
+### Funcionalidades
 
-- Users now can prepare several goals for the agent to work on sequentially. The agent will pick up the next goal from the queue once the current goal is completed. Use `/goal next <objective>` to queue a goal and `/goal next manage` to review and change the queue interactively.
-- Add the built-in `update-config` skill — you can now have Kimi edit its own config files.
-- Add persistent experimental feature toggles and a TUI panel that applies confirmed changes by reloading the current session.
-- Add `/reload` to reload the current session and apply updated config files, plus `/reload-tui` to reload only TUI preferences.
-- Add a doctor command for validating Kimi Code configuration files.
+- Agora os usuários podem preparar vários objetivos para que o agente trabalhe neles sequencialmente. Assim que o objetivo atual for concluído, o agente selecionará o próximo da fila. Use `/goal next <objective>` para adicionar um objetivo à fila e `/goal next manage` para revisar e alterar a fila de forma interativa.
+- Adicionar a skill integrada `update-config` — agora você pode fazer com que o Kimi edite seus próprios arquivos de configuração.
+- Adicionar opções persistentes para ativar ou desativar recursos experimentais e um painel na TUI que aplica as alterações confirmadas recarregando a sessão atual.
+- Adicionar `/reload` para recarregar a sessão atual e aplicar os arquivos de configuração atualizados, além de `/reload-tui` para recarregar apenas as preferências da TUI.
+- Adicionar um comando doctor para validar os arquivos de configuração do Kimi Code.
 
-### Bug Fixes
+### Correções de bugs
 
-- Normalize malformed Responses stream rate limit errors as provider rate limit failures.
-- Keep managed OAuth credentials scoped to their configured authentication and API endpoints.
-- Stop carrying active and queued goals into forked sessions.
-- Fail early when Git Bash is missing on Windows before starting CLI sessions.
-- Refresh the update target before showing foreground update prompts so the displayed version matches the install.
-- Point session error diagnostics to the `/export-debug-zip` command.
-- Set terminal tab titles without renaming the running process.
+- Normalizar erros de limite de taxa malformados no stream de Responses como falhas de limite de taxa do provedor.
+- Manter as credenciais OAuth gerenciadas restritas aos endpoints de autenticação e API configurados para elas.
+- Impedir que objetivos ativos e enfileirados sejam levados para sessões criadas por fork.
+- Detectar a ausência do Git Bash no Windows antes de iniciar sessões da CLI, evitando falhas posteriores.
+- Atualizar o destino da atualização antes de exibir avisos de atualização em primeiro plano, garantindo que a versão exibida corresponda à instalação.
+- Direcionar os diagnósticos de erros da sessão para o comando `/export-debug-zip`.
+- Definir os títulos das abas do terminal sem renomear o processo em execução.
 
-### Polish
+### Melhorias
 
-- Start automatic background updates as soon as startup's fresh update check finds a newer version.
-- Set the CLI process title to kimi-code during startup.
-- Lowercase the stale file content message in edit tool errors.
+- Iniciar atualizações automáticas em segundo plano assim que a verificação inicial detectar uma versão mais recente.
+- Definir o título do processo da CLI como kimi-code durante a inicialização.
+- Colocar em letras minúsculas a mensagem sobre conteúdo de arquivo desatualizado nos erros da ferramenta de edição.
 
-### Refactors
+### Refatorações
 
-- Ensure Nix-packaged CLI builds can find ripgrep and fd.
+- Garantir que builds da CLI empacotados com Nix consigam localizar o ripgrep e o fd.
 
-### Other
+### Outros
 
-- Document the Git Bash prerequisite for Windows installs.
+- Documentar o pré-requisito do Git Bash para instalações no Windows.
 
 ## 0.9.0 (2026-06-03)
 
-### Features
+### Funcionalidades
 
-- Add the `kimi acp` subcommand: kimi-code now speaks [Agent Client Protocol 0.23](https://agentclientprotocol.com/) over stdio so IDEs (Zed, JetBrains AI Chat, custom clients) can drive sessions directly — coverage matrix, Zed configuration and breaking pre-release notes are in [kimi acp Subcommand Page](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp.html).
-- Add `/btw` for side-channel conversations without steering the active main turn, and allow `/btw` to open the side-channel panel before entering a question.
+- Adicionar o subcomando `kimi acp`: agora o kimi-code oferece suporte ao [Agent Client Protocol 0.23](https://agentclientprotocol.com/) via stdio, permitindo que IDEs (Zed, JetBrains AI Chat e clientes personalizados) controlem sessões diretamente — a matriz de compatibilidade, a configuração do Zed e as notas sobre alterações incompatíveis da versão pré-lançamento estão disponíveis na [página do subcomando kimi acp](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp.html).
+- Adicionar `/btw` para conversas paralelas que não interferem no turno principal em andamento, além de permitir que `/btw` abra o painel de conversas paralelas antes de inserir uma pergunta.
 
-### Bug Fixes
+### Correções de bugs
 
-- Fix external editor (Ctrl+G) on Windows by removing `/bin/sh` dependency and using platform-aware shell quoting for temp file paths.
-- Use the OpenAI completion token field required by newer Chat Completions models.
-- Use configured model output limits for completion token caps.
-- Fix goal budget tool schemas for OpenAI-compatible providers.
-- Resume saved subagents lazily when they are accessed.
+- Corrigir o editor externo (Ctrl+G) no Windows, removendo a dependência de `/bin/sh` e usando o tratamento de aspas adequado ao sistema operacional para os caminhos dos arquivos temporários.
+- Usar o campo de token de conclusão da OpenAI exigido pelos modelos mais recentes de Chat Completions.
+- Usar os limites de saída configurados para o modelo ao definir os limites de tokens de conclusão.
+- Corrigir os schemas das ferramentas de orçamento de objetivos para provedores compatíveis com a OpenAI.
+- Retomar subagents salvos de forma lazy, somente quando forem acessados.
 
-### Polish
+### Melhorias
 
-- Unify the interaction and visuals across TUI dialogs and selectors.
-- Log enabled experimental flags at startup.
+- Unificar a interação e o visual entre as caixas de diálogo e os seletores da TUI.
+- Registrar as flags experimentais ativadas durante a inicialização.
 
-### Refactors
+### Refatorações
 
-- Allow SDK runtime creation to use a separate RPC client while preserving local CLI startup.
+- Permitir que a criação do runtime do SDK utilize um cliente RPC separado, preservando a inicialização local da CLI.
 
 ## 0.8.0 (2026-06-02)
 
-### Features
+### Funcionalidades
 
-- Add experimental goal mode for longer tasks that need more than one turn. Turn it on with `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` before you start Kimi.
+- Adicionar o modo experimental de objetivos para tarefas mais longas, que exigem mais de um turno. Ative-o definindo `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` antes de iniciar o Kimi.
 
-  Use `/goal <objective>` in the TUI when you want Kimi to keep working on one task across turns. For example:
+  Use `/goal <objective>` na TUI quando quiser que o Kimi continue trabalhando em uma mesma tarefa ao longo de vários turnos. Por exemplo:
 
-  ```text
-  /goal Fix the failing checkout test
-  ```
+  ` /goal Fix the failing checkout test `
 
-  Kimi shows the goal in the TUI and keeps progress visible while it works. Use `/goal status`, `/goal pause`, `/goal resume`, `/goal cancel`, and `/goal replace <objective>` to manage the goal. This feature is still experimental. Try it and tell us what would make it more useful.
-- Add `kimi provider` CLI subcommand with `add`, `remove`, `list`, and `catalog list` / `catalog add` actions, so providers from a custom registry (api.json) or the public models.dev catalog can be imported and managed without launching the TUI.
-- Add background structured questions so agents can continue while waiting for user answers.
-- Add background automatic upgrades, which can be disabled in tui.toml.
-- Add `/undo` slash command to withdraw the last prompt from conversation history, and keep replay records in sync when a prompt is undone.
-- Add a `kimi upgrade` command for manually checking and upgrade Kimi Code CLI.
-- Add approval lifecycle hook events for observing pending and completed permission prompts.
-- Allow subagents to use custom tools registered on their parent agent.
-- Allow glob searches to target explicit absolute paths outside the workspace.
+  O Kimi exibe o objetivo na TUI e mantém o progresso visível enquanto trabalha. Use `/goal status`, `/goal pause`, `/goal resume`, `/goal cancel` e `/goal replace <objective>` para gerenciar o objetivo. Esse recurso ainda é experimental. Experimente e conte para nós o que poderia torná-lo mais útil.
+- Adicionar o subcomando `kimi provider` à CLI, com as ações `add`, `remove`, `list`, `catalog list` e `catalog add`, permitindo importar e gerenciar provedores de um registro personalizado (`api.json`) ou do catálogo público models.dev sem precisar iniciar a TUI.
+- Adicionar perguntas estruturadas em segundo plano, permitindo que os agentes continuem trabalhando enquanto aguardam as respostas dos usuários.
+- Adicionar atualizações automáticas em segundo plano, que podem ser desativadas em `tui.toml`.
+- Adicionar o comando `/undo` para retirar o último prompt do histórico da conversa e manter os registros de reprodução sincronizados quando um prompt for desfeito.
+- Adicionar o comando `kimi upgrade` para verificar e atualizar manualmente o Kimi Code CLI.
+- Adicionar eventos de hooks ao ciclo de vida das aprovações, permitindo observar solicitações de permissão pendentes e concluídas.
+- Permitir que subagents utilizem ferramentas personalizadas registradas no agente principal.
+- Permitir que pesquisas com glob utilizem caminhos absolutos explícitos fora do workspace.
 
-### Bug Fixes
+### Correções de bugs
 
-- Fix cross-provider replay failures from incompatible tool call IDs and unsigned Claude thinking history.
-- Fix custom registry provider handling during re-import. Prevent loss of multi-provider entries and remove stale providers along with their model aliases and default model references.
-- Fix tool output preview rendering: trim trailing empty lines, append ellipsis to multi-line Bash command headers, and truncate long single-line output by visual wrapped lines instead of raw newline count.
-- Fix slash-activated skills not being recognized by the model due to missing system reminder wrapper.
-- Fix a crash in the `/sessions` picker on very narrow terminals by clamping every rendered line to the terminal width.
-- Normalize glob patterns before brace expansion to prevent incorrect path matching.
-- Prevent modified keyboard release sequences from appearing after exiting the CLI.
-- Fix Git Bash path detection on Windows by also searching `usr\bin\bash.exe` locations, which is where bash lives in many Git for Windows installations where `bin\bash.exe` does not exist.
+- Corrigir falhas de reprodução entre provedores causadas por IDs incompatíveis de chamadas de ferramentas e pelo histórico de thinking do Claude sem assinatura.
+- Corrigir o tratamento de provedores de registros personalizados durante a reimportação. Evitar a perda de entradas com vários provedores e remover provedores obsoletos, juntamente com seus aliases de modelos e referências ao modelo padrão.
+- Corrigir a renderização da prévia da saída das ferramentas: remover linhas vazias no final, adicionar reticências aos cabeçalhos de comandos Bash com várias linhas e truncar saídas longas de uma única linha com base nas linhas exibidas após a quebra visual, em vez da quantidade de quebras de linha.
+- Corrigir skills ativadas por comandos slash que não eram reconhecidas pelo modelo devido à ausência do wrapper de lembrete do sistema.
+- Corrigir uma falha no seletor `/sessions` em terminais muito estreitos, limitando cada linha renderizada à largura do terminal.
+- Normalizar padrões glob antes da expansão de chaves para evitar correspondências incorretas de caminhos.
+- Impedir que sequências modificadas de liberação de teclas apareçam após sair da CLI.
+- Corrigir a detecção do caminho do Git Bash no Windows, pesquisando também em locais `usr\bin\bash.exe`, onde o bash está presente em muitas instalações do Git for Windows que não possuem `bin\bash.exe`.
 
-### Polish
+### Melhorias
 
-- Show MCP server summary in the welcome panel and add configuration hints in the /mcp command output.
-- Point users to `/provider` instead of the removed `/connect` command in the welcome screen and the no-models-configured hint.
-- Append the current todo list as markdown to compaction summaries before writing them to history.
-- Show the full model name in the footer status bar instead of truncating the provider prefix.
-- Remind the model to refresh TodoList during long-running tasks and strengthen TodoList progress-tracking guidance.
-- Replace chalk named color with theme-aware hex in session-directory warning.
+- Exibir um resumo dos servidores MCP no painel de boas-vindas e adicionar dicas de configuração à saída do comando `/mcp`.
+- Direcionar os usuários para `/provider` em vez do comando `/connect`, que foi removido, na tela de boas-vindas e no aviso de ausência de modelos configurados.
+- Adicionar a lista de tarefas atual ao resumo de compactação em formato Markdown antes de gravá-lo no histórico.
+- Exibir o nome completo do modelo na barra de status do rodapé, em vez de truncar o prefixo do provedor.
+- Lembrar o modelo de atualizar o TodoList durante tarefas longas e reforçar as orientações de acompanhamento do progresso no TodoList.
+- Substituir a cor nomeada do chalk por um valor hexadecimal adaptado ao tema no aviso sobre o diretório da sessão.
 
-### Refactors
+### Refatorações
 
-- Consolidate background task management under the agent background runtime.
+- Consolidar o gerenciamento de tarefas em segundo plano no runtime de background do agente.
 
 ## 0.7.0 (2026-06-02)
 
-### Features
+### Funcionalidades
 
-- Add `/provider` command for managing AI providers, support custom registry imports, and introduce a tabbed model selector. It replaces the deprecated `/connect` command — use `/provider` instead.
-- Render scheduled reminders distinctly in the TUI, expose cron fired events to SDK clients, and report cron fire times with local timezone offsets.
-- Add `KIMI_MODEL_ADAPTIVE_THINKING` (and a matching `adaptive_thinking` model-alias field) to force adaptive thinking (`thinking: { type: 'adaptive' }`) on or off, overriding the Anthropic model-name version inference. This lets custom-named compatible endpoints that back an adaptive-capable model opt in even when the model name does not encode a parseable Claude version.
+- Adicionar o comando `/provider` para gerenciar provedores de IA, oferecer suporte à importação de registros personalizados e introduzir um seletor de modelos com abas. Ele substitui o comando obsoleto `/connect` — use `/provider` em seu lugar.
+- Exibir lembretes agendados de forma diferenciada na TUI, disponibilizar eventos de disparo do cron para clientes do SDK e informar os horários de execução do cron com os respectivos deslocamentos do fuso horário local.
+- Adicionar `KIMI_MODEL_ADAPTIVE_THINKING` (e o campo correspondente `adaptive_thinking` nos aliases de modelos) para forçar a ativação ou desativação do adaptive thinking (`thinking: { type: 'adaptive' }`), substituindo a inferência de versão baseada no nome do modelo Anthropic. Isso permite que endpoints compatíveis com nomes personalizados, que utilizam modelos com suporte a adaptive thinking, ativem esse recurso mesmo quando o nome do modelo não contém uma versão Claude que possa ser identificada.
 
-### Bug Fixes
+### Correções de bugs
 
-- Report truncated compaction summaries clearly and apply valid completion token budgets across supported providers.
-- Fix glob pattern backslash escaping and include match count in truncation messages.
+- Informar claramente quando os resumos de compactação forem truncados e aplicar limites válidos de tokens de conclusão nos provedores compatíveis.
+- Corrigir o escape de barras invertidas em padrões glob e incluir a quantidade de correspondências nas mensagens de truncamento.
 
-### Polish
+### Melhorias
 
-- Clarify Kimi Platform API key login labels and prompt details.
-- Polish a small TUI visual interaction.
+- Esclarecer os rótulos e os detalhes do prompt de login com chave de API da Kimi Platform.
+- Aprimorar um pequeno detalhe visual e de interação da TUI.
 
 ## 0.6.0 (2026-05-29)
 
-### Features
+### Funcionalidades
 
-- Add a `KIMI_MODEL_*` environment-variable channel that lets you run Kimi Code against a specific model (provider type, base URL, API key, context size, capabilities, and thinking settings) without editing `config.toml`.
-- Install plugins directly from GitHub repository URLs, and surface each install's origin and trust level (kimi-official, curated, third-party) in the plugin manager.
+- Adicionar um canal de variáveis de ambiente `KIMI_MODEL_*` que permite executar o Kimi Code com um modelo específico (tipo de provedor, URL base, chave de API, tamanho do contexto, recursos e configurações de thinking) sem precisar editar o arquivo `config.toml`.
+- Permitir a instalação de plugins diretamente de URLs de repositórios do GitHub e exibir a origem e o nível de confiança de cada instalação (`kimi-official`, `curated`, `third-party`) no gerenciador de plugins.
 
-### Bug Fixes
+### Correções de bugs
 
-- Show the real terminal status of background agents in the transcript so lost, failed, and killed ones no longer appear as completed, and include the resume agent id and recovery instructions in the failure notification so the model can resume reliably.
-- Recover from provider model token limit errors during long conversations.
-- Automatically retry when a model response stream is dropped mid-flight (a `terminated` error) instead of failing the turn.
-- Handle context overflow errors consistently across provider responses.
-- Back off failed compaction retries by a fixed slice of the model context window.
-- Fix the native self-updater reporting a successful update when the install command actually failed.
-- Project persisted hook and blocked prompt messages into model context.
-- Keep blocked prompt hook conversations available to subsequent model turns.
-- Fix footer leaking onto the terminal when resuming a non-existent session.
-- Fix automatic ripgrep installation when temporary files are on another filesystem.
+- Exibir no histórico da conversa o status real dos agentes em segundo plano, para que agentes perdidos, com falha ou encerrados à força não apareçam mais como concluídos. Incluir também o ID do agente para retomada e as instruções de recuperação na notificação de falha, permitindo que o modelo retome o trabalho de forma confiável.
+- Recuperar-se de erros de limite de tokens do modelo do provedor durante conversas longas.
+- Tentar novamente automaticamente quando o stream de resposta de um modelo for interrompido durante a execução (erro `terminated`), em vez de encerrar o turno com falha.
+- Tratar erros de estouro de contexto de maneira consistente entre as respostas dos provedores.
+- Aumentar progressivamente o intervalo entre novas tentativas de compactação malsucedidas, usando uma fração fixa da janela de contexto do modelo.
+- Corrigir o atualizador nativo, que informava uma atualização bem-sucedida mesmo quando o comando de instalação falhava.
+- Incluir no contexto do modelo as mensagens persistidas dos hooks e os prompts bloqueados.
+- Manter as conversas dos hooks de prompts bloqueados disponíveis para os turnos seguintes do modelo.
+- Corrigir o vazamento do rodapé no terminal ao retomar uma sessão inexistente.
+- Corrigir a instalação automática do ripgrep quando os arquivos temporários estão em outro sistema de arquivos.
 
-### Polish
+### Melhorias
 
-- Remove the default per-turn step limit of 1000. Users can still set `max_steps_per_turn` in config to enforce a custom limit.
-- Support querying sessions by sessionId or workDir in listSessions, and show a helpful cd command when resuming a session from a different working directory.
-- Expand the footer's rotating tips to surface more commands and shortcuts, featuring newer and important ones more prominently.
-- Improve the usage information display in the TUI.
-- Restrict plugin trust badges to Kimi-hosted plugin CDN URL patterns.
-- Clarify subagent and background task stop messages as user-initiated.
-- Align the datasource plugin with the generic two-tool workflow.
+- Remover o limite padrão de 1000 etapas por turno. Os usuários ainda podem definir `max_steps_per_turn` na configuração para estabelecer um limite personalizado.
+- Permitir consultar sessões por `sessionId` ou `workDir` em `listSessions` e exibir um comando `cd` útil ao retomar uma sessão a partir de um diretório de trabalho diferente.
+- Ampliar as dicas rotativas do rodapé para apresentar mais comandos e atalhos, dando maior destaque aos mais recentes e importantes.
+- Melhorar a exibição das informações de uso na TUI.
+- Restringir os selos de confiança dos plugins aos padrões de URL da CDN de plugins hospedada pela Kimi.
+- Esclarecer que as mensagens de interrupção de subagents e tarefas em segundo plano são resultado de ações do usuário.
+- Alinhar o plugin de datasource ao fluxo de trabalho genérico de duas ferramentas.
 
-### Refactors
+### Refatorações
 
-- Introduce `ModelProvider` interface and `SingleModelProvider` to decouple `Agent` from `ProviderManager`.
-- Split `RuntimeConfig` into `Kaos` and `ToolServices` and update all references accordingly.
-- Slim the LLM diagnostic logs with fewer, more compact fields.
-- Relocate shared tool service typing to the tool support layer.
+- Introduzir as interfaces `ModelProvider` e `SingleModelProvider` para desacoplar `Agent` de `ProviderManager`.
+- Dividir `RuntimeConfig` em `Kaos` e `ToolServices` e atualizar todas as referências de acordo.
+- Simplificar os logs de diagnóstico do LLM, utilizando menos campos e tornando-os mais compactos.
+- Transferir a tipagem compartilhada dos serviços de ferramentas para a camada de suporte a ferramentas.
 
 ## 0.5.0 (2026-05-28)
 
-### Features
+### Funcionalidades
 
-- Add scheduled tasks:
+- Adicionar tarefas agendadas:
 
-  You can now ask the agent to remind you at a specific time, run a task on a recurring cron schedule (for example, check a deploy every 5 minutes or run a daily report every weekday at 9am), or come back on its own in a few minutes to continue what it was doing.
+  Agora você pode pedir ao agente que envie um lembrete em um horário específico, execute uma tarefa de acordo com uma programação cron recorrente (por exemplo, verificar um deploy a cada 5 minutos ou gerar um relatório diário em todos os dias úteis às 9h) ou retome por conta própria, após alguns minutos, uma tarefa que estava executando.
 
-  Schedules use the standard 5-field cron syntax.
+  Os agendamentos utilizam a sintaxe cron padrão de 5 campos.
 
-- Add `/auto` slash command and `--auto` CLI flag for auto permission mode.
-- Show file content and diff in Write and Edit approval prompts, and open them in a dedicated full-screen viewer on ctrl+e instead of expanding inline.
+- Adicionar o comando slash `/auto` e a flag `--auto` à CLI para ativar o modo de permissões automáticas.
+- Exibir o conteúdo dos arquivos e as diferenças nos prompts de aprovação das operações Write e Edit, permitindo abri-los em um visualizador dedicado em tela cheia ao pressionar `ctrl+e`, em vez de expandi-los diretamente na interface.
 
-### Bug Fixes
+### Correções de bugs
 
-- Fix compaction to handle edge cases where no messages are compactable and improve retry logic.
-- Fix official datasource tools to preserve complete responses and write returned result files.
-- Fix migration mapping the legacy `default_yolo` key to the dead `yolo` field instead of `default_permission_mode`.
+- Corrigir a compactação para lidar com casos extremos em que nenhuma mensagem pode ser compactada e melhorar a lógica de novas tentativas.
+- Corrigir as ferramentas oficiais de datasource para preservar as respostas completas e gravar os arquivos de resultado retornados.
+- Corrigir a migração que mapeava a chave legada `default_yolo` para o campo obsoleto `yolo`, em vez de `default_permission_mode`.
 
-### Polish
+### Melhorias
 
-- Add a clickable changelog link to the update prompt.
-- Show the full Bash command when expanding a Bash tool card with `ctrl+o`. The header still truncates long commands at 60 chars, but the expanded view now reveals the complete multi-line command above the output.
-- Shorten the session title written to the terminal window/tab from 80 to 32 characters so long first messages and pasted content no longer stretch the tab bar past readable width.
-- Cap the inline todo panel at five rows and show a `+N more` indicator so long task lists no longer fill the screen.
-- Clarify plugin manager keyboard shortcuts and show plugin state changes inline.
-- Report discovered plugin skills in plugin manager summaries.
-- Offload large base64 media payloads from `wire.jsonl` into external blob files to reduce wire size and memory pressure during session replay. Includes an in-memory read-through cache on `BlobStore` so repeated rehydration avoids redundant disk reads.
-- Wrap long question, body, and option text in the AskUserQuestion dialog instead of truncating with an ellipsis. The question prompt, body description, option label, option description, and submit-tab review entries now flow onto multiple lines with a hanging indent.
+- Adicionar um link clicável para o changelog ao aviso de atualização.
+- Exibir o comando Bash completo ao expandir um cartão da ferramenta Bash com `ctrl+o`. O cabeçalho continua limitando comandos longos a 60 caracteres, mas a visualização expandida agora mostra o comando completo, incluindo múltiplas linhas, acima da saída.
+- Reduzir de 80 para 32 caracteres o título da sessão exibido na janela ou aba do terminal, evitando que mensagens iniciais longas e conteúdos colados ultrapassem a largura legível da barra de abas.
+- Limitar o painel inline de tarefas a cinco linhas e exibir um indicador `+N more`, evitando que listas longas ocupem toda a tela.
+- Esclarecer os atalhos de teclado do gerenciador de plugins e exibir as alterações de estado dos plugins diretamente na interface.
+- Exibir as skills de plugins encontradas nos resumos do gerenciador de plugins.
+- Transferir grandes cargas de mídia em base64 de `wire.jsonl` para arquivos blob externos, reduzindo o tamanho dos dados transmitidos e a pressão sobre a memória durante a reprodução de sessões. Inclui um cache de leitura em memória no `BlobStore`, permitindo que leituras repetidas evitem acessos redundantes ao disco.
+- Ajustar a janela de diálogo AskUserQuestion para que textos longos de perguntas, corpo e opções ocupem várias linhas, em vez de serem truncados com reticências. O enunciado da pergunta, a descrição do corpo, o rótulo e a descrição das opções e os itens de revisão na aba de envio agora são distribuídos em várias linhas com recuo suspenso.
 
-### Refactors
+### Refatorações
 
-- Refactor TUI code structure.
+- Refatorar a estrutura do código da TUI.
 
 ## 0.4.0 (2026-05-27)
 
-### Features
+### Funcionalidades
 
-- Add user-global plugin installation, interactive plugin management, plugin-provided skills, and plugin-owned MCP servers.
-- Expand folded paste markers on second paste.
-- Rework tool permissions: reads outside cwd no longer prompt, session approvals match the exact call, and path-based rules are case-insensitive.
-- Add `/export-debug-zip` slash command to export the current session as a debug ZIP archive directly from the TUI.
-- Add `/export-md` slash command to export the current session as a Markdown file.
+- Adicionar a instalação de plugins em nível global para o usuário, gerenciamento interativo de plugins, suporte a skills fornecidas por plugins e servidores MCP pertencentes aos próprios plugins.
+- Expandir os marcadores de conteúdo colado recolhido ao colar o mesmo conteúdo uma segunda vez.
+- Reformular as permissões das ferramentas: leituras fora do diretório de trabalho atual (`cwd`) não exigem mais confirmação, as aprovações da sessão correspondem exatamente à chamada realizada e as regras baseadas em caminhos não diferenciam letras maiúsculas de minúsculas.
+- Adicionar o comando slash `/export-debug-zip` para exportar a sessão atual como um arquivo ZIP de diagnóstico diretamente pela TUI.
+- Adicionar o comando slash `/export-md` para exportar a sessão atual como um arquivo Markdown.
 
-### Bug Fixes
+### Correções de bugs
 
-- Prevent the TUI from crashing when pull request lookup fails during startup.
-- Fix thinking spinner leaking past turn end when an empty thinking delta creates an orphaned thinking component.
-- Show the original session resume command after forking a session.
-- Restrict plugin zip installs to manifests at the archive root or a single wrapper directory.
-- Route session-tagged log entries exclusively to the session sink instead of duplicating them to the global sink. Consistently omit stable main-agent context keys from all session log lines that carry `agentId=main`.
+- Impedir que a TUI falhe quando a busca por pull requests apresenta erros durante a inicialização.
+- Corrigir o indicador de carregamento de thinking que permanecia visível após o fim do turno quando um delta de thinking vazio criava um componente órfão.
+- Exibir o comando original de retomada da sessão após criar uma sessão por fork.
+- Restringir a instalação de plugins por arquivos ZIP a manifestos localizados na raiz do arquivo ou em um único diretório intermediário.
+- Direcionar exclusivamente para o destino de logs da sessão as entradas identificadas com uma sessão, em vez de duplicá-las no destino global. Omitir de forma consistente as chaves estáveis de contexto do agente principal em todas as linhas de log da sessão que contenham `agentId=main`.
 
-### Refactors
+### Refatorações
 
-- Refactor TUI resume replay logic.
-- Use one retry classification for transient LLM failures across regular turns and compaction.
+- Refatorar a lógica de reprodução ao retomar sessões na TUI.
+- Utilizar uma única classificação de novas tentativas para falhas transitórias de LLM, tanto nos turnos regulares quanto na compactação.
 
-### Other
+### Outros
 
-- Enhance `kimi export` to include more diagnostic information in the manifest.
+- Aprimorar o comando `kimi export` para incluir mais informações de diagnóstico no manifesto.
 
 ## 0.3.0 (2026-05-26)
 
-### Features
+### Funcionalidades
 
-- `/logout` now opens a picker so you can choose which provider to log out of, instead of always logging out the one tied to the current model. The current provider is highlighted by default, so pressing Enter matches the previous behavior. The command is also available as `/disconnect`.
-- The `openai` provider now works out of the box for OpenAI-compatible reasoner models: it auto-detects thinking fields in responses (`reasoning_content` / `reasoning_details` / `reasoning`) and auto-injects `reasoning_effort` when history contains prior thinking. DeepSeek, Qwen, One API and other gateway-fronted services no longer need a hand-set `reasoning_key`, which remains available as an explicit override for non-standard gateways.
+- O comando `/logout` agora abre um seletor para que você escolha de qual provedor deseja sair, em vez de sempre desconectar aquele associado ao modelo atual. O provedor atual aparece destacado por padrão, portanto, pressionar Enter mantém o comportamento anterior. O comando também está disponível como `/disconnect`.
+- O provedor `openai` agora funciona diretamente com modelos de raciocínio compatíveis com a API da OpenAI: ele detecta automaticamente os campos de thinking nas respostas (`reasoning_content` / `reasoning_details` / `reasoning`) e insere automaticamente `reasoning_effort` quando o histórico contém registros anteriores de thinking. Serviços como DeepSeek, Qwen, One API e outros que utilizam gateways não precisam mais configurar manualmente `reasoning_key`, que continua disponível como uma substituição explícita para gateways fora do padrão.
 
-### Bug Fixes
+### Correções de bugs
 
-- Prevent running the `/model` and `/sessions` slash commands while streaming or compacting context.
-- Preserve catalog-declared interleaved reasoning fields for OpenAI-compatible models configured through `/connect`.
-- Fix API key input dialog showing a masked dot in empty state.
-- Fix user skills in `~/.agents/` not being loaded.
-- Restore real-time token display for running subagents in the TUI.
-- Hide the todo panel on resume when all todos are already completed.
-- Always emit a paired tool result when a tool returns a malformed or missing result, preventing the next request from failing with a missing tool_call_id error.
-- Fix Plan mode session resets so new sessions no longer fail after plan review rejection and continue receiving events after setup errors.
-- Exit promptly when the controlling terminal goes away. The TUI now handles `SIGHUP` / `SIGTERM` and stdout/stderr `EIO` / `EPIPE` / `ENOTCONN` errors, preventing leftover `kimi` processes that pin a CPU core after the parent shell or multiplexer dies unexpectedly.
-- Avoid overly small local completion caps that can truncate reasoning before summaries are produced.
+- Impedir a execução dos comandos slash `/model` e `/sessions` durante o streaming ou a compactação do contexto.
+- Preservar os campos de raciocínio intercalados declarados no catálogo para modelos compatíveis com a OpenAI configurados por meio de `/connect`.
+- Corrigir o diálogo de entrada da chave de API, que exibia um ponto mascarado mesmo quando o campo estava vazio.
+- Corrigir o carregamento de skills do usuário localizadas em `~/.agents/`.
+- Restaurar a exibição de tokens em tempo real para subagents em execução na TUI.
+- Ocultar o painel de tarefas ao retomar uma sessão quando todas as tarefas já estiverem concluídas.
+- Sempre emitir um resultado correspondente quando uma ferramenta retornar um resultado inválido ou ausente, evitando que a próxima solicitação falhe com um erro de `tool_call_id` ausente.
+- Corrigir as redefinições de sessão no modo Plan, garantindo que novas sessões não falhem após a rejeição da revisão do plano e continuem recebendo eventos após erros de configuração.
+- Encerrar imediatamente quando o terminal controlador deixar de estar disponível. A TUI agora trata `SIGHUP` / `SIGTERM` e erros de stdout/stderr `EIO` / `EPIPE` / `ENOTCONN`, evitando que processos `kimi` permaneçam ativos consumindo um núcleo da CPU após o encerramento inesperado do shell ou multiplexador pai.
+- Evitar limites locais de tokens de conclusão excessivamente baixos, que podem truncar o raciocínio antes da geração dos resumos.
 
-### Refactors
+### Refatorações
 
-- Make `AgentRecords` hold the `Agent` instance directly and inline the restore dispatch logic.
+- Fazer com que `AgentRecords` mantenha diretamente a instância de `Agent` e incorporar a lógica de despacho da restauração diretamente no código.
 
-### Other
+### Outros
 
-- Improve the Write tool UX.
+- Melhorar a experiência de uso (UX) da ferramenta Write.
 
 ## 0.2.0 (2026-05-26)
 
-### Features
+### Funcionalidades
 
-- Add a `/connect` command that configures a provider and model from a model catalog.
-- The `/connect` provider and model pickers now support type-to-search filtering, and long lists are paginated. The `/model` picker is also paginated when many models are configured.
-- Add `Ctrl-J` as an additional shortcut for inserting new lines in the TUI prompt.
-- Add wire record migration handling during session replay.
-- Migrate user skills from `~/.kimi/skills/` to `~/.kimi-code/skills/` during the first-launch migration; existing target skills are kept.
-- Emit session resume hint as a structured meta message in stream-json output format.
+- Adicionar o comando `/connect`, que permite configurar um provedor e um modelo a partir de um catálogo de modelos.
+- Os seletores de provedores e modelos do comando `/connect` agora permitem filtrar os resultados digitando o texto da busca, e listas longas são divididas em páginas. O seletor `/model` também passa a ser paginado quando muitos modelos estão configurados.
+- Adicionar `Ctrl-J` como atalho adicional para inserir novas linhas no prompt da TUI.
+- Adicionar o tratamento de migração de registros wire durante a reprodução de sessões.
+- Migrar as skills do usuário de `~/.kimi/skills/` para `~/.kimi-code/skills/` durante a migração da primeira inicialização, mantendo as skills que já existirem no diretório de destino.
+- Emitir a dica de retomada da sessão como uma mensagem meta estruturada no formato de saída stream-json.
 
-### Bug Fixes
+### Correções de bugs
 
-- Report the macOS product version in OAuth device information instead of the Darwin kernel version.
-- Correct the `X-Msh-Platform` header value to `kimi_code_cli`.
-- Clarify the prompt-mode error when no model is configured by pointing users to the login flow.
-- Hide the empty current session from the sessions picker while keeping other empty sessions visible.
-- Stop mentioning OAuth credentials in the migration UI — they are never migrated, so the previous "needs /login" notice misread as a failure. OAuth-only installs no longer trigger the migration screen.
-- Surface API-provided error messages during feedback, usage, login, and model setup failures.
-- Persist model selections from the terminal UI to the default configuration, and honor the configured default thinking state for new sessions.
-- Retry compaction responses that do not contain a summary before updating conversation history.
-- Avoid CPU spikes from large streamed tool arguments and coalesce high-frequency streaming UI updates.
-- Resume sessions with a newer wire protocol version instead of failing. A warning is now shown in the TUI and records are replayed without migration.
-- Warn tmux users when extended key settings may prevent modified Enter shortcuts from working.
-- Let Kimi requests use the remaining context window for completion tokens by default while keeping explicit environment limits as hard caps.
+- Informar a versão do produto macOS nas informações do dispositivo OAuth, em vez da versão do kernel Darwin.
+- Corrigir o valor do cabeçalho `X-Msh-Platform` para `kimi_code_cli`.
+- Esclarecer a mensagem de erro do modo de prompt quando nenhum modelo está configurado, direcionando os usuários para o fluxo de login.
+- Ocultar a sessão atual vazia no seletor de sessões, mantendo visíveis as demais sessões vazias.
+- Remover as menções às credenciais OAuth da interface de migração — elas nunca são migradas, portanto, o aviso anterior de que era necessário executar `/login` podia ser interpretado incorretamente como uma falha. Instalações que utilizam apenas OAuth não exibem mais a tela de migração.
+- Exibir mensagens de erro fornecidas pela API durante falhas de feedback, consulta de uso, login e configuração de modelos.
+- Salvar as seleções de modelos feitas pela interface do terminal na configuração padrão e respeitar o estado de thinking padrão configurado para novas sessões.
+- Tentar novamente respostas de compactação que não contenham um resumo antes de atualizar o histórico da conversa.
+- Evitar picos de uso da CPU causados por argumentos grandes de ferramentas transmitidos em streaming e agrupar atualizações frequentes da interface durante o streaming.
+- Retomar sessões com uma versão mais recente do protocolo wire, em vez de falhar. Agora, um aviso é exibido na TUI e os registros são reproduzidos sem migração.
+- Alertar usuários do tmux quando as configurações de teclas estendidas puderem impedir o funcionamento dos atalhos de Enter modificados.
+- Permitir que as solicitações do Kimi utilizem, por padrão, o espaço restante da janela de contexto para tokens de conclusão, mantendo os limites explícitos definidos por variáveis de ambiente como limites máximos obrigatórios.
 
-### Refactors
+### Refatorações
 
-- Flatten tool call data by inlining tool names and arguments at the top level, and limit legacy record migration so it only rewrites matching tool call payloads.
-- Move wire metadata handling into the record layer and keep persistence backends limited to storage operations.
+- Achatar os dados das chamadas de ferramentas, incorporando os nomes e argumentos das ferramentas diretamente no nível superior, e limitar a migração de registros legados para que reescreva apenas os payloads correspondentes às chamadas de ferramentas.
+- Transferir o tratamento dos metadados wire para a camada de registros e manter os backends de persistência limitados às operações de armazenamento.
 
-### Other
+### Outros
 
-- When no models are configured, `/model` and the welcome panel now point users to `/login` (for Kimi) and `/connect` (for other providers).
+- Quando nenhum modelo estiver configurado, os comandos `/model` e o painel de boas-vindas agora direcionam os usuários para `/login` (no caso do Kimi) e `/connect` (para outros provedores).
