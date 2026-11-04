@@ -12,6 +12,7 @@ import {
 import { ErrorCode } from '../protocol/error-codes';
 import { interactionOutcome } from '../protocol/interaction-wire';
 import type { ConversationService } from '../services/conversation/conversationService';
+import { sendMappedError, sessionConflictErrors } from './sessionErrors';
 
 interface ConversationRouteHost {
   get(
@@ -56,7 +57,7 @@ export function registerConversationRoutes(
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
+        ...sessionConflictErrors,
       },
       description:
         'One page of an agent\'s turns, oldest first: the latest page, or the turns whose ordinal is below before',
@@ -64,13 +65,13 @@ export function registerConversationRoutes(
     },
     async (req, reply) => {
       const { session_id, agent_id } = req.params;
-      const feed = await conversations.feed(session_id, agent_id);
-      if (feed === undefined) {
-        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session not found: ${session_id}`, req.id));
-        return;
+      try {
+        const feed = await conversations.feed(session_id, agent_id);
+        const page = feed.snapshot(req.query.before, req.query.limit ?? DEFAULT_PAGE_TURNS);
+        reply.send(okEnvelope({ agent_id, turns: await feed.hydrate(page.turns), has_more: page.has_more }, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
       }
-      const page = feed.snapshot(req.query.before, req.query.limit ?? DEFAULT_PAGE_TURNS);
-      reply.send(okEnvelope({ agent_id, turns: await feed.hydrate(page.turns), has_more: page.has_more }, req.id));
     },
   );
   app.get(turnsRoute.path, turnsRoute.options, turnsRoute.handler as Parameters<ConversationRouteHost['get']>[2]);
@@ -86,7 +87,7 @@ export function registerConversationRoutes(
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.TOOL_CALL_NOT_FOUND]: {},
-        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
+        ...sessionConflictErrors,
       },
       description:
         'Plans of an agent\'s ExitPlanMode tool calls in timeline order: the reviewed plan, plan file path, offered options and review outcome. tool_call_id narrows the read to one call (an unknown id or a non-ExitPlanMode call is 40416)',
@@ -95,12 +96,14 @@ export function registerConversationRoutes(
     async (req, reply) => {
       const { session_id, agent_id } = req.params;
       const { tool_call_id } = req.query;
-      const feed = await conversations.feed(session_id, agent_id);
-      if (feed === undefined) {
-        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session not found: ${session_id}`, req.id));
+      let turns: readonly ConversationTurn[];
+      try {
+        turns = (await conversations.feed(session_id, agent_id)).turns();
+      } catch (error) {
+        sendMappedError(reply, req, error);
         return;
       }
-      const plans = projectPlans(feed.turns(), tool_call_id);
+      const plans = projectPlans(turns, tool_call_id);
       if (tool_call_id !== undefined && plans.length === 0) {
         reply.send(
           errEnvelope(

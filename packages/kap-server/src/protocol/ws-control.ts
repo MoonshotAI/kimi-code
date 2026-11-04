@@ -8,6 +8,7 @@ import {
   itemRemovedMessageSchema,
   noticeMessageSchema,
   turnMessageSchema,
+  turnsFailedMessageSchema,
   turnsMessageSchema,
   turnsRemovedMessageSchema,
 } from './conversation';
@@ -232,7 +233,7 @@ export const clientControlOperations = [
     messageSchema: subscribeV2MessageSchema,
     ackSchema: subscribeV2AckMessageSchema,
     description:
-      'Start receiving agents of one session (agent_ids defaults to the main agent). Every newly added agent first gets a turns frame with its latest page, then turn, item and notice frames.',
+      'Start receiving agents of one session (agent_ids defaults to the main agent). Every newly added agent first gets a turns frame with its latest page, or turns.failed when its conversation cannot be loaded, then turn, item and notice frames. When the session itself cannot be opened, the ack carries the error code (40401 lists the session in not_found) and nothing is subscribed.',
   },
   {
     type: 'unsubscribe_v2',
@@ -406,7 +407,15 @@ export const conversationEventOperations = [
     kind: 'event',
     messageSchema: turnsMessageSchema,
     description:
-      'Latest page of turns of an agent, sent when a connection starts receiving that agent; older pages come from GET /sessions/{session_id}/agents/{agent_id}/turns.',
+      'Latest page of turns of an agent, sent when a connection starts receiving that agent, when the agent is loaded again and after an undo; it replaces the client copy of those turns. Older pages come from GET /sessions/{session_id}/agents/{agent_id}/turns.',
+  },
+  {
+    type: 'turns.failed',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: turnsFailedMessageSchema,
+    description:
+      'The conversation of a subscribed agent could not be loaded; code and msg say why. The agent stays subscribed, and a later turns frame replaces the failure.',
   },
   {
     type: 'turn',
@@ -444,7 +453,7 @@ export const conversationEventOperations = [
     direction: 'server_to_client',
     kind: 'event',
     messageSchema: turnsRemovedMessageSchema,
-    description: 'Turns that left the conversation, for example after undo or clear.',
+    description: 'Turns that left the conversation, for example after clear.',
   },
   {
     type: 'notice',

@@ -1,7 +1,7 @@
 import type { WebSocket } from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentTaskOutputChunk, IAgentTaskService } from '@moonshot-ai/agent-core-v2';
+import { Error2, ErrorCodes, type AgentTaskOutputChunk, type IAgentTaskService } from '@moonshot-ai/agent-core-v2';
 import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 
 import { TASK_OUTPUT_DEFAULT_TAIL_BYTES, TASK_OUTPUT_MAX_TAIL_BYTES } from '../src/protocol/ws-task';
@@ -134,7 +134,6 @@ describe('WsConnectionV1 control frames', () => {
         const agents = subscribed.get(sessionId) ?? new Set<string>();
         for (const agentId of agentIds) agents.add(agentId);
         subscribed.set(sessionId, agents);
-        return true;
       },
       unsubscribe: (sessionId: string, _target: unknown, agentIds?: readonly string[]) => {
         unsubscribes.push(agentIds === undefined ? { sessionId } : { sessionId, agentIds });
@@ -245,18 +244,40 @@ describe('WsConnectionV1 control frames', () => {
     conn.close();
   });
 
-  it('reports an unknown session in the subscribe_v2 ack not_found list', async () => {
+  it('reports an unknown session with 40401 and the not_found list', async () => {
     const socket = new FakeSocket();
     const { broadcaster } = makeCapturingBroadcaster();
-    broadcaster.subscribe = async () => false;
+    broadcaster.subscribe = async () => {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, 'session not found: gone');
+    };
     const conn = makeConn(socket, { broadcaster });
 
     socket.emit('message', controlFrame('subscribe_v2', { session_id: 'gone' }));
     await vi.waitFor(() => expect(acks(socket)).toHaveLength(1));
 
     expect(acks(socket)[0]).toMatchObject({
-      code: 0,
+      code: 40401,
       payload: { accepted: [], not_found: ['gone'] },
+    });
+    expect(conn.subscriptions.size).toBe(0);
+    conn.close();
+  });
+
+  it('reports why a session cannot be opened without listing it as not found', async () => {
+    const socket = new FakeSocket();
+    const { broadcaster } = makeCapturingBroadcaster();
+    broadcaster.subscribe = async () => {
+      throw new Error2(ErrorCodes.WIRE_VERSION_TOO_LOW, 'upgrade to read this session');
+    };
+    const conn = makeConn(socket, { broadcaster });
+
+    socket.emit('message', controlFrame('subscribe_v2', { session_id: 'newer' }));
+    await vi.waitFor(() => expect(acks(socket)).toHaveLength(1));
+
+    expect(acks(socket)[0]).toMatchObject({
+      code: 40930,
+      msg: 'upgrade to read this session',
+      payload: { accepted: [], not_found: [] },
     });
     expect(conn.subscriptions.size).toBe(0);
     conn.close();

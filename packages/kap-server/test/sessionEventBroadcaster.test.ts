@@ -11,6 +11,7 @@ import type {
   SessionActivityState,
 } from '@moonshot-ai/agent-core-v2';
 import {
+  ErrorCodes,
   INTERACTION_TAG_SESSION_ID,
   LifecycleScope,
   IAgentLifecycleService,
@@ -39,7 +40,6 @@ import {
   makeAgentScopeContext,
 } from '@moonshot-ai/agent-core-v2';
 import { Event2 } from '@moonshot-ai/agent-core-v2/app/event/event2';
-import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
 import {
   AgentEventBusView,
   EventBusService,
@@ -466,7 +466,6 @@ function makeCore(
         if (t === IAgentLifecycleService) return lifecycle;
         if (t === ISessionActivityView) return lifecycle.workView;
         if (t === ISessionMetadata) return { read: async () => ({ agents: metaAgents }) };
-        if (t === ISessionEventBus) return { subscribe: () => ({ dispose: () => {} }) };
         return undefined;
       },
     };
@@ -588,9 +587,9 @@ describe('SessionEventBroadcaster', () => {
     return lifecycle;
   }
 
-  it('subscribe returns false for an unknown session', async () => {
+  it('subscribe rejects an unknown session as not found', async () => {
     const { target } = collectingTarget();
-    expect(await bc.subscribe('nope', target, ['main'])).toBe(false);
+    await expect(bc.subscribe('nope', target, ['main'])).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
   });
 
   it('broadcasts session.meta.updated under the real session id and fans out to every connection', async () => {

@@ -405,7 +405,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const connectionRegistry = new ConnectionRegistry();
   const conversations = new ConversationService(core);
   const sessionRating = createServerSessionRating(core, { debugEndpoints, logger });
-  core.accessor.get(IGlobalSearchService).setLiveConversationSource(conversations);
+  core.accessor.get(IGlobalSearchService);
   const broadcaster = new SessionEventBroadcaster({
     core,
     logger,

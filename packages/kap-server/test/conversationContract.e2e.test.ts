@@ -121,6 +121,7 @@ interface LlmRoute {
   readonly match: (body: string) => boolean;
   readonly respond: () => string;
   readonly delayMs?: number;
+  readonly pause?: { readonly afterEvents: number; readonly ms: number };
 }
 
 interface MockLlm {
@@ -139,9 +140,18 @@ async function startMockLlm(routes: readonly LlmRoute[], fallback: () => string 
       hits.push(body);
       const route = routes.find((r) => r.match(body));
       const respond = route?.respond ?? fallback;
+      const pause = route?.pause;
       const send = (): void => {
         res.writeHead(200, { 'content-type': 'text/event-stream' });
-        res.end(respond());
+        if (pause === undefined) {
+          res.end(respond());
+          return;
+        }
+        const events = respond().split(/(?<=\n\n)/);
+        res.write(events.slice(0, pause.afterEvents).join(''));
+        setTimeout(() => {
+          res.end(events.slice(pause.afterEvents).join(''));
+        }, pause.ms);
       };
       if (route?.delayMs !== undefined) setTimeout(send, route.delayMs);
       else send();
@@ -303,6 +313,7 @@ const CONVERSATION_FRAME_TYPES = new Set([
   'item.delta',
   'item.removed',
   'turns.removed',
+  'turns.failed',
   'notice',
 ]);
 
@@ -548,9 +559,10 @@ describe('conversation contract e2e', () => {
       await until('steer reaches subscriber', () => JSON.stringify(channel.turns()).includes('answer after steer'));
       expect(channel.turns()).toEqual(before.turns);
 
+      const pages = channel.conversation.filter((frame) => frame.type === 'turns').length;
       await rest(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { count: 1 } });
       expect((await getTurns(server!, base, sid)).turns).toEqual([]);
-      await until('turns.removed reaches subscriber', () => channel.conversation.some((frame) => frame.type === 'turns.removed'));
+      await until('fresh page reaches subscriber', () => channel.conversation.filter((frame) => frame.type === 'turns').length > pages);
       expect(channel.turns()).toEqual([]);
       const reconnected = await subscribeConversation(server!, sid);
       try {
@@ -733,29 +745,30 @@ describe('conversation contract e2e', () => {
     channel.close();
   });
 
-  it('S4b: a live session lists and reads subagents that are not loaded', async () => {
-    await boot([
-      {
-        match: (body) => body.includes('spawn-fg') && !body.includes('"role":"tool"'),
-        respond: () => sseToolCall('call_fg', 'Agent', '{"prompt":"fg-answer-7","description":"fg ans"}'),
-      },
-      { match: (body) => body.includes('fg-answer-7') && !body.includes('spawn-fg'), respond: () => sseText('seven') },
-      { match: () => true, respond: () => sseText('done') },
-    ]);
+  it('S4b: subscriptions that cannot be served say why', async () => {
     const sid = await createSession(server!, base);
-    await submitPrompt(server!, base, sid, 'spawn-fg one foreground agent');
-    await idleOrDump(server!, base, sid);
-    const [agentTool] = toolItems(await getTurns(server!, base, sid), 'Agent');
-    const childId: string = agentTool.agent_refs[0].agent_id;
-    const lifecycle = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(IAgentLifecycleService);
-    await lifecycle.remove(lifecycle.get(childId)!);
+    const socket = await openFrameSocket(server!);
+    try {
+      socket.send({ type: 'subscribe_v2', id: 'missing-session', payload: { session_id: 'ses_missing_example' } });
+      expect(await socket.next((frame) => frame.type === 'ack' && frame.id === 'missing-session')).toMatchObject({
+        code: 40401,
+        payload: { accepted: [], not_found: ['ses_missing_example'] },
+      });
 
-    const conversations = new ConversationService(server!.core);
-    expect(await conversations.liveAgentIds(sid)).toEqual(expect.arrayContaining([MAIN_AGENT_ID, childId]));
-    const turns = await conversations.liveTurns(sid, childId);
-    expect(turns?.some((turn) => turn.items.some((item) => item.type === 'assistant_message' && item.text === 'seven'))).toBe(true);
-    expect(lifecycle.handleOf(childId)).toBeUndefined();
-    conversations.dispose();
+      socket.send({ type: 'subscribe_v2', id: 'agents', payload: { session_id: sid, agent_ids: [MAIN_AGENT_ID, 'agent-missing'] } });
+      expect(await socket.next((frame) => frame.type === 'turns.failed')).toMatchObject({
+        session_id: sid,
+        agent_id: 'agent-missing',
+        code: 40401,
+      });
+      expect(await socket.next((frame) => frame.type === 'turns' && frame.agent_id === MAIN_AGENT_ID)).toMatchObject({ turns: [] });
+      expect(await socket.next((frame) => frame.type === 'ack' && frame.id === 'agents')).toMatchObject({
+        code: 0,
+        payload: { accepted: [sid], not_found: [] },
+      });
+    } finally {
+      await socket.close();
+    }
   });
 
   it('S4c: a subscribed subagent keeps streaming after it is evicted and resumed', async () => {
@@ -807,6 +820,24 @@ describe('conversation contract e2e', () => {
     await until('agent idle frame', () => channel.agents.at(-1)?.status === 'idle');
     await until('turn ended on the channel', () => channel.turns()[0]?.status === 'ended');
     expect(channel.turns()).toEqual((await getTurns(server!, base, sid)).turns);
+    channel.close();
+  });
+
+  it('S5b: a subscriber joining mid-step sees the text the step already streamed', async () => {
+    await boot([{ match: () => true, respond: () => sseTextChunks('first half ', 'second half'), pause: { afterEvents: 1, ms: 3000 } }]);
+    const sid = await createSession(server!, base);
+    await submitPrompt(server!, base, sid, 'stream in two halves');
+    await until('model called', () => llm!.hits.length > 0);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const channel = await subscribeConversation(server!, sid);
+    const running = channel.snapshot().turns[0];
+    expect(running).toMatchObject({ status: 'running' });
+    expect(running.items).toContainEqual(expect.objectContaining({ type: 'assistant_message', status: 'running', text: 'first half ' }));
+    await idle(server!, base, sid);
+    await until('turn ended on the channel', () => channel.turns()[0]?.status === 'ended');
+    expect(channel.turns()).toEqual((await getTurns(server!, base, sid)).turns);
+    expect(textOf(channel.turns()[0].items.find((item: any) => item.type === 'assistant_message'))).toBe('first half second half');
     channel.close();
   });
 

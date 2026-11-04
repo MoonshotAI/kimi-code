@@ -1,8 +1,27 @@
 import { daemonFileRefFromPart, parseDaemonFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
+import { stripBundledSkillBlocks, type SteerMessage } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import { fromCorePart } from '@moonshot-ai/agent-core-v2/human/message';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
+
+const TASK_ORIGIN_FIELDS = ['taskId', 'status', 'notificationId'];
+
+const ORIGIN_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  user: ['clientMetadata'],
+  skill_activation: ['trigger', 'skillName', 'skillArgs', 'clientMetadata'],
+  plugin_command: ['trigger', 'pluginId', 'commandName', 'commandArgs'],
+  system_trigger: ['name'],
+  retry: ['trigger'],
+  task: TASK_ORIGIN_FIELDS,
+  background_task: TASK_ORIGIN_FIELDS,
+  task_notification: TASK_ORIGIN_FIELDS,
+  cron_job: ['jobId', 'cron', 'recurring', 'coalescedCount', 'stale'],
+  cron_missed: ['count'],
+  hook_result: ['event', 'blocked'],
+  shell_command: ['phase', 'isError'],
+};
 
 function deriveMessageId(sessionId: string, index: number): string {
   const padded = String(index).padStart(6, '0');
@@ -150,6 +169,27 @@ export function projectPromptContentParts(content: readonly ContentPart[]): Mess
     }
   }
   return parts;
+}
+
+export function projectUserContent(message: SteerMessage): MessageContent[] {
+  const origin = message.origin as { readonly kind: string; readonly name?: unknown } | undefined;
+  if (origin?.kind === 'retry' || (origin?.kind === 'system_trigger' && origin.name !== 'subagent')) return [];
+  return projectPromptContentParts(stripBundledSkillBlocks(message).filter((part) => !isUserPromptSubmitHookPart(part)));
+}
+
+export function projectOrigin(origin: { readonly kind: string } | undefined): Record<string, unknown> | undefined {
+  if (origin === undefined) return undefined;
+  const source = origin as Readonly<Record<string, unknown>>;
+  const projected: Record<string, unknown> = { kind: origin.kind };
+  for (const field of ORIGIN_FIELDS[origin.kind] ?? []) {
+    if (source[field] !== undefined) projected[field] = source[field];
+  }
+  if (origin.kind === 'user' && Array.isArray(source['skillActivations'])) {
+    projected['skillActivations'] = (source['skillActivations'] as { skillName?: unknown; skillArgs?: unknown }[]).map(
+      ({ skillName, skillArgs }) => ({ skillName, skillArgs }),
+    );
+  }
+  return projected;
 }
 
 export function toProtocolMessage(

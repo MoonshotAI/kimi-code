@@ -232,6 +232,24 @@ describe('server-v2 /api/v1 skills', () => {
       expect(session.body.data.title).toBe(metadata.display_text);
     });
 
+    it('pairs the activation with a client-chosen prompt_id', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+
+      const activated = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`, {
+        args: '--help',
+        prompt_id: 'activation-1',
+      });
+      expect(activated.body.code).toBe(0);
+      const page = await getJson<{ turns: { items: { type: string; prompt_ids?: string[] }[] }[] }>(`/api/v1/sessions/${id}/agents/main/turns`);
+      expect(page.body.data.turns[0]?.items[0]).toMatchObject({ type: 'user_message', prompt_ids: ['activation-1'] });
+
+      const duplicate = await postJson<null>(`/api/v1/sessions/${id}/skills/update-config:activate`, {
+        prompt_id: 'activation-1',
+      });
+      expect(duplicate.body.code).toBe(40927);
+    });
+
     it('keeps ordered text parts among activation attachments', async () => {
       const id = await createSession();
       await createMainAgent(id);

@@ -64,6 +64,7 @@ import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
 import { sendEnvironmentError } from './environment';
+import { reservePromptId, type PromptIdReservation } from './prompts';
 import {
   sendMappedError as sendSessionMappedError,
   sessionConflictErrors,
@@ -202,6 +203,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         [ErrorCode.SKILL_NOT_FOUND]: {},
         [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
+        [ErrorCode.PROMPT_ID_CONFLICT]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         ...sessionConflictErrors,
@@ -236,6 +238,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         }
 
         let preparedMedia: PromptMediaPreparation | undefined;
+        let reservation: PromptIdReservation | undefined;
         try {
           const attachments = req.body.attachments ?? [];
           const attachmentParts: ContentPart[] = [];
@@ -302,13 +305,16 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
             preparedMedia !== undefined && preparedMedia.attachments.length > 0
               ? preparedMedia.attachments
               : undefined;
+          reservation = reservePromptId(session_id, req.body.prompt_id);
           await mainAgent.accessor.get(IAgentSkillService).activate({
             name: parsed.id,
             args: req.body.args,
+            promptId: reservation.id,
             clientMetadata: req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)],
             content: attachmentParts,
             attachments: promptAttachments,
           });
+          reservation.submit();
           await preparedMedia?.discard();
           preparedMedia = undefined;
           requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
@@ -316,6 +322,8 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         } catch (error) {
           await preparedMedia?.discardStaged();
           throw error;
+        } finally {
+          reservation?.dispose();
         }
       };
       try {

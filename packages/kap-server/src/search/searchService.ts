@@ -19,7 +19,6 @@ import {
   type SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { normalizeLiteral, tokenize } from '@moonshot-ai/minidb';
-import type { ConversationStep, ConversationTurn } from '../protocol/conversation';
 
 import {
   GlobalSearchError,
@@ -28,7 +27,6 @@ import {
   type GlobalSearchPage,
   type GlobalSearchQuery,
 } from './contract';
-import { MAX_DOC_TEXT_CHARS, type MessageDoc, type TitleDoc } from './docs';
 import {
   SearchIndexCore,
   type CoreIndexView,
@@ -41,10 +39,7 @@ import {
 } from './indexCore';
 import {
   boundaryOf,
-  decodePageToken,
   encodePageToken,
-  matchDocs,
-  paginateRows,
   type MatchedRow,
   type NormalizedQuery,
   type SearchBudgets,
@@ -102,15 +97,9 @@ export interface IGlobalSearchService {
     lifecycle: CoreLifecycleReport;
   }>;
   lifecycleReport(): CoreLifecycleReport;
-  setLiveConversationSource(source: LiveConversationSource): void;
 }
 
 export const IGlobalSearchService = createDecorator<IGlobalSearchService>('globalSearch');
-
-export interface LiveConversationSource {
-  liveAgentIds(sessionId: string): Promise<readonly string[] | undefined>;
-  liveTurns(sessionId: string, agentId: string): Promise<readonly ConversationTurn[] | undefined>;
-}
 
 function normalizeQuery(input: GlobalSearchQuery, maxQueryTerms: number): NormalizedQuery {
   const mode = input.mode ?? 'terms';
@@ -232,7 +221,6 @@ export class GlobalSearchService implements IGlobalSearchService {
   private summaries = new Map<string, SessionSummary>();
   private disposed = false;
   private reindexing = false;
-  private liveSource: LiveConversationSource | null = null;
   private syncQueued = false;
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
   private lastRefreshError: { at: number; message: string } | null = null;
@@ -246,10 +234,6 @@ export class GlobalSearchService implements IGlobalSearchService {
     @IConfigService private readonly config: IConfigService,
   ) {
     this.requestSync();
-  }
-
-  setLiveConversationSource(source: LiveConversationSource): void {
-    this.liveSource = source;
   }
 
   private get indexDir(): string {
@@ -421,119 +405,7 @@ export class GlobalSearchService implements IGlobalSearchService {
     if (!(await this.enabled())) {
       throw new GlobalSearchError('index_unavailable', GLOBAL_SEARCH_DISABLED_DETAIL);
     }
-    const sessionId = q.container?.sessionId;
-    const liveAgentIds = sessionId !== undefined ? await this.liveSource?.liveAgentIds(sessionId) : undefined;
-    if (liveAgentIds !== undefined && sessionId !== undefined) {
-      return this.searchLive(q, sessionId, liveAgentIds, input.pageToken);
-    }
     return this.searchIndex(q, input.pageToken);
-  }
-
-  private async searchLive(
-    q: NormalizedQuery,
-    sessionId: string,
-    liveAgentIds: readonly string[],
-    pageToken: string | undefined,
-  ): Promise<GlobalSearchPage> {
-    const page = decodePageToken(q, 'live', pageToken, undefined);
-    const agentIds = q.container?.agentId !== undefined ? [q.container.agentId] : liveAgentIds;
-    const docs = await this.collectLiveDocs(sessionId, agentIds);
-    const budget = {
-      deadlineAt: Date.now() + this.queryDeadlineMs,
-      textCharsLeft: this.queryTextBudgetChars,
-    };
-    const boundary = page.kind === 'keyset' ? page.boundary : undefined;
-    const matched =
-      q.mode === 'literal'
-        ? matchDocs(
-            q,
-            docs.map(({ key, value }) => ({ key, value, score: 0 })),
-            boundary,
-            budget,
-          )
-        : matchDocs(q, matchLiveTerms(q.termsQuery ?? [], docs), boundary, budget);
-    const { pageRows, hasMore } = paginateRows(q, page, matched.rows);
-    return {
-      items: pageRows.map((row) => this.projectHit(q, row)),
-      hasMore,
-      pageToken: hasMore
-        ? encodePageToken(q, 'live', boundaryOf(q, pageRows.at(-1)!), undefined)
-        : undefined,
-      incomplete: matched.incomplete,
-      indexState: {
-        state: 'ready',
-        indexedSessions: 1,
-        totalSessions: 1,
-        documents: docs.length,
-      },
-      source: 'live',
-    };
-  }
-
-  private async collectLiveDocs(
-    sessionId: string,
-    agentIds: readonly string[],
-  ): Promise<{ key: string; value: MessageDoc | TitleDoc }[]> {
-    const summary = await this.sessionIndex.get(sessionId);
-    const workspaceId = summary?.workspaceId ?? '';
-    const sessionTitle = summary?.title ?? '';
-    const fallbackTime = summary?.updatedAt ?? 0;
-    const parseTime = (iso: string | undefined): number => {
-      if (iso === undefined) return fallbackTime;
-      const ms = Date.parse(iso);
-      return Number.isNaN(ms) ? fallbackTime : ms;
-    };
-    const docs: { key: string; value: MessageDoc | TitleDoc }[] = [];
-    for (const agentId of agentIds) {
-      const turns = (await this.liveSource?.liveTurns(sessionId, agentId)) ?? [];
-      for (const turn of turns) {
-        for (const item of turn.items) {
-          let entry: { key: string; role: 'user' | 'assistant'; text: string; step?: ConversationStep };
-          if (item.type === 'user_message' && item.placement === 'opener') {
-            const text = item.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
-            entry = { key: `u/${turn.turn_id}`, role: 'user', text };
-          } else if (item.type === 'assistant_message') {
-            const step = turn.steps.find((candidate) => candidate.index === item.step_index);
-            entry = { key: `a/${item.item_id}`, role: 'assistant', text: item.text, step };
-          } else {
-            continue;
-          }
-          const text = entry.text.trim();
-          if (text.length === 0) continue;
-          docs.push({
-            key: `${sessionId}/${agentId}/live/${entry.key}`,
-            value: {
-              kind: 'message',
-              sessionId,
-              workspaceId,
-              sessionTitle,
-              agentId,
-              role: entry.role,
-              text: text.length > MAX_DOC_TEXT_CHARS ? text.slice(0, MAX_DOC_TEXT_CHARS) : text,
-              time: parseTime(entry.step?.ended_at ?? entry.step?.started_at ?? turn.started_at),
-              turn: turn.ordinal,
-              stepId: entry.step === undefined ? undefined : `t${turn.ordinal}.${entry.step.index}`,
-            },
-          });
-        }
-      }
-    }
-    if (sessionTitle.length > 0) {
-      docs.push({
-        key: `${sessionId}/$title`,
-        value: {
-          kind: 'title',
-          sessionId,
-          workspaceId,
-          sessionTitle,
-          agentId: '',
-          role: 'title',
-          text: sessionTitle,
-          time: fallbackTime,
-        },
-      });
-    }
-    return docs;
   }
 
   private budgets(): SearchBudgets {
@@ -733,30 +605,6 @@ export class GlobalSearchService implements IGlobalSearchService {
     if (this.disposed) return { state: this.drainSettled ? 'stopped' : 'closing' };
     return this.backend?.lifecycleSnapshot() ?? { state: 'stopped' };
   }
-}
-
-function matchLiveTerms(
-  terms: readonly string[],
-  docs: readonly { key: string; value: MessageDoc | TitleDoc }[],
-): { key: string; value: MessageDoc | TitleDoc; score: number }[] {
-  if (terms.length === 0) return [];
-  const matched: { key: string; value: MessageDoc | TitleDoc; score: number }[] = [];
-  for (const { key, value: doc } of docs) {
-    const counts = new Map<string, number>();
-    for (const token of tokenize(doc.text)) counts.set(token, (counts.get(token) ?? 0) + 1);
-    let score = 0;
-    let hit = true;
-    for (const term of terms) {
-      const tf = counts.get(term) ?? 0;
-      if (tf === 0) {
-        hit = false;
-        break;
-      }
-      score += Math.log(1 + tf);
-    }
-    if (hit) matched.push({ key, value: doc, score });
-  }
-  return matched;
 }
 
 registerScopedService(

@@ -1,6 +1,4 @@
 import { isUndoAnchor, type ContextMessage } from '@moonshot-ai/agent-core-v2';
-import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
-import { stripBundledSkillBlocks } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 
@@ -16,7 +14,7 @@ import type {
   ToolCallItem,
   ToolInteraction,
 } from '../../protocol/conversation';
-import { projectPromptContentParts, projectToolResultOutput } from '../messages/messageProjection';
+import { projectOrigin, projectToolResultOutput, projectUserContent } from '../messages/messageProjection';
 
 interface PendingPrompt {
   readonly turnNumber?: number;
@@ -244,8 +242,8 @@ function applyMessage(state: ConversationState, message: ContextMessage | undefi
       status: 'ended',
       placement: 'steer',
       prompt_ids: message.id === undefined ? [] : [message.id],
-      origin: plainOrigin(origin),
-      content: userContent(message),
+      origin: projectOrigin(origin),
+      content: projectUserContent(message),
       created_at: time,
     });
     return;
@@ -267,8 +265,8 @@ function applyMessage(state: ConversationState, message: ContextMessage | undefi
     status: 'ended',
     placement: 'opener',
     prompt_ids: promptId === undefined ? [] : [promptId],
-    origin: plainOrigin(origin),
-    content: userContent(message),
+    origin: projectOrigin(origin),
+    content: projectUserContent(message),
     created_at: time,
   });
 }
@@ -278,7 +276,7 @@ function notificationItem(turn: ConversationTurn, message: ContextMessage): Conv
     type: 'notification',
     item_id: message.id ?? nextItemId(turn),
     status: 'ended',
-    origin: plainOrigin(message.origin),
+    origin: projectOrigin(message.origin),
     text: textOf(message.content),
   };
 }
@@ -566,6 +564,7 @@ function endTurn(
   for (const item of turn.items) {
     if (item.status === 'running') item.status = 'ended';
   }
+  turn.items = turn.items.map(settleInteraction);
   delete state.provisionalOutcomes[turn.turn_id];
   if (state.openTurnId === turn.turn_id) state.openTurnId = undefined;
 }
@@ -687,12 +686,6 @@ function contentItem(
   return undefined;
 }
 
-function userContent(message: ContextMessage): ReturnType<typeof projectPromptContentParts> {
-  return projectPromptContentParts(
-    stripBundledSkillBlocks(message).filter((part) => !isUserPromptSubmitHookPart(part)),
-  );
-}
-
 function toolOutput(output: string | readonly ContentPart[]): unknown {
   if (typeof output === 'string') return output;
   if (output.some((part) => part.type === 'image_url' || part.type === 'video_url' || part.type === 'audio_url')) {
@@ -721,8 +714,9 @@ function parseArguments(raw: string | null): unknown {
   }
 }
 
-function plainOrigin(origin: ContextMessage['origin']): Record<string, unknown> | undefined {
-  return origin === undefined ? undefined : { ...origin };
+export function settleInteraction(item: ConversationItem): ConversationItem {
+  if (item.type !== 'tool_call' || item.interaction?.status !== 'pending') return item;
+  return { ...item, interaction: { ...item.interaction, status: 'ended' } };
 }
 
 function projectError(error: unknown, requestId: string | undefined): ConversationError | undefined {

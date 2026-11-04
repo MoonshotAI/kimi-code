@@ -2,13 +2,13 @@ import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 import { describe, expect, it } from 'vitest';
 
 import type { ConversationTurn } from '../../src/protocol/conversation';
-import { restoredTurnEvents } from '../../src/services/conversation/conversationFeed';
 import {
   applyConversationRecord,
   createConversationState,
   undoConversationTurns,
   type ConversationState,
 } from '../../src/services/conversation/conversationFold';
+import { parseWireRecords } from '../../src/services/conversation/conversationService';
 
 let clock = 1_000;
 
@@ -133,14 +133,19 @@ describe('conversation fold', () => {
     expect(state.turns[0]?.status).toBe('running');
   });
 
-  it('drops bundled skill instructions from user content', () => {
+  it('drops bundled skill instructions from user content and server paths from its origin', () => {
     const state = fold([
       turnPrompt(0, 'p1'),
       record('context.append_message', {
         message: {
           role: 'user',
           id: 'p1',
-          origin: { kind: 'user', skillActivations: [{ activationId: 'act-1', skillName: 'review' }] },
+          origin: {
+            kind: 'user',
+            clientMetadata: [{ display_text: 'check this diff' }],
+            attachments: [{ name: 'notes.md', mediaType: 'text/markdown', size: 4, path: '/home/example/notes.md' }],
+            skillActivations: [{ activationId: 'act-1', skillName: 'review', skillArgs: '--deep', skillPath: '/home/example/skills/review' }],
+          },
           content: [
             { type: 'text', text: 'full review skill instructions' },
             { type: 'text', text: 'check this diff' },
@@ -151,6 +156,58 @@ describe('conversation fold', () => {
     ]);
 
     expect(shape(state.turns[0])).toEqual(['opener:check this diff']);
+    expect(state.turns[0]?.items[0]).toMatchObject({ type: 'user_message' });
+    expect((state.turns[0]?.items[0] as { origin?: unknown }).origin).toEqual({
+      kind: 'user',
+      clientMetadata: [{ display_text: 'check this diff' }],
+      skillActivations: [{ skillName: 'review', skillArgs: '--deep' }],
+    });
+  });
+
+  it('hides the text of retries and internal triggers and keeps only display fields of their origins', () => {
+    const state = fold([
+      userMessage('k1', 'User activated the skill', {
+        kind: 'skill_activation',
+        trigger: 'user-slash',
+        activationId: 'act-2',
+        skillName: 'commit',
+        skillPath: '/home/example/skills/commit',
+      }),
+      turnPrompt(1, 'p2', { kind: 'retry', trigger: 'provider_error' }),
+      userMessage('p2', 'retry the previous request', { kind: 'retry', trigger: 'provider_error' }),
+      userMessage(undefined, 'Continue working toward the active goal', { kind: 'system_trigger', name: 'goal_continuation' }),
+      userMessage(undefined, 'Report back to the parent agent', { kind: 'system_trigger', name: 'subagent' }),
+    ]);
+
+    expect(state.turns.map(shape)).toEqual([
+      ['opener:User activated the skill'],
+      ['opener:'],
+      ['opener:'],
+      ['opener:Report back to the parent agent'],
+    ]);
+    expect((state.turns[0]?.items[0] as { origin?: unknown }).origin).toEqual({
+      kind: 'skill_activation',
+      trigger: 'user-slash',
+      skillName: 'commit',
+    });
+    expect((state.turns[2]?.items[0] as { origin?: unknown }).origin).toEqual({ kind: 'system_trigger', name: 'goal_continuation' });
+  });
+
+  it('ends interactions left pending when their turn ends', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'run it'),
+      stepBegin(0, 1, 's1'),
+      toolCall(0, 1, 's1', 'call-1', 'Bash', { command: 'ls' }),
+      record('interaction.request', { id: 'i1', kind: 'approval', toolCallId: 'call-1', request: {} }),
+      turnEnded(0, 'cancelled'),
+    ]);
+
+    expect(state.turns[0]?.items[1]).toMatchObject({
+      type: 'tool_call',
+      status: 'ended',
+      interaction: { interaction_id: 'i1', status: 'ended' },
+    });
   });
 
   it('times reasoning by its streamed block and falls back to the step span for untimed records', () => {
@@ -219,8 +276,9 @@ describe('conversation fold', () => {
 
     expect(state.turns.map(shape)).toEqual([
       ['opener:User activated the skill'],
-      ['opener:Continue working toward the active goal'],
+      ['opener:'],
     ]);
+    expect(state.turns[1]?.items[0]).toMatchObject({ origin: { kind: 'system_trigger', name: 'goal_continuation' } });
   });
 
   it('attaches interactions recorded before the tool call and subagent links to tool items', () => {
@@ -323,23 +381,16 @@ describe('conversation fold', () => {
     ]);
   });
 
-  it('reports the items an undo cut from a turn that stays', () => {
-    const records = [
+  it('cuts an undone steer and what followed it from a turn that stays', () => {
+    const state = fold([
       userMessage('a', 'first'),
       message('assistant', 'one'),
       record('turn.steer', { input: [{ type: 'text', text: 'wait' }], origin: { kind: 'user' } }),
       userMessage('c', 'wait'),
       message('assistant', 'two'),
-    ];
-    const before = fold(records).turns[0]!;
-    const after = undoConversationTurns(fold(records), 1).turns[0]!;
-
-    expect(shape(after)).toEqual(['opener:first', 'assistant_message:t0#1:one']);
-    expect(restoredTurnEvents(before, after)).toEqual([
-      { type: 'item.removed', turn_id: 't0', item_id: 'c' },
-      { type: 'item.removed', turn_id: 't0', item_id: 't0#3' },
     ]);
-    expect(restoredTurnEvents(after, structuredClone(after))).toEqual([]);
+
+    expect(shape(undoConversationTurns(state, 1).turns[0])).toEqual(['opener:first', 'assistant_message:t0#1:one']);
   });
 
   it('folds legacy assistant and tool messages', () => {
@@ -384,5 +435,16 @@ describe('conversation fold', () => {
 
     expect(state.turns.map(shape)).toEqual([['opener:two']]);
     expect(state.turns[0]?.ordinal).toBe(1);
+  });
+});
+
+describe('cold wire records', () => {
+  it('rejects a corrupted complete line and tolerates a torn last line', () => {
+    const line = JSON.stringify({ type: 'context.clear', time: 1 });
+
+    expect(parseWireRecords(`${line}\n{"type":"conte`, 'example/wire.jsonl')).toEqual([JSON.parse(line)]);
+    expect(() => parseWireRecords(`${line}\n{"type":"conte\n${line}\n`, 'example/wire.jsonl')).toThrow(
+      'wire.jsonl: corrupted line 2 in example/wire.jsonl',
+    );
   });
 });

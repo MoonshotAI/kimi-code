@@ -37,10 +37,8 @@ import {
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
-import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 import { ErrorCode } from '../protocol/error-codes';
-import { projectPromptContentParts } from '../services/messages/messageProjection';
+import { projectPromptContentParts, projectUserContent } from '../services/messages/messageProjection';
 import {
   promptAbortResponseSchema,
   promptListResponseSchema,
@@ -243,12 +241,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           await assertPromptFileRefs(req.body.content, core.accessor.get(IFileService));
           await assertPromptPathRefs(req.body.content);
           if (req.body.skills !== undefined) {
-            if (req.body.prompt_id !== undefined) {
-              throw new Error2(
-                ErrorCodes.REQUEST_INVALID,
-                'prompt_id cannot be combined with a bundled skill submission',
-              );
-            }
             await assertActivatableSkills(
               session.accessor.get(ISessionSkillCatalog),
               req.body.skills,
@@ -343,6 +335,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             try {
               result = await resolved.skill.promptWithSkills({
                 input: parts,
+                promptId: reservation.id,
                 clientMetadata,
                 skills: req.body.skills,
                 attachments: promptAttachments,
@@ -351,6 +344,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               settlement.dispose();
               throw error;
             }
+            reservation.submit();
             enqueued = true;
             settlement.settle(result.prompt_id, () => preparedMedia?.discard());
             reply.send(
@@ -546,15 +540,11 @@ export function projectPromptSnapshot(prompt: {
     ? 'running'
     : prompt.state === 'blocked' ? 'blocked' : 'queued';
   const origin = prompt.message.origin;
-  const bundled = origin?.kind === 'user' ? (origin.skillActivations ?? []) : [];
-  const content = annotateBundledSkillParts(prompt.message.content, bundled).filter(
-    (part) => !isSkillActivationPart(part) && !isUserPromptSubmitHookPart(part),
-  );
   return {
     prompt_id: prompt.id,
     user_message_id: prompt.userMessageId,
     status,
-    content: projectPromptContentParts(content),
+    content: projectUserContent(prompt.message),
     created_at: prompt.createdAt,
     metadata: origin?.kind === 'user' || origin?.kind === 'skill_activation' ? origin.clientMetadata?.[0] : undefined,
   };

@@ -12,6 +12,7 @@ import {
   InteractionResolvedEvent,
   PromptCompleted,
   SubagentSpawned,
+  type DurableAgentRuntimeParticipant,
   type IAgentScopeHandle,
   type IDisposable,
 } from '@moonshot-ai/agent-core-v2';
@@ -43,11 +44,13 @@ import type { MessageContent } from '../../protocol/message';
 import {
   applyConversationRecord,
   createConversationState,
+  settleInteraction,
   undoConversationTurns,
   type ConversationState,
 } from './conversationFold';
 
 export type ConversationEvent =
+  | { readonly type: 'reset' }
   | { readonly type: 'turn.started' | 'turn.updated' | 'turn.ended'; readonly turn: ConversationTurnHeader }
   | { readonly type: 'item.started' | 'item.updated' | 'item.ended'; readonly turn_id: string; readonly item: ConversationItem }
   | { readonly type: 'item.delta'; readonly turn_id: string; readonly item_id: string; readonly delta: string }
@@ -102,19 +105,17 @@ export class ConversationFeed implements IDisposable {
   private readonly live = new Map<string, LiveItem>();
   private readonly listeners = new Set<ConversationListener>();
   private readonly disposables: IDisposable[] = [];
+  readonly ready: Promise<ConversationFeed>;
 
-  static async attach(handle: IAgentScopeHandle): Promise<ConversationFeed> {
-    const feed = new ConversationFeed(handle);
-    try {
-      await feed.start();
-    } catch (error) {
-      feed.dispose();
-      throw error;
-    }
-    return feed;
+  constructor(private readonly handle: IAgentScopeHandle) {
+    this.ready = this.start().then(
+      () => this,
+      (error: unknown) => {
+        this.dispose();
+        throw error;
+      },
+    );
   }
-
-  private constructor(private readonly handle: IAgentScopeHandle) {}
 
   get agentId(): string {
     return this.handle.id;
@@ -191,7 +192,8 @@ export class ConversationFeed implements IDisposable {
         });
       }),
     );
-    const attachment = await this.handle.accessor.get(IEventDispatcher).attachLate({
+    const dispatcher = this.handle.accessor.get(IEventDispatcher);
+    const participant: DurableAgentRuntimeParticipant<ConversationState> = {
       id: 'kap.conversation',
       events: RECORD_EVENTS,
       undoable: true,
@@ -203,8 +205,25 @@ export class ConversationFeed implements IDisposable {
       commit: (next) => {
         this.commit(next);
       },
-    });
-    this.disposables.push(attachment);
+    };
+    if (dispatcher.restorePhase === 'new') {
+      this.disposables.push(dispatcher.attach(participant));
+      await new Promise<void>((resolve, reject) => {
+        this.disposables.push(
+          dispatcher.hooks.onDidRestore.register('kap.conversation', async (_context, next) => {
+            await next();
+            resolve();
+          }),
+          {
+            dispose: () => {
+              reject(new Error(`agent ${this.handle.id} closed before its conversation was restored`));
+            },
+          },
+        );
+      });
+    } else {
+      this.disposables.push(await dispatcher.attachLate(participant));
+    }
     this.sent = this.state.turns;
     this.started = true;
   }
@@ -226,16 +245,8 @@ export class ConversationFeed implements IDisposable {
   private finishRestore(): void {
     if (!this.restoring) return;
     this.restoring = false;
-    const previous = new Map(this.sent.map((turn) => [turn.turn_id, turn]));
-    const current = new Set(this.state.turns.map((turn) => turn.turn_id));
-    const removed = this.sent.filter((turn) => !current.has(turn.turn_id)).map((turn) => turn.turn_id);
     this.sent = this.state.turns;
-    if (removed.length > 0) this.emit({ type: 'turns.removed', turn_ids: removed });
-    for (const turn of this.state.turns) {
-      const before = previous.get(turn.turn_id);
-      if (before === undefined) continue;
-      for (const event of restoredTurnEvents(before, turn)) this.emit(event);
-    }
+    this.emit({ type: 'reset' });
   }
 
   private flush(): void {
@@ -359,7 +370,7 @@ export class ConversationFeed implements IDisposable {
     const liveItems = [...this.live.values()].filter((entry) => entry.turnId === turn.turn_id).map((entry) => entry.item);
     let presented = liveItems.length === 0 ? turn : { ...turn, items: [...turn.items, ...liveItems] };
     if (presented.status === 'running' && !this.isActive(presented)) {
-      presented = { ...presented, status: 'ended', outcome: 'interrupted' };
+      presented = { ...presented, status: 'ended', outcome: 'interrupted', items: presented.items.map(settleInteraction) };
     }
     return presented;
   }
@@ -386,23 +397,6 @@ export class ConversationFeed implements IDisposable {
 function headerOf(turn: ConversationTurn): ConversationTurnHeader {
   const { items: _items, ...header } = turn;
   return header;
-}
-
-export function restoredTurnEvents(before: ConversationTurn, after: ConversationTurn): ConversationEvent[] {
-  if (JSON.stringify(before) === JSON.stringify(after)) return [];
-  const turnId = after.turn_id;
-  const kept = new Set(after.items.map((item) => item.item_id));
-  const previousItems = new Map(before.items.map((item) => [item.item_id, JSON.stringify(item)]));
-  const events: ConversationEvent[] = before.items
-    .filter((item) => !kept.has(item.item_id))
-    .map((item) => ({ type: 'item.removed', turn_id: turnId, item_id: item.item_id }));
-  for (const item of after.items) {
-    if (previousItems.get(item.item_id) === JSON.stringify(item)) continue;
-    events.push({ type: item.status === 'ended' ? 'item.ended' : 'item.updated', turn_id: turnId, item });
-  }
-  const header = headerOf(after);
-  if (JSON.stringify(headerOf(before)) !== JSON.stringify(header)) events.push({ type: 'turn.updated', turn: header });
-  return events;
 }
 
 function headerUnchanged(before: ConversationTurn, after: ConversationTurn): boolean {

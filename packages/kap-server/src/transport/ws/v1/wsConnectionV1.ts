@@ -7,7 +7,9 @@ import {
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 
+import { ErrorCode } from '../../../protocol/error-codes';
 import type { CredentialValidator } from '../../../services/auth/credentials';
+import { mapError } from '../../errors';
 import type { IConnectionRegistry } from '../connectionRegistry';
 import { buildAck, buildPing, buildResponse, buildServerHello } from './protocol';
 import type {
@@ -200,15 +202,21 @@ export class WsConnectionV1 implements BroadcastTarget {
       return;
     }
     const sid = parsed.data.session_id;
-    const ok = await this.broadcaster.subscribe(sid, this, parsed.data.agent_ids ?? [MAIN_AGENT_ID]);
-    if (ok) this.subscriptions.add(sid);
-    this.sendImmediateFrame(
-      buildAck(frame.id ?? '', 0, 'success', {
-        accepted: ok ? [sid] : [],
-        not_found: ok ? [] : [sid],
-      }),
-    );
-    if (ok) this.broadcaster.sendPendingInteractions(sid, this);
+    try {
+      await this.broadcaster.subscribe(sid, this, parsed.data.agent_ids ?? [MAIN_AGENT_ID]);
+    } catch (error) {
+      const failure = mapError(error, frame.id ?? '');
+      this.sendImmediateFrame(
+        buildAck(frame.id ?? '', failure.code, failure.msg, {
+          accepted: [],
+          not_found: failure.code === ErrorCode.SESSION_NOT_FOUND ? [sid] : [],
+        }),
+      );
+      return;
+    }
+    this.subscriptions.add(sid);
+    this.sendImmediateFrame(buildAck(frame.id ?? '', 0, 'success', { accepted: [sid], not_found: [] }));
+    this.broadcaster.sendPendingInteractions(sid, this);
   }
 
   private async onUnsubscribeV2(frame: InboundFrame): Promise<void> {

@@ -12,6 +12,8 @@ import type {
   Workspace,
 } from '@moonshot-ai/agent-core-v2';
 import {
+  Error2,
+  ErrorCodes,
   IAgentLifecycleService,
   IEventService,
   INTERACTION_TAG_SESSION_ID,
@@ -24,8 +26,6 @@ import {
   interactions,
   toDisposable,
 } from '@moonshot-ai/agent-core-v2';
-import { ISessionEventBus } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
-import { SubagentStarted } from '@moonshot-ai/agent-core-v2/session/subagent/mirrorAgentRun';
 import type {
   ConfigWarningItem,
   DiUnitChangedEvent,
@@ -52,7 +52,11 @@ import type { AgentFeedMessage } from '../../../protocol/ws-agent';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { ConversationEvent, ConversationFeed } from '../../../services/conversation/conversationFeed';
-import type { ConversationService } from '../../../services/conversation/conversationService';
+import type {
+  ConversationFeedCreated,
+  ConversationService,
+} from '../../../services/conversation/conversationService';
+import { mapError } from '../../errors';
 import { ensureMainAgent } from '../../mainAgent';
 import { SessionAgentFeed } from './sessionAgentFeed';
 import { SessionTaskFeed } from './sessionTaskFeed';
@@ -99,6 +103,7 @@ interface SessionState {
 interface ConversationAttachment {
   readonly feed: ConversationFeed;
   readonly subscription: IDisposable;
+  pending?: ConversationEvent[];
 }
 
 interface WorkTracker {
@@ -128,6 +133,7 @@ export class SessionEventBroadcaster {
   private readonly deletionSubscription: IDisposable | undefined;
   private readonly createSubscription: IDisposable | undefined;
   private readonly lifecycleSubscription: IDisposable;
+  private readonly feedSubscription: IDisposable | undefined;
   private closed = false;
 
   constructor(
@@ -170,6 +176,9 @@ export class SessionEventBroadcaster {
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)
       .subscribe((event) => this.onCoreEvent(event));
+    this.feedSubscription = opts.conversations?.onDidCreateFeed((created) => {
+      this.onFeedCreated(created);
+    });
   }
 
   addGlobalTarget(target: BroadcastTarget): void {
@@ -189,35 +198,30 @@ export class SessionEventBroadcaster {
     sessionId: string,
     target: BroadcastTarget,
     agentIds: readonly string[],
-  ): Promise<boolean> {
+  ): Promise<void> {
     let session: ISessionScopeHandle | undefined;
     try {
       session = await resumeSessionById(this.opts.core.accessor, sessionId);
+      if (session !== undefined) await ensureMainAgent(session);
     } catch (error) {
       this.opts.logger?.warn(
         { sessionId, err: error instanceof Error ? error.message : String(error) },
-        'session subscribe resume failed',
+        'session subscribe failed',
       );
-      return false;
+      throw error;
     }
-    if (session !== undefined) {
-      try {
-        await ensureMainAgent(session);
-      } catch (error) {
-        this.opts.logger?.warn(
-          { sessionId, err: error instanceof Error ? error.message : String(error) },
-          'session subscribe main agent failed',
-        );
-      }
+    if (session === undefined) {
+      throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session not found: ${sessionId}`);
     }
     const state = await this.ensureState(sessionId);
-    if (state === undefined || this.sessions.get(sessionId) !== state) return false;
+    if (state === undefined || this.sessions.get(sessionId) !== state) {
+      throw new Error(`session ${sessionId} closed while subscribing`);
+    }
     const subscribed = state.targets.get(target) ?? new Set<string>();
     state.targets.set(target, subscribed);
     for (const agentId of agentIds) subscribed.add(agentId);
     this.sendAgentLists(state, target, subscribed);
-    await Promise.all(agentIds.map((agentId) => this.attachConversation(state, target, agentId)));
-    return true;
+    await Promise.all(agentIds.map((agentId) => this.subscribeConversation(state, target, agentId)));
   }
 
   isSubscribed(sessionId: string, target: BroadcastTarget): boolean {
@@ -241,40 +245,103 @@ export class SessionEventBroadcaster {
     this.evictDetachedSession(sessionId);
   }
 
-  private async attachConversation(
+  private async subscribeConversation(
     state: SessionState,
     target: BroadcastTarget,
     agentId: string,
   ): Promise<void> {
-    let feed: ConversationFeed | undefined;
+    const conversations = this.opts.conversations;
+    if (conversations === undefined) return;
+    let feed: ConversationFeed;
     try {
-      feed = await this.opts.conversations?.feed(state.sessionId, agentId);
+      feed = await conversations.feed(state.sessionId, agentId);
     } catch (error) {
+      if (state.targets.get(target)?.has(agentId) !== true) return;
       this.opts.logger?.warn(
         { sessionId: state.sessionId, agentId, err: error instanceof Error ? error.message : String(error) },
         'session subscribe conversation failed',
       );
+      this.detachConversation(state, target, agentId);
+      const failure = mapError(error, '');
+      try {
+        target.send({
+          type: 'turns.failed',
+          session_id: state.sessionId,
+          agent_id: agentId,
+          event_created_at: new Date().toISOString(),
+          code: failure.code,
+          msg: failure.msg,
+        });
+      } catch {
+      }
       return;
     }
-    if (feed === undefined || state.targets.get(target)?.has(agentId) !== true) return;
+    await this.attachConversation(state, target, agentId, feed);
+  }
+
+  private onFeedCreated({ sessionId, agentId, feed }: ConversationFeedCreated): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined) return;
+    void feed.ready.then(
+      (ready) => {
+        for (const [target, agentIds] of state.targets) {
+          if (agentIds.has(agentId)) void this.attachConversation(state, target, agentId, ready);
+        }
+      },
+      () => {},
+    );
+  }
+
+  private async attachConversation(
+    state: SessionState,
+    target: BroadcastTarget,
+    agentId: string,
+    feed: ConversationFeed,
+  ): Promise<void> {
+    if (state.targets.get(target)?.has(agentId) !== true) return;
     if (state.conversations.get(target)?.get(agentId)?.feed === feed) return;
-    const buffered: ConversationEvent[] = [];
-    let ready = false;
-    const subscription = feed.subscribe((event) => {
-      if (ready) this.sendConversation(target, state.sessionId, agentId, event);
-      else buffered.push(event);
-    });
     this.detachConversation(state, target, agentId);
     let byAgent = state.conversations.get(target);
     if (byAgent === undefined) {
       byAgent = new Map();
       state.conversations.set(target, byAgent);
     }
-    const attachment: ConversationAttachment = { feed, subscription };
+    const attachment: ConversationAttachment = {
+      feed,
+      subscription: feed.subscribe((event) => {
+        this.forwardConversation(state, target, agentId, feed, event);
+      }),
+    };
     byAgent.set(agentId, attachment);
-    const snapshot = feed.snapshot(undefined, CONVERSATION_PAGE_TURNS);
-    const turns = await feed.hydrate(snapshot.turns).catch(() => snapshot.turns);
-    if (state.conversations.get(target)?.get(agentId) !== attachment) return;
+    await this.sendPage(state, target, agentId, attachment);
+  }
+
+  private forwardConversation(
+    state: SessionState,
+    target: BroadcastTarget,
+    agentId: string,
+    feed: ConversationFeed,
+    event: ConversationEvent,
+  ): void {
+    const attachment = state.conversations.get(target)?.get(agentId);
+    if (attachment?.feed !== feed) return;
+    if (event.type === 'reset') void this.sendPage(state, target, agentId, attachment);
+    else if (attachment.pending !== undefined) attachment.pending.push(event);
+    else this.sendConversation(target, state.sessionId, agentId, event);
+  }
+
+  private async sendPage(
+    state: SessionState,
+    target: BroadcastTarget,
+    agentId: string,
+    attachment: ConversationAttachment,
+  ): Promise<void> {
+    const pending: ConversationEvent[] = [];
+    attachment.pending = pending;
+    const page = attachment.feed.snapshot(undefined, CONVERSATION_PAGE_TURNS);
+    const turns = await attachment.feed.hydrate(page.turns).catch(() => page.turns);
+    if (state.conversations.get(target)?.get(agentId) !== attachment || attachment.pending !== pending) return;
+    attachment.pending = undefined;
     try {
       target.send({
         type: 'turns',
@@ -282,13 +349,11 @@ export class SessionEventBroadcaster {
         agent_id: agentId,
         event_created_at: new Date().toISOString(),
         turns,
-        has_more: snapshot.has_more,
+        has_more: page.has_more,
       });
-      for (const event of buffered) this.sendConversation(target, state.sessionId, agentId, event);
     } catch {
     }
-    buffered.length = 0;
-    ready = true;
+    for (const event of pending) this.sendConversation(target, state.sessionId, agentId, event);
   }
 
   private detachConversation(state: SessionState, target: BroadcastTarget, agentId: string): void {
@@ -321,23 +386,19 @@ export class SessionEventBroadcaster {
     this.deletionSubscription?.dispose();
     this.createSubscription?.dispose();
     this.lifecycleSubscription.dispose();
+    this.feedSubscription?.dispose();
     for (const sessionId of this.workTrackers.keys()) this.untrackWork(sessionId);
-    for (const [sessionId, state] of this.sessions) {
-      disposeSessionState(state);
-      this.opts.conversations?.dropSession(sessionId);
-    }
+    for (const state of this.sessions.values()) disposeSessionState(state);
     this.sessions.clear();
     await this.globalQueue;
   }
 
   private evictSession(sessionId: string): void {
     const state = this.sessions.get(sessionId);
-    if (state !== undefined) {
-      this.sessions.delete(sessionId);
-      state.targets.clear();
-      disposeSessionState(state);
-    }
-    this.opts.conversations?.dropSession(sessionId);
+    if (state === undefined) return;
+    this.sessions.delete(sessionId);
+    state.targets.clear();
+    disposeSessionState(state);
   }
 
   private detachSession(sessionId: string): void {
@@ -346,7 +407,6 @@ export class SessionEventBroadcaster {
     state.detached = true;
     disposeSessionState(state);
     state.knownInteractions.clear();
-    this.opts.conversations?.dropSession(sessionId);
     this.evictDetachedSession(sessionId);
   }
 
@@ -367,7 +427,7 @@ export class SessionEventBroadcaster {
     for (const [target, agentIds] of state.targets) this.sendAgentLists(state, target, agentIds);
     await Promise.all(
       [...state.targets].flatMap(([target, agentIds]) =>
-        [...agentIds].map((agentId) => this.attachConversation(state, target, agentId)),
+        [...agentIds].map((agentId) => this.subscribeConversation(state, target, agentId)),
       ),
     );
   }
@@ -405,14 +465,9 @@ export class SessionEventBroadcaster {
     const agentStates = new SessionAgentFeed(sessionId, agents, (agentId, message) => {
       this.sendAgentFrame(state, agentId, message);
     });
-    const restarts = session.accessor.get(ISessionEventBus).subscribe(SubagentStarted, (event) => {
-      for (const [target, agentIds] of state.targets) {
-        if (agentIds.has(event.subagentId)) void this.attachConversation(state, target, event.subagentId);
-      }
-    });
     state.tasks = tasks;
     state.agents = agentStates;
-    state.lifecycleDisposables.push(tasks, agentStates, restarts);
+    state.lifecycleDisposables.push(tasks, agentStates);
   }
 
   private sendAgentLists(
