@@ -17,6 +17,7 @@ import {
   ISessionIndex,
   ISessionMetadata,
   ISessionLegacyService,
+  ISessionPromptPredictionService,
   ISessionTitleService,
   IEventService,
   SessionCreated,
@@ -48,6 +49,8 @@ import type { ConversationService } from '../services/conversation/conversationS
 import { loadWorkspaceVisibility } from '../services/workspaceVisibility';
 import {
   archiveSessionResponseSchema,
+  cancelPromptPredictionRequestSchema,
+  cancelPromptPredictionResponseSchema,
   compactSessionRequestSchema,
   compactSessionResponseSchema,
   createSessionChildRequestSchema,
@@ -58,6 +61,8 @@ import {
   editSessionGoalResponseSchema,
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
+  predictPromptRequestSchema,
+  predictPromptResponseSchema,
   sessionAbortResponseSchema,
   sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
@@ -189,6 +194,10 @@ const sessionActionRequestSchema = z.preprocess(
     instruction: z.string().optional(),
     turn_id: z.string().min(1).optional(),
     agent_id: z.string().min(1).optional(),
+     count: z.number().int().positive().optional(),
+     page_size: z.number().int().min(1).max(100).optional(),
+    prediction_id: z.string().min(1).optional(),
+    expected_turn_id: z.number().int().nonnegative().optional(),
   }),
 );
 
@@ -645,6 +654,8 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           undoSessionResponseSchema,
           sessionAbortResponseSchema,
           startBtwSessionResponseSchema,
+          predictPromptResponseSchema,
+          cancelPromptPredictionResponseSchema,
           archiveSessionResponseSchema,
           deleteSessionResponseSchema,
           takeoverSessionResponseSchema,
@@ -927,6 +938,8 @@ type SessionAction =
   | 'undo'
   | 'abort'
   | 'btw'
+  | 'predict-prompt'
+  | 'cancel-prompt-prediction'
   | 'restore'
   | 'archive'
   | 'delete'
@@ -936,8 +949,22 @@ type SessionAction =
 interface SessionActionExtra {
   readonly core: Scope;
   readonly conversations: ConversationService;
-  readonly req: { readonly id: string };
-  readonly reply: { readonly send: (payload: unknown) => unknown };
+  readonly req: {
+    readonly id: string;
+    readonly raw?: {
+      readonly aborted: boolean;
+      once(event: 'aborted', listener: () => void): unknown;
+      off(event: 'aborted', listener: () => void): unknown;
+    };
+  };
+  readonly reply: {
+    readonly send: (payload: unknown) => unknown;
+    readonly raw?: {
+      readonly destroyed: boolean;
+      once(event: 'close', listener: () => void): unknown;
+      off(event: 'close', listener: () => void): unknown;
+    };
+  };
 }
 
 type SessionActionCtx<TBody = unknown> = SessionActionExtra & {
@@ -951,6 +978,14 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   undo: { body: undoSessionRequestSchema, handle: undoSessionAction },
   abort: { handle: abortSessionAction },
   btw: { handle: btwSessionAction },
+  'predict-prompt': {
+    body: predictPromptRequestSchema,
+    handle: predictPromptAction,
+  },
+  'cancel-prompt-prediction': {
+    body: cancelPromptPredictionRequestSchema,
+    handle: cancelPromptPredictionAction,
+  },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
   delete: { handle: deleteSessionAction },
@@ -1044,6 +1079,50 @@ async function btwSessionAction(ctx: SessionActionCtx): Promise<void> {
   await core.accessor.get(IAuthSummaryService).ensureReady(sessionModel || undefined);
   const agentId = await session.accessor.get(ISessionBtwService).start();
   reply.send(okEnvelope({ agent_id: agentId }, req.id));
+}
+
+async function predictPromptAction(
+  ctx: SessionActionCtx<z.infer<typeof predictPromptRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const session = await resumeSessionById(core.accessor, id);
+  if (session === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  const service = session.accessor.get(ISessionPromptPredictionService);
+  const disconnected = (): boolean => req.raw?.aborted === true || reply.raw?.destroyed === true;
+  const onAborted = (): void => {
+    service.cancel(body.prediction_id);
+  };
+  req.raw?.once('aborted', onAborted);
+  reply.raw?.once('close', onAborted);
+  try {
+    if (disconnected()) return;
+    const prediction = await service.predict({
+      predictionId: body.prediction_id,
+      expectedTurnId: body.expected_turn_id,
+    });
+    if (!disconnected()) {
+      reply.send(okEnvelope(predictPromptResponseSchema.parse({ prediction }), req.id));
+    }
+  } finally {
+    req.raw?.off('aborted', onAborted);
+    reply.raw?.off('close', onAborted);
+  }
+}
+
+async function cancelPromptPredictionAction(
+  ctx: SessionActionCtx<z.infer<typeof cancelPromptPredictionRequestSchema>>,
+): Promise<void> {
+  const { core, req, reply, id, body } = ctx;
+  const session = await resumeSessionById(core.accessor, id);
+  if (session === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  const cancelled = session.accessor
+    .get(ISessionPromptPredictionService)
+    .cancel(body.prediction_id);
+  reply.send(okEnvelope(cancelPromptPredictionResponseSchema.parse({ cancelled }), req.id));
 }
 
 async function restoreSessionAction(ctx: SessionActionCtx): Promise<void> {

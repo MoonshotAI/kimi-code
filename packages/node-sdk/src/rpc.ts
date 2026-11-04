@@ -363,6 +363,21 @@ export abstract class SDKRpcClientBase {
 
   abstract startBtw(input: SessionIdRpcInput): Promise<string>;
 
+  async predictNextPrompt(_input: {
+    sessionId: string;
+    predictionId: string;
+    expectedTurnId: number;
+  }): Promise<string | null> {
+    return null;
+  }
+
+  async cancelPromptPrediction(_input: {
+    sessionId: string;
+    predictionId: string;
+  }): Promise<boolean> {
+    return false;
+  }
+
   abstract cancel(input: SessionIdRpcInput): Promise<void>;
 
   abstract clearContext(input: SessionIdRpcInput): Promise<void>;

@@ -100,11 +100,17 @@ const a2 = { inputOther: 10, output: 20, inputCacheRead: 30, inputCacheCreation:
 const b1 = { inputOther: 100, output: 200, inputCacheRead: 300, inputCacheCreation: 400 };
 
 describe('SessionUsageService (wire-backed)', () => {
-  it('accumulates usage by model', async () => {
+  it('accumulates usage by model without mutating prior status snapshots', async () => {
     await svc.record(agent, 'model-a', a1);
+    const snapshot = svc.status(agent);
     await svc.record(agent, 'model-a', a2);
     await svc.record(agent, 'model-b', b1);
 
+    expect(snapshot).toEqual({
+      byModel: { 'model-a': a1 },
+      total: a1,
+      currentTurn: undefined,
+    });
     expect(svc.status(agent)).toEqual({
       byModel: {
         'model-a': { inputOther: 11, output: 22, inputCacheRead: 33, inputCacheCreation: 44 },
@@ -135,19 +141,6 @@ describe('SessionUsageService (wire-backed)', () => {
       output: 6,
       inputCacheRead: 7,
       inputCacheCreation: 8,
-    });
-  });
-
-  it('returns immutable status snapshots', async () => {
-    await svc.record(agent, 'model-a', a1);
-    const snapshot = svc.status(agent);
-
-    await svc.record(agent, 'model-a', a2);
-
-    expect(snapshot).toEqual({
-      byModel: { 'model-a': a1 },
-      total: a1,
-      currentTurn: undefined,
     });
   });
 
@@ -248,9 +241,15 @@ describe('SessionUsageService (wire-backed)', () => {
     expect('payload' in records[0]!).toBe(false);
   });
 
-  it('marks turn-scoped sources with usageScope only (no turnId or context persisted)', async () => {
+  it('marks turn and prediction scopes without adding prediction to currentTurn', async () => {
     await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 7, step: 2 });
+    await svc.record(agent, 'model-a', a2, {
+      type: 'operation',
+      turnId: 7,
+      requestKind: 'prompt_prediction',
+    });
 
+    expect(svc.status(agent).currentTurn).toEqual(a1);
     const records = await readRecords();
     expect(records).toEqual([
       {
@@ -259,6 +258,14 @@ describe('SessionUsageService (wire-backed)', () => {
         model: 'model-a',
         usage: a1,
         usageScope: 'turn',
+        time: expect.any(Number),
+      },
+      {
+        type: 'usage.record',
+        agentId: 'test-agent',
+        model: 'model-a',
+        usage: a2,
+        usageScope: 'prediction',
         time: expect.any(Number),
       },
     ]);

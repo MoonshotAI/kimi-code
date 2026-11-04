@@ -93,6 +93,28 @@ describe('facade routing', () => {
       method: 'status',
       args: [undefined],
     });
+
+    channel.results.set('sessionPromptPredictionService.predict', 'next prompt');
+    await expect(klient.session('s1').predictNextPrompt({
+      predictionId: 'prediction-1',
+      expectedTurnId: 4,
+    })).resolves.toBe('next prompt');
+    channel.results.set('sessionPromptPredictionService.cancel', true);
+    await expect(klient.session('s1').cancelPromptPrediction('prediction-1')).resolves.toBe(true);
+    expect(channel.calls.slice(3)).toEqual([
+      {
+        scope: { sessionId: 's1' },
+        service: 'sessionPromptPredictionService',
+        method: 'predict',
+        args: [{ predictionId: 'prediction-1', expectedTurnId: 4 }],
+      },
+      {
+        scope: { sessionId: 's1' },
+        service: 'sessionPromptPredictionService',
+        method: 'cancel',
+        args: ['prediction-1'],
+      },
+    ]);
   });
 
   it('forwards the login region option through the wire contract', async () => {

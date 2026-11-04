@@ -263,6 +263,19 @@ export class Session {
     return this.rpc.startBtw({ sessionId: this.id });
   }
 
+  async predictNextPrompt(input: {
+    predictionId: string;
+    expectedTurnId: number;
+  }): Promise<string | null> {
+    this.ensureOpen();
+    return this.rpc.predictNextPrompt({ sessionId: this.id, ...input });
+  }
+
+  async cancelPromptPrediction(predictionId: string): Promise<boolean> {
+    this.ensureOpen();
+    return this.rpc.cancelPromptPrediction({ sessionId: this.id, predictionId });
+  }
+
   async cancel(): Promise<void> {
     this.ensureOpen();
     await this.rpc.cancel({ sessionId: this.id });

@@ -262,6 +262,24 @@ export interface PluginToggleEvent {
   enabled_plugins?: string;
 }
 
+export interface PredictionRequestedEvent {
+  prediction_id: string;
+  turn_id: number;
+}
+
+export interface PredictionGeneratedEvent {
+  prediction_id: string;
+  turn_id: number;
+  status: 'generated' | 'empty' | 'invalid' | 'tool_call' | 'timeout' | 'cancelled' | 'stale' | 'error';
+  duration_ms: number;
+  prediction_chars?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  input_cache_read?: number;
+  input_cache_creation?: number;
+  request_id?: string;
+}
+
 export interface CompactionFinishedEvent {
   turn_id?: number;
   source: 'manual' | 'auto';
@@ -1000,6 +1018,30 @@ export const telemetryEventDefinitions = {
       enabled: 'Whether the plugin is enabled after the toggle',
       enabled_plugins:
         'Comma-separated sorted ids of enabled, loaded plugins after the toggle commits; empty string for a known empty set',
+    },
+  }),
+  prediction_requested: defineAgentTelemetryEvent<PredictionRequestedEvent>({
+    owner: 'kimi-code',
+    comment: 'A side-channel next-prompt prediction request starts.',
+    properties: {
+      prediction_id: 'Caller-generated prediction identifier; contains no prompt content',
+      turn_id: 'Completed main-agent turn used as the prediction source',
+    },
+  }),
+  prediction_generated: defineAgentTelemetryEvent<PredictionGeneratedEvent>({
+    owner: 'kimi-code',
+    comment: 'A side-channel next-prompt prediction request settles.',
+    properties: {
+      prediction_id: 'Caller-generated prediction identifier; contains no prompt content',
+      turn_id: 'Completed main-agent turn used as the prediction source',
+      status: 'Bounded prediction outcome; stale covers lifecycle, context, and handle changes',
+      duration_ms: 'Prediction wall-clock time in milliseconds',
+      prediction_chars: 'Length of the accepted prediction in UTF-16 code units, never its text',
+      input_tokens: 'Total prediction input tokens including cache usage',
+      output_tokens: 'Prediction output tokens',
+      input_cache_read: 'Prediction cache-read input tokens',
+      input_cache_creation: 'Prediction cache-creation input tokens',
+      request_id: 'Provider request trace identifier when available',
     },
   }),
   compaction_finished: defineAgentTelemetryEvent<CompactionFinishedEvent>({

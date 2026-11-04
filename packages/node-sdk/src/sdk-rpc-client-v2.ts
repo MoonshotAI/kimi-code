@@ -2607,6 +2607,26 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return session.accessor.get(ISessionBtwService).start();
   }
 
+  override async predictNextPrompt(input: {
+    sessionId: string;
+    predictionId: string;
+    expectedTurnId: number;
+  }): Promise<string | null> {
+    this.requireLiveSession(input.sessionId);
+    return this.klient.session(input.sessionId).predictNextPrompt({
+      predictionId: input.predictionId,
+      expectedTurnId: input.expectedTurnId,
+    });
+  }
+
+  override async cancelPromptPrediction(input: {
+    sessionId: string;
+    predictionId: string;
+  }): Promise<boolean> {
+    this.requireLiveSession(input.sessionId);
+    return this.klient.session(input.sessionId).cancelPromptPrediction(input.predictionId);
+  }
+
   /**
    * Through the agent scope (`IAgentSwarmService.enter` / `.exit`) — no
    * klient facade exists. The v2 service is the port of v1's `SwarmMode`:
