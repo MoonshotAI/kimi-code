@@ -7,6 +7,7 @@ import type { ExecutableTool, ExecutableToolContext } from '#/tool/toolContract'
 import { mcpResultToExecutableOutput, type McpOutputOptions } from '#/agent/mcp/output';
 import { qualifyMcpToolName } from '#/mcpCore/tool-naming';
 import type { MCPClient, MCPToolResult } from '#/mcpCore/types';
+import { beginMcpServerCall } from '#/mcpCore/connection-manager';
 import {
   isMcpConnectionClosedError,
   isMcpMalformedResultError,
@@ -48,28 +49,41 @@ export function createMcpTool(
             isError: true,
           };
         }
-        let result;
-        try {
-          result = await callTool(client, args, context.signal);
-        } catch (error) {
-          await throwIfUnauthorized(options, qualifiedName, error, client);
-          result = await retryAfterReconnect(
-            error,
-            client,
-            args,
-            context,
-            options,
-            callTool,
-            qualifiedName,
-          );
+        const finishCall = options.serverName === undefined
+          ? () => {}
+          : beginMcpServerCall(options.serverName);
+        if (finishCall === undefined) {
+          return {
+            output: `MCP server for tool "${qualifiedName}" is being updated. Retry after the update finishes.`,
+            isError: true,
+          };
         }
-        return mcpResultToExecutableOutput(result, qualifiedName, {
-          signal: context.signal,
-          attachmentStore: options.attachmentStore,
-          originals: options.originals?.(),
-          telemetry: options.telemetry,
-          providerType: options.providerType?.(),
-        });
+        try {
+          let result;
+          try {
+            result = await callTool(client, args, context.signal);
+          } catch (error) {
+            await throwIfUnauthorized(options, qualifiedName, error, client);
+            result = await retryAfterReconnect(
+              error,
+              client,
+              args,
+              context,
+              options,
+              callTool,
+              qualifiedName,
+            );
+          }
+          return await mcpResultToExecutableOutput(result, qualifiedName, {
+            signal: context.signal,
+            attachmentStore: options.attachmentStore,
+            originals: options.originals?.(),
+            telemetry: options.telemetry,
+            providerType: options.providerType?.(),
+          });
+        } finally {
+          finishCall();
+        }
       },
     }),
   };

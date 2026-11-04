@@ -12,6 +12,7 @@ import { convertMCPContentBlock, mcpResultToExecutableOutput } from '#/agent/mcp
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { StdioMcpClient } from '#/mcpCore/client-stdio';
+import { drainMcpServer, resumeMcpServer } from '#/mcpCore/connection-manager';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
@@ -900,6 +901,41 @@ describe('createMcpTool', () => {
     if (execution.isError === true) throw new Error('expected tool execution');
     await expect(execution.execute({ turnId: 1, toolCallId: 'audio', signal: controller.signal })).rejects.toBe(reason);
     expect(calls).toBe(1);
+  });
+
+  test('rejects new tool calls while the server is draining', async () => {
+    let calls = 0;
+    const client = {
+      async listTools() { return []; },
+      async callTool() {
+        calls++;
+        return { content: [{ type: 'text', text: 'ok' }], isError: false };
+      },
+      async ping() {},
+    } satisfies MCPClient;
+    await drainMcpServer('drain-test');
+    try {
+      const tool = createMcpTool(
+        'mcp__drain-test__tool',
+        { name: 'tool', description: 'Tool', parameters: {} },
+        client,
+        { serverName: 'drain-test' },
+      );
+      const resolved = tool.resolveExecution({});
+      const execution = isPromiseLike(resolved) ? await resolved : resolved;
+      if (execution.isError === true) throw new Error('expected executable tool call');
+      const result = await execution.execute({
+        turnId: 1,
+        toolCallId: 'call_mcp',
+        signal: new AbortController().signal,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain('being updated');
+      expect(calls).toBe(0);
+    } finally {
+      resumeMcpServer('drain-test');
+    }
   });
 
   test('omits truncated when the MCP output was not truncated', async () => {

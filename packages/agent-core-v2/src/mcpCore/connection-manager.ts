@@ -173,6 +173,47 @@ interface NeedsAuthTransition {
   promise?: Promise<boolean>;
 }
 
+const activeMcpCalls = new Map<string, number>();
+const drainingMcpServers = new Set<string>();
+const mcpCallWaiters = new Map<string, Set<() => void>>();
+
+export function isMcpServerDraining(name: string): boolean {
+  return drainingMcpServers.has(name);
+}
+
+export function beginMcpServerCall(name: string): (() => void) | undefined {
+  if (drainingMcpServers.has(name)) return undefined;
+  activeMcpCalls.set(name, (activeMcpCalls.get(name) ?? 0) + 1);
+  let finished = false;
+  return () => {
+    if (finished) return;
+    finished = true;
+    const remaining = (activeMcpCalls.get(name) ?? 1) - 1;
+    if (remaining > 0) {
+      activeMcpCalls.set(name, remaining);
+      return;
+    }
+    activeMcpCalls.delete(name);
+    const waiters = mcpCallWaiters.get(name);
+    mcpCallWaiters.delete(name);
+    for (const resolve of waiters ?? []) resolve();
+  };
+}
+
+export async function drainMcpServer(name: string): Promise<void> {
+  drainingMcpServers.add(name);
+  if ((activeMcpCalls.get(name) ?? 0) === 0) return;
+  await new Promise<void>((resolve) => {
+    const waiters = mcpCallWaiters.get(name) ?? new Set<() => void>();
+    waiters.add(resolve);
+    mcpCallWaiters.set(name, waiters);
+  });
+}
+
+export function resumeMcpServer(name: string): void {
+  drainingMcpServers.delete(name);
+}
+
 export class McpConnectionManager implements McpConnectionView {
   private readonly entries = new Map<string, InternalEntry>();
   private readonly listeners = new Set<McpStatusListener>();
@@ -280,6 +321,7 @@ export class McpConnectionManager implements McpConnectionView {
   async remove(name: string): Promise<boolean> {
     const entry = this.entries.get(name);
     if (entry === undefined) return false;
+    await drainMcpServer(name);
     this.transition(entry, { type: 'disable' });
     const closing = this.operationTails.get(name);
     this.entries.delete(name);
@@ -290,6 +332,7 @@ export class McpConnectionManager implements McpConnectionView {
   async markRemoved(name: string): Promise<boolean> {
     const entry = this.entries.get(name);
     if (entry === undefined) return false;
+    await drainMcpServer(name);
     this.transition(entry, { type: 'remove' });
     await this.operationTails.get(name);
     return true;
@@ -318,6 +361,7 @@ export class McpConnectionManager implements McpConnectionView {
   }
 
   private upsert(name: string, config: McpServerConfig): InternalEntry {
+    resumeMcpServer(name);
     const previous = this.entries.get(name);
     if (previous !== undefined) {
       if (isLiveState(previous.state) && mcpServerConfigsEqual(previous.config, config)) {

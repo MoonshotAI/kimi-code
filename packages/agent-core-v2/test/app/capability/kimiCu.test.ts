@@ -707,7 +707,39 @@ describe('kimi-cu entry', () => {
     expect(plugins.installs).toEqual([
       { marketplaceId: 'kimi-cu-win', expectedVersion: '0.2.14' },
     ]);
+    expect(plugins.enabledCalls).toEqual([
+      { id: 'kimi-cu-win', enabled: false },
+      { id: 'kimi-cu-win', enabled: true },
+    ]);
     expect(doctorResults).toEqual([]);
+  });
+
+  it('restores the Windows plugin after an installation failure', async () => {
+    const busy = Object.assign(new Error('resource busy or locked'), { code: 'EBUSY' });
+    const plugins = fakePlugins([{ id: 'kimi-cu-win', enabled: true, state: 'ok' }], () => {
+      throw busy;
+    });
+    const host = fakeHostProcess([
+      {
+        match: '-Command',
+        code: 0,
+        stdout: 'version=0.2.14\nmcp=true\nhelper=embedded\nagent=running\n',
+      },
+    ]);
+    const entry = createKimiCuEntry(
+      makeCtx({
+        platform: 'win32',
+        arch: 'x64',
+        plugins: plugins.service,
+        hostProcess: host.service,
+      }),
+    );
+
+    await expect(entry.install(() => undefined)).rejects.toThrow('Restart Kimi Code');
+    expect(plugins.enabledCalls).toEqual([
+      { id: 'kimi-cu-win', enabled: false },
+      { id: 'kimi-cu-win', enabled: true },
+    ]);
   });
 
   it('explains how to recover when Windows plugin files are still in use', async () => {

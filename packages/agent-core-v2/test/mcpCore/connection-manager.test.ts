@@ -27,7 +27,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Error2 } from '#/errors';
 import { KIMI_MCP_CLIENT_NAME } from '#/mcpCore/client-shared';
-import { McpConnectionManager, type McpConnectionManagerOptions, type McpServerEntry } from '#/mcpCore/connection-manager';
+import {
+  beginMcpServerCall,
+  isMcpServerDraining,
+  McpConnectionManager,
+  type McpConnectionManagerOptions,
+  type McpServerEntry,
+} from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import type { StoredMcpOAuthTokens } from '#/mcpCore/oauth/provider';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
@@ -236,6 +242,38 @@ describe('McpConnectionManager', () => {
         'slow:removed',
       ]);
     } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('drains active calls before removal and accepts calls again after reconnect', async () => {
+    const cm = createManager();
+    let finish: (() => void) | undefined;
+    try {
+      await cm.connectAll({ alpha: stdioConfig() });
+      finish = beginMcpServerCall('alpha');
+      expect(finish).toBeDefined();
+
+      let settled = false;
+      const removing = cm.markRemoved('alpha').then(() => {
+        settled = true;
+      });
+      expect(isMcpServerDraining('alpha')).toBe(true);
+      expect(beginMcpServerCall('alpha')).toBeUndefined();
+      expect(settled).toBe(false);
+      expect(cm.get('alpha')?.status).toBe('connected');
+
+      finish?.();
+      finish = undefined;
+      await removing;
+      expect(cm.get('alpha')?.status).toBe('removed');
+
+      await cm.connect('alpha', stdioConfig());
+      expect(isMcpServerDraining('alpha')).toBe(false);
+      finish = beginMcpServerCall('alpha');
+      expect(finish).toBeDefined();
+    } finally {
+      finish?.();
       await cm.shutdown();
     }
   }, 20000);

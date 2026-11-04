@@ -190,36 +190,47 @@ async function installPluginLayer(
   if (marketplace !== undefined && entry?.version === undefined) {
     throw new Error(`Marketplace plugin "${config.id}" has no version in the current catalog`);
   }
-  const summary = marketplace === undefined
-    ? await installResolvedMarketplacePlugin(
-        ctx.plugins,
-        { marketplaceId: config.id },
-        {
-          source: config.zipUrl,
-          catalogId: config.id,
-          origin: 'marketplace',
-          expectedPluginId: config.id,
-          fetchImpl: fetch,
-        },
-      )
-    : await ctx.plugins.installPlugin({
-        marketplaceId: config.id,
-        expectedVersion: entry!.version,
-        expectedSha256: entry!.sha256sum,
-      });
-  if (!summary.enabled) {
-    await ctx.plugins.setPluginEnabled({ id: config.id, enabled: true });
-  }
-  if (summary.enabledMcpServerCount >= summary.mcpServerCount) return;
-  const info = await ctx.plugins.getPluginInfo({ id: config.id });
-  for (const server of info.mcpServers) {
-    if (!server.enabled) {
-      await ctx.plugins.setPluginMcpServerEnabled({
-        id: config.id,
-        server: server.name,
-        enabled: true,
-      });
+  const installed = await ctx.plugins.listPlugins();
+  const wasEnabled = ctx.platform === 'win32' &&
+    installed.find((plugin) => plugin.id === config.id)?.enabled === true;
+  if (wasEnabled) await ctx.plugins.setPluginEnabled({ id: config.id, enabled: false });
+  try {
+    const summary = marketplace === undefined
+      ? await installResolvedMarketplacePlugin(
+          ctx.plugins,
+          { marketplaceId: config.id },
+          {
+            source: config.zipUrl,
+            catalogId: config.id,
+            origin: 'marketplace',
+            expectedPluginId: config.id,
+            fetchImpl: fetch,
+          },
+        )
+      : await ctx.plugins.installPlugin({
+          marketplaceId: config.id,
+          expectedVersion: entry!.version,
+          expectedSha256: entry!.sha256sum,
+        });
+    if (!summary.enabled) {
+      await ctx.plugins.setPluginEnabled({ id: config.id, enabled: true });
     }
+    if (summary.enabledMcpServerCount >= summary.mcpServerCount) return;
+    const info = await ctx.plugins.getPluginInfo({ id: config.id });
+    for (const server of info.mcpServers) {
+      if (!server.enabled) {
+        await ctx.plugins.setPluginMcpServerEnabled({
+          id: config.id,
+          server: server.name,
+          enabled: true,
+        });
+      }
+    }
+  } catch (error) {
+    if (wasEnabled) {
+      await ctx.plugins.setPluginEnabled({ id: config.id, enabled: true }).catch(() => undefined);
+    }
+    throw error;
   }
 }
 
