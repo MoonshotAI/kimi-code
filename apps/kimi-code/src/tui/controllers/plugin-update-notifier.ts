@@ -31,6 +31,8 @@ export interface PluginUpdateNotifierDeps {
   readonly notify: (message: string) => void;
   /** Overridable for tests; defaults to the shared marketplace loader. */
   readonly loadMarketplace?: () => Promise<PluginMarketplace>;
+  readonly reloadPlugins?: () => Promise<unknown>;
+  readonly refreshPluginCommands?: () => Promise<unknown>;
   /** Overridable for tests; defaults to the updates dir under the data dir. */
   readonly stateFile?: string;
 }
@@ -211,6 +213,13 @@ export class PluginUpdateNotifier {
   private loadMarketplace(): Promise<PluginMarketplace> {
     const load = this.deps.loadMarketplace;
     if (load !== undefined) return load();
-    return loadPluginMarketplace({ workDir: this.deps.workDir });
+    return loadPluginMarketplace({
+      workDir: this.deps.workDir,
+      reconcileAvailability: async (changed) => {
+        if (!changed) return;
+        await this.deps.reloadPlugins?.();
+        await this.deps.refreshPluginCommands?.();
+      },
+    });
   }
 }

@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -449,6 +449,28 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     expect(sub.body.code).toBe(0);
     expect(sub.body.data.items).toEqual([]);
     expect(sub.body.data.has_more).toBe(false);
+
+    const summary = await server!.core.accessor.get(ISessionIndex).get(id);
+    const wirePath = join(home as string, 'sessions', summary!.workspaceId, id, 'agents', 'main', 'wire.jsonl');
+    const sourceWire = await readFile(wirePath, 'utf-8');
+    expect(sourceWire).toContain('"min_protocol_version":"1.5"');
+    await writeFile(
+      wirePath,
+      sourceWire
+        .replace('"protocol_version":"1.5"', '"protocol_version":"9.9"')
+        .replace('"min_protocol_version":"1.5"', '"min_protocol_version":"9.9"'),
+      'utf-8',
+    );
+    const incompatible = await getJson<TranscriptContract>(
+      `/api/v1/sessions/${id}/transcript?agent_id=main`,
+    );
+    expect(incompatible.body.code).toBe(40930);
+    expect(incompatible.body.msg).toContain('Upgrade Kimi Code');
+    const userMessages = await getJson<UserMessagesContract>(
+      `/api/v1/sessions/${id}/transcript/user-messages`,
+    );
+    expect(userMessages.body.code).toBe(40930);
+    expect(userMessages.body.msg).toContain('Upgrade Kimi Code');
   });
 
   it('backfills a resumed live session from the wire records, then continues live', async () => {

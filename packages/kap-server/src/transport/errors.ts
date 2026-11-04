@@ -56,11 +56,13 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.OS_FS_PERMISSION_DENIED]: ErrorCode.FS_PERMISSION_DENIED,
   [ErrorCodes.STORAGE_IO_FAILED]: ErrorCode.PERSISTENCE_FAILURE,
   [ErrorCodes.STORAGE_LOCKED]: ErrorCode.PERSISTENCE_FAILURE,
+  [ErrorCodes.WIRE_VERSION_TOO_LOW]: ErrorCode.WIRE_VERSION_TOO_LOW,
 };
 
 const PUBLIC_DETAIL_CODES: ReadonlySet<string> = new Set([
   ErrorCodes.SESSION_OCCUPIED,
   ErrorCodes.SESSION_STALE,
+  ErrorCodes.WIRE_VERSION_TOO_LOW,
 ]);
 
 export function mapError(err: unknown, requestId: string): ReturnType<typeof errEnvelope> {

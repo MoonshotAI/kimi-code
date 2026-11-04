@@ -28,6 +28,7 @@ import {
   formatPullRequestBadge,
   type GitStatus,
   type GitStatusCache,
+  type GitStatusSource,
 } from '#/utils/git/git-status';
 import {
   formatTokenCount,
@@ -197,11 +198,18 @@ export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): s
   return `${base} ${pullRequest}`;
 }
 
+/** Where the footer reads git state for a given app state; a new key replaces the cache. */
+export interface FooterGitBinding {
+  readonly key: string;
+  readonly source: GitStatusSource;
+}
+
 export class FooterComponent implements Component {
   private state: AppState;
   private readonly onRefresh: () => void;
-  private gitCache: GitStatusCache;
-  private gitCacheWorkDir: string;
+  private gitBinding: ((state: AppState) => FooterGitBinding | null) | null = null;
+  private gitCache: GitStatusCache | null = null;
+  private gitCacheKey: string | null = null;
   private transientHint: string | null = null;
   private warningHint: string | null = null;
   private expandHintProvider: (() => ToolOutputExpandHint | null) | null = null;
@@ -225,10 +233,6 @@ export class FooterComponent implements Component {
   constructor(state: AppState, onRefresh: () => void = () => {}) {
     this.state = state;
     this.onRefresh = onRefresh;
-    this.gitCacheWorkDir = state.workDir;
-    this.gitCache = createGitStatusCache(state.workDir, {
-      onChange: this.onRefresh,
-    });
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.syncEnvironmentSpinner(state.environment);
@@ -236,18 +240,33 @@ export class FooterComponent implements Component {
   }
 
   setState(state: AppState): void {
-    if (state.workDir !== this.gitCacheWorkDir) {
-      this.gitCache.dispose();
-      this.gitCacheWorkDir = state.workDir;
-      this.gitCache = createGitStatusCache(state.workDir, {
-        onChange: this.onRefresh,
-      });
+    this.syncGitCache(state);
+    if (state.environment?.status === 'ready' && this.state.environment?.status !== 'ready') {
+      this.gitCache?.refresh();
     }
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.syncEnvironmentSpinner(state.environment);
     this.syncStatusLineRunner(state);
     this.state = state;
+  }
+
+  /**
+   * Resolves the git source for each app state. Until it is set, or while it
+   * resolves to `null`, the git slot stays empty.
+   */
+  setGitBinding(resolve: (state: AppState) => FooterGitBinding | null): void {
+    this.gitBinding = resolve;
+    this.syncGitCache(this.state);
+  }
+
+  private syncGitCache(state: AppState): void {
+    const binding = this.gitBinding?.(state) ?? null;
+    const key = binding?.key ?? null;
+    if (key === this.gitCacheKey) return;
+    this.gitCache?.dispose();
+    this.gitCacheKey = key;
+    this.gitCache = binding === null ? null : createGitStatusCache(binding.source, { onChange: this.onRefresh });
   }
 
   private syncStatusLineRunner(state: AppState): void {
@@ -311,7 +330,7 @@ export class FooterComponent implements Component {
   }
 
   refreshGitStatus(): void {
-    this.gitCache.refresh();
+    this.gitCache?.refresh();
   }
 
   invalidate(): void {}
@@ -554,9 +573,7 @@ export class FooterComponent implements Component {
         : shortenCwd(state.workDir, process.env['HOME']);
     if (cwd) slots['cwd'] = [chalk.hex(colors.textDim)(cwd)];
 
-    // The git badge reads the local filesystem; a remote-bound session's
-    // repository state lives on the target host, so the slot stays hidden.
-    const git = remote ? null : this.gitCache.getStatus();
+    const git = this.gitCache?.getStatus() ?? null;
     if (git !== null) slots['git'] = [formatFooterGitBadge(git, colors)];
 
     return slots;
@@ -569,7 +586,7 @@ export class FooterComponent implements Component {
       cwd: isRemoteEnvironment(state.environment) && state.environment.cwd !== undefined
         ? state.environment.cwd
         : state.workDir,
-      gitBranch: isRemoteEnvironment(state.environment) ? null : (this.gitCache.getStatus()?.branch ?? null),
+      gitBranch: this.gitCache?.getStatus()?.branch ?? null,
       permissionMode: state.permissionMode,
       planMode: state.planMode,
       contextUsage: state.contextUsage,
@@ -623,7 +640,7 @@ export class FooterComponent implements Component {
   }
 
   dispose(): void {
-    this.gitCache.dispose();
+    this.gitCache?.dispose();
     if (this.goalTimer !== null) {
       clearInterval(this.goalTimer);
       this.goalTimer = null;

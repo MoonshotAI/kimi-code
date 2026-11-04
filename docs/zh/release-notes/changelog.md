@@ -6,6 +6,25 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.5.0（2026-11-04）
+
+### 新功能
+
+- 支持在 Agent 工作时使用 `/model` 和 `/effort`，设置从下一轮生效。
+- 多目录工作区可合并主目录和已记住的附加目录中的项目级 Skills，同名时主目录优先。
+- 支持在 SSH、Docker 或自定义命令环境中创建远程会话。
+- 新增 `[workspace] require_trust = false`，将所有工作区视为可信并跳过信任提示（`/reload` 后生效），仅在全部工作区可信时使用。
+
+### 优化
+
+- Web 跨会话全文搜索默认关闭，可在 `[database]` 设置 `global_search = true` 开启。
+- 仅配置 `default_model` 时，Agent 和 AgentSwarm 新派生的子 Agent 固定使用该模型；旧 `force` 配置会被忽略并警告。
+- 调整 Agent 和 AgentSwarm 的模型选择：隐式 `primary` 不再可用，使用主模型时需显式加入模型池；未配置 `[secondary_model]` 时仍继承主会话模型。
+
+### 修复
+
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 2.4.1（2026-10-30）
 
 ### 优化

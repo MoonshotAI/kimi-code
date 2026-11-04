@@ -76,8 +76,13 @@ export class WelcomeComponent implements Component {
       ? chalk.hex(currentTheme.palette.warning)('not set, run /login or /provider')
       : (effectiveActiveModel?.displayName ?? effectiveActiveModel?.model ?? this.state.model);
 
+    const workDir =
+      this.state.environment?.environmentId !== 'local' &&
+      this.state.environment?.cwd !== undefined
+        ? this.state.environment.cwd
+        : this.state.workDir;
     const infoLines = [
-      labelStyle('Directory: ') + this.state.workDir,
+      labelStyle('Directory: ') + workDir,
       labelStyle('Session:   ') + this.state.sessionId,
       labelStyle('Model:     ') + modelValue,
       labelStyle('Version:   ') + this.state.version,

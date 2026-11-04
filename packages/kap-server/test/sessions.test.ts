@@ -1594,10 +1594,15 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(childChildren.body.data.items.some((s) => s.id === grandchildId)).toBe(true);
   });
 
-  it('does not list a plain fork as a child (kind must be "child")', async () => {
+  it('does not list a plain fork as a child and rejects an incompatible source', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    await main.accessor.get(IWireService).flush();
     const invalid = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
       turn_index: -1,
     });
@@ -1608,6 +1613,37 @@ describe('server-v2 /api/v1/sessions', () => {
     const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
     expect(children.body.code).toBe(0);
     expect(children.body.data.items.some((s) => s.id === forked.body.data.id)).toBe(false);
+
+    const sessionDir = sessionDirOf(
+      (server as RunningServer).core.accessor.get(IBootstrapService).homeDir,
+      `sessions/${parent.body.data.workspace_id}`,
+      parentId,
+    );
+    const wirePath = join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl');
+    const sourceWire = await readFile(wirePath, 'utf8');
+    expect(sourceWire).toContain('"min_protocol_version":"1.5"');
+    await writeFile(
+      wirePath,
+      sourceWire
+        .replace('"protocol_version":"1.5"', '"protocol_version":"9.9"')
+        .replace('"min_protocol_version":"1.5"', '"min_protocol_version":"9.9"'),
+    );
+    await closeSessionById((server as RunningServer).core.accessor, parentId);
+    const messages = await getJson<unknown>(`/api/v1/sessions/${parentId}/messages`);
+    expect(messages.body.code).toBe(40930);
+    const message = await getJson<unknown>(`/api/v1/sessions/${parentId}/messages/msg_incompatible`);
+    expect(message.body.code).toBe(40930);
+    const sliced = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
+      turn_index: 999,
+    });
+    expect(sliced.body.code).toBe(40930);
+    expect(sliced.body.msg).toContain('Upgrade Kimi Code');
+    const incompatible = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    expect(incompatible.body.code).toBe(40930);
+    expect(incompatible.body.msg).toBe(
+      'This session requires a newer version of Kimi Code. Upgrade Kimi Code to the latest version to read this session.',
+    );
+    expect(incompatible.body.details).toEqual({ minReaderVersion: '9.9', readerVersion: '1.5' });
   });
 
   it('fork clears inherited cron tasks while the source keeps them', async () => {
@@ -2859,5 +2895,150 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     expect(listed.body.data.items.some((s) => s.id === id)).toBe(true);
     const fetched = await getJson<{ id: string }>(`/api/v1/sessions/${id}`);
     expect(fetched.body.data.id).toBe(id);
+  });
+});
+
+describe('server-v2 /api/v1/sessions:btw', () => {
+  const modelBase = 'https://model.example.test/v1';
+  const mainAnswer = 'The main agent answered with a much longer explanation than the side chat.';
+  const sideAnswer = 'Short side answer.';
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+  let releaseSideAnswer: () => void = () => {};
+  let sideAnswerGate: Promise<void> = Promise.resolve();
+
+  function sseBody(text: string): string {
+    const chunk = (delta: Record<string, unknown>, finishReason: string | null) =>
+      `data: ${JSON.stringify({
+        id: 'chatcmpl-test',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'fake-model',
+        choices: [{ index: 0, delta, finish_reason: finishReason }],
+      })}\n\n`;
+    return `${chunk({ role: 'assistant', content: text }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`;
+  }
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-btw-'));
+    await writeFile(
+      join(home, 'config.toml'),
+      [
+        'default_model = "fake"',
+        '',
+        '[providers.fake]',
+        'type = "openai"',
+        'api_key = "sk-test"',
+        `base_url = "${modelBase}"`,
+        '',
+        '[models.fake]',
+        'provider = "fake"',
+        'model = "fake-model"',
+        'max_context_size = 131072',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const realFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!url.startsWith(modelBase)) return realFetch(input, init);
+      const messages = JSON.stringify(JSON.parse(typeof init?.body === 'string' ? init.body : '{}').messages ?? []);
+      const side = messages.includes('side question');
+      if (side) await sideAnswerGate;
+      return new Response(sseBody(side ? sideAnswer : mainAnswer), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterAll(async () => {
+    vi.restoreAllMocks();
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+      home = undefined;
+    }
+  });
+
+  async function postJson<T>(path: string, body: unknown): Promise<Envelope<T>> {
+    const res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    } as never);
+    return (await res.json()) as Envelope<T>;
+  }
+
+  async function transcriptTurns(sessionId: string, agentId: string) {
+    const res = await fetch(`${base}/api/v1/sessions/${sessionId}/transcript?agent_id=${agentId}`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    const body = (await res.json()) as Envelope<AgentTranscriptSnapshot>;
+    return body.data.items.flatMap((item) => (item.kind === 'turn' ? [item] : []));
+  }
+
+  function answerOf(turn: Awaited<ReturnType<typeof transcriptTurns>>[number]): string[] {
+    return turn.steps.flatMap((step) =>
+      step.frames.flatMap((frame) => (frame.kind === 'text' && frame.role === 'assistant' ? [frame.text] : [])),
+    );
+  }
+
+  it('keeps the first side chat answer when its prompt starts before anyone reads the fork', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
+    const sessionId = created.data.id;
+    await transcriptTurns(sessionId, 'main');
+    await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
+      content: [{ type: 'text', text: 'main question' }],
+      model: 'fake',
+    });
+    await vi.waitFor(
+      async () => {
+        expect((await transcriptTurns(sessionId, 'main')).map((turn) => turn.state)).toEqual(['completed']);
+      },
+      { timeout: 10_000 },
+    );
+
+    sideAnswerGate = new Promise((resolve) => {
+      releaseSideAnswer = resolve;
+    });
+    const btw = await postJson<{ agent_id: string }>(`/api/v1/sessions/${sessionId}:btw`, {});
+    const agentId = btw.data.agent_id;
+    await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
+      content: [{ type: 'text', text: 'side question' }],
+      agent_id: agentId,
+      model: 'fake',
+    });
+    await transcriptTurns(sessionId, agentId);
+    releaseSideAnswer();
+
+    await vi.waitFor(
+      async () => {
+        const own = (await transcriptTurns(sessionId, agentId)).filter((turn) => turn.prompt === 'side question');
+        expect(own.map((turn) => turn.state)).toEqual(['completed']);
+      },
+      { timeout: 10_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const turns = await transcriptTurns(sessionId, agentId);
+    const own = turns.filter((turn) => turn.prompt === 'side question');
+    expect(own).toHaveLength(1);
+    expect(answerOf(own[0]!)).toEqual([sideAnswer]);
+    expect(new Set(turns.map((turn) => turn.turnId)).size).toBe(turns.length);
   });
 });
