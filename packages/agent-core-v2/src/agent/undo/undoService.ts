@@ -28,6 +28,7 @@ import { IEventService } from '#/app/event/event';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -76,6 +77,7 @@ export class AgentConversationUndoService
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IWireService private readonly wire: IWireService,
     @ILogService private readonly log: ILogService,
+    @ISessionRunGate private readonly runGate: ISessionRunGate,
   ) {
     super();
   }
@@ -119,6 +121,7 @@ export class AgentConversationUndoService
           `Conversation undo requires a restored dispatcher (phase '${this.dispatcher.restorePhase}')`,
         );
       }
+      this.runGate.begin();
       this.assertUndoAvailable(turns);
       const fromTurnId = this.removedFromTurnId(turns);
       try {

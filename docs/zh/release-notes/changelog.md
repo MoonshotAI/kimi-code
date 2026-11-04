@@ -6,6 +6,118 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.4.1（2026-10-30）
+
+### 优化
+
+- Agent 单次读取文件现最多返回 100,000 字符或约 25,000 tokens（以先到者为准），不再是最多 500,000 字符；可在 `config.toml` 的 `[read]` 下设置 `max_chars`，再次提高这两项上限。
+- 优化内置提示词。
+
+### 修复
+
+- Web：优化交互体验并修复已知问题。
+
+## 2.4.0（2026-10-28）
+
+### 新功能
+
+- 新增 `/import-sessions` 和 `kimi import-sessions`，可导入近 15 或 30 天的 Claude Code、Codex 会话。
+- 新增 `/provider refresh [providerId]`，可在运行时重新拉取 provider 模型列表。
+- 流式输出思考内容时可按 `Ctrl-O` 展开查看。
+- 兼容终端可通过 OSC 7501 展示主会话、子代理状态及待处理交互。
+- Tower 支持按任务选择模型和 `max_running_tasks` 并发限制，默认 Agent 并发上限从 16 提高到 256。
+
+### 优化
+
+- 默认不再由 Agent 自动进入 Plan 模式，只能由用户开启；所有计划都需用户审阅，Never Ask 不再自动批准；`kimi -p` 跳过 `default_plan_mode`，且不能批准已处于 Plan 模式的计划。
+- Web 会话空闲 30 分钟后自动卸载，再次访问时透明恢复。
+- 优化 Fullscreen 模式部分组件的布局与交互体验，改进审批选项展示、鼠标选择和焦点切换。
+- Todo 列表改为可展开的消息流卡片，移除输入区常驻面板和 `Ctrl-T` 快捷键。
+- 优化内置 `/import-from-cc-codex` Skill。
+
+### 修复
+
+- 工作区 MCP 断线后自动退避重连，可用 `[mcp] reconnect_initial_delay_ms` 和 `reconnect_max_delay_ms` 调整间隔。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 2.3.3（2026-10-26）
+
+### 优化
+
+- 使用 `/swarm` 开启 swarm 模式时，现会显示高消耗提醒。
+- 优化模型切换确认提示。
+- 将 swarm 与 goal 启动确认提示中重复的两行权限模式说明合并为一句。
+
+### 修复
+
+- `AgentSwarm` 调用在任何子 Agent 启动前被拒绝（例如 swarm 模式未开启）时，不再显示失败的 swarm；如果你主动请求 swarm，Agent 会在拒绝后引导你使用 `/swarm`。
+- Web：优化交互体验并修复已知问题。
+
+## 2.3.2（2026-10-25）
+
+### 修复
+
+- 默认直接处理任务，不再主动启动子 Agent；如需委派，请在消息、AGENTS.md、技能中明确提出，或开启多 Agent 模式。
+- swarm 现仅在你开启 swarm 模式时启动：Agent 无法再自行启动 `AgentSwarm`，因此 `kimi -p` 和 Zed 等 ACP 客户端中不再提供 swarm。
+
+## 2.3.1（2026-10-23）
+
+### 新功能
+
+- 会话被占用时，重试后现可选择接管该会话，被已退出进程锁住的会话可重新使用；新增 `KIMI_CODE_SESSION_LOCK=0` 开关，可关闭会话锁。
+
+### 优化
+
+- 会话被占用的错误提示现显示占用方的客户端名称。
+
+### 修复
+
+- 修复 macOS 和 Linux 上应用崩溃后会话偶尔仍被占用的问题。
+- 修复 Windows 上 Git Bash 不可用时工作区信任失败的问题。
+- Web：优化交互体验并修复已知问题。
+
+## 2.3.0（2026-10-21）
+
+### 新功能
+
+- 插件技能改用限定名 `<插件ID>:<技能名>` 调用，同名技能不再互相遮挡；裸名调用不再生效。
+- 同一会话在多个客户端打开时，从他处发消息会显示占用提示，可重试或取消。
+- 首轮对话后自动生成会话标题，并显示为终端窗口标题。
+- 会话中切换模型时弹出确认框，可开新会话、压缩继续或直接继续。
+- 远程控制支持流式传输，上限从 10 MiB 提升至 100 MiB。
+
+### 优化
+
+- `/compact` 在 Agent 忙碌时改为排队执行，不再报错。
+- 会话评分开关从 tui.toml 迁移至 config.toml。
+- `dangerous_command_guard = false` 现在关闭全部内建确认护栏，不再仅限危险命令。
+
+### 修复
+
+- hooks 改为在会话项目目录下运行，不再使用 server 启动目录。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
+## 2.2.0（2026-10-14）
+
+### 新功能
+
+- 新增实验性的进度更新功能 NotifyUser（默认关闭）：新会话可展示 Agent 回合内主动发布的进度更新。可在 TUI 的 `/experiments` 面板开启。
+- 新增 `kimi app [path]` 命令，在当前或指定目录打开一个新的 Desktop 会话。
+- 全屏模式新增用户消息摘要条：用户消息滚出视口后保留一行摘要，点击即可跳回原始消息。全屏模式可在 `/settings` 的 TUI mode 设置中开启，或在 `~/.kimi-code/tui.toml` 中设置 `tui_mode = "fullscreen"`。
+
+### 优化
+
+- 用户技能卡片改为高亮提示词展示，并支持按 Ctrl-S 发送技能提示词。
+- Tower 模式：Agent 运行中发送消息会中止当前 turn，并作为独立 turn 执行。
+- 退出时运行 shutdown hooks 期间显示「Shutting down」状态提示，此时按 Ctrl+C 可立即强制退出，无需等待 hook 超时。
+
+### 修复
+
+- 修复 UserPromptSubmit hook 注入文本时对话错位、回复丢失与渲染乱序的问题；不含「message」字段的 hook JSON 输出不再加入对话。
+- 移除 MCP stdio 服务器配置中从未实现的 `executor = "kaos"` 选项；仍在使用该选项的配置会在加载时校验失败。
+- 修复 fork 出的会话会重复触发源会话 cron 任务的问题。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 2.1.1（2026-09-24）
 
 ### 优化

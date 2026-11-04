@@ -12,6 +12,7 @@ export type { Event, ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 export { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '@moonshot-ai/agent-core-v2/tool/toolContract';
 
 export type { AgentStatusUpdatedEvent } from '@moonshot-ai/agent-core-v2/agent/usage/usageEvents';
+export type { EnvironmentStatusChangedEvent } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentEvents';
 export type { SessionMetaUpdatedEvent } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 export type { GoalUpdatedEvent } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
 export type { SkillActivatedEvent } from '@moonshot-ai/agent-core-v2/features/skill/skillOps';
@@ -100,3 +101,9 @@ export type MaybePromise<T> = T | Promise<T>;
 export type ApprovalHandler = (request: ApprovalRequest) => MaybePromise<ApprovalResponse>;
 
 export type QuestionHandler = (request: QuestionRequest) => MaybePromise<QuestionResult>;
+
+/**
+ * Called after a call was rejected because another client updated the
+ * session, the session was reloaded from disk, and before the call is retried.
+ */
+export type StaleReloadHandler = () => Promise<void>;

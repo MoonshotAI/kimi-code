@@ -3,9 +3,10 @@ import type {
   ExportSessionManifest,
   ShellEnvironment,
 } from '@moonshot-ai/agent-core-v2/app/sessionExport/sessionExport';
-import type { Kaos } from '@moonshot-ai/kaos';
+import type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
+import type { RemoteEnvironmentEntry } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import type { KimiHostIdentity, OAuthRefreshOutcome } from '@moonshot-ai/kimi-code-oauth';
-import type { ContentPart } from '@moonshot-ai/kosong';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 
 import type { ResumeSessionResult } from '#/replay';
 import type { PermissionMode } from '#/permission';
@@ -20,13 +21,40 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: 
 export type JsonObject = { readonly [key: string]: JsonValue };
 
 export type { ImportCustomRegistryOptions, ImportCustomRegistryResult } from '@moonshot-ai/klient';
+export type {
+  RefreshProviderModelsOptions,
+  RefreshProviderModelsResponse,
+} from '@moonshot-ai/klient';
 
 export type Unsubscribe = () => void;
 
-export interface AgentRuntimeBinding {
-  readonly workspaceId: string;
-  readonly runtimeId: string;
+export interface AgentEnvironmentBinding {
+  readonly environmentId: string;
+  readonly cwd?: string;
 }
+
+export type { EnvironmentStatus as SessionEnvironmentStatus } from '@moonshot-ai/agent-core-v2/environment/environment';
+
+export type SessionEnvironmentType = 'local' | 'ssh' | 'docker' | 'command';
+
+export interface SessionEnvironmentInfo {
+  readonly environmentId: string;
+  readonly type: SessionEnvironmentType;
+  readonly status: SessionEnvironmentStatus;
+  readonly connectError?: string;
+}
+
+export interface SessionEnvironmentState extends AgentEnvironmentBinding {
+  readonly type: SessionEnvironmentType;
+  readonly status: SessionEnvironmentStatus;
+  readonly connectError?: string;
+}
+
+export interface SessionEnvironmentsInfo {
+  readonly environments: readonly SessionEnvironmentInfo[];
+}
+
+export type { RemoteEnvironmentEntry };
 
 export type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
@@ -59,6 +87,7 @@ export type {
 export type {
   BackgroundConfig,
   ConfigDiagnostics,
+  EnvironmentsConfig,
   KimiConfig,
   KimiConfigPatch,
   LoopControl,
@@ -91,10 +120,25 @@ export type {
   PluginGithubRef,
   PluginInfo,
   PluginMcpServerInfo,
+  PluginOrigin,
   PluginSource,
   PluginSummary,
   ReloadSummary,
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
+export type {
+  MarketplaceLocation,
+  MarketplaceUpdateStatus,
+  PluginMarketplace,
+  PluginMarketplaceClassification,
+  PluginMarketplaceDistribution,
+  PluginMarketplaceEntry,
+  PluginMarketplaceLocale,
+  PluginMarketplaceLocalizedText,
+  PluginMarketplacePlatform,
+  PluginMarketplaceTier,
+  ReadPluginMarketplaceOptions,
+} from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
+export type { InstallPluginInput } from '@moonshot-ai/agent-core-v2/app/plugin/plugin';
 export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
 export type { ToolInfo } from '#/tool';
 export type {
@@ -120,7 +164,7 @@ export type { KimiHostIdentity, OAuthRefreshOutcome };
 // hosts name them through `KimiHarnessOptions.uiCapabilities`, so the type is public here.
 export type { HostUiCapability };
 export type { TelemetryClient, TelemetryContextPatch, TelemetryProperties };
-export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/kosong';
+export type { ContentPart, Role, ThinkingEffort, ToolCall } from '@moonshot-ai/agent-core-v2';
 // Contributed commands are an agent-core-v2 seam; the type is re-exported
 // from the v2 engine (v1 sessions report an empty command set).
 export type { AgentCommandInfo } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
@@ -163,6 +207,12 @@ export interface WorkspaceTrustInfo {
   readonly instructionSources: WorkspaceTrustInstructionSources;
 }
 
+export interface WorkspaceTrustInfoOptions {
+  readonly additionalDirs?: readonly string[];
+  readonly environmentId?: string;
+  readonly environmentCwd?: string;
+}
+
 /**
  * File-suggestion query against a workspace root, no session required. Only
  * meaningful on the agent-core-v2 engine; the v1 engine has no equivalent
@@ -171,6 +221,8 @@ export interface WorkspaceTrustInfo {
 export interface SuggestFilesInput {
   readonly query: string;
   readonly limit?: number;
+  /** Complete against this live session's working directory, on the environment the session runs on. */
+  readonly sessionId?: string;
 }
 
 export interface SuggestFilesItem {
@@ -197,6 +249,10 @@ export interface UploadFileOptions {
   readonly expiresInSec?: number;
 }
 
+export interface EditGoalObjectiveInput {
+  readonly objective: string;
+}
+
 export interface CreateGoalInput {
   readonly objective: string;
   readonly replace?: boolean;
@@ -210,6 +266,14 @@ export type PromptInput = readonly PromptPart[];
 export interface PromptSkillActivation {
   readonly name: string;
   readonly args?: string;
+}
+
+export interface PromptSubmissionResult {
+  readonly promptId: string;
+  readonly createdAt: string;
+  readonly state: 'running' | 'queued' | 'blocked';
+  readonly turnId?: number;
+  readonly steered: boolean;
 }
 
 export interface KimiHarnessOptions {
@@ -229,7 +293,18 @@ export interface KimiHarnessOptions {
   readonly uiCapabilities?: readonly HostUiCapability[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
+  /**
+   * Opt into the interactive SSH password retry. `askpassCommand` must
+   * re-enter a process whose entry runs `runSshAskpass` from the
+   * `./ssh-askpass` subpath when `isSshAskpassEnvironment()` holds.
+   */
+  readonly sshPassword?: KimiSshPasswordOptions;
   readonly sessionStartedProperties?: TelemetryProperties;
+}
+
+export interface KimiSshPasswordOptions {
+  readonly prompt: (environmentId: string) => Promise<string | undefined>;
+  readonly askpassCommand: readonly [string, ...string[]];
 }
 
 export interface CreateSessionOptions {
@@ -240,8 +315,6 @@ export interface CreateSessionOptions {
   readonly permission?: PermissionMode | undefined;
   readonly planMode?: boolean;
   readonly metadata?: JsonObject | undefined;
-  readonly kaos?: Kaos | undefined;
-  readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
   /**
    * Main-agent profile name (`--agent`): a builtin profile or one defined by
@@ -262,6 +335,20 @@ export interface CreateSessionOptions {
    * interactive / SDK sessions.
    */
   readonly drainAgentTasksOnStop?: boolean;
+  /**
+   * Initial environment binding for the main agent. An id declared in
+   * `[environments]`, or one already registered in this process (a temporary
+   * `connect` environment). Omit to start on the local environment, or the
+   * configured default when one is set. A registered environment that is not
+   * declared requires `environmentCwd`.
+   */
+  readonly environmentId?: string;
+  /**
+   * Working directory on the target environment for the initial binding.
+   * For a declared environment, defaults to that entry's `defaultCwd`.
+   * Required when the id is registered in this process but not declared.
+   */
+  readonly environmentCwd?: string;
 }
 
 export interface RenameSessionInput {
@@ -279,8 +366,6 @@ export interface GenerateSessionTitleInput {
 
 export interface ResumeSessionInput {
   readonly id: string;
-  readonly kaos?: Kaos | undefined;
-  readonly persistenceKaos?: Kaos | undefined;
   readonly additionalDirs?: readonly string[];
   /** Re-select the session's already-bound main profile; a different name fails. */
   readonly agentProfile?: string;
@@ -306,7 +391,7 @@ export interface AddAdditionalDirInput {
 }
 
 export interface AddAdditionalDirOptions {
-  /** When true, share the directory through workspace local config. When false,
+  /** When true, remember the directory in the workspace registry. When false,
    * keep it scoped to this session while still restoring it on session resume. */
   readonly persist: boolean;
 }
@@ -317,7 +402,7 @@ export interface ForkSessionInput {
   readonly title?: string;
   readonly metadata?: JsonObject;
   /**
-   * Zero-based index of the user-visible turn to retain through. Omit it to
+   * Persistent engine turnId to retain through; gaps are allowed. Omit it to
    * preserve the existing full-session fork behavior.
    */
   readonly turnIndex?: number;
@@ -392,7 +477,7 @@ export interface ReloadSessionOptions {
 export interface PlanInfo {
   readonly id: string;
   readonly content: string;
-  readonly path: string;
+  readonly path: string | null;
 }
 
 export type SessionPlan = PlanInfo | null;
@@ -407,7 +492,7 @@ export interface SessionTodoItem {
 export interface TokenUsage {
   readonly inputOther: number;
   readonly output: number;
-  readonly inputCacheRead: number;
+  readonly inputCacheRead?: number;
   readonly inputCacheCreation: number;
 }
 
@@ -458,8 +543,6 @@ export interface SessionSummary {
 
 export interface AddAdditionalDirResult {
   readonly additionalDirs: readonly string[];
-  readonly projectRoot: string;
-  readonly configPath: string;
   readonly persisted: boolean;
 }
 

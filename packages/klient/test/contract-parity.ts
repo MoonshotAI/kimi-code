@@ -11,15 +11,15 @@ import type { z } from 'zod';
 
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
-import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
+import type { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBinding';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { SessionActivityState } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
-import type { PromptLaunchResult, PromptPayload, SteerPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import type { PromptLaunchResult, SteerResult } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/message';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
@@ -185,12 +185,13 @@ import {
   promptWithSkillsResultSchema,
   runCommandPayloadSchema,
   runShellCommandPayloadSchema,
-  runtimeBindingSchema,
+  environmentBindingSchema,
   setModelPayloadSchema,
   setModelResultSchema,
   setPermissionPayloadSchema,
   shellCommandResultSchema,
   steerPayloadSchema,
+  steerResultSchema,
   stopTaskPayloadSchema,
   tokenUsageSchema,
   usageStatusSchema,
@@ -609,15 +610,17 @@ const _sessionActivityState: AssertWire<typeof sessionActivityStateSchema, Sessi
 // mirrors; facade-only payload shapes (cancel / setPermission / plan / task /
 // command) derive from the `AgentFacade` input types.
 type ActivateSkillPayload = Parameters<IAgentSkillService['activate']>[0];
-type PromptWithSkillsPayload = Parameters<IAgentSkillService['promptWithSkills']>[0];
+type PromptWithSkillsPayload = Parameters<AgentFacade['promptWithSkills']>[0];
 type PromptSkillActivation = PromptWithSkillsPayload['skills'][number];
 type AgentCommandInfo = ReturnType<IAgentCommandService['list']>[number];
-type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
+type EnvironmentBinding = IAgentEnvironmentBindingService['current'];
 type RunShellCommandPayload = Parameters<IAgentShellCommandService['run']>[0];
 type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
 type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
 type TokenUsage = NonNullable<UsageStatus['total']>;
 type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'video_url' }>;
+type PromptPayload = Parameters<AgentFacade['prompt']>[0];
+type SteerPayload = Parameters<AgentFacade['steer']>[0];
 
 type EmptyPayload = {};
 type CancelPayload = NonNullable<Parameters<AgentFacade['cancel']>[0]>;
@@ -650,6 +653,7 @@ const _steerPayload: AssertWireToEngine<typeof steerPayloadSchema, SteerPayload>
 const _activateSkillPayload: AssertWire<typeof activateSkillPayloadSchema, ActivateSkillPayload> =
   true;
 const _promptLaunchResult: AssertWire<typeof promptLaunchResultSchema, PromptLaunchResult> = true;
+const _steerResult: AssertWire<typeof steerResultSchema, SteerResult> = true;
 type PromptWithSkillsResult = Awaited<ReturnType<IAgentSkillService['promptWithSkills']>>;
 const _promptWithSkillsResult: AssertWire<
   typeof promptWithSkillsResultSchema,
@@ -675,7 +679,7 @@ const _usageStatus: AssertWire<typeof usageStatusSchema, UsageStatus> = true;
 // `Message`/`Tool`/`PromptOrigin` unions) mirrored as `unknown`.
 const _agentContextData: AssertEngineToWire<typeof agentContextDataSchema, AgentContextData> = true;
 const _agentCommandInfo: AssertWire<typeof agentCommandInfoSchema, AgentCommandInfo> = true;
-const _runtimeBinding: AssertWire<typeof runtimeBindingSchema, RuntimeBinding> = true;
+const _environmentBinding: AssertWire<typeof environmentBindingSchema, EnvironmentBinding> = true;
 const _runCommandPayload: AssertWire<typeof runCommandPayloadSchema, RunCommandPayload> = true;
 const _planData: AssertWire<typeof planDataSchema, PlanData> = true;
 const _cancelPlanPayload: AssertWire<typeof cancelPlanPayloadSchema, CancelPlanPayload> = true;

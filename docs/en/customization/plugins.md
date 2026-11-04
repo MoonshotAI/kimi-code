@@ -108,7 +108,7 @@ You must first complete OAuth login with a Kimi Code account via `/login`; data 
 #### How to use
 
 1. Describe your need in natural language, and Kimi Code will automatically invoke the data capabilities
-2. Explicitly trigger the data query skill with `/skill:kimi-datasource`
+2. Explicitly trigger the data query skill with `/skill:kimi-datasource:kimi-datasource`
 
 #### What you can do
 
@@ -275,9 +275,9 @@ Supported fields:
 
 | Field | Description |
 | --- | --- |
-| `name` | Required; serves as the plugin id. Must match `[a-z0-9][a-z0-9_-]{0,63}` |
+| `name` | Required; serves as the plugin id. Must match `[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*(@[A-Za-z0-9_-]+)?` |
 | `version`, `description`, `keywords`, `author`, `homepage`, `license` | Display metadata |
-| `interface` | Shown in `/plugins`: `displayName`, `shortDescription`, `longDescription`, `developerName`, `websiteURL` |
+| `interface` | Shown in `/plugins`: `displayName`, `shortDescription`, `longDescription`, `developerName`, `websiteURL`; see capability display overrides below |
 | `skills` | One or more `./` paths within the plugin root; if omitted, root `SKILL.md` is the single Skill root |
 | `agents` | One or more `./` paths within the plugin root, pointing to [agent files](./agents.md#custom-agents); if omitted, `agents/` is auto-discovered |
 | `sessionStart.skill` | Loads the specified plugin Skill into the main Agent when a new or resumed session starts |
@@ -287,6 +287,12 @@ Supported fields:
 | `mcpServers` | MCP server declarations; enabled by default, can be disabled from `/plugins` |
 | `hooks` | Hook rules run on lifecycle events while enabled; see [Hooks in Plugins](#hooks-in-plugins) |
 | `commands` | One or more `./` paths to a directory or `.md` file; registers the Markdown files inside as slash commands. See [Plugin Slash Commands](#plugin-slash-commands) |
+
+`interface.mcpOverrides` is keyed by MCP server names from `mcpServers` and can provide display-only `displayName`, `description`, and `iconUrl` fields. These fields do not change MCP server names or runtime configuration.
+
+`interface.skillOverrides` is keyed by Skill directory names and can provide display-only `displayName` and `description` fields. These fields affect plugin information display only; they do not change Skill invocation names or `SKILL.md` content.
+
+`interface.defaultLocale` declares the language of the default `interface` text. `interface.locales` can point to a translation directory inside the plugin root, such as `./locales/`. Each `<locale>.json` file, such as `en-US.json`, can provide the display fields above and both kinds of overrides. Plugin detail and preview requests can specify a `locale`; matching translations are used for capability display, while fields without a translation fall back to the default `interface`.
 
 Unsupported runtime fields such as `tools`, `apps`, `inject`, and `configFile` appear as diagnostics and are ignored.
 
@@ -400,7 +406,9 @@ my-plugin/
       SKILL.md
 ```
 
-`sessionStart.skill` loads a plugin Skill into the main Agent at session start, making it suitable for initialization instructions, workflow rules, or mapping terminology from other tools to Kimi Code CLI. It only injects text; it does not execute code.
+`sessionStart.skill` loads a plugin Skill into the main Agent at session start, making it suitable for initialization instructions, workflow rules, or mapping terminology from other tools to Kimi Code CLI. It only injects text; it does not execute code. The value is the Skill's frontmatter name as declared inside the plugin, without the `<plugin-id>:` prefix.
+
+Plugin Skills are listed and invoked under the qualified name `<plugin-id>:<skill-name>` — for example `/skill:my-plugin:using-my-plugin` — mirroring [plugin slash commands](#plugin-slash-commands). This keeps same-named Skills from different plugins distinct, and a bare skill name never resolves to a plugin Skill. If a plugin command and a plugin Skill share the same name, `/plugin-id:name` runs the command; invoke the Skill with the explicit `/skill:plugin-id:name` form.
 
 Regardless of how a Skill is loaded (`sessionStart.skill`, `/skill:<name>`, or automatic model invocation), `skillInstructions` appears alongside that plugin's Skill.
 
@@ -487,7 +495,7 @@ Installing a plugin never runs its hooks by itself. They only fire when their ma
 
 Plugins have a limited loading scope. The following operations do not occur during installation or session startup:
 
-- Command-type plugin tools and legacy tool runtimes are not executed
+- Command-type plugin tools and legacy tool environments are not executed
 - All paths must remain within the plugin root directory after symbolic link resolution
 - MCP servers of enabled plugins start after `/reload` or in new sessions and can be disabled at any time from `/plugins`
 - Broken manifests or unsafe paths appear in `/plugins info <id>` diagnostics and do not affect other sessions

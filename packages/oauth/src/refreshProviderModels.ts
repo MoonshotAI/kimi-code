@@ -1,5 +1,6 @@
 import {
   applyCustomRegistryProvider,
+  declaredUpgradeTarget,
   fetchCustomRegistry,
   isReservedProviderId,
   oauthManagedProviderMessage,
@@ -68,6 +69,16 @@ export interface RefreshResult {
   /** Providers whose model list stayed identical after refresh. */
   readonly unchanged: readonly string[];
   readonly failed: ReadonlyArray<{ readonly provider: string; readonly reason: string }>;
+  /**
+   * Set when a registry dropped the default model and the default moved to the
+   * replacement that model had declared through `upgrade`.
+   */
+  readonly retiredDefault?: {
+    readonly from: string;
+    readonly to: string;
+    /** The dropped model's record as it was before this refresh. */
+    readonly fromModel: ManagedKimiModelAlias;
+  };
 }
 
 export type RefreshProviderScope = 'all' | 'oauth';
@@ -235,12 +246,27 @@ interface ProviderModelSnapshot {
   readonly model: ManagedKimiModelAlias;
 }
 
+// Field order follows how the config file happened to be written: the writer
+// keeps existing keys in place and appends new ones, while a refresh builds
+// aliases in registry order. Snapshots sort keys so order alone never counts as
+// a change.
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .toSorted()
+      .map((key) => [key, sortKeysDeep(value[key])]),
+  );
+}
+
 // Compare the full model metadata for the relevant aliases, not just model IDs:
 // a registry can change capabilities (e.g. enabling reasoning) without changing
 // any model ID. Spreading the whole alias keeps this in sync with the schema
-// automatically; only `capabilities` needs normalizing because its order is not
-// meaningful. `defaultModel` joins the snapshot so a lost selection flips the
-// provider to changed and the re-selected default is written back.
+// automatically; `capabilities` is sorted because its order is not meaningful,
+// and keys are sorted for the same reason. `defaultModel` joins the snapshot so
+// a lost selection flips the provider to changed and the re-selected default is
+// written back.
 function providerModelSnapshot(
   config: ManagedKimiConfigShape,
   providerId: string,
@@ -259,7 +285,7 @@ function providerModelSnapshot(
     });
   }
   snapshots.sort((a, b) => a.alias.localeCompare(b.alias));
-  return JSON.stringify({ defaultModel: config.defaultModel ?? null, models: snapshots });
+  return JSON.stringify(sortKeysDeep({ defaultModel: config.defaultModel ?? null, models: snapshots }));
 }
 
 function providerModelsEqual(
@@ -275,7 +301,7 @@ function providerModelsEqual(
 }
 
 function providerConfigSnapshot(config: ManagedKimiConfigShape, providerId: string): string {
-  return JSON.stringify(config.providers[providerId] ?? null);
+  return JSON.stringify(sortKeysDeep(config.providers[providerId] ?? null));
 }
 
 function providerConfigEqual(
@@ -346,6 +372,25 @@ async function rebaseSelectionAfterFetch(
   return { ...config, defaultModel: fresh.defaultModel, thinking: fresh.thinking };
 }
 
+// A registry retires a model by dropping it after declaring its replacement
+// through `upgrade`, which an earlier refresh persisted on the alias. Follow
+// that declaration instead of leaving the user without a default, carrying the
+// user's thinking selection over the same way a surviving default keeps it.
+function followRetiredDefault(
+  previous: ManagedKimiConfigShape,
+  next: ManagedKimiConfigShape,
+): RefreshResult['retiredDefault'] {
+  const from = previous.defaultModel;
+  if (from === undefined || readModel(next, from) !== undefined) return undefined;
+  const fromModel = readModel(previous, from);
+  const to = declaredUpgradeTarget(previous, from);
+  if (fromModel === undefined || to === undefined || readModel(next, to) === undefined) {
+    return undefined;
+  }
+  restoreDefaultSelection(next, to, previous.thinking?.enabled);
+  return { from, to, fromModel };
+}
+
 // `apply*` may leave `defaultModel` pointing at an alias that no longer exists
 // (e.g. the previously-selected model was dropped from the registry). The host's
 // `setConfig` deep-merge cannot clear a key, so the matching `removeProvider`
@@ -413,6 +458,7 @@ export async function refreshProviderModels(
   const changed: ProviderChange[] = [];
   const unchanged: string[] = [];
   const failed: Array<{ provider: string; reason: string }> = [];
+  let retiredDefault: RefreshResult['retiredDefault'];
   const scope = options.scope ?? 'all';
   const targetId = options.providerId;
 
@@ -834,6 +880,7 @@ export async function refreshProviderModels(
 
       if (changedProviders.length > 0 || hasUnreportedConfigChange) {
         restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
+        const retired = followRetiredDefault(config, next);
         clampDanglingDefault(next);
         clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
         for (const providerId of providersToRemoveBeforeSet) {
@@ -845,6 +892,7 @@ export async function refreshProviderModels(
           defaultModel: next.defaultModel,
           thinking: next.thinking,
         });
+        retiredDefault = retired ?? retiredDefault;
         for (const change of changedProviders) {
           changed.push({
             providerId: change.providerId,
@@ -865,5 +913,5 @@ export async function refreshProviderModels(
     }
   }
 
-  return { changed, unchanged, failed };
+  return { changed, unchanged, failed, retiredDefault };
 }

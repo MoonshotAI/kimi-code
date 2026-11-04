@@ -5,7 +5,17 @@
 
 import { isAbsolute, relative, sep } from 'node:path';
 
-import { Container, Spacer, Text, truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
+import chalk from 'chalk';
+
+import {
+  Container,
+  Spacer,
+  stripTerminalSequences,
+  Text,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+} from '@moonshot-ai/pi-tui';
 import type { Component, TUI } from '@moonshot-ai/pi-tui';
 import { Markdown } from '#/tui/components/markdown/markdown';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
@@ -14,15 +24,23 @@ import {
   BRAILLE_SPINNER_FRAMES,
   BRAILLE_SPINNER_INTERVAL_MS,
   COMMAND_PREVIEW_LINES,
+  MESSAGE_INDENT,
   OUTCOME_MAX_LINES,
   RESULT_PREVIEW_LINES,
+  SUBAGENT_PREVIEW_TEXT_MAX_CHARS,
   THINKING_PREVIEW_LINES,
 } from '#/tui/constant/rendering';
 import {
   STREAMING_ARGS_FIELD_RE,
   STREAMING_ARGS_PREVIEW_MAX_CHARS,
 } from '#/tui/constant/streaming';
-import { FAILURE_MARK, STATUS_BULLET, SUCCESS_MARK } from '#/tui/constant/symbols';
+import {
+  FAILURE_MARK,
+  NOTIFY_USER_MARK,
+  NOTIFY_USER_MARK_FOREGROUND,
+  STATUS_BULLET,
+  SUCCESS_MARK,
+} from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
@@ -37,17 +55,27 @@ import { formatTokenCount } from '#/utils/usage/usage-format';
 
 import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
-import { TruncatedHeaderLine, type HeaderContent } from './truncated-header-line';
+import {
+  TruncatedHeaderLine,
+  type HeaderContent,
+  type HeaderSegments,
+} from './truncated-header-line';
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal';
 import { searchNoticeOnly } from './tool-renderers/grep-output';
 import { parseReadMediaOutput } from './tool-renderers/media';
-import { computeWriteStats } from './tool-renderers/chip';
 import { nonEmptyLines, outcomeLine, outcomeRows } from './tool-renderers/outcome';
-import { TruncatedOutputComponent } from './tool-renderers/truncated';
+import { TruncatedOutputComponent, trimTrailingEmptyLines } from './tool-renderers/truncated';
 import { isSpilledToolOutput } from './tool-renderers/types';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
+import {
+  isTodoListRead,
+  TodoCardBody,
+  todoCardHidesItems,
+  todoListFromResult,
+} from './tool-renderers/todo';
+import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 import { buildWaitForHeader, parseWaitForOutput } from './tool-renderers/wait-for';
 
 const MAX_ARG_LENGTH = 60;
@@ -65,6 +93,7 @@ const MAX_LIVE_OUTPUT_CHARS = 50_000;
 // to keep its render cache across rebuilds, and the palette is read at call
 // time so theme switches still apply.
 const dimHeaderStyle = (text: string): string => currentTheme.dim(text);
+const notifyTitleStyle = (text: string): string => currentTheme.boldFg('textStrong', text);
 
 /** Delay before a long-running foreground Bash/Agent card advertises Ctrl+B. */
 const DETACH_HINT_DELAY_MS = 10_000;
@@ -469,7 +498,7 @@ export function extractKeyArgumentDetail(
     // Prefer the short `description` so the header preview never spills a
     // multi-line `prompt` into the TUI chrome.
     Agent: ['description', 'prompt'],
-    NotifyUser: ['message'],
+    NotifyUser: ['title', 'message'],
   };
 
   // Glob: concatenate multiple args into a single summary so the header
@@ -518,11 +547,69 @@ function formatSubagentLabel(agentName: string | undefined): string {
 
 function tailNonEmptyLines(text: string, maxLines: number): string[] {
   if (text.length === 0) return [];
-  return text
-    .split('\n')
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim().length > 0)
-    .slice(-maxLines);
+  const lines: string[] = [];
+  let end = text.length;
+  while (end > 0 && lines.length < maxLines) {
+    const start = text.lastIndexOf('\n', end - 1);
+    const line = text.slice(start + 1, end).trimEnd();
+    if (line.trim().length > 0) lines.push(line);
+    end = start === -1 ? 0 : start;
+  }
+  return lines.toReversed();
+}
+
+/**
+ * The last `maxLines` source lines without splitting the whole string —
+ * the cards below only ever show a two-row window, so scanning back from the
+ * end keeps the cost proportional to what is displayed rather than to the
+ * accumulated subagent output.
+ */
+function tailSourceLines(text: string, maxLines: number): string {
+  let end = text.length;
+  for (let seen = 0; seen < maxLines; seen++) {
+    if (end === 0) return text;
+    const start = text.lastIndexOf('\n', end - 1);
+    if (start === -1) return text;
+    end = start;
+  }
+  return text.slice(end + 1);
+}
+
+/**
+ * Keeps the trailing slice of streamed subagent text that the card can show.
+ * The cut drops the first, partial line so every retained line starts at a
+ * line boundary: wrapping is then identical to the unbounded text, and no
+ * escape sequence is left half-open. A single logical line longer than the cap
+ * has no boundary to align to, so it keeps its raw tail.
+ */
+function tailPreviewText(text: string): string {
+  if (text.length <= SUBAGENT_PREVIEW_TEXT_MAX_CHARS) return text;
+  const tail = text.slice(text.length - SUBAGENT_PREVIEW_TEXT_MAX_CHARS);
+  const lineBreak = tail.indexOf('\n');
+  if (lineBreak !== -1) {
+    const aligned = tail.slice(lineBreak + 1);
+    // Only drop the partial first line when two non-empty lines remain: those
+    // wrap exactly as they would unbounded. A trailing blank does not count —
+    // the finished window filters empty lines — and otherwise the partial line
+    // is what fills the window, so the raw tail is the better answer.
+    if (tailNonEmptyLines(aligned, 2).length === 2) {
+      return stripTerminalSequences(aligned);
+    }
+  }
+  // The card applies its own styling, so control sequences carried in the
+  // streamed text are dropped rather than replayed without their opener.
+  return stripTerminalSequences(tail);
+}
+
+function lastNonEmptyLine(text: string): string | undefined {
+  let end = text.length;
+  while (end > 0) {
+    const start = text.lastIndexOf('\n', end - 1);
+    const trimmed = text.slice(start + 1, end).trim();
+    if (trimmed.length > 0) return trimmed;
+    end = start === -1 ? 0 : start;
+  }
+  return undefined;
 }
 
 class PrefixedWrappedLine implements Component {
@@ -576,6 +663,127 @@ class PrefixedWrappedLine implements Component {
       this.renderCache = { width: safeWidth, lines: rendered };
     }
     return rendered;
+  }
+}
+
+interface NotifyUserHeaderContent extends HeaderSegments {
+  readonly notifyUserTitle: string;
+}
+
+function isNotifyUserHeaderContent(content: HeaderContent): content is NotifyUserHeaderContent {
+  return typeof content !== 'string' && 'notifyUserTitle' in content;
+}
+
+function notifyUserBadge(): string {
+  return currentTheme.bg(
+    'primary',
+    chalk.hex(NOTIFY_USER_MARK_FOREGROUND)(NOTIFY_USER_MARK),
+  );
+}
+
+function notifyUserLiveArgs(toolCall: ToolCallBlockData): Record<string, unknown> {
+  const stream = toolCall.streamingArguments;
+  if (stream === undefined) return toolCall.args;
+  return {
+    ...toolCall.args,
+    title: extractPartialStringField(stream, 'title') ?? toolCall.args['title'],
+    message: extractPartialStringField(stream, 'message') ?? toolCall.args['message'],
+  };
+}
+
+function notifyUserTitle(args: Record<string, unknown>): string {
+  const title = stripTerminalSequences(str(args['title']))
+    .replaceAll(/[\r\n]+/g, ' ')
+    .trim();
+  if (title.length > 0) return title;
+  const firstLine = str(args['message'])
+    .split(/\r\n|\r|\n/)
+    .find((line) => line.trim().length > 0)
+    ?.trim();
+  if (firstLine === undefined) return '';
+  return stripTerminalSequences(firstLine)
+    .replace(/^[-*#>\s]+/, '')
+    .replaceAll('**', '')
+    .trim();
+}
+
+class NotifyUserHeader extends TruncatedHeaderLine {
+  private title: string | undefined;
+  private expanded = false;
+  private expandedCache: { width: number; lines: string[] } | undefined;
+
+  constructor(content: HeaderContent) {
+    super(content);
+    this.setText(content);
+  }
+
+  override setText(content: HeaderContent): void {
+    this.title = isNotifyUserHeaderContent(content) ? content.notifyUserTitle : undefined;
+    this.expandedCache = undefined;
+    super.setText(content);
+  }
+
+  setExpanded(expanded: boolean): void {
+    if (this.expanded === expanded) return;
+    this.expanded = expanded;
+    this.invalidate();
+  }
+
+  override invalidate(): void {
+    this.expandedCache = undefined;
+    super.invalidate();
+  }
+
+  override render(width: number): string[] {
+    if (this.title === undefined || !this.expanded) return super.render(width);
+    const safeWidth = Math.max(1, width);
+    if (isRenderCacheEnabled() && this.expandedCache?.width === safeWidth) {
+      return this.expandedCache.lines;
+    }
+    const firstPrefix = `${notifyUserBadge()} `;
+    const firstWidth = Math.max(1, safeWidth - visibleWidth(firstPrefix));
+    const continuationWidth = Math.max(1, safeWidth - visibleWidth(MESSAGE_INDENT));
+    const first = wrapTextWithAnsi(this.title, firstWidth)[0] ?? '';
+    const remainder = this.title.slice(first.length).trimStart();
+    const continuation =
+      remainder.length > 0 ? wrapTextWithAnsi(remainder, continuationWidth) : [];
+    const lines = [first, ...continuation].map((row, index) =>
+      truncateToWidth(
+        `${index === 0 ? firstPrefix : MESSAGE_INDENT}${notifyTitleStyle(row)}`,
+        safeWidth,
+        '…',
+      ),
+    );
+    if (isRenderCacheEnabled()) this.expandedCache = { width: safeWidth, lines };
+    return lines;
+  }
+}
+
+function stripTerminalSequencesExceptLinks(text: string): string {
+  return text
+    .split(/(\u001B\]8;[^;]*;[^\u0007\u001B]*(?:\u0007|\u001B\\))/g)
+    .map((part) => (part.startsWith('\u001B]8;') ? part : stripTerminalSequences(part)))
+    .join('');
+}
+
+class ToolOutputMarkdown extends Markdown {
+  private dimCache: { source: string[]; lines: string[] } | undefined;
+
+  override invalidate(): void {
+    this.dimCache = undefined;
+    super.invalidate();
+  }
+
+  override render(width: number): string[] {
+    const source = super.render(width);
+    if (isRenderCacheEnabled() && this.dimCache?.source === source) return this.dimCache.lines;
+    const lines = source.map((line) =>
+      currentTheme.dim(
+        truncateToWidth(stripTerminalSequencesExceptLinks(line).trimEnd(), Math.max(1, width), '…'),
+      ),
+    );
+    if (isRenderCacheEnabled()) this.dimCache = { source, lines };
+    return lines;
   }
 }
 
@@ -705,7 +913,10 @@ export class ToolCallComponent extends Container {
     this.applySubagentReplay(toolCall.subagent);
 
     this.addChild(new Spacer(1));
-    this.headerText = new TruncatedHeaderLine(this.buildHeader());
+    this.headerText =
+      toolCall.name === 'NotifyUser'
+        ? new NotifyUserHeader(this.buildHeader())
+        : new TruncatedHeaderLine(this.buildHeader());
     this.addChild(this.headerText);
     this.buildCallPreview();
     this.callPreviewEndIndex = this.children.length;
@@ -792,6 +1003,7 @@ export class ToolCallComponent extends Container {
   setExpanded(expanded: boolean): void {
     if (this.expanded === expanded) return;
     this.expanded = expanded;
+    if (this.headerText instanceof NotifyUserHeader) this.headerText.setExpanded(expanded);
     // rebuildBody (not rebuildContent) so the args-driven call preview
     // — which is what carries Write content / Edit diff — re-renders
     // with the new line cap. rebuildContent only touches result-driven
@@ -847,6 +1059,13 @@ export class ToolCallComponent extends Container {
     // Arguments cut off by max_tokens: the card shows a fixed "call never
     // executed" note in place of any preview, so there is nothing to expand.
     if (this.toolCall.truncated === true && this.result === undefined) return false;
+    if (
+      name === 'NotifyUser' &&
+      isExperimentalFlagEnabled('notify_user') &&
+      this.result === undefined
+    ) {
+      return str(notifyUserLiveArgs(this.toolCall)['message']).trim().length > 0;
+    }
     if (this.result === undefined && this.toolCall.streamingArguments !== undefined) {
       // While the arguments stream, the Write tail and the Edit progress row
       // ignore the toggle; only Bash reveals its partial command when expanded.
@@ -860,7 +1079,16 @@ export class ToolCallComponent extends Container {
     if (result === undefined) return nonEmptyLines(this.liveOutput).length > 1;
     if (result.output.length === 0) return false;
     if (result.output.trimStart().startsWith('<system-reminder>')) return false;
-    if (result.is_error === true) return nonEmptyLines(result.output).length > RESULT_PREVIEW_LINES;
+    // Mirror the error preview's fold threshold: the hint row replaces the
+    // hidden rows, so a single hidden row leaves nothing for ctrl+o to gain.
+    // Count rows the way the preview does — internal blanks included, only
+    // trailing empties dropped (nonEmptyLines would skip interior blanks);
+    // Bash's preview renders sanitized output, so control-only rows (e.g. a
+    // trailing reset) must not count either.
+    if (result.is_error === true) {
+      const output = name === 'Bash' ? sanitizeShellOutput(result.output) : result.output;
+      return trimTrailingEmptyLines(output.split('\n')).length > RESULT_PREVIEW_LINES + 1;
+    }
     switch (name) {
       case 'ReadMediaFile':
         // A media envelope renders its body only when expanded; anything else
@@ -919,10 +1147,11 @@ export class ToolCallComponent extends Container {
         // The result body renders the same way in both states (the call
         // preview is checked above), so only the preview can hide content.
         return false;
+      case 'TodoList':
+        return todoCardHidesItems(todoListFromResult(result.output));
       case 'SetGoalBudget':
       case 'UpdateGoal':
       case 'AgentSwarm':
-      case 'TodoList':
       case 'EnterPlanMode':
         return false;
       default:
@@ -959,8 +1188,15 @@ export class ToolCallComponent extends Container {
         });
         return capped.length !== full.length || capped.at(-1) !== full.at(-1);
       }
-      case 'Write':
-        return computeWriteStats(args).lines > COMMAND_PREVIEW_LINES;
+      case 'Write': {
+        // Mirror buildCallPreview's cap exactly: highlightLines keeps a
+        // trailing empty entry for a final newline (computeWriteStats strips
+        // it), and the hint row replaces the hidden rows, so a single hidden
+        // row would leave nothing for ctrl+o to gain.
+        const content = str(args['content']);
+        const filePath = str(args['file_path'] ?? args['path']);
+        return highlightLines(content, langFromPath(filePath)).length > COMMAND_PREVIEW_LINES + 1;
+      }
       default:
         return false;
     }
@@ -1075,7 +1311,7 @@ export class ToolCallComponent extends Container {
     if (subagent === undefined) return;
     this.subagentAgentId = subagent.id;
     this.subagentAgentName = subagent.name;
-    this.subagentText = subagent.text ?? '';
+    this.subagentText = tailPreviewText(subagent.text ?? '');
     for (const call of subagent.toolCalls ?? []) {
       if (call.result === undefined) {
         this.ongoingSubCalls.set(call.id, { name: call.name, args: call.args });
@@ -1413,7 +1649,7 @@ export class ToolCallComponent extends Container {
     this.subagentResultSummary =
       payload.resultSummary.length > 0 ? payload.resultSummary : undefined;
     if (this.subagentText.trim().length === 0 && this.subagentResultSummary !== undefined) {
-      this.subagentText = this.subagentResultSummary;
+      this.subagentText = tailPreviewText(this.subagentResultSummary);
     }
     this.syncSubagentElapsedTimer();
     this.headerText.setText(this.buildHeader());
@@ -1561,10 +1797,15 @@ export class ToolCallComponent extends Container {
 
   appendSubagentText(text: string, kind: SubagentTextKind = 'text'): void {
     this.lastSubagentStreamKind = kind;
+    // The preview window only ever shows a small tail, so keep the retained
+    // buffer bounded instead of concatenating the whole history. Trimming the
+    // merged buffer on each append costs O(cap + delta) regardless of how long
+    // the agent has been running, and the text still ends with the newest
+    // output.
     if (kind === 'thinking') {
-      this.subagentThinkingText += text;
+      this.subagentThinkingText = tailPreviewText(this.subagentThinkingText + text);
     } else {
-      this.subagentText += text;
+      this.subagentText = tailPreviewText(this.subagentText + text);
     }
     // Child-agent activity means it is running unless already terminal/backgrounded.
     if (
@@ -1736,24 +1977,32 @@ export class ToolCallComponent extends Container {
     }
 
     if (toolCall.name === 'NotifyUser' && isExperimentalFlagEnabled('notify_user')) {
-      // The update itself lives in the panel above the input box; the card
-      // is the durable trace in the transcript, so the header carries the
-      // first line and ctrl+o shows the whole message.
+      // Stream the title and message while arguments arrive. Delivered
+      // updates remain as a durable transcript trace: the header carries
+      // the title (or the message's first line) and ctrl+o shows the message.
       if (isTruncated) {
         // max_tokens cut the arguments short: the call never ran and the
         // panel entry was dropped, so the card must not read as in flight.
         return `${bullet}${currentTheme.boldFg('error', 'Update cut off')}${currentTheme.dim(' (arguments truncated by max_tokens)')}`;
       }
       const delivery = notifyResultState(result?.output);
-      const label = isFinished
-        ? isError
-          ? 'Could not send you an update'
-          : delivery === 'displayed'
-            ? 'Sent you an update'
-            : delivery === 'suppressed'
-              ? 'Update not displayed'
-              : 'Update completed'
-        : 'Sending you an update';
+      if (!isFinished || (!isError && delivery === 'displayed')) {
+        const title = notifyUserTitle(isFinished ? toolCall.args : notifyUserLiveArgs(toolCall));
+        const content: NotifyUserHeaderContent = {
+          head: `${notifyUserBadge()} `,
+          flex: { text: title, style: notifyTitleStyle, keep: 'head' },
+          tail: '',
+          notifyUserTitle: title,
+        };
+        return content;
+      }
+      const label = isError
+        ? 'Could not send you an update'
+        : delivery === 'displayed'
+          ? 'Sent you an update'
+          : delivery === 'suppressed'
+            ? 'Update not displayed'
+            : 'Update completed';
       const tone = isError ? 'error' : 'primary';
       const preview = extractKeyArgumentDetail(toolCall.name, toolCall.args, this.workspaceDir);
       const head = `${bullet}${currentTheme.boldFg(tone, label)}`;
@@ -1808,7 +2057,9 @@ export class ToolCallComponent extends Container {
       return this.buildSingleSubagentHeader();
     }
 
-    const verb = isFinished ? 'Used' : isTruncated ? 'Truncated' : 'Using';
+    const finishedVerb =
+      toolCall.name === 'TodoList' && isTodoListRead(toolCall.args) ? 'Read' : 'Used';
+    const verb = isFinished ? finishedVerb : isTruncated ? 'Truncated' : 'Using';
     const keyArg = extractKeyArgumentDetail(toolCall.name, toolCall.args, this.workspaceDir);
     const decoded = decodeMcpToolName(toolCall.name);
     const verbStyled = isTruncated
@@ -1978,7 +2229,7 @@ export class ToolCallComponent extends Container {
     }
 
     if (this.subagentText.length > 0) {
-      const tailLines = this.subagentText.split('\n').slice(-3);
+      const tailLines = tailSourceLines(this.subagentText, 3).split('\n');
       for (const line of tailLines) {
         this.addChild(new Text(`    ${currentTheme.dim(line)}`, 0, 0));
       }
@@ -2241,12 +2492,14 @@ export class ToolCallComponent extends Container {
     const content = this.getActiveSubagentContent();
     // Keep both tones muted: a bright `fg('text')` here flashed white whenever
     // the window flipped between thinking and a brief text/tool-output segment.
+    const text =
+      content === undefined ? '…' : tailSourceLines(content.text, THINKING_PREVIEW_LINES * 4);
     const styled =
       content === undefined
-        ? currentTheme.dim('…')
+        ? currentTheme.dim(text)
         : content.tone === 'thinking'
-          ? currentTheme.dim(content.text)
-          : currentTheme.fg('textDim', content.text);
+          ? currentTheme.dim(text)
+          : currentTheme.fg('textDim', text);
     // Always exactly two rows (padded when short) so the live window matches
     // the finished card's height.
     return new PrefixedWrappedLine(
@@ -2290,13 +2543,20 @@ export class ToolCallComponent extends Container {
       return;
     }
     if (name === 'NotifyUser' && isExperimentalFlagEnabled('notify_user')) {
-      // Collapsed: header only (the panel shows the live text). Expanded:
-      // the full message as Markdown, indented under the header.
+      // Collapsed cards always keep one title row. Expansion reveals the
+      // message, including its live stream while the call is in flight.
       if (!this.expanded) return;
-      const message = str(this.toolCall.args['message']).trim();
+      const inFlight = this.result === undefined;
+      const args = inFlight ? notifyUserLiveArgs(this.toolCall) : this.toolCall.args;
+      const message = str(args['message']).trim();
       if (message.length === 0) return;
+      const displayed =
+        this.result !== undefined &&
+        this.result.is_error !== true &&
+        notifyResultState(this.result.output) === 'displayed';
+      const MarkdownComponent = inFlight || displayed ? ToolOutputMarkdown : Markdown;
       this.addChild(
-        new Markdown(message, 2, 0, this.markdownTheme, undefined, {
+        new MarkdownComponent(message, MESSAGE_INDENT.length, 0, this.markdownTheme, undefined, {
           ...createMarkdownOptions(),
           copySource: true,
         }),
@@ -2324,8 +2584,10 @@ export class ToolCallComponent extends Container {
       // Cap as soon as args finalize, not just when result lands. Otherwise the
       // brief render tick between finalized args and result draws the full file,
       // and the snap back to the collapsed cap triggers pi-tui's full-redraw
-      // path which wipes the terminal scrollback (pre-TUI history).
-      const writeShouldCap = !this.expanded;
+      // path which wipes the terminal scrollback (pre-TUI history). The cap
+      // swaps the hidden rows for a one-line hint, so capping a single row
+      // would render at the same height as the full preview.
+      const writeShouldCap = !this.expanded && allLines.length > COMMAND_PREVIEW_LINES + 1;
       const shown = writeShouldCap ? allLines.slice(0, COMMAND_PREVIEW_LINES) : allLines;
       const remaining = allLines.length - shown.length;
       for (const [i, line] of shown.entries()) {
@@ -2356,6 +2618,15 @@ export class ToolCallComponent extends Container {
         this.addChild(new Text(line, 2, 0));
       }
     } else if (name === 'Bash') {
+      // The engine stamps the cwd the command actually executes in (the bound
+      // environment's resolved path) into display.cwd; show it whenever it says
+      // something the card does not already — a remote environment's path or an
+      // explicit cwd argument. A stamp equal to the local workspace dir is
+      // the default local case and keeps the card's current shape.
+      const executionCwd = this.stampedExecutionCwd();
+      if (executionCwd !== undefined) {
+        this.addChild(new Text(currentTheme.dim(`cwd: ${executionCwd}`), 2, 0));
+      }
       // Collapsed: the header already carries the command's first line, so no
       // command body is added; the outcome row comes from the live tail or the
       // result renderer. Expanded: the full command, across the whole lifecycle.
@@ -2372,6 +2643,14 @@ export class ToolCallComponent extends Container {
         }),
       );
     }
+  }
+
+  private stampedExecutionCwd(): string | undefined {
+    const display = this.toolCall.display;
+    if (display?.kind !== 'command') return undefined;
+    const cwd = display.cwd;
+    if (cwd === undefined || cwd.length === 0 || cwd === this.workspaceDir) return undefined;
+    return cwd;
   }
 
   /**
@@ -2529,10 +2808,11 @@ export class ToolCallComponent extends Container {
       return;
     }
 
-    // TodoList: the authoritative list is shown in the dedicated
-    // TodoPanel before the input area, so repeating the text dump here is
-    // pure clutter. Keep the headline, drop the body.
+    // TodoList: the card shows the reported list instead of the text dump,
+    // for reads and writes alike.
     if (this.toolCall.name === 'TodoList' && !result.is_error) {
+      const todos = todoListFromResult(result.output);
+      if (todos.length > 0) this.addChild(new TodoCardBody(todos, this.expanded));
       return;
     }
 
@@ -2668,11 +2948,8 @@ function computeLatestActivity(
     }
   }
   if (text.length > 0) {
-    const tail = text
-      .split('\n')
-      .toReversed()
-      .find((l) => l.trim().length > 0);
-    if (tail !== undefined) return tail.trim();
+    const tail = lastNonEmptyLine(text);
+    if (tail !== undefined) return tail;
   }
   return undefined;
 }

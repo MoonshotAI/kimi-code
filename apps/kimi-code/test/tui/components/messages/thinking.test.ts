@@ -89,4 +89,32 @@ describe('ThinkingComponent', () => {
       expect(visibleWidth(line)).toBeLessThanOrEqual(37);
     }
   });
+
+  it('shows a single overflow line instead of swapping it for a same-height hint', () => {
+    const component = new ThinkingComponent(['line1', 'line2', 'line3'].join('\n'), true, 'live');
+    component.finalize();
+
+    const out = strip(component.render(80).join('\n'));
+    expect(out).toContain('line1');
+    expect(out).toContain('line2');
+    expect(out).toContain('line3');
+    expect(out).not.toContain('more lines');
+    expect(component.hasHiddenContent()).toBe(false);
+  });
+
+  it('collapses once folding saves at least one row', () => {
+    const component = new ThinkingComponent(
+      ['line1', 'line2', 'line3', 'line4'].join('\n'),
+      true,
+      'live',
+    );
+    component.finalize();
+
+    const out = strip(component.render(80).join('\n'));
+    expect(out).toContain('line1');
+    expect(out).toContain('line2');
+    expect(out).not.toContain('line3');
+    expect(out).toContain('… (2 more lines, ctrl+o to expand)');
+    expect(component.hasHiddenContent()).toBe(true);
+  });
 });

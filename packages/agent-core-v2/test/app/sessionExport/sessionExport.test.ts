@@ -886,6 +886,7 @@ function registerSessionExportServices(
   });
   reg.defineInstance(ISessionManager, {
     _serviceBrand: undefined,
+    resolveCreationEnvironment: async () => { throw new Error('environment resolution should not be called by session export'); },
     create: async () => {
       throw new Error('create should not be called by session export');
     },
@@ -899,6 +900,7 @@ function registerSessionExportServices(
     ): Promise<T> => work({ archive: async () => {}, restore: async () => undefined }),
     list: () => (options.lifecycleHandle === undefined ? [] : [options.lifecycleHandle]),
     close: async () => {},
+    closeIfIdle: async () => false,
     archive: async () => {},
     restore: async () => options.lifecycleHandle,
     delete: async () => {},
@@ -916,6 +918,17 @@ function registerSessionExportServices(
       id,
       root: `/workspaces/${id}`,
       name: id,
+      kind: 'implicit',
+      additionalDirs: [],
+      createdAt: 1,
+      lastOpenedAt: 2,
+    }),
+    create: async (input) => ({
+      id: 'ws_created',
+      root: input.root,
+      name: 'created',
+      kind: 'implicit',
+      additionalDirs: [],
       createdAt: 1,
       lastOpenedAt: 2,
     }),
@@ -923,10 +936,15 @@ function registerSessionExportServices(
       id: 'ws_created',
       root,
       name: 'created',
+      kind: 'implicit',
+      additionalDirs: [],
       createdAt: 1,
       lastOpenedAt: 2,
     }),
+    touch: async () => undefined,
     update: async () => undefined,
+    setPrimary: async () => undefined,
+    readProjectConfigDirs: async () => [],
     delete: async () => {},
   });
   reg.define(ISessionExportService, SessionExportService);
@@ -981,6 +999,7 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
     onDidChangeMetadata: noopEvent,
     read: async () => meta,
     update: async () => {},
+    applyPromptMetadata: async () => false,
     setTitle: async () => {},
     setGeneratedTitleIfUncustomized: async () => false,
     setArchived: async () => {},

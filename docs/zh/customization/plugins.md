@@ -108,7 +108,7 @@ Kimi Datasource 是 Kimi Code 官方数据插件。用自然语言直接查询�
 #### 使用方式
 
 1. 直接用自然语言描述需求，Kimi Code 会自动调用数据能力
-2. 通过 `/skill:kimi-datasource` 明确触发数据查询 Skill
+2. 通过 `/skill:kimi-datasource:kimi-datasource` 明确触发数据查询 Skill
 
 #### 能做什么
 
@@ -274,9 +274,9 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 
 | 字段 | 说明 |
 | --- | --- |
-| `name` | 必填，作为 plugin id，必须匹配 `[a-z0-9][a-z0-9_-]{0,63}` |
+| `name` | 必填，作为 plugin id，必须匹配 `[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*(@[A-Za-z0-9_-]+)?` |
 | `version`、`description`、`keywords`、`author`、`homepage`、`license` | 展示元数据 |
-| `interface` | 在 `/plugins` 中展示的字段：`displayName`、`shortDescription`、`longDescription`、`developerName`、`websiteURL` |
+| `interface` | 在 `/plugins` 中展示的字段：`displayName`、`shortDescription`、`longDescription`、`developerName`、`websiteURL`；另见下方的能力展示覆盖 |
 | `skills` | 一个或多个 `./` 路径，必须位于 plugin 根目录内。省略时根目录的 `SKILL.md` 被当作单个 Skill root |
 | `agents` | 一个或多个 `./` 路径，必须位于 plugin 根目录内，指向含有 [Agent 文件](./agents.md#自定义-agent) 的目录。省略时若根目录存在 `agents/` 目录则自动采用 |
 | `sessionStart.skill` | 在新会话或恢复会话开始时，把指定 plugin Skill 加载到 main agent |
@@ -286,6 +286,12 @@ Plugin 是一个带 manifest 的目录或 zip 文件。Manifest 可以放在以�
 | `mcpServers` | MCP server 声明，默认启用，可从 `/plugins` 中禁用 |
 | `hooks` | 在 plugin 启用期间于生命周期事件上运行的 hook 规则，见 [插件中的 Hooks](#插件中的-hooks) |
 | `commands` | 一个或多个 `./` 路径，指向目录或 `.md` 文件，把其中的 Markdown 文件注册为斜杠命令，见 [插件斜杠命令](#插件斜杠命令) |
+
+`interface.mcpOverrides` 以 `mcpServers` 中的服务键为键，可为对应 MCP 服务提供展示用的 `displayName`、`description` 和 `iconUrl`。这些字段不改变 MCP 服务名称或运行配置。
+
+`interface.skillOverrides` 以技能目录名为键，可为对应技能提供展示用的 `displayName` 和 `description`。它们只影响插件信息展示，不改变技能的调用名称或 `SKILL.md` 内容。
+
+`interface.defaultLocale` 声明 `interface` 默认文案的语言。`interface.locales` 可指向插件根目录内的翻译目录（例如 `./locales/`），其中的 `<语言>.json` 文件（例如 `en-US.json`）可提供上述展示字段及两类 overrides。读取插件详情或预览时可指定 `locale`，匹配的翻译用于能力展示，未提供的字段回退到默认 `interface`。
 
 `tools`、`apps`、`inject`、`configFile` 等不支持的运行时字段会显示为 diagnostics 并被忽略。
 
@@ -399,7 +405,9 @@ my-plugin/
       SKILL.md
 ```
 
-`sessionStart.skill` 在会话启动时把一个 plugin Skill 加载到 main agent，适合放置初始化说明、工作流规则，或把其他工具中的术语映射到 Kimi Code CLI。它只注入文本，不执行代码。
+`sessionStart.skill` 在会话启动时把一个 plugin Skill 加载到 main agent，适合放置初始化说明、工作流规则，或把其他工具中的术语映射到 Kimi Code CLI。它只注入文本，不执行代码。字段值是插件内 Skill frontmatter 中声明的名字，不带 `<plugin-id>:` 前缀。
+
+Plugin Skill 以全限定名 `<plugin-id>:<skill-name>` 列出和调用（例如 `/skill:my-plugin:using-my-plugin`），与[插件斜杠命令](#插件斜杠命令)的命名方式一致：不同插件的同名 Skill 互不冲突，裸名不会解析到 plugin Skill。当插件命令与插件 Skill 同名时，`/plugin-id:name` 执行命令；调用 Skill 需使用显式形态 `/skill:plugin-id:name`。
 
 无论 Skill 通过哪种方式加载（`sessionStart.skill`、`/skill:<name>` 或模型自动调用），`skillInstructions` 都会随该 plugin 的 Skill 一起出现。
 

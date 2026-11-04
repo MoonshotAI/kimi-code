@@ -7,6 +7,7 @@ import type {
   PromptOrigin,
   ResumedAgentState,
   ToolCall,
+  ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 import { limitAgentReplayByTurns } from '@moonshot-ai/kimi-code-sdk';
 
@@ -53,6 +54,7 @@ export interface SkillActivationProjection {
   readonly activationId: string;
   readonly skillName: string;
   readonly skillArgs?: string;
+  readonly skillSource?: string;
   readonly trigger: SkillActivationTrigger;
   /** The activation rode a bundled prompt message, not a standalone one. */
   readonly bundled?: boolean;
@@ -211,6 +213,7 @@ export function collectReplayMessageContent(
 export function toolCallFromReplayMessage(
   rawToolCall: ToolCall,
   context: ReplayRenderContext,
+  display?: ToolInputDisplay,
 ): ToolCallBlockData | undefined {
   const id = rawToolCall.id;
   const name = rawToolCall.name;
@@ -219,6 +222,7 @@ export function toolCallFromReplayMessage(
     id,
     name,
     args: parseReplayToolArguments(rawToolCall.arguments),
+    display,
     step: context.stepIndex,
     turnId: context.currentTurnId,
   };
@@ -322,6 +326,7 @@ export function skillActivationFromOrigin(
     activationId: origin.activationId,
     skillName: origin.skillName,
     skillArgs: origin.skillArgs,
+    skillSource: origin.skillSource,
     trigger: origin.trigger,
   };
 }
@@ -368,6 +373,35 @@ export function stripBundledSkillParts(message: ContextMessage): readonly Conten
     message.content,
     bundledSkillsFromOrigin(message.origin),
   ).filter((part) => !isSkillActivationPart(part));
+}
+
+export function userSlashSkillPromptText(
+  message: ContextMessage,
+  skill: SkillActivationProjection,
+): string {
+  const parts = withoutUserPromptSubmitHookParts(message.content);
+  const [first, ...rest] = parts;
+  const callerParts = first?.type === 'text' ? rest : parts;
+  const name = skill.skillSource === 'builtin' ? skill.skillName : `skill:${skill.skillName}`;
+  const args = skill.skillArgs ?? '';
+  const command = args.trim().length > 0 ? `/${name} ${args}` : `/${name}`;
+  // Media parts mean the caller content came from an external activation with
+  // attachments (e.g. kap-server), never from a typed command: keep the
+  // command identity and show the attachment rendering alongside it.
+  if (callerParts.some((part) => part.type !== 'text')) {
+    const attachmentText = contentPartsToText(callerParts).trim();
+    return attachmentText.length > 0 ? `${command} ${attachmentText}` : command;
+  }
+  const callerText = contentPartsToText(callerParts);
+  const trimmed = callerText.trim();
+  if (trimmed.length === 0) return command;
+  // Text-only caller content is ambiguous: a saved typed command always
+  // starts with the slash mention, while external text attachments (the
+  // kap-server activation API accepts text attachments) are arbitrary prose
+  // — prepend the reconstructed command for the latter so the activated
+  // skill stays identifiable.
+  if (trimmed.startsWith('/')) return callerText;
+  return `${command} ${trimmed}`;
 }
 
 export function pluginCommandFromOrigin(

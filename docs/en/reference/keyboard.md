@@ -14,9 +14,7 @@ The following keys are always available in the input box:
 | `Esc` | Close a popup / cancel completion / interrupt streaming output or context compaction |
 | `Ctrl-C` | Interrupt the current streaming output, or clear the input box |
 | `Ctrl-D` | Exit Kimi Code CLI when the input box is empty |
-| `Ctrl-T` | Expand or collapse the todo list when it is truncated |
-| `Ctrl-P` | Previous page in the experimental `Updates` panel when it has multiple pages |
-| `Ctrl-N` | Next page in the experimental `Updates` panel when it has multiple pages |
+| `Ctrl-N` | Focus the experimental `Updates` panel, including while an approval or question waits |
 
 Pressing `Ctrl-C` **during streaming** cancels immediately — no second confirmation needed.
 
@@ -63,7 +61,7 @@ While streaming output is active, the input box can still receive input and supp
 | `Esc` | Interrupt the current streaming output |
 | `Ctrl-C` | Interrupt the current streaming output |
 
-Pressing `Ctrl-S` causes the model to see your message at the next interruptible point, without waiting for the current turn to finish.
+Pressing `Ctrl-S` causes the model to see your message at the next interruptible point, without waiting for the current turn to finish. The message text stays faded until the agent reads it. If an interrupted turn carries the message into a later turn, it stays faded until that turn starts.
 
 ## Tool Output
 
@@ -85,6 +83,7 @@ When the Agent initiates a tool call that requires confirmation, the TUI display
 | `Esc` / `Ctrl-C` / `Ctrl-D` | Reject the current request |
 | `Ctrl-E` | Expand or collapse the full content when the panel contains a diff or file preview |
 | `Ctrl-O` | Toggle the collapsed state of other tool output |
+| `Ctrl-N` | Focus the `Updates` panel |
 
 Options that require feedback (such as "Reject" or "Revise") switch to a feedback input state after confirmation: type the feedback text and press `Enter` to submit; press `Esc` to exit feedback input and return to the candidate list.
 

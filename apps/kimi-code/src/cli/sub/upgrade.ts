@@ -4,7 +4,7 @@ import { track as trackTelemetry, type TelemetryProperties } from '@moonshot-ai/
 import { INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS } from '#/constant/app';
 
 import { refreshUpdateCache } from '#/cli/update/refresh';
-import { selectUpdateTarget } from '#/cli/update/select';
+import { decideUpdate, formatUpdateChannelWarning, resolveUpdateChannel } from '#/cli/update/select';
 import { detectInstallSource } from '#/cli/update/source';
 import {
   canAutoInstall,
@@ -18,10 +18,12 @@ import {
   type InstallPromptChoiceValue,
   type InstallPromptOptions,
 } from '#/cli/update/prompt';
-import {
-  NPM_PACKAGE_NAME,
-  type InstallSource,
-  type UpdateCache,
+import type {
+  ActionableUpdatePlan,
+  InstallIntent,
+  InstallSource,
+  UpdateCache,
+  UpdateChannel,
 } from '#/cli/update/types';
 
 interface WritableLike {
@@ -32,11 +34,15 @@ type UpgradeTrack = (event: string, properties?: TelemetryProperties) => void;
 type UpgradeLogger = Pick<Logger, 'info' | 'warn'>;
 
 export interface UpgradeDeps {
-  readonly refreshUpdateCache: () => Promise<UpdateCache>;
-  readonly detectInstallSource: () => Promise<InstallSource>;
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly refreshUpdateCache: (channel: UpdateChannel) => Promise<UpdateCache>;
+  readonly detectInstallSource: {
+    (options: { readonly allowGlobalPrefix: false }): Promise<InstallSource | null>;
+    (): Promise<InstallSource>;
+  };
   readonly installUpdate: (
     source: InstallSource,
-    version: string,
+    plan: ActionableUpdatePlan,
     platform: NodeJS.Platform,
   ) => Promise<void>;
   readonly promptForInstallChoice: (
@@ -56,10 +62,14 @@ export async function handleUpgrade(
   overrides: Partial<UpgradeDeps> = {},
 ): Promise<number> {
   const deps = createDefaultUpgradeDeps(overrides);
+  const sourceHint = await deps.detectInstallSource({ allowGlobalPrefix: false }).catch(() => null);
+  const selection = resolveUpdateChannel(currentVersion, sourceHint ?? 'unsupported', deps.env);
+  const channelWarning = formatUpdateChannelWarning(selection);
+  if (channelWarning !== null) deps.stderr.write(channelWarning);
 
   let cache: UpdateCache;
   try {
-    cache = await deps.refreshUpdateCache();
+    cache = await deps.refreshUpdateCache(selection.channel);
   } catch (error) {
     const reason = formatErrorMessage(error);
     trackUpgradeEvent(deps.track, 'upgrade_command_failed', {
@@ -75,102 +85,75 @@ export async function handleUpgrade(
     return 1;
   }
 
-  const target = selectUpdateTarget(currentVersion, cache.latest);
-  if (target === null) {
+  const plan = decideUpdate(currentVersion, cache);
+  if (plan.kind === 'none') {
     trackUpgradeEvent(deps.track, 'upgrade_command_no_update', {
       current_version: currentVersion,
     });
     logUpgradeInfo(deps.logger, 'manual upgrade no update', {
       currentVersion,
+      plan: plan.kind,
     });
     deps.stdout.write(`Kimi Code is already up to date (${formatDisplayVersion(currentVersion)}).\n`);
     return 0;
   }
 
-  const source = await deps.detectInstallSource().catch(() => 'unsupported' as const);
-  const installCommand = installCommandFor(source, target.version, deps.platform);
-  if (!canAutoInstall(source, deps.platform) || (!deps.yes && !deps.isInteractive)) {
-    trackUpgradeEvent(deps.track, 'upgrade_command_manual_command', {
-      current_version: currentVersion,
-      target_version: target.version,
-      source,
-    });
-    logUpgradeInfo(deps.logger, 'manual upgrade command shown', {
-      currentVersion,
-      targetVersion: target.version,
-      source,
-    });
-    deps.stdout.write(renderManualUpdateMessage(currentVersion, target, source, installCommand));
+  const source = sourceHint ?? await deps.detectInstallSource().catch(() => 'unsupported' as const);
+  const target = plan.target;
+  const intent: InstallIntent = plan.kind;
+  const installCommand = installCommandFor(source, target.version, deps.platform, target.channel);
+  const eventBase = {
+    current_version: currentVersion,
+    target_version: target.version,
+    source,
+    intent,
+  };
+  const logBase = {
+    currentVersion,
+    targetVersion: target.version,
+    source,
+    intent,
+  };
+  const sourceCanAutoInstall = canAutoInstall(source, deps.platform);
+  if (!sourceCanAutoInstall || (!deps.yes && !deps.isInteractive)) {
+    trackUpgradeEvent(deps.track, 'upgrade_command_manual_command', eventBase);
+    logUpgradeInfo(deps.logger, 'manual upgrade command shown', logBase);
+    deps.stdout.write(renderManualUpdateMessage(currentVersion, plan, source, installCommand));
     return 0;
   }
 
   if (!deps.yes) {
-    trackUpgradeEvent(deps.track, 'upgrade_command_prompted', {
-      current_version: currentVersion,
-      target_version: target.version,
-      source,
-    });
-    logUpgradeInfo(deps.logger, 'manual upgrade prompted', {
-      currentVersion,
-      targetVersion: target.version,
-      source,
-    });
+    trackUpgradeEvent(deps.track, 'upgrade_command_prompted', eventBase);
+    logUpgradeInfo(deps.logger, 'manual upgrade prompted', logBase);
     const choice = await deps.promptForInstallChoice({
       currentVersion,
-      target,
+      plan,
       installCommand,
       installSource: source,
     });
     if (choice === 'skip') {
-      trackUpgradeEvent(deps.track, 'upgrade_command_skipped', {
-        current_version: currentVersion,
-        target_version: target.version,
-        source,
-      });
-      logUpgradeInfo(deps.logger, 'manual upgrade skipped', {
-        currentVersion,
-        targetVersion: target.version,
-        source,
-      });
+      trackUpgradeEvent(deps.track, 'upgrade_command_skipped', eventBase);
+      logUpgradeInfo(deps.logger, 'manual upgrade skipped', logBase);
       return 0;
     }
   }
 
   try {
-    trackUpgradeEvent(deps.track, 'upgrade_command_install_selected', {
-      current_version: currentVersion,
-      target_version: target.version,
-      source,
-    });
-    await deps.installUpdate(source, target.version, deps.platform);
-    trackUpgradeEvent(deps.track, 'upgrade_command_succeeded', {
-      current_version: currentVersion,
-      target_version: target.version,
-      source,
-    });
-    logUpgradeInfo(deps.logger, 'manual upgrade install succeeded', {
-      currentVersion,
-      targetVersion: target.version,
-      source,
-    });
-    deps.stdout.write(renderInstallSuccessMessage(target));
+    trackUpgradeEvent(deps.track, 'upgrade_command_install_selected', eventBase);
+    await deps.installUpdate(source, plan, deps.platform);
+    trackUpgradeEvent(deps.track, 'upgrade_command_succeeded', eventBase);
+    logUpgradeInfo(deps.logger, 'manual upgrade install succeeded', logBase);
+    deps.stdout.write(renderInstallSuccessMessage(plan));
     return 0;
   } catch (error) {
     trackUpgradeEvent(deps.track, 'upgrade_command_failed', {
-      current_version: currentVersion,
-      target_version: target.version,
-      source,
+      ...eventBase,
       stage: 'install',
       reason: formatErrorMessage(error),
     });
-    logUpgradeWarn(deps.logger, 'manual upgrade install failed', {
-      currentVersion,
-      targetVersion: target.version,
-      source,
-      error,
-    });
+    logUpgradeWarn(deps.logger, 'manual upgrade install failed', { ...logBase, error });
     deps.stderr.write(
-      `warning: failed to install ${NPM_PACKAGE_NAME}@${target.version}: ` +
+      `warning: failed to install @moonshot-ai/kimi-code@${target.version}: ` +
         `${formatErrorMessage(error)}\n`,
     );
     return 1;
@@ -179,10 +162,11 @@ export async function handleUpgrade(
 
 function createDefaultUpgradeDeps(overrides: Partial<UpgradeDeps>): UpgradeDeps {
   return {
+    env: overrides.env ?? process.env,
     refreshUpdateCache:
       overrides.refreshUpdateCache ??
-      (() => refreshUpdateCache({ timeoutMs: INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS })),
-    detectInstallSource: overrides.detectInstallSource ?? (() => detectInstallSource()),
+      ((channel) => refreshUpdateCache({ channel, timeoutMs: INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS })),
+    detectInstallSource: overrides.detectInstallSource ?? detectInstallSource,
     installUpdate: overrides.installUpdate ?? installUpdateForeground,
     promptForInstallChoice: overrides.promptForInstallChoice ?? promptForInstallChoice,
     platform: overrides.platform ?? process.platform,

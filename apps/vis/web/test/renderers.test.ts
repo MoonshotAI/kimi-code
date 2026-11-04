@@ -58,8 +58,7 @@ const HISTORICAL_OR_HEADER_TYPES = new Set([
 ]);
 
 describe('wire renderers', () => {
-  it('covers every durable record in the current core-v2 wire manifest', async () => {
-    const manifestPath = resolve(
+  it('covers every durable record and renders MCP failure resolution', async () => {    const manifestPath = resolve(
       import.meta.dirname,
       '../../../../packages/agent-core-v2/docs/wire-manifest.d.ts',
     );
@@ -75,6 +74,59 @@ describe('wire renderers', () => {
       .toSorted();
 
     expect(renderedCurrentTypes).toEqual(upstreamTypes);
+    const renderer = WIRE_RENDERERS['mcp.server_failure_resolved'];
+    const headline = renderer.headline({
+      type: 'mcp.server_failure_resolved',
+      agentId: 'main',
+      serverName: 'example',
+      transport: 'http',
+      resolution: 'recovered',
+    });
+    const markup = renderToStaticMarkup(headline.main);
+    expect(markup).toContain('example');
+    expect(markup).toContain('recovered');
+    const mediaDetail = WIRE_RENDERERS['context.append_message'].detail?.({
+      type: 'context.append_message',
+      agentId: 'main',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+        ],
+      },
+    } as never);
+    expect(renderToStaticMarkup(mediaDetail)).toContain('data:image/png;base64,AAA');
+  });
+
+  it('renders a change-notifier snapshot written before the belief fields existed', () => {
+    const renderer = WIRE_RENDERERS['changeNotifier.snapshot'];
+    const legacy = {
+      type: 'changeNotifier.snapshot',
+      agentId: 'main',
+      agentsMdHash: 'legacy-hash',
+      skillsHash: 'legacy-skills',
+      subagentNames: ['default'],
+      modelPoolAliases: ['k1'],
+    } as unknown as Parameters<typeof renderer.headline>[0];
+    const headline = renderer.headline(legacy);
+    const markup = renderToStaticMarkup(headline.main);
+    expect(markup).toContain('1 profiles');
+  });
+
+  it('renders the model pool size from the models record', () => {
+    const renderer = WIRE_RENDERERS['changeNotifier.snapshot'];
+    const record = {
+      type: 'changeNotifier.snapshot',
+      agentId: 'main',
+      agentsMdHash: null,
+      agentsMdFiles: { '/p/AGENTS.md': 'hash' },
+      skillsHash: null,
+      subagentNames: null,
+      modelPool: { defaultModel: 'k1', models: { k1: '', k2: '' } },
+    } as unknown as Parameters<typeof renderer.headline>[0];
+    const markup = renderToStaticMarkup(renderer.headline(record).main);
+    expect(markup).toContain('1 agents.md');
+    expect(markup).toContain('2 pool models');
   });
 
   it('distinguishes oversized snapshots from files that did not exist', () => {

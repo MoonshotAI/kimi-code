@@ -1,9 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { release } from 'node:os';
 
+import {
+  kimiRegionProfile,
+  type KimiRegionResolution,
+} from '@moonshot-ai/kimi-code-oauth';
+
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IRegionService } from '#/app/region/region';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import type { ITelemetryAppender, TelemetryAppenderRecord } from './telemetry';
@@ -22,6 +28,7 @@ import { cleanTelemetryProperties } from './privacy';
 export interface CloudAppenderOptions {
   readonly storage: IFileSystemStorageService;
   readonly bootstrap: IBootstrapService;
+  readonly resolveRegion: () => KimiRegionResolution;
   readonly deviceId: string;
   readonly sessionId?: string;
   readonly appName: string;
@@ -55,9 +62,11 @@ export function createCloudAppender(
   accessor: ServicesAccessor,
   host: CloudAppenderHostOptions,
 ): CloudAppender {
+  const regions = accessor.get(IRegionService);
   return new CloudAppender({
     storage: accessor.get(IFileSystemStorageService),
     bootstrap: accessor.get(IBootstrapService),
+    resolveRegion: () => regions.current(),
     ...host,
   });
 }
@@ -68,6 +77,7 @@ const DEFAULT_FLUSH_INTERVAL_MS = 30_000;
 export class CloudAppender implements ITelemetryAppender {
   private readonly transport: CloudTransport;
   private readonly context: CloudContext;
+  private readonly resolveRegion: () => KimiRegionResolution;
   private readonly flushThreshold: number;
   private readonly flushIntervalMs: number;
   private deviceId: string;
@@ -78,17 +88,19 @@ export class CloudAppender implements ITelemetryAppender {
   constructor(options: CloudAppenderOptions) {
     this.deviceId = options.deviceId;
     this.sessionId = options.sessionId ?? null;
+    this.resolveRegion = options.resolveRegion;
     this.flushThreshold = options.flushThreshold ?? DEFAULT_FLUSH_THRESHOLD;
     this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.context = buildContext(options);
+    this.refreshRegionContext();
     this.transport = new CloudTransport({
       storage: options.storage,
       deviceId: options.deviceId,
       endpoint: options.endpoint,
-      homeDir: options.bootstrap.homeDir,
-      readMarker:
-        (options.bootstrap.getEnv('KIMI_CODE_REGION_MARKER') ??
-          process.env['KIMI_CODE_REGION_MARKER']) !== 'off',
+      resolveEndpoint:
+        options.endpoint === undefined
+          ? () => kimiRegionProfile(this.resolveRegion().region).telemetryEndpoint
+          : undefined,
       getAccessToken: options.getAccessToken,
       fetchImpl: options.fetchImpl,
       retryBackoffsMs: options.retryBackoffsMs,
@@ -99,6 +111,7 @@ export class CloudAppender implements ITelemetryAppender {
   }
 
   track(record: TelemetryAppenderRecord): void {
+    this.refreshRegionContext();
     const ambientSessionId = record.context['session_id'];
     const enriched: EnrichedCloudEvent = {
       event_id: randomUUID().replaceAll('-', ''),
@@ -116,6 +129,12 @@ export class CloudAppender implements ITelemetryAppender {
     }
   }
 
+  private refreshRegionContext(): void {
+    const resolution = this.resolveRegion();
+    setPrimitive(this.context, 'region', resolution.region);
+    setPrimitive(this.context, 'region_source', resolution.source);
+  }
+
   private envelopeContext(ambient: TelemetryProperties): CloudContext {
     const context: CloudContext = { ...this.context };
     const ambientModel = ambient['model'];
@@ -129,7 +148,12 @@ export class CloudAppender implements ITelemetryAppender {
     if (this.buffer.length === 0) return;
     const events = this.buffer;
     this.buffer = [];
-    await this.transport.send(events);
+    try {
+      await this.transport.send(events);
+    } catch (error) {
+      this.buffer = [...events, ...this.buffer];
+      throw error;
+    }
   }
 
   async shutdown(): Promise<void> {

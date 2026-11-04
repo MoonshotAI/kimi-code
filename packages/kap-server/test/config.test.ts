@@ -124,6 +124,15 @@ describe('server-v2 /api/v1/config', () => {
     expect(cfg.auto_session_title).toBeUndefined();
   });
 
+  it('POST { disable_feedback_survey: true } persists and GET echoes it', async () => {
+    await boot();
+    const cfg = await patchConfig({ disable_feedback_survey: true });
+    expect(cfg.disable_feedback_survey).toBe(true);
+
+    const after = await getConfig();
+    expect(after.disable_feedback_survey).toBe(true);
+  });
+
   it('POST { secondary_model } persists the subagent model pool and GET echoes it', async () => {
     await boot();
     const cfg = await patchConfig({
@@ -155,6 +164,32 @@ describe('server-v2 /api/v1/config', () => {
     expect(
       Object.keys((after.secondary_model as { models: Record<string, string> }).models),
     ).not.toContain('provider/fastModel');
+  });
+
+  it('POST { secondary_model: null } clears the section and preserves other domains', async () => {
+    await boot(
+      [
+        'default_model = "provider/main"',
+        '',
+        '[secondary_model]',
+        'default_model = "provider/fast"',
+        'default_effort = "high"',
+        '',
+        '[secondary_model.models]',
+        '"provider/fast" = "fast and cheap"',
+        '"provider/main" = "main model"',
+        '',
+      ].join('\n'),
+    );
+
+    const cfg = await patchConfig({ secondary_model: null });
+    expect(cfg.secondary_model).toBeUndefined();
+    expect(cfg.default_model).toBe('provider/main');
+
+    await (server as RunningServer).core.accessor.get(IConfigService).reload();
+    const after = await getConfig();
+    expect(after.secondary_model).toBeUndefined();
+    expect(after.default_model).toBe('provider/main');
   });
 
   it('POST { providers } converts fields of a provider id colliding with a map-valued key', async () => {

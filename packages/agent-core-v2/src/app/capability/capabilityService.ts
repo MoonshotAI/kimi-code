@@ -1,7 +1,5 @@
 import { homedir } from 'node:os';
 
-import { KIMI_CODE_PROVIDER_NAME, resolveKimiRegion } from '@moonshot-ai/kimi-code-oauth';
-
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Disposable } from '#/_base/di/lifecycle';
@@ -10,7 +8,8 @@ import { ILogService } from '#/_base/log/log';
 import { Error2 } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
-import { IProviderService } from '#/llm-adapter/provider/provider';
+import { IPluginMarketplaceService } from '#/app/plugin/marketplaceService';
+import { IRegionService } from '#/app/region/region';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import { ICapabilityService } from './capability';
@@ -50,9 +49,10 @@ export class CapabilityService extends Disposable implements ICapabilityService 
   constructor(
     @IBootstrapService bootstrap: IBootstrapService,
     @IPluginService plugins: IPluginService,
+    @IPluginMarketplaceService marketplace: IPluginMarketplaceService,
     @IHostProcessService hostProcess: IHostProcessService,
     @ILogService private readonly log: ILogService,
-    @IProviderService providers: IProviderService,
+    @IRegionService regions: IRegionService,
     entriesOverride?: readonly CapabilityEntry[],
   ) {
     super();
@@ -65,18 +65,9 @@ export class CapabilityService extends Disposable implements ICapabilityService 
         kimiHomeDir: bootstrap.homeDir,
         userHomeDir: homedir(),
         plugins,
+        marketplace,
         hostProcess,
-        resolveRegion: () => {
-          const oauth = providers.get(KIMI_CODE_PROVIDER_NAME)?.oauth;
-          return resolveKimiRegion({
-            configuredOAuthHost: oauth?.oauthHost,
-            configuredOAuthKey: oauth?.key,
-            readMarker:
-              (bootstrap.getEnv('KIMI_CODE_REGION_MARKER') ??
-                process.env['KIMI_CODE_REGION_MARKER']) !== 'off',
-            homeDir: bootstrap.homeDir,
-          });
-        },
+        resolveRegion: () => regions.getRegionAsync(),
       };
       this.entries = new Map<CapabilityId, CapabilityEntry>([
         ['kimi-cu', createKimiCuEntry(ctx)],

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createActor, waitFor } from '#/xstate2';
 import { xstateInspectionCollector } from '#/xstateInspection';
 
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -10,12 +10,13 @@ import {
   type AssistantMessage,
   type StreamedMessagePart,
   type ToolCall,
-} from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { LlmEvent } from '#/llm/requester/actor';
-import type { LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
-import type { LlmRetryOptions } from '#/llm/requester/retry';
-import { emptyUsage, type TokenUsage } from '#/llm/usage';
+} from '#/message';
+import { createOpenAIRequester } from '#/llm-requester/factories';
+import type { LlmModel } from '#/llm-requester/model';
+import type { LlmEvent } from '#/llm-requester/actor';
+import type { LlmRequester, LlmRequestEvent } from '#/llm-requester/requester';
+import type { LlmRetryOptions } from '#/llm-requester/retry';
+import { emptyUsage, type TokenUsage } from '#/llm-requester/usage';
 import { connectPlugins } from '#/plugin';
 import { createTimingPlugin } from '#/timing/plugin';
 import { createAgentMachine, type AgentEmitted, type AgentMachineSelf, type PromptGateVerdict, type ScopeFactoryOutput } from '#/agent/machine';
@@ -73,6 +74,57 @@ function createStubRequester(responses: readonly AssistantMessage[]): LlmRequest
       return Promise.resolve();
     },
   };
+}
+
+function createOpenAIStubRequester(
+  responses: readonly AssistantMessage[],
+  captured?: Record<string, unknown>[],
+): LlmRequester {
+  let call = 0;
+  return createOpenAIRequester({
+    clientFactory: () => ({
+      chat: {
+        completions: {
+          create: (params: Record<string, unknown>) => {
+            captured?.push(params);
+            const message = responses[Math.min(call, responses.length - 1)];
+            call += 1;
+            const chunk = {
+              id: `chatcmpl-${call}`,
+              object: 'chat.completion.chunk',
+              created: 0,
+              model: 'test-model',
+              choices: [
+                {
+                  index: 0,
+                  delta:
+                    message.toolCalls.length > 0
+                      ? {
+                          tool_calls: message.toolCalls.map((toolCall, index) => ({
+                            index,
+                            id: toolCall.id,
+                            type: 'function',
+                            function: { name: toolCall.name, arguments: toolCall.arguments ?? '' },
+                          })),
+                        }
+                      : { content: extractText(message) },
+                  finish_reason: message.toolCalls.length > 0 ? 'tool_calls' : 'stop',
+                },
+              ],
+            };
+            return {
+              withResponse: async () => ({
+                data: (async function* () {
+                  yield chunk;
+                })(),
+                response: new Response(null),
+              }),
+            };
+          },
+        },
+      },
+    }) as never,
+  });
 }
 
 function createTestAgent(
@@ -269,12 +321,16 @@ describe('agent machine tool failure', () => {
       'assistant:done',
     ]);
 
-    const dupRequester = createStubRequester([
-      createAssistantMessage([], [toolCall('call-1', 'slow_tool'), toolCall('call-1', 'fast_tool')]),
-      createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
-      createAssistantMessage([], [{ ...toolCall('call-1', 'slow_tool'), rawId: 'call-original' }]),
-      createAssistantMessage([{ type: 'text', text: 'done' }]),
-    ]);
+    const dupBodies: Record<string, unknown>[] = [];
+    const dupRequester = createOpenAIStubRequester(
+      [
+        createAssistantMessage([], [toolCall('call-1', 'slow_tool'), toolCall('call-1', 'fast_tool')]),
+        createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
+        createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
+        createAssistantMessage([{ type: 'text', text: 'done' }]),
+      ],
+      dupBodies,
+    );
     const dupStarted: string[] = [];
     const dupResolvers = new Map<string, (result: ToolResult) => void>();
     const dupTools = stubTools(({ toolCall: call }) => {
@@ -328,8 +384,20 @@ describe('agent machine tool failure', () => {
     ).toEqual([
       ['call-1:', 'call-1__2:call-1'],
       ['call-1__3:call-1'],
-      ['call-1__4:call-original'],
+      ['call-1__4:call-1'],
     ]);
+    const secondRequestMessages = dupBodies[1]?.['messages'] as Record<string, unknown>[];
+    const assistantWithCalls = secondRequestMessages.find(
+      (message) => message['role'] === 'assistant' && Array.isArray(message['tool_calls']),
+    );
+    const wireCalls = assistantWithCalls?.['tool_calls'] as Record<string, unknown>[];
+    expect(wireCalls.map((call) => call['id'])).toEqual(['call-1', 'call-1__2']);
+    expect(
+      secondRequestMessages
+        .filter((message) => message['role'] === 'tool')
+        .map((message) => message['tool_call_id']),
+    ).toEqual(['call-1', 'call-1__2']);
+    expect(JSON.stringify(secondRequestMessages)).not.toContain('"rawId"');
 
     let attempt = 0;
     const rollbackRequester: LlmRequester = {
@@ -347,6 +415,7 @@ describe('agent machine tool failure', () => {
               requestId: null,
               retryAfterMs: null,
               headers: null,
+              retryable: true,
             },
           });
           return Promise.resolve();
@@ -795,7 +864,10 @@ describe('agent machine lifecycle', () => {
       generate: (_config, _content, { onEvent }) => {
         call += 1;
         if (call === 1) {
-          onEvent?.({ type: 'llm.failed.remote', error: { kind: 'unknown', message: 'llm down' } });
+          onEvent?.({
+            type: 'llm.failed.remote',
+            error: { kind: 'unknown', message: 'llm down', retryable: false },
+          });
           return Promise.resolve();
         }
         streamMessage(createAssistantMessage([{ type: 'text', text: 'recovered' }]), onEvent);
@@ -818,7 +890,7 @@ describe('agent machine lifecycle', () => {
     await vi.waitFor(() => {
       expect(rolesAndTexts(store.getState().history)).toEqual(['user:hi']);
     });
-    expect(failures[0]).toMatchObject({ kind: 'unknown', message: 'llm down' });
+    expect(failures[0]).toMatchObject({ kind: 'unknown', message: 'llm down', retryable: false });
     expect(actor.getSnapshot().status).toBe('active');
 
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('retry') } });
@@ -1047,33 +1119,38 @@ describe('agent machine input.remind', () => {
 
     actor.send({
       type: 'input.remind',
-      key: 'todo',
-      entry: { message: createUserMessage('<system-reminder>\nold\n</system-reminder>') },
+      entry: {
+        message: createUserMessage('<system-reminder>\nold\n</system-reminder>'),
+        meta: { key: 'todo' },
+      },
     });
     actor.send({
       type: 'input.remind',
-      key: 'todo',
-      entry: { message: createUserMessage('<system-reminder>\nstale\n</system-reminder>') },
+      entry: {
+        message: createUserMessage('<system-reminder>\nstale\n</system-reminder>'),
+        meta: { key: 'todo' },
+      },
     });
     await vi.waitFor(() => {
-      expect(actor.getSnapshot().context.reminders).toHaveLength(1);
+      expect(actor.getSnapshot().context.reminders).toHaveLength(2);
     });
     expect(actor.getSnapshot().matches('idle')).toBe(true);
     expect(store.getState().history).toHaveLength(0);
-    expect(actor.getSnapshot().context.reminders).toHaveLength(1);
+    expect(actor.getSnapshot().context.reminders).toHaveLength(2);
     expect(actor.getSnapshot().context.reminders[0]?.meta).toEqual({ source: 'reminder', key: 'todo' });
-    expect(extractText(actor.getSnapshot().context.reminders[0]?.message ?? createUserMessage(''))).toContain('stale');
+    expect(extractText(actor.getSnapshot().context.reminders[0]?.message ?? createUserMessage(''))).toContain('old');
+    expect(extractText(actor.getSnapshot().context.reminders[1]?.message ?? createUserMessage(''))).toContain('stale');
 
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
     await vi.waitFor(() => {
       expect(resolveTool).toBeDefined();
     });
-    expect(actor.getSnapshot().context.reminders).toHaveLength(1);
+    expect(actor.getSnapshot().context.reminders).toHaveLength(2);
 
     resolveTool?.({ content: [{ type: 'text', text: 'slow' }] });
     await waitFor(
       actor,
-      (s) => s.matches('idle') && store.getState().history.length === 5,
+      (s) => s.matches('idle') && store.getState().history.length === 6,
       { timeout: 5000 },
     );
 
@@ -1081,12 +1158,14 @@ describe('agent machine input.remind', () => {
       'user:hi',
       'assistant:',
       'tool:slow',
+      'user:<system-reminder>\nold\n</system-reminder>',
       'user:<system-reminder>\nstale\n</system-reminder>',
       'assistant:done',
     ]);
     expect(store.getState().history[3]?.meta).toEqual({ source: 'reminder', key: 'todo' });
+    expect(store.getState().history[4]?.meta).toEqual({ source: 'reminder', key: 'todo' });
     expect(actor.getSnapshot().context.reminders).toHaveLength(0);
-    expect(consumedKeys).toEqual([['todo']]);
+    expect(consumedKeys).toEqual([['todo', 'todo']]);
   });
 });
 
@@ -1107,6 +1186,7 @@ describe('agent machine llm retry', () => {
               requestId: null,
               retryAfterMs: null,
               headers: null,
+              retryable: true,
             },
           });
           return Promise.resolve();
@@ -1340,7 +1420,7 @@ describe('agent machine input.abort', () => {
             onEvent?.({ type: 'llm.streaming.part', part });
           }
           signal.addEventListener('abort', () => {
-            onEvent?.({ type: 'llm.failed.remote', error: { kind: 'abort', message: 'aborted' } });
+            onEvent?.({ type: 'llm.failed.remote', error: { kind: 'abort', message: 'aborted', retryable: false } });
             resolve();
           });
         });
@@ -1384,7 +1464,7 @@ describe('agent machine input.abort', () => {
         signals.push(signal);
         return new Promise((resolve) => {
           signal.addEventListener('abort', () => {
-            onEvent?.({ type: 'llm.failed.remote', error: { kind: 'abort', message: 'aborted' } });
+            onEvent?.({ type: 'llm.failed.remote', error: { kind: 'abort', message: 'aborted', retryable: false } });
             resolve();
           });
         });
@@ -1594,7 +1674,7 @@ describe('agent machine input.abort', () => {
             signal.addEventListener('abort', () => {
               onEvent?.({
                 type: 'llm.failed.remote',
-                error: { kind: 'abort', message: 'aborted' },
+                error: { kind: 'abort', message: 'aborted', retryable: false },
               });
               resolve();
             });
@@ -1646,7 +1726,7 @@ describe('agent machine input.abort', () => {
             signal.addEventListener('abort', () => {
               onEvent?.({
                 type: 'llm.failed.remote',
-                error: { kind: 'abort', message: 'aborted' },
+                error: { kind: 'abort', message: 'aborted', retryable: false },
               });
               resolve();
             });

@@ -10,6 +10,7 @@ export interface ISessionMcpOverlay {
 
 export interface SessionMcpOverlayOptions {
   readonly stdioCwd?: string;
+  readonly sessionId?: string;
 }
 
 export interface IWorkspaceMcpService {

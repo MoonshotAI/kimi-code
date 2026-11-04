@@ -1,9 +1,8 @@
 import { freeze, isDraft, original } from 'immer';
 
-import type { FinishReason } from '#human/llm/finish-reason';
-import { createToolMessage } from '#/llm-adapter/contract/message';
-import type { ContentPart, ToolCall } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm/usage';
+import type { FinishReason } from '#human/llm-requester/finish-reason';
+import { createToolMessage, type ContentPart, type ToolCall } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm-requester/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ContextMessage, ContextMessageTiming } from './types';
@@ -226,13 +225,14 @@ function createLoopEventFoldWithState(
   };
 }
 
-interface ImmutableFoldSink extends LoopEventFoldSink {
+interface FoldSink extends LoopEventFoldSink {
   current(): readonly ContextMessage[];
+  setMutable(mutable: boolean): void;
 }
 
 interface BoundFold {
   readonly fold: LoopEventFold;
-  readonly sink: ImmutableFoldSink;
+  readonly sink: FoldSink;
 }
 
 const boundFoldMap = new WeakMap<object, BoundFold>();
@@ -240,8 +240,10 @@ const boundFoldMap = new WeakMap<object, BoundFold>();
 export function foldAppendMessage(
   state: readonly ContextMessage[],
   message: ContextMessage,
+  mutable = false,
 ): readonly ContextMessage[] {
-  const bound = boundOf(state);
+  const bound = boundOf(state, mutable);
+  bound.sink.setMutable(mutable);
   bound.fold.appendMessage(message, undefined);
   return bind(bound, bound.sink.current());
 }
@@ -249,23 +251,25 @@ export function foldAppendMessage(
 export function foldLoopEvent(
   state: readonly ContextMessage[],
   event: LoopRecordedEvent,
+  mutable = false,
 ): readonly ContextMessage[] {
-  const bound = boundOf(state);
+  const bound = boundOf(state, mutable);
+  bound.sink.setMutable(mutable);
   bound.fold.loopEvent(event, undefined);
   return bind(bound, bound.sink.current());
 }
 
 export function resetFold(state: readonly ContextMessage[]): readonly ContextMessage[] {
-  const sink = createImmutableFoldSink(state);
+  const sink = createFoldSink(state, false);
   boundFoldMap.set(state, { fold: createLoopEventFold(sink), sink });
   return state;
 }
 
-function boundOf(state: readonly ContextMessage[]): BoundFold {
+function boundOf(state: readonly ContextMessage[], mutable: boolean): BoundFold {
   const key = keyOf(state);
   let bound = boundFoldMap.get(key);
   if (bound === undefined || bound.sink.current() !== key) {
-    const sink = createImmutableFoldSink(key);
+    const sink = createFoldSink(key, mutable);
     bound = { fold: createLoopEventFoldWithState(sink, recoverFoldState(key)), sink };
     boundFoldMap.set(key, bound);
   }
@@ -282,40 +286,62 @@ function keyOf(state: readonly ContextMessage[]): readonly ContextMessage[] {
   return (isDraft(state) ? original(state as any) : state) as readonly ContextMessage[];
 }
 
-function createImmutableFoldSink(initial: readonly ContextMessage[]): ImmutableFoldSink {
-  let current = initial;
+function createFoldSink(initial: readonly ContextMessage[], initialMutable: boolean): FoldSink {
+  let current: readonly ContextMessage[] = initial;
+  let mutable = false;
+  const setMutable = (next: boolean): void => {
+    mutable = next;
+    if (mutable && Object.isFrozen(current)) current = [...current];
+  };
+  setMutable(initialMutable);
   let openIndex = findOpenAssistantIndex(initial);
   const updateOpen = (update: (message: ContextMessage) => ContextMessage): void => {
     if (openIndex === -1) return;
+    if (mutable) {
+      (current as ContextMessage[])[openIndex] = update(current[openIndex]!);
+      return;
+    }
     const next = current.slice();
     next[openIndex] = freeze(update(next[openIndex]!), true);
     current = Object.freeze(next);
   };
   return {
     current: () => current,
+    setMutable,
     openAssistant: () => {
-      current = Object.freeze([
-        ...current,
-        freeze<ContextMessage>({ role: 'assistant', content: [], toolCalls: [], partial: true }, true),
-      ]);
+      if (mutable) {
+        (current as ContextMessage[]).push({ role: 'assistant', content: [], toolCalls: [], partial: true });
+      } else {
+        current = Object.freeze([
+          ...current,
+          freeze<ContextMessage>({ role: 'assistant', content: [], toolCalls: [], partial: true }, true),
+        ]);
+      }
       openIndex = current.length - 1;
     },
     appendOpenContent: (part) => {
       updateOpen((message) => ({ ...message, content: [...message.content, part] }));
     },
     appendOpenToolCall: (call, display) => {
-      updateOpen((message) => ({
-        ...message,
-        toolCalls: [...message.toolCalls, call],
-        toolCallDisplays:
-          display === undefined
-            ? message.toolCallDisplays
-            : { ...message.toolCallDisplays, [call.id]: display },
-      }));
+      updateOpen((message) => {
+        if (message.role !== 'assistant') return message;
+        return {
+          ...message,
+          toolCalls: [...message.toolCalls, call],
+          toolCallDisplays:
+            display === undefined
+              ? message.toolCallDisplays
+              : { ...message.toolCallDisplays, [call.id]: display },
+        };
+      });
     },
     dropOpenAssistant: () => {
       if (openIndex === -1) return;
-      current = Object.freeze([...current.slice(0, openIndex), ...current.slice(openIndex + 1)]);
+      if (mutable) {
+        (current as ContextMessage[]).splice(openIndex, 1);
+      } else {
+        current = Object.freeze([...current.slice(0, openIndex), ...current.slice(openIndex + 1)]);
+      }
       openIndex = -1;
     },
     sealOpenAssistant: (meta) => {
@@ -328,10 +354,18 @@ function createImmutableFoldSink(initial: readonly ContextMessage[]): ImmutableF
       openIndex = -1;
     },
     pushToolMessage: (message) => {
-      current = Object.freeze([...current, freeze(message, true)]);
+      if (mutable) {
+        (current as ContextMessage[]).push(message);
+      } else {
+        current = Object.freeze([...current, freeze(message, true)]);
+      }
     },
     pushMessage: (message) => {
-      current = Object.freeze([...current, freeze(message, true)]);
+      if (mutable) {
+        (current as ContextMessage[]).push(message);
+      } else {
+        current = Object.freeze([...current, freeze(message, true)]);
+      }
     },
   };
 }
@@ -347,6 +381,7 @@ function recoverFoldState(state: readonly ContextMessage[]): InitialFoldState | 
   const openIndex = findOpenAssistantIndex(state);
   if (openIndex === -1) return undefined;
   const open = state[openIndex]!;
+  if (open.role !== 'assistant') return undefined;
   const resolvedToolCallIds = new Set<string>();
   for (let i = openIndex + 1; i < state.length; i++) {
     const message = state[i]!;

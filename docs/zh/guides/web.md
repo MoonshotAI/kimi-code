@@ -50,7 +50,7 @@ Stop:    Ctrl+C
 | `/new` | 新开会话 |
 | `/goal` | 进入目标模式，跨轮次持续推进同一目标 |
 | `/compact` | 压缩当前会话上下文 |
-| `/tower` | Tower 多 Agent 协作（实验功能），`/tower <base-branch>` 指定基准分支 |
+| `/tower` | [Tower 多 Agent 协作](./tower.md)（实验功能）；`/tower <base-branch>` 指定基准分支，但不发送任务目标 |
 | `/export` | 导出会话内容与故障排查日志为 ZIP |
 | `/remote-control` | 开启远程控制，从远程访问本地 Web 会话 |
 
@@ -73,7 +73,7 @@ Web 支持的斜杠命令见上文 [常用斜杠命令](#常用斜杠命令)，�
 | 后台任务 | ✓ | ✓ | Web 为任务面板实时展示进度 |
 | 文件与改动 | ✓ | ✓ | Web 有改动文件摘要卡与逐文件 diff |
 | 设置 | ✓ | ✓ | Web 另有图形化设置页（供应商、账号与用量、Lab 实验特性） |
-| 全局搜索 | — | ✓ | Web 可实现跨会话、跨工作区搜索 |
+| 全局搜索 | — | ✓ | 需先在 `config.toml` 中设置 `[database] global_search = true`，之后 Web 可实现跨会话、跨工作区搜索 |
 | 移动端适配 | — | ✓ | `--host` 开启局域网共享后，可实现在同一局域网下的手机浏览器中使用 |
 
 </div>

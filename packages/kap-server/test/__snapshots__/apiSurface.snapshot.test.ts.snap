@@ -34,6 +34,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "DELETE",
+      "/api/v1/remote-control/devices/{id}",
+    ],
+    [
+      "DELETE",
       "/api/v1/workspaces/{workspace_id}",
     ],
     [
@@ -86,7 +90,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/debug/session/{session_id}/agent/{agent_id}/runtime-binding",
+      "/api/v1/debug/session/{session_id}/agent/{agent_id}/environment-binding",
     ],
     [
       "GET",
@@ -162,6 +166,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/plugins/{tail}",
+    ],
+    [
+      "GET",
       "/api/v1/plugins/marketplace",
     ],
     [
@@ -178,6 +186,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/remote-control/devices",
+    ],
+    [
+      "GET",
       "/api/v1/sessions",
     ],
     [
@@ -186,11 +198,15 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/approvals",
+      "/api/v1/sessions/{session_id}/children",
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/children",
+      "/api/v1/sessions/{session_id}/environment",
+    ],
+    [
+      "GET",
+      "/api/v1/sessions/{session_id}/environments",
     ],
     [
       "GET",
@@ -230,39 +246,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/questions",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/runtime",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/skills",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/snapshot",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/status",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/tasks",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/tasks/{task_id}",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/terminals",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/terminals/{terminal_id}",
     ],
     [
       "GET",
@@ -302,6 +286,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/workspaces/project-config-dirs",
+    ],
+    [
+      "GET",
       "/api/v2/mcp/auth-statuses",
     ],
     [
@@ -326,11 +314,23 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "PATCH",
+      "/api/v1/remote-control/devices/{id}",
+    ],
+    [
+      "PATCH",
+      "/api/v1/sessions/{session_id}/goal",
+    ],
+    [
+      "PATCH",
       "/api/v1/workspaces/{workspace_id}",
     ],
     [
       "POST",
       "/api/v1/capabilities/{tail}",
+    ],
+    [
+      "POST",
+      "/api/v1/client_configs",
     ],
     [
       "POST",
@@ -398,6 +398,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/plugins/preview",
+    ],
+    [
+      "POST",
       "/api/v1/providers",
     ],
     [
@@ -411,6 +415,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/remote-control",
+    ],
+    [
+      "POST",
+      "/api/v1/remote-control/devices/{id}/deactivate",
     ],
     [
       "POST",
@@ -430,11 +438,15 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/sessions/{session_id}/{tail}",
+      "/api/v1/sessions/{session_id}:reload",
     ],
     [
       "POST",
-      "/api/v1/sessions/{session_id}/approvals/{approval_id}",
+      "/api/v1/sessions/{session_id}:takeover",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/{tail}",
     ],
     [
       "POST",
@@ -443,6 +455,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}/export",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/interactions/{interaction_id}",
     ],
     [
       "POST",
@@ -462,27 +478,11 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/sessions/{session_id}/questions/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/runtime",
+      "/api/v1/sessions/{session_id}/rating",
     ],
     [
       "POST",
       "/api/v1/sessions/{session_id}/skills/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/tasks/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/terminals",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/terminals/{tail}",
     ],
     [
       "POST",
@@ -491,6 +491,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/shutdown",
+    ],
+    [
+      "POST",
+      "/api/v1/workspace/fs:list",
     ],
     [
       "POST",
@@ -506,7 +510,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/workspaces/{workspace_id}/add-dir",
+      "/api/v1/workspaces/{workspace_id}/primary",
     ],
     [
       "POST",

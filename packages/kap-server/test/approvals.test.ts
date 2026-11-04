@@ -19,29 +19,12 @@ interface Envelope<T> {
   details?: { path: string; message: string }[];
 }
 
-interface ApprovalWire {
-  approval_id: string;
-  session_id: string;
-  agent_id: string;
-  turn_id?: number;
-  tool_call_id: string;
-  tool_name: string;
-  action: string;
-  tool_input_display: unknown;
-  created_at: string;
-  expires_at: string;
+interface RespondWire {
+  outcome: string;
+  ended_at: string;
 }
 
-interface ListWire {
-  items: ApprovalWire[];
-}
-
-interface ResolveWire {
-  resolved: true;
-  resolved_at: string;
-}
-
-describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
+describe('server-v2 /api/v1/sessions/{sid}/interactions (approval)', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
@@ -85,13 +68,6 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
 
-  async function getJson<T>(path: string): Promise<{ status: number; body: Envelope<T> }> {
-    const res = await fetch(`${base}${path}`, {
-      headers: authHeaders(server as RunningServer),
-    } as never);
-    return { status: res.status, body: (await res.json()) as Envelope<T> };
-  }
-
   async function createSession(): Promise<string> {
     const { body } = await postJson<{ id: string }>('/api/v1/sessions', {
       metadata: { cwd: home as string },
@@ -120,57 +96,58 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     return parked.id;
   }
 
-  it('lists a pending approval projected onto the wire shape', async () => {
-    const sid = await createSession();
-    const aid = enqueueApproval(sid, 'tc-1');
+  function pendingApprovalIds(sessionId: string): string[] {
+    return interactions
+      .findAll({ kind: 'approval', resolved: false, tags: { sessionId } })
+      .map((i) => i.id);
+  }
 
-    const { body } = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
-    expect(body.code).toBe(0);
-    expect(body.data.items).toHaveLength(1);
-    const item = body.data.items[0]!;
-    expect(item.approval_id).toBe(aid);
-    expect(item.session_id).toBe(sid);
-    expect(item.agent_id).toBe('main');
-    expect(item.tool_call_id).toBe('tc-1');
-    expect(item.tool_name).toBe('Bash');
-    expect(item.action).toBe('run');
-    expect(item.tool_input_display).toEqual({ kind: 'command', command: 'echo hi' });
-    expect(Number.isNaN(Date.parse(item.created_at))).toBe(false);
-    expect(Number.isNaN(Date.parse(item.expires_at))).toBe(false);
-  });
-
-  it('resolves a pending approval', async () => {
+  it('responds to a pending approval through the interactions route', async () => {
     const sid = await createSession();
     const aid = enqueueApproval(sid, 'tc-2');
 
-    const { body } = await postJson<ResolveWire>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
+    const { body } = await postJson<RespondWire>(`/api/v1/sessions/${sid}/interactions/${aid}`, {
+      kind: 'approval',
       decision: 'approved',
     });
     expect(body.code).toBe(0);
-    expect(body.data.resolved).toBe(true);
-    expect(Number.isNaN(Date.parse(body.data.resolved_at))).toBe(false);
+    expect(body.data.outcome).toBe('approved');
+    expect(Number.isNaN(Date.parse(body.data.ended_at))).toBe(false);
 
-    const listed = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
-    expect(listed.body.data.items).toHaveLength(0);
+    expect(pendingApprovalIds(sid)).toEqual([]);
   });
 
   it('returns 40902 on a duplicate resolve (recently-resolved window)', async () => {
     const sid = await createSession();
     const aid = enqueueApproval(sid, 'tc-3');
-    await postJson<ResolveWire>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
+    await postJson<RespondWire>(`/api/v1/sessions/${sid}/interactions/${aid}`, {
+      kind: 'approval',
       decision: 'approved',
     });
 
-    const dup = await postJson<{ resolved: false }>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
+    const dup = await postJson<null>(`/api/v1/sessions/${sid}/interactions/${aid}`, {
+      kind: 'approval',
       decision: 'approved',
     });
     expect(dup.body.code).toBe(40902);
-    expect(dup.body.data).toEqual({ resolved: false });
   });
 
-  it('returns 40404 for an unknown approval id', async () => {
+  it('returns 40001 when the body kind does not match the interaction', async () => {
     const sid = await createSession();
-    const { body } = await postJson<null>(`/api/v1/sessions/${sid}/approvals/nope`, {
+    const aid = enqueueApproval(sid, 'tc-kind');
+    const { body } = await postJson<null>(`/api/v1/sessions/${sid}/interactions/${aid}`, {
+      kind: 'question',
+      dismissed: true,
+    });
+    expect(body.code).toBe(40001);
+
+    expect(pendingApprovalIds(sid)).toEqual([aid]);
+  });
+
+  it('returns 40404 for an unknown interaction id', async () => {
+    const sid = await createSession();
+    const { body } = await postJson<null>(`/api/v1/sessions/${sid}/interactions/nope`, {
+      kind: 'approval',
       decision: 'rejected',
     });
     expect(body.code).toBe(40404);
@@ -182,12 +159,11 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     const second = enqueueApproval(sid, 'Bash_0');
     expect(first).not.toBe(second);
 
-    const { body } = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
-    expect(body.data.items.map((i) => i.approval_id).toSorted()).toEqual([first, second].toSorted());
-    expect(body.data.items.every((i) => i.tool_call_id === 'Bash_0')).toBe(true);
+    expect(pendingApprovalIds(sid).toSorted()).toEqual([first, second].toSorted());
 
     for (const aid of [first, second]) {
-      const resolved = await postJson<ResolveWire>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
+      const resolved = await postJson<RespondWire>(`/api/v1/sessions/${sid}/interactions/${aid}`, {
+        kind: 'approval',
         decision: 'approved',
       });
       expect(resolved.body.code).toBe(0);
@@ -195,39 +171,11 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
   });
 
   it('returns 40401 for an unknown session', async () => {
-    const { body } = await getJson<null>('/api/v1/sessions/nope/approvals?status=pending');
+    const { body } = await postJson<null>('/api/v1/sessions/nope/interactions/nope', {
+      kind: 'approval',
+      decision: 'approved',
+    });
     expect(body.code).toBe(40401);
   });
 
-  it('stamps the requesting agent onto wire approvals, defaulting to main', async () => {
-    const sid = await createSession();
-    interactions.enqueue({
-      id: `approval_${randomUUID()}`,
-      kind: 'approval',
-      payload: {
-        toolCallId: 'tc-sub',
-        toolName: 'Bash',
-        action: 'run',
-        display: { kind: 'command', command: 'echo hi' },
-      },
-      tags: { agentId: 'agent-7', sessionId: sid, toolCallId: 'tc-sub' },
-    });
-    interactions.enqueue({
-      id: `approval_${randomUUID()}`,
-      kind: 'approval',
-      payload: {
-        toolCallId: 'tc-untagged',
-        toolName: 'Bash',
-        action: 'run',
-        display: { kind: 'command', command: 'echo hi' },
-      },
-      tags: { sessionId: sid, toolCallId: 'tc-untagged' },
-    });
-
-    const { body } = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
-    expect(body.code).toBe(0);
-    const byToolCall = new Map(body.data.items.map((i) => [i.tool_call_id, i.agent_id]));
-    expect(byToolCall.get('tc-sub')).toBe('agent-7');
-    expect(byToolCall.get('tc-untagged')).toBe('main');
-  });
 });

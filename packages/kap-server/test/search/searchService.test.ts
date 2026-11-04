@@ -136,7 +136,7 @@ function makeConfig(searchEnabled: boolean, extra?: Record<string, unknown>): IC
   return {
     ready: Promise.resolve(),
     get: (domain: string) =>
-      domain === DATABASE_SECTION ? { search: searchEnabled, ...extra } : undefined,
+      domain === DATABASE_SECTION ? { globalSearch: true, search: searchEnabled, ...extra } : undefined,
   } as unknown as IConfigService;
 }
 
@@ -916,6 +916,71 @@ describe('GlobalSearchService', () => {
       await chmod(s2Wire, 0o644).catch(() => {});
       core.beginClose();
       await core.close();
+    }
+
+    const incompatible = summary('incompatible', 'incompatible', T1);
+    const incompatibleWire = await writeWire(home!, 'incompatible', 'main', [
+      rawRecord({ type: 'metadata', protocol_version: '1.5', created_at: 1, min_protocol_version: '1.5' }),
+      userLine('苹果 derived', T1),
+    ]);
+    const incompatibleCore = new SearchIndexCore({
+      indexDir: join(home!, 'search-index-incompatible'),
+      log: noopLog,
+      bootSalt: 'incompatible-test',
+    });
+    const incompatibleInput = [syncInput(home!, incompatible)];
+    const incompatibleCount = () =>
+      incompatibleCore.db?.query({ key: { prefix: 'incompatible/' }, project: ['kind'] }).filter((row) => row.value.kind === 'message').length ?? 0;
+    try {
+      await incompatibleCore.sync(incompatibleInput);
+      expect(incompatibleCount()).toBe(1);
+      await writeFile(
+        incompatibleWire,
+        `${rawRecord({ type: 'metadata', protocol_version: '9.9', created_at: 1, min_protocol_version: '9.9' })}\n${userLine('苹果 derived', T1)}\n`,
+        'utf8',
+      );
+      const rejected = await incompatibleCore.sync(incompatibleInput);
+      expect(rejected.failures).toBe(1);
+      expect(incompatibleCount()).toBe(0);
+      const retried = await incompatibleCore.sync(incompatibleInput);
+      expect(retried.failures).toBe(1);
+      expect(incompatibleCount()).toBe(0);
+
+      await writeFile(
+        incompatibleWire,
+        `${rawRecord({ type: 'metadata', protocol_version: '1.5', created_at: 1, min_protocol_version: 42 })}\n${userLine('苹果 derived', T1)}\n`,
+        'utf8',
+      );
+      const healthy = summary('healthy', 'healthy', T1);
+      await writeWire(home!, 'healthy', 'main', [
+        rawRecord({ type: 'metadata', protocol_version: '1.5', created_at: 1, min_protocol_version: '1.5' }),
+        userLine('苹果 healthy', T1),
+      ]);
+      const malformed = await incompatibleCore.sync([
+        ...incompatibleInput,
+        syncInput(home!, healthy),
+      ]);
+      expect(malformed.failures).toBe(1);
+      expect(incompatibleCount()).toBe(0);
+      expect(
+        incompatibleCore.db?.query({ key: { prefix: 'healthy/' }, project: ['kind'] }).filter((row) => row.value.kind === 'message').length,
+      ).toBe(1);
+      for (const [index, header] of ['not-json', 'null'].entries()) {
+        await writeFile(incompatibleWire, `${header}\n${userLine('苹果 derived', T1)}\n`, 'utf8');
+        (incompatibleCore as unknown as { sessionSyncFailures: Map<string, number> }).sessionSyncFailures.clear();
+        const isolated = await incompatibleCore.sync([
+          { ...incompatibleInput[0]!, updatedAt: T1 + index + 1 },
+          syncInput(home!, healthy),
+        ]);
+        expect(isolated.failures, header).toBe(1);
+        expect(incompatibleCount()).toBe(0);
+        expect(
+          incompatibleCore.db?.query({ key: { prefix: 'healthy/' }, project: ['kind'] }).filter((row) => row.value.kind === 'message').length,
+        ).toBe(1);
+      }
+    } finally {
+      incompatibleCore.beginClose();
+      await incompatibleCore.close();
     }
   });
 
@@ -3557,5 +3622,71 @@ describe('search lifecycle diagnostics (stage 5)', () => {
       expect(service.syncDebounceMs).toBe(12_345);
       expect((coreOf(service) as unknown as { syncSessionCap: number }).syncSessionCap).toBe(7);
     });
+  });
+});
+
+describe('global search switched off', () => {
+  let home: string | undefined;
+  const services: GlobalSearchService[] = [];
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-kap-search-off-'));
+  });
+
+  afterEach(async () => {
+    for (const service of services.splice(0)) service.dispose();
+    await drainGlobalSearchDisposals();
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true });
+      home = undefined;
+    }
+  });
+
+  function offConfig(section: Record<string, unknown>): IConfigService {
+    return {
+      ready: Promise.resolve(),
+      get: (domain: string) => (domain === DATABASE_SECTION ? section : undefined),
+    } as unknown as IConfigService;
+  }
+
+  async function expectOff(service: GlobalSearchService): Promise<void> {
+    services.push(service);
+    const status = await service.status();
+    expect(status.lifecycle.state).toBe('stopped');
+    expect(status.lifecycle.detail).toContain('global_search');
+    expect(status.sessions).toBe(0);
+    expect(service.lifecycleReport()).toEqual({ state: 'stopped' });
+    await expect(service.search({ query: '苹果' })).rejects.toMatchObject({
+      name: 'GlobalSearchError',
+      reason: 'index_unavailable',
+    });
+    await expect(service.reindex()).rejects.toMatchObject({ reason: 'index_unavailable' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect(stat(join(home!, 'search-index'))).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+
+  it('stays off by default: no index directory, no worker, search tells how to enable it', async () => {
+    const s1 = summary('s1', '搜索重构讨论', T1);
+    await writeTitle(home!, s1.id, s1.title!);
+    await writeWire(home!, 's1', 'main', [userLine('帮我看看苹果怎么挑', T1)]);
+    const service = new GlobalSearchService(
+      staticIndex([s1]),
+      makeBootstrap(home!),
+      noopLog,
+      offConfig({ search: true }),
+    );
+    service.syncDebounceMs = 0;
+    await expectOff(service);
+  });
+
+  it('explicit global_search = false keeps the index off', async () => {
+    const service = new GlobalSearchService(
+      staticIndex([]),
+      makeBootstrap(home!),
+      noopLog,
+      offConfig({ globalSearch: false, search: false }),
+    );
+    service.syncDebounceMs = 0;
+    await expectOff(service);
   });
 });

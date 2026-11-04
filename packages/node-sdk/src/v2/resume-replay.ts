@@ -9,6 +9,10 @@ import {
   type ContextMessage as V2ContextMessage,
   type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
+import { fromCoreMessage } from '@moonshot-ai/agent-core-v2/human/message';
+import { fromPersistentWireRecord } from '@moonshot-ai/agent-core-v2/wire/wireService';
+
+import { SurveyTurnCounter } from '@moonshot-ai/kimi-code-product/session-rating/node';
 
 import type { ContextMessage } from '#/context';
 import {
@@ -46,10 +50,10 @@ export async function foldAgentWireReplay(
 
 async function foldAgentWireReplayFull(wirePath: string): Promise<FoldedAgentReplay> {
   try {
-    const userTurns = new UserTurnCounter();
+    const userTurns = new SurveyTurnCounter();
     const records = parseWireRecords(await readFile(wirePath, 'utf-8'), userTurns);
     if (records.length === 0) return { ...EMPTY_FOLD, userTurnCount: userTurns.count };
-    const folded = foldWireRecords(records);
+    const folded = foldWireRecords(records, fromPersistentWireRecord);
     return {
       replay: folded.replay.map(mapReplayRecord),
       toolStore: folded.toolStore,
@@ -73,10 +77,21 @@ function mapReplayRecord(record: V2AgentReplayRecord): AgentReplayRecord {
       },
     };
   }
+  if (record.type === 'message') {
+    const message = fromCoreMessage(record.message);
+    return {
+      ...record,
+      message: {
+        ...record.message,
+        ...message,
+        toolCalls: message.role === 'assistant' ? message.toolCalls : [],
+      },
+    } as unknown as AgentReplayRecord;
+  }
   return record as unknown as AgentReplayRecord;
 }
 
-function parseWireRecords(content: string, userTurns: UserTurnCounter): WireRecord[] {
+function parseWireRecords(content: string, userTurns: SurveyTurnCounter): WireRecord[] {
   const lines = content.split('\n');
   const records: WireRecord[] = [];
   for (const [index, rawLine] of lines.entries()) {
@@ -99,96 +114,36 @@ function parseWireRecords(content: string, userTurns: UserTurnCounter): WireReco
 
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 const TYPE_PREFIX = '{"type":"';
-const TYPE_MARKER = '"type":"';
+const TYPE_MARKER = '"type"';
 const TYPE_MARKER_BYTES = Buffer.from(TYPE_MARKER);
-const RELEVANT_TYPE_PREFIXES = [
-  'context.',
-  'goal.',
-  'full_compaction.',
-  'plan_mode.',
-  'config.update',
-  'permission.',
-  'tools.update_store',
-  'forked',
-];
 const CARRYOVER_TYPE_PREFIXES = ['goal.', 'tools.update_store', 'forked'];
-const HEAD_TYPE_PREFIXES = [...CARRYOVER_TYPE_PREFIXES, 'turn.prompt', 'context.append_message'];
+const FATAL_SCAN_TYPE_PREFIXES = [
+  ...CARRYOVER_TYPE_PREFIXES,
+  'context.undo',
+  'context.clear',
+  'context.apply_compaction',
+  'turn.cancel',
+];
+const HEAD_TYPE_PREFIXES = [
+  ...CARRYOVER_TYPE_PREFIXES,
+  'context.undo',
+  'context.clear',
+  'context.apply_compaction',
+  'turn.prompt',
+  'turn.steer',
+  'turn.cancel',
+  'context.append_message',
+];
 const HEAD_HEADER_BYTES =
   TYPE_PREFIX.length + Math.max(...HEAD_TYPE_PREFIXES.map((prefix) => prefix.length));
 
-class UserTurnCounter {
-  private total = 0;
-  private reliable = true;
-  private firstPromptStart = Infinity;
-  private firstUserMessageStart = Infinity;
-
-  get count(): number | undefined {
-    return this.reliable && this.firstUserMessageStart >= this.firstPromptStart
-      ? this.total
-      : undefined;
-  }
-
-  invalidate(): void {
-    this.reliable = false;
-  }
-
-  observeLine(bytes: Buffer, start: number): void {
-    const line = decodeLine(bytes);
-    if (line.length === 0) return;
-    try {
-      this.observe(JSON.parse(line) as WireRecord, start);
-    } catch {
-      this.invalidate();
-    }
-  }
-
-  observe(record: WireRecord, start: number): void {
-    if (record === null || typeof record !== 'object') {
-      this.invalidate();
-      return;
-    }
-    if (record['type'] === 'context.append_message') {
-      const message = record['message'] as V2ContextMessage | undefined;
-      if (
-        message?.role === 'user' &&
-        (message.origin === undefined || message.origin === null || isRealUserInput(message))
-      ) {
-        this.firstUserMessageStart = Math.min(this.firstUserMessageStart, start);
-      }
-      return;
-    }
-    if (record['type'] !== 'turn.prompt') return;
-    this.firstPromptStart = Math.min(this.firstPromptStart, start);
-    const userOrigin = isUserTurnOrigin(record['origin']);
-    if (userOrigin === undefined) this.invalidate();
-    else if (userOrigin) this.total += 1;
-  }
-}
-
-function isUserTurnOrigin(origin: unknown): boolean | undefined {
-  if (origin === null || typeof origin !== 'object' || !('kind' in origin)) return undefined;
-  switch (origin.kind) {
-    case 'user':
-      return true;
-    case 'skill_activation':
-    case 'plugin_command':
-      if (!('trigger' in origin) || typeof origin.trigger !== 'string') return undefined;
-      return origin.trigger === 'user-slash';
-    case 'shell_command':
-      if (!('phase' in origin) || typeof origin.phase !== 'string') return undefined;
-      return origin.phase === 'input';
-    case 'cron_job':
-    case 'cron_missed':
-    case 'system_trigger':
-    case 'task':
-    case 'background_task':
-    case 'hook_result':
-    case 'compaction_summary':
-    case 'injection':
-    case 'retry':
-      return false;
-    default:
-      return undefined;
+function observeSurveyLine(counter: SurveyTurnCounter, bytes: Buffer, start: number): void {
+  const line = decodeLine(bytes);
+  if (line.length === 0) return;
+  try {
+    counter.observe(JSON.parse(line), start);
+  } catch {
+    counter.invalidate();
   }
 }
 
@@ -261,8 +216,9 @@ class WireReplayScan {
   private readonly walkResults = new Set<string>();
   private readonly windowLines: ScannedRecord[] = [];
   private readonly seeds: ScannedRecord[] = [];
+  private readonly turnAppends: ScannedRecord[] = [];
   private readonly legacyCompactionStarts: number[] = [];
-  private readonly userTurns = new UserTurnCounter();
+  private readonly userTurns = new SurveyTurnCounter();
 
   constructor(private readonly turnLimit: number) {
     this.mode = turnLimit > 0 ? 'boundary' : 'head';
@@ -319,16 +275,27 @@ class WireReplayScan {
       return undefined;
     }
     const records: WireRecord[] = [firstRecord];
-    const seeds = this.seeds.toSorted((a, b) => a.start - b.start);
-    for (const seed of seeds) {
-      records.push(seed.record);
-    }
+    const windowRecords: WireRecord[] = [];
+    const includedWindowStarts = new Set<number>();
     for (let index = this.windowLines.length - 1; index >= 0; index--) {
       const line = this.windowLines[index]!;
       if (line.start < windowStart) continue;
-      records.push(line.record);
+      includedWindowStarts.add(line.start);
+      windowRecords.push(line.record);
     }
-    const folded = foldWireRecords(records);
+    const seeds = this.seeds.toSorted((a, b) => a.start - b.start);
+    for (const seed of seeds) {
+      if (!includedWindowStarts.has(seed.start)) records.push(seed.record);
+    }
+    records.push(...windowRecords);
+    const matchingByStart = new Map<number, WireRecord>([[0, firstRecord]]);
+    for (const scanned of [...this.seeds, ...this.turnAppends, ...this.windowLines]) {
+      matchingByStart.set(scanned.start, scanned.record);
+    }
+    const matchingRecords = [...matchingByStart.entries()]
+      .toSorted((a, b) => a[0] - b[0])
+      .map((entry) => entry[1]);
+    const folded = foldWireRecords(records, fromPersistentWireRecord, matchingRecords);
     if (!boundaryFound || windowStart <= 0) {
       return {
         replay: limitAgentReplayByTurns(folded.replay.map(mapReplayRecord), this.turnLimit),
@@ -353,19 +320,25 @@ class WireReplayScan {
   }
 
   private processLine(start: number, joined: Buffer, tolerate: boolean): void {
+    const line = decodeLine(joined);
+    if (line.length === 0) return;
     const sniffed = sniffWireTypeBytes(joined);
-    if (
-      sniffed === 'turn.prompt' ||
-      (sniffed === undefined && !hasRelevantMarkerBytes(joined))
-    ) {
-      this.userTurns.observeLine(joined, start);
-      return;
-    }
     if (sniffed !== undefined && !FOLD_RELEVANT_WIRE_TYPES.has(sniffed)) {
-      if (tolerate) this.userTurns.observeLine(joined, start);
+      if (tolerate) observeSurveyLine(this.userTurns, joined, start);
       return;
     }
-    const record = parseJsonLine(decodeLine(joined), tolerate);
+    let record: WireRecord | undefined;
+    try {
+      record = parseJsonLine(line, tolerate);
+    } catch (error) {
+      const recoverable =
+        sniffed === undefined &&
+        hasTypeMarker(joined, 0, joined.length, HEAD_TYPE_PREFIXES) &&
+        !hasTypeMarker(joined, 0, joined.length, FATAL_SCAN_TYPE_PREFIXES);
+      if (!recoverable) throw error;
+      this.userTurns.invalidate();
+      return;
+    }
     if (record === undefined) {
       this.userTurns.invalidate();
       return;
@@ -374,7 +347,10 @@ class WireReplayScan {
     const parsedType = record['type'];
     const type = typeof parsedType === 'string' ? parsedType : sniffed;
     if (type === undefined || !FOLD_RELEVANT_WIRE_TYPES.has(type)) return;
-    this.windowLines.push({ start, record });
+    const scanned = { start, record };
+    this.windowLines.push(scanned);
+    if (type === 'context.append_message') this.turnAppends.push(scanned);
+    if (FOLD_CARRYOVER_WIRE_TYPES.has(type)) this.seeds.push(scanned);
     if (this.mode === 'boundary') this.processBoundaryLine(type, start, record);
     else this.processExtendLine(type, start, record);
   }
@@ -490,23 +466,20 @@ class WireReplayScan {
           lastLine && tailFragment.length > 0
             ? Buffer.concat([view.subarray(lineStart, lineEnd), tailFragment])
             : view.subarray(lineStart, lineEnd);
-        if (!selected) {
-          this.userTurns.observeLine(bytes, dataFileStart + lineStart);
+        const line = decodeLine(bytes);
+        if (line.length === 0) {
           if (lastLine) return;
           lineStart = lineEnd + 1;
           continue;
         }
         let record: WireRecord;
         try {
-          record = JSON.parse(decodeLine(bytes)) as WireRecord;
+          record = JSON.parse(line) as WireRecord;
         } catch (error) {
-          if (
-            startsWithTypePrefix(bytes, 0)
-              ? hasTypePrefixAt(bytes, TYPE_PREFIX.length, CARRYOVER_TYPE_PREFIXES)
-              : hasTypeMarker(bytes, 0, bytes.length, CARRYOVER_TYPE_PREFIXES)
-          ) {
-            throw error;
-          }
+          const fatal = startsWithTypePrefix(bytes, 0)
+            ? hasTypePrefixAt(bytes, TYPE_PREFIX.length, FATAL_SCAN_TYPE_PREFIXES)
+            : hasTypeMarker(bytes, 0, bytes.length, FATAL_SCAN_TYPE_PREFIXES);
+          if (fatal || (!selected && (!lastLine || !tolerateTailLine))) throw error;
           this.userTurns.invalidate();
           if (lastLine) return;
           lineStart = lineEnd + 1;
@@ -514,6 +487,9 @@ class WireReplayScan {
         }
         this.userTurns.observe(record, dataFileStart + lineStart);
         const recordType = record['type'];
+        if (recordType === 'context.append_message') {
+          this.turnAppends.push({ start: dataFileStart + lineStart, record });
+        }
         if (typeof recordType === 'string' && FOLD_CARRYOVER_WIRE_TYPES.has(recordType)) {
           this.seeds.push({ start: dataFileStart + lineStart, record });
         }
@@ -522,7 +498,8 @@ class WireReplayScan {
         tailFragment.length > 0 &&
         lineEnd - lineStart < HEAD_HEADER_BYTES
       ) {
-        this.userTurns.observeLine(
+        observeSurveyLine(
+          this.userTurns,
           Buffer.concat([view.subarray(lineStart, lineEnd), tailFragment]),
           dataFileStart + lineStart,
         );
@@ -539,16 +516,6 @@ function sniffWireTypeBytes(data: Buffer): string | undefined {
   if (!startsWithBytes(data, 0, TYPE_PREFIX)) return undefined;
   const end = data.indexOf(0x22, TYPE_PREFIX.length);
   return end < 0 ? undefined : data.subarray(TYPE_PREFIX.length, end).toString('utf-8');
-}
-
-function hasRelevantMarkerBytes(data: Buffer): boolean {
-  let from = 0;
-  for (;;) {
-    const hit = data.indexOf(TYPE_MARKER_BYTES, from);
-    if (hit < 0) return false;
-    if (hasTypePrefixAt(data, hit + TYPE_MARKER.length, RELEVANT_TYPE_PREFIXES)) return true;
-    from = hit + 1;
-  }
 }
 
 function decodeLine(bytes: Buffer): string {
@@ -586,9 +553,25 @@ function hasTypeMarker(
   for (;;) {
     const hit = data.indexOf(TYPE_MARKER_BYTES, from);
     if (hit < 0 || hit >= end) return false;
-    if (hasTypePrefixAt(data, hit + TYPE_MARKER.length, prefixes)) return true;
+    let valueStart = hit + TYPE_MARKER.length;
+    while (valueStart < end && isJsonWhitespace(data[valueStart])) valueStart += 1;
+    if (data[valueStart] !== 0x3a) {
+      from = hit + 1;
+      continue;
+    }
+    valueStart += 1;
+    while (valueStart < end && isJsonWhitespace(data[valueStart])) valueStart += 1;
+    if (data[valueStart] !== 0x22) {
+      from = hit + 1;
+      continue;
+    }
+    if (hasTypePrefixAt(data, valueStart + 1, prefixes)) return true;
     from = hit + 1;
   }
+}
+
+function isJsonWhitespace(value: number | undefined): boolean {
+  return value === 0x20 || value === 0x09 || value === 0x0a || value === 0x0d;
 }
 
 function startsWithBytes(data: Buffer, start: number, text: string): boolean {

@@ -1,35 +1,16 @@
 name: Publish VS Code extension
 
-# 把 0.7.3 手动发版流程固化成 CI 流水线：
-#
-#   pnpm install → package:platform（全 6 平台）→ package:verify
-#   → extension host 冒烟（xvfb）→ publish:vsix → publish:ovsx
-#
-# 触发语义（参照 kimi-code-app 仓 desktop release.yml 的判定方式）：
-# 只在"本次 push 改动了 apps/vscode/package.json 的 version"时发布，
-# 即 changesets 版本 PR（"ci: release packages"）合入后自动触发；
-# 普通 PR 合入不会改变版本号，不会发布。版本号比较以 push 事件的
-# before SHA 为基准（git show），可覆盖一次 push 含多个 commit 的情况，
-# 不依赖工作区状态。workflow_dispatch 为手动兜底，
-# 跳过版本号变化检查，直接走后续幂等闸门。
-#
-# 幂等（两道保险，可安全重跑，失败即停不自动重试）：
-# 1. 发布前逐平台核验 VS Marketplace（vsce show）与 Open VSX（REST）
-#    线上版本：6 个 targetPlatform（darwin/linux/win32 × x64/arm64）
-#    全部在线才跳过对应发布步骤；任一平台缺失（如上次部分发布失败）
-#    即放行给发布步骤补齐，重跑可补齐；
-# 2. 发布脚本自身带 --skip-duplicate（vsce）/ already-exists 跳过（ovsx）。
-#
-# 前置条件：仓库管理员需先配置 secrets VSCE_PAT / OVSX_PAT，
-# 未配置时 publish 步骤会失败，属预期。
-
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_call:
+    secrets:
+      VSCE_PAT:
+        required: false
+      OVSX_PAT:
+        required: false
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+concurrency:
+  group: vscode-publish-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -38,13 +19,14 @@ jobs:
   publish:
     name: Publish VSIX to marketplaces
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'MoonshotAI'
+    if: github.repository_owner == 'MoonshotAI' && startsWith(github.ref, 'refs/heads/release/')
     timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0 # 需要按 push 事件的 before SHA 取旧版本号比较
+          ref: ${{ github.sha }}
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -62,7 +44,6 @@ jobs:
         id: gate
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
           BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
@@ -71,27 +52,20 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "extension version: ${version}"
 
-          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
-            echo "manual dispatch — skipping version-change check"
+          prev=""
+          if [ -n "${BEFORE_SHA}" ] && [ -n "${BEFORE_SHA//0/}" ]; then
+            if git show "${BEFORE_SHA}:${pkg}" > /tmp/prev-vscode-pkg.json 2> /dev/null; then
+              prev="$(node -p "require('/tmp/prev-vscode-pkg.json').version")"
+            fi
           else
-            # 以 push 事件的 before SHA 为比较基准（覆盖多 commit 的单次 push）。
-            # before 为空或全 0（如新分支首推）时无法比较，prev 视为空 →
-            # 判定版本变化放行 —— 宁可多查一次线上闸门，不可漏发。
-            prev=""
-            if [ -n "${BEFORE_SHA}" ] && [ -n "${BEFORE_SHA//0/}" ]; then
-              if git show "${BEFORE_SHA}:${pkg}" > /tmp/prev-vscode-pkg.json 2> /dev/null; then
-                prev="$(node -p "require('/tmp/prev-vscode-pkg.json').version")"
-              fi
-            else
-              echo "push event has no usable before SHA ('${BEFORE_SHA}') — treating as a version change"
-            fi
-            if [ "${prev}" = "${version}" ]; then
-              echo "apps/vscode version unchanged in this push (${version}) — nothing to publish"
-              echo "should_publish=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "version changed ${prev:-<none>} -> ${version} — release push"
+            echo "push event has no usable before SHA ('${BEFORE_SHA}') — treating as a version change"
           fi
+          if [ "${prev}" = "${version}" ]; then
+            echo "apps/vscode version unchanged in this push (${version}) — nothing to publish"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "version changed ${prev:-<none>} -> ${version} — release push"
           echo "should_publish=true" >> "$GITHUB_OUTPUT"
 
           # 线上闸门：逐平台核验，6 个 targetPlatform 全部在线才跳过对应市场；

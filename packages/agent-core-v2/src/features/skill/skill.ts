@@ -19,6 +19,7 @@ export interface PromptWithSkillsInput {
   readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly skills: readonly PromptSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];
+  readonly steerIfActive?: boolean;
 }
 
 export interface PromptWithSkillsResult {
@@ -26,4 +27,5 @@ export interface PromptWithSkillsResult {
   readonly prompt_id: string;
   readonly created_at: string;
   readonly state: 'running' | 'queued' | 'blocked';
+  readonly steered?: boolean;
 }

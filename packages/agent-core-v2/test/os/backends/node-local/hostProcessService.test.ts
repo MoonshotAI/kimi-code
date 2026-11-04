@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { EventEmitter } from 'node:events';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { PassThrough, Readable } from 'node:stream';
+import { join } from 'pathe';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
@@ -77,6 +80,13 @@ describe('HostProcessService', () => {
     const proc = await svc.spawn('node', ['-e', 'setTimeout(() => {}, 30000)']);
     expect(proc.pid).toBeGreaterThan(0);
     await proc.kill('SIGTERM');
+    const code = await proc.wait();
+    expect(code).not.toBe(0);
+  });
+
+  it('terminates a process that outlives its timeout', async () => {
+    const svc = ix.get(IHostProcessService);
+    const proc = await svc.spawn('node', ['-e', 'setTimeout(() => {}, 30000)'], { timeout: 200 });
     const code = await proc.wait();
     expect(code).not.toBe(0);
   });

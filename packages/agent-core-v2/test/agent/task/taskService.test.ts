@@ -49,8 +49,11 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { ITaskService } from '#/app/task/task';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentWire } from '../../wire/stubs';
@@ -231,48 +234,6 @@ describe('AgentTaskService', () => {
       },
     };
   }
-
-  it('task.terminated dispatch carries the retained output tail as outputTail', async () => {
-    const { records } = capturingWire();
-    const svc = ix.get(IAgentTaskService);
-    const taskId = svc.registerTask(outputtingTask('line one\nline two\n'));
-
-    await svc.wait(taskId, 1000);
-
-    const terminated = records.filter((record) => record['type'] === 'task.terminated');
-    expect(terminated).toHaveLength(1);
-    expect(terminated[0]).toMatchObject({
-      info: { taskId, status: 'completed' },
-      outputTail: 'line one\nline two\n',
-    });
-  });
-
-  it('task.terminated outputTail is bounded to the last 4 KiB of retained output', async () => {
-    const { records } = capturingWire();
-    const svc = ix.get(IAgentTaskService);
-    const taskId = svc.registerTask(outputtingTask('x'.repeat(8 * 1024)));
-
-    await svc.wait(taskId, 1000);
-
-    const terminated = records.find((record) => record['type'] === 'task.terminated');
-    expect(terminated?.['outputTail']).toBe('x'.repeat(4 * 1024));
-  });
-
-  it('task.terminated dispatch omits outputTail when the task produced no output', async () => {
-    const { records } = capturingWire();
-    const svc = ix.get(IAgentTaskService);
-    const taskId = svc.registerTask({
-      ...fakeProcessTask(),
-      start: async (sink) => {
-        await sink.settle({ status: 'completed' });
-      },
-    });
-
-    await svc.wait(taskId, 1000);
-
-    const terminated = records.find((record) => record['type'] === 'task.terminated');
-    expect(terminated?.['outputTail']).toBeUndefined();
-  });
 
   function stubLoop(): StubLoop {
     return ix.get(IAgentLoopService) as unknown as StubLoop;
@@ -867,6 +828,8 @@ describe('AgentTaskService', () => {
     ix.stub(IAgentBlobService, noopBlob);
     registerAgentEventBus(ix, disposables);
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    const sessionLocks = new InMemorySessionLockService();
+    ix.stub(ISessionLockService, sessionLocks);
     ix.set(IWireService, new SyncDescriptor(WireService));
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
@@ -1013,7 +976,6 @@ describe('AgentTaskService', () => {
     return {
       role: 'user',
       content: [{ type: 'text', text }],
-      toolCalls: [],
       origin: { kind: 'compaction_summary' },
     };
   }

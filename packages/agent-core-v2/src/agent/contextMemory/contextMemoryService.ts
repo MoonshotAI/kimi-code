@@ -27,6 +27,8 @@ import type { ContextMessage } from './types';
 export class AgentContextMemoryService extends Disposable implements IAgentContextMemoryService {
   declare readonly _serviceBrand: undefined;
 
+  private revision = 0;
+
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -35,6 +37,11 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   ) {
     super();
     this.agentState.contributeState(contextMemoryKey);
+    this._register(
+      this.agentState.onDidChange(contextMemoryKey)(() => {
+        if (this.dispatcher.restorePhase === 'restoring') this.revision += 1;
+      }),
+    );
   }
 
   private get tokenEstimateFns(): TokenEstimate {
@@ -47,6 +54,10 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
 
   get(): readonly ContextMessage[] {
     return this.agentState.get(contextMemoryKey) as readonly ContextMessage[];
+  }
+
+  prefixRevision(): number {
+    return this.revision;
   }
 
   append(...messages: readonly ContextMessage[]): void {
@@ -128,6 +139,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   }
 
   private publishSplice(input: Omit<ContextSplicedPayload, 'agentId'>): void {
+    if (input.deleteCount > 0) this.revision += 1;
     void this.dispatcher.dispatch(
       new ContextSpliced({ agentId: this.scopeContext.agentId, ...input }),
     );

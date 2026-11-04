@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -51,7 +51,7 @@ interface TurnContract {
 
 interface TranscriptContract {
   agent_id: string;
-  items: (TurnContract | { kind: 'marker' | 'taskref' })[];
+  items: (TurnContract | { kind: 'marker' })[];
   has_more: boolean;
   tasks: unknown[];
   interactions: {
@@ -129,15 +129,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       _serviceBrand: undefined,
       get: () => {
         throw new Error('modelCatalog.get not exercised in this test');
-      },
-      getRequester: () => {
-        throw new Error('modelCatalog.getRequester not exercised in this test');
-      },
-      generate: () => {
-        throw new Error('modelCatalog.generate not exercised in this test');
-      },
-      ping: () => {
-        throw new Error('modelCatalog.ping not exercised in this test');
       },
       findByName: () => [],
       listModels: async () => [],
@@ -412,7 +403,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'running' }],
@@ -421,7 +412,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: 'file.txt' }],
-        toolCalls: [],
         toolCallId: 'call_1',
       },
     ]);
@@ -459,13 +449,35 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     expect(sub.body.code).toBe(0);
     expect(sub.body.data.items).toEqual([]);
     expect(sub.body.data.has_more).toBe(false);
+
+    const summary = await server!.core.accessor.get(ISessionIndex).get(id);
+    const wirePath = join(home as string, 'sessions', summary!.workspaceId, id, 'agents', 'main', 'wire.jsonl');
+    const sourceWire = await readFile(wirePath, 'utf-8');
+    expect(sourceWire).toContain('"min_protocol_version":"1.5"');
+    await writeFile(
+      wirePath,
+      sourceWire
+        .replace('"protocol_version":"1.5"', '"protocol_version":"9.9"')
+        .replace('"min_protocol_version":"1.5"', '"min_protocol_version":"9.9"'),
+      'utf-8',
+    );
+    const incompatible = await getJson<TranscriptContract>(
+      `/api/v1/sessions/${id}/transcript?agent_id=main`,
+    );
+    expect(incompatible.body.code).toBe(40930);
+    expect(incompatible.body.msg).toContain('Upgrade Kimi Code');
+    const userMessages = await getJson<UserMessagesContract>(
+      `/api/v1/sessions/${id}/transcript/user-messages`,
+    );
+    expect(userMessages.body.code).toBe(40930);
+    expect(userMessages.body.msg).toContain('Upgrade Kimi Code');
   });
 
   it('backfills a resumed live session from the wire records, then continues live', async () => {
     const id = await createSession();
     await ensureMainAgent(id);
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'running' }], toolCalls: [] },
     ]);
 
@@ -589,7 +601,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'run ls' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'run ls' }] },
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'running' }],
@@ -688,7 +700,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
     ]);
 
@@ -712,7 +724,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'hello there' }], toolCalls: [] },
     ]);
 
@@ -746,7 +758,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     bus.publish(serverEvent({ type: 'turn.step.started', turnId: 0, step: 1 }));
     bus.publish(serverEvent({ type: 'assistant.delta', turnId: 0, delta: 'Hello ' }));
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
     ]);
 
     await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
@@ -908,7 +920,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
     ]);
 
     await server!.close();
@@ -1009,27 +1021,24 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
       { role: 'assistant', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
       {
         role: 'user',
         content: [{ type: 'text', text: 'injected reminder' }],
-        toolCalls: [],
         origin: { kind: 'injection', variant: 'reminder' },
       } as ContextMessage,
       {
         role: 'user',
         content: [{ type: 'text', text: 'subagent run prompt' }],
-        toolCalls: [],
         origin: { kind: 'system_trigger', name: 'subagent' },
       } as ContextMessage,
       {
         role: 'user',
         content: [
           { type: 'text', text: 'second question' },
-          { type: 'image', source: { kind: 'url', url: 'https://example.com/a.png' } },
+          { type: 'image_url', imageUrl: { url: 'https://example.com/a.png' } },
         ],
-        toolCalls: [],
       } as ContextMessage,
     ]);
     const session = getLiveSessionById(server!.core.accessor, id);
@@ -1037,7 +1046,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const sub = session!.accessor.get(IAgentLifecycleService).handleOf('sub-1')!;
     sub.accessor
       .get(IAgentContextMemoryService)
-      .append({ role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage);
+      .append({ role: 'user', content: [{ type: 'text', text: 'scan the repo' }] } as ContextMessage);
     await sub.accessor.get(IWireService).flush();
 
     await server!.close();
@@ -1149,7 +1158,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         content: [
           { type: 'image_url', imageUrl: { url: 'kimi-file://f_upload?path=%2Ftmp%2Fcache%2Ff_upload.png' } },
         ],
-        toolCalls: [],
       } as ContextMessage,
       { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
     ]);
@@ -1288,7 +1296,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const output =
       'Exited plan mode. Plan mode deactivated. All tools are now available.\nPlan saved to: /tmp/plans/foo.md\n\n## Approved Plan:\n# The Plan\n\nDo the thing.';
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'build it' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'build it' }] },
       {
         role: 'assistant',
         content: [],
@@ -1297,7 +1305,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: output }],
-        toolCalls: [],
         toolCallId: 'call_plan',
       },
     ]);
@@ -1325,7 +1332,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const id = await createSession();
     await ensureMainAgent(id);
     await seedMainAgentMessages(id, [
-      { role: 'user', content: [{ type: 'text', text: 'build it' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'build it' }] },
       {
         role: 'assistant',
         content: [],
@@ -1334,7 +1341,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: 'User requested revisions. Plan mode remains active.' }],
-        toolCalls: [],
         toolCallId: 'call_plan',
       },
     ]);

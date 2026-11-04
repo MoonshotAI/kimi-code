@@ -8,51 +8,90 @@ export const SRC_ROOT = join(PKG_ROOT, 'src');
 const TEST_ROOT = join(PKG_ROOT, 'test');
 const HUMAN_ROOT = join(SRC_ROOT, 'human');
 const ADAPTER_ROOT = join(SRC_ROOT, 'llm-adapter');
-const LOOP_MACHINE_ADAPTER_ROOT = join(SRC_ROOT, 'agent/loop/machine');
+const LOOP_ADAPTER_ROOT = join(SRC_ROOT, 'agent/loop');
 const SESSION_LIFECYCLE_ADAPTER_ROOT = join(SRC_ROOT, 'session/agentLifecycle');
+const REMOTE_SERVER_ROOT = join(SRC_ROOT, 'remote/server');
+const REMOTE_SERVER_ALLOWED_RE =
+  /^#\/(?:(?:remote\/protocol|os\/interface|_base\/execEnv)(?:\/|$)|os\/backends\/node-local\/(?:hostFsService|hostProcessService)$)/;
+const REMOTE_SERVER_MODULE_RE = /\/remote\/server(?:\/|$)/;
+const REMOTE_ASKPASS_FILE = join(SRC_ROOT, 'remote/askpass.ts');
+const OS_REMOTE_BACKEND_ROOT = join(SRC_ROOT, 'os/backends/remote');
+const OS_REMOTE_BACKEND_ALLOWED_RE = /^#\/(?:remote\/protocol|os\/interface|_base)(?:\/|$)/;
+const ENVIRONMENT_ROOT = join(SRC_ROOT, 'environment');
+const REMOTE_ROOT = join(SRC_ROOT, 'remote');
+const REMOTE_DECLARATION_ROOT = join(SRC_ROOT, 'remote/declaration');
+const REMOTE_CLIENT_ROOT = join(SRC_ROOT, 'remote/client');
 
 const SELF_PACKAGE_PREFIX = '@moonshot-ai/agent-core-v2/';
 const KOSONG_PATH_RE = /(?:^|\/)kosong(?:\/|$)/;
-const TRAIT_FILE_RE = /\/trait\.ts$/;
-const FORMAT_LOWER_FILE_RE = /\/bases\/[^/]+\/(?:format|lower)\.ts$/;
-const FORMAT_LOWER_MODULE_RE = /\/bases\/[^/]+\/(?:format|lower)$/;
-const TRAIT_MODULE_RE = /\/trait$/;
-const BASES_DIR_RE = /\/llm\/requester\/bases(?:\/|$)/;
-const BASES_INTERNAL_MODULE_RE =
-  /\/llm\/requester\/bases\/[^/]+\/(?:format|lower|patterns|reasoning-key)$/;
+const PIPELINE_DIR_RE = /\/llm\/builtin\/(?:protocol|provider)(?:\/|$)/;
+const PIPELINE_INTERNAL_MODULE_RE =
+  /\/llm\/builtin\/protocol\/[^/]+\/(?:format|lower|patterns|reasoning-key)$/;
 const TEST_DIR_RE = /\/test(?:\/|$)/;
 
-function traitBoundaryViolation(absFile, targetAbs, specifier) {
-  const message = `format and trait never import each other ('${specifier}') — both sides speak only the neutral wire/chunk types in the protocol's contract.ts`;
-  if (TRAIT_FILE_RE.test(absFile) && FORMAT_LOWER_MODULE_RE.test(targetAbs)) {
-    return message;
+function pipelineInternalViolation(absFile, targetAbs, specifier) {
+  if (!PIPELINE_INTERNAL_MODULE_RE.test(targetAbs)) return undefined;
+  if (PIPELINE_DIR_RE.test(absFile) || TEST_DIR_RE.test(absFile)) return undefined;
+  return `protocol format modules are internal to the requester pipeline ('${specifier}') — only llm/builtin protocol/provider code and tests may import format/lower/patterns; everyone else speaks contract/requester`;
+}
+
+function remoteServerViolation(absFile, specifier) {
+  if (!isInside(REMOTE_SERVER_ROOT, absFile)) return undefined;
+  if (specifier.startsWith('.') || specifier.startsWith('node:')) return undefined;
+  if (REMOTE_SERVER_ALLOWED_RE.test(specifier)) return undefined;
+  return `the remote executor stays light: src/remote/server may import only node builtins, relative modules, #/remote/protocol, #/os/interface, #/_base/execEnv and the node-local hostFsService / hostProcessService implementations ('${specifier}')`;
+}
+
+function remoteAskpassViolation(absFile, specifier) {
+  if (absFile !== REMOTE_ASKPASS_FILE || specifier.startsWith('node:')) return undefined;
+  return `the SSH askpass helper stays light: src/remote/askpass.ts may import only node builtins ('${specifier}') — the CLI process entry loads it before any engine module`;
+}
+
+function osRemoteBackendViolation(absFile, specifier) {
+  if (!isInside(OS_REMOTE_BACKEND_ROOT, absFile)) return undefined;
+  if (specifier.startsWith('.') || specifier.startsWith('node:')) return undefined;
+  if (OS_REMOTE_BACKEND_ALLOWED_RE.test(specifier)) return undefined;
+  return `the remote os backend is a sibling of node-local: src/os/backends/remote may import only node builtins, relative modules, #/remote/protocol, #/os/interface and #/_base ('${specifier}') — the transport and environment wiring live in src/remote/client`;
+}
+
+function remoteServerConsumerViolation(absFile, specifier) {
+  if (isInside(REMOTE_SERVER_ROOT, absFile) || TEST_DIR_RE.test(absFile)) {
+    return undefined;
   }
-  if (FORMAT_LOWER_FILE_RE.test(absFile) && TRAIT_MODULE_RE.test(targetAbs)) {
-    return message;
+  const targetAbs = resolveIntraV2(specifier, absFile);
+  if (targetAbs === undefined || !REMOTE_SERVER_MODULE_RE.test(stripTs(targetAbs))) {
+    return undefined;
+  }
+  return `engine code never imports the remote executor ('${specifier}') — only tests and the CLI exec-server entry may touch src/remote/server; engine code speaks the client side (#/remote)`;
+}
+
+function environmentLayerViolation(absFile, targetAbs, specifier) {
+  if (isInside(ENVIRONMENT_ROOT, absFile) && isInside(REMOTE_ROOT, targetAbs)) {
+    return `the environment layer never imports the remote stack ('${specifier}') — src/environment holds the target-neutral Environment contract and registry; ssh/docker/command declarations and launchers live under src/remote`;
+  }
+  if (
+    isInside(REMOTE_DECLARATION_ROOT, absFile) &&
+    (isInside(REMOTE_CLIENT_ROOT, targetAbs) || isInside(REMOTE_SERVER_ROOT, targetAbs))
+  ) {
+    return `remote environment declarations stay transport-free ('${specifier}') — the main entry loads src/remote/declaration, so it never imports the remote client or executor`;
   }
   return undefined;
 }
 
-function basesInternalViolation(absFile, targetAbs, specifier) {
-  if (!BASES_INTERNAL_MODULE_RE.test(targetAbs)) return undefined;
-  if (TRAIT_FILE_RE.test(absFile) && FORMAT_LOWER_MODULE_RE.test(targetAbs)) return undefined;
-  if (BASES_DIR_RE.test(absFile) || TEST_DIR_RE.test(absFile)) return undefined;
-  return `protocol format modules are internal to the requester pipeline ('${specifier}') — only llm/requester/bases code and tests may import format/lower/patterns; everyone else speaks contract/trait/requester`;
-}
-
 const HUMAN_VOCABULARY = new Set([
   'agent/origin',
+  'message',
   'llm/message',
-  'llm/usage',
-  'llm/capability',
-  'llm/thinking',
-  'llm/finish-reason',
-  'llm/response-format',
-  'llm/media/upload',
-  'llm/media/image-formats',
-  'llm/requester/requester',
-  'llm/toolCallIdNormalizer',
-  'llm-kimi/trait',
+  'llm-requester/errors',
+  'llm-requester/usage',
+  'llm-requester/capability',
+  'llm-requester/thinking',
+  'llm-requester/finish-reason',
+  'llm-requester/response-format',
+  'llm-requester/requester',
+  'media/upload',
+  'llm/protocol/kit/media',
+  'llm/builtin/provider/kimi/protocol',
   'interaction/interaction',
   'interaction/machine',
   'interaction/facade',
@@ -73,7 +112,7 @@ const V2_ONLY_FIRST_SEGMENTS = new Set([
   'errors',
   'debug',
   'program',
-  'runtime',
+  'environment',
   '_base',
 ]);
 
@@ -122,7 +161,7 @@ export function checkSource(source, absFile) {
   const inHuman = isInside(HUMAN_ROOT, absFile);
   const inAdapter =
     isInside(ADAPTER_ROOT, absFile) ||
-    isInside(LOOP_MACHINE_ADAPTER_ROOT, absFile) ||
+    isInside(LOOP_ADAPTER_ROOT, absFile) ||
     isInside(SESSION_LIFECYCLE_ADAPTER_ROOT, absFile);
 
   let match;
@@ -143,11 +182,36 @@ export function checkSource(source, absFile) {
 
     if (!inSrc) continue;
 
+    const remoteServer = remoteServerViolation(absFile, specifier);
+    if (remoteServer !== undefined) {
+      violations.push({ file: absFile, line, message: remoteServer });
+      continue;
+    }
+    const remoteAskpass = remoteAskpassViolation(absFile, specifier);
+    if (remoteAskpass !== undefined) {
+      violations.push({ file: absFile, line, message: remoteAskpass });
+      continue;
+    }
+    const osRemoteBackend = osRemoteBackendViolation(absFile, specifier);
+    if (osRemoteBackend !== undefined) {
+      violations.push({ file: absFile, line, message: osRemoteBackend });
+      continue;
+    }
+    const remoteServerConsumer = remoteServerConsumerViolation(absFile, specifier);
+    if (remoteServerConsumer !== undefined) {
+      violations.push({ file: absFile, line, message: remoteServerConsumer });
+      continue;
+    }
+
     const targetAbs = resolveIntraV2(specifier, absFile);
     if (targetAbs !== undefined) {
-      const basesInternal = basesInternalViolation(absFile, stripTs(targetAbs), specifier);
-      if (basesInternal !== undefined) {
-        violations.push({ file: absFile, line, message: basesInternal });
+      const pipelineInternal = pipelineInternalViolation(absFile, stripTs(targetAbs), specifier);
+      if (pipelineInternal !== undefined) {
+        violations.push({ file: absFile, line, message: pipelineInternal });
+      }
+      const environmentLayer = environmentLayerViolation(absFile, targetAbs, specifier);
+      if (environmentLayer !== undefined) {
+        violations.push({ file: absFile, line, message: environmentLayer });
       }
     }
 
@@ -170,12 +234,6 @@ export function checkSource(source, absFile) {
           message: `human must not import outside its kernel ('${specifier}') — human is the pure LLM/agent kernel: it never imports llm-adapter or v2 domains`,
         });
       }
-      if (targetAbs !== undefined) {
-        const traitBoundary = traitBoundaryViolation(absFile, stripTs(targetAbs), specifier);
-        if (traitBoundary !== undefined) {
-          violations.push({ file: absFile, line, message: traitBoundary });
-        }
-      }
       continue;
     }
 
@@ -184,7 +242,7 @@ export function checkSource(source, absFile) {
       violations.push({
         file: absFile,
         line,
-        message: `only llm-adapter, agent/loop/machine and session/agentLifecycle may import the human implementation ('${specifier}') — v2 code outside those adapter layers is limited to the vocabulary modules (${[...HUMAN_VOCABULARY].join(', ')})`,
+        message: `only llm-adapter, agent/loop and session/agentLifecycle may import the human implementation ('${specifier}') — v2 code outside those adapter layers is limited to the vocabulary modules (${[...HUMAN_VOCABULARY].join(', ')})`,
       });
     }
   }

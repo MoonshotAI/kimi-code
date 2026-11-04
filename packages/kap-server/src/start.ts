@@ -10,13 +10,19 @@ import {
   IConfigService,
   IEventService,
   IMcpOAuthService,
-  IOAuthService,
   IProviderDiscoveryService,
   ISessionIndex,
   ISessionIndexMirror,
+  ISessionManager,
   ICapabilityService,
   IPluginService,
+  IEnvironmentService,
   IWorkspaceService,
+  IAgentLifecycleService,
+  IAgentEnvironmentBindingService,
+  ISessionContext,
+  MAIN_AGENT_ID,
+  NOTIFY_USER_UI_CAPABILITY,
   PluginChanged,
   logSeed,
   resolveConfigPath,
@@ -29,9 +35,9 @@ import {
 import {
   createKimiDefaultHeaders,
   KIMI_CODE_PROVIDER_NAME,
-  kimiRegionProfile,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
+import { RemoteEnvironmentProviderFactory } from '@moonshot-ai/agent-core-v2/remote';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
@@ -78,11 +84,16 @@ import {
   type ServerTelemetry,
   shutdownServerTelemetry,
 } from './services/telemetry';
+import { createServerSessionRating } from './services/sessionRating';
 import { TranscriptService } from './services/transcript/transcriptService';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
+import { SessionIdleReaper, resolveSessionIdleReclaimMs } from './services/sessionIdleReaper';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
-import { createRemoteControlManager } from '@moonshot-ai/remote-control';
+import {
+  createRemoteControlManager,
+  RemoteControlDeviceClient,
+} from '@moonshot-ai/remote-control';
 
 import { createAuthTokenService, type IAuthTokenService } from './services/auth/authTokenService';
 import { createCredentialValidator } from './services/auth/credentials';
@@ -143,6 +154,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const port = opts.port ?? DEFAULT_PORT;
   const homeDir = resolveKimiHome(opts.homeDir);
   const serverVersion = opts.serverVersion ?? getServerVersion();
+  const idleReclaimMs = resolveSessionIdleReclaimMs(opts.env ?? process.env);
   const registry = createInstanceRegistry({
     instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
   });
@@ -161,7 +173,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     );
   }
   const enableShutdown = exposureClass === 'loopback' || opts.allowRemoteShutdown === true;
-  const enableTerminals = exposureClass === 'loopback';
   const debugEndpoints = exposureClass === 'loopback' && opts.debugEndpoints === true;
   const logger = opts.logger ?? createServerLogger({ level: opts.logLevel ?? 'info' });
   const onUnhandledRejection = (reason: unknown): void => {
@@ -199,17 +210,38 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     {
       homeDir,
       configPath,
-      env: opts.env,
+      env:
+        opts.pluginMarketplaceUrl === undefined
+          ? opts.env
+          : {
+              ...(opts.env ?? process.env),
+              KIMI_CODE_PLUGIN_MARKETPLACE_URL: opts.pluginMarketplaceUrl,
+            },
       clientIdentity: opts.hostIdentity,
       args: {
         requestHeaders: createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity }),
         skillDirs: opts.skillDirs,
         displayName: opts.hostIdentity.displayName,
         replyStyleGuide: opts.hostIdentity.replyStyleGuide,
+        uiCapabilities: [NOTIFY_USER_UI_CAPABILITY],
       },
     },
     [...logSeed(logging), ...(opts.seeds ?? [])],
   );
+  const environments = core.accessor.get(IEnvironmentService);
+  const remoteEnvironmentProvider = await environments.addProvider(
+    new RemoteEnvironmentProviderFactory({
+      clientVersion: serverVersion,
+    }),
+  );
+  const legacyAcpBindingSubscription = core.accessor.get(ISessionManager).onDidCreateSession?.((event) => {
+    const main = event.handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+    if (main === undefined) return;
+    const binding = main.accessor.get(IAgentEnvironmentBindingService);
+    const current = binding.current;
+    if (current.environmentId !== `acp:${event.sessionId}` || environments.current(current.environmentId) !== undefined) return;
+    binding.bind('local', current.cwd ?? event.handle.accessor.get(ISessionContext).cwd);
+  });
 
   const readManagedOAuth = (): { key?: string; oauthHost?: string } | undefined =>
     core.accessor
@@ -220,7 +252,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     homeDir,
     localOrigin: () => `http://${localOriginHost}:${boundPort}`,
     localServerToken: () => authTokenService.getToken(),
-    clientVersion: `kimi-code/${serverVersion}`,
+    clientVersion: `${opts.hostIdentity.productName}/${opts.hostIdentity.version}`,
+    urlSource: opts.hostIdentity.platform,
     configuredOAuthKey: () => readManagedOAuth()?.key,
     configuredOAuthHost: () => readManagedOAuth()?.oauthHost,
     stderr: {
@@ -229,6 +262,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         return true;
       },
     },
+  });
+  const remoteControlDevices = new RemoteControlDeviceClient({
+    homeDir,
+    configuredOAuthKey: () => readManagedOAuth()?.key,
+    configuredOAuthHost: () => readManagedOAuth()?.oauthHost,
   });
 
   let telemetry: ServerTelemetry = {};
@@ -259,6 +297,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     core.accessor.get(IProviderDiscoveryService),
     core.accessor.get(IConfigService),
     logger,
+  );
+  const sessionIdleReaper = new SessionIdleReaper(
+    core.accessor.get(ISessionManager),
+    logger,
+    idleReclaimMs,
   );
 
   try {
@@ -319,11 +362,13 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     configChangedPublisher.close();
     await remoteControlManager.close();
     await app.close();
+    sessionRating.dispose();
     configWarningSubscription.dispose();
     pluginChangeSubscription.dispose();
     capabilityInstallSubscription.dispose();
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
+    await sessionIdleReaper.close();
     try {
       await shutdownServerTelemetry(telemetry);
     } catch (error) {
@@ -337,6 +382,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await core.accessor.get(ISessionIndexMirror).drain();
       await core.accessor.get(IMcpOAuthService).shutdown();
       const appendLogStore = core.accessor.get(IAppendLogStore);
+      legacyAcpBindingSubscription?.dispose();
+      await remoteEnvironmentProvider.dispose();
       core.dispose();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
@@ -356,9 +403,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   const connectionRegistry = new ConnectionRegistry();
   const transcriptService = new TranscriptService({ homeDir, core, logger });
+  const sessionRating = createServerSessionRating(core, { debugEndpoints, logger });
   core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
   const broadcaster = new SessionEventBroadcaster({
-    eventsDir: join(homeDir, 'server', 'events'),
     core,
     logger,
     transcriptService,
@@ -421,11 +468,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'search', description: 'Global message search' },
           { name: 'transcript', description: 'Turn-granular session transcript' },
           { name: 'prompts', description: 'Prompt submission & abort' },
-          { name: 'approvals', description: 'Approval resolution' },
-          { name: 'questions', description: 'Question resolution & dismiss' },
+          { name: 'interactions', description: 'Approval and question responses' },
           { name: 'tools', description: 'Tool & MCP server management' },
           { name: 'tasks', description: 'Task management' },
-          { name: 'terminals', description: 'PTY terminal sessions' },
           { name: 'fs', description: 'Filesystem operations' },
           { name: 'files', description: 'File upload & download' },
           { name: 'remote-control', description: 'Remote Control tunnel' },
@@ -447,20 +492,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     hostIdentity: opts.hostIdentity,
     debugEndpoints,
     enableShutdown,
-    enableTerminals,
     guiStore,
-    pluginMarketplaceUrl: (() => {
-      const configured = opts.pluginMarketplaceUrl ?? process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'];
-      if (configured !== undefined) return () => configured;
-      return () =>
-        `${kimiRegionProfile(core.accessor.get(IOAuthService).getRegion()).cdnBase}/plugins/marketplace.json`;
-    })(),
-    pluginMarketplaceIsDefault:
-      opts.pluginMarketplaceUrl === undefined &&
-      (process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] === undefined ||
-        process.env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1'),
     remoteControl: {
       service: remoteControlManager,
+      devices: remoteControlDevices,
+      homeDir,
       staticEnableError:
         exposureClass !== 'loopback'
           ? 'Remote Control requires a loopback host.'
@@ -469,11 +505,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
             : undefined,
     },
     onShutdown: () => {
-      void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
+      void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
     },
     connectionRegistry,
-    broadcaster,
     transcriptService,
+    sessionRating,
     dangerousBypassAuth: opts.disableAuth === true,
     webTitle: opts.webTitle,
   });
@@ -484,7 +520,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     validateCredential,
     registry: connectionRegistry,
     broadcaster,
-    logger,
   });
   const wssDebug = debugEndpoints ? registerWsDebug() : undefined;
 
@@ -614,6 +649,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       'provider-model catalog auto-refresh failed to start',
     );
   });
+  sessionIdleReaper.start();
 
   process.on('unhandledRejection', onUnhandledRejection);
   process.on('uncaughtException', onUncaughtException);

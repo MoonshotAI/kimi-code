@@ -7,7 +7,7 @@
  */
 
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
-import type { KimiHarness, Session, TokenUsage } from '@moonshot-ai/kimi-code-sdk';
+import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { getCacheHintConfig, peekCacheHintConfig } from '#/utils/cache-hint-config';
 import { currentTuiConfig } from '../commands/config';
@@ -22,8 +22,7 @@ import type { TUIState } from '../tui-state';
 import { evaluateCacheHint } from '../utils/cache-hint';
 import { formatErrorMessage } from '../utils/event-payload';
 import {
-  makeExtractionResendable,
-  originalsDirForSession,
+  makeSessionExtractionResendable,
   type ExtractionResult,
 } from '../utils/image-placeholder';
 
@@ -64,18 +63,6 @@ export interface CacheHintHost {
 
 type HintDecision = { readonly idleSeconds: number; readonly totalTokens: number };
 
-/** Cache-break detection: a step's cache read dropping under 95% of the
- *  previous step's by more than this many tokens counts as a break. */
-const CACHE_BREAK_MIN_DROP_TOKENS = 2000;
-const CACHE_BREAK_DROP_RATIO = 0.95;
-
-interface CacheBreakBaseline {
-  readonly model: string;
-  readonly effort: string;
-  readonly usage: TokenUsage;
-  readonly time: number;
-}
-
 export class CacheHintController {
   /** Latest in-process LLM round-trip time (turn begin / turn end). */
   private lastActivityAt: number | undefined;
@@ -97,70 +84,8 @@ export class CacheHintController {
   private restoredTexts: string[] = [];
   /** Resume scenario fires at most once per session per TUI instance. */
   private readonly resumedSessions = new Set<string>();
-  /** Last measured main-loop step usage for cache-break detection. */
-  private breakBaseline: CacheBreakBaseline | undefined;
 
   constructor(private readonly host: CacheHintHost) {}
-
-  /**
-   * Cache-break detection (client-side, main loop): feed each completed
-   * step's usage. A step whose cache read drops sharply below the previous
-   * one is reported as `cache_break_detected` with both usages, both
-   * model/effort values, the drop ratio, and the interval — a mid-session
-   * model/effort switch busts the cache key, and that cause is exactly what
-   * the report should carry. Unmeasured (missing/all-zero) usage is skipped
-   * without touching the baseline; compaction resets it (the drop there is
-   * expected).
-   *
-   * Also doubles as the cache-activity signal: a completed step is a real
-   * provider round trip, so the server-side cache was just refreshed —
-   * unlike a bare turn begin, whose prompt may still fail before any model
-   * request.
-   */
-  noteStepUsage(usage: TokenUsage | undefined): void {
-    this.recordActivity();
-    if (usage === undefined) return;
-    if (
-      usage.inputOther === 0 &&
-      usage.output === 0 &&
-      usage.inputCacheRead === 0 &&
-      usage.inputCacheCreation === 0
-    ) {
-      return;
-    }
-    const model = this.host.state.appState.model;
-    const effort = this.host.state.appState.thinkingEffort;
-    const now = Date.now();
-    const prev = this.breakBaseline;
-    this.breakBaseline = { model, effort, usage, time: now };
-    if (prev === undefined) return;
-    const prevRead = prev.usage.inputCacheRead;
-    const currRead = usage.inputCacheRead;
-    if (currRead >= prevRead * CACHE_BREAK_DROP_RATIO) return;
-    if (prevRead - currRead <= CACHE_BREAK_MIN_DROP_TOKENS) return;
-    this.host.track('cache_break_detected', {
-      prev_model: prev.model,
-      curr_model: model,
-      prev_effort: prev.effort,
-      curr_effort: effort,
-      prev_input_cache_read: prevRead,
-      curr_input_cache_read: currRead,
-      prev_input_other: prev.usage.inputOther,
-      curr_input_other: usage.inputOther,
-      prev_output: prev.usage.output,
-      curr_output: usage.output,
-      prev_input_cache_creation: prev.usage.inputCacheCreation,
-      curr_input_cache_creation: usage.inputCacheCreation,
-      cache_read_drop_ratio: (prevRead - currRead) / prevRead,
-      interval_ms: now - prev.time,
-    });
-  }
-
-  /** Compaction legitimately shrinks the cached prefix — reset the baseline.
-   *  Also used when the context is cut by other means (e.g. /undo). */
-  resetCacheBreakBaseline(): void {
-    this.breakBaseline = undefined;
-  }
 
   recordActivity(): void {
     this.lastActivityAt = Date.now();
@@ -186,7 +111,6 @@ export class CacheHintController {
     this.triggerFetchAttempted = false;
     this.lastDialogRestored = false;
     this.restoredTexts = [];
-    this.breakBaseline = undefined;
   }
 
   /** Background warm-up on session creation; never blocks, never throws. */
@@ -238,6 +162,10 @@ export class CacheHintController {
       dismissed: host.state.appState.cacheExpiryHint === false,
     });
     if (decision.kind === 'skip') return;
+    // Another dialog (e.g. the model migration prompt) already owns the editor
+    // area: never replace it under the user's keystrokes. The seeded baseline
+    // leaves this cycle to the idle-submit path, which hints on the first prompt.
+    if (host.state.editorReplacementMounted) return;
     this.resumedSessions.add(session.id);
     // The resume dialog also covers this idle cycle: the first submit right
     // after it must not be intercepted again.
@@ -370,13 +298,27 @@ export class CacheHintController {
   }
 
   private async releaseToSendPath(stash: StashedSubmit): Promise<void> {
-    // A session reset cleared the image store: rebuild the extraction from
-    // its snapshots, persisting compressed pastes' originals into the NEW
-    // session's originals dir so the compression caption survives the move.
-    const extraction =
-      stash.extraction !== undefined && this.host.state.appState.sessionId !== stash.sessionId
-        ? makeExtractionResendable(stash.extraction, originalsDirForSession(this.host.session))
-        : stash.extraction;
+    // A reset cleared the store, so register snapshot originals in the new
+    // session and rebuild image parts before returning to the send path.
+    let extraction = stash.extraction;
+    if (extraction !== undefined && this.host.state.appState.sessionId !== stash.sessionId) {
+      const session = this.host.session;
+      if (session === undefined) {
+        this.restoreStashedInput(stash);
+        return;
+      }
+      try {
+        extraction = await makeSessionExtractionResendable(extraction, session);
+      } catch (error) {
+        this.host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}. Paste the image again before retrying.`);
+        this.restoreStashedInput(stash);
+        return;
+      }
+      if (this.host.session !== session) {
+        this.restoreStashedInput(stash);
+        return;
+      }
+    }
     if (stash.inlineSkillActivations !== undefined && stash.inlineSkillActivations.length > 0) {
       await this.host.sendInlineSkillUserInput(stash.text, stash.inlineSkillActivations, extraction);
       return;

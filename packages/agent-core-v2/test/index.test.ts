@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  WIRE_MIN_READER_VERSION,
   WIRE_PROTOCOL_VERSION,
   EVENT2_REGISTRY,
   IAgentContextMemoryService,
@@ -90,7 +91,8 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'file_history.checkpoint',
   'interruptionReminder.recorded',
   'plugin.session_start',
-  'runtime.set_binding',
+  'changeNotifier.snapshot',
+  'environment.set_binding',
   'turn.ended',
   'prompt.aborted',
   'prompt.completed',
@@ -109,6 +111,10 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'subagent.completed',
   'subagent.failed',
   'subagent.cancelled',
+  'mcp.server_failed',
+  'mcp.server_failure_resolved',
+  'tool_select.initialized',
+  'tool_select.tools_changed',
 ]);
 
 describe('v1 wire vocabulary', () => {
@@ -161,6 +167,7 @@ describe('v1 wire vocabulary', () => {
       {
         type: 'metadata',
         protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
         created_at: expect.any(Number),
       },
       {
@@ -203,6 +210,7 @@ describe('v1 wire vocabulary', () => {
       {
         type: 'metadata',
         protocol_version: WIRE_PROTOCOL_VERSION,
+        min_protocol_version: WIRE_MIN_READER_VERSION,
         created_at: expect.any(Number),
       },
       {
@@ -445,19 +453,31 @@ describe('AgentRecords persistence metadata', () => {
     expect(migrated.message.toolCalls[0]?.['function']).toBeUndefined();
   });
 
-  it('replays a newer wire version without rewriting its metadata', async () => {
+  it('rejects a wire journal that requires a newer reader', async () => {
     persistence.records.push(
       {
         type: 'metadata',
         protocol_version: '9.9',
+        min_protocol_version: '9.9',
         created_at: 1,
       },
     );
 
-    await expect(ctx.restorePersisted()).resolves.toBeUndefined();
+    expectResumeMatches = false;
+    const failure = await ctx.restorePersisted().catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      code: 'wire.version_too_low',
+      message:
+        'This session requires a newer version of Kimi Code. Upgrade Kimi Code to the latest version to read this session.',
+      details: {
+        minReaderVersion: '9.9',
+        readerVersion: WIRE_PROTOCOL_VERSION,
+      },
+    });
     expect(persistence.records[0]).toMatchObject({
       type: 'metadata',
       protocol_version: '9.9',
+      min_protocol_version: '9.9',
     });
   });
 
@@ -623,7 +643,6 @@ function userMessage(text: string): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
   };
 }
 

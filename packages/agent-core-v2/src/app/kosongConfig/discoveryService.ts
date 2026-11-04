@@ -6,7 +6,9 @@ import {
   type RefreshResult,
 } from '@moonshot-ai/kimi-code-oauth';
 import { LifecycleScope } from '#/app/scopes';
+import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Emitter, type Event } from '#/_base/event';
 import { Error2 } from '#/_base/errors/errors';
 import { IOAuthService } from '#/app/auth/auth';
 import { AuthErrors } from '#/app/auth/errors';
@@ -15,6 +17,7 @@ import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import { ModelCatalogErrors } from '#/llm-adapter/model/errors';
 import { type ModelRecord } from '#/llm-adapter/model/model';
+import { effectiveModelConfig } from '#/llm-adapter/model/model-auth';
 import {
   IProviderService,
   type ModelSource,
@@ -34,6 +37,7 @@ import {
   ModelCatalogChanged,
   type RefreshProviderModelsOptions,
   type RefreshProviderModelsResponse,
+  type RetiredModel,
 } from './discovery';
 
 interface StaticExclusion {
@@ -45,10 +49,14 @@ interface StaticExclusion {
 
 const EMPTY_EXCLUSION: StaticExclusion = { providers: {}, models: {} };
 
-export class ProviderDiscoveryService implements IProviderDiscoveryService {
+export class ProviderDiscoveryService extends Disposable implements IProviderDiscoveryService {
   declare readonly _serviceBrand: undefined;
 
+  private readonly _onDidRetireModel = this._register(new Emitter<RetiredModel>());
+  readonly onDidRetireModel: Event<RetiredModel> = this._onDidRetireModel.event;
+
   private refreshChain: Promise<unknown> = Promise.resolve();
+  private readonly retiredModels = new Map<string, string>();
 
   constructor(
     @IProviderService private readonly providerService: IProviderService,
@@ -56,7 +64,9 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
     @IOAuthService private readonly oauth: IOAuthService,
     @IEventService private readonly events: IEventService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
-  ) {}
+  ) {
+    super();
+  }
 
   refreshProviderModels(
     options: RefreshProviderModelsOptions = {},
@@ -67,6 +77,13 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
       () => undefined,
     );
     return run;
+  }
+
+  retiredModelReplacement(alias: string): string | undefined {
+    const models = this.config.get<Readonly<Record<string, ModelRecord>>>(MODELS_SECTION) ?? {};
+    if (alias in models) return undefined;
+    const replacement = this.retiredModels.get(alias);
+    return replacement !== undefined && replacement in models ? replacement : undefined;
   }
 
   private async doRefreshProviderModels(
@@ -92,6 +109,14 @@ export class ProviderDiscoveryService implements IProviderDiscoveryService {
       scope: options.scope,
       providerId: options.providerId,
     });
+    const retired = result.retiredDefault;
+    if (retired !== undefined) {
+      for (const [alias, replacement] of this.retiredModels) {
+        if (replacement === retired.from) this.retiredModels.set(alias, retired.to);
+      }
+      this.retiredModels.set(retired.from, retired.to);
+      this._onDidRetireModel.fire({ from: retired.from, to: retired.to });
+    }
     const response = mapRefreshResult(result);
     if (response.changed.length > 0) {
       this.events.publish(new ModelCatalogChanged({ payload: response }));
@@ -271,6 +296,9 @@ function withoutKeys<T>(
 }
 
 function mapRefreshResult(result: RefreshResult): RefreshProviderModelsResponse {
+  const retired = result.retiredDefault;
+  const retiredModel =
+    retired === undefined ? undefined : effectiveModelConfig(retired.fromModel as ModelRecord);
   return {
     changed: result.changed.map((change) => ({
       provider_id: change.providerId,
@@ -283,6 +311,14 @@ function mapRefreshResult(result: RefreshResult): RefreshProviderModelsResponse 
       provider: failure.provider,
       reason: failure.reason,
     })),
+    retired_default:
+      retired === undefined
+        ? undefined
+        : {
+            from: retired.from,
+            to: retired.to,
+            from_display_name: retiredModel?.displayName ?? retiredModel?.model ?? retired.from,
+          },
   };
 }
 

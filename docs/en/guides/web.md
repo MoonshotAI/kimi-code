@@ -50,7 +50,7 @@ The `#token=` fragment is the access credential — don't share it. Stop the ser
 | `/new` | Start a new session |
 | `/goal` | Enter Goal mode and keep working toward the same objective across turns |
 | `/compact` | Compact the current session's context |
-| `/tower` | Tower multi-agent collaboration (experimental); `/tower <base-branch>` sets the base branch |
+| `/tower` | [Tower multi-agent collaboration](./tower.md) (experimental); `/tower <base-branch>` sets the base branch without sending an objective |
 | `/export` | Export the session content and troubleshooting logs as a ZIP |
 | `/remote-control` | Enable remote control to access the local web session remotely |
 
@@ -72,7 +72,7 @@ How the two sides compare:
 | Background tasks | ✓ | ✓ | Web shows live progress in the task panel |
 | Files and changes | ✓ | ✓ | Web has a changed-files summary card and per-file diffs |
 | Settings | ✓ | ✓ | Web adds a settings UI (providers, account & usage, Lab experiments) |
-| Global search | — | ✓ | Web searches across sessions and workspaces |
+| Global search | — | ✓ | Set `[database] global_search = true` in `config.toml` first; Web then searches across sessions and workspaces |
 | Mobile layout | — | ✓ | With LAN sharing on (`--host`), it works in phone browsers on the same network |
 
 </div>

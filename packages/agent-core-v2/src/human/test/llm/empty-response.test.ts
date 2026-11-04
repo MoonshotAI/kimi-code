@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import { NO_FINISH } from '#/llm/finish-reason';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
+import { NO_FINISH } from '#/llm-requester/finish-reason';
 import {
   createMessageAccumulator,
   type AssistantMessage,
   type StreamedMessagePart,
-} from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import { emptyResponseError } from '#/llm/empty-response';
+} from '#/message';
+import type { LlmModel } from '#/llm-requester/model';
+import { emptyResponseError } from '#/llm-requester/empty-response';
 
 const model: LlmModel = { provider: 'test', model: 'test-model', capability: UNKNOWN_CAPABILITY };
 
@@ -28,6 +28,7 @@ describe('emptyResponseError', () => {
       kind: 'empty_response',
       finishReason: null,
       rawFinishReason: null,
+      retryable: true,
     });
     expect(error?.message).toContain('empty response (no content, no tool calls)');
     expect(error?.message).toContain('Provider: test, model: test-model');
@@ -40,6 +41,7 @@ describe('emptyResponseError', () => {
       kind: 'empty_response',
       finishReason: 'filtered',
       rawFinishReason: 'content_filter',
+      retryable: false,
     });
     expect(filtered?.message).toContain('filtered the response');
   });

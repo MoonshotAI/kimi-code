@@ -14,7 +14,7 @@ Kimi Code CLI 内置三种 subagent，开箱即用，分别面向不同任务形
 
 三种类型之外，使用 subagent 还有三条约定，分别关于工具边界、委派深度和完成时机：
 
-`coder` subagent 与 main agent 共享大部分工具集：可以在后台执行 Shell 命令、维护待办列表、进入 Plan 模式、调用 Agent Skills。三种内置 subagent 都不能继续派发新的 subagent。
+`coder` subagent 与 main agent 共享大部分工具集：可以在后台执行 Shell 命令、维护待办列表、调用 Agent Skills。三种内置 subagent 都不能继续派发新的 subagent。
 
 自定义 Agent 缺省时继承内置委派列表（`coder`、`explore`、`plan`），这些内置类型自身不能再派发，因此委派链默认必然终止，不存在不受限的递归派发。如需更深的委派链，可以在 Agent 文件中显式声明 [`subagents`](#agent-文件格式) 列表。
 
@@ -40,6 +40,8 @@ subagent 支持在后台运行：完成后结果自动回到 main agent，无需
 - **多个 subagent 可以并行运行**，互不干扰。
 
 每个 subagent 都会独立消耗模型 token。简单任务没有必要派发 subagent，由 main agent 直接处理更经济。
+
+如果较大的目标需要独立的实现 branch、独立 review 和带门槛的合并，见 [Tower 多 Agent 协作](../guides/tower.md)。Tower 是实验性的仓库级协调模式，不是普通 subagent 类型。
 
 ## 权限继承
 

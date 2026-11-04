@@ -130,6 +130,7 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description:
         'Turn-granular session transcript page: live sessions read the in-memory store (wire-records backfill awaited per requested agent), cold sessions rebuild the requested agent from the persisted wire records',
@@ -156,12 +157,9 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
               agent_id: query.agent_id,
               items: page.items,
               has_more: page.hasMore,
-              tasks: [...transcript.getTasks().values()],
               interactions: [...transcript.getInteractions().values()],
               attachments: [...transcript.getAttachments().values()],
-              todos: [...transcript.getTodos().values()],
               prompts: [...transcript.getPrompts().values()],
-              meta: transcript.getMeta(),
               agents: store.agents(),
               pending_interactions: transcript.listPendingInteractions(),
               seq: transcriptService.getSeqWatermark(session_id, query.agent_id),
@@ -181,7 +179,7 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
       const roster = (await transcriptService.readColdRoster(session_id)) ?? [];
       if (
         !roster.some((d) => d.agentId === query.agent_id) &&
-        (snapshot.items.length > 0 || snapshot.tasks.length > 0 || query.agent_id === MAIN_AGENT_ID)
+        (snapshot.items.length > 0 || query.agent_id === MAIN_AGENT_ID)
       ) {
         roster.push({
           agentId: query.agent_id,
@@ -194,12 +192,9 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
             agent_id: query.agent_id,
             items: page.items,
             has_more: page.hasMore,
-            tasks: snapshot.tasks,
             interactions: snapshot.interactions,
             attachments: snapshot.attachments,
-            todos: snapshot.todos,
             prompts: snapshot.prompts,
-            meta: snapshot.meta,
             agents: roster,
             pending_interactions: [],
           },
@@ -269,6 +264,7 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description:
         'All turn-opening inputs ("user messages") of a session, grouped per agent: every turn with a defined prompt (real user text, user-slash skill/plugin commands, cron prompts — distinguish via origin), plus attachment-only prompts projected with an empty prompt string. agent_id optional: present reads one agent, absent reads every rostered agent. Live sessions answer from the in-memory store (history backfill awaited per agent), cold sessions rebuild from the persisted wire records. Unpaginated; attachment entities referenced by the messages ride along (metadata only)',
@@ -343,6 +339,7 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.TOOL_CALL_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description:
         'Plan information of an agent\'s ExitPlanMode tool calls: the reviewed plan content, plan file path, offered options, and the review outcome, in timeline order. agent_id required; tool_call_id optional — present narrows the read to that one call (unknown id or non-ExitPlanMode call → 40416), absent lists every call with recoverable plan content. Content is projected from the linked approval interaction (interactive reviews, live or cold), the live tool frame display (auto mode), or the tool result output text (cold rebuilds without an interaction). Live sessions read the in-memory store (history backfill awaited), cold sessions rebuild the agent from the persisted wire records',

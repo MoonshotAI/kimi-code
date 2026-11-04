@@ -111,24 +111,37 @@ export function createShellPathBridge(
   }
 
   function toShellPath(nativePath: string): string {
-    if (!enabled) return nativePath;
-
-    if (nativePath.startsWith('\\\\')) {
-      return nativePath.replaceAll('\\', '/');
-    }
-
-    const driveMatch = /^([A-Za-z]):(?:[\\/]|$)/.exec(nativePath);
-    if (driveMatch !== null) {
-      const drive = driveMatch[1]!.toLowerCase();
-      const rest = nativePath.slice(2).replaceAll('\\', '/');
-      return `/${drive}${rest.startsWith('/') ? rest : `/${rest}`}`;
-    }
-
-    return nativePath.replaceAll('\\', '/');
+    return enabled ? toMsysPath(nativePath) : nativePath;
   }
 
   return { toShellPath, fromShellPath };
 }
+
+function toMsysPath(nativePath: string): string {
+  if (nativePath.startsWith('\\\\')) {
+    return nativePath.replaceAll('\\', '/');
+  }
+
+  const driveMatch = /^([A-Za-z]):(?:[\\/]|$)/.exec(nativePath);
+  if (driveMatch !== null) {
+    const drive = driveMatch[1]!.toLowerCase();
+    const rest = nativePath.slice(2).replaceAll('\\', '/');
+    return `/${drive}${rest.startsWith('/') ? rest : `/${rest}`}`;
+  }
+
+  return nativePath.replaceAll('\\', '/');
+}
+
+export const REMOTE_SHELL_PATH_BRIDGE: ShellPathBridge = {
+  toShellPath: toMsysPath,
+  fromShellPath(path) {
+    if (!path.startsWith('/')) return path;
+    const normalized = nodePath.posix.normalize(path);
+    const lexical = translateShellDrivePath(normalized);
+    if (lexical !== normalized) return lexical;
+    throw new Error(`Windows remote path ${normalized} cannot be resolved on the target; use an absolute drive path such as C:\\work instead`);
+  },
+};
 
 const bridgeCache = new Map<string, ShellPathBridge>();
 

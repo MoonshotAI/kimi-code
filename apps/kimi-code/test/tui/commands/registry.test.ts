@@ -175,6 +175,7 @@ describe('built-in slash command registry', () => {
         'export-debug-zip',
         'fork',
         'help',
+        'import-sessions',
         'init',
         'login',
         'logout',

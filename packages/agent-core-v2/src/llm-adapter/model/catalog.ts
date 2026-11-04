@@ -3,19 +3,12 @@ import { z } from 'zod';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { ModelCapability } from '../contract/capability';
-import type { LlmCredentialProvider } from '#human/llm/requester/requester';
-import type { TokenUsage } from '#human/llm/usage';
+import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import type { Protocol, ProtocolProviderOptions } from '../protocol/protocol';
 import type { ProviderConfig } from '../provider/provider';
 
-import type { ModelRecord } from './model';
+import type { ModelRecord, ModelUpgrade } from './model';
 import { effectiveModelConfig } from './model-auth';
-import type {
-  ModelRequestEvent,
-  ModelRequestInput,
-  ModelRequestParams,
-  ModelRequester,
-} from './model-requester';
 
 export interface Model {
   readonly id: string;
@@ -42,15 +35,6 @@ export interface Model {
   readonly providerOptions?: ProtocolProviderOptions;
 }
 
-export interface ModelPingResult {
-  readonly ok: boolean;
-  readonly durationMs: number;
-  readonly text?: string;
-  readonly finishReason?: string;
-  readonly usage?: TokenUsage;
-  readonly error?: string;
-}
-
 export const modelCatalogItemSchema = z.object({
   provider: z.string().min(1),
   model: z.string().min(1),
@@ -59,6 +43,13 @@ export const modelCatalogItemSchema = z.object({
   capabilities: z.array(z.string()).optional(),
   support_efforts: z.array(z.string()).optional(),
   default_effort: z.string().optional(),
+  upgrade: z
+    .object({
+      model: z.string().min(1),
+      migration_markdown: z.string(),
+      retirement_at: z.string().optional(),
+    })
+    .optional(),
 });
 export type ModelCatalogItem = z.infer<typeof modelCatalogItemSchema>;
 
@@ -93,6 +84,15 @@ export interface ProviderCredentialState {
   readonly hasCredentialConflict: boolean;
 }
 
+function toProtocolModelUpgrade(upgrade: ModelUpgrade | undefined) {
+  if (upgrade === undefined) return undefined;
+  return {
+    model: upgrade.model,
+    migration_markdown: upgrade.migrationMarkdown,
+    retirement_at: upgrade.retirementAt,
+  };
+}
+
 export function toProtocolModel(
   model: Model,
   record: ModelRecord,
@@ -106,6 +106,7 @@ export function toProtocolModel(
     capabilities: effectiveModelConfig(record, providerType ?? model.providerType).capabilities,
     support_efforts: model.supportEfforts === undefined ? undefined : [...model.supportEfforts],
     default_effort: model.defaultEffort,
+    upgrade: toProtocolModelUpgrade(record.upgrade),
   };
 }
 
@@ -123,6 +124,7 @@ export function toProtocolModelFallback(
     capabilities: effective.capabilities,
     support_efforts: effective.supportEfforts,
     default_effort: effective.defaultEffort,
+    upgrade: toProtocolModelUpgrade(record.upgrade),
   };
 }
 
@@ -175,14 +177,6 @@ export interface IModelCatalog {
   readonly _serviceBrand: undefined;
 
   get(id: string): Model;
-  getRequester(id: string): ModelRequester;
-  generate(
-    id: string,
-    input: ModelRequestInput,
-    signal?: AbortSignal,
-    params?: ModelRequestParams,
-  ): AsyncIterable<ModelRequestEvent>;
-  ping(id: string): Promise<ModelPingResult>;
   findByName(name: string): readonly string[];
 
   listModels(): Promise<readonly ModelCatalogItem[]>;

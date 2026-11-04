@@ -1,4 +1,6 @@
 import { Disposable } from '#/_base/di/lifecycle';
+import { resolveAgentTaskConfig } from '#/agent/task/configSection';
+import { IConfigService } from '#/app/config/config';
 import {
   ITowerRateLimitService,
   type TowerRateLimitSnapshot,
@@ -7,7 +9,7 @@ import {
 export const RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS = 2_000;
 export const RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS = 180_000;
 export const TOWER_SPAWN_PAUSE_MS = 60_000;
-export const TOWER_MAX_BUDGET = 16;
+export const TOWER_DEFAULT_MAX_RUNNING_AGENTS = 256;
 
 export class RateLimitCapacityGovernor {
   private capacity = Number.POSITIVE_INFINITY;
@@ -78,7 +80,10 @@ export class TowerRateLimitService extends Disposable implements ITowerRateLimit
   private inflight = 0;
   private blockedUntil: number | null = null;
 
-  constructor(now: () => number = Date.now) {
+  constructor(
+    @IConfigService private readonly config: IConfigService,
+    now: () => number = Date.now,
+  ) {
     super();
     this.now = now;
     this.governor = new RateLimitCapacityGovernor(this.now);
@@ -96,7 +101,11 @@ export class TowerRateLimitService extends Disposable implements ITowerRateLimit
 
   budget(): number {
     this.governor.maybeRecover();
-    return Math.max(1, Math.min(TOWER_MAX_BUDGET, this.governor.getCapacity()));
+    const maxRunningTasks = resolveAgentTaskConfig(this.config)?.maxRunningTasks;
+    return Math.max(
+      1,
+      Math.min(this.governor.getCapacity(), maxRunningTasks ?? TOWER_DEFAULT_MAX_RUNNING_AGENTS),
+    );
   }
 
   acquire(): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
