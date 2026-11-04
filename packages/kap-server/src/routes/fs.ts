@@ -16,10 +16,13 @@ import {
   WorkspaceFsService,
   WorkspaceGitService,
   ITelemetryService,
+  workspaceDirectories,
   type Scope,
+  type WorkspaceDirectory,
 } from '@moonshot-ai/agent-core-v2';
 import { Event } from '@moonshot-ai/agent-core-v2/_base/event';
 import { IGitService } from '@moonshot-ai/agent-core-v2/app/git/git';
+import { GitService } from '@moonshot-ai/agent-core-v2/app/git/gitService';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import {
   fsDiffRequestSchema,
@@ -92,22 +95,31 @@ const sessionIdAndTailParamSchema = z.object({
   tail: z.string().min(1),
 });
 
+const fsTargetFields = {
+  environment_id: z.string().min(1).optional(),
+  environment_cwd: z.string().min(1).optional(),
+};
+
 const fsDownloadQuerySchema = z.object({
   allow_external_symlinks: z.enum(['true', 'false']).optional(),
+  ...fsTargetFields,
 });
 
 const workspaceFsListBodySchema = fsListRequestSchema
   .omit({ include_git_status: true })
   .extend({
     workspace: z.string().min(1),
+    ...fsTargetFields,
   });
 
 const workspaceFsSearchBodySchema = fsSearchRequestSchema.extend({
   workspace: z.string().min(1),
+  ...fsTargetFields,
 });
 
 const workspaceFsSuggestBodySchema = fsSuggestRequestSchema.extend({
   workspace: z.string().min(1),
+  ...fsTargetFields,
 });
 
 const rootFsSuggestBodySchema = fsSuggestRequestSchema.extend({
@@ -143,28 +155,48 @@ interface FsScope extends EnvironmentReadStreamSource {
   readonly lease: EnvironmentLease;
 }
 
-function acquireSessionFs(core: Scope, sessionId: string, required: readonly EnvironmentCapability[]): FsScope {
+async function acquireSessionFs(
+  core: Scope,
+  sessionId: string,
+  required: readonly EnvironmentCapability[],
+  target?: WorkspaceDirectory,
+): Promise<FsScope> {
   const session = getLiveSessionById(core.accessor, sessionId);
   if (session === undefined) throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   const workdir = session.accessor.get(ISessionWorkdir);
-  const lease = core.accessor.get(IEnvironmentService).acquire({ environmentId: workdir.environmentId }, required);
-  return { fs: workdir.fs, hostFs: lease.environment.fs!, lease, environmentId: workdir.environmentId };
+  if (target === undefined || (target.environmentId === workdir.environmentId && target.path === workdir.cwd)) {
+    const lease = core.accessor.get(IEnvironmentService).acquire({ environmentId: workdir.environmentId, cwd: workdir.cwd }, required);
+    return { fs: workdir.fs, hostFs: lease.environment.fs!, lease, environmentId: workdir.environmentId };
+  }
+  const candidates = (workdir.environmentDirs.directories ?? workdir.environmentDirs.dirs).filter((dir) => dir.environmentId === target.environmentId);
+  const selected = candidates.find((dir) => dir.path === target.path);
+  if (selected === undefined) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, `directory ${target.path} is not mounted on environment ${target.environmentId}`);
+  }
+  return acquireRootedFs(core, session.accessor.get(ISessionWorkdir).environmentId, {
+    workDir: selected.path,
+    additionalDirs: candidates.filter((dir) => dir.path !== selected.path).map((dir) => dir.path),
+  }, required, target.environmentId);
 }
 
-function acquireLocalRootedFs(
+async function acquireRootedFs(
   core: Scope,
   workspaceId: string,
   roots: { readonly workDir: string; readonly additionalDirs: readonly string[] },
   required: readonly EnvironmentCapability[],
-): FsScope {
+  environmentId = LOCAL_ENVIRONMENT_ID,
+): Promise<FsScope> {
   const environments = core.accessor.get(IEnvironmentService);
-  const lease = environments.acquire({ environmentId: LOCAL_ENVIRONMENT_ID }, required);
+  const lease = await environments.acquireWhenReady({ environmentId, cwd: roots.workDir }, required);
   try {
     const hostFs = lease.environment.fs!;
     const context = { workspaceId, cwd: roots.workDir };
-    const git = new WorkspaceGitService(context, { current: core.accessor.get(IGitService), onDidChange: Event.None as Event<void> });
-    const fs = new WorkspaceFsService(context, { additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git);
-    return { fs, hostFs, lease, environmentId: LOCAL_ENVIRONMENT_ID };
+    const current = environmentId === LOCAL_ENVIRONMENT_ID
+      ? core.accessor.get(IGitService)
+      : new GitService(environments, hostFs, environmentId);
+    const git = new WorkspaceGitService(context, { current, onDidChange: Event.None as Event<void> });
+    const fs = new WorkspaceFsService(context, { additionalDirs: roots.additionalDirs }, hostFs, environments, core.accessor.get(ITelemetryService), git, environmentId);
+    return { fs, hostFs, lease, environmentId };
   } catch (error) {
     lease.dispose();
     throw error;
@@ -175,7 +207,11 @@ async function resolveWorkspaceFs(
   core: Scope,
   ref: string,
   required: readonly EnvironmentCapability[],
+  target?: WorkspaceDirectory,
 ): Promise<FsScope | undefined> {
+  if (target !== undefined && target.environmentId !== LOCAL_ENVIRONMENT_ID && target.path === ref) {
+    return acquireRootedFs(core, ref, { workDir: ref, additionalDirs: [] }, required, target.environmentId);
+  }
   const workspaces = core.accessor.get(IWorkspaceService);
   let ws = await workspaces.get(ref);
   if (ws === undefined) {
@@ -186,7 +222,24 @@ async function resolveWorkspaceFs(
       return undefined;
     }
   }
-  return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: ws.additionalDirs }, required);
+  const directories = workspaceDirectories(ws);
+  const selected = target === undefined
+    ? directories[0]!
+    : directories.find((dir) => dir.environmentId === target.environmentId && dir.path === target.path);
+  if (selected === undefined) {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, `directory ${target?.path} is not mounted on environment ${target?.environmentId}`);
+  }
+  return acquireRootedFs(core, ws.id, {
+    workDir: selected.path,
+    additionalDirs: directories.filter((dir) => dir.environmentId === selected.environmentId && dir.path !== selected.path).map((dir) => dir.path),
+  }, required, selected.environmentId);
+}
+
+function fsRequestTarget(body: unknown): WorkspaceDirectory | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const value = body as { environment_id?: unknown; environment_cwd?: unknown };
+  if (typeof value.environment_id !== 'string' || typeof value.environment_cwd !== 'string') return undefined;
+  return { environmentId: value.environment_id, path: value.environment_cwd };
 }
 
 export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
@@ -253,7 +306,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           ? await resolveWorkspaceFs(core, session_id, required)
           : session === undefined
             ? undefined
-            : acquireSessionFs(core, session_id, required);
+            : await acquireSessionFs(core, session_id, required, fsRequestTarget(req.body));
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
@@ -350,7 +403,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, ...listRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs']);
+        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs'], fsRequestTarget(req.body));
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -398,7 +451,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, ...searchRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs', 'process']);
+        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs', 'process'], fsRequestTarget(req.body));
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -445,7 +498,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const { workspace, ...suggestRequest } = req.body;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs']);
+        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs'], fsRequestTarget(req.body));
         if (environmentFs === undefined) {
           reply.send(
             errEnvelope(
@@ -501,7 +554,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       const fsRoots = { workDir: roots[0]!, additionalDirs: roots.slice(1) };
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = acquireLocalRootedFs(core, encodeWorkDirKey(fsRoots.workDir), fsRoots, ['fs']);
+        environmentFs = await acquireRootedFs(core, encodeWorkDirKey(fsRoots.workDir), fsRoots, ['fs']);
         for (const root of [fsRoots.workDir, ...fsRoots.additionalDirs]) {
           let stat;
           try {
@@ -580,7 +633,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       let resolved: Awaited<ReturnType<IWorkspaceFsService['resolveDownload']>>;
       let environmentFs: FsScope | undefined;
       try {
-        environmentFs = acquireSessionFs(core, session_id, ['fs']);
+        environmentFs = await acquireSessionFs(core, session_id, ['fs'], fsRequestTarget(req.query));
         resolved = await environmentFs.fs.resolveDownload(
           relPath,
           req.query.allow_external_symlinks === 'true',
@@ -909,6 +962,9 @@ function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void 
         return;
       case ErrorCodes.SESSION_NOT_FOUND:
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
+        return;
+      case ErrorCodes.CONFIG_INVALID:
+        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
         return;
       case ErrorCodes.OS_FS_NOT_FOUND:
       case ErrorCodes.OS_FS_NOT_DIRECTORY:

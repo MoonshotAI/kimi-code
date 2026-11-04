@@ -542,16 +542,19 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect((await workspaces.get(workspace.id))?.environmentDirs).toEqual([{ environmentId: 'devbox', path: '/srv/app' }]);
   });
 
-  it('rejects a second directory for a mounted environment and directories that do not exist', async () => {
+  it('supports multiple directories per environment and rejects directories that do not exist', async () => {
     const workspace = await workspaces.createOrTouch(dirA);
     const { service, connected } = createEnvironmentDirs(dirA, workspace.id);
     await service.ready;
     await service.add({ environmentId: 'devbox', path: '/srv/app' });
+    await service.add({ environmentId: 'devbox', path: '/srv/next' });
 
-    await expect(service.add({ environmentId: 'devbox', path: '/srv/next' })).rejects.toMatchObject({ code: 'environment.conflict' });
     await expect(service.add({ environmentId: 'staging', path: '/srv/missing' })).rejects.toMatchObject({ code: 'environment.invalid_cwd' });
     await expect(service.add({ environmentId: 'local', path: 'relative' })).rejects.toMatchObject({ code: 'environment.invalid_cwd' });
-    expect(service.dirs).toEqual([{ environmentId: 'devbox', path: '/srv/app' }]);
-    expect(connected).toEqual(['devbox', 'staging']);
+    expect(service.dirs).toEqual([
+      { environmentId: 'devbox', path: '/srv/app' },
+      { environmentId: 'devbox', path: '/srv/next' },
+    ]);
+    expect(connected).toEqual(['devbox', 'devbox', 'staging']);
   });
 });

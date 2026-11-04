@@ -138,19 +138,32 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
 
   targets(): readonly EnvironmentTarget[] {
     const current = this.binding.current;
-    const primary: EnvironmentTarget = { environmentId: current.environmentId, primary: true, cwd: current.cwd };
+    const directories = this.workdir?.environmentDirs.directories ?? this.workdir?.environmentDirs.dirs ?? [];
+    const primaryAdditionalDirs = directories.filter((dir) => dir.environmentId === current.environmentId && dir.path !== current.cwd).map((dir) => dir.path);
+    const primary: EnvironmentTarget = {
+      environmentId: current.environmentId,
+      primary: true,
+      cwd: current.cwd,
+      additionalDirs: primaryAdditionalDirs.length > 0 ? primaryAdditionalDirs : undefined,
+    };
     if (this.declarations === undefined || this.workdir === undefined || this.flags?.enabled(MULTI_ENVIRONMENT_FLAG_ID) !== true) return [primary];
     const declared = new Set(this.declarations.snapshot().entries.map((declaration) => declaration.id));
     if (current.environmentId !== LOCAL_ENVIRONMENT_ID && !declared.has(current.environmentId)) return [primary];
-    const secondary = this.workdir.environmentDirs.dirs
-      .filter(
-        (dir) =>
-          dir.environmentId !== current.environmentId &&
-          (dir.environmentId === LOCAL_ENVIRONMENT_ID || declared.has(dir.environmentId)) &&
-          this.resolver.current(dir.environmentId) !== undefined,
-      )
-      .toSorted((left, right) => left.environmentId.localeCompare(right.environmentId))
-      .map((dir): EnvironmentTarget => ({ environmentId: dir.environmentId, primary: false, cwd: dir.path }));
+    const grouped = new Map<string, string[]>();
+    for (const dir of directories) {
+      if (dir.environmentId === current.environmentId) continue;
+      if (dir.environmentId !== LOCAL_ENVIRONMENT_ID && !declared.has(dir.environmentId)) continue;
+      if (this.resolver.current(dir.environmentId) === undefined) continue;
+      grouped.set(dir.environmentId, [...(grouped.get(dir.environmentId) ?? []), dir.path]);
+    }
+    const secondary = [...grouped.entries()]
+      .toSorted(([left], [right]) => left.localeCompare(right))
+      .map(([environmentId, paths]): EnvironmentTarget => ({
+        environmentId,
+        primary: false,
+        cwd: paths[0],
+        additionalDirs: paths.length > 1 ? paths.slice(1) : undefined,
+      }));
     return [primary, ...secondary];
   }
 
@@ -168,7 +181,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
       isAvailable: (required = []) => this.isReadyFor(binding, required),
       acquire: (required = []) => this.resolver.acquire(binding(), required),
       acquireWhenReady: async (required = []) => this.resolver.acquireWhenReady(binding(), required),
-      workspaceRoots: () => this.rootsOf(binding(), target.primary),
+      workspaceRoots: () => this.rootsOf(binding(), target.primary, target.additionalDirs),
     };
   }
 
@@ -177,7 +190,8 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
   }
 
   workspaceRoots(): EnvironmentWorkspaceRoots {
-    return this.rootsOf(this.binding.current, true);
+    const primary = this.targets().find((target) => target.primary);
+    return this.rootsOf(this.binding.current, true, primary?.additionalDirs);
   }
 
   isAvailable(required: readonly EnvironmentCapability[] = []): boolean {
@@ -201,7 +215,7 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     }
   }
 
-  private rootsOf(binding: EnvironmentBinding, primary: boolean): EnvironmentWorkspaceRoots {
+  private rootsOf(binding: EnvironmentBinding, primary: boolean, additionalDirs: readonly string[] = []): EnvironmentWorkspaceRoots {
     let workDir = binding.cwd;
     if (workDir === undefined && binding.environmentId !== LOCAL_ENVIRONMENT_ID) {
       try {
@@ -215,11 +229,11 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
       if (workDir === undefined) {
         throw new EnvironmentError('environment.unavailable', `environment ${binding.environmentId} has no working directory until it connects`);
       }
-      return { workDir, additionalDirs: [] };
+      return { workDir, additionalDirs };
     }
     return {
       workDir: workDir ?? this.session.cwd,
-      additionalDirs: this.sessionState.get(workspaceContextAdditionalDirsKey),
+      additionalDirs: [...new Set([...this.sessionState.get(workspaceContextAdditionalDirsKey), ...additionalDirs])],
     };
   }
 

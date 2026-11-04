@@ -2,7 +2,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import type { EnvironmentAccess, EnvironmentTarget } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID, type EnvironmentAccess, type EnvironmentTarget } from '#/environment/environment';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { ISessionEnvironmentMounts, type EnvironmentMount } from '#/session/environmentMounts/environmentMounts';
 
@@ -59,24 +59,37 @@ export class AgentEnvironmentRosterService extends Disposable implements IAgentE
     });
     const describe = async (target: EnvironmentTarget): Promise<RosterEntry> => {
       const label = `\`${target.environmentId}\``;
-      if (target.primary) return entry(target, [`- ${label} (primary): working directory ${environment.workspaceRoots().workDir}`]);
+      const primaryAdditionalDirs = target.primary && target.environmentId !== LOCAL_ENVIRONMENT_ID ? (target.additionalDirs ?? []) : [];
+      if (target.primary && primaryAdditionalDirs.length === 0) {
+        return entry(target, [`- ${label} (primary): working directory ${environment.workspaceRoots().workDir}`]);
+      }
       let pending = mounted.get(target.environmentId);
       const handle = environment.handle(target);
       if (pending === undefined && handle.isAvailable()) {
         const cwd = connectedCwd(handle);
         if (cwd !== undefined) {
-          pending = { target, cwd, mount: mounts.mount(target.environmentId, cwd) };
+          pending = { target, cwd, mount: mounts.mount(target.environmentId, cwd, target.additionalDirs) };
           mounted.set(target.environmentId, pending);
         }
       }
-      if (pending === undefined) return entry(target, [`- ${label}: working directory ${target.cwd}; not connected yet`]);
+      const role = target.primary ? ' (primary)' : '';
+      if (pending === undefined) {
+        return entry(target, [
+          `- ${label}${role}: working directory ${target.cwd}; not connected yet`,
+          ...primaryAdditionalDirs.map((path) => `  - additional directory ${path}; not connected yet`),
+        ]);
+      }
       const mount = await pending.mount;
       if (mount.status === 'failed') {
-        return entry(target, [`- ${label}: working directory ${pending.cwd}; its AGENTS.md files and skills could not be loaded: ${mount.error}`]);
+        return entry(target, [`- ${label}${role}: working directory ${pending.cwd}; its AGENTS.md files and skills could not be loaded: ${mount.error}`]);
       }
       return entry(
         target,
-        [`- ${label}: working directory ${pending.cwd}`, ...mount.agentsMdPaths.map((path) => `  - AGENTS.md: ${path}`)],
+        [
+          `- ${label}${role}: working directory ${pending.cwd}`,
+          ...primaryAdditionalDirs.map((path) => `  - additional directory ${path}`),
+          ...mount.agentsMdPaths.map((path) => `  - AGENTS.md: ${path}`),
+        ],
         mount.agentsMdPaths.length > 0,
       );
     };
@@ -84,11 +97,12 @@ export class AgentEnvironmentRosterService extends Disposable implements IAgentE
       reminder.register<RosterDisclosure>(ENVIRONMENT_ROSTER_REMINDER_VARIANT, async ({ lastInjection, lastDisclosure }) => {
         const targets = environment.targets();
         for (const [environmentId, pending] of mounted) {
-          if (targets.some((target) => target.environmentId === environmentId && target.cwd === pending.target.cwd)) continue;
+          const current = targets.find((target) => target.environmentId === environmentId && target.cwd === pending.target.cwd);
+          if (current !== undefined && JSON.stringify(current.additionalDirs ?? []) === JSON.stringify(pending.target.additionalDirs ?? [])) continue;
           mounted.delete(environmentId);
           mounts.unmount(environmentId, pending.mount);
         }
-        if (targets.length < 2) {
+        if (targets.length < 2 && (targets[0]?.environmentId === LOCAL_ENVIRONMENT_ID || (targets[0]?.additionalDirs?.length ?? 0) === 0)) {
           if (lastInjection === undefined || lastDisclosure === SINGLE_ENVIRONMENT_DISCLOSURE) return undefined;
           return {
             content: `Only the primary environment \`${targets[0]!.environmentId}\` is available now. Tools no longer take an \`environment\` argument.`,

@@ -205,6 +205,101 @@ describe('server-v2 /api/v1 fs routes', () => {
     }
   });
 
+  it('routes every project directory by environment and keeps session primaries stable', async () => {
+    const remoteA = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-a-')));
+    const remoteB = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-b-')));
+    await writeFile(join(remoteA, 'selected.txt'), 'remote-a');
+    await writeFile(join(remoteB, 'selected.txt'), 'remote-b');
+    await writeFile(join(work!, 'selected.txt'), 'local');
+    git(remoteB, 'init');
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
+      id: 'multi-root-provider',
+      attach: async (host) => {
+        const environment = Object.assign(
+          new FakeEnvironment(
+            { environmentId: 'devbox', generation: 'devbox-generation' },
+            { capabilities: ['fs', 'process'] },
+          ),
+          { fs: new HostFileSystem(), process: new HostProcessService() },
+        );
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
+    try {
+      const created = await fetch(`${base}/api/v1/workspaces`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({
+          name: 'multi-env',
+          directories: [
+            { environment_id: 'devbox', path: remoteA },
+            { environment_id: 'devbox', path: remoteB },
+            { environment_id: 'local', path: work },
+          ],
+        }),
+      } as never);
+      const workspace = (await created.json()) as Envelope<{ id: string; primary_environment_id: string; directories: { environment_id: string; path: string }[] }>;
+      expect(workspace.code).toBe(0);
+      expect(workspace.data.primary_environment_id).toBe('devbox');
+      expect(workspace.data.directories).toHaveLength(3);
+      const sessionResponse = await fetch(`${base}/api/v1/sessions`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ workspace_id: workspace.data.id }),
+      } as never);
+      const session = (await sessionResponse.json()) as Envelope<{ id: string }>;
+      expect(session.code).toBe(0);
+
+      const primaryRead = await postFs<{ content: string }>(session.data.id, 'read', { path: 'selected.txt' });
+      expect(primaryRead.data.content).toBe('remote-a');
+      const secondaryTarget = { environment_id: 'devbox', environment_cwd: remoteB };
+      const secondaryRead = await postFs<{ content: string }>(session.data.id, 'read', { path: 'selected.txt', ...secondaryTarget });
+      expect(secondaryRead.data.content).toBe('remote-b');
+      const localRead = await postFs<{ content: string }>(session.data.id, 'read', {
+        path: 'selected.txt',
+        environment_id: 'local',
+        environment_cwd: work,
+      });
+      expect(localRead.data.content).toBe('local');
+      const status = await postFs<{ branch: string }>(session.data.id, 'git_status', secondaryTarget);
+      expect(status.code).toBe(0);
+      const download = await fetch(`${base}/api/v1/sessions/${session.data.id}/fs/selected.txt:download?environment_id=devbox&environment_cwd=${encodeURIComponent(remoteB)}`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      expect(await download.text()).toBe('remote-b');
+      const rejected = await postFs<null>(session.data.id, 'read', {
+        path: 'selected.txt',
+        environment_id: 'devbox',
+        environment_cwd: `${remoteB}/unmounted`,
+      });
+      expect(rejected.code).toBe(ErrorCode.VALIDATION_FAILED);
+
+      const promoted = await fetch(`${base}/api/v1/workspaces/${workspace.data.id}`, {
+        method: 'PATCH',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({
+          directories: [
+            { environment_id: 'devbox', path: remoteB },
+            { environment_id: 'devbox', path: remoteA },
+            { environment_id: 'local', path: work },
+          ],
+        }),
+      } as never);
+      const promotedBody = (await promoted.json()) as Envelope<{ id: string }>;
+      expect(promotedBody.code).toBe(0);
+      const environment = await fetch(`${base}/api/v1/sessions/${session.data.id}/environment`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      const binding = (await environment.json()) as Envelope<{ environment_id: string; cwd: string }>;
+      expect(binding.data.environment_id).toBe('devbox');
+      expect(binding.data.cwd).toBe(remoteA);
+    } finally {
+      await provider.dispose();
+      await Promise.all([remoteA, remoteB].map((path) => rm(path, { recursive: true, force: true })));
+    }
+  });
+
   it('fs:read maps a directory to FS_IS_DIRECTORY', async () => {
     const id = await createSession();
     const body = await postFs<null>(id, 'read', { path: '.' });

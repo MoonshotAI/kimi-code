@@ -147,7 +147,7 @@ interface RestoreHook {
 interface MultiEnvironmentOptions {
   readonly enabled?: boolean;
   readonly declarations: readonly string[];
-  readonly mounts?: Readonly<Record<string, string>>;
+  readonly mounts?: Readonly<Record<string, string | readonly string[]>>;
 }
 
 function multiEnvironmentServices(options: MultiEnvironmentOptions | undefined, mounts: EnvironmentMountsStub): {
@@ -169,20 +169,25 @@ function multiEnvironmentServices(options: MultiEnvironmentOptions | undefined, 
 
 interface EnvironmentMountsStub {
   readonly view: WorkspaceEnvironmentDirsView;
-  set(mounts: Readonly<Record<string, string>>): void;
+  set(mounts: Readonly<Record<string, string | readonly string[]>>): void;
 }
 
-function environmentMountsStub(initial: Readonly<Record<string, string>>): EnvironmentMountsStub {
+function environmentMountsStub(initial: Readonly<Record<string, string | readonly string[]>>): EnvironmentMountsStub {
   const changed = new Emitter<void>();
   let dirs: readonly WorkspaceEnvironmentDir[] = [];
-  const set = (mounts: Readonly<Record<string, string>>): void => {
-    dirs = Object.entries(mounts).map(([environmentId, path]) => ({ environmentId, path }));
+  const set = (mounts: Readonly<Record<string, string | readonly string[]>>): void => {
+    dirs = Object.entries(mounts).flatMap(([environmentId, paths]) =>
+      (typeof paths === 'string' ? [paths] : paths).map((path) => ({ environmentId, path })),
+    );
     changed.fire();
   };
   set(initial);
   return {
     view: {
       get dirs() {
+        return dirs;
+      },
+      get directories() {
         return dirs;
       },
       onDidChange: changed.event,
@@ -606,6 +611,23 @@ describe('AgentEnvironmentService multi-environment targets', () => {
     expect(agentEnvironment.workspaceRoots()).toEqual({ workDir: '/workspace', additionalDirs: ['/workspace-extra'] });
   });
 
+  it('groups every mounted directory by environment', () => {
+    const { agentEnvironment } = setup({
+      multiEnvironment: { declarations: ['remote'], mounts: { remote: ['/srv/app', '/srv/shared'] } },
+    });
+
+    expect(agentEnvironment.targets()[1]).toEqual({
+      environmentId: 'remote',
+      primary: false,
+      cwd: '/srv/app',
+      additionalDirs: ['/srv/shared'],
+    });
+    expect(agentEnvironment.handle(agentEnvironment.targets()[1]!).workspaceRoots()).toEqual({
+      workDir: '/srv/app',
+      additionalDirs: ['/srv/shared'],
+    });
+  });
+
   it('offers local beside a remote primary only after local is mounted', () => {
     const unmounted = setup({
       seedBinding: { environmentId: 'remote', cwd: '/srv/app' },
@@ -686,12 +708,12 @@ const ROSTER_GUIDANCE =
   'Skills found in another environment are named `<skill>@<environment>`.';
 
 function stubMounts(results: Record<string, EnvironmentMount> = {}) {
-  const calls: { readonly environmentId: string; readonly cwd: string }[] = [];
+  const calls: { readonly environmentId: string; readonly cwd: string; readonly additionalDirs?: readonly string[] }[] = [];
   const unmounted: string[] = [];
   const mounts: ISessionEnvironmentMounts = {
     _serviceBrand: undefined,
-    mount: (environmentId: string, cwd: string) => {
-      calls.push({ environmentId, cwd });
+    mount: (environmentId: string, cwd: string, additionalDirs?: readonly string[]) => {
+      calls.push({ environmentId, cwd, additionalDirs });
       return Promise.resolve(results[environmentId] ?? { status: 'mounted', agentsMdPaths: [] });
     },
     unmount: (environmentId: string) => {
@@ -826,6 +848,28 @@ describe('AgentEnvironmentRosterService', () => {
       { environmentId: 'remote', cwd: '/srv/app' },
       { environmentId: 'remote', cwd: '/srv/next' },
     ]);
+  });
+
+  it('reloads environment context when an additional directory is added', async () => {
+    const { agentEnvironment, mounts: workspaceMounts } = setup({
+      seedBinding: { environmentId: 'remote', cwd: '/srv/app' },
+      multiEnvironment: { declarations: ['remote'], mounts: { remote: ['/srv/app', '/srv/initial'] } },
+    });
+    const { mounts, calls, unmounted } = stubMounts();
+    const { provide } = rosterProvider(agentEnvironment, mounts);
+    const injected = { role: 'user' as const, content: [] };
+
+    const first = await provide({});
+    workspaceMounts.set({ remote: ['/srv/app', '/srv/shared'] });
+    const changed = await provide({ lastInjection: injected, lastDisclosure: first?.disclosure });
+
+    expect(changed?.content).toContain('additional directory /srv/shared');
+    expect(unmounted).toEqual(['remote']);
+    expect(calls[1]).toEqual({
+      environmentId: 'remote',
+      cwd: '/srv/app',
+      additionalDirs: ['/srv/shared'],
+    });
   });
 
   it('reports an environment whose project context could not be loaded', async () => {

@@ -5,7 +5,7 @@ import { Emitter, type Event } from '#/_base/event';
 import type { ILogService } from '#/_base/log/log';
 import { workspaceRootKey } from '#/_base/utils/workdir-slug';
 import type { IEnvironmentService } from '#/app/environment/environment';
-import type { IWorkspaceService, Workspace, WorkspaceEnvironmentDir } from '#/app/workspace/workspace';
+import { IWorkspaceService, type Workspace, type WorkspaceEnvironmentDir, workspaceDirectories } from '#/app/workspace/workspace';
 import type { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { normalizeRemoteCwd, requireEnvironmentDirectory } from '#/environment/environmentDefaults';
@@ -41,9 +41,13 @@ export class WorkspaceEnvironmentDirsService extends Disposable implements IWork
   }
 
   get dirs(): readonly WorkspaceEnvironmentDir[] {
+    return this.directories.filter((dir) => dir.environmentId !== LOCAL_ENVIRONMENT_ID);
+  }
+
+  get directories(): readonly WorkspaceEnvironmentDir[] {
     return [
       ...this.registryDirs,
-      ...this.ephemeralDirs.filter((dir) => !this.registryDirs.some((kept) => kept.environmentId === dir.environmentId)),
+      ...this.ephemeralDirs.filter((dir) => !this.registryDirs.some((kept) => kept.environmentId === dir.environmentId && kept.path === dir.path)),
     ];
   }
 
@@ -56,20 +60,14 @@ export class WorkspaceEnvironmentDirsService extends Disposable implements IWork
       environmentId: input.environmentId,
       path: normalizeEnvironmentDir(input.environmentId, input.path),
     };
-    const existing = this.dirs.find((kept) => kept.environmentId === dir.environmentId);
-    if (existing !== undefined && existing.path !== dir.path) {
-      throw new EnvironmentError(
-        'environment.conflict',
-        `environment ${dir.environmentId} already has directory ${existing.path} in this workspace`,
-      );
-    }
-    const persisted = this.registryDirs.some((kept) => kept.environmentId === dir.environmentId);
-    if (existing !== undefined && (persisted || input.persist !== true)) return existing;
+    const existing = this.directories.some((kept) => kept.environmentId === dir.environmentId && kept.path === dir.path);
+    const persisted = this.registryDirs.some((kept) => kept.environmentId === dir.environmentId && kept.path === dir.path);
+    if (existing && (persisted || input.persist !== true)) return dir;
     await requireEnvironmentDirectory(this.environments, dir.environmentId, dir.path);
     if (input.persist === true) {
       const target = (await this.record()) ?? (await this.workspaces.createOrTouch(this.context.cwd));
-      await this.workspaces.update(target.id, { environmentDirs: [...(target.environmentDirs ?? []), dir] });
-      this.ephemeralDirs = this.ephemeralDirs.filter((kept) => kept.environmentId !== dir.environmentId);
+      await this.workspaces.update(target.id, { directories: [...workspaceDirectories(target), dir] });
+      this.ephemeralDirs = this.ephemeralDirs.filter((kept) => kept.environmentId !== dir.environmentId || kept.path !== dir.path);
       await this.reloadFromRegistry();
       return dir;
     }
@@ -79,7 +77,8 @@ export class WorkspaceEnvironmentDirsService extends Disposable implements IWork
   }
 
   private async reloadFromRegistry(): Promise<void> {
-    const next = (await this.record())?.environmentDirs ?? [];
+    const record = await this.record();
+    const next = record === undefined ? [] : workspaceDirectories(record);
     if (sameDirs(this.registryDirs, next)) return;
     this.registryDirs = next;
     this.changeEmitter.fire();

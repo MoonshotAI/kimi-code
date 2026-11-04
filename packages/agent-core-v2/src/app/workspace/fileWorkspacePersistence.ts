@@ -101,6 +101,11 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
           delete merged['environment_dirs'];
         }
         merged['root'] = ws.root;
+        if (ws.primaryEnvironmentId !== undefined && ws.primaryEnvironmentId !== 'local') {
+          merged['primary_environment_id'] = ws.primaryEnvironmentId;
+        } else {
+          delete merged['primary_environment_id'];
+        }
         merged['name'] = ws.name;
         merged['kind'] = ws.kind;
         merged['created_at'] = new Date(ws.createdAt).toISOString();
@@ -241,6 +246,7 @@ function parseProjectsDocument(value: unknown): {
     workspaces.push({
       id,
       root: entry.root,
+      primaryEnvironmentId: entry.primary_environment_id,
       name: entry.name,
       kind: entry.kind === 'managed' ? 'managed' : 'implicit',
       additionalDirs: entry.additional_dirs ?? [],
@@ -360,6 +366,7 @@ function sanitizeEntry(value: unknown, strict = false): PersistedWorkspaceEntry 
     : undefined;
   return {
     root: v.root,
+    primary_environment_id: typeof v.primary_environment_id === 'string' ? v.primary_environment_id : undefined,
     name: v.name,
     kind: typeof v.kind === 'string' ? v.kind : undefined,
     additional_dirs: additionalDirs,

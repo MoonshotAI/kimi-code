@@ -633,6 +633,7 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `GET /api/v1/sessions/{session_id}/goal` | Current goal snapshot (`null` when none) |
 | `GET /api/v1/sessions/{session_id}/warnings` | Session-level warnings |
 | `GET /api/v1/sessions/{session_id}/environment` | Read the main agent's environment binding |
+| `GET /api/v1/environments` | List configured execution environments and their connection status |
 | `GET /api/v1/sessions/{session_id}/environments` | List the environments registered for the session workspace |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream, not enveloped) |
 | `GET /api/v1/sessions/{session_id}/snapshot` | Full snapshot for client rebuilds (with `as_of_seq` and `epoch`) |
@@ -930,6 +931,12 @@ On success, `data` is `{ workspace_id, environment_id, cwd? }`; `cwd` is the wor
 
 - `40401`: session not found
 
+#### `GET /api/v1/environments`
+
+Lists configured execution environments and their current connection status. Clients can use this endpoint when choosing a project's remote directory.
+
+On success, `data` is `{ environments }`. Each entry is `{ environment_id, type, status, connect_error? }` with `type` one of `local` / `ssh` / `docker` / `command` and `status` one of `pending` / `connecting` / `ready` / `disconnected` / `disposed`; `pending` means no live connection and no observed failure (never connected), and `connect_error` carries the recorded failure reason for a `disconnected` entry.
+
 #### `GET /api/v1/sessions/{session_id}/environments`
 
 Lists the environments available to the session.
@@ -938,7 +945,7 @@ Lists the environments available to the session.
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ environments }`. Each `environments` entry is `{ environment_id, type, status, connect_error? }` with `type` one of `local` / `ssh` / `docker` / `command` and `status` one of `pending` / `connecting` / `ready` / `disconnected` / `disposed`; `pending` means no live connection and no observed failure (never connected), and `connect_error` carries the recorded failure reason for a `disconnected` entry.
+On success, `data` has the same shape as `GET /api/v1/environments`.
 
 - `40401`: session not found
 
@@ -1513,10 +1520,12 @@ Every endpoint that returns a workspace uses this wire shape. Registration and u
 | Field | Type | Description |
 | --- | --- | --- |
 | `id` | string | Workspace id: `wd_<slug>_<hash12>` for implicit registration (CLI/VS Code entering a directory), `wm_<uuid>` when created via `POST /api/v1/workspaces` |
-| `root` | string | Absolute path of the primary directory |
+| `root` | string | Absolute path of the primary directory on its environment |
+| `primary_environment_id` | string | Environment of the primary directory; `local` for older projects without an explicit binding |
+| `directories` | `{ environment_id, path }[]` | Complete ordered project directory list, 1–65 entries. The first entry is primary. Each entry identifies a directory on its own environment, and the same path may appear under different environment ids |
 | `name` | string | Display name, 1–100 characters; defaults to the primary directory's base name |
 | `kind` | string | Workspace kind: `managed` (explicitly created, `wm_` id; sessions do not merge the project `local.toml`) or `implicit` (registered by directory, `wd_` id; sessions merge the project `local.toml` for legacy compatibility) |
-| `additional_dirs` | string[] | Registry-managed extra source folders as absolute paths (excludes project `local.toml` and ephemeral sources) |
+| `additional_dirs` | string[] | Local additional source folders, retained for compatibility. This is a projection of the local entries in `directories`, excluding project `local.toml` and ephemeral sources |
 | `created_at` | string | Registration time, ISO 8601 |
 | `last_opened_at` | string | Last time the workspace was opened or re-registered, ISO 8601 |
 | `session_count` | integer | Number of sessions in the workspace |
@@ -1531,39 +1540,43 @@ On success, `data` is `{ items }` where each item is [the workspace object](#the
 
 Registers a new workspace and returns it. Every call creates a fresh entry (`wm_<uuid>` id) — even when the same path is already another workspace's primary directory, entries are never folded and no warning is issued. Clients retrying a submission (network retry, double click) should send the same `idempotency_key`; the server dedupes on the key and returns the entry created by the first call.
 
+Use `root + additional_dirs` for a local workspace, or `directories` for an environment-aware project. `directories` takes precedence when both forms are present.
+
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `root` | body | string | **Required.** Absolute path of an existing directory, used as the primary directory |
+| `root` | body | string | Absolute path of an existing local directory, used as the primary directory. Required when `directories` is omitted |
+| `directories` | body | `{ environment_id, path }[]` | Complete ordered directory list, 1–65 entries. The first entry is primary and may be remote. Each path must be absolute and exist on its environment. Duplicate `(environment_id, path)` pairs are rejected; one environment may contribute multiple directories |
 | `name` | body | string | Display name, 1–100 characters. Default the primary directory's base name |
-| `additional_dirs` | body | string[] | Extra source folders. Each item resolves like `add-dir` (absolute, relative to the primary directory, or `~` expansion), must exist and be a directory, and must not duplicate the primary directory or another item; at most 64 items |
+| `additional_dirs` | body | string[] | Extra local source folders. Each item resolves like `add-dir` (absolute, relative to the primary directory, or `~` expansion), must exist and be a directory, and must not duplicate the primary directory or another item; at most 64 items |
 | `idempotency_key` | body | string | Client-generated idempotency key, 1–200 characters. Retries with the same key return the workspace created by the first call |
 
 On success, `data` is [the workspace object](#the-workspace-object).
 
-- `40001`: `root` is missing or not an absolute path, or another request validation failure (`details` lists the field)
-- `40006`: `additional_dirs` contains duplicates or the primary directory itself. `msg` is `Duplicate source folder: <actual path>`; `details` is `[{ "path": "additional_dirs.N", "directory": "<resolved absolute path>" }]`, where `path` locates the request field and `directory` is the duplicate directory
-- `40409`: `root` or a path in `additional_dirs` does not exist or is not a directory
+- `40001`: both `root` and `directories` are missing, `root` is not an absolute path, or another request validation failure (`details` lists the field)
+- `40006`: duplicate entries. `msg` is `Duplicate source folder: <actual path>`; `details` is `[{ "path": "additional_dirs.N", "directory": "<resolved absolute path>" }]`, where `path` locates the request field and `directory` is the duplicate directory
+- `40409`: a directory does not exist or is not a directory on the selected environment, or its environment is unavailable
 
 #### `PATCH /api/v1/workspaces/{workspace_id}`
 
-Updates a workspace's display name and/or source folders. `additional_dirs` uses whole-list replace semantics — submit the full edited list; omitting the field keeps the current list; the primary directory never changes. At least one of `name` or `additional_dirs` is required.
+Updates a workspace's display name and/or source folders. `directories` and `additional_dirs` use whole-list replace semantics; omitting a field keeps the corresponding current value. With `directories`, submit the complete ordered list, including the primary entry first. This can replace the primary directory, including with a remote directory; the workspace id and session bucket stay unchanged. The legacy `additional_dirs` form changes local additional directories only. At least one of `name`, `directories`, or `additional_dirs` is required.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **Required.** Workspace id |
 | `name` | body | string | New display name, 1–100 characters |
-| `additional_dirs` | body | string[] | Full replacement list of extra source folders, resolved and validated like `POST /api/v1/workspaces` |
+| `directories` | body | `{ environment_id, path }[]` | Full replacement ordered directory list, validated like `POST /api/v1/workspaces` |
+| `additional_dirs` | body | string[] | Full replacement list of local extra source folders, resolved and validated like `POST /api/v1/workspaces` |
 
 On success, `data` is [the workspace object](#the-workspace-object).
 
-- `40001`: both fields are missing, or another request validation failure (`details` lists each field)
-- `40006`: duplicate entries or an entry equal to the primary directory; `msg`, `details.path`, and `details.directory` have the same meaning as for `POST /api/v1/workspaces`
-- `40409`: a path in `additional_dirs` does not exist or is not a directory
+- `40001`: all fields are missing, or another request validation failure (`details` lists each field)
+- `40006`: duplicate entries; `msg`, `details.path`, and `details.directory` have the same meaning as for `POST /api/v1/workspaces`
+- `40409`: a directory does not exist or is not a directory on the selected environment, or its environment is unavailable
 - `40410`: workspace not found
 
 #### `POST /api/v1/workspaces/{workspace_id}/primary`
 
-Promotes a source folder in the workspace's dir set to the primary directory. The swap is atomic: the path becomes the new `root` and the previous primary moves into `additional_dirs`; the workspace id and session bucket are unchanged, and all sessions are kept. After the swap, additional directories coming from the previous primary's `local.toml` are no longer merged (`local.toml` follows the primary directory).
+Promotes a local source folder in the workspace's dir set to the primary directory. The swap is atomic: the path becomes the new `root` and the previous primary moves into `additional_dirs`; the workspace id and session bucket are unchanged, and all sessions are kept. After the swap, additional directories coming from the previous primary's `local.toml` are no longer merged (`local.toml` follows the primary directory). To promote a remote directory or replace the entire ordered directory list, use `PATCH` with `directories`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1638,7 +1651,11 @@ On success, `data` is `{ trusted }`, containing the effective trust state after 
 
 ### File system
 
-In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{action}` with JSON bodies; actions are `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `git_status:batch` / `pull_request` / `pull_request:batch` / `diff` / `open` / `open-in` / `reveal`. Actions run on the environment the session was created on; `open`, `open-in`, and `reveal` only work for sessions on the `local` environment. In addition:
+In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{action}` with JSON bodies; actions are `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `git_status:batch` / `pull_request` / `pull_request:batch` / `diff` / `open` / `open-in` / `reveal`. Actions run on the session's primary environment by default. Directory listing, reading, searching, Git and pull-request status, and diffs accept the optional fields `environment_id` and `environment_cwd` to select an environment and one of its mounted project directories. Supply both fields together; the directory must be mounted in the project. `open`, `open-in`, and `reveal` only work on the `local` environment.
+
+The session-less `POST /api/v1/workspace/fs:list`, `fs:search`, and `fs:suggest` endpoints accept the same target fields in their JSON bodies. The file download endpoint accepts them as query parameters. Other host-level file picker endpoints continue to operate on the local host.
+
+In addition:
 
 | Method and path | Description |
 | --- | --- |

@@ -9,6 +9,7 @@ export interface WorkspaceAddEnvironmentDirInput {
 
 export interface WorkspaceEnvironmentDirsView {
   readonly dirs: readonly WorkspaceEnvironmentDir[];
+  readonly directories?: readonly WorkspaceEnvironmentDir[];
   readonly onDidChange: Event<void>;
 }
 

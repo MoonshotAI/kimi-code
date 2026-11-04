@@ -16,6 +16,7 @@ export interface EnvironmentBinding {
 
 export interface EnvironmentTarget extends EnvironmentBinding {
   readonly primary: boolean;
+  readonly additionalDirs?: readonly string[];
 }
 
 export function environmentBindingId(environmentId: string, cwd?: string): string {

@@ -217,7 +217,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
 
       const registry = core.accessor.get(IWorkspaceService);
       let workDir: string;
-      let bucket: { readonly id: string; readonly root: string } | undefined;
+      let bucket: { readonly id: string; readonly root: string; readonly primaryEnvironmentId?: string } | undefined;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
         if (workspace === undefined) {
@@ -255,12 +255,15 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           bucket === undefined
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
+        const environmentId = body.environment_id ?? bucket?.primaryEnvironmentId;
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: resolved.id,
           workDir,
-          environmentId: body.environment_id,
-          environmentCwd: body.environment_cwd,
-          ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
+          environmentId,
+          environmentCwd: environmentId !== undefined && environmentId !== 'local' && bucket !== undefined
+            ? workDir
+            : body.environment_cwd,
+          ensureMainAgent: environmentId !== undefined && environmentId !== 'local',
         });
         if (typeof body.title === 'string') {
           await handle.accessor.get(ISessionMetadata).setTitle(body.title);
