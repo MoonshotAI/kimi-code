@@ -1010,6 +1010,7 @@ interface CapabilityChangedPayload {
     percent?: number;
     error?: string;
     note?: string;
+    confirmationRequired?: 'stop-processes';
   };
 }
 
@@ -1022,6 +1023,9 @@ function capabilityChangedPayload(payload: unknown): CapabilityChangedPayload | 
   const running = (install as { running?: unknown }).running;
   if (typeof running !== 'boolean') return undefined;
   const out: CapabilityChangedPayload['install'] = { running };
+  if ((install as { confirmationRequired?: unknown }).confirmationRequired === 'stop-processes') {
+    out.confirmationRequired = 'stop-processes';
+  }
   for (const key of ['step', 'error', 'note'] as const) {
     const value = (install as Record<string, unknown>)[key];
     if (typeof value === 'string') out[key] = value;

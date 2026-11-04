@@ -1,5 +1,4 @@
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,12 +14,10 @@ import type { AppState } from '#/tui/types';
 
 const gitStatusMocks = vi.hoisted(() => ({
   createGitStatusCache: vi.fn(),
-  actual: null as null | typeof import('#/utils/git/git-status').createGitStatusCache,
 }));
 
 vi.mock('#/utils/git/git-status', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/utils/git/git-status')>();
-  gitStatusMocks.actual = actual.createGitStatusCache;
   return { ...actual, createGitStatusCache: gitStatusMocks.createGitStatusCache };
 });
 
@@ -32,6 +29,15 @@ beforeEach(() => {
     dispose: vi.fn(),
   }));
 });
+
+const gitSource = {
+  status: async () => null,
+  pullRequest: async () => null,
+};
+
+function plainText(text: string): string {
+  return text.replaceAll(/\[[0-9;]*m/g, '');
+}
 
 const TRUECOLOR_PATTERN = /\[38;2;(\d+);(\d+);(\d+)m/g;
 
@@ -99,9 +105,67 @@ describe('FooterComponent', () => {
     }));
     const footer = new FooterComponent(appState);
     footer.refreshGitStatus();
+    expect(gitStatusMocks.createGitStatusCache).not.toHaveBeenCalled();
+    footer.setGitBinding((state) => ({ key: state.sessionId, source: gitSource }));
+    footer.refreshGitStatus();
     expect(refresh).toHaveBeenCalledTimes(1);
     footer.dispose();
     expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the git cache through a disconnect and refreshes it once the environment is ready again', () => {
+    const refresh = vi.fn();
+    const dispose = vi.fn();
+    gitStatusMocks.createGitStatusCache.mockImplementation(() => ({ getStatus: () => null, refresh, dispose }));
+    const remote = (status: 'ready' | 'disconnected'): AppState => ({
+      ...appState,
+      environment: { environmentId: 'dev-box', type: 'ssh', status },
+    });
+    const footer = new FooterComponent(remote('ready'));
+    footer.setGitBinding((state) => ({ key: state.sessionId, source: gitSource }));
+
+    footer.setState(remote('disconnected'));
+    expect(dispose).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+
+    footer.setState(remote('ready'));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    footer.setState(remote('ready'));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenCalledTimes(1);
+    footer.dispose();
+  });
+
+  it('keeps the git cache for the same binding key and replaces it on a new one', () => {
+    const dispose = vi.fn();
+    gitStatusMocks.createGitStatusCache.mockImplementation(() => ({
+      getStatus: () => ({
+        branch: 'main',
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        diffAdded: 0,
+        diffDeleted: 0,
+        pullRequest: null,
+      }),
+      refresh: vi.fn(),
+      dispose,
+    }));
+    const footer = new FooterComponent(appState);
+    footer.setGitBinding((state) => (state.sessionId === 'none' ? null : { key: state.sessionId, source: gitSource }));
+    expect(plainText(footer.render(160)[0] ?? '')).toContain('main');
+
+    footer.setState({ ...appState, model: 'other' });
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenCalledTimes(1);
+
+    footer.setState({ ...appState, sessionId: 'ses-2' });
+    expect(gitStatusMocks.createGitStatusCache).toHaveBeenCalledTimes(2);
+    expect(dispose).toHaveBeenCalledTimes(1);
+
+    footer.setState({ ...appState, sessionId: 'none' });
+    expect(dispose).toHaveBeenCalledTimes(2);
+    expect(plainText(footer.render(160)[0] ?? '')).not.toContain('main');
+    footer.dispose();
   });
 
   const previousChalkLevel = chalk.level;
@@ -385,17 +449,7 @@ describe('FooterComponent environment slot', () => {
   }
 
   beforeEach(() => {
-    // A real repo so the local git slot has a branch to render when visible.
-    gitStatusMocks.createGitStatusCache.mockImplementation((workDir, options) =>
-      gitStatusMocks.actual!(workDir, options),
-    );
     repoDir = mkdtempSync(join(tmpdir(), 'kimi-footer-environment-'));
-    spawnSync('git', ['init', '-b', 'main'], { cwd: repoDir });
-    writeFileSync(join(repoDir, 'a.txt'), 'a');
-    spawnSync('git', ['add', '.'], { cwd: repoDir });
-    spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'init'], {
-      cwd: repoDir,
-    });
   });
 
   afterEach(() => {
@@ -406,12 +460,11 @@ describe('FooterComponent environment slot', () => {
     return new FooterComponent({ ...appState, workDir: repoDir, environment });
   }
 
-  it('renders the remote identifier ahead of the cwd without a type prefix and hides the local git slot', () => {
+  it('renders the remote identifier ahead of the cwd without a type prefix', () => {
     const ssh = footerWith({ environmentId: 'dev-box', type: 'ssh', status: 'ready' });
     const sshRendered = line1(ssh);
     expect(sshRendered).toContain('dev-box');
     expect(sshRendered.indexOf('dev-box')).toBeLessThan(sshRendered.indexOf('kimi-footer-environment'));
-    expect(sshRendered).not.toContain('main');
     ssh.dispose();
 
     const command = footerWith({ environmentId: 'kimi-dev', type: 'command', status: 'ready' });

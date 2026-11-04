@@ -5,15 +5,20 @@ import path from 'node:path';
 
 import { kimiCdnContentUrl } from '@moonshot-ai/kimi-code-oauth';
 
+import { Error2 } from '#/errors';
+
 import { installResolvedMarketplacePlugin } from '../../plugin/pluginService';
+import { CapabilityErrors } from '../errors';
 import { downloadToFile, runCommand } from '../host';
 import type {
   CapabilityDetectResult,
   CapabilityEntry,
   CapabilityInstallReporter,
+  CapabilityInstallOptions,
   CapabilityStep,
 } from '../types';
 import type { CapabilityEntryContext } from './context';
+import { findWindowsCuProcesses, manageWindowsCuProcesses } from './windowsCuProcesses';
 
 const MAC_PLUGIN_ID = 'kimi-cu';
 const WINDOWS_PLUGIN_ID = 'kimi-cu-win';
@@ -678,7 +683,7 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
           throw error;
         }
         throw new Error(
-          'Kimi Computer Use plugin files are still in use by the current Kimi Code process. Restart Kimi Code, then install again.',
+          'Kimi Computer Use plugin files are still in use. Close other applications using the plugin, then install again.',
           { cause: error },
         );
       }
@@ -741,7 +746,27 @@ function createWindowsKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry 
       'Windows GUI automation — read app UIs and click, type, scroll, and drag in desktop apps.',
     supported,
     detect,
-    install,
+    install: async (report, options: CapabilityInstallOptions = {}) => {
+      if (!supported) return install(report);
+      const { powershell, count } = await findWindowsCuProcesses(ctx, [powershellPath, powershell7Path]);
+      function checkProcessConsent(count: number): number {
+        if (count > 0 && options.stopRunningProcesses !== true) {
+          throw new Error2(
+            CapabilityErrors.codes.CAPABILITY_PROCESSES_RUNNING,
+            'Kimi Computer Use processes must be stopped before installation',
+          );
+        }
+        return count;
+      }
+      checkProcessConsent(count);
+      return ctx.plugins.withMcpServersSuspended(WINDOWS_PLUGIN_ID, async () => {
+        if (checkProcessConsent(await manageWindowsCuProcesses(ctx, powershell, false)) > 0) {
+          report('stop-processes');
+          await manageWindowsCuProcesses(ctx, powershell, true);
+        }
+        return install(report);
+      });
+    },
   };
 }
 

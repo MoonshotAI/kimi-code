@@ -172,6 +172,20 @@ describe('ensureRgPath remote environment branch', () => {
     expect(environment.fs!.mkdir).not.toHaveBeenCalled();
   });
 
+  it.each(['x64', 'arm64'])('downloads the target Windows ZIP on a cache miss (%s)', async (osArch) => {
+    const probe = noRgProbe();
+    const environment = remoteEnvironment(`remote-windows-download-${osArch}`, { osKind: 'Windows', pathClass: 'win32', osArch });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, body: bodyFromBuffer(Buffer.from('invalid checksum')) });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(ensureRgPath(probe, { environment, allowCachedFallback: true })).rejects.toThrow(/checksum mismatch/);
+
+    const arch = osArch === 'x64' ? 'x86_64' : 'aarch64';
+    expect(fetchMock.mock.calls[0]?.[0]).toMatch(new RegExp(`ripgrep-15\\.0\\.0-${arch}-pc-windows-msvc\\.zip$`));
+    expect(probe.exec).toHaveBeenCalledWith([String.raw`C:\Users\remote\.kimi-code\bin\rg.exe`, '--version']);
+    expect(environment.fs!.writeBytes).not.toHaveBeenCalled();
+  });
+
   it('keeps the local flow for the local environment', async () => {
     const probe = noRgProbe();
     const environment = new FakeEnvironment(

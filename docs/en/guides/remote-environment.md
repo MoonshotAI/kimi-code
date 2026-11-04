@@ -67,7 +67,7 @@ For the full field reference, see [`environments`](../configuration/config-files
 
 Windows targets use Git Bash for the `Bash` tool, matching local Windows sessions. Install [Git for Windows](https://gitforwindows.org/) and the Windows `kimi` binary on the target. Native PowerShell tool commands and Windows Docker containers are not supported.
 
-For SSH, put the binary on the target account's `PATH` and verify that `ssh windows-dev kimi --version` succeeds without a prompt. Set `remoteBin` to the bare name `kimi` or `kimi.exe`, not an absolute Windows path, so the same invocation works with cmd, PowerShell, or Git Bash as the SSH default shell. Use a native drive path for `defaultCwd`, not a Git Bash path such as `/c/work/project`; UNC paths are not supported. Tool arguments can use lexical drive forms such as `/c/work/file.txt`, but other MSYS paths such as `/tmp`, `/usr`, `/dev`, and `/proc` are rejected because their mounts cannot be confirmed on the target; the controller never runs its local `cygpath` to guess them.
+For SSH, the default executor path is `~/.kimi-code/bin/kimi.exe`, with `~` expanded to the target account's home. You can set `remoteBin` to an absolute Windows path, including paths with spaces. The launcher detects the target before running the executor and supports cmd, Windows PowerShell 5.1, and Git Bash as the SSH default shell. Alternatively, put the binary on the target account's `PATH` and set `remoteBin` to `kimi` or `kimi.exe`; bare names run directly without a platform probe. Use a native drive path for `defaultCwd`, not a Git Bash path such as `/c/work/project`; UNC paths are not supported. Tool arguments can use lexical drive forms such as `/c/work/file.txt`, but other MSYS paths such as `/tmp`, `/usr`, `/dev`, and `/proc` are rejected because their mounts cannot be confirmed on the target; the controller never runs its local `cygpath` to guess them.
 
 ```toml
 [environments.windows-dev]
@@ -103,7 +103,7 @@ Each environment id keeps one connection for the whole process. Workspaces bound
 
 There is **no silent fallback to the local environment** after a drop: a command like `rm` or `git` that was meant for the remote machine must never land on yours. The next tool call opens the pipe again. While the target stays unreachable, tool calls fail with an `environment.unavailable` error. A call that was already in flight on the old connection fails and is not retried on the new connection.
 
-Every connect attempt is bounded to 10 seconds: a target that never answers the handshake fails with an `initialize timed out` error instead of hanging silently, and when the launcher wrote anything to stderr — a stuck password prompt or an `npx` download's progress — the error includes that tail so the cause is visible.
+Each SSH platform probe and the executor handshake has its own 10-second limit. SSH connections using an executor path can run up to two probes before the handshake; bare executable names skip them. A target that never answers the handshake fails with an `initialize timed out` error instead of hanging silently, and when the launcher wrote anything to stderr — a stuck password prompt or an `npx` download's progress — the error includes that tail so the cause is visible.
 
 ## SSH authentication
 
@@ -138,7 +138,7 @@ Host dev-box
 
 The executor is a light build of Kimi Code itself, started as `kimi exec-server` on the target. It only serves filesystem and process requests — it never touches model APIs, credentials, or session state. stdio is the default and only supported transport, so the explicit `kimi exec-server --listen stdio` spelling is equivalent and keeps working.
 
-The default POSIX install path is `~/.kimi-code/bin/kimi` on the target (override it per entry with `remoteBin` when the executor lives elsewhere, for example a preinstalled container image). [Windows targets](#windows-targets) instead use a bare executable name on the target's `PATH`.
+The default POSIX install path is `~/.kimi-code/bin/kimi` on the target (override it per entry with `remoteBin` when the executor lives elsewhere, for example a preinstalled container image). [Windows SSH targets](#windows-targets) default to `~/.kimi-code/bin/kimi.exe`; an absolute Windows path or a bare executable name on the target's `PATH` can override it.
 
 ### Installing the executor
 

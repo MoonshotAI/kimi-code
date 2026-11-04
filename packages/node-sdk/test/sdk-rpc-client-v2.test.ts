@@ -74,6 +74,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
+import { CapabilityService } from '@moonshot-ai/agent-core-v2/app/capability/capabilityService';
 import { ISessionAgentProfileCatalog } from '@moonshot-ai/agent-core-v2/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { attachmentFileSource } from '@moonshot-ai/agent-core-v2/agent/tools/fileReadSource';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
@@ -173,6 +174,36 @@ async function findSessionDir(homeDir: string, sessionId: string): Promise<strin
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
+  it('forwards process-stop authorization through harness and session capability installs', async () => {
+    const status = {
+      id: 'kimi-cu' as const,
+      displayName: 'Kimi Computer Use',
+      description: 'Computer operations on Windows',
+      supported: true,
+      state: 'partial' as const,
+      steps: [],
+      install: { running: false, confirmationRequired: 'stop-processes' as const },
+    };
+    const install = vi.spyOn(CapabilityService.prototype, 'installCapability').mockResolvedValue(status);
+    const { harness, homeDir } = await makeHarness();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const session = new Session({ id: 'capability-test', workDir: homeDir, rpc: client });
+    try {
+      for (const api of [harness, session]) {
+        expect(await api.installCapability('kimi-cu')).toMatchObject({
+          install: { confirmationRequired: 'stop-processes' },
+        });
+        expect(install).toHaveBeenLastCalledWith('kimi-cu', undefined);
+        await api.installCapability('kimi-cu', { stopRunningProcesses: true });
+        expect(install).toHaveBeenLastCalledWith('kimi-cu', { stopRunningProcesses: true });
+      }
+    } finally {
+      install.mockRestore();
+      await client.close();
+      await harness.close();
+    }
+  });
+
   it('loads explicit agent files for native print sessions', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-work-'));
