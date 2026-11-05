@@ -544,6 +544,7 @@ function applyInteractionRequest(state: ConversationState, record: WireRecord, t
   state.interactions[id] = toolCallId;
   const request = record['request'];
   const track = toolTrack(state, toolCallId);
+  if (findToolCall(state, toolCallId)?.item.status === 'ended') delete track.turnId;
   if (kind === 'approval' && findToolCall(state, toolCallId) === undefined) {
     openToolCallAwaitingApproval(state, toolCallId, request, time);
   }

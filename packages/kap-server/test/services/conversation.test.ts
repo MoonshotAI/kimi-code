@@ -373,6 +373,24 @@ describe('conversation fold', () => {
     expect(state.turns[2]?.items.map((item) => item.item_id)).toEqual(['n-c', 'n-c:1']);
   });
 
+  it('attaches an approval to the new call when an ended call of an earlier turn reused its id', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'first'),
+      stepBegin(0, 1, 's1'),
+      toolCall(0, 1, 's1', 'Bash_1', 'Bash', { command: 'ls' }),
+      toolResult('Bash_1', 'ok'),
+      turnEnded(0, 'completed'),
+      turnPrompt(1, 'p2'),
+      userMessage('p2', 'second'),
+      stepBegin(1, 1, 's2'),
+      record('interaction.request', { id: 'i1', kind: 'approval', toolCallId: 'Bash_1', request: { toolName: 'Bash', turnId: 1 } }),
+    ]);
+
+    expect(state.turns[0]?.items[1]).toEqual(expect.not.objectContaining({ interaction_id: expect.anything() }));
+    expect(state.turns[1]?.items[1]).toMatchObject({ item_id: 'Bash_1', stage: 'awaiting_approval', interaction_id: 'i1' });
+  });
+
   it('attaches interactions recorded before the tool call and subagent links to tool items', () => {
     const state = fold([
       turnPrompt(0, 'p1'),
