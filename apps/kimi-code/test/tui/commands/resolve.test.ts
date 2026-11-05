@@ -122,6 +122,34 @@ describe('resolveUserInput', () => {
     ]);
   });
 
+  it('preserves token offsets when the input starts with whitespace', () => {
+    const resolved = resolveUserInput({
+      ...options,
+      input: '  /skill:review',
+      skillVariantPathForCommand: (_commandName, start) =>
+        start === 2 ? '/work/B/review/SKILL.md' : undefined,
+    });
+
+    expect(resolved.activations).toEqual([
+      { skillName: 'review', path: '/work/B/review/SKILL.md', start: 2 },
+    ]);
+  });
+
+  it('excludes the leading builtin when a skill is named btw', () => {
+    const resolved = resolveUserInput({
+      ...options,
+      skillCommandMap: new Map([...options.skillCommandMap, ['skill:btw', 'btw']]),
+      input: '/btw /skill:review',
+      skillVariantPathForCommand: (_commandName, start) =>
+        start === 5 ? '/work/B/review/SKILL.md' : undefined,
+    });
+
+    expect(resolved.intent).toMatchObject({ kind: 'builtin', name: 'btw' });
+    expect(resolved.activations).toEqual([
+      { skillName: 'review', path: '/work/B/review/SKILL.md', start: 5 },
+    ]);
+  });
+
   it('maps returned activations back to their command names', () => {
     const path = '/work/B/review/SKILL.md';
     expect(skillVariantPathsForInput('/review', [{ skillName: 'review', path }], options.skillCommandMap)).toEqual([

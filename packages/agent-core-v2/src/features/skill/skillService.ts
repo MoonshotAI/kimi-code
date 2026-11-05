@@ -179,6 +179,11 @@ export class AgentSkillService implements IAgentSkillService {
     );
     const handle = this.loop.promptHandle(id)!;
     if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
+      if (prepared.length === 1) {
+        void handle.launched.then((turn) => {
+          if (turn?.id !== undefined) this.rememberModelToolParent(prepared[0]!.origin, turn.id);
+        });
+      }
       return { prompt_id: id, created_at: handle.createdAt, state: 'queued', steered: false };
     }
     await Promise.race([handle.launched, handle.completion]);

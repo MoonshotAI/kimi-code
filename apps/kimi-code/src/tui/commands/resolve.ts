@@ -156,11 +156,11 @@ export function resolveUserInput(options: ResolveSlashCommandInput): {
   ) {
     return { intent, activations: [] };
   }
-  const text = options.input.trim();
+  const text = options.input;
   const selectedActivations = extractInlineSkillActivations(text, options.skillCommandMap, {
     includeLeading: true,
     skillVariantPathForCommand: options.skillVariantPathForCommand,
-  });
+  }).filter((activation) => intent.kind !== 'builtin' || activation.start !== 0);
   const tokens = findInlineSkillTokens(text, {
     isKnownSkill: (name) => resolveSkillCommand(options.skillCommandMap, name) !== undefined,
     includeLeading: true,

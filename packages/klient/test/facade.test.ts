@@ -357,6 +357,7 @@ describe('session skills routing', () => {
         description: 'review changes',
         path: '/skills/review/SKILL.md',
         source: 'project',
+        workspaceDir: '/work/B',
       },
     ];
     channel.result = summaries;
