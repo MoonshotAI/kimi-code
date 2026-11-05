@@ -135,6 +135,7 @@ export class SubagentTool implements ISubagentTool {
     @IInstantiationService private readonly instantiationService: IInstantiationService,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
@@ -551,11 +552,16 @@ export class SubagentTool implements ISubagentTool {
 
       if (runInBackground) {
         const output = formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, false);
-        this.tasks.detach(taskId, output);
-        if (detach === undefined) return { output };
+        if (detach !== undefined) {
+          const task = this.tasks.prepareCoreDetach(taskId, toolCallId);
+          if (task !== undefined) this.loop.detachTool(task, output);
+        } else {
+          this.tasks.detach(taskId, output);
+          return { output };
+        }
       }
       if (detach === undefined) {
-        return this.directForegroundResult(taskId, handle, args.description, allowBackground, timeoutMs);
+        return await this.directForegroundResult(taskId, handle, args.description, allowBackground, timeoutMs);
       }
       await this.tasks.wait(taskId, Number.POSITIVE_INFINITY);
       return await this.formatForegroundResult(taskId, handle, timeoutMs);

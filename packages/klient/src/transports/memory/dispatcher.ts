@@ -426,7 +426,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       }
       return agentSkillServiceView(resolved.like as IAgentScopeHandle);
     }
-    if (service === 'agentLoopService') {
+    if (service === 'agentLoopService' || service === 'agentContextMemoryService') {
       if (resolved.kind !== 'agent') {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
       }

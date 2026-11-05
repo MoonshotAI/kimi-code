@@ -4,7 +4,7 @@ import { createControlledPromise } from '@antfu/utils';
 
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -15,7 +15,6 @@ import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSel
 import { LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
 import { toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IAgentLoopService } from '#/agent/loop/loop';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
@@ -229,11 +228,11 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(announcementText).toContain('<tools_added>');
     expect(announcementText).toContain(MCP_ALPHA);
 
-  const requests = wireEvents(ctx, 'llm.request').filter(
-    (event) => (event.args as { kind?: string }).kind === 'loop',
-  );
-  expect(requests.map((request) => (request.args as { toolSelect?: boolean }).toolSelect))
-    .toEqual([true, true, true, true, true, false]);
+    const requests = wireEvents(ctx, 'llm.request').filter(
+      (event) => (event.args as { kind?: string }).kind === 'loop',
+    );
+    expect(requests.map((request) => (request.args as { toolSelect?: boolean }).toolSelect))
+      .toEqual([true, true, true, true, true, false]);
 
     const secondWire = ctx.llmCalls[1]!;
     const schemaMessages = secondWire.history.filter(
@@ -258,12 +257,12 @@ describe('progressive tool disclosure end-to-end', () => {
     }
     expect(historyText(beforePendingSelect.history)).toContain('not applied in this session');
     expect(ctx.get(IAgentToolRegistryService).resolve(inlineName)).toBe(inlineTool);
-    expect(ctx.get(IAgentContextMemoryService).get().filter(
+    expect(ctx.get(IAgentLoopService).history().filter(
       (message) => message.origin?.kind === 'injection' && message.origin.variant === 'tool_update_pending',
     )).toHaveLength(1);
 
     const switchWire = ctx.llmCalls[5]!;
-    expect(ctx.get(IAgentProfileService).data().activeToolNames).toBeUndefined();
+    expect(ctx.get(IAgentLoopService).data().activeToolNames).toBeUndefined();
     expect(ctx.get(IAgentToolSelectService).defaultTools(false).map((tool) => tool.name))
       .toContain(MCP_ALPHA);
     expect(ctx.get(IAgentToolSelectService).defaultTools(false).find((tool) => tool.name === MCP_ALPHA)
@@ -361,7 +360,7 @@ describe('progressive tool disclosure end-to-end', () => {
   });
 
   it('reports select_tools as callable despite a profile allowlist omission, but respects an explicit deny', async () => {
-    ctx.get(IAgentProfileService).update({ activeToolNames: ['Read'] });
+    ctx.get(IAgentLoopService).update({ activeToolNames: ['Read'] });
     ctx.mockNextResponse(selectToolsCall('call_select_self', ['select_tools']));
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select the selection tool' }] });
@@ -376,7 +375,7 @@ describe('progressive tool disclosure end-to-end', () => {
       consecutiveFailures: 0,
     });
 
-    ctx.get(IAgentProfileService).update({ disallowedTools: ['select_tools'] });
+    ctx.get(IAgentLoopService).update({ disallowedTools: ['select_tools'] });
     expect(ctx.get(IAgentToolSelectService).load(['select_tools'])).toMatchObject({
       alreadyCallable: [],
       policyDenied: ['select_tools'],
@@ -384,7 +383,7 @@ describe('progressive tool disclosure end-to-end', () => {
   });
 
   it('answers not-available-in-this-session for a host-denied name', async () => {
-    ctx.get(IAgentProfileService).update({ disallowedTools: ['Automation'] });
+    ctx.get(IAgentLoopService).update({ disallowedTools: ['Automation'] });
 
     ctx.mockNextResponse(selectToolsCall('call_select_1', ['Automation']));
     ctx.mockNextResponse({ type: 'text', text: 'ok' });
@@ -404,7 +403,7 @@ describe('progressive tool disclosure end-to-end', () => {
       source: 'user',
       disclosure: 'deferred',
     });
-    ctx.get(IAgentProfileService).update({ disallowedTools: ['mcp__srv__*'] });
+    ctx.get(IAgentLoopService).update({ disallowedTools: ['mcp__srv__*'] });
     ctx.mockNextResponse(selectToolsCall('call_select_1', [MCP_ALPHA]));
     ctx.mockNextResponse({ type: 'text', text: 'done' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load the announced tool' }] });

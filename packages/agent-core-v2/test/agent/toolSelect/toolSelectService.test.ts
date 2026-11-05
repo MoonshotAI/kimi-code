@@ -28,7 +28,7 @@ import {
 } from '#/agent/loop/loop';
 import { createToolSelectResolver } from '#/agent/loop/toolSelectPolicy';
 import { TurnStarted } from '#/agent/loop/turnEvents';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { StubEffectiveProfileReader } from '../loop/stubs';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -221,9 +221,25 @@ class RecordingEventBus implements IEventBus {
   }
 }
 
-class FakeLoopService implements IAgentLoopService {
+class FakeLoopService extends StubEffectiveProfileReader implements IAgentLoopService {
   readonly _serviceBrand = undefined;
   readonly requester = {} as IAgentLoopService['requester'];
+
+  async start(): Promise<void> {}
+
+  override getModelCapabilities(): ModelCapability {
+    return capabilities;
+  }
+
+  async setProfile(): Promise<void> {}
+
+  async bindProfile(): Promise<void> {}
+
+  async applyBindingSnapshot(): Promise<void> {}
+
+  async setModel(model: string) {
+    return { model };
+  }
 
   history(): readonly ContextMessage[] {
     return [];
@@ -373,9 +389,6 @@ function registerSharedServices(
     scope.agentContext.space._setHistoryProvider(() => contextMemory.history());
   }
   reg.defineInstance(IAgentScopeContext, scope);
-  reg.definePartialInstance(IAgentProfileService, {
-    getModelCapabilities: () => capabilities,
-  });
   reg.definePartialInstance(IAgentToolPolicyService, {
     isToolActive: (name: string) => activeToolNames === undefined || activeToolNames.has(name),
     isToolDenied: (name: string) => deniedToolNames.has(name),
@@ -638,24 +651,24 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
       disposables.add(current.registry.register(current.ix.createInstance(SelectToolsTool), { source: 'builtin' }));
       current.ix.get(IAgentStateService).set(toolSelectKey, JSON.parse(persisted));
     }
-    current.contextMemory.history.push({
+    current.contextMemory.messages.push({
       role: 'system', content: [],
       tools: [{ name: updated.name, description: updated.description, parameters: updated.parameters }],
     }, userMessage('continue'));
-    const history = structuredClone(current.contextMemory.history);
+    const history = structuredClone(current.contextMemory.history());
     const capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
-    const resolved = await resolveWith(current, { messages: current.contextMemory.get(), capabilities });
+    const resolved = await resolveWith(current, { messages: current.contextMemory.history(), capabilities });
     expect(resolved.profile?.tools?.map((tool) => tool.name)).toEqual(['SchemaTool', 'Unchanged']);
     expect(resolved.profile?.tools?.find((tool) => tool.name === updated.name)?.parameters).toEqual(old.parameters);
     expect(resolved.content.messages).toEqual([userMessage('continue')]);
-    expect(current.contextMemory.history).toEqual(history);
+    expect(current.contextMemory.history()).toEqual(history);
     expect(JSON.stringify(current.ix.get(IAgentStateService).get(toolSelectKey))).toBe(persisted);
     expect(current.ix.get(IAgentStateService).get(toolSelectKey).initial?.find((tool) => tool.name === old.name)?.parameters)
       .toEqual(old.parameters);
     expect(current.ix.get(IAgentStateService).get(toolSelectKey).current.find((tool) => tool.name === old.name)?.parameters)
       .toEqual(old.parameters);
     activeToolNames = new Set(['Unchanged']);
-    const filtered = await resolveWith(current, { messages: current.contextMemory.get(), capabilities });
+    const filtered = await resolveWith(current, { messages: current.contextMemory.history(), capabilities });
     expect(filtered.profile?.tools?.map((tool) => tool.name)).toEqual(['Unchanged']);
   });
 
@@ -815,7 +828,7 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     const schema = { name, description: old.description, parameters: old.parameters };
     const earlierCall = toolCall('earlier-call', name);
     h.contextMemory.landAnnouncement(`<tools_added>\n${name}\n</tools_added>`);
-    h.contextMemory.history.push(
+    h.contextMemory.messages.push(
       userMessage('before update'),
       { role: 'assistant', content: [], toolCalls: [earlierCall] },
       { role: 'tool', toolCallId: earlierCall.id, content: [{ type: 'text', text: 'earlier result' }] },
@@ -830,10 +843,10 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     registerMcp(restored, new StubMcpTool(MCP_ALPHA));
     registerUser(restored, new EchoTool('LateTool'));
     restored.ix.get(IAgentStateService).set(toolSelectKey, JSON.parse(persisted));
-    restored.contextMemory.history.push(...structuredClone(h.contextMemory.history));
+    restored.contextMemory.messages.push(...structuredClone(h.contextMemory.history()));
 
     for (const current of [h, restored]) {
-      const resolved = await resolveWith(current, { messages: current.contextMemory.get(), capabilities });
+      const resolved = await resolveWith(current, { messages: current.contextMemory.history(), capabilities });
       const top = resolved.profile?.tools ?? [];
       expect(top.find((tool) => tool.name === name)).toEqual({ ...schema, deferred: undefined });
       expect(top.find((tool) => tool.name === 'Unchanged')).toEqual(before.find((tool) => tool.name === 'Unchanged'));
@@ -884,42 +897,42 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     const original = new StubMcpTool(MCP_ALPHA);
     const registration = registerMcp(h, original);
     await h.sut.prepareForRequest();
-    h.contextMemory.history.push(schemaMessage(MCP_ALPHA));
+    h.contextMemory.messages.push(schemaMessage(MCP_ALPHA));
     registration.dispose();
     registerMcp(h, new StubMcpTool(MCP_ALPHA, 'ok', REQUIRED_PAYLOAD_PARAMETERS));
     await h.sut.prepareForRequest();
-    expect(h.sut.shapeHistory(h.contextMemory.get())).toHaveLength(1);
+    expect(h.sut.shapeHistory(h.contextMemory.history())).toHaveLength(1);
     const selection = h.ix.createInstance(SelectToolsTool).resolveExecution({ names: [MCP_ALPHA] });
     if (selection.isError === true) throw new Error('expected a runnable selection');
     const result = await selection.execute({
       turnId: 1,
       toolCallId: 'reload',
       signal: new AbortController().signal,
-      remind: (message) => h.contextMemory.history.push(message),
+      remind: (message) => h.contextMemory.messages.push(message),
     });
     expect(result.output).toBe(`Already available: ${MCP_ALPHA}`);
-    const resolved = await resolveWith(h, { messages: h.contextMemory.get(), capabilities });
+    const resolved = await resolveWith(h, { messages: h.contextMemory.history(), capabilities });
     expect(resolved.profile?.tools?.find((tool) => tool.name === MCP_ALPHA)?.deferred).toBe(true);
     expect(resolved.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.parameters))
       .toEqual([original.parameters]);
-    expect(h.contextMemory.history).toHaveLength(1);
+    expect(h.contextMemory.history()).toHaveLength(1);
   });
 
   it.each(['inline', 'deferred', 'empty'] as const)('uses actual explicit %s tools when shaping historical definitions', async (mode) => {
     const h = createHarness();
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
-    h.contextMemory.history.push(schemaMessage(MCP_ALPHA));
+    h.contextMemory.messages.push(schemaMessage(MCP_ALPHA));
     const tools: Tool[] = mode === 'empty' ? [] : [{
       name: MCP_ALPHA,
       description: 'Explicit definition.',
       parameters: {},
       deferred: mode === 'deferred' ? true : undefined,
     }];
-    const resolved = await resolveWith(h, { messages: h.contextMemory.get(), tools, capabilities });
+    const resolved = await resolveWith(h, { messages: h.contextMemory.history(), tools, capabilities });
     expect(resolved.profile?.tools).toBe(tools);
     expect(resolved.content.messages.flatMap((message) => toolsOf(message) ?? []).map((tool) => tool.name))
       .toEqual(mode === 'inline' ? [] : [MCP_ALPHA]);
-    expect(h.contextMemory.history).toHaveLength(1);
+    expect(h.contextMemory.history()).toHaveLength(1);
   });
 
   it('resolver shapes defaults and history with protocol-inferred capabilities', async () => {
@@ -1867,10 +1880,12 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
     original.dispose();
     registerBuiltin(h, new EchoTool('Echo', 'Updated description.'));
     expect(await announce(h, 2)).toBeUndefined();
-    const updateReminders = () => h.contextMemory.history.filter(
+    const before = h.contextMemory.history().length;
+    const updateReminders = () => h.contextMemory.history().filter(
       (message) => message.origin?.kind === 'injection' && message.origin.variant === 'tool_update_pending',
     );
     expect(updateReminders()).toHaveLength(1);
+    expect(h.contextMemory.history()).toHaveLength(before);
 
     const added = registerMcp(h, new StubMcpTool(MCP_BETA));
     expect(await announce(h, 3)).toContain(`<tools_added>\n${MCP_BETA}\n</tools_added>`);

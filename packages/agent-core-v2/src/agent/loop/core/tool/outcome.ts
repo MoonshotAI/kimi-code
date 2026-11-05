@@ -35,6 +35,14 @@ export function failedToolOutcome(toolCall: ToolCall, error: unknown): ToolCallO
   return { type: 'failed', entry: toolEntry(toolCall, errorResult(errorText(error))), error };
 }
 
+export interface ToolCompletionInput {
+  readonly toolCall: ToolCall;
+  readonly outcome: AsyncToolOutcome;
+  readonly result?: ToolResult;
+}
+
+export type ToolCompletionFactory = (input: ToolCompletionInput) => UserEntry | Promise<UserEntry>;
+
 export function completionEntry(
   toolCall: ToolCall,
   outcome: AsyncToolOutcome,
@@ -48,4 +56,12 @@ export function completionEntry(
         ? [{ type: 'text', text: `[async tool aborted] ${label}` }]
         : [{ type: 'text', text: `[async tool failed] ${label}\n${errorText(outcome.error)}` }];
   return createUserEntry({ role: 'user', content }, { source: 'async-tool', toolCallId: toolCall.id });
+}
+
+export async function resolveCompletionEntry(
+  input: ToolCompletionInput,
+  factory?: ToolCompletionFactory,
+): Promise<UserEntry> {
+  if (factory !== undefined) return factory(input);
+  return completionEntry(input.toolCall, input.outcome, input.result);
 }

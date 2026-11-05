@@ -4,14 +4,14 @@ import { createUserEntry, type ToolEntry } from '#human/agent/turn';
 import { createAssistantMessage, createUserMessage, extractText, type Message, type ToolCall } from '#human/llm/message';
 import type { LlmRequest } from '#human/llm/request';
 import type { LlmOutcome } from '#human/llm/response';
-import {
-  createLoop,
-  type Loop,
-  type LoopEmitted,
-  type LoopLlmRequester,
-  type StepStartingEvent,
-  type ToolBatchStartingEvent,
+import type {
+  Loop,
+  LoopEmitted,
+  LoopLlmRequester,
+  StepStartingEvent,
+  ToolBatchStartingEvent,
 } from '#/agent/loop/core/index';
+import { createTestLoop as createLoop } from './factory';
 import {
   createToolExecutor,
   type ToolExecuteInput,

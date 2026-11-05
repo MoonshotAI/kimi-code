@@ -1,5 +1,6 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
+import type { LoopDetachedTask } from '#/agent/loop/loop';
 import type {
   AgentTask,
   AgentTaskInfo,
@@ -84,6 +85,7 @@ export interface IAgentTaskService {
   suppressAllTerminalNotifications(): Promise<void>;
   markTasksDeliveredViaWait(tasks: readonly AgentTaskWaitDelivery[]): void;
   detach(taskId: string, text?: string): AgentTaskInfo | undefined;
+  prepareCoreDetach(taskId: string, toolCallId: string): LoopDetachedTask | undefined;
   stop(taskId: string, reason?: string): Promise<AgentTaskInfo | undefined>;
   stopByUser(taskId: string): Promise<AgentTaskInfo | undefined>;
   stopAll(reason?: string): Promise<readonly AgentTaskInfo[]>;

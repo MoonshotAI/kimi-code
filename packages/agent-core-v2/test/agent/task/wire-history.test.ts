@@ -40,6 +40,7 @@ function processInfo(
     exitCode: null,
     status: 'running',
     detached: true,
+    parentToolCallId: 'tool-call-1',
     ...overrides,
   };
 }
@@ -207,15 +208,20 @@ describe('AgentTaskService Wire history', () => {
     expect(ctx.get(IAgentTaskService).list(false)).toEqual([]);
   });
 
-  it('restores an undelivered terminal notification once', async () => {
+  it('restores an undelivered terminal notification through Core once', async () => {
     const completed = processInfo({ status: 'completed', endedAt: 200, exitCode: 0 });
+    ctx.mockNextResponse({ type: 'text', text: 'restored completion' });
 
     await restoreTaskHistory(ctx, [completed]);
-    ctx.get(IAgentLoopService).flushReminders();
+    await ctx.get(IAgentLoopService).settled();
 
     const origins = ctx.get(IAgentLoopService).history().map((message) => message.origin);
     expect(origins.filter((origin) => origin?.kind === 'task' && origin.taskId === completed.taskId)).toHaveLength(1);
-    expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(1);
+    expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(0);
+    const records = await ctx.persistedWireRecords();
+    expect(records.some((record) => record.type === 'turn.prompt' && (record['origin'] as { kind?: string }).kind === 'task')).toBe(true);
+    expect(JSON.stringify(records)).toContain('<notification');
+    expect(JSON.stringify(records)).not.toContain('[async tool completed]');
   });
 
   it('does not restore a terminal notification already present in Loop history', async () => {

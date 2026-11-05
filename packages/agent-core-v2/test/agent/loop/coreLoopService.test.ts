@@ -583,6 +583,29 @@ describe('core LoopService integration', () => {
                 taskId: processInfo.taskId,
                 toolCallId: toolCtx.toolCallId,
                 info: () => processInfo,
+                completion: ({ outcome, result }) => {
+                  const status = processInfo.status === 'running'
+                    ? outcome.type === 'aborted' ? 'killed' : outcome.type === 'failed' ? 'failed' : 'completed'
+                    : processInfo.status;
+                  processInfo = { ...processInfo, status, endedAt: processInfo.endedAt ?? 500 };
+                  const notificationId = `task:task-process:${status}`;
+                  const output = result?.content.map((part) => part.type === 'text' ? part.text : '').join('') ?? '';
+                  return {
+                    message: {
+                      role: 'user',
+                      content: [{
+                        type: 'text',
+                        text: `<notification id="${notificationId}" category="task" type="task.${status}" source_kind="background_task" source_id="task-process">\n${output}\n</notification>`,
+                      }],
+                    },
+                    meta: {
+                      source: 'async-tool',
+                      promptId: notificationId,
+                      toolCallId: toolCtx.toolCallId,
+                      origin: { kind: 'task', taskId: 'task-process', status, notificationId },
+                    },
+                  };
+                },
               }, `background task_id=${processInfo.taskId}`);
               detached.resolve();
               await gate;
@@ -641,7 +664,10 @@ describe('core LoopService integration', () => {
         }
         expect(subject.allEvents.filter((event) => event.type === '[rpc]' && event.event === 'task.started')).toHaveLength(1);
         expect(records.every((record) => !record.type.startsWith('agent.'))).toBe(true);
+        expect(JSON.stringify(records)).not.toContain('[async tool completed]');
         if (!closeWhileRunning) {
+          expect(JSON.stringify(records)).toContain('<notification');
+          expect(records.some((record) => record.type === 'turn.prompt' && (record['origin'] as { kind?: string }).kind === 'task')).toBe(true);
           expect(JSON.stringify(subject.llmInputs())).toContain('task_id=task-process');
           expect(JSON.stringify(records)).toContain('background-result');
           expect(JSON.stringify(records)).toContain('async finished');

@@ -466,6 +466,9 @@ function createFakeTaskService(
     onDidAppendOutput: Event.None as Event<AgentTaskOutputChunk>,
     onDidChangeTask: changeEmitter.event,
     refresh(): void {},
+    prepareCoreDetach(): undefined {
+      return undefined;
+    },
 
     registerTask(task: AgentTask, registerOptions: RegisterAgentTaskOptions = {}): string {
       const detached = registerOptions.detached ?? true;
@@ -719,7 +722,7 @@ function bashTool(
     },
   );
   const environment = stubAgentEnvironment(backend, { workDir: ctx.cwd });
-  return new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
+  return new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), background, {} as never, toolPolicy, config);
 }
 
 describe('BashTool', () => {
@@ -907,6 +910,7 @@ describe('BashTool', () => {
       ctx,
       shadow,
       createFakeTaskService().service,
+      {} as never,
       stubToolPolicy(),
       stubConfig(),
     );
@@ -1408,6 +1412,7 @@ describe('BashTool display cwd', () => {
       ctx,
       stubWorkspaceContext(workDir),
       {} as unknown as IAgentTaskService,
+      {} as never,
       {} as unknown as IAgentToolPolicyService,
       {} as unknown as IConfigService,
     );
@@ -1451,6 +1456,7 @@ describe('BashTool spawn cwd', () => {
       createTestCtx('/Users/mac/project'),
       stubWorkspaceContext(workDir),
       createFakeTaskService().service,
+      {} as never,
       stubToolPolicy(),
       stubConfig(),
     );

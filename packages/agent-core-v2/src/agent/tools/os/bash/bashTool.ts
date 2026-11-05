@@ -1,4 +1,5 @@
 import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { resolveAgentTaskConfig } from '#/agent/task/configSection';
 import { IConfigService } from '#/app/config/config';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
@@ -77,6 +78,7 @@ export class BashTool implements IBashTool {
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IConfigService private readonly config: IConfigService,
   ) {}
@@ -278,8 +280,13 @@ export class BashTool implements IBashTool {
           title: 'Background task started',
           brief: `Started ${taskId}`,
         });
-        this.tasks.detach(taskId, started.output);
-        if (!coreDetachedTool) return started;
+        if (coreDetachedTool) {
+          const task = this.tasks.prepareCoreDetach(taskId, toolCallId);
+          if (task !== undefined) this.loop.detachTool(task, started.output);
+        } else {
+          this.tasks.detach(taskId, started.output);
+          return started;
+        }
       }
       if (!coreDetachedTool) {
         return await this.directForegroundResult(taskId, proc, description, builder, foregroundTimeoutMs, () => detachScenario);

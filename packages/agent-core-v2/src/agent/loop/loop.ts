@@ -10,6 +10,7 @@ import type { Hooks } from '#/hooks';
 import type { HistoryMessage, UserEntry } from '#human/agent/turn';
 import type { LoopRequester } from './requesterContract';
 import { LoopErrors } from './errors';
+import type { ToolCompletionFactory } from './core/tool/outcome';
 export interface AgentActivityRetrySnapshot {
   readonly failedAttempt: number;
   readonly nextAttempt: number;
@@ -215,6 +216,7 @@ export interface LoopDetachedTask {
   readonly taskId: string;
   readonly toolCallId: string;
   info(): AgentTaskInfo;
+  readonly completion: ToolCompletionFactory;
 }
 
 export interface IAgentLoopService {

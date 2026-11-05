@@ -160,6 +160,10 @@ class FakeTaskService implements IAgentTaskService {
 
   refresh(): void {}
 
+  prepareCoreDetach(): undefined {
+    return undefined;
+  }
+
   getTask(taskId: string): AgentTaskInfo | undefined {
     return this.entries.get(taskId)?.info;
   }
@@ -674,7 +678,7 @@ describe('TaskStopTool', () => {
     expect(outputString(result)).toContain('Task not found: bash-unknown0');
   });
 
-  it('stops a running task, records the reason, and suppresses terminal notification', async () => {
+  it('stops a running task and records the reason without suppressing terminal notification', async () => {
     const tasks = new FakeTaskService();
     const taskId = tasks.add(processTask({ taskId: 'bash-stop0001' }));
 
@@ -690,12 +694,12 @@ describe('TaskStopTool', () => {
     expect(output).toContain('status: killed');
     expect(output).toContain('reason: custom stop reason');
     expect(tasks.stopCalls).toEqual([{ taskId, reason: 'custom stop reason' }]);
-    expect(tasks.suppressCalls).toEqual([taskId]);
+    expect(tasks.suppressCalls).toEqual([]);
     expect(tasks.getTask(taskId)).toMatchObject({
       status: 'killed',
       stopReason: 'custom stop reason',
-      terminalNotificationSuppressed: true,
     });
+    expect(tasks.getTask(taskId)?.terminalNotificationSuppressed).not.toBe(true);
   });
 
   it.each([
@@ -831,7 +835,7 @@ describe('WaitForTool', () => {
     expect(tasks.waitDeliveries).toEqual([]);
   });
 
-  it('returns a finished task immediately and marks it delivered via wait', async () => {
+  it('returns a finished task immediately without reading output or marking it delivered', async () => {
     const tasks = new FakeTaskService();
     const taskId = tasks.add(
       processTask({
@@ -854,8 +858,8 @@ describe('WaitForTool', () => {
     expect(output).toContain('wait_status: completed');
     expect(output).toContain('status: completed');
     expect(output).toContain('[finished]');
-    expect(output).toContain('[output]\nDONE-OUTPUT');
-    expect(tasks.waitDeliveries).toEqual([[{ taskId, status: 'completed' }]]);
+    expect(output).not.toContain('[output]\nDONE-OUTPUT');
+    expect(tasks.waitDeliveries).toEqual([]);
     expect(lastEvent(records)?.properties).toMatchObject({
       outcome: 'completed',
       has_task_id: true,
@@ -879,7 +883,7 @@ describe('WaitForTool', () => {
     expect(onUpdate).not.toHaveBeenCalled();
   });
 
-  it('reports tasks that finished during the wait and marks all of them delivered', async () => {
+  it('reports tasks that finished during the wait without marking them delivered', async () => {
     const tasks = new FakeTaskService();
     tasks.add(processTask({ taskId: 'bash-wait001', description: 'main wait' }), outputSnapshot('WAITED-OUT\n'));
     tasks.add(processTask({ taskId: 'bash-extra001', description: 'side task' }));
@@ -901,12 +905,7 @@ describe('WaitForTool', () => {
     expect(output).toContain('[completed_during_wait]');
     expect(output).toContain('task_id: bash-extra001');
     expect(output).toContain('status: failed');
-    expect(tasks.waitDeliveries).toEqual([
-      [
-        { taskId: 'bash-wait001', status: 'completed' },
-        { taskId: 'bash-extra001', status: 'failed' },
-      ],
-    ]);
+    expect(tasks.waitDeliveries).toEqual([]);
     expect(lastEvent(records)?.properties).toMatchObject({
       outcome: 'completed',
       extra_completed_count: 1,
@@ -932,11 +931,11 @@ describe('WaitForTool', () => {
     expect(result.isError ?? false).toBe(false);
     expect(output).toContain('wait_status: completed');
     expect(output).toContain('task_id: bash-a1');
-    expect(output).toContain('[output]\nA-OUT');
+    expect(output).not.toContain('[output]\nA-OUT');
     expect(output).toContain('[still_running]');
     expect(output).toContain('task_id: bash-b1');
     expect(tasks.waitCalls).toHaveLength(2);
-    expect(tasks.waitDeliveries).toEqual([[{ taskId: 'bash-a1', status: 'completed' }]]);
+    expect(tasks.waitDeliveries).toEqual([]);
     expect(lastEvent(records)?.properties).toMatchObject({
       outcome: 'completed',
       has_task_id: false,
@@ -1010,7 +1009,7 @@ describe('WaitForTool', () => {
     expect(tasks.waitDeliveries).toEqual([]);
   });
 
-  it('does not mark tasks delivered when formatting the result fails', async () => {
+  it('does not read task output or mark the task delivered when a wait finishes', async () => {
     const tasks = new FakeTaskService();
     const taskId = tasks.add(
       processTask({
@@ -1022,12 +1021,12 @@ describe('WaitForTool', () => {
     );
     tasks.failSnapshotTaskIds.add(taskId);
 
-    await expect(
-      executeTool(
-        new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
-        context('wait_fmt_fail', { timeout: 10, task_id: taskId }),
-      ),
-    ).rejects.toThrow('snapshot read failed');
+    const result = await executeTool(
+      new WaitForTool(tasks, recordingTelemetry([]), stubFlag(true), stubGoal(), agentScope()),
+      context('wait_fmt_fail', { timeout: 10, task_id: taskId }),
+    );
+    expect(outputString(result)).toContain('wait_status: completed');
+    expect(outputString(result)).not.toContain('[output]');
     expect(tasks.waitDeliveries).toEqual([]);
   });
 
@@ -1244,12 +1243,12 @@ describe('WaitForTool (harness)', () => {
       };
       if (timing === 'before-request') {
         ctx.get(IAgentLoopService).hooks.onWillBeginStep.register('steer-before-request', async (event, next) => {
-          if (event.step === 1) await steer();
+          if (event.step === 1) void steer();
           await next();
         });
       } else {
         ctx.get(IAgentToolExecutorService).onWillExecuteTool((event) => {
-          if (event.toolCall.id === 'wait-specific') event.waitUntil(steer());
+          if (event.toolCall.id === 'wait-specific') void steer();
         });
       }
       const waitingAgain = createControlledPromise<void>();
@@ -1275,7 +1274,7 @@ describe('WaitForTool (harness)', () => {
       expect(ctx.llmCalls[2]?.history.find((message) => message.role === 'tool' && message.toolCallId === 'wait-again')).toMatchObject({
         content: [{ text: expect.stringContaining('wait_status: completed') }],
       });
-      expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(0);
+      expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(1);
       await ctx.expectResumeMatches();
     } finally {
       slow.resolveWait(0);
@@ -1283,7 +1282,7 @@ describe('WaitForTool (harness)', () => {
     }
   });
 
-  it.each(['steer-first', 'completion-first'] as const)('reports task completion once when it races with steering (%s)', async (order) => {
+  it.each(['steer-first', 'completion-first'] as const)('reports task completion through wait and notification when it races with steering (%s)', async (order) => {
     const ctx = createTestAgent();
     const slow = controllableProcess();
     try {
@@ -1308,17 +1307,15 @@ describe('WaitForTool (harness)', () => {
       await steered;
       await waitForTerminal(tasks, taskId);
       await vi.waitFor(() => {
-        const deliveries = ctx.context.history().filter((message) =>
-          (message.origin?.kind === 'task' && message.origin.taskId === taskId) ||
-          (message.role === 'tool' && message.toolCallId === 'racing-wait' && message.content.some((part) =>
-            part.type === 'text' && part.text.includes('wait_status: completed'),
-          )),
+        const notifications = ctx.context.history().filter((message) =>
+          message.origin?.kind === 'task' && message.origin.taskId === taskId,
         );
-        expect(deliveries).toHaveLength(1);
+        expect(notifications).toHaveLength(1);
       });
       await ctx.get(IAgentLoopService).settled();
 
       const history = ctx.context.history();
+      expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(1);
       expect(await tasks.readOutput(taskId)).toBe('BACKGROUND-RESULT');
       expect(history.filter((message) => message.content.some((part) =>
         part.type === 'text' && part.text === 'Handle the new request too.',
@@ -1355,7 +1352,7 @@ describe('WaitForTool (harness)', () => {
     }
   });
 
-  it('waits for a real registered task end-to-end and suppresses its notification', async () => {
+  it('waits for a real registered task end-to-end without suppressing its notification', async () => {
     const records: TelemetryRecord[] = [];
     const loop = stubLoopWithHooks();
     const ctx = createTestAgent(
@@ -1381,13 +1378,14 @@ describe('WaitForTool (harness)', () => {
       expect(output).toContain('wait_status: completed');
       expect(output).toContain(`task_id: ${taskId}`);
       expect(output).toContain('[finished]');
-      expect(output).toContain('[output]\nDONE-OUTPUT');
-      expect(ctx.allEvents.some((event) => event.event === 'task.waitDelivered')).toBe(true);
+      expect(output).not.toContain('[output]\nDONE-OUTPUT');
+      expect(ctx.allEvents.some((event) => event.event === 'task.waitDelivered')).toBe(false);
 
-      expect(loop.snapshot().hasPendingRequests).toBe(false);
+      await vi.waitFor(() => expect(loop.snapshot().hasPendingRequests).toBe(true));
       loop.drainNextBatch(ctx.context);
-      expect(ctx.context.history().some((message) => message.origin?.kind === 'task')).toBe(false);
-      expect(ctx.allEvents.some((event) => event.event === 'task.notified')).toBe(false);
+      expect(ctx.context.history().some((message) => message.origin?.kind === 'task')).toBe(true);
+      expect(ctx.allEvents.some((event) => event.event === 'task.notified')).toBe(true);
+      expect(await tasks.readOutput(taskId)).toBe('DONE-OUTPUT\n');
       expect(ctx.llmCalls).toHaveLength(0);
       expect(
         records.findLast((record) => record.event === 'wait_for_completed')?.properties,

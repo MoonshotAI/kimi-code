@@ -1,9 +1,8 @@
-import type { HistoryMessage, ToolMeta, UserEntry, UserMeta } from '#human/agent/turn';
+import type { HistoryMessage, UserEntry, UserMeta } from '#human/agent/turn';
 import type { UnfinishedTurn } from './contract/command';
 import type { LoopEmitted } from './contract/emitted';
 import type { LoopProfile } from './contract/profile';
-import { INTERRUPTED, type TurnOutcome } from './contract/outcome';
-import { completionEntry } from './tool/outcome';
+import { type TurnOutcome } from './contract/outcome';
 
 interface Event {
   readonly type: string;
@@ -96,25 +95,11 @@ function withTask(notify: readonly UserEntry[], toolCallId: string, entry: UserE
   return [...notify.filter((item) => taskOf(item) !== toolCallId), entry];
 }
 
-function detachedTask(state: LoopRecordState, entry: HistoryMessage): UserEntry | undefined {
-  if (entry.message.role !== 'tool' || (entry.meta as ToolMeta | undefined)?.detached !== true) return undefined;
-  const toolCallId = entry.message.toolCallId;
-  if (state.notify.some((item) => taskOf(item) === toolCallId)) return undefined;
-  const toolCall = state.messages
-    .flatMap((item) => (item.message.role === 'assistant' ? item.message.toolCalls : []))
-    .findLast((call) => call.id === toolCallId);
-  return toolCall === undefined ? undefined : completionEntry(toolCall, { type: 'aborted', reason: INTERRUPTED });
-}
-
 function appended(state: LoopRecordState, event: Extract<LoopRecord, { type: 'message.appended' }>): LoopRecordState {
-  const orphan = detachedTask(state, event.entry);
   const consumed = event.source !== 'tool' && event.entry.message.role === 'user' ? taskOf(event.entry as UserEntry) : undefined;
-  const notify =
-    orphan !== undefined
-      ? [...state.notify, orphan]
-      : consumed !== undefined
-        ? state.notify.filter((item) => taskOf(item) !== consumed)
-        : state.notify;
+  const notify = consumed === undefined
+    ? state.notify
+    : state.notify.filter((item) => taskOf(item) !== consumed);
   const unfinished =
     state.unfinished?.turnId === event.turnId ? { ...state.unfinished, appended: true } : state.unfinished;
   return withUnfinished({ ...state, messages: [...state.messages, event.entry], notify }, unfinished);

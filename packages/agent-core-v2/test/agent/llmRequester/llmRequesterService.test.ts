@@ -2118,7 +2118,7 @@ describe('core requester', () => {
 
   it('recovers credentials through the core recovery policy', async () => {
     const calls = { value: 0 };
-    const base = createRequester(calls, new APIStatusError(401, 'unauthorized'));
+    const base = createRequester(calls, new APIStatusError(401, 'unauthorized', false));
     const invalidate = vi.fn();
     const requester: ModelEventRequester = {
       ...base,
@@ -2155,7 +2155,7 @@ describe('core requester', () => {
       },
     ];
     const { service, dispatcher, telemetryRecords } = createService(
-      createRequester(calls, new APIStatusError(400, 'tool_use ids must be unique'), [new APIRequestTooLargeError(413, 'too large')], inputs),
+      createRequester(calls, new APIStatusError(400, 'tool_use ids must be unique', false), [new APIRequestTooLargeError(413, 'too large')], inputs),
       { contextMessages: messages },
     );
 

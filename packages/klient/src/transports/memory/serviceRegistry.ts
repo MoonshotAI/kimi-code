@@ -72,7 +72,6 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   agentPermissionModeService: IAgentPermissionModeService,
   agentCommandService: IAgentCommandService,
   agentEnvironmentBindingService: IAgentEnvironmentBindingService,
-  agentContextMemoryService: IAgentLoopService,
   agentTokenCountingService: ISessionTokenCountingService,
   sessionActivityView: ISessionActivityView,
   agentShellCommandService: IAgentShellCommandService,

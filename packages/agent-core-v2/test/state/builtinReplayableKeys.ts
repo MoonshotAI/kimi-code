@@ -16,7 +16,7 @@ import { changeNotifierSnapshotKey } from '#/agent/changeNotifier/changeNotifier
 import { profileActiveToolsKey, profileKey } from '#/agent/profile/profileOps';
 import { environmentBindingKey } from '#/agent/environmentBinding/environmentBindingOps';
 import { taskKey } from '#/agent/task/taskOps';
-import { taskNotificationDeliveryKey } from '#/agent/task/taskService';
+import { taskNotificationDeliveryKey } from '#/agent/task/taskRuntime';
 import { toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
 import { userToolKey } from '#/agent/userTool/userToolOps';
 import { fileHistoryKey } from '#/features/fileHistory/fileHistoryOps';
