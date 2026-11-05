@@ -327,7 +327,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private defaultToolsForDisclosure(disclosure: boolean): readonly Tool[] {
-    const entries = disclosure ? this.capableTools() : this.initialTools();
+    const entries = this.capableTools(disclosure);
     return this.shapeToolsForDisclosure(entries, disclosure).map((tool) => ({
       name: tool.name,
       description: tool.description,
@@ -336,14 +336,14 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     }));
   }
 
-  private capableTools(): readonly ToolSelectTool[] {
+  private capableTools(includeRuntime: boolean): readonly ToolSelectTool[] {
     const initial = this.initialTools();
     const initialNames = new Set(initial.map((tool) => tool.name));
     const current = this.currentTools();
     const currentByName = new Map(current.map((tool) => [tool.name, tool]));
     return [
       ...initial.map((tool) => currentByName.get(tool.name) ?? tool),
-      ...current.filter((tool) => tool.origin === 'runtime' && !initialNames.has(tool.name)),
+      ...current.filter((tool) => includeRuntime && tool.origin === 'runtime' && !initialNames.has(tool.name)),
     ].toSorted((left, right) => left.name.localeCompare(right.name));
   }
 
