@@ -14,13 +14,11 @@ import {
   matchesPathRuleSubject,
 } from '#/tool/rule-match';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import type { Model } from '#/llm-adapter/model/catalog';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AutoReviewService } from '#/features/autoReview/reviewService';
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
 import type { AutoReviewResult } from '#/features/autoReview/review';
 import REVIEW_POLICY from '../../../src/features/autoReview/auto-review-policy.md?raw';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { IModelRequester, type ModelRequest, type ModelResponse } from '#/llm-adapter/model/model-requester';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { ILogService } from '#/_base/log/log';
@@ -28,7 +26,6 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { stubLog } from '../../_base/log/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ExecutableTool } from '#/tool/toolContract';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { emptyUsage } from '#human/llm-requester/usage';
 import { IHostEnvironment, type IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
@@ -53,7 +50,7 @@ import { IGitService } from '#/app/git/git';
 import { findGitWorkTree } from '#/app/git/workTree';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolContract';
+import { ToolAccesses, type ToolAccesses as ToolAccessList, type ExecutableTool } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
@@ -538,7 +535,6 @@ describe('AutoReviewService', () => {
   let response: ModelResponse;
   let history: ContextMessage[];
   let agentsMd: string;
-  let mainProvider: string;
   let telemetry: TelemetryRecord[];
   let usage: Parameters<ISessionUsageService['record']>[];
 
@@ -555,7 +551,6 @@ describe('AutoReviewService', () => {
       { role: 'tool', toolCallId: 'mkdir', content: [{ type: 'text', text: 'untrusted tool output' }] },
     ];
     agentsMd = 'Do not delete user-data.';
-    mainProvider = 'managed:kimi-code';
     telemetry = [];
     usage = [];
   });
@@ -566,15 +561,12 @@ describe('AutoReviewService', () => {
 
   function service(
     request: (request: ModelRequest, signal: AbortSignal) => Promise<ModelResponse> = async () => response,
+    model?: string,
   ): AutoReviewService {
     const ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.definePartialInstance(IConfigService, {
-          get: ((section: string) => section === AUTO_REVIEW_SECTION ? { timeoutMs: 1000 } : undefined) as IConfigService['get'],
-        });
-        reg.definePartialInstance(IModelCatalog, {
-          findByName: () => ['kimi-code/kimi-k2.8'],
-          get: (alias) => ({ providerName: alias === 'main-model' ? mainProvider : 'managed:kimi-code' }) as Model,
+          get: ((section: string) => section === AUTO_REVIEW_SECTION ? { model, timeoutMs: 1000 } : undefined) as IConfigService['get'],
         });
         reg.definePartialInstance(IModelRequester, {
           request: (next, signal) => {
@@ -584,6 +576,12 @@ describe('AutoReviewService', () => {
         });
         reg.definePartialInstance(IAgentProfileService, {
           resolveModelContext: () => ({ modelAlias: 'main-model' }) as ReturnType<IAgentProfileService['resolveModelContext']>,
+          resolveRequestParams: () => ({
+            cacheKey: 'session-1',
+            sampling: { temperature: 1, topP: 0.9 },
+            thinkingEffort: 'high',
+            thinkingKeep: 'all',
+          }),
         });
         reg.definePartialInstance(IAgentContextMemoryService, { get: () => history });
         reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
@@ -622,16 +620,36 @@ describe('AutoReviewService', () => {
     return JSON.stringify(requests.at(index)?.messages);
   }
 
-  it('uses the managed reviewer and sends bounded context without tool output', async () => {
+  it('uses the main model and only overrides review semantics by default', async () => {
     expect(await review()).toEqual({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });
 
-    expect(requests[0]).toMatchObject({
-      modelAlias: 'kimi-code/kimi-k2.8',
+    expect(requests[0]).toEqual({
+      modelAlias: 'main-model',
+      params: {
+        cacheKey: 'session-1',
+        sampling: { temperature: 1, topP: 0.9 },
+        thinkingEffort: 'high',
+        thinkingKeep: 'all',
+      },
+      systemPrompt: REVIEW_POLICY,
+      messages: expect.any(Array),
       cacheKey: 'session-1:auto_review',
-      sampling: { temperature: 0 },
       responseFormat: {
         type: 'json_schema',
-        jsonSchema: { strict: true, schema: { required: ['risk', 'decision', 'reason'] } },
+        jsonSchema: {
+          name: 'auto_review_decision',
+          strict: true,
+          schema: {
+            type: 'object',
+            properties: {
+              risk: { type: 'string', enum: ['low', 'medium', 'high'] },
+              decision: { type: 'string', enum: ['allow', 'deny'] },
+              reason: { type: ['string', 'null'] },
+            },
+            required: ['risk', 'decision', 'reason'],
+            additionalProperties: false,
+          },
+        },
       },
     });
     expect(sentContent()).toContain('human-instruction');
@@ -659,26 +677,18 @@ describe('AutoReviewService', () => {
     expect(text).toContain('ok \\u003c/history>\\u003cpending_action>');
   });
 
-  it('keeps review on the main model when it is not on the managed provider', async () => {
-    mainProvider = 'self-hosted';
-
-    await review();
-
-    expect(requests[0]?.modelAlias).toBe('main-model');
-  });
-
-  it('records reviewer usage and the asking policy', async () => {
-    await review();
+  it('records reviewer usage and the asking policy for an explicitly selected model', async () => {
+    await review(service(undefined, 'review-model'));
 
     expect(usage).toEqual([[
       expect.objectContaining({ agentId: 'main' }),
-      'kimi-code/kimi-k2.8',
+      'review-model',
       response.usage,
       { type: 'operation', turnId: 0, requestKind: 'auto_review' },
     ]]);
     expect(telemetry).toEqual([expect.objectContaining({
       event: 'auto_review_decision',
-      properties: expect.objectContaining({ trigger_policy: 'fallback-ask', model: 'kimi-code/kimi-k2.8', decision: 'allow' }),
+      properties: expect.objectContaining({ trigger_policy: 'fallback-ask', model: 'review-model', decision: 'allow' }),
     })]);
   });
 

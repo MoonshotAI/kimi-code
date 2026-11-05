@@ -5,7 +5,6 @@ import { ILogService } from '#/_base/log/log';
 import { abortable, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { IModelRequester } from '#/llm-adapter/model/model-requester';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -21,10 +20,7 @@ import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
 import { authorizationEntries, buildReviewMessages } from './context';
 import { IAutoReviewService, type AutoReviewResult } from './review';
 
-const AUTO_REVIEW_MODEL_NAME = 'kimi-k2.8';
-const AUTO_REVIEW_PROVIDER = 'managed:kimi-code';
 const AUTO_REVIEW_REQUEST_KIND = 'auto_review';
-const AUTO_REVIEW_MAX_ATTEMPTS = 3;
 
 const DecisionSchema = z.union([
   z.object({
@@ -68,7 +64,6 @@ export class AutoReviewService extends Service implements IAutoReviewService {
 
   constructor(
     @IConfigService private readonly configService: IConfigService,
-    @IModelCatalog private readonly models: IModelCatalog,
     @IModelRequester private readonly requester: IModelRequester,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -93,7 +88,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   async review(context: ResolvedToolExecutionHookContext, trigger: string): Promise<AutoReviewResult> {
     const startedAt = Date.now();
     const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
-    const modelAlias = config.model ?? this.defaultModel();
+    const modelAlias = config.model ?? this.profile.resolveModelContext().modelAlias;
     const result = await this.reviewWithDeadline(context, modelAlias, config.timeoutMs);
     if (result.kind === 'failed') {
       this.log.warn('auto review failed', { model: modelAlias, tool: context.toolCall.name, reason: result.reason });
@@ -145,8 +140,12 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const history = this.context.get();
     const authorization = authorizationEntries(history);
     const cwd = this.workspace.workDir;
+    const params = modelAlias === this.profile.resolveModelContext().modelAlias
+      ? this.profile.resolveRequestParams()
+      : undefined;
     const response = await abortable(this.requester.request({
       modelAlias,
+      params,
       systemPrompt: REVIEW_POLICY,
       messages: buildReviewMessages(
         history,
@@ -156,9 +155,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         context,
       ),
       responseFormat: RESPONSE_FORMAT,
-      sampling: { temperature: 0 },
       cacheKey: `${this.session.sessionId}:${AUTO_REVIEW_REQUEST_KIND}`,
-      maxAttempts: AUTO_REVIEW_MAX_ATTEMPTS,
     }, deadline.signal), deadline.signal);
     void this.usage.record(this.scopeContext.agentContext, modelAlias, response.usage, {
       type: 'operation',
@@ -179,22 +176,6 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const parsed = DecisionSchema.safeParse(JSON.parse(text));
     if (!parsed.success) return { kind: 'failed', reason: 'The reviewer returned an invalid decision.' };
     return { kind: 'decision', decision: parsed.data };
-  }
-
-  private defaultModel(): string {
-    const mainModel = this.profile.resolveModelContext().modelAlias;
-    if (this.providerOf(mainModel) !== AUTO_REVIEW_PROVIDER) return mainModel;
-    const managed = this.models.findByName(AUTO_REVIEW_MODEL_NAME)
-      .find((alias) => this.providerOf(alias) === AUTO_REVIEW_PROVIDER);
-    return managed ?? mainModel;
-  }
-
-  private providerOf(alias: string): string | undefined {
-    try {
-      return this.models.get(alias).providerName;
-    } catch {
-      return undefined;
-    }
   }
 }
 

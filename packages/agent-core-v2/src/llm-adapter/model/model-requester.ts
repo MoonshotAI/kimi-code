@@ -2,17 +2,15 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import type { AssistantMessage, Message } from '#human/llm/message';
 import type { ResponseFormat } from '#human/llm-requester/response-format';
 import type { TokenUsage } from '#human/llm-requester/usage';
-
-import type { SamplingOptions } from './generate';
+import type { ModelRequestParams } from './generate';
 
 export interface ModelRequest {
   readonly modelAlias: string;
   readonly systemPrompt: string;
   readonly messages: readonly Message[];
+  readonly params?: ModelRequestParams;
   readonly responseFormat?: ResponseFormat;
-  readonly sampling?: SamplingOptions;
   readonly cacheKey?: string;
-  readonly maxAttempts?: number;
 }
 
 export interface ModelResponse {

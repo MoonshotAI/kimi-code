@@ -5,6 +5,9 @@ import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { AssistantMessage } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm-requester/usage';
+import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
+import type { ModelOverrides } from './model.types';
+import { completionBudgetParams, resolveCompletionBudget } from './completion-budget';
 
 import { IProtocolAdapterRegistry } from '../protocol/protocol';
 
@@ -31,10 +34,15 @@ export class ModelRequester implements IModelRequester {
 
   request(request: ModelRequest, signal: AbortSignal): Promise<ModelResponse> {
     const model = this.catalog.get(request.modelAlias);
-    const params: ModelRequestParams = {
+    const overrides = this.config.get<ModelOverrides>('modelOverrides');
+    const budget = resolveCompletionBudget({
+      maxOutputSize: model.maxOutputSize,
+      maxCompletionTokensCap: overrides?.maxCompletionTokens,
+    });
+    const params: ModelRequestParams = request.params ?? {
       cacheKey: request.cacheKey,
-      sampling: request.sampling,
       thinkingEffort: this.thinkingEffort(model),
+      ...completionBudgetParams({ budget, capability: model.capabilities }),
     };
     return runWithCredentialRecovery(
       model.credentialProvider,
@@ -78,7 +86,7 @@ export class ModelRequester implements IModelRequester {
       },
       signal,
       params,
-      { recoveries: [], retry: { maxAttemptsPerStep: request.maxAttempts ?? 1 } },
+      { recoveries: [], retry: { maxAttemptsPerStep: this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep } },
     )) {
       if (event.type === 'usage') usage = event.usage;
       if (event.type === 'finish') {

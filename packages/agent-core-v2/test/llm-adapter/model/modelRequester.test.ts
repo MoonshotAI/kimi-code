@@ -36,6 +36,7 @@ import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterR
 import type { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ModelRequester } from '#/llm-adapter/model/model-requester-service';
 import type { IConfigService } from '#/app/config/config';
+import { LOOP_CONTROL_SECTION } from '#/agent/loop/configSection';
 import {
   buildStreamTiming,
   coreRequesterFromA,
@@ -606,7 +607,9 @@ describe('ModelRequester', () => {
           requester,
         ),
     };
-    const config: Partial<IConfigService> = { get: (() => undefined) as IConfigService['get'] };
+    const config: Partial<IConfigService> = {
+      get: ((section: string) => section === LOOP_CONTROL_SECTION ? { maxAttemptsPerStep: 2 } : undefined) as IConfigService['get'],
+    };
     return new ModelRequester(
       { get: () => model } as Partial<IModelCatalog> as IModelCatalog,
       protocols as IProtocolAdapterRegistry,
@@ -624,7 +627,7 @@ describe('ModelRequester', () => {
     };
 
     const response = await modelRequester(modelWith(createStaticCredentialProvider('sk')), requester).request(
-      { ...REQUEST, cacheKey: 'session-1:auto_review', responseFormat: { type: 'json_object' }, maxAttempts: 2 },
+      { ...REQUEST, cacheKey: 'session-1:auto_review', responseFormat: { type: 'json_object' } },
       new AbortController().signal,
     );
 
@@ -634,19 +637,24 @@ describe('ModelRequester', () => {
     expect(requester.calls[0]?.config.responseFormat).toEqual({ type: 'json_object' });
   });
 
-  it('makes a single attempt by default', async () => {
+  it('inherits the main model request params without adding sampling overrides', async () => {
     const requester = new FakeLlmRequester();
-    requester.handler = (_index, emit) => {
-      transientFailure(emit, 503);
-    };
+    requester.handler = (_index, emit) => textStream(emit);
 
-    await expect(
-      modelRequester(modelWith(createStaticCredentialProvider('sk')), requester).request(
-        REQUEST,
-        new AbortController().signal,
-      ),
-    ).rejects.toBeDefined();
-    expect(requester.calls).toHaveLength(1);
+    await modelRequester(modelWith(createStaticCredentialProvider('sk')), requester).request(
+      {
+        ...REQUEST,
+        params: {
+          sampling: { temperature: 1, topP: 0.9 },
+          thinkingEffort: 'high',
+          thinkingKeep: 'all',
+        },
+      },
+      new AbortController().signal,
+    );
+
+    expect(requester.calls[0]?.config.extraParams).toEqual({ openai: { temperature: 1, top_p: 0.9 } });
+    expect(requester.calls[0]?.config.thinking).toEqual({ effort: 'high', keep: 'all' });
   });
 
   it('refreshes OAuth credentials of the selected model after a 401', async () => {

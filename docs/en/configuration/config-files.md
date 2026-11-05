@@ -332,7 +332,7 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `model` | `string` | managed K2.8 when the main model uses the managed Kimi Code provider; otherwise the main model | Model alias used for independent review requests |
+| `model` | `string` | Main model | Model alias used for independent review requests |
 | `timeout_ms` | `integer` | `30000` | Review deadline in milliseconds, from `1000` to `120000` |
 
 Only calls that Always Ask mode would ask you to approve are reviewed. Calls that a more specific rule already approves — default-approved tools, writes inside a Git working tree, your `allow` rules, and calls approved for this session — skip review, and calls that already require approval in Ask When Needed mode are asked as before. A reviewer `allow` lets the call run. A `deny` or a review failure asks for your approval in Ask When Needed mode; in Never Ask mode the tool returns an error without running and the main agent can continue.
