@@ -123,6 +123,20 @@ describe('WrappingSelectList', () => {
     }
   });
 
+  it('renders same-name variants on single lines with trailing workspace basenames', () => {
+    const lines = new WrappingSelectList([
+      { value: 'skill:review', label: 'skill:review', description: 'Review primary', data: { workspaceLabel: 'A' } },
+      { value: 'skill:review', label: 'skill:review', description: 'Review secondary with a longer description', data: { workspaceLabel: 'B' } },
+    ], 5, IDENTITY_THEME, SLASH_LAYOUT).render(80);
+
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('Review primary');
+    expect(lines[0]!.endsWith('A')).toBe(true);
+    expect(lines[1]).toContain('Review secondary');
+    expect(lines[1]!.endsWith('B')).toBe(true);
+    for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+  });
+
   it('never emits a line wider than the requested width, including CJK text', () => {
     const list = new WrappingSelectList(
       [

@@ -1118,7 +1118,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | `content` | body | array | **必填。** 非空的内容块数组；变体见下 |
 | `agent_id` | body | string | 目标 Agent。默认为 main agent |
 | `prompt_id` | body | string | 客户端选定的提示词 id，用于幂等提交；已被进行中提示词占用的 id 返回 `40927`，已完成的返回 `40903`。不能与 `skills` 同用 |
-| `skills` | body | array | 打包的 Skill 激活，至少 1 个 `{ name, args? }` 条目；每个 Skill 必须存在且可由用户激活 |
+| `skills` | body | array | 打包的 Skill 激活，至少 1 个 `{ name, path?, args? }` 条目；每个 Skill 必须存在且可由用户激活。`path` 用于选择会话目录中的同名变体 |
 | `profile` | body | string | 提交前要绑定的 Agent 档案 |
 | `model` | body | string | 要切换到的模型别名 |
 | `thinking` | body | string | Thinking 强度等级 |
@@ -1318,7 +1318,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 
-成功时 `data` 为 `{ skills }`，每项是一个技能描述符 `{ name, description, path, source, type?, disable_model_invocation? }`：`source` 为 `project` / `user` / `extra` / `builtin`；`type` 标识技能类别（只有用户可激活的类型才能被激活）；`disable_model_invocation` 会让技能对模型不可见。
+成功时 `data` 为 `{ skills }`，每项是一个技能描述符 `{ name, description, path, source, workspace_dir?, type?, disable_model_invocation? }`：`source` 为 `project` / `user` / `extra` / `builtin`；`type` 标识技能类别（只有用户可激活的类型才能被激活）；`disable_model_invocation` 会让技能对模型不可见。`workspace_dir` 是项目级技能的根目录，其他来源省略该字段。同名技能可以以不同 `path` 作为多个变体返回。
 
 - `40401`：会话不存在（或未激活）
 
@@ -1342,6 +1342,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 | `skill_name` | path | string | **必填。** 要激活的技能名 |
+| `path` | body | string | 可选。会话技能目录中某个 `SKILL.md` 的精确路径，用于选择同名变体；必须与目录返回的条目匹配 |
 | `args` | body | string | 传给技能的自由文本参数，相当于斜杠命令后的文本 |
 | `attachments` | body | array | 随激活携带的媒体块。`image` / `video` 块带 `source` 对象（`kind` 为 `url` / `base64` / `file` / `session_media`，与提示词内容块同形）；`file` 块带顶层 `file_id`、`name`、`media_type`、`size` |
 

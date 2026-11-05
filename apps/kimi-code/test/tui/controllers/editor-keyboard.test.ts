@@ -266,6 +266,28 @@ describe('EditorKeyboardController disposal', () => {
   });
 });
 
+describe('EditorKeyboardController skill variant selection', () => {
+  it('defers cleanup on empty input until after the submit callback', async () => {
+    const { host, editor } = createHarness();
+    const path = '/work/B/review/SKILL.md';
+    const selected = new Map([['skill:review', path]]);
+    const submitted: Array<string | undefined> = [];
+    host.retainSkillVariantSelection = (text) => {
+      if (text === '') selected.clear();
+    };
+    host.handleUserInput = vi.fn(() => {
+      submitted.push(selected.get('skill:review'));
+    });
+
+    (editor['onChange'] as unknown as (text: string) => void)('');
+    (editor['onSubmit'] as unknown as (text: string) => void)('/skill:review');
+
+    expect(submitted).toEqual([path]);
+    await Promise.resolve();
+    expect(selected.size).toBe(0);
+  });
+});
+
 describe('EditorKeyboardController shell history recall', () => {
   type Recall = (entry: string, direction: 1 | -1) => string | undefined;
   type Mock = ReturnType<typeof vi.fn>;

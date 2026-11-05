@@ -225,6 +225,7 @@ export interface SlashCommandHost {
   ): void;
   readonly skillCommandMap: Map<string, string>;
   readonly pluginCommandMap: Map<string, string>;
+  readonly skillVariantPathForCommand?: (commandName: string) => string | undefined;
 
   // Controller refs
   readonly streamingUI: StreamingUIController;
@@ -245,6 +246,9 @@ export function dispatchInput(host: SlashCommandHost, text: string): void {
     pluginCommandMap: host.pluginCommandMap,
     isStreaming: host.state.appState.streamingPhase !== 'idle',
     isCompacting: host.state.appState.isCompacting,
+    skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
+      ? undefined
+      : (commandName) => host.skillVariantPathForCommand!(commandName),
   });
   if (intent.kind === 'skill' || activations.length > 0) {
     const leading = activations[0];

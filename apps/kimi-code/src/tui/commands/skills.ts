@@ -41,11 +41,13 @@ export function buildSkillSlashCommands(skills: readonly SkillSummary[]): SkillS
       skill.source === 'builtin' || skill.isSubSkill === true
         ? skill.name
         : `skill:${skill.name}`;
-    commandMap.set(commandName, skill.name);
+    if (!commandMap.has(commandName)) commandMap.set(commandName, skill.name);
     return {
       name: commandName,
       aliases: [],
       description: skill.description ?? '',
+      skillPath: skill.path,
+      workspaceDir: skill.workspaceDir,
     };
   });
   return { commands, commandMap };

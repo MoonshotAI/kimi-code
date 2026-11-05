@@ -56,6 +56,7 @@ export interface ResolveSlashCommandInput {
   readonly pluginCommandMap: ReadonlyMap<string, string>;
   readonly isStreaming: boolean;
   readonly isCompacting: boolean;
+  readonly skillVariantPathForCommand?: (commandName: string) => string | undefined;
 }
 
 export function resolveSlashCommandInput(options: ResolveSlashCommandInput): SlashCommandIntent {
@@ -159,11 +160,20 @@ export function resolveUserInput(options: ResolveSlashCommandInput): {
       isKnownSkill: (name) => resolveSkillCommand(options.skillCommandMap, name) !== undefined,
       includeLeading: true,
     });
-    if (tokens.length === 1 && tokens[0]?.start === 0) {
+    const token = tokens[0];
+    const path = token === undefined
+      ? undefined
+      : options.skillVariantPathForCommand?.(token.commandName);
+    if (path !== undefined) activations[0] = { ...activations[0]!, path };
+    if (tokens.length === 1 && token?.start === 0) {
       if (intent.kind !== 'skill') return { intent, activations: [] };
       return {
         intent,
-        activations: [{ skillName: activations[0]!.skillName, args: text.slice(tokens[0].end).trim() }],
+        activations: [{
+          skillName: activations[0]!.skillName,
+          path: activations[0]!.path,
+          args: text.slice(token.end).trim(),
+        }],
       };
     }
   }

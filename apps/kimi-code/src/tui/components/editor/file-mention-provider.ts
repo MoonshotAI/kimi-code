@@ -19,6 +19,8 @@ const MAX_FALLBACK_SUGGESTIONS = 50;
 
 export interface SlashAutocompleteCommand extends SlashCommand {
   readonly aliases?: readonly string[];
+  readonly skillPath?: string;
+  readonly workspaceDir?: string;
 }
 
 interface FsMentionCandidate {
@@ -59,6 +61,7 @@ export class FileMentionProvider implements AutocompleteProvider {
     private readonly getInputMode: () => 'prompt' | 'bash' = () => 'prompt',
     private readonly skillCommandNames?: ReadonlySet<string>,
     private readonly remoteSuggest?: RemoteMentionSuggest,
+    private readonly onSkillVariantSelected?: (selection: { commandName: string; path: string }) => void,
   ) {
     this.additionalDirs = additionalDirs.map((dir) => resolveMentionDirectory(workDir, dir));
     // Build an expanded list that includes alias entries so that
@@ -209,6 +212,12 @@ export class FileMentionProvider implements AutocompleteProvider {
             value: m.cmd.name,
             label: m.label,
             description: formatSlashCommandDescription(m.cmd),
+            data: {
+              skillPath: m.cmd.skillPath,
+              workspaceLabel: m.cmd.workspaceDir === undefined
+                ? undefined
+                : basename(m.cmd.workspaceDir) || m.cmd.workspaceDir,
+            },
           })),
           prefix: textBeforeCursor,
         };
@@ -279,7 +288,13 @@ export class FileMentionProvider implements AutocompleteProvider {
         value: m.cmd.name,
         label: m.cmd.name,
         description: formatSlashCommandDescription(m.cmd),
-        data: { inlineSkill: true },
+        data: {
+          inlineSkill: true,
+          skillPath: m.cmd.skillPath,
+          workspaceLabel: m.cmd.workspaceDir === undefined
+            ? undefined
+            : basename(m.cmd.workspaceDir) || m.cmd.workspaceDir,
+        },
       })),
       prefix,
     };
@@ -292,6 +307,10 @@ export class FileMentionProvider implements AutocompleteProvider {
     item: AutocompleteItem,
     prefix: string,
   ): { lines: string[]; cursorLine: number; cursorCol: number } {
+    const skillPath = item.data?.['skillPath'];
+    if (typeof skillPath === 'string' && skillPath.length > 0) {
+      this.onSkillVariantSelected?.({ commandName: item.value, path: skillPath });
+    }
     // Inline skill selection mid-input: pi-tui's default applyCompletion
     // treats mid-line slash prefixes as file paths and drops the `/`. Preserve
     // the slash and add a trailing space so the completed token stays a valid

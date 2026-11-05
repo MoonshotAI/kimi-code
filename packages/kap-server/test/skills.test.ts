@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -539,7 +539,7 @@ describe('server-v2 /api/v1 skills', () => {
       expect(names(wsSkills)).toEqual(names(sessSkills));
     });
 
-    it('lists and activates additional-dir skills with primary winning collisions', async () => {
+    it('lists same-name variants and activates an explicit additional-dir path', async () => {
       const primary = await makeWorkspaceDir();
       const secondary = await makeWorkspaceDir();
       await seedProjectSkill(primary, 'e2e-primary');
@@ -556,6 +556,13 @@ describe('server-v2 /api/v1 skills', () => {
       expect(workspaceSkills.some((skill) => skill.name === 'e2e-primary')).toBe(true);
       expect(workspaceSkills.some((skill) => skill.name === 'e2e-secondary')).toBe(true);
       expect(workspaceSkills.find((skill) => skill.name === 'e2e-shared')?.path).toContain(primary);
+      const sharedVariants = workspaceSkills.filter((skill) => skill.name === 'e2e-shared');
+      expect(sharedVariants).toHaveLength(2);
+      expect(sharedVariants.map((skill) => skill.workspace_dir)).toEqual([
+        await realpath(primary),
+        await realpath(secondary),
+      ]);
+      const secondaryShared = sharedVariants.find((skill) => skill.path.includes(secondary))!;
 
       const created = await postJson<{ id: string }>('/api/v1/sessions', { workspace_id: wid });
       expect(created.body.code).toBe(0);
@@ -574,16 +581,22 @@ describe('server-v2 /api/v1 skills', () => {
         { args: 'additional args' },
       );
       expect(activated.body.code).toBe(0);
+      const sharedActivation = await postJson<{ activated: boolean; skill_name: string }>(
+        `/api/v1/sessions/${sid}/skills/e2e-shared:activate`,
+        { path: secondaryShared.path, args: 'shared-secondary' },
+      );
+      expect(sharedActivation.body.code).toBe(0);
       const messages = await getJson<{
         items: { role: string; content: { type: string; text?: string }[] }[];
       }>(`/api/v1/sessions/${sid}/messages`);
-      const input = messages.body.data.items.find(
-        (message) =>
-          message.role === 'user' &&
-          message.content.some((part) => part.text?.includes('User activated the skill')),
-      );
-      const modelText = input?.content.map((part) => part.text ?? '').join('\n') ?? '';
-      expect(modelText).toContain('Say hello to additional args.');
+      const sharedText = messages.body.data.items
+        .filter((message) => message.role === 'user')
+        .flatMap((message) => message.content)
+        .map((part) => part.text ?? '')
+        .join('\n');
+      expect(sharedText).toContain('Say hello to additional args.');
+      expect(sharedText).toContain('Say hello to shared-secondary.');
+      expect(sharedText).toContain(`dir="${secondaryShared.path.replace(/\/SKILL\.md$/, '')}"`);
     });
 
     it('honors explicit skill dirs in workspace preview', async () => {

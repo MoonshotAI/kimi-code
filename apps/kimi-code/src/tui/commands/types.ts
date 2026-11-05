@@ -6,6 +6,8 @@ export interface KimiSlashCommand<Name extends string = string> extends SlashCom
   readonly name: Name;
   readonly aliases: readonly string[];
   readonly description: string;
+  readonly skillPath?: string;
+  readonly workspaceDir?: string;
   readonly priority?: number;
   readonly availability?: SlashCommandAvailability | ((args: string) => SlashCommandAvailability);
   /** When set, the command is hidden from the palette and blocked unless this flag is enabled.

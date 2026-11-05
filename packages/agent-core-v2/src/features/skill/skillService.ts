@@ -57,7 +57,7 @@ export class AgentSkillService implements IAgentSkillService {
   async activate(input: SkillActivationInput): Promise<PromptLaunchResult> {
     const catalog = this.catalog;
     await catalog.ready;
-    const skill = catalog.catalog.getSkill(input.name);
+    const skill = catalog.catalog.getSkill(input.name, input.path);
     if (skill === undefined) {
       throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
     }
@@ -200,7 +200,7 @@ export class AgentSkillService implements IAgentSkillService {
     readonly entry: BundledSkillActivation;
   } {
     const catalog = this.catalog;
-    const skill = catalog.catalog.getSkill(input.name);
+    const skill = catalog.catalog.getSkill(input.name, input.path);
     if (skill === undefined) {
       throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
     }

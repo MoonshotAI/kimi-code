@@ -9,6 +9,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
+import { executeModelSkill } from '#/features/skill/tools/skillTool';
 import { type SkillCatalog, type SkillDefinition } from '#/features/skill/catalog/types';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import {
@@ -166,8 +167,10 @@ describe('ToolManager SkillTool registration with a structural catalog', () => {
       getSkill: (name) => (name === skill.name ? skill : undefined),
       getPluginSkill: () => undefined,
       renderSkillPrompt: () => skill.content,
+      listDefaultSkills: () => [skill],
       listSkills: () => [skill],
       listInvocableSkills: () => [skill],
+      registerVariants: () => {},
       getSkillRoots: () => ['/skills/review'],
       getSkippedByPolicy: () => [],
       getModelSkillListing: () => '- review: desc for review',
@@ -190,6 +193,55 @@ describe('ToolManager SkillTool registration with a structural catalog', () => {
 
     expect(skills.getSkillRoots()).toEqual(['/skills/review']);
     expect(tools.resolve('Skill')).toMatchObject({ name: 'Skill' });
+  });
+});
+
+describe('SkillTool nested variants', () => {
+  it('prefers a nested skill from the parent workspace directory', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.registerVariants([
+      {
+        ...makeSkill('parent.child'),
+        path: '/work/A/parent/child/SKILL.md',
+        dir: '/work/A/parent/child',
+        content: 'from A',
+        workspaceDir: '/work/A',
+      },
+      {
+        ...makeSkill('parent.child'),
+        path: '/work/B/parent/child/SKILL.md',
+        dir: '/work/B/parent/child',
+        content: 'from B',
+        workspaceDir: '/work/B',
+      },
+    ], { replace: true });
+    const sessionCatalog: Parameters<typeof executeModelSkill>[0] = {
+      _serviceBrand: undefined,
+      catalog,
+      ready: Promise.resolve(),
+      onDidChange: () => ({ dispose: () => {} }),
+      load: async () => {},
+      reload: async () => {},
+      list: async () => [],
+    };
+    const skillService: Parameters<typeof executeModelSkill>[1] = {
+      _serviceBrand: undefined,
+      activate: vi.fn(),
+      promptWithSkills: vi.fn(),
+      recordModelToolActivation: vi.fn(),
+    };
+
+    const result = await executeModelSkill(
+      sessionCatalog,
+      skillService,
+      { skill: 'parent.child' },
+      1,
+      'session-1',
+      '/work/B',
+    );
+
+    expect(JSON.stringify(result.delivery)).toContain('from B');
+    expect(JSON.stringify(result.delivery)).toContain('/work/B/parent/child/SKILL.md');
   });
 });
 

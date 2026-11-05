@@ -741,7 +741,11 @@ export class Session {
     return this.rpc.getPluginInfo(id);
   }
 
-  async activateSkill(name: string, args?: string | undefined): Promise<void> {
+  async activateSkill(
+    name: string,
+    args?: string | undefined,
+    options?: { readonly path?: string },
+  ): Promise<void> {
     this.ensureOpen();
     const skillName = normalizeRequiredString(
       name,
@@ -752,6 +756,7 @@ export class Session {
     await this.rpc.activateSkill({
       sessionId: this.id,
       name: skillName,
+      path: options?.path,
       ...(skillArgs !== undefined ? { args: skillArgs } : {}),
     });
   }

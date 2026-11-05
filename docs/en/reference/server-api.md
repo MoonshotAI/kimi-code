@@ -1118,7 +1118,7 @@ Submits a user prompt to the session. Media references are validated first, then
 | `content` | body | array | **Required.** Non-empty array of content parts; variants below |
 | `agent_id` | body | string | Target agent. Default the main agent |
 | `prompt_id` | body | string | Client-chosen prompt id for idempotent submission; an id already reserved by an in-flight prompt fails `40927`, one that has already completed fails `40903`. Cannot be combined with `skills` |
-| `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, args? }`; every skill must exist and be user-activatable |
+| `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, path?, args? }`; every skill must exist and be user-activatable. `path` selects a same-name variant from the session catalog |
 | `profile` | body | string | Agent profile to bind before submitting |
 | `model` | body | string | Model alias to switch the agent to |
 | `thinking` | body | string | Thinking-mode effort level |
@@ -1318,7 +1318,7 @@ Lists the skills available to one session, merged from every source (built-in, p
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ skills }` where each item is a skill descriptor `{ name, description, path, source, type?, disable_model_invocation? }`: `source` is `project` / `user` / `extra` / `builtin`, `type` classifies the skill (only user-activatable types can be activated), and `disable_model_invocation` hides the skill from the model.
+On success, `data` is `{ skills }` where each item is a skill descriptor `{ name, description, path, source, workspace_dir?, type?, disable_model_invocation? }`: `source` is `project` / `user` / `extra` / `builtin`, `type` classifies the skill (only user-activatable types can be activated), and `disable_model_invocation` hides the skill from the model. `workspace_dir` is the project root for project skills and is omitted for other sources. Same-name skills can appear as multiple variants with distinct `path` values.
 
 - `40401`: session not found (or not activated)
 
@@ -1342,6 +1342,7 @@ Activates a skill in the session — the REST analogue of the `/<skill>` slash c
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `skill_name` | path | string | **Required.** Name of the skill to activate |
+| `path` | body | string | Optional exact `SKILL.md` path from the session catalog, used to select a same-name variant. Must match an entry returned by the catalog |
 | `args` | body | string | Free-form arguments handed to the skill, like the text after a slash command |
 | `attachments` | body | array | Media parts attached to the activation. Image and video parts carry a `source` object whose `kind` is `url` / `base64` / `file` / `session_media` (same shapes as the prompt content parts); file parts carry the top-level `file_id`, `name`, `media_type`, and `size` |
 

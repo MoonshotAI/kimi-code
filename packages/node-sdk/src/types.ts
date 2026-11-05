@@ -265,6 +265,7 @@ export type PromptInput = readonly PromptPart[];
 
 export interface PromptSkillActivation {
   readonly name: string;
+  readonly path?: string;
   readonly args?: string;
 }
 

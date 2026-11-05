@@ -61,6 +61,22 @@ describe('resolveUserInput', () => {
   ])('resolves $input without changing argument or command precedence', ({ input, skills }) => {
     expect(resolveUserInput({ ...options, input }).activations).toEqual(skills);
   });
+
+  it('attaches a selected variant path only to a single activation', () => {
+    const path = '/work/B/review/SKILL.md';
+    const skillVariantPathForCommand = (commandName: string) =>
+      commandName === 'skill:review' ? path : undefined;
+    expect(
+      resolveUserInput({ ...options, input: '/skill:review src/app.ts', skillVariantPathForCommand }).activations,
+    ).toEqual([{ skillName: 'review', path, args: 'src/app.ts' }]);
+    expect(
+      resolveUserInput({
+        ...options,
+        input: '/skill:security /skill:review',
+        skillVariantPathForCommand,
+      }).activations,
+    ).toEqual([{ skillName: 'security' }, { skillName: 'review' }]);
+  });
 });
 
 describe('resolveSlashCommandInput', () => {

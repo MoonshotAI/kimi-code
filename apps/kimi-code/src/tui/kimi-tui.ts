@@ -189,6 +189,7 @@ import {
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
+import { findInlineSkillTokens } from './utils/inline-skill-tokens';
 import { ImageAttachmentStore, type ImageAttachment, type MediaAttachment } from './utils/image-attachment-store';
 import {
   extractMediaAttachments,
@@ -385,6 +386,7 @@ export class KimiTUI {
   private surveySettingSubscription: Unsubscribe | undefined;
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
+  private readonly skillVariantPaths = new Map<string, string>();
   private pluginCommands: readonly KimiSlashCommand[] = [];
   readonly pluginCommandMap = new Map<string, string>();
   private readonly imageStore = new ImageAttachmentStore();
@@ -584,6 +586,8 @@ export class KimiTUI {
         name: cmd.name,
         aliases: cmd.aliases,
         description: cmd.description,
+        skillPath: cmd.skillPath,
+        workspaceDir: cmd.workspaceDir,
         ...(cmd.argumentHint !== undefined ? { argumentHint: cmd.argumentHint } : {}),
         ...(completer !== undefined
           ? { getArgumentCompletions: (prefix: string) => completer(prefix) }
@@ -620,6 +624,9 @@ export class KimiTUI {
       () => this.state.appState.inputMode,
       skillCommandNames,
       remoteSuggest,
+      ({ commandName, path }) => {
+        this.skillVariantPaths.set(commandName, path);
+      },
     );
     this.state.editor.setAutocompleteProvider(provider);
 
@@ -665,10 +672,24 @@ export class KimiTUI {
     const skillCommands = buildSkillSlashCommands(skills);
     this.skillCommands = skillCommands.commands;
     this.skillCommandMap.clear();
+    this.skillVariantPaths.clear();
     for (const [commandName, skillName] of skillCommands.commandMap) {
       this.skillCommandMap.set(commandName, skillName);
     }
     this.setupAutocomplete();
+  }
+
+  retainSkillVariantSelection(text: string): void {
+    if (this.skillVariantPaths.size === 0) return;
+    const tokens = findInlineSkillTokens(text, { isKnownSkill: () => true, includeLeading: true });
+    const commandNames = new Set(tokens.flatMap((token) => [token.commandName, `skill:${token.commandName}`]));
+    for (const commandName of this.skillVariantPaths.keys()) {
+      if (!commandNames.has(commandName)) this.skillVariantPaths.delete(commandName);
+    }
+  }
+
+  skillVariantPathForCommand(commandName: string): string | undefined {
+    return this.skillVariantPaths.get(commandName) ?? this.skillVariantPaths.get(`skill:${commandName}`);
   }
 
   async refreshPluginCommands(session?: Session): Promise<void> {
@@ -1783,14 +1804,14 @@ export class KimiTUI {
     try {
       for (const activation of activations) {
         if (activation.args === undefined) {
-          prepared.skills.push({ name: activation.skillName });
+          prepared.skills.push({ name: activation.skillName, path: activation.path });
           continue;
         }
         const rewrite = rewriteMediaPlaceholders(
           activation.args, this.imageStore, 'plain', mediaSnapshots,
         );
         this.imageStore.retainFileIds(rewrite.videoAttachmentIds);
-        prepared.skills.push({ name: activation.skillName, args: rewrite.text });
+        prepared.skills.push({ name: activation.skillName, path: activation.path, args: rewrite.text });
         prepared.mediaAttachmentIds.push(
           ...new Set([...rewrite.imageAttachmentIds, ...rewrite.videoAttachmentIds]),
         );

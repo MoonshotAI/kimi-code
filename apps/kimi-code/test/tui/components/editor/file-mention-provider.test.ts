@@ -104,6 +104,30 @@ describe('FileMentionProvider', () => {
     expect(result).toBeNull();
   });
 
+  it('exposes workspace metadata and reports the selected variant', async () => {
+    const selections: Array<{ commandName: string; path: string }> = [];
+    const command = {
+      name: 'skill:review',
+      description: 'Review',
+      skillPath: '/work/B/review/SKILL.md',
+      workspaceDir: '/work/B',
+    };
+    const provider = new FileMentionProvider(
+      [command],
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      new Set(['skill:review']),
+      undefined,
+      (selection) => selections.push(selection),
+    );
+    const suggestions = await provider.getSuggestions(['/skill:rev'], 0, 10, { signal: ctrl() });
+    expect(suggestions?.items[0]?.data?.['workspaceLabel']).toBe('B');
+    provider.applyCompletion(['/skill:rev'], 0, 10, suggestions!.items[0]!, suggestions!.prefix);
+    expect(selections).toEqual([{ commandName: 'skill:review', path: '/work/B/review/SKILL.md' }]);
+  });
+
   it('does not complete slash arguments before existing free text', async () => {
     const provider = new FileMentionProvider([GOAL_COMMAND], workDir, NO_FD);
     const line = '/goal Fix the checkout docs';

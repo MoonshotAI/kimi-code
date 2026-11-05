@@ -88,6 +88,11 @@ export class WrappingSelectList extends SelectList {
     const description = item.description
       ? item.description.replaceAll(/[\r\n]+/g, ' ').trim()
       : undefined;
+    const workspaceLabel = item.data?.['workspaceLabel'];
+
+    if (typeof workspaceLabel === 'string' && workspaceLabel.length > 0) {
+      return [this.renderWorkspaceItemLine(item, isSelected, width, primaryColumnWidth, workspaceLabel)];
+    }
 
     if (description && width > 40) {
       const effectivePrimaryColumnWidth = Math.max(
@@ -124,6 +129,42 @@ export class WrappingSelectList extends SelectList {
     const maxWidth = width - prefixWidth - 2;
     const truncatedValue = this.truncatePrimaryValue(item, isSelected, maxWidth, maxWidth);
     return [isSelected ? theme.selectedText(`${prefix}${truncatedValue}`) : prefix + truncatedValue];
+  }
+
+  private renderWorkspaceItemLine(
+    item: SelectItem,
+    isSelected: boolean,
+    width: number,
+    primaryColumnWidth: number,
+    workspaceLabel: string,
+  ): string {
+    const { theme } = this.internals();
+    const prefix = isSelected ? '→ ' : '  ';
+    const prefixWidth = visibleWidth(prefix);
+    const suffix = ` ${truncatePlainToWidth(workspaceLabel, Math.min(24, Math.max(1, Math.floor(width / 4))))}`;
+    const effectivePrimaryColumnWidth = Math.max(
+      1,
+      Math.min(primaryColumnWidth, width - prefixWidth - visibleWidth(suffix) - 4),
+    );
+    const truncatedValue = this.truncatePrimaryValue(
+      item,
+      isSelected,
+      Math.max(1, effectivePrimaryColumnWidth - PRIMARY_COLUMN_GAP),
+      effectivePrimaryColumnWidth,
+    );
+    const spacing = ' '.repeat(Math.max(1, effectivePrimaryColumnWidth - visibleWidth(truncatedValue)));
+    const description = item.description?.replaceAll(/[\r\n]+/g, ' ').trim() ?? '';
+    const descriptionWidth = Math.max(
+      1,
+      width - prefixWidth - visibleWidth(truncatedValue) - visibleWidth(spacing) - visibleWidth(suffix) - 2,
+    );
+    const renderedDescription = truncatePlainToWidth(description, descriptionWidth);
+    const body = `${truncatedValue}${spacing}${renderedDescription}`;
+    const padding = ' '.repeat(
+      Math.max(1, width - prefixWidth - visibleWidth(body) - visibleWidth(suffix) - 2),
+    );
+    if (isSelected) return theme.selectedText(`${prefix}${body}${padding}${suffix}`);
+    return prefix + truncatedValue + theme.description(`${spacing}${renderedDescription}${padding}${suffix}`);
   }
 
   private truncatePrimaryValue(
