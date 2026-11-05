@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 
 import {
+  EnvironmentError,
   IEnvironmentService,
   ISessionIndex,
   ISessionIndexMirror,
@@ -20,6 +21,7 @@ import { z } from 'zod';
 import { defineRoute } from '../../middleware/defineRoute';
 import { errEnvelope, okEnvelope } from '../../protocol/envelope';
 import { ErrorCode } from '../../protocol/error-codes';
+import { withTimeout } from '../../transport/errors';
 import { resolveSessionFacts, type SessionFacts } from '../sessions';
 
 interface V2SessionsRouteHost {
@@ -387,6 +389,8 @@ function decodePageToken(raw: string, fingerprint: string): readonly [number, st
 
 const GIT_DOMAIN_TTL_MS = 60_000;
 
+const REMOTE_GIT_DOMAIN_TIMEOUT_MS = 3_000;
+
 const GIT_DOMAIN_UNAVAILABLE: V2GitDomain = { branch: null, pull_request: null };
 
 function mapPullRequest(pr: FsPullRequest | null): V2GitDomain['pull_request'] {
@@ -409,6 +413,7 @@ function gitTarget(summary: SessionSummary, workspaceCwd: string | null): GitTar
 
 class GitDomainResolver {
   private readonly cache = new Map<string, { value: V2GitDomain; fetchedAt: number }>();
+  private readonly inflight = new Map<string, Promise<V2GitDomain | undefined>>();
 
   constructor(private readonly core: Scope) {}
 
@@ -433,9 +438,8 @@ class GitDomainResolver {
     }
     await Promise.all(
       [...misses].map(async ([key, target]) => {
-        const value = await this.fetch(target);
-        this.cache.set(key, { value, fetchedAt: now });
-        resolvedByKey.set(key, value);
+        const value = await this.load(key, target);
+        if (value !== undefined) resolvedByKey.set(key, value);
       }),
     );
     return new Map(
@@ -446,7 +450,23 @@ class GitDomainResolver {
     );
   }
 
-  private async fetch(target: GitTarget): Promise<V2GitDomain> {
+  private async load(key: string, target: GitTarget): Promise<V2GitDomain | undefined> {
+    let pending = this.inflight.get(key);
+    if (pending === undefined) {
+      const fetchedAt = Date.now();
+      pending = this.fetch(target)
+        .then((value) => {
+          if (value !== undefined) this.cache.set(key, { value, fetchedAt });
+          return value;
+        })
+        .finally(() => this.inflight.delete(key));
+      this.inflight.set(key, pending);
+    }
+    if (target.environmentId === LOCAL_ENVIRONMENT_ID) return pending;
+    return withTimeout(pending, REMOTE_GIT_DOMAIN_TIMEOUT_MS).catch(() => undefined);
+  }
+
+  private async fetch(target: GitTarget): Promise<V2GitDomain | undefined> {
     try {
       let status: Awaited<ReturnType<IGitService['status']>>;
       if (target.environmentId === LOCAL_ENVIRONMENT_ID) {
@@ -464,8 +484,8 @@ class GitDomainResolver {
         branch: status.branch.length === 0 ? null : status.branch,
         pull_request: mapPullRequest(status.pullRequest),
       };
-    } catch {
-      return GIT_DOMAIN_UNAVAILABLE;
+    } catch (error) {
+      return error instanceof EnvironmentError ? undefined : GIT_DOMAIN_UNAVAILABLE;
     }
   }
 }
