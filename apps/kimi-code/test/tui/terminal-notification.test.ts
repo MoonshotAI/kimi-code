@@ -1,11 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
+/* eslint-disable import/first -- vi.mock setup must run before the imports it stubs out. */
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  execFile: vi.fn(),
+}));
+
+vi.mock('node:child_process', () => ({
+  execFile: mocks.execFile,
+}));
 
 import type { TUIState } from '#/tui/kimi-tui';
 import {
   buildTerminalNotificationSequences,
+  buildWindowsToastCommand,
   emitTerminalNotification,
   formatNotification,
   isInsideTmux,
+  isWindowsTerminalSession,
   notifyTerminalOnce,
   supportsOsc9Notification,
   supportsTerminalProgress,
@@ -250,5 +261,115 @@ describe('isInsideTmux', () => {
   it('returns false when TMUX is empty or unset', () => {
     expect(isInsideTmux({ TMUX: '' })).toBe(false);
     expect(isInsideTmux({})).toBe(false);
+  });
+});
+
+describe('isWindowsTerminalSession', () => {
+  it('detects Windows Terminal via the WT_SESSION env var', () => {
+    expect(isWindowsTerminalSession({ WT_SESSION: 'abc-123' })).toBe(true);
+  });
+
+  it('returns false when WT_SESSION is empty or unset', () => {
+    expect(isWindowsTerminalSession({ WT_SESSION: '' })).toBe(false);
+    expect(isWindowsTerminalSession({})).toBe(false);
+  });
+});
+
+describe('buildWindowsToastCommand', () => {
+  it('targets powershell.exe with a non-interactive -Command script', () => {
+    const { file, args } = buildWindowsToastCommand('Kimi Code: Approval required');
+
+    expect(file).toBe('powershell.exe');
+    expect(args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-Command']);
+    const script = args[3]!;
+    expect(script).toContain('ToastTemplateType]::ToastText01');
+    expect(script).toContain("CreateToastNotifier('Kimi Code')");
+    expect(script).toContain("CreateTextNode('Kimi Code: Approval required')");
+  });
+
+  it('escapes single quotes in the message for the PowerShell script', () => {
+    const { args } = buildWindowsToastCommand("it's done");
+
+    expect(args[3]).toContain("CreateTextNode('it''s done')");
+  });
+});
+
+describe('Windows Terminal toast notifications', () => {
+  beforeEach(() => {
+    mocks.execFile.mockReset();
+    mocks.execFile.mockReturnValue({ unref: vi.fn() });
+  });
+
+  it('spawns a toast alongside BEL in Windows Terminal without OSC 9', () => {
+    const terminal = { write: vi.fn() };
+
+    emitTerminalNotification(
+      terminal,
+      { title: 'Kimi Code', body: 'Approval required' },
+      { supportsOsc9: false, insideTmux: false, windowsTerminal: true },
+    );
+
+    expect(terminal.write).toHaveBeenCalledTimes(1);
+    expect(terminal.write).toHaveBeenCalledWith('\u0007');
+    expect(mocks.execFile).toHaveBeenCalledTimes(1);
+    const [file, args] = mocks.execFile.mock.calls[0]!;
+    expect(file).toBe('powershell.exe');
+    expect(args[3]).toContain("CreateTextNode('Kimi Code: Approval required')");
+  });
+
+  it('does not spawn a toast when OSC 9 is supported', () => {
+    const terminal = { write: vi.fn() };
+
+    emitTerminalNotification(
+      terminal,
+      { title: 'Kimi Code', body: 'Approval required' },
+      { supportsOsc9: true, insideTmux: false, windowsTerminal: true },
+    );
+
+    expect(mocks.execFile).not.toHaveBeenCalled();
+  });
+
+  it('does not spawn a toast outside Windows Terminal', () => {
+    const terminal = { write: vi.fn() };
+
+    emitTerminalNotification(
+      terminal,
+      { title: 'Kimi Code', body: 'Approval required' },
+      { supportsOsc9: false, insideTmux: false, windowsTerminal: false },
+    );
+
+    expect(terminal.write).toHaveBeenCalledWith('\u0007');
+    expect(mocks.execFile).not.toHaveBeenCalled();
+  });
+
+  it('swallows errors passed to the execFile callback', () => {
+    const terminal = { write: vi.fn() };
+    mocks.execFile.mockImplementation(
+      (_file: string, _args: string[], callback: (error: Error | null) => void) => {
+        callback(new Error('spawn powershell.exe ENOENT'));
+        return { unref: vi.fn() };
+      },
+    );
+
+    expect(() => {
+      emitTerminalNotification(
+        terminal,
+        { title: 'Kimi Code', body: 'Approval required' },
+        { supportsOsc9: false, insideTmux: false, windowsTerminal: true },
+      );
+    }).not.toThrow();
+  });
+
+  it('does not spawn a toast for an empty message', () => {
+    const terminal = { write: vi.fn() };
+
+    emitTerminalNotification(
+      terminal,
+      { title: '', body: '' },
+      { supportsOsc9: false, insideTmux: false, windowsTerminal: true },
+    );
+
+    expect(terminal.write).not.toHaveBeenCalled();
+    expect(mocks.execFile).not.toHaveBeenCalled();
   });
 });
