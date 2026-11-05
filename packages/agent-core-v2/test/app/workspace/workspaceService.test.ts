@@ -195,7 +195,7 @@ describe('WorkspaceService (file-backed)', () => {
     expect(published).toEqual([]);
   });
 
-  it('rebuilds from session_index.jsonl when workspaces.json is absent', async () => {
+  it('does not rebuild from session_index.jsonl when workspaces.json is absent', async () => {
     const workA = join(homeDir, 'proj-a');
     const workB = join(homeDir, 'proj-b');
     await seedSessionIndex([
@@ -216,24 +216,16 @@ describe('WorkspaceService (file-backed)', () => {
       },
     ]);
 
-    const list = await build().list();
-    expect(list.map((w) => w.id).toSorted()).toEqual(
-      [encodeWorkDirKey(workA), encodeWorkDirKey(workB)].toSorted(),
-    );
-    const a = list.find((w) => w.id === encodeWorkDirKey(workA));
-    expect(a?.root).toBe(workA);
-    expect(a?.name).toBe('proj-a');
-
-    expect((await restart().list()).map((w) => w.id).toSorted()).toEqual(
-      list.map((w) => w.id).toSorted(),
-    );
+    expect(await build().list()).toEqual([]);
+    expect(await restart().list()).toEqual([]);
+    expect((await readRegistry()).workspaces).toEqual({});
   });
 
-  it('rebuilds empty when neither file exists', async () => {
+  it('starts empty when neither file exists', async () => {
     expect(await build().list()).toEqual([]);
   });
 
-  it('merges session-index workDirs into an existing catalog on load', async () => {
+  it('does not merge session-index workDirs into an existing catalog on load', async () => {
     const work = join(homeDir, 'existing');
     const fromIndex = join(homeDir, 'from-index');
     await writeWorkspacesJson({
@@ -253,20 +245,13 @@ describe('WorkspaceService (file-backed)', () => {
     ]);
 
     const list = await build().list();
-    expect(list.map((w) => w.id).toSorted()).toEqual(
-      [encodeWorkDirKey(work), encodeWorkDirKey(fromIndex)].toSorted(),
-    );
-    const existing = list.find((w) => w.id === encodeWorkDirKey(work));
-    expect(existing?.name).toBe('existing');
-    expect(existing?.lastOpenedAt).toBe(Date.parse('2024-01-02T00:00:00.000Z'));
-    expect(list.find((w) => w.id === encodeWorkDirKey(fromIndex))?.name).toBe('from-index');
-
-    expect((await restart().list()).map((w) => w.id).toSorted()).toEqual(
-      list.map((w) => w.id).toSorted(),
-    );
+    expect(list.map((w) => w.id)).toEqual([encodeWorkDirKey(work)]);
+    expect(list[0]?.name).toBe('existing');
+    expect(list[0]?.lastOpenedAt).toBe(Date.parse('2024-01-02T00:00:00.000Z'));
+    expect((await restart().list()).map((w) => w.id)).toEqual([encodeWorkDirKey(work)]);
   });
 
-  it('merge skips tombstoned ids and tolerates a dirty deleted_workspace_ids field', async () => {
+  it('ignores session-index workDirs with and without deletion tombstones', async () => {
     const work = join(homeDir, 'existing');
     const deleted = join(homeDir, 'deleted');
     const fresh = join(homeDir, 'fresh');
@@ -294,13 +279,10 @@ describe('WorkspaceService (file-backed)', () => {
       },
     ]);
 
-    const list = await build().list();
-    expect(list.map((w) => w.id).toSorted()).toEqual(
-      [encodeWorkDirKey(work), encodeWorkDirKey(fresh)].toSorted(),
-    );
+    expect((await build().list()).map((w) => w.id)).toEqual([encodeWorkDirKey(work)]);
   });
 
-  it('delete tombstones the id and the merge never resurrects it', async () => {
+  it('delete tombstones the id and session history never resurrects it', async () => {
     const dirA = join(homeDir, 'dir-a');
     const dirB = join(homeDir, 'dir-b');
     await fsp.mkdir(dirA);
@@ -513,7 +495,7 @@ describe('WorkspaceService (file-backed)', () => {
     expect(list[0]?.root).toBe(lowerRoot);
   });
 
-  it('rebuild folds session-index workDir variants into one workspace', async () => {
+  it('ignores session-index workDir variants instead of folding them into a workspace', async () => {
     const firstSeen = '//Host/Share/Proj';
     await seedSessionIndex([
       { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: firstSeen },
@@ -521,10 +503,7 @@ describe('WorkspaceService (file-backed)', () => {
       { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: '//HOST/SHARE/PROJ' },
     ]);
 
-    const list = await build().list();
-    expect(list).toHaveLength(1);
-    expect(list[0]?.id).toBe(encodeWorkDirKey(firstSeen));
-    expect(list[0]?.root).toBe(firstSeen);
+    expect(await build().list()).toEqual([]);
   });
 
   it('keeps POSIX roots case-sensitive', async () => {
@@ -773,7 +752,7 @@ describe('WorkspaceService (file-backed)', () => {
     expect(await registry.setPrimary('wd_missing_000000000000', homeDir)).toBeUndefined();
   });
 
-  it('merge and rebuild skip session-index lines written into wm_ buckets', async () => {
+  it('ignores session-index lines from both managed and implicit buckets', async () => {
     const workA = join(homeDir, 'proj-a');
     const workB = join(homeDir, 'proj-b');
     await seedSessionIndex([
@@ -789,8 +768,7 @@ describe('WorkspaceService (file-backed)', () => {
       },
     ]);
 
-    const list = await build().list();
-    expect(list.map((w) => w.id)).toEqual([encodeWorkDirKey(workB)]);
+    expect(await build().list()).toEqual([]);
   });
 
   it('migration and patch preserve unknown entry and top-level fields', async () => {
@@ -859,6 +837,12 @@ describe('WorkspaceService (file-backed)', () => {
       [aliasId]: {
         root: aliasRoot,
         name: 'proj',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-01T00:00:00.000Z',
+      },
+      [encodeWorkDirKey(join(homeDir, 'unrelated'))]: {
+        root: join(homeDir, 'unrelated'),
+        name: 'unrelated',
         created_at: '2026-01-01T00:00:00.000Z',
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
@@ -945,16 +929,14 @@ describe('WorkspaceService (file-backed)', () => {
     lines.push('not-json');
     await writeSessionIndexLines(lines);
 
-    const list = await build().list();
-    expect(list).toHaveLength(28);
+    expect(await build().list()).toEqual([]);
 
     const { ids, tombstoned, lines: compacted } = await readSessionIndexIds();
     expect(compacted).toHaveLength(10);
     expect([...ids].toSorted()).toEqual(fresh.map((entry) => entry.sessionId).toSorted());
     expect([...tombstoned].toSorted()).toEqual(['s_gone_0', 's_gone_1']);
 
-    const afterRestart = await restart().list();
-    expect(afterRestart).toHaveLength(28);
+    expect(await restart().list()).toEqual([]);
   });
 
   it('leaves a mostly-fresh session index byte-identical', async () => {
@@ -1036,8 +1018,7 @@ describe('WorkspaceService (file-backed)', () => {
     }
     const flaky = new FlakyStorage(homeDir);
 
-    const list = await build(new HostFileSystem(), flaky).list();
-    expect(list).toHaveLength(21);
+    expect(await build(new HostFileSystem(), flaky).list()).toEqual([]);
     expect(await fsp.readFile(join(homeDir, 'session_index.jsonl'), 'utf8')).toBe(before);
 
     failWrites = false;
@@ -1126,7 +1107,7 @@ describe('projects.json migration and patch', () => {
       scenario: 'non-array deletion tombstones',
       legacy: { version: 1, workspaces: {}, deleted_workspace_ids: 'invalid' },
     },
-  ])('rebuilds from the session index with $scenario', async ({ legacy }) => {
+  ])('does not rebuild from the session index with $scenario', async ({ legacy }) => {
     const workDir = join(homeDir, 'recovered');
     const id = encodeWorkDirKey(workDir);
     await fsp.writeFile(join(homeDir, 'workspaces.json'), JSON.stringify(legacy), 'utf8');
@@ -1138,9 +1119,9 @@ describe('projects.json migration and patch', () => {
       },
     ]);
 
-    expect((await build().list()).map((workspace) => workspace.id)).toEqual([id]);
+    expect(await build().list()).toEqual([]);
     const migrated = await readProjects();
-    expect(migrated.projects[id]?.root).toBe(workDir);
+    expect(migrated.projects).toEqual({});
     expect(migrated.deleted_project_ids).toEqual([]);
   });
 

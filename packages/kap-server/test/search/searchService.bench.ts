@@ -8,6 +8,8 @@ import type {
   IConfigService,
   ILogService,
   ISessionIndex,
+  IWorkspaceAliases,
+  IWorkspaceService,
   SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { DATABASE_SECTION } from '@moonshot-ai/agent-core-v2';
@@ -25,6 +27,26 @@ const T1 = 1_700_000_000_000;
 function summary(id: string, title: string, updatedAt = T1): SessionSummary {
   return { id, workspaceId: WS, title, createdAt: updatedAt, updatedAt, archived: false };
 }
+
+const workspaces = {
+  _serviceBrand: undefined,
+  list: async () => [
+    {
+      id: WS,
+      root: '/repo/test',
+      name: 'test',
+      kind: 'implicit',
+      additionalDirs: [],
+      createdAt: 1,
+      lastOpenedAt: 1,
+    },
+  ],
+} as unknown as IWorkspaceService;
+
+const aliases = {
+  _serviceBrand: undefined,
+  resolveAliasIds: async (id: string) => [id],
+} as IWorkspaceAliases;
 
 function makeBootstrap(home: string): IBootstrapService {
   return {
@@ -97,7 +119,14 @@ function makeConfig(searchEnabled: boolean): IConfigService {
 }
 
 function makeService(home: string, index: ISessionIndex): GlobalSearchService {
-  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeConfig(true));
+  const service = new GlobalSearchService(
+    index,
+    makeBootstrap(home),
+    noopLog,
+    makeConfig(true),
+    workspaces,
+    aliases,
+  );
   service.syncDebounceMs = 0;
   return service;
 }

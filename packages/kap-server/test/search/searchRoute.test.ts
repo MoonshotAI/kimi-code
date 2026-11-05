@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 process.env['KIMI_CODE_SEARCH_WORKER'] = '1';
 
-import { ISessionIndex, type SessionSummary } from '@moonshot-ai/agent-core-v2';
+import { ISessionIndex, IWorkspaceService, type SessionSummary } from '@moonshot-ai/agent-core-v2';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../../src/start';
@@ -57,6 +57,21 @@ function stubSessionIndex(summaries: SessionSummary[]): ISessionIndex {
     remove: async () => {},
   };
 }
+
+const workspaceService = {
+  _serviceBrand: undefined,
+  list: async () => [
+    {
+      id: WS,
+      root: '/repo/route',
+      name: 'route',
+      kind: 'implicit',
+      additionalDirs: [],
+      createdAt: 1,
+      lastOpenedAt: 1,
+    },
+  ],
+} as unknown as IWorkspaceService;
 
 describe('server-v2 /api/v1/search', () => {
   let server: RunningServer | undefined;
@@ -114,7 +129,10 @@ describe('server-v2 /api/v1/search', () => {
       homeDir: home,
       env: { ...process.env, KIMI_CODE_GLOBAL_SEARCH: '1' },
       logLevel: 'silent',
-      seeds: [[ISessionIndex, stubSessionIndex(summaries)]],
+      seeds: [
+        [ISessionIndex, stubSessionIndex(summaries)],
+        [IWorkspaceService, workspaceService],
+      ],
     });
     base = `http://127.0.0.1:${server.port}`;
   });

@@ -739,3 +739,86 @@ describe('server-v2 /api/v1/workspaces', () => {
     }
   });
 });
+
+describe('workspace registry session-index isolation', () => {
+  it.each(['legacy', 'existing-projects'] as const)(
+    'does not recreate projects from stale session indexes during $scenario startup',
+    async (scenario) => {
+      const home = await mkdtemp(join(tmpdir(), 'kimi-workspace-registry-only-'));
+      let server: RunningServer | undefined;
+      try {
+        const names = [
+          'empty',
+          'existing',
+          'themes',
+          'repo',
+          'normal-1-old',
+          'normal-1-new',
+          'local-1-new',
+          'local-1-old',
+          'normal-2-old',
+          'normal-2-new',
+          'local-2-old',
+        ];
+        const entries = names.map((name) => {
+          const workDir = join(home, 'roots', name);
+          const workspaceId = encodeWorkDirKey(workDir);
+          return {
+            sessionId: `s_${name}`,
+            sessionDir: join(home, 'sessions', workspaceId, `s_${name}`),
+            workDir,
+          };
+        });
+        if (scenario === 'legacy') {
+          await writeFile(
+            join(home, 'workspaces.json'),
+            JSON.stringify({ version: 1, workspaces: {}, deleted_workspace_ids: [] }),
+            'utf8',
+          );
+        } else {
+          await writeFile(
+            join(home, 'projects.json'),
+            JSON.stringify({ schema_version: 2, projects: {}, deleted_project_ids: [] }),
+            'utf8',
+          );
+        }
+        await writeFile(
+          join(home, 'session_index.jsonl'),
+          `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`,
+          'utf8',
+        );
+        server = await startServer({
+          hostIdentity: TEST_HOST_IDENTITY,
+          host: '127.0.0.1',
+          port: 0,
+          homeDir: home,
+          logLevel: 'silent',
+        });
+        const base = `http://127.0.0.1:${server.port}`;
+        const get = async <T,>(path: string): Promise<Envelope<T>> => {
+          const response = await fetch(`${base}${path}`, {
+            headers: authHeaders(server as RunningServer),
+          });
+          return (await response.json()) as Envelope<T>;
+        };
+
+        const workspaces = await get<ListWire>('/api/v1/workspaces');
+        expect(workspaces.code).toBe(0);
+        expect(workspaces.data.items).toEqual([]);
+        const v1 = await get<{ items: unknown[] }>('/api/v1/sessions?include_archive=true');
+        expect(v1.data.items).toEqual([]);
+        const v2 = await get<{ groups: unknown[] }>(
+          '/api/v2/sessions?view=by_workspace&meta.archived=all',
+        );
+        expect(v2.data.groups).toEqual([]);
+        const projects = JSON.parse(await readFile(join(home, 'projects.json'), 'utf8')) as {
+          projects: Record<string, unknown>;
+        };
+        expect(projects.projects).toEqual({});
+      } finally {
+        if (server !== undefined) await server.close();
+        await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      }
+    },
+  );
+});
