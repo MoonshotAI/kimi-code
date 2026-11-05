@@ -33,6 +33,21 @@ describe('getDataDir', () => {
     expect(getDataDir()).toBe('/tmp/kimi-test-data');
   });
 
+  it('expands a standalone tilde to the home directory', () => {
+    process.env['KIMI_CODE_HOME'] = '~';
+    expect(getDataDir()).toBe(homedir());
+  });
+
+  it('expands a tilde-prefixed path to the home directory', () => {
+    process.env['KIMI_CODE_HOME'] = '~/.local/share/kimi-code';
+    expect(getDataDir()).toBe(join(homedir(), '.local', 'share', 'kimi-code'));
+  });
+
+  it('does not expand named-user tilde paths', () => {
+    process.env['KIMI_CODE_HOME'] = '~other/kimi-code';
+    expect(getDataDir()).toBe('~other/kimi-code');
+  });
+
   it('returns KIMI_CODE_HOME even if it is a relative path', () => {
     process.env['KIMI_CODE_HOME'] = 'relative/path';
     expect(getDataDir()).toBe('relative/path');
