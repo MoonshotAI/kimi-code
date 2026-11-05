@@ -133,7 +133,9 @@ import { ILogOptions } from '#/_base/log/logConfig';
 import {
   WIRE_MIN_READER_VERSION,
   WIRE_PROTOCOL_VERSION,
-  AgentTaskService,
+  AgentTaskRuntime,
+  AgentTaskOutputService,
+  IAgentTaskOutputService,
   AgentExternalHooksService,
   FileStorageService,
   InMemoryStorageService,
@@ -749,7 +751,10 @@ export function permissionRulesServices(
 }
 
 export function taskServices(): TestAgentServiceOverride {
-  return agentService(IAgentTaskService, new SyncDescriptor(AgentTaskService));
+  return [
+    agentService(IAgentTaskService, new SyncDescriptor(AgentTaskRuntime)),
+    agentService(IAgentTaskOutputService, new SyncDescriptor(AgentTaskOutputService)),
+  ];
 }
 
 export function mcpServices(options: {
@@ -1413,7 +1418,11 @@ export class AgentTestContext {
             );
             reg.defineDescriptor(
               IAgentTaskService,
-              new SyncDescriptor(AgentTaskService),
+              new SyncDescriptor(AgentTaskRuntime),
+            );
+            reg.defineDescriptor(
+              IAgentTaskOutputService,
+              new SyncDescriptor(AgentTaskOutputService),
             );
             reg.defineDescriptor(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
             const agentStateService = new TestAgentStateService(

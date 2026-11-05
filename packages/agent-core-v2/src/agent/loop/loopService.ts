@@ -25,6 +25,8 @@ import { abortedToolOutput } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TaskStarted, TaskTerminated } from '#/agent/task/taskOps';
 import { TERMINAL_STATUSES, type AgentTaskInfo } from '#/agent/task/types';
+import { AgentTaskService } from '#/agent/task/taskService';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { IConfigService } from '#/app/config/config';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { type FinishReason } from '#human/llm-requester/finish-reason';
@@ -204,6 +206,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @ISessionRunGate private readonly runGate: ISessionRunGate,
     @ILogService private readonly logger: ILogService,
     @IAgentMediaResolverService mediaResolver: IAgentMediaResolverService,
+    @IAgentTaskOutputService private readonly taskOutputs: IAgentTaskOutputService,
   ) {
     super();
     const space = this.scopeContext.agentContext.space;
@@ -321,7 +324,50 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     this.loop = undefined;
     await this.wire.drainPersisted().catch(() => undefined);
-    this.createLoopFromSnapshot(this.journal.snapshot(), seededMessages, minimumNextTurnId, historyRevision);
+    const snapshot = this.journal.snapshot();
+    const completions = await this.restoreTaskCompletions(snapshot, seededMessages);
+    this.createLoopFromSnapshot(snapshot, seededMessages, minimumNextTurnId, historyRevision, completions);
+  }
+
+  private async restoreTaskCompletions(
+    snapshot: LoopJournalSnapshot,
+    seededMessages?: readonly HistoryMessage[],
+  ): Promise<readonly UserEntry[]> {
+    const { journal } = await this.wire.readRestoreChains();
+    const history = new AgentTaskService(this.scopeContext.agentId);
+    history.restore(journal);
+    const delivered = new Set<string>();
+    for (const entry of seededMessages ?? snapshot.input.messages ?? []) {
+      const origin = contextFromHistoryEntry(entry).origin;
+      if (origin?.kind === 'task') delivered.add(`${origin.taskId}\0${origin.status}\0${origin.notificationId}`);
+    }
+    const completions: UserEntry[] = [];
+    for (const info of history.list(false)) {
+      if (info.status === 'lost' || !TERMINAL_STATUSES.has(info.status)) continue;
+      if (info.detached === false || info.terminalNotificationSuppressed === true) continue;
+      const origin = info.status;
+      const notificationId = `task:${info.taskId}:${info.status}`;
+      if (delivered.has(`${info.taskId}\0${origin}\0${notificationId}`)) continue;
+      const toolCallId = info.kind === 'question' ? info.toolCallId : info.parentToolCallId;
+      if (toolCallId === undefined) continue;
+      completions.push(await this.taskOutputs.createCompletion(info, toolCallId));
+    }
+    return completions;
+  }
+
+  private projectTaskCompletionNudge(entry: UserEntry): void {
+    if (entry.meta?.origin?.kind !== 'task' || entry.meta.source !== 'async-tool' || entry.meta.toolCallId === undefined) return;
+    const promptId = entry.meta.promptId;
+    if (promptId !== undefined && this.nudges.some((nudge) => nudge.entry?.meta?.promptId === promptId)) return;
+    this.nudges.push({
+      kind: 'notify',
+      entry,
+      contextMessage: contextFromHistoryEntry(entry),
+      promptIds: promptId === undefined ? [] : [promptId],
+      bypassMaxSteps: false,
+      turnScoped: false,
+      sentToMachine: true,
+    });
   }
 
   private createLoopFromSnapshot(
@@ -329,9 +375,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     seededMessages?: readonly HistoryMessage[],
     minimumNextTurnId?: number,
     historyRevision?: number,
+    completions: readonly UserEntry[] = [],
   ): void {
     this.initialized = true;
     this.tools.sync();
+    for (const entry of completions) this.projectTaskCompletionNudge(entry);
     const loop = createLoop({
       createTurnExecution: (input) => {
         return this.requester.createTurnExecution({
@@ -353,6 +401,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         ...snapshot.input,
         profile: { systemPrompt: this.profile.getSystemPrompt(), tools: [] },
         messages: seededMessages === undefined ? snapshot.input.messages : [...seededMessages],
+        inbox: {
+          ...snapshot.input.inbox,
+          notify: [...(snapshot.input.inbox?.notify ?? []), ...completions],
+        },
         nextTurnId: Math.max(snapshot.input.nextTurnId ?? 0, minimumNextTurnId ?? 0),
         historyRevision,
       },
@@ -1053,7 +1105,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (this.disposing) return;
     this.ensureLoop();
     this.detachedTasks.set(task.toolCallId, { task, started: task.info() });
-    this.loop?.detachTool(task.toolCallId, text);
+    this.loop?.detachTool(task.toolCallId, text, task.completion);
   }
 
   abortTool(toolCallId: string, reason?: unknown): void {
@@ -1161,7 +1213,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return (
       this.pendingSubmissions.length > 0 ||
       (this.loop?.state.inbox.normal.length ?? 0) > 0 ||
-      this.nudges.slice(this.nudgeCursor).some((nudge) => !nudge.dropped) ||
+      (this.loop?.state.inbox.notify.length ?? 0) > 0 ||
+      this.nudges.slice(this.nudgeCursor).some((nudge) => !nudge.dropped && !nudge.consumed) ||
       (this.loop !== undefined && this.loop.state.status !== 'idle')
     );
   }
@@ -1662,10 +1715,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         return this.finishTurn(turn, outcome);
       }
       case 'prompt.notified':
-      case 'prompt.steered': {
+        this.projectTaskCompletionNudge(event.entry);
         this.projectSteered(event);
         return;
-      }
+      case 'prompt.steered':
+        this.projectSteered(event);
+        return;
       default:
         return;
     }

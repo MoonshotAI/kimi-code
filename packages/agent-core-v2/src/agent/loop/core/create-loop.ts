@@ -3,7 +3,7 @@ import type { ToolDescription } from '#human/llm/message';
 import type { PolicyRegistry } from '#human/llm/policy/registry';
 import type { ToolExecutor } from '#human/tool/executor';
 import type { WaitOpts } from '#human/utils/wait';
-import { AgentMachine } from './agent-machine';
+import { createActorLoop } from './loop-actor';
 import type { LoopInput } from './contract/command';
 import type { LoopAck, LoopEmitted } from './contract/emitted';
 import type { HookRegistration } from './contract/hook';
@@ -13,6 +13,7 @@ import type { HookRegistry } from './hook/registry';
 import type { LoopLlmRequester, LoopRequestRuntime, TurnExecution, TurnExecutionFactory } from './request';
 import type { LoopState } from './state';
 import type { WaitForTasks } from './tool/tasks';
+import type { ToolCompletionFactory } from './tool/outcome';
 
 export interface CreateLoopOptions {
   readonly createTurnExecution?: TurnExecutionFactory;
@@ -40,7 +41,7 @@ export interface Loop {
   continue(): void;
   abort(reason?: unknown): void;
   abortTool(toolCallId: string, reason?: unknown): void;
-  detachTool(toolCallId: string, text?: string): void;
+  detachTool(toolCallId: string, text?: string, completion?: ToolCompletionFactory): void;
   setRequester(requester: LoopLlmRequester | undefined): void;
   operation<T>(create: (runtime: LoopRequestRuntime) => T): T;
   setContext(messages: HistoryMessage[], reason?: string): LoopAck<'context.settled' | 'context.rejected'> | undefined;
@@ -54,5 +55,5 @@ export interface Loop {
 }
 
 export function createLoop(options: CreateLoopOptions): Loop {
-  return new AgentMachine(options);
+  return createActorLoop(options);
 }

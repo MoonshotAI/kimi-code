@@ -6,7 +6,8 @@ import type {
   ToolExecutionResult,
 } from '#/agent/toolExecutor/toolExecutor';
 import { createCoreTools } from '#/agent/loop/toolAdapter';
-import { createLoop, type LoopLlmRequester } from '#/agent/loop/core/index';
+import type { LoopLlmRequester } from '#/agent/loop/core/index';
+import { createTestLoop as createLoop } from './core/factory';
 import { createUserEntry, type ToolEntry } from '#human/agent/turn';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '#human/llm/message';
 import type { LlmRequest } from '#human/llm/request';
@@ -146,6 +147,57 @@ describe('core tool adapter', () => {
     await loop.waitForIdle();
     expect(loop.state.messages.some((entry) => extractText(entry.message).includes('[async tool completed]'))).toBe(true);
     await loop.close();
+
+    const toolGate = deferred<void>();
+    const completion = deferred<ReturnType<typeof prompt>>();
+    let requestCompletion: () => void = () => undefined;
+    const completionRequested = new Promise<void>((resolve) => {
+      requestCompletion = resolve;
+    });
+    const closingLoop = createLoop({
+      createTurnExecution: ({ profile }) => ({
+        profile,
+        requester: requester([done('', [call('close-bg')]), done('next')]),
+      }),
+      executor: {
+        execute: async () => {
+          await toolGate.promise;
+          return { content: [] };
+        },
+      },
+    });
+    const asyncEntries: string[] = [];
+    const notifications: string[] = [];
+    closingLoop.subscribe((event) => {
+      if (event.type === 'tool.async_ended') asyncEntries.push(extractText(event.entry.message));
+      if (event.type === 'prompt.notified') notifications.push(extractText(event.entry.message));
+    });
+    const started = closingLoop.wait('tool.started');
+    const active = closingLoop.runTurn(prompt());
+    await started;
+    const detachedClose = closingLoop.wait('tool.ended', { match: (event) => event.detached });
+    closingLoop.detachTool('close-bg', 'closing', () => {
+      requestCompletion();
+      return completion.promise;
+    });
+    await detachedClose;
+    expect((await active).type).toBe('done');
+    toolGate.resolve();
+    await completionRequested;
+    const closing = closingLoop.close();
+    let closed = false;
+    void closing.then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    completion.resolve(createUserEntry(createUserMessage('custom closed'), {
+      source: 'async-tool',
+      toolCallId: 'close-bg',
+    }));
+    await closing;
+    expect(asyncEntries).toEqual(['custom closed']);
+    expect(notifications).toEqual([]);
   });
 
   it('settles late results only in their original batch when an id is reused', async () => {

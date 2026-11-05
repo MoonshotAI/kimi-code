@@ -5,6 +5,7 @@ import { Error2 } from '#/_base/errors/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -68,6 +69,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     @ISessionContext private readonly session: ISessionContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
@@ -172,7 +174,8 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
 
     const started = acknowledgement();
     if (detach === undefined) return started;
-    this.tasks.detach(taskId, started.output);
+    const task = this.tasks.prepareCoreDetach(taskId, toolCallId);
+    if (task !== undefined) this.loop.detachTool(task, started.output);
     const info = await this.tasks.wait(taskId, Number.POSITIVE_INFINITY);
     const output = await this.tasks.readOutput(taskId);
     return {

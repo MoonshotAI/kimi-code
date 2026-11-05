@@ -8,7 +8,8 @@ import type { LlmRetryable } from '#human/llm/policy/retry';
 import type { LlmModelSpec, LlmRequest } from '#human/llm/request';
 import { contentsOf, createRequester, mergeFields, type LlmRequestPart } from '#human/llm/requester';
 import type { LlmOutcome } from '#human/llm/response';
-import { createLoop, type LoopLlmRequester, type LoopProfile } from '#/agent/loop/core/index';
+import type { LoopLlmRequester, LoopProfile } from '#/agent/loop/core/index';
+import { createTestLoop as createLoop } from './factory';
 
 const spec: LlmModelSpec = { provider: 'fake', name: 'fake-model' };
 

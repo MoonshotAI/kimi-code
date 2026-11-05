@@ -22,7 +22,7 @@ import { turnKey, type TurnPrompt } from '#/agent/loop/turnOps';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { planKey } from '#/features/plan/planOps';
 import { IAgentTaskService, type AgentTask } from '#/agent/task/task';
-import { taskNotificationDeliveryKey } from '#/agent/task/taskService';
+import { taskNotificationDeliveryKey } from '#/agent/task/taskRuntime';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { ContextUndone } from '#/agent/undo/undoService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';

@@ -386,6 +386,7 @@ describe('Bash environment generation guard', () => {
       }),
       stubWorkspaceContext('/workspace'),
       {} as never,
+      {} as never,
       toolPolicy,
       stubConfigService(),
     );

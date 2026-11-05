@@ -5,7 +5,6 @@ import { createAssistantMessage, createUserMessage, extractText, type ToolCall }
 import type { LlmRequest } from '#human/llm/request';
 import type { LlmOutcome } from '#human/llm/response';
 import {
-  createLoop,
   loopProjection,
   toLoopRecord,
   type Loop,
@@ -13,6 +12,7 @@ import {
   type LoopLlmRequester,
   type LoopRecord,
 } from '#/agent/loop/core/index';
+import { createTestLoop as createLoop } from './factory';
 import type { ToolExecuteInput, ToolResult } from '#human/tool/executor';
 
 function requester(outcomes: (() => LlmOutcome)[]): LoopLlmRequester {
@@ -152,14 +152,17 @@ describe('loop record', () => {
     expect(recovered.state).toMatchObject({ status: 'interrupted', turn: { id: 2, step: 1 } });
     const after = record(recovered);
     expect((await recovered.runTurn(prompt('next'))).type).toBe('done');
-    expect(after.slice(0, 5).map((item) => item.type)).toEqual([
+    expect(after.slice(0, 7).map((item) => item.type)).toEqual([
+      'tool.ended',
       'message.appended',
+      'tool.ended',
       'message.appended',
       'step.ended',
       'turn.ended',
       'turn.started',
     ]);
-    expect(after[3]).toMatchObject({ turnId: 2, outcome: { type: 'aborted', reason: { reason: 'crashed' } } });
+    expect(after[4]).toMatchObject({ turnId: 2, outcome: { type: 'aborted', reason: { reason: 'crashed' } } });
+    expect(after[6]).toMatchObject({ type: 'turn.started' });
     const resumed = fold([...prefix, ...after]);
     expect(resumed.unfinished).toBeUndefined();
     expect(resumed.nextTurnId).toBe(4);

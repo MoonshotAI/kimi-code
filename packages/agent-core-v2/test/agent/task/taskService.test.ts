@@ -19,7 +19,8 @@ import {
   type AgentTaskInfo,
 } from '#/agent/task/task';
 import { renderNotificationXml } from '#/agent/task/notificationXml';
-import { AgentTaskService, taskNotificationDeliveryKey } from '#/agent/task/taskService';
+import { AgentTaskRuntime as AgentTaskService, taskNotificationDeliveryKey } from '#/agent/task/taskRuntime';
+import { AgentTaskOutputService, IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
@@ -184,6 +185,7 @@ describe('AgentTaskService', () => {
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
     ix.set(IAgentTaskService, new SyncDescriptor(AgentTaskService));
+    ix.set(IAgentTaskOutputService, new SyncDescriptor(AgentTaskOutputService));
   });
   afterEach(() => disposables.dispose());
 
@@ -420,9 +422,11 @@ describe('AgentTaskService', () => {
     const childResult = waitResultString(await childWait);
     const mainResult = waitResultString(await mainWait);
     expect(childResult).toContain('wait_status: completed');
-    expect(childResult).toContain('leaf findings');
+    expect(childResult).not.toContain('leaf findings');
     expect(mainResult).toContain('wait_status: completed');
-    expect(mainResult).toContain('parent done after child');
+    expect(mainResult).not.toContain('parent done after child');
+    expect(await childSvc.readOutput(taskC)).toBe('leaf findings');
+    expect(await mainSvc.readOutput(taskM)).toBe('parent done after child');
     expect(order).toEqual(['childWait', 'taskM', 'mainWait']);
   });
 
@@ -755,6 +759,7 @@ describe('AgentTaskService', () => {
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
     ix.set(IAgentTaskService, new SyncDescriptor(AgentTaskService));
+    ix.set(IAgentTaskOutputService, new SyncDescriptor(AgentTaskOutputService));
     return ix;
   }
 
@@ -815,6 +820,7 @@ describe('AgentTaskService', () => {
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
     ix.set(IAgentTaskService, new SyncDescriptor(AgentTaskService));
+    ix.set(IAgentTaskOutputService, new SyncDescriptor(AgentTaskOutputService));
     return ix;
   }
 

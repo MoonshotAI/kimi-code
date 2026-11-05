@@ -19,7 +19,7 @@ import { CRASHED, type Cause, type StepOutcome, type ToolCallOutcome, type TurnO
 import type { LoopProfile } from './contract/profile';
 import type { HookFailure } from './hook/failure';
 import { loopProjection, type LoopRecord, type LoopRecordState } from './record';
-import { abortedToolOutcome } from './tool/outcome';
+import { abortedToolOutcome, type ToolCompletionFactory } from './tool/outcome';
 
 export type LoopPhase = 'idle' | 'running' | 'closed';
 
@@ -105,6 +105,8 @@ export interface LiveTool {
   result?: ToolResult;
   error?: unknown;
   reason?: unknown;
+  completion?: ToolCompletionFactory;
+  completionEntry?: Promise<UserEntry>;
   readonly waiters: Set<() => void>;
 }
 
