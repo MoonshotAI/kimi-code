@@ -75,7 +75,7 @@ export function userMessageItem(
     origin: presented,
     text: content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n'),
     attachments: content.filter(isMediaPart).map((part, index): Attachment => {
-      const name = mediaFields(part).name;
+      const name = mediaFields(part)?.name;
       return { ...mediaOf(part), name: typeof name === 'string' ? name : undefined, ordinal: index + 1 };
     }),
     skills: origin?.kind === 'user'
@@ -276,7 +276,7 @@ export function mediaPartOf(media: Pick<Media, 'kind'> & { readonly url: string 
 }
 
 export function mediaUrlOf(part: MediaPart): string | undefined {
-  const url = mediaFields(part).url;
+  const url = mediaFields(part)?.url;
   return typeof url === 'string' ? url : undefined;
 }
 
@@ -313,7 +313,7 @@ function originOf(origin: PromptOrigin | undefined): UserMessageOrigin {
   }
 }
 
-function mediaFields(part: MediaPart): { readonly url?: unknown; readonly name?: unknown } {
+function mediaFields(part: MediaPart): { readonly url?: unknown; readonly name?: unknown } | undefined {
   if (part.type === 'image_url') return part.imageUrl;
   return part.type === 'video_url' ? part.videoUrl : part.audioUrl;
 }
