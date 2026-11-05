@@ -3,8 +3,8 @@ import * as win32Path from 'node:path/win32';
 
 import type { HostEnvironmentInfo, PathClass } from '#/os/interface/hostEnvironment';
 
-import type { EnvironmentPath, EnvironmentWorkspaceMapper } from './environment';
-import { EnvironmentError } from './environmentRegistry';
+import type { EnvironmentLease, EnvironmentPath, EnvironmentWorkspaceMapper } from './environment';
+import { EnvironmentError, type EnvironmentRegistry } from './environmentRegistry';
 
 export function normalizeRemoteCwd(cwd: string): string {
   const path = /^[A-Za-z]:[\\/]/.test(cwd) ? win32Path : posixPath;
@@ -12,6 +12,37 @@ export function normalizeRemoteCwd(cwd: string): string {
     throw new EnvironmentError('environment.invalid_cwd', 'remote cwd must be an absolute POSIX or Windows path; relative paths and ~ are not expanded');
   }
   return path.resolve(cwd);
+}
+
+export async function requireEnvironmentDirectory(
+  environments: Pick<EnvironmentRegistry, 'acquireWhenReady'>,
+  environmentId: string,
+  cwd: string,
+): Promise<void> {
+  let lease: EnvironmentLease;
+  try {
+    lease = await environments.acquireWhenReady({ environmentId }, ['fs']);
+  } catch (error) {
+    if (error instanceof EnvironmentError) throw error;
+    throw new EnvironmentError(
+      'environment.unavailable',
+      `failed to connect environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  try {
+    const stat = await lease.environment.fs!.stat(cwd).catch((error: unknown) => {
+      throw new EnvironmentError(
+        'environment.invalid_cwd',
+        `cwd ${cwd} is not readable on environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+    if (!stat.isDirectory) {
+      throw new EnvironmentError('environment.invalid_cwd', `cwd ${cwd} is not a directory on environment ${environmentId}`);
+    }
+  } finally {
+    lease.dispose();
+  }
 }
 
 export const DEFAULT_ENVIRONMENT_HOST: HostEnvironmentInfo = {

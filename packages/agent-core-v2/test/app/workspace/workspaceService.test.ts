@@ -172,6 +172,28 @@ describe('WorkspaceService (file-backed)', () => {
     expect(list.find((w) => w.id === created.id)?.name).toBe('proj');
   });
 
+  it('persists a remote workspace without touching the local filesystem', async () => {
+    const created = await build().create({ root: '/srv/does-not-exist-locally', primaryEnvironmentId: 'devbox' });
+    expect(created).toMatchObject({ root: '/srv/does-not-exist-locally', primaryEnvironmentId: 'devbox', additionalDirs: [] });
+    expect((await readRegistry()).workspaces[created.id]).toMatchObject({ primary_environment_id: 'devbox' });
+
+    const service = restart();
+    expect(await service.get(created.id)).toMatchObject({ primaryEnvironmentId: 'devbox' });
+    expect(await service.touch(created.id)).toMatchObject({ primaryEnvironmentId: 'devbox' });
+    await expect(service.update(created.id, {
+      directories: [{ environmentId: 'local', path: homeDir }],
+    })).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+    await expect(service.create({
+      root: '/srv/app',
+      primaryEnvironmentId: 'devbox',
+      additionalDirs: ['/srv/api'],
+    })).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+
+    const local = await service.create({ root: homeDir });
+    expect(local.primaryEnvironmentId).toBeUndefined();
+    expect((await readRegistry()).workspaces[local.id]).not.toHaveProperty('primary_environment_id');
+  });
+
   it('publishes lifecycle events on create, touch, rename, and delete', async () => {
     const service = build();
     const created = await service.createOrTouch(homeDir, 'proj');

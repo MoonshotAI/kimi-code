@@ -225,7 +225,10 @@ describe('process group over a subprocess loopback', () => {
   it('kills all managed processes when the connection drops', async () => {
     const proc = await processes.spawn('sleep', ['300']);
     expect(isAlive(proc.pid)).toBe(true);
+    const stderr = collect(proc.stderr);
     connection.close();
+    expect(await proc.wait()).toBe(-1);
+    expect((await stderr).toString()).toContain('connection to the remote environment was lost (connection closed by client)');
     spawned.bridge.close();
     await spawned.bridge.exited;
     await waitForDeath(proc.pid);

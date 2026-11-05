@@ -1,7 +1,11 @@
 import {
   IBootstrapService,
+  IEnvironmentService,
   IHostFileSystem,
   IWorkspaceService,
+  LOCAL_ENVIRONMENT_ID,
+  workspaceDirectories,
+  workspaceEnvironmentId,
   IWorkspaceSessions,
   IWorkspaceTrust,
   IWorkspaceTrustStore,
@@ -9,6 +13,7 @@ import {
   type Workspace,
 } from '@moonshot-ai/agent-core-v2';
 import { workspaceRootKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import { normalizeRemoteCwd, requireEnvironmentDirectory } from '@moonshot-ai/agent-core-v2/environment/environmentDefaults';
 import { isAbsolute, join, normalize, resolve } from 'node:path';
 
 import { z } from 'zod';
@@ -31,7 +36,8 @@ import {
   workspaceIdParamSchema,
   workspaceTrustResponseSchema,
 } from '../protocol/rest-workspace';
-import type { Workspace as WorkspaceWire } from '../protocol/workspace';
+import type { WorkspaceDirectory as WorkspaceDirectoryWire, Workspace as WorkspaceWire } from '../protocol/workspace';
+import { sendEnvironmentError } from './environment';
 
 interface WorkspaceRouteHost {
   get(
@@ -98,48 +104,29 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.WORKSPACE_DUPLICATE_DIR]: { detailsSchema: duplicateDirDetailsSchema },
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description: 'Register a workspace (fresh id per call; retry-safe via idempotency_key)',
       tags: ['workspaces'],
     },
     async (req, reply) => {
-      const root = req.body.root;
-      if (!isAbsolute(root)) {
-        reply.send(
-          buildValidationEnvelope(
-            [{ path: 'root', message: 'root must be an absolute path' }],
-            req.id,
-          ),
-        );
+      const directories = req.body.directories ?? [
+        { environment_id: LOCAL_ENVIRONMENT_ID, path: req.body.root! },
+        ...(req.body.additional_dirs ?? []).map((path) => ({ environment_id: LOCAL_ENVIRONMENT_ID, path })),
+      ];
+      const resolved = await normalizeDirectoriesInput(core, directories, req.body.directories === undefined, req.id);
+      if ('envelope' in resolved) {
+        reply.send(resolved.envelope);
         return;
       }
-      const hostFs = core.accessor.get(IHostFileSystem);
-      try {
-        const stat = await hostFs.stat(root);
-        if (!stat.isDirectory) {
-          reply.send(
-            errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `root ${root} is not a directory`, req.id),
-          );
-          return;
-        }
-      } catch {
-        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `root ${root} does not exist`, req.id));
-        return;
-      }
-      const additional = await normalizeAdditionalDirsInput(
-        core,
-        root,
-        req.body.additional_dirs ?? [],
-        req.id,
-      );
-      if ('envelope' in additional) {
-        reply.send(additional.envelope);
+      if ('error' in resolved) {
+        if (!sendEnvironmentError(reply, req.id, resolved.error)) throw resolved.error;
         return;
       }
       const ws = await core.accessor.get(IWorkspaceService).create({
-        root,
+        ...resolved.parts,
         name: req.body.name,
-        additionalDirs: additional.dirs,
         idempotencyKey: req.body.idempotency_key,
       });
       reply.send(okEnvelope(await toWireWorkspace(core, ws), req.id));
@@ -163,6 +150,8 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         [ErrorCode.WORKSPACE_DUPLICATE_DIR]: { detailsSchema: duplicateDirDetailsSchema },
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
       },
       description: 'Update a workspace name and/or source folders (full replace)',
       tags: ['workspaces'],
@@ -177,23 +166,37 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         );
         return;
       }
-      let additionalDirs: readonly string[] | undefined;
-      if (req.body.additional_dirs !== undefined) {
-        const additional = await normalizeAdditionalDirsInput(
-          core,
-          existing.root,
-          req.body.additional_dirs,
-          req.id,
-        );
-        if ('envelope' in additional) {
-          reply.send(additional.envelope);
+      const environmentId = workspaceEnvironmentId(existing);
+      const directories = req.body.directories ?? (req.body.additional_dirs === undefined
+        ? undefined
+        : [
+            { environment_id: environmentId, path: existing.root },
+            ...req.body.additional_dirs.map((path) => ({ environment_id: environmentId, path })),
+          ]);
+      let parts: DirectoryParts | undefined;
+      if (directories !== undefined) {
+        if (directories[0]!.environment_id !== environmentId) {
+          reply.send(buildValidationEnvelope([{ path: 'directories.0.environment_id', message: 'the workspace environment cannot change' }], req.id));
           return;
         }
-        additionalDirs = additional.dirs;
+        const resolved = await normalizeDirectoriesInput(core, directories, req.body.directories === undefined, req.id);
+        if ('envelope' in resolved) {
+          reply.send(resolved.envelope);
+          return;
+        }
+        if ('error' in resolved) {
+          if (!sendEnvironmentError(reply, req.id, resolved.error)) throw resolved.error;
+          return;
+        }
+        parts = resolved.parts;
       }
       const ws = await registry.update(workspace_id, {
         name: req.body.name,
-        additionalDirs,
+        ...(parts === undefined
+          ? {}
+          : {
+              directories: workspaceDirectories(parts),
+            }),
       });
       if (ws === undefined) {
         reply.send(
@@ -343,6 +346,14 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         );
         return;
       }
+      if (workspaceEnvironmentId(existing) !== LOCAL_ENVIRONMENT_ID) {
+        if (req.body.path !== existing.root) {
+          reply.send(buildValidationEnvelope([{ path: 'path', message: 'path is not in the workspace dir set' }], req.id));
+          return;
+        }
+        reply.send(okEnvelope(await toWireWorkspace(core, existing), req.id));
+        return;
+      }
       const resolved = resolveAdditionalDirPath(core, existing.root, req.body.path);
       const resolvedKey = workspaceRootKey(resolved);
       const inSet =
@@ -421,11 +432,84 @@ function resolveAdditionalDirPath(core: Scope, root: string, input: string): str
   return isAbsolute(expanded) ? normalize(expanded) : resolve(root, expanded);
 }
 
+type DirectoryParts = Pick<Workspace, 'root' | 'primaryEnvironmentId' | 'additionalDirs'>;
+
+async function normalizeDirectoriesInput(
+  core: Scope,
+  input: readonly WorkspaceDirectoryWire[],
+  legacyFields: boolean,
+  requestId: string,
+): Promise<{ readonly parts: DirectoryParts } | { readonly envelope: unknown } | { readonly error: unknown }> {
+  const rootField = legacyFields ? 'root' : 'directories.0.path';
+  const environmentId = input[0]!.environment_id;
+  const mixed = input.findIndex((dir) => dir.environment_id !== environmentId);
+  if (mixed >= 0) {
+    return {
+      envelope: buildValidationEnvelope(
+        [{ path: `directories.${mixed}.environment_id`, message: 'all directories must use the same environment' }],
+        requestId,
+      ),
+    };
+  }
+  if (environmentId !== LOCAL_ENVIRONMENT_ID) {
+    if (input.length > 1) {
+      return {
+        envelope: buildValidationEnvelope(
+          [{ path: legacyFields ? 'additional_dirs.0' : 'directories.1', message: 'remote workspaces support a single directory' }],
+          requestId,
+        ),
+      };
+    }
+    let root: string;
+    try {
+      root = normalizeRemoteCwd(input[0]!.path);
+    } catch (error) {
+      return {
+        envelope: buildValidationEnvelope(
+          [{ path: rootField, message: error instanceof Error ? error.message : String(error) }],
+          requestId,
+        ),
+      };
+    }
+    try {
+      await requireEnvironmentDirectory(core.accessor.get(IEnvironmentService), environmentId, root);
+    } catch (error) {
+      return { error };
+    }
+    return { parts: { root, primaryEnvironmentId: environmentId, additionalDirs: [] } };
+  }
+  const root = input[0]!.path;
+  if (!isAbsolute(root)) {
+    return {
+      envelope: buildValidationEnvelope([{ path: rootField, message: 'root must be an absolute path' }], requestId),
+    };
+  }
+  const hostFs = core.accessor.get(IHostFileSystem);
+  try {
+    const stat = await hostFs.stat(root);
+    if (!stat.isDirectory) {
+      return { envelope: errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `root ${root} is not a directory`, requestId) };
+    }
+  } catch {
+    return { envelope: errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, `root ${root} does not exist`, requestId) };
+  }
+  const additional = await normalizeAdditionalDirsInput(
+    core,
+    root,
+    input.slice(1).map((dir) => dir.path),
+    requestId,
+    legacyFields ? (index) => `additional_dirs.${index}` : (index) => `directories.${index + 1}`,
+  );
+  if ('envelope' in additional) return additional;
+  return { parts: { root, additionalDirs: additional.dirs } };
+}
+
 async function normalizeAdditionalDirsInput(
   core: Scope,
   root: string,
   input: readonly string[],
   requestId: string,
+  field: (index: number) => string,
 ): Promise<{ readonly dirs: string[] } | { readonly envelope: unknown }> {
   const hostFs = core.accessor.get(IHostFileSystem);
   const rootKey = workspaceRootKey(root);
@@ -449,10 +533,10 @@ async function normalizeAdditionalDirsInput(
       };
     }
     if (workspaceRootKey(dir) === rootKey) {
-      return { envelope: buildDuplicateDirEnvelope(index, dir, requestId) };
+      return { envelope: buildDuplicateDirEnvelope(field(index), dir, requestId) };
     }
     if (dirs.some((kept) => workspaceRootKey(kept) === workspaceRootKey(dir))) {
-      return { envelope: buildDuplicateDirEnvelope(index, dir, requestId) };
+      return { envelope: buildDuplicateDirEnvelope(field(index), dir, requestId) };
     }
     dirs.push(dir);
   }
@@ -482,6 +566,8 @@ export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<Works
   return {
     id: ws.id,
     root: ws.root,
+    primary_environment_id: workspaceEnvironmentId(ws),
+    directories: workspaceDirectories(ws).map((dir) => ({ environment_id: dir.environmentId, path: dir.path })),
     name: ws.name,
     kind: ws.kind,
     additional_dirs: [...ws.additionalDirs],
@@ -491,14 +577,14 @@ export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<Works
   };
 }
 
-function buildDuplicateDirEnvelope(index: number, dir: string, requestId: string) {
+function buildDuplicateDirEnvelope(field: string, dir: string, requestId: string) {
   const directory = resolve(dir);
   return errEnvelope(
     ErrorCode.WORKSPACE_DUPLICATE_DIR,
     `Duplicate source folder: ${directory}`,
     requestId,
     undefined,
-    [{ path: `additional_dirs.${index}`, directory }],
+    [{ path: field, directory }],
   );
 }
 

@@ -199,7 +199,7 @@ async function acquireFsSource(
       lease: { track: (resource) => resource, dispose: () => {} },
     };
   }
-  const lease = core.accessor.get(IEnvironmentService).acquire({ environmentId }, ['fs']);
+  const lease = await core.accessor.get(IEnvironmentService).acquireWhenReady({ environmentId }, ['fs']);
   return { hostFs: lease.environment.fs!, lease };
 }
 
