@@ -65,6 +65,7 @@ export interface IAgentToolSelectService {
   shapeHistory(
     messages: readonly ContextMessage[],
     disclosure?: boolean,
+    tools?: readonly Tool[],
   ): readonly ContextMessage[];
 
   load(names: readonly string[]): LoadToolsResult;
