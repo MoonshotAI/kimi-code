@@ -133,11 +133,23 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 **Why not in the app:** The file walker is inside the combined autocomplete provider.
 
+### opt-in-gitignored-at-completion — keep
+
+**Decision:** `CombinedAutocompleteProvider` accepts a default-off `includeGitignoredFiles` option. When enabled, `@` completion keeps ordinary fd matches first and, only when fewer than 20 ordinary matches remain, supplements them with deduplicated `--no-ignore-vcs` matches. The existing signal, hidden-file arguments, `.git` exclusions, root fan-out, scoring, and 20-item cap are shared by both phases.
+
+**Why not in the app:** The ordinary and supplemental fd walkers feed the same internal absolute-path dedupe and ranking pipeline. An app wrapper would have to replace that pipeline and could not avoid duplicate scans when the ordinary result already fills the list.
+
 ### autocomplete-preserves-literal-wrappers — keep
 
 **Decision:** Path completion tries the prose-stripped token first, then retries the original token when no file matches. Unmatched leading wrappers in real filenames therefore remain valid path characters.
 
 **Why not in the app:** Token extraction and file lookup both live inside the combined autocomplete provider.
+
+### autocomplete-provider-preview-scheduling — keep
+
+**Decision:** Providers may set `autocompleteDebounceMs` and `getAutocompletePreview`. The editor retains the last authoritative suggestions with their input context, applies a provider preview while the existing debounce timer is pending, and always runs the trailing request. Previews never replace the authoritative cache; cancellation clears it. Providers without these optional members retain the upstream 20ms debounce and no-preview behavior.
+
+**Why not in the app:** Debounce, abort/start-token invalidation, request sequencing, and authoritative response acceptance are private editor state. An app-side timer or preview cache would create a second scheduler that could race the editor's own requests.
 
 ### opt-in-inline-slash-autocomplete — keep
 

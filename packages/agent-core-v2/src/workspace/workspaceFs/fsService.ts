@@ -651,86 +651,68 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   async search(req: FsSearchRequest): Promise<FsSearchResponse> {
     const roots = await this.suggestRoots();
     if (req.query === '') {
-      const items: FsSearchHit[] = [];
-      const seenPaths = new Set<string>();
-      let truncated = false;
-      for (const root of roots) {
-        let listed: FsListResponse;
-        try {
-          listed = await this.list({
-            path: root.dir,
-            depth: 1,
-            limit: req.limit,
-            show_hidden: false,
-            follow_gitignore: req.follow_gitignore,
-            exclude_globs: req.exclude_globs,
-            sort: 'type_first',
-            include_git_status: false,
-          });
-        } catch (error) {
-          if (!root.primary && isMissingPathError(error)) continue;
-          throw error;
-        }
-        truncated = truncated || listed.truncated;
-        for (const entry of listed.items) {
-          if (req.include_globs !== undefined && !matchesAnyGlob(entry.path, req.include_globs)) {
-            continue;
-          }
-          const pathKey = `${root.real}/${entry.path}`;
-          if (seenPaths.has(pathKey)) continue;
-          seenPaths.add(pathKey);
-          items.push({
-            path: this.suggestDisplayPath(root, entry.path),
-            name: entry.name,
-            kind: entry.kind,
-            score: 1,
-            match_positions: [],
-          });
-        }
-      }
-      return {
-        items: items.slice(0, req.limit),
-        truncated: truncated || items.length > req.limit,
-      };
+      return this.suggestTopLevel(
+        {
+          query: '',
+          limit: req.limit,
+          follow_gitignore: req.follow_gitignore,
+          show_hidden: false,
+          include_globs: req.include_globs,
+          exclude_globs: req.exclude_globs,
+        },
+        roots,
+        true,
+      );
     }
 
-    const candidates: FsSearchHit[] = [];
+    const candidates: Array<FsSearchHit & { ignored: boolean }> = [];
     const queryLower = req.query.toLowerCase();
     const seenPaths = new Set<string>();
+    const effectiveCap = Math.min(req.limit, SEARCH_HARD_CAP);
     let inventoryTruncated = false;
-    for (const root of roots) {
-      const ignoreRules = req.follow_gitignore ? await this.walkIgnoreFor(root.dir) : WALK_DEFAULT_IGNORE;
-      inventoryTruncated = await this.walk(root.dir, ignoreRules, async (relPath, name, kind) => {
-        const pathKey = `${root.real}/${relPath}`;
-        if (seenPaths.has(pathKey)) return;
-        seenPaths.add(pathKey);
-        const score = computeFuzzyScore(name, queryLower);
-        if (score <= 0) return;
-        if (req.include_globs && !matchesAnyGlob(relPath, req.include_globs)) {
-          return;
-        }
-        if (req.exclude_globs && matchesAnyGlob(relPath, req.exclude_globs)) {
-          return;
-        }
-        const path = this.suggestDisplayPath(root, relPath);
-        candidates.push({
-          path,
-          name,
-          kind,
-          score,
-          match_positions: computeMatchPositions(path, queryLower),
-        });
-      }) || inventoryTruncated;
+    const runPass = async (ignored: boolean): Promise<void> => {
+      for (const root of roots) {
+        const ignoreRules = ignored ? WALK_DEFAULT_IGNORE : await this.walkIgnoreFor(root.dir);
+        inventoryTruncated = await this.walk(root.dir, ignoreRules, async (relPath, name, kind) => {
+          const pathKey = `${root.real}/${relPath}`;
+          if (seenPaths.has(pathKey)) return;
+          seenPaths.add(pathKey);
+          const score = computeFuzzyScore(name, queryLower);
+          if (score <= 0) return;
+          if (req.include_globs && !matchesAnyGlob(relPath, req.include_globs)) {
+            return;
+          }
+          if (req.exclude_globs && matchesAnyGlob(relPath, req.exclude_globs)) {
+            return;
+          }
+          const path = this.suggestDisplayPath(root, relPath);
+          candidates.push({
+            path,
+            name,
+            kind,
+            ignored,
+            score,
+            match_positions: computeMatchPositions(path, queryLower),
+          });
+        }) || inventoryTruncated;
+      }
+    };
+    await runPass(false);
+    if (!req.follow_gitignore && candidates.length <= effectiveCap) {
+      await runPass(true);
     }
 
     candidates.sort((a, b) => {
+      if (a.ignored !== b.ignored) return Number(a.ignored) - Number(b.ignored);
       if (b.score !== a.score) return b.score - a.score;
       return a.path.localeCompare(b.path);
     });
 
-    const effectiveCap = Math.min(req.limit, SEARCH_HARD_CAP);
     const truncated = candidates.length > effectiveCap;
-    return { items: candidates.slice(0, effectiveCap), truncated: truncated || inventoryTruncated };
+    return {
+      items: candidates.slice(0, effectiveCap).map(({ ignored: _ignored, ...item }) => item),
+      truncated: truncated || inventoryTruncated,
+    };
   }
 
   async suggest(req: FsSuggestRequest): Promise<FsSuggestResponse> {
@@ -819,16 +801,18 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   private async suggestTopLevel(
     req: FsSuggestRequest,
     roots: readonly SuggestRoot[],
+    followSymlinkDirectories = false,
   ): Promise<FsSuggestResponse> {
     interface TopEntry {
       readonly path: string;
       readonly name: string;
       readonly kind: 'file' | 'directory' | 'symlink';
+      readonly ignored: boolean;
     }
     const all: TopEntry[] = [];
     let capped = false;
     for (const root of roots) {
-      const matcher = req.follow_gitignore ? await this.matcherFor(root.dir) : undefined;
+      const matcher = await this.matcherFor(root.dir);
       let entries: readonly HostDirEntry[];
       try {
         entries = await this.hostFs.readdir(root.dir);
@@ -836,25 +820,35 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         if (!root.primary && isMissingPathError(error)) continue;
         throw mapFsError(error, root.dir);
       }
-      const visible: { name: string; kind: TopEntry['kind'] }[] = [];
+      const visible: {
+        name: string;
+        kind: TopEntry['kind'];
+        isDirectory: boolean;
+        ignored: boolean;
+      }[] = [];
       for (const entry of entries) {
         const name = entry.name;
         if (!req.show_hidden && isHidden(name)) continue;
-        if (matcher !== undefined && (matcher.ignores(name) || matcher.ignores(`${name}/`))) {
-          continue;
-        }
+        if (VCS_METADATA_DIRS.has(name)) continue;
+        const ignored = matcher !== undefined && (matcher.ignores(name) || matcher.ignores(`${name}/`));
+        if (req.follow_gitignore && ignored) continue;
         if (req.exclude_globs !== undefined && matchesAnyGlob(name, req.exclude_globs)) continue;
+        if (req.include_globs !== undefined && !matchesAnyGlob(name, req.include_globs)) continue;
         const kind: TopEntry['kind'] = entry.isSymbolicLink === true
           ? 'symlink'
           : entry.isDirectory
             ? 'directory'
             : 'file';
-        visible.push({ name, kind });
+        const isDirectory = entry.isDirectory || (
+          followSymlinkDirectories &&
+          entry.isSymbolicLink === true &&
+          await this.hostFs.stat(this.path.join(root.dir, name)).then((stat) => stat.isDirectory).catch(() => false)
+        );
+        visible.push({ name, kind, isDirectory, ignored });
       }
       visible.sort((a, b) => {
-        const ad = a.kind === 'directory' ? 0 : 1;
-        const bd = b.kind === 'directory' ? 0 : 1;
-        if (ad !== bd) return ad - bd;
+        if (a.ignored !== b.ignored) return Number(a.ignored) - Number(b.ignored);
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
       if (visible.length > SEARCH_HARD_CAP) {
@@ -862,17 +856,15 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         capped = true;
       }
       for (const entry of visible) {
-        if (VCS_METADATA_DIRS.has(entry.name)) continue;
-        if (req.include_globs !== undefined && !matchesAnyGlob(entry.name, req.include_globs)) {
-          continue;
-        }
         all.push({
           path: this.suggestDisplayPath(root, entry.name),
           name: entry.name,
           kind: entry.kind,
+          ignored: entry.ignored,
         });
       }
     }
+    all.sort((a, b) => Number(a.ignored) - Number(b.ignored));
     const items = all.slice(0, req.limit).map((entry) => ({
       path: entry.path,
       name: entry.name,
@@ -890,38 +882,11 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     rgBinary: string,
     roots: readonly SuggestRoot[],
   ): Promise<FsSuggestResponse> {
-    const args = ['--files'];
-    if (query.followGitignore) {
-      args.push('--no-require-git');
-    } else {
-      args.push('--no-ignore');
-    }
-    if (query.showHidden) args.push('--hidden');
-    for (const dir of VCS_METADATA_DIRS) args.push('-g', `!${dir}`, '-g', `!${dir}/**`);
     const multi = roots.length > 1;
-    if (multi) {
-      for (const root of roots) args.push(root.dir);
-    }
-
-    const lease = this.resolver.acquire(
-      { environmentId: this.environmentId },
-      ['process'],
-    );
-    const proc = await lease.environment.process!.spawn(rgBinary, args, { cwd: this.workDir });
-
     const top = new SuggestTopHeap(cap);
     const seenDirs = new Set<string>();
     const seenPaths = new Set<string>();
     let matched = 0;
-    let killed = false;
-    const kill = (): void => {
-      if (killed) return;
-      killed = true;
-      void proc.kill('SIGKILL');
-    };
-    const onAbort = (): void => kill();
-    if (signal.aborted) kill();
-    else signal.addEventListener('abort', onAbort, { once: true });
 
     const sep = this.path.separator;
     const rootMatchers = roots.map((root) => {
@@ -940,7 +905,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       return { root: best.root, rel: line.slice(best.prefix.length) };
     };
 
-    const handleLine = (raw: string): void => {
+    const handleLine = (raw: string, ignored: boolean): void => {
       let line = raw;
       if (line.endsWith('\r')) line = line.slice(0, -1);
       if (sep !== '/') line = line.split(sep).join('/');
@@ -953,11 +918,11 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         if (located === undefined) return;
         root = located.root;
         rel = located.rel;
-        const pathKey = `${root.real}/${rel}`;
-        if (seenPaths.has(pathKey)) return;
-        seenPaths.add(pathKey);
       }
-      const file = evaluateSuggestCandidate(rel, 'file', query);
+      const pathKey = multi ? `${root.real}/${rel}` : rel;
+      if (seenPaths.has(pathKey)) return;
+      seenPaths.add(pathKey);
+      const file = evaluateSuggestCandidate(rel, 'file', query, ignored);
       if (file !== null) {
         matched += 1;
         top.push(this.displayCandidate(root, file));
@@ -968,7 +933,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         const dirKey = multi ? `${root.real}/${dir}` : dir;
         if (!seenDirs.has(dirKey)) {
           seenDirs.add(dirKey);
-          const candidate = evaluateSuggestCandidate(dir, 'directory', query);
+          const candidate = evaluateSuggestCandidate(dir, 'directory', query, ignored);
           if (candidate !== null) {
             matched += 1;
             top.push(this.displayCandidate(root, candidate));
@@ -978,43 +943,73 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       }
     };
 
-    let stdoutBuf = '';
-    const drainStdout = async (): Promise<void> => {
-      proc.stdout.setEncoding('utf-8');
-      try {
-        for await (const chunk of proc.stdout) {
-          stdoutBuf += chunk as string;
-          let nl = stdoutBuf.indexOf('\n');
-          while (nl >= 0) {
-            handleLine(stdoutBuf.slice(0, nl));
-            stdoutBuf = stdoutBuf.slice(nl + 1);
-            nl = stdoutBuf.indexOf('\n');
+    const runPass = async (ignored: boolean): Promise<void> => {
+      const args = ['--files', '--no-require-git'];
+      if (ignored) args.push('--no-ignore');
+      if (query.showHidden) args.push('--hidden');
+      for (const dir of VCS_METADATA_DIRS) args.push('-g', `!${dir}`, '-g', `!${dir}/**`);
+      if (multi) {
+        for (const root of roots) args.push(root.dir);
+      }
+
+      const lease = this.resolver.acquire(
+        { environmentId: this.environmentId },
+        ['process'],
+      );
+      const proc = await lease.environment.process!.spawn(rgBinary, args, { cwd: this.workDir });
+      let killed = false;
+      const kill = (): void => {
+        if (killed) return;
+        killed = true;
+        void proc.kill('SIGKILL');
+      };
+      const onAbort = (): void => kill();
+      if (signal.aborted) kill();
+      else signal.addEventListener('abort', onAbort, { once: true });
+
+      let stdoutBuf = '';
+      const drainStdout = async (): Promise<void> => {
+        proc.stdout.setEncoding('utf-8');
+        try {
+          for await (const chunk of proc.stdout) {
+            stdoutBuf += chunk as string;
+            let nl = stdoutBuf.indexOf('\n');
+            while (nl >= 0) {
+              handleLine(stdoutBuf.slice(0, nl), ignored);
+              stdoutBuf = stdoutBuf.slice(nl + 1);
+              nl = stdoutBuf.indexOf('\n');
+            }
           }
+          if (stdoutBuf.length > 0) handleLine(stdoutBuf, ignored);
+        } catch (error) {
+          if (!(killed && isPrematureCloseError(error))) throw error;
         }
-        if (stdoutBuf.length > 0) handleLine(stdoutBuf);
-      } catch (error) {
-        if (!(killed && isPrematureCloseError(error))) throw error;
+      };
+
+      let exitCode: number;
+      try {
+        [, , exitCode] = await Promise.all([
+          drainStdout(),
+          readStream(proc.stderr),
+          proc.wait().catch(() => -1),
+        ]);
+      } finally {
+        signal.removeEventListener('abort', onAbort);
+        try {
+          void proc.dispose();
+        } catch {
+        }
+        lease.dispose();
+      }
+
+      if (!killed && exitCode !== 0 && exitCode !== 1) {
+        throw new Error(`rg --files exited with code ${exitCode}`);
       }
     };
 
-    let exitCode: number;
-    try {
-      [, , exitCode] = await Promise.all([
-        drainStdout(),
-        readStream(proc.stderr),
-        proc.wait().catch(() => -1),
-      ]);
-    } finally {
-      signal.removeEventListener('abort', onAbort);
-      try {
-        void proc.dispose();
-      } catch {
-      }
-      lease.dispose();
-    }
-
-    if (!killed && exitCode !== 0 && exitCode !== 1) {
-      throw new Error(`rg --files exited with code ${exitCode}`);
+    await runPass(false);
+    if (!query.followGitignore && matched <= cap && !signal.aborted) {
+      await runPass(true);
     }
 
     const items = top.drain().map((candidate) => ({
@@ -1039,21 +1034,25 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const seenPaths = new Set<string>();
     let matched = 0;
     let inventoryTruncated = false;
-    for (const root of roots) {
-      const ignoreRules = query.followGitignore ? await this.walkIgnoreFor(root.dir) : WALK_DEFAULT_IGNORE;
-      inventoryTruncated = await this.walk(root.dir, ignoreRules, async (relPath, _name, kind) => {
-        if (signal.aborted || Date.now() >= deadline) return false;
-        if (multi) {
-          const pathKey = `${root.real}/${relPath}`;
+    const runPass = async (ignored: boolean): Promise<void> => {
+      for (const root of roots) {
+        const ignoreRules = ignored ? WALK_DEFAULT_IGNORE : await this.walkIgnoreFor(root.dir);
+        inventoryTruncated = await this.walk(root.dir, ignoreRules, async (relPath, _name, kind) => {
+          if (signal.aborted || Date.now() >= deadline) return false;
+          const pathKey = multi ? `${root.real}/${relPath}` : relPath;
           if (seenPaths.has(pathKey)) return;
           seenPaths.add(pathKey);
-        }
-        const candidate = evaluateSuggestCandidate(relPath, kind, query);
-        if (candidate === null) return;
-        matched += 1;
-        top.push(this.displayCandidate(root, candidate));
-      }, { deadlineMs: deadline }) || inventoryTruncated;
-      if (signal.aborted || Date.now() >= deadline) break;
+          const candidate = evaluateSuggestCandidate(relPath, kind, query, ignored);
+          if (candidate === null) return;
+          matched += 1;
+          top.push(this.displayCandidate(root, candidate));
+        }, { deadlineMs: deadline }) || inventoryTruncated;
+        if (signal.aborted || Date.now() >= deadline) break;
+      }
+    };
+    await runPass(false);
+    if (!query.followGitignore && matched <= cap && !signal.aborted && Date.now() < deadline) {
+      await runPass(true);
     }
     const items = top.drain().map((candidate) => ({
       path: candidate.path,

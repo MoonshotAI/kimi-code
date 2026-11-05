@@ -820,15 +820,34 @@ describe('WorkspaceFsService.diff', () => {
 });
 
 describe('WorkspaceFsService.search', () => {
-  it('finds files by fuzzy query and respects the result cap', async () => {
-    const fs = makeSession(
-      { 'src/foo.ts': '', 'src/bar.ts': '', 'README.md': '' },
-      emptyHandler,
-    );
-    const result = await fs.search({ query: 'foo', limit: 50, follow_gitignore: false });
-    const paths = result.items.map((i) => i.path);
-    expect(paths).toContain('src/foo.ts');
-    expect(paths).not.toContain('src/bar.ts');
+  it('groups ignored matches after ordinary files before applying the result cap', async () => {
+    const backend = fakeFs({
+      '.gitignore': 'b.ts\n',
+      'a.ts': '',
+      'b.ts': '',
+      'm.ts': '',
+      'z.ts': '',
+    });
+    let walks = 0;
+    const walk = backend.walk.bind(backend);
+    backend.walk = async (...args) => {
+      walks += 1;
+      return walk(...args);
+    };
+    const fs = makeRemoteWalkSession(backend);
+
+    const capped = await fs.search({ query: 'ts', limit: 2, follow_gitignore: false });
+    expect(capped.items.map((item) => item.path)).toEqual(['a.ts', 'm.ts']);
+    expect(capped.truncated).toBe(true);
+    expect(walks).toBe(1);
+
+    const all = await fs.search({ query: 'ts', limit: 50, follow_gitignore: false });
+    expect(all.items.map((item) => item.path)).toEqual(['a.ts', 'm.ts', 'z.ts', 'b.ts']);
+    expect(walks).toBe(3);
+
+    const filtered = await fs.search({ query: 'ts', limit: 50, follow_gitignore: true });
+    expect(filtered.items.map((item) => item.path)).toEqual(['a.ts', 'm.ts', 'z.ts']);
+    expect(walks).toBe(4);
   });
 
   it('reports symlinks as kind symlink and does not recurse into them', async () => {
@@ -889,18 +908,31 @@ describe('WorkspaceFsService.search', () => {
     expect(result.truncated).toBe(true);
   });
 
-  it('respects .gitignore in the empty-query listing', async () => {
+  it('groups ignored entries after ordinary entries in the empty-query listing', async () => {
     const fs = makeSession(
       { '.gitignore': 'ignored.ts\n', 'ignored.ts': '', 'kept.ts': '' },
       emptyHandler,
     );
-    const result = await fs.search({ query: '', limit: 50, follow_gitignore: true });
-    expect(result.items.map((i) => i.path)).toEqual(['kept.ts']);
+    const included = await fs.search({ query: '', limit: 50, follow_gitignore: false });
+    expect(included.items.map((i) => i.path)).toEqual(['kept.ts', 'ignored.ts']);
+
+    const capped = await fs.search({ query: '', limit: 1, follow_gitignore: false });
+    expect(capped.items.map((i) => i.path)).toEqual(['kept.ts']);
+    expect(capped.truncated).toBe(true);
+
+    const filtered = await fs.search({ query: '', limit: 50, follow_gitignore: true });
+    expect(filtered.items.map((i) => i.path)).toEqual(['kept.ts']);
   });
 
-  it('searches additional roots with absolute result paths', async () => {
+  it('searches additional roots with absolute result paths and global ignored grouping', async () => {
     const fs = makeSession(
-      { 'src/foo.ts': '', '/extra/lib/foo.ts': '', '/extra/top.ts': '' },
+      {
+        'src/foo.ts': '',
+        '/extra/.gitignore': 'ignored-foo.ts\n',
+        '/extra/ignored-foo.ts': '',
+        '/extra/lib/foo.ts': '',
+        '/extra/top.ts': '',
+      },
       emptyHandler,
       [],
       defaultGitStub(),
@@ -911,12 +943,16 @@ describe('WorkspaceFsService.search', () => {
     );
 
     const matches = await fs.search({ query: 'foo', limit: 50, follow_gitignore: false });
-    expect(matches.items.map((item) => item.path)).toContain('src/foo.ts');
-    expect(matches.items.map((item) => item.path)).toContain('/extra/lib/foo.ts');
+    const paths = matches.items.map((item) => item.path);
+    expect(paths).toContain('src/foo.ts');
+    expect(paths).toContain('/extra/lib/foo.ts');
+    expect(paths.indexOf('src/foo.ts')).toBeLessThan(paths.indexOf('/extra/ignored-foo.ts'));
+    expect(paths.indexOf('/extra/lib/foo.ts')).toBeLessThan(paths.indexOf('/extra/ignored-foo.ts'));
 
     const topLevel = await fs.search({ query: '', limit: 50, follow_gitignore: false });
     expect(topLevel.items.map((item) => item.path)).toContain('src');
     expect(topLevel.items.map((item) => item.path)).toContain('/extra/top.ts');
+    expect(topLevel.items.at(-1)?.path).toBe('/extra/ignored-foo.ts');
   });
 });
 
@@ -1079,14 +1115,27 @@ describe('WorkspaceFsService.suggest', () => {
     expect(filesArgs).toContain('!.git/**');
   });
 
-  it('passes --no-ignore to rg when follow_gitignore is false', async () => {
+  it('uses a second no-ignore rg pass for ignored suggestions when follow_gitignore is false', async () => {
     const captured: string[][] = [];
-    const fs = makeSession({}, rgLinesHandler([], captured));
-    await fs.suggest({ query: 'x', limit: 50, follow_gitignore: false, show_hidden: false });
-    const filesArgs = captured.find((a) => a.includes('--files'))!;
-    expect(filesArgs).toContain('--no-ignore');
-    expect(filesArgs).not.toContain('--no-require-git');
-    expect(filesArgs).not.toContain('--hidden');
+    const fs = makeSession({}, (args) => {
+      if (args[0] === 'rg' && args[1] === '--version') {
+        return { stdout: 'ripgrep 15.0.0', exitCode: 0 };
+      }
+      if (args[0] === 'rg' && args.includes('--files')) {
+        captured.push([...args]);
+        const lines = args.includes('--no-ignore') ? ['visible.ts', 'ignored.ts'] : ['visible.ts'];
+        return { stdout: `${lines.join('\n')}\n`, exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 0 };
+    });
+    const result = await fs.suggest({ query: 'ts', limit: 50, follow_gitignore: false, show_hidden: false });
+
+    expect(result.items.map((item) => item.path)).toEqual(['visible.ts', 'ignored.ts']);
+    expect(captured).toHaveLength(2);
+    expect(captured[0]).toContain('--no-require-git');
+    expect(captured[0]).not.toContain('--no-ignore');
+    expect(captured[1]).toContain('--no-ignore');
+    expect(captured[1]).toContain('--no-require-git');
   });
 
   it('hides dot-prefixed entries at any depth unless show_hidden is set', async () => {
@@ -1151,16 +1200,18 @@ describe('WorkspaceFsService.suggest', () => {
     expect(hidden.items.map((i) => i.path)).not.toContain('.hidden.ts');
   });
 
-  it('truncates at the limit and reports it', async () => {
-    const fs = makeSession({}, rgLinesHandler(['a1.ts', 'a2.ts', 'a3.ts', 'a4.ts']));
+  it('truncates at the limit without an ignored supplement when ordinary matches already exceed it', async () => {
+    const captured: string[][] = [];
+    const fs = makeSession({}, rgLinesHandler(['a1.ts', 'a2.ts', 'a3.ts', 'a4.ts'], captured));
     const result = await fs.suggest({
       query: 'a',
       limit: 2,
-      follow_gitignore: true,
+      follow_gitignore: false,
       show_hidden: false,
     });
     expect(result.items).toHaveLength(2);
     expect(result.truncated).toBe(true);
+    expect(captured.filter((args) => args.includes('--files'))).toHaveLength(1);
   });
 
   it('applies include_globs and exclude_globs after matching', async () => {
@@ -1190,6 +1241,7 @@ describe('WorkspaceFsService.suggest', () => {
       {
         'src/foo.ts': '',
         'src/nested/bar.ts': '',
+        'src/ignored-long.ts': '',
         '.gitignore': 'ignored.ts\n',
         'ignored.ts': '',
       },
@@ -1234,6 +1286,14 @@ describe('WorkspaceFsService.suggest', () => {
       show_hidden: false,
     });
     expect(ignored.items.map((i) => i.path)).not.toContain('ignored.ts');
+
+    const withIgnored = await fs.suggest({
+      query: 'ignored',
+      limit: 50,
+      follow_gitignore: false,
+      show_hidden: false,
+    });
+    expect(withIgnored.items.map((i) => i.path)).toEqual(['src/ignored-long.ts', 'ignored.ts']);
   });
 
   it('hides dot entries in the fallback walk unless show_hidden is set', async () => {

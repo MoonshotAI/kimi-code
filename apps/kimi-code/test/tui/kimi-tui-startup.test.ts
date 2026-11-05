@@ -1000,6 +1000,7 @@ describe('KimiTUI startup', () => {
     expect(suggestFiles).toHaveBeenCalledWith(driver.state.appState.workDir, {
       query: 'app',
       sessionId: session.id,
+      followGitignore: false,
     });
     expect(result?.items[0]).toMatchObject({ value: '@src/app.ts' });
   });

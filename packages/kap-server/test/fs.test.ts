@@ -483,17 +483,27 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.data.entries['missing.txt']).toBeNull();
   });
 
-  it('fs:search finds files by query', async () => {
+  it('fs:search groups ignored files after ordinary matches only when requested', async () => {
+    await writeFile(join(work!, '.gitignore'), 'alpha-ignored.ts\n');
     await writeFile(join(work!, 'alpha.ts'), '');
+    await writeFile(join(work!, 'alpha-ignored.ts'), '');
     await writeFile(join(work!, 'beta.ts'), '');
     const id = await createSession();
-    const body = await postFs<{ items: { path: string }[]; truncated: boolean }>(
+    const included = await postFs<{ items: { path: string }[]; truncated: boolean }>(
+      id,
+      'search',
+      { query: 'alpha', follow_gitignore: false },
+    );
+    expect(included.code).toBe(0);
+    expect(included.data.items.map((i) => i.path)).toEqual(['alpha.ts', 'alpha-ignored.ts']);
+
+    const filtered = await postFs<{ items: { path: string }[]; truncated: boolean }>(
       id,
       'search',
       { query: 'alpha' },
     );
-    expect(body.code).toBe(0);
-    expect(body.data.items.map((i) => i.path)).toContain('alpha.ts');
+    expect(filtered.code).toBe(0);
+    expect(filtered.data.items.map((i) => i.path)).toEqual(['alpha.ts']);
   });
 
   it('fs:search resolves a registered workspace id when no session exists', async () => {
@@ -858,9 +868,12 @@ describe('server-v2 /api/v1 fs routes', () => {
       await writeFile(join(work!, 'shared.ts'), 'primary');
       await writeFile(join(extra, 'secondary-only.ts'), '');
       await writeFile(join(extra, 'shared.ts'), 'secondary');
+      await writeFile(join(extra, '.gitignore'), 'ignored-shared.ts\n');
+      await writeFile(join(extra, 'ignored-shared.ts'), 'ignored');
       const workspace = await createRegisteredWorkspace([extra]);
       const extraShared = join(extra, 'shared.ts').split(sep).join('/');
       const extraSecondary = join(extra, 'secondary-only.ts').split(sep).join('/');
+      const extraIgnored = join(extra, 'ignored-shared.ts').split(sep).join('/');
 
       const shared = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
         workspace: workspace.id,
@@ -871,6 +884,15 @@ describe('server-v2 /api/v1 fs routes', () => {
       expect(shared.data.items.map((item) => item.path)).toEqual(
         expect.arrayContaining(['shared.ts', extraShared]),
       );
+
+      const withIgnored = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
+        workspace: workspace.id,
+        query: 'shared',
+        follow_gitignore: false,
+      });
+      expect(withIgnored.code).toBe(0);
+      expect(withIgnored.data.items.map((item) => item.path)).toHaveLength(3);
+      expect(withIgnored.data.items.at(-1)?.path).toBe(extraIgnored);
 
       const secondary = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
         workspace: workspace.id,

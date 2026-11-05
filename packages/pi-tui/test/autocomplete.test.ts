@@ -131,20 +131,33 @@ describe("CombinedAutocompleteProvider", () => {
 			rmSync(rootDir, { recursive: true, force: true });
 		});
 
-		test("returns all files and folders for empty @ query", async () => {
+		test("includes gitignored files last only when explicitly enabled", async () => {
+			assert.strictEqual(spawnSync("git", ["init", "--quiet"], { cwd: baseDir }).status, 0);
 			setupFolder(baseDir, {
 				dirs: ["src"],
 				files: {
+					".gitignore": "ignored.ts\n",
 					"README.md": "readme",
+					"ignored.ts": "ignored",
 				},
 			});
 
-			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
 			const line = "@";
-			const result = await getSuggestions(provider, [line], 0, line.length);
+			const defaultProvider = new CombinedAutocompleteProvider([], baseDir, requireFdPath());
+			const defaultResult = await getSuggestions(defaultProvider, [line], 0, line.length);
+			const defaultValues = defaultResult?.items.map((item) => item.value) ?? [];
+			assert.ok(defaultValues.includes("@README.md"));
+			assert.ok(defaultValues.includes("@src/"));
+			assert.ok(!defaultValues.includes("@ignored.ts"));
 
-			const values = result?.items.map((item) => item.value).sort();
-			assert.deepStrictEqual(values, ["@README.md", "@src/"].sort());
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath(), [], {
+				includeGitignoredFiles: true,
+			});
+			const result = await getSuggestions(provider, [line], 0, line.length);
+			const values = result?.items.map((item) => item.value) ?? [];
+			assert.strictEqual(values.at(-1), "@ignored.ts");
+			assert.ok(values.indexOf("@README.md") < values.indexOf("@ignored.ts"));
+			assert.ok(values.indexOf("@src/") < values.indexOf("@ignored.ts"));
 		});
 
 		test("recognizes @ after CJK punctuation without consuming the preceding text", async () => {
@@ -341,20 +354,32 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.ok(!values?.includes("@packages/ai/src/autocomplete.ts"));
 		});
 
-		test("searches additional base paths with fd for @ mentions", async () => {
+		test("groups ignored matches after ordinary matches across additional roots", async () => {
+			assert.strictEqual(spawnSync("git", ["init", "--quiet"], { cwd: baseDir }).status, 0);
+			assert.strictEqual(spawnSync("git", ["init", "--quiet"], { cwd: outsideDir }).status, 0);
 			setupFolder(baseDir, {
-				files: { "shared-cwd.ts": "export {};" },
+				files: { ".gitignore": "shared\n", "shared-cwd.ts": "export {};", shared: "ignored" },
 			});
 			setupFolder(outsideDir, {
-				files: { "shared-extra.ts": "export {};" },
+				files: { ".gitignore": "shared\n", "shared-extra.ts": "export {};", shared: "ignored" },
 			});
 
-			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath(), [outsideDir]);
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath(), [outsideDir], {
+				includeGitignoredFiles: true,
+			});
 			const result = await getSuggestions(provider, ["@shared"], 0, 7);
 
 			const values = result?.items.map((item) => item.value) ?? [];
-			assert.ok(values.includes("@shared-cwd.ts"));
-			assert.ok(values.includes(`@${join(outsideDir, "shared-extra.ts").replace(/\\/g, "/")}`));
+			const cwd = "@shared-cwd.ts";
+			const extra = `@${join(outsideDir, "shared-extra.ts").replace(/\\/g, "/")}`;
+			const ignoredCwd = values.indexOf("@shared");
+			const ignoredExtra = values.indexOf(`@${join(outsideDir, "shared").replace(/\\/g, "/")}`);
+			assert.ok(values.includes(cwd));
+			assert.ok(values.includes(extra));
+			assert.ok(ignoredCwd > values.indexOf(cwd));
+			assert.ok(ignoredCwd > values.indexOf(extra));
+			assert.ok(ignoredExtra > values.indexOf(cwd));
+			assert.ok(ignoredExtra > values.indexOf(extra));
 		});
 
 		test("scopes @dir/ queries across every root", async () => {
@@ -389,20 +414,23 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(overlapCount, 1);
 		});
 
-		test("merges empty @ query across roots within the result cap", async () => {
-			const cwdFiles: Record<string, string> = {};
+		test("does not let ignored matches displace a full ordinary result cap across roots", async () => {
+			const cwdFiles: Record<string, string> = { ".gitignore": "f-ignored.ts\n", "f-ignored.ts": "ignored" };
 			for (let i = 0; i < 15; i++) cwdFiles[`f${i}.ts`] = "export {};";
 			setupFolder(baseDir, { files: cwdFiles });
-			const extraFiles: Record<string, string> = {};
+			const extraFiles: Record<string, string> = { ".gitignore": "g-ignored.ts\n", "g-ignored.ts": "ignored" };
 			for (let i = 0; i < 15; i++) extraFiles[`g${i}.ts`] = "export {};";
 			setupFolder(outsideDir, { files: extraFiles });
 
-			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath(), [outsideDir]);
+			const provider = new CombinedAutocompleteProvider([], baseDir, requireFdPath(), [outsideDir], {
+				includeGitignoredFiles: true,
+			});
 			const result = await getSuggestions(provider, ["@"], 0, 1);
 
-			const count = result?.items.length ?? 0;
-			assert.ok(count <= 20, `expected <= 20 items, got ${count}`);
-			assert.ok(count > 0);
+			const values = result?.items.map((item) => item.value) ?? [];
+			assert.strictEqual(values.length, 20);
+			assert.ok(!values.includes("@f-ignored.ts"));
+			assert.ok(!values.includes(`@${join(outsideDir, "g-ignored.ts").replace(/\\/g, "/")}`));
 		});
 
 		test("falls back to full-path per root when another root has the scoped directory", async () => {

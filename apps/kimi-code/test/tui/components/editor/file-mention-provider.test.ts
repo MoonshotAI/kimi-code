@@ -407,6 +407,52 @@ describe('FileMentionProvider', () => {
       '@"docs/with space.md"',
     ]);
     expect(result!.items.some((item) => item.value.includes('local-only'))).toBe(false);
+
+    const preview = provider.getAutocompletePreview({
+      lines: ['@app'],
+      cursorLine: 0,
+      cursorCol: 4,
+      previous: { lines: ['@'], cursorLine: 0, cursorCol: 1, suggestions: result! },
+    });
+    expect(preview?.prefix).toBe('@app');
+    expect(preview?.items.map((item) => item.value)).toEqual(['@src/app.ts']);
+
+    const deletion = provider.getAutocompletePreview({
+      lines: ['@'],
+      cursorLine: 0,
+      cursorCol: 1,
+      previous: { lines: ['@app'], cursorLine: 0, cursorCol: 4, suggestions: preview! },
+    });
+    expect(deletion).toBeNull();
+
+    const replaced = provider.getAutocompletePreview({
+      lines: ['@zzz'],
+      cursorLine: 0,
+      cursorCol: 4,
+      previous: { lines: ['@app'], cursorLine: 0, cursorCol: 4, suggestions: preview! },
+    });
+    expect(replaced).toBeNull();
+
+    const changedQuote = provider.getAutocompletePreview({
+      lines: ['@"app'],
+      cursorLine: 0,
+      cursorCol: 5,
+      previous: { lines: ['@app'], cursorLine: 0, cursorCol: 4, suggestions: preview! },
+    });
+    expect(changedQuote).toBeNull();
+
+    const changedRoot = provider.getAutocompletePreview({
+      lines: ['@src/a'],
+      cursorLine: 0,
+      cursorCol: 6,
+      previous: {
+        lines: ['@src'],
+        cursorLine: 0,
+        cursorCol: 4,
+        suggestions: { prefix: '@src', items: result!.items },
+      },
+    });
+    expect(changedRoot).toBeNull();
   });
 
   it('returns null instead of local candidates when remote suggestions are unavailable', async () => {
@@ -615,17 +661,19 @@ describe('FileMentionProvider', () => {
     },
   );
 
-  it('filesystem fallback returns folders and excludes .git', async () => {
+  it('filesystem fallback groups gitignored files after ordinary files and excludes .git', async () => {
+    expect(spawnSync('git', ['init', '--quiet'], { cwd: workDir }).status).toBe(0);
     mkdirSync(join(workDir, 'src'));
-    mkdirSync(join(workDir, '.git'));
-    writeFileSync(join(workDir, '.git', 'config'), 'secret');
+    writeFileSync(join(workDir, '.gitignore'), 'ignored.ts\n');
+    writeFileSync(join(workDir, 'kept.ts'), 'kept');
+    writeFileSync(join(workDir, 'ignored.ts'), 'ignored');
     const provider = new FileMentionProvider([], workDir, NO_FD);
 
-    const result = await provider.getSuggestions(['@'], 0, 1, { signal: ctrl() });
+    const result = await provider.getSuggestions(['@ts'], 0, 3, { signal: ctrl() });
 
     expect(result).not.toBeNull();
     const values = result!.items.map((item) => item.value);
-    expect(values).toContain('@src/');
+    expect(values).toEqual(['@kept.ts', '@ignored.ts']);
     expect(values.some((value) => value.startsWith('@.git'))).toBe(false);
   });
 
