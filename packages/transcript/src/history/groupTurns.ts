@@ -154,36 +154,46 @@ const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
 const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
 
 function toolOutputOf(message: HistoryMessage): unknown {
-  const content = message.content ?? [];
-  const hasMedia = content.some((part) =>
-    part.type === 'image' || part.type === 'video' ||
-    part.type === 'image_url' || part.type === 'video_url'
-  );
-  if (!hasMedia) return textOf(message);
-  return content.map((part) => {
+  const output: HistoryContentPart[] = [];
+  let hasDaemonMedia = false;
+  for (const part of message.content ?? []) {
+    if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
+      output.push(part);
+      continue;
+    }
+    if (part.type === 'image' || part.type === 'video') {
+      if ('source' in part && (part.source as HistoryMediaSource).kind === 'session_media') {
+        hasDaemonMedia = true;
+        output.push(part);
+      }
+      continue;
+    }
     const ref = daemonFileRefFromPairingPart(part);
     if (ref !== undefined) {
-      return {
+      hasDaemonMedia = true;
+      output.push({
         type: ref.kind,
         source: { kind: 'session_media', file_id: ref.ref.fileId },
         name: ref.name,
-      };
+      });
+      continue;
     }
     if ((part.type === 'image_url' || part.type === 'video_url') && 'source' in part) {
       const source = part.source as NativeHistoryMediaSource;
       if (source.kind === 'url') {
         const daemonRef = parseDaemonFileRef(source.url);
         if (daemonRef !== undefined) {
-          return {
+          hasDaemonMedia = true;
+          output.push({
             type: part.type === 'image_url' ? 'image' : 'video',
             source: { kind: 'session_media', file_id: daemonRef.fileId },
             name: part.name,
-          };
+          });
         }
       }
     }
-    return part;
-  });
+  }
+  return hasDaemonMedia ? output : textOf(message);
 }
 
 export function groupMessagesIntoSnapshot(

@@ -479,6 +479,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
           { id: 'c2', name: 'ReadMediaFile', arguments: '{"path":"/b.png"}' },
           { id: 'c3', name: 'ReadMediaFile', arguments: '{"path":"/c.mp3"}' },
           { id: 'c4', name: 'ReadMediaFile', arguments: '{"path":"/d.png"}' },
+          { id: 'c5', name: 'ReadMediaFile', arguments: '{"path":"/e.png"}' },
         ],
       },
       { role: 'tool', content: [{ type: 'text', text: 'file body' }], toolCallId: 'c1', toolCalls: [] },
@@ -487,9 +488,19 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         content: [
           { type: 'text', text: 'media result' },
           { type: 'image_url', imageUrl: { url: 'kimi-file://f_img', name: 'img.png' } } as HistoryContentPart,
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } } as HistoryContentPart,
           { type: 'video_url', source: { kind: 'url', url: 'kimi-file://f_vid' }, name: 'clip.mp4' },
         ],
         toolCallId: 'c2',
+        toolCalls: [],
+      },
+      {
+        role: 'tool',
+        content: [
+          { type: 'text', text: 'base64 only' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } } as HistoryContentPart,
+        ],
+        toolCallId: 'c5',
         toolCalls: [],
       },
       {
@@ -542,6 +553,9 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       { type: 'image', source: { kind: 'session_media', file_id: 'f_img' }, name: 'img.png' },
       { type: 'video', source: { kind: 'session_media', file_id: 'f_vid' }, name: 'clip.mp4' },
     ]);
+    expect(JSON.stringify(mediaTool?.kind === 'tool' && mediaTool.output)).not.toContain('AAAA');
+    const inlineTool = firstTurn.steps[0]?.frames.find((f) => f.kind === 'tool' && f.toolCallId === 'c5');
+    expect(inlineTool?.kind === 'tool' && inlineTool.output).toBe('base64 only');
     const audioTool = firstTurn.steps[0]?.frames.find((f) => f.kind === 'tool' && f.toolCallId === 'c3');
     expect(audioTool?.kind === 'tool' && audioTool.output).toBe('');
     const failedTool = firstTurn.steps[0]?.frames.find((f) => f.kind === 'tool' && f.toolCallId === 'c4');
