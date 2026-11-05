@@ -2418,7 +2418,7 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 - `kind` 为 `agent`；轮次之间只承载一个 `system` 条目的轮次为 `system`，即完成的上下文压缩，或分叉出的 agent 开头的分叉分界。`system` 轮次不会处于 `running`，实时推送时连续发送 `turn.started`、`item.ended` 与 `turn.ended`。
 - `status` 为 `running` 或 `ended`；agent 不运行的轮次（例如被 hook 拒绝的提示词）一出现就是 `ended`。结束的轮次带 `outcome`：`completed`；`interrupted`，`end_reason` 为 `user_cancelled`（用户停止）或 `aborted`（因其他原因中止，例如运行中服务端停止）；或 `failed`，`end_reason` 为 `error`、`max_steps`、`filtered`（输出被服务商的内容过滤拦截）或 `blocked`（输入被 hook 或策略拦下）。失败的轮次带 `error`，形如 `{ code, message, name?, status_code?, request_id?, retryable? }`。
 - 运行中的轮次在模型请求失败、等待重试时带 `retry`，形如 `{ attempt, next_attempt, max_attempts, delay_ms, error: { name, message, status_code? } }`，`attempt` 是刚失败的那一次。下一步开始、一步结束或该轮结束时清除。
-- `steps` 按 `index` 列出已结束的步骤（模型请求），形如 `{ index, outcome, started_at, ended_at?, finish_reason?, usage?, timing? }`。步骤的 `outcome` 为 `completed`、`interrupted` 或 `failed`；`usage` 为 `{ input_other, output, input_cache_read, input_cache_creation }`；`timing` 在有测量值时包含 `first_token_ms`、`stream_ms`、`request_build_ms`、`server_first_token_ms`、`server_decode_ms`、`client_consume_ms` 与 `client_blocked_ms`。轮次的 `usage` 是各步骤之和。
+- `steps` 按 `index` 列出已结束的步骤（模型请求），形如 `{ index, outcome, started_at, ended_at?, finish_reason?, usage? }`。步骤的 `outcome` 为 `completed`、`interrupted` 或 `failed`；`usage` 为 `{ input_other, output, input_cache_read, input_cache_creation }`。轮次的 `usage` 是各步骤之和。
 
 每个条目都有 `{ item_id, type, step_index?, status, outcome?, created_at }`。条目按出现的先后排列，结束的条目除下文另有说明外 `outcome` 为 `completed`：
 

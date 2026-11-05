@@ -49,17 +49,6 @@ export const usageSchema = z.object({
 });
 export type Usage = z.infer<typeof usageSchema>;
 
-export const stepTimingSchema = z.object({
-  first_token_ms: z.number().optional(),
-  stream_ms: z.number().optional(),
-  request_build_ms: z.number().optional(),
-  server_first_token_ms: z.number().optional(),
-  server_decode_ms: z.number().optional(),
-  client_consume_ms: z.number().optional(),
-  client_blocked_ms: z.number().optional(),
-});
-export type StepTiming = z.infer<typeof stepTimingSchema>;
-
 export const stepSummarySchema = z.object({
   index: z.number().int().positive(),
   outcome: conversationOutcomeSchema,
@@ -67,7 +56,6 @@ export const stepSummarySchema = z.object({
   ended_at: isoDateTimeSchema.optional(),
   finish_reason: z.string().optional(),
   usage: usageSchema.optional(),
-  timing: stepTimingSchema.optional(),
 });
 export type StepSummary = z.infer<typeof stepSummarySchema>;
 

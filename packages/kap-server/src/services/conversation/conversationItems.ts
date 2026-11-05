@@ -19,7 +19,6 @@ import type {
   ReasoningItem,
   RetryState,
   StepSummary,
-  StepTiming,
   ToolCallItem,
   Usage,
   UserMessageItem,
@@ -45,16 +44,6 @@ const FILE_ID = String.raw`f_(?:[0-9A-Za-z]{26}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[
 const UPLOADED_FILE_PATH = new RegExp(String.raw`(?:^|[\\/])(${FILE_ID})-[^\\/]*$`);
 const CACHED_MEDIA_PATH = new RegExp(String.raw`(?:^|[\\/])(${FILE_ID})\.[^\\/.]+$`);
 const IMAGE_COMPRESSION_CAPTION = /^<system>Image compressed to fit model limits:[\s\S]*<\/system>$/;
-
-const STEP_TIMING_NAMES = {
-  llmFirstTokenLatencyMs: 'first_token_ms',
-  llmStreamDurationMs: 'stream_ms',
-  llmRequestBuildMs: 'request_build_ms',
-  llmServerFirstTokenMs: 'server_first_token_ms',
-  llmServerDecodeMs: 'server_decode_ms',
-  llmClientConsumeMs: 'client_consume_ms',
-  llmClientBlockedMs: 'client_blocked_ms',
-} as const satisfies Record<string, keyof StepTiming>;
 
 export function isoTime(ms: number): string {
   return new Date(ms).toISOString();
@@ -208,11 +197,6 @@ export function stepSummary(
   interruptReason: string | undefined,
   end: Extract<LoopRecordedEvent, { type: 'step.end' }>,
 ): StepSummary {
-  const timing: StepTiming = {};
-  for (const [field, name] of Object.entries(STEP_TIMING_NAMES) as [keyof typeof STEP_TIMING_NAMES, keyof StepTiming][]) {
-    const value = end[field];
-    if (typeof value === 'number') timing[name] = value;
-  }
   return {
     index,
     outcome: stepOutcome(interruptReason, end.finishReason),
@@ -227,7 +211,6 @@ export function stepSummary(
           input_cache_read: end.usage.inputCacheRead ?? 0,
           input_cache_creation: end.usage.inputCacheCreation ?? 0,
         },
-    timing: Object.keys(timing).length === 0 ? undefined : timing,
   };
 }
 

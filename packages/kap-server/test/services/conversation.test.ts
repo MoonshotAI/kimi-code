@@ -153,7 +153,6 @@ describe('conversation fold', () => {
         ended_at: expect.any(String),
         finish_reason: 'tool_use',
         usage: { input_other: 3, output: 2, input_cache_read: 0, input_cache_creation: 1 },
-        timing: { first_token_ms: 40, server_decode_ms: 7 },
       },
       expect.objectContaining({ index: 2, outcome: 'completed', finish_reason: 'end_turn' }),
     ]);
