@@ -483,7 +483,8 @@ describe('conversation contract e2e', () => {
     expect(channel.turns()).toEqual(end.turns);
 
     expect(channel.agents.some((frame) => frame.status === 'running')).toBe(true);
-    for (const field of ['turn_number', 'prompt_id', 'compacting', 'retry']) {
+    expect(channel.agents.every((frame) => frame.compacting === false)).toBe(true);
+    for (const field of ['turn_number', 'prompt_id', 'retry']) {
       expect(channel.agents.every((frame) => !(field in frame))).toBe(true);
     }
     await until('agent idle frame', () => channel.agents.at(-1)?.status === 'idle');
