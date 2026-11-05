@@ -1,6 +1,10 @@
 import { ApiError as RawGoogleGenAISDKApiError } from '@google/genai';
 
-import { toLlmStatusErrorMessage, toLlmStreamErrorMessage } from '#/llm/protocol/rules/status';
+import {
+  isTransientHttpStatus,
+  toLlmStatusErrorMessage,
+  toLlmStreamErrorMessage,
+} from '#/llm/protocol/rules/status';
 import type { LlmRemoteErrorMessage } from '#/llm/response';
 import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/response';
 import type { StreamedMessagePart, ThinkPart, ToolCall } from '#/llm/message';
@@ -194,13 +198,20 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
       };
     }
     if (source === 'stream') {
+      const businessCode = typeof code === 'number' ? code : error.status;
       return toLlmStreamErrorMessage({
-        businessCode: typeof code === 'number' ? code : error.status,
+        businessCode,
         message,
+        retryable: businessCode === undefined || isTransientHttpStatus(businessCode),
         retryAfterMs,
       });
     }
-    return toLlmStatusErrorMessage({ statusCode: error.status, message, retryAfterMs });
+    return toLlmStatusErrorMessage({
+      statusCode: error.status,
+      message,
+      retryable: isTransientHttpStatus(error.status),
+      retryAfterMs,
+    });
   }
   if (error instanceof Error) {
     const msg = error.message;
@@ -213,9 +224,17 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
     const code = (error as { code?: number }).code;
     if (typeof code === 'number') {
       if (source === 'stream') {
-        return toLlmStreamErrorMessage({ businessCode: code, message: msg });
+        return toLlmStreamErrorMessage({
+          businessCode: code,
+          message: msg,
+          retryable: isTransientHttpStatus(code),
+        });
       }
-      return toLlmStatusErrorMessage({ statusCode: code, message: msg });
+      return toLlmStatusErrorMessage({
+        statusCode: code,
+        message: msg,
+        retryable: isTransientHttpStatus(code),
+      });
     }
     return { kind: 'provider', message: `GoogleGenAI error: ${msg}`, retryable: true };
   }

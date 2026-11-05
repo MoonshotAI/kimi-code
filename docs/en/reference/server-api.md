@@ -2193,7 +2193,7 @@ A next-generation session query for list views — filtering, sorting, and field
 | `view` | `flat` (default) / `by_workspace`, see below |
 | `group.page_size` | Sessions returned per workspace under `view=by_workspace`: 1–100, default 5 (up to 10000 with the `id,archived` projection); rejected without the grouped view (`40001`) |
 | `sort` | `meta.updated_at_desc` (default) / `meta.updated_at_asc` / `meta.created_at_desc` |
-| `include` | Comma-separated extra field groups; currently only `git` (branch and PR info, deduplicated per directory and cached for 60 seconds) |
+| `include` | Comma-separated extra field groups; currently only `git` (branch and PR info, deduplicated per environment and working directory and cached for 60 seconds) |
 | `fields` | Comma-separated item projection; currently only `id,archived`, trimming each item to `{ id, archived }` (select-all-matching flows). Not combinable with `include=git` (`40001`) |
 | `page_size` | 1–100, default 50; up to 10000 with the `id,archived` projection. Under `view=by_workspace` it counts groups per page |
 | `page_token` | Pagination token from the previous page |

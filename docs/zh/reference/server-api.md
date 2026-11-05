@@ -2194,7 +2194,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `view` | `flat`（默认）/ `by_workspace`，见下文 |
 | `group.page_size` | `view=by_workspace` 时每个工作区返回的会话数：1–100，默认 5（使用 `id,archived` 投影时上限 10000）；未开分组视图时传入返回 `40001` |
 | `sort` | `meta.updated_at_desc`（默认）/ `meta.updated_at_asc` / `meta.created_at_desc` |
-| `include` | 逗号分隔的附加字段组；目前支持 `git`（分支与 PR 信息，按目录去重并缓存 60 秒） |
+| `include` | 逗号分隔的附加字段组；目前支持 `git`（分支与 PR 信息，按环境与工作目录去重并缓存 60 秒） |
 | `fields` | 逗号分隔的字段投影；目前仅支持 `id,archived`，每项裁剪为 `{ id, archived }`（用于全选匹配场景）。不可与 `include=git` 同传（`40001`） |
 | `page_size` | 1–100，默认 50；使用 `id,archived` 投影时上限放宽至 10000。`view=by_workspace` 时按组计数 |
 | `page_token` | 上一页返回的翻页令牌 |
