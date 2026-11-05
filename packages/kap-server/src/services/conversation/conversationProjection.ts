@@ -310,8 +310,8 @@ function presentOrigin(origin: PromptOrigin | undefined): UserMessageOrigin {
         job_id: origin.jobId,
         schedule: origin.cron,
         recurring: origin.recurring,
-        coalesced_count: origin.coalescedCount,
-        stale: origin.stale,
+        coalesced_count: origin.coalescedCount ?? 1,
+        stale: origin.stale ?? false,
       };
     case 'hook_result':
       return { kind: 'hook', hook_event: origin.event };

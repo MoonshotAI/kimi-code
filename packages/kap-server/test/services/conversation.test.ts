@@ -320,9 +320,11 @@ describe('conversation fold', () => {
         coalescedCount: 2,
         stale: false,
       }),
-      turnPrompt(3, 'missed', { kind: 'cron_missed' }),
+      turnPrompt(3, 'cron-legacy', { kind: 'cron_job' }),
+      userMessage('cron-legacy', 'weekly digest', { kind: 'cron_job', jobId: 'job-2', cron: '0 9 * * 1', recurring: true }),
+      turnPrompt(4, 'missed', { kind: 'cron_missed' }),
       userMessage('missed', 'missed runs', { kind: 'cron_missed', count: 2 }),
-      turnPrompt(4, 'hook-1', { kind: 'hook_result' }),
+      turnPrompt(5, 'hook-1', { kind: 'hook_result' }),
       userMessage('hook-1', 'hook output', { kind: 'hook_result', event: 'SessionStart' }),
     ]);
 
@@ -334,6 +336,7 @@ describe('conversation fold', () => {
       [{ kind: 'goal' }, [], ''],
       [{ kind: 'system' }, [], 'Report back to the parent agent'],
       [{ kind: 'cron', job_id: 'job-1', schedule: '0 3 * * *', recurring: true, coalesced_count: 2, stale: false }, [], 'nightly report'],
+      [{ kind: 'cron', job_id: 'job-2', schedule: '0 9 * * 1', recurring: true, coalesced_count: 1, stale: false }, [], 'weekly digest'],
       [{ kind: 'system' }, [], 'missed runs'],
       [{ kind: 'hook', hook_event: 'SessionStart' }, [], 'hook output'],
     ]);
