@@ -185,6 +185,7 @@ interface TestMediaResolution {
 }
 
 function requester(opts: {
+  modelId?: string;
   videoIn?: boolean;
   imageIn?: boolean;
   protocol?: Protocol;
@@ -196,7 +197,7 @@ function requester(opts: {
   credentialProvider?: LlmCredentialProvider;
 }): TestMediaResolution {
   const model: TestMediaResolution['model'] = {
-    id: 'm',
+    id: opts.modelId ?? 'm',
     name: 'stub',
     aliases: [],
     protocol: opts.protocol ?? 'openai',
@@ -439,10 +440,20 @@ describe('AgentMediaResolverService video strategy', () => {
         new Map([[wmvFileId, { name: 'clip.wmv', bytes: Buffer.from([1, 2, 3]) }]]),
         sessionDir,
       );
+      const openAiOut = await resolveMedia(
+        wmvRes,
+        [videoMessage(buildKimiFileUrl(wmvFileId))],
+        requester({ protocol: 'openai', providerType: 'shared', uploadVideo: undefined }),
+      );
+      expect(firstPart(openAiOut)).toEqual({
+        type: 'video_url',
+        videoUrl: { url: `data:video/x-ms-wmv;base64,${Buffer.from([1, 2, 3]).toString('base64')}` },
+      });
+
       const wmvOut = await resolveMedia(
         wmvRes,
         [videoMessage(buildKimiFileUrl(wmvFileId))],
-        requester({ protocol: 'anthropic', providerType: 'anthropic', uploadVideo: wmvUpload }),
+        requester({ protocol: 'anthropic', providerType: 'shared', uploadVideo: wmvUpload }),
       );
       expect(firstPart(wmvOut)).toEqual({
         type: 'text',
@@ -505,7 +516,7 @@ describe('AgentMediaResolverService video strategy', () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  it('inlines transient failures and recovers after later uploads', async () => {
+  it('probes upload once per model and recovers after a model switch', async () => {
     let uploadCalls = 0;
     const upload = vi.fn(async (): Promise<VideoURLPart> => {
       uploadCalls += 1;
@@ -514,12 +525,20 @@ describe('AgentMediaResolverService video strategy', () => {
     });
     const bigFileId = 'big-file';
     const bigBytes = Buffer.concat([VIDEO_BYTES, Buffer.alloc(20 * 1024 * 1024)]);
-    const res = resolver(
+    const counting = countingFileService(
       new Map([
         [FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }],
         [bigFileId, { name: 'big.mp4', bytes: bigBytes }],
       ]),
-      sessionDir,
+    );
+    const res = new AgentMediaResolverService(
+      counting.service,
+      blobStore(),
+      telemetry,
+      new AgentStateService(),
+      stubMediaStore(sessionDir),
+      stubDispatcher,
+      stubScopeContext,
     );
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
     const req = requester({ uploadVideo: upload });
@@ -530,8 +549,17 @@ describe('AgentMediaResolverService video strategy', () => {
       videoUrl: { url: `data:video/mp4;base64,${VIDEO_BYTES.toString('base64')}` },
     });
 
-    const retried = await resolveMedia(res, [message], req);
-    expect(firstPart(retried)).toEqual(msPart('prov-1'));
+    const sameModel = await resolveMedia(res, [message], req);
+    expect(firstPart(sameModel)).toEqual({
+      type: 'video_url',
+      videoUrl: { url: `data:video/mp4;base64,${VIDEO_BYTES.toString('base64')}` },
+    });
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(counting.gets).toBe(2);
+
+    const switchedReq = requester({ modelId: 'switched', uploadVideo: upload });
+    const switched = await resolveMedia(res, [message], switchedReq);
+    expect(firstPart(switched)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(2);
 
     let bigUploadCalls = 0;
@@ -542,15 +570,23 @@ describe('AgentMediaResolverService video strategy', () => {
     });
     const bigPath = await plantCanonical(bigFileId, '.mp4', VIDEO_BYTES);
     const bigMessage = videoMessage(buildKimiFileUrl(bigFileId));
-    const bigReq = requester({ uploadVideo: bigUpload });
+    const bigReq = requester({ modelId: 'big', uploadVideo: bigUpload });
     const bigFailed = await resolveMedia(res, [bigMessage], bigReq);
     expect(firstPart(bigFailed)).toEqual({
       type: 'text',
       text: `<video path="${bigPath}"></video>`,
     });
 
-    const bigRetried = await resolveMedia(res, [bigMessage], bigReq);
-    expect(firstPart(bigRetried)).toEqual(msPart('big-prov'));
+    const bigSameModel = await resolveMedia(res, [bigMessage], bigReq);
+    expect(firstPart(bigSameModel)).toEqual({
+      type: 'text',
+      text: `<video path="${bigPath}"></video>`,
+    });
+    expect(bigUpload).toHaveBeenCalledTimes(1);
+
+    const bigSwitchedReq = requester({ modelId: 'switched-big', uploadVideo: bigUpload });
+    const bigSwitched = await resolveMedia(res, [bigMessage], bigSwitchedReq);
+    expect(firstPart(bigSwitched)).toEqual(msPart('big-prov'));
     expect(bigUpload).toHaveBeenCalledTimes(2);
   });
 
