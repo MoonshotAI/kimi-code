@@ -8,7 +8,8 @@ import { Error2 } from '#/_base/errors/errors';
 import type { ILogService } from '#/_base/log/log';
 import type { IConfigService } from '#/app/config/config';
 import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
-import type { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import type { ISessionIndex, SessionSummary } from '#/app/sessionIndex/sessionIndex';
+import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { reloadOnStale } from '#/app/sessionManager/sessionLookup';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
@@ -51,6 +52,7 @@ function makeSessionManager(
     readonly config?: IConfigService;
     readonly hostFs?: IHostFileSystem;
     readonly locks?: InMemorySessionLockService;
+    readonly telemetry?: typeof noopTelemetryService;
   } = {},
 ): SessionManager {
   const log = { _serviceBrand: undefined, warn: () => {}, info: () => {}, error: () => {} } as unknown as ILogService;
@@ -84,6 +86,7 @@ function makeSessionManager(
         realpath: async (path: string) => path,
       } as unknown as IHostFileSystem),
     overrides.locks ?? new InMemorySessionLockService(),
+    overrides.telemetry ?? noopTelemetryService,
   );
 }
 
@@ -476,6 +479,123 @@ describe('SessionManager', () => {
     await expect(manager.whenResumeSettled('session-1')).resolves.toBeUndefined();
     manager.dispose();
   });
+
+  it('circuits workspace acquisition failures without duplicate telemetry until restore', async () => {
+    const summary: SessionSummary = {
+      id: 'session-1',
+      workspaceId: 'workspace-1',
+      cwd: '/workspace',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+    };
+    const error = new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, 'missing');
+    const fake = controller();
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+    } as unknown as WorkspaceInstance;
+    let fail = true;
+    const acquire = vi.fn(async () => {
+      if (fail) throw error;
+      return { instance: workspace, dispose: vi.fn() };
+    });
+    const workspaces = {
+      acquire,
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager;
+    const track2 = vi.fn();
+    const telemetry = {
+      withContext: () => ({ track2 }),
+    } as unknown as typeof noopTelemetryService;
+    const manager = makeSessionManager(
+      workspaces,
+      { get: async () => summary } as unknown as ISessionIndex,
+      { telemetry },
+    );
+    const restore = vi.fn(async (_id: string, _options?: { forceRetry?: boolean }) => fake.handle);
+    (fake.service as unknown as { restore: unknown }).restore = restore;
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      await expect(manager.resume(summary.id)).rejects.toBe(error);
+    }
+    expect(acquire).toHaveBeenCalledTimes(1);
+    expect(track2).toHaveBeenCalledTimes(1);
+
+    fail = false;
+    await expect(manager.restore(summary.id)).resolves.toBe(fake.handle);
+    expect(restore).toHaveBeenCalledWith(
+      summary.id,
+      expect.objectContaining({ forceRetry: true }),
+    );
+    expect(acquire).toHaveBeenCalledTimes(2);
+    await expect(manager.resume(summary.id)).resolves.toBe(fake.handle);
+    expect(track2).toHaveBeenCalledTimes(1);
+    manager.dispose();
+  });
+
+  it('coalesces concurrent non-retryable failures into one real attempt', async () => {
+    const summary: SessionSummary = {
+      id: 'session-1',
+      workspaceId: 'workspace-1',
+      cwd: '/workspace',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+    };
+    const error = new Error2(ErrorCodes.FS_PATH_NOT_FOUND, 'missing');
+    const fake = controller();
+    const resume = vi.fn(async () => {
+      throw error;
+    });
+    (fake.service as unknown as { resume: unknown }).resume = resume;
+    const workspace = {
+      id: 'workspace-1',
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+    } as unknown as WorkspaceInstance;
+    const manager = makeSessionManager(
+      workspaceManager(workspace),
+      { get: async () => summary } as unknown as ISessionIndex,
+    );
+
+    const attempts = Array.from({ length: 20 }, () => manager.resume(summary.id));
+    await Promise.all(attempts.map((attempt) => expect(attempt).rejects.toBe(error)));
+    expect(resume).toHaveBeenCalledTimes(1);
+    manager.dispose();
+  });
+
+  it.each(['workspaceId', 'cwd', 'environmentId'] as const)(
+    'allows a real retry after %s changes',
+    async (field) => {
+      const summary: SessionSummary = {
+        id: 'session-1',
+        workspaceId: 'workspace-1',
+        cwd: '/workspace',
+        createdAt: 1,
+        updatedAt: 1,
+        archived: false,
+      };
+      const fake = controller();
+      const resume = vi.fn()
+        .mockRejectedValueOnce(new Error2(ErrorCodes.FS_PATH_NOT_FOUND, 'missing'))
+        .mockResolvedValueOnce(fake.handle);
+      (fake.service as unknown as { resume: unknown }).resume = resume;
+      const workspace = {
+        id: 'workspace-1',
+        program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+      } as unknown as WorkspaceInstance;
+      const manager = makeSessionManager(
+        workspaceManager(workspace),
+        { get: async () => summary } as unknown as ISessionIndex,
+      );
+
+      await expect(manager.resume(summary.id)).rejects.toThrow('missing');
+      Object.assign(summary, { [field]: field === 'cwd' ? '/next' : 'next' });
+      await expect(manager.resume(summary.id)).resolves.toBe(fake.handle);
+      expect(resume).toHaveBeenCalledTimes(2);
+      manager.dispose();
+    },
+  );
 
   it('owns one global live-session registry across workspace controllers', async () => {
     const fake = controller();

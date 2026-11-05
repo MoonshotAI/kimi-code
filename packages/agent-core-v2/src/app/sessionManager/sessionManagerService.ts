@@ -10,6 +10,7 @@ import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from
 import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes, isError2, SessionErrors, unwrapErrorCause } from '#/errors';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentCronService } from '#/features/cron/cronService';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
@@ -26,6 +27,7 @@ import {
   type SessionWillCloseEvent,
   type SessionWillCreateEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { resumeFailure, resumeFingerprint, type ResumeFailure } from '#/workspace/sessionLifecycle/resumeFailure';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceInstanceManager, type WorkspaceInstanceLease, type WorkspaceInstanceRef } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
@@ -50,7 +52,7 @@ export class SessionManager implements ISessionManager {
   private readonly sessions = new Map<string, ISessionScopeHandle>();
   private readonly owners = new Map<string, SessionControllerEntry>();
   private readonly pendingResumes = new Map<string, Promise<ISessionScopeHandle | undefined>>();
-  private readonly resumeFailures = new Map<string, Error>();
+  private readonly resumeFailures = new Map<string, ResumeFailure>();
   private readonly reclaimed = new Set<string>();
   private readonly lifecycleChains = new Map<string, Promise<void>>();
   private readonly controllers = new Map<string, SessionControllerEntry>();
@@ -78,6 +80,7 @@ export class SessionManager implements ISessionManager {
     @IEnvironmentService private readonly environments: IEnvironmentService,
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
   async resolveCreationEnvironment(options: CreateManagedSessionOptions) {
@@ -187,9 +190,34 @@ export class SessionManager implements ISessionManager {
   async resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
     const inflight = this.pendingResumes.get(sessionId);
     if (inflight !== undefined) return inflight;
-    this.resumeFailures.delete(sessionId);
+    let summary: SessionSummary | undefined;
     const promise = this.serializeLifecycle(sessionId, async () => {
-      const entry = await this.controllerForSession(sessionId);
+      const live = this.owners.has(sessionId);
+      summary = await this.index.get(sessionId);
+      if (!live) {
+        if (summary === undefined) {
+          this.resumeFailures.delete(sessionId);
+          return undefined;
+        }
+        const previous = this.resumeFailures.get(sessionId);
+        if (
+          previous !== undefined &&
+          options?.forceRetry !== true &&
+          previous.nonRetryable &&
+          previous.fingerprint === resumeFingerprint(summary)
+        ) {
+          throw previous.error;
+        }
+      }
+      this.resumeFailures.delete(sessionId);
+      const entry = await this.controllerForSession(sessionId, summary).catch((error: unknown) => {
+        this.telemetry
+          .withContext({ session_id: sessionId })
+          .track2('session_load_failed', {
+            reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
+          });
+        throw error;
+      });
       if (entry === undefined) return undefined;
       return this.runControllerOperation(entry, (controller) => controller.resume(
         sessionId,
@@ -199,7 +227,7 @@ export class SessionManager implements ISessionManager {
     }).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
     void promise.catch((error: unknown) => {
-      this.resumeFailures.set(sessionId, error instanceof Error ? error : new Error('session resume failed'));
+      this.resumeFailures.set(sessionId, resumeFailure(error, summary));
     });
     return promise;
   }
@@ -215,7 +243,7 @@ export class SessionManager implements ISessionManager {
   async whenResumeSettled(sessionId: string): Promise<void> {
     await this.pendingResumes.get(sessionId);
     const failure = this.resumeFailures.get(sessionId);
-    if (failure !== undefined) throw failure;
+    if (failure !== undefined) throw failure.error;
     await this.owners.get(sessionId)?.controller.whenResumeSettled(sessionId);
   }
 
@@ -328,7 +356,11 @@ export class SessionManager implements ISessionManager {
   }
 
   async restore(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
-    return this.serializeLifecycle(sessionId, () => this.restoreInner(sessionId, options));
+    const handle = await this.serializeLifecycle(sessionId, () =>
+      this.restoreInner(sessionId, { ...options, forceRetry: true }),
+    );
+    if (handle !== undefined) this.resumeFailures.delete(sessionId);
+    return handle;
   }
 
   async delete(sessionId: string): Promise<void> {
@@ -354,6 +386,7 @@ export class SessionManager implements ISessionManager {
         if (failed?.status === 'rejected') throw failed.reason;
         await controller.delete(sessionId);
         this.reclaimed.delete(sessionId);
+        this.resumeFailures.delete(sessionId);
       });
     });
   }
@@ -435,6 +468,7 @@ export class SessionManager implements ISessionManager {
       subscriptions.add(controller.onDidCreateSession((event) => {
         entry.sessionCount += 1;
         this.reclaimed.delete(event.sessionId);
+        this.resumeFailures.delete(event.sessionId);
         this.sessions.set(event.sessionId, event.handle);
         this.owners.set(event.sessionId, entry);
         this.didCreateEmitter.fire(event);
@@ -501,10 +535,13 @@ export class SessionManager implements ISessionManager {
     }
   }
 
-  private async controllerForSession(sessionId: string): Promise<SessionControllerEntry | undefined> {
+  private async controllerForSession(
+    sessionId: string,
+    persisted?: SessionSummary,
+  ): Promise<SessionControllerEntry | undefined> {
     const live = this.owners.get(sessionId);
     if (live !== undefined) return this.retainController(live);
-    const summary = await this.index.get(sessionId);
+    const summary = persisted ?? await this.index.get(sessionId);
     if (summary === undefined) return undefined;
     await this.environments.ready;
     return this.controllerForWorkspace({ workspaceId: summary.workspaceId, root: summary.cwd });

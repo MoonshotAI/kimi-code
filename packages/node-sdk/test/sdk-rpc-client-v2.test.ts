@@ -407,6 +407,48 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
+  it('forces a fresh engine resume through the public resume API', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-resume-force-'));
+    tempDirs.push(workDir);
+    const { harness, client } = await makeEnvironmentHarness();
+    try {
+      const session = await harness.createSession({ workDir });
+      await session.close();
+      const resume = vi.spyOn(client.engineAccessor.get(ISessionManager), 'resume');
+
+      await harness.resumeSession({ id: session.id });
+
+      expect(resume).toHaveBeenCalledWith(
+        session.id,
+        expect.objectContaining({ forceRetry: true }),
+      );
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('forces a fresh engine resume through the public reload API', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-reload-force-'));
+    tempDirs.push(workDir);
+    const { harness, client } = await makeEnvironmentHarness();
+    try {
+      const session = await harness.createSession({ workDir });
+      await session.close();
+      const resume = vi.spyOn(client.engineAccessor.get(ISessionManager), 'resume');
+
+      await harness.reloadSession({ id: session.id });
+
+      expect(resume).toHaveBeenCalledWith(
+        session.id,
+        expect.objectContaining({ forceRetry: true }),
+      );
+    } finally {
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('keeps remote AGENTS.md change notifications on the session workdir across reloads', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-agents-local-'));
     const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-agents-remote-'));

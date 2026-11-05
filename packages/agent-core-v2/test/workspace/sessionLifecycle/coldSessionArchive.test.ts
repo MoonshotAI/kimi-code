@@ -18,6 +18,7 @@ import {
   ISessionIndexMirror,
   type SessionSummary,
 } from '#/app/sessionIndex/sessionIndex';
+import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
@@ -260,6 +261,7 @@ function sessionManagerResuming(sessionId: string): SessionManager {
       realpath: async (path: string) => path,
     } as unknown as IHostFileSystem,
     new InMemorySessionLockService(),
+    noopTelemetryService,
   );
 }
 

@@ -28,6 +28,7 @@ import {
   IEventDispatcher,
   IEventService,
   IEnvironmentService,
+  ITelemetryService,
   ISessionManager,
   ISessionMetadata,
   ISessionTitleService,
@@ -41,6 +42,7 @@ import {
   sessionDirOf,
   type ContextMessage,
   type ScopeSeed,
+  type TelemetryAppenderRecord,
 } from '@moonshot-ai/agent-core-v2';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
@@ -2473,6 +2475,83 @@ describe('server-v2 /api/v1/sessions', () => {
     const got = await getJson<SessionWire>(`/api/v1/sessions/${removed.body.data.id}`);
     expect(got.body.code).toBe(0);
     expect(got.body.data.metadata.cwd).toBe(cwd);
+  });
+
+  it('circuits repeated missing-workspace cold resumes and restores explicitly', async () => {
+    await restartWithFreshHome();
+    const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-resume-circuit-'));
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    expect(created.body.code).toBe(0);
+    const id = created.body.data.id;
+    const workspaceId = created.body.data.workspace_id;
+    await closeSessionById((server as RunningServer).core.accessor, id);
+    const records: TelemetryAppenderRecord[] = [];
+    const appender = (server as RunningServer).core.accessor.get(ITelemetryService).addAppender({
+      track: (record) => records.push(record),
+    });
+
+    try {
+      const registry = (server as RunningServer).core.accessor.get(IWorkspaceService);
+      await registry.delete(workspaceId);
+      await rm(cwd, { recursive: true, force: true });
+      const createOrTouch = vi.spyOn(registry, 'createOrTouch').mockRejectedValue(
+        new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${cwd} does not exist`),
+      );
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        await expect(
+          resumeSessionById((server as RunningServer).core.accessor, id),
+        ).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+      }
+      const failureCount = () => records.filter((record) =>
+        record.event === 'session_load_failed' &&
+        record.context['session_id'] === id &&
+        record.properties['reason'] === 'fs.path_not_found'
+      ).length;
+      expect(failureCount()).toBe(1);
+
+      createOrTouch.mockRestore();
+      await mkdir(cwd, { recursive: true });
+      await expect(
+        (server as RunningServer).core.accessor.get(ISessionManager).restore(id),
+      ).resolves.toBeDefined();
+      expect(failureCount()).toBe(1);
+    } finally {
+      appender.dispose();
+      await closeSessionById((server as RunningServer).core.accessor, id).catch(() => undefined);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('retries a cached missing-workspace failure through normal reload', async () => {
+    await restartWithFreshHome();
+    const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-resume-reload-'));
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    expect(created.body.code).toBe(0);
+    const id = created.body.data.id;
+    const workspaceId = created.body.data.workspace_id;
+    await closeSessionById((server as RunningServer).core.accessor, id);
+    const registry = (server as RunningServer).core.accessor.get(IWorkspaceService);
+    const createOrTouch = vi.spyOn(registry, 'createOrTouch');
+
+    try {
+      await registry.delete(workspaceId);
+      await rm(cwd, { recursive: true, force: true });
+      createOrTouch.mockRejectedValue(
+        new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${cwd} does not exist`),
+      );
+      await expect(
+        resumeSessionById((server as RunningServer).core.accessor, id),
+      ).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+
+      createOrTouch.mockRestore();
+      await mkdir(cwd, { recursive: true });
+      const reloaded = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`, {});
+      expect(reloaded.body.code).toBe(0);
+    } finally {
+      createOrTouch.mockRestore();
+      await closeSessionById((server as RunningServer).core.accessor, id).catch(() => undefined);
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it('merges metadata via profile and keeps cwd authoritative', async () => {

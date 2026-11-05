@@ -35,6 +35,7 @@ import { CHILD_SESSION_KIND,
   ISessionIndex,
   ISessionIndexMirror,
   PARENT_SESSION_ID_KEY,
+  type SessionSummary,
 } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import type { SessionEndedEvent } from '#/app/telemetry/events';
@@ -99,6 +100,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
+import { resumeFailure, resumeFingerprint, type ResumeFailure } from './resumeFailure';
 import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
@@ -174,7 +176,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private readonly _onDidForkSession = this._register(new Emitter<SessionForkedEvent>());
   readonly onDidForkSession: Event<SessionForkedEvent> = this._onDidForkSession.event;
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
-  private readonly resumeFailures = new Map<string, Error>();
+  private readonly resumeFailures = new Map<string, ResumeFailure>();
 
   constructor(
     private readonly instantiation: IInstantiationService,
@@ -267,6 +269,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.hostFs.remove(sessionDir).catch(() => {});
       throw error;
     }
+    this.resumeFailures.delete(sessionId);
     await this.announceCreated({ sessionId, handle, source: 'startup' });
     return handle;
   }
@@ -394,9 +397,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
     try {
       const stat = await lease.environment.fs!.stat(cwd).catch((error: unknown) => {
+        const code = (unwrapErrorCause(error) as NodeJS.ErrnoException | undefined)?.code;
         throw new EnvironmentError(
-          'environment.invalid_cwd',
+          code === 'ENOENT' || code === 'ENOTDIR' ? 'environment.invalid_cwd' : 'environment.unavailable',
           `cwd ${cwd} is not readable on environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
         );
       });
       if (!stat.isDirectory) {
@@ -439,16 +444,38 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const inflight = this.resuming.get(sessionId);
     if (inflight !== undefined) return inflight;
     const live = this.sessions.get(sessionId);
-    if (live !== undefined) return Promise.resolve(live);
-    this.resumeFailures.delete(sessionId);
-    const promise = this.doResume(sessionId, source, opts)
-      .catch((error: unknown) => {
+    if (live !== undefined) {
+      this.resumeFailures.delete(sessionId);
+      return Promise.resolve(live);
+    }
+    let summary: SessionSummary | undefined;
+    const promise = (async () => {
+      summary = await this.index.get(sessionId);
+      if (summary === undefined || summary.workspaceId !== this.workspaceId) {
+        this.resumeFailures.delete(sessionId);
+        return undefined;
+      }
+      const previous = this.resumeFailures.get(sessionId);
+      if (
+        previous !== undefined &&
+        opts?.forceRetry !== true &&
+        previous.nonRetryable &&
+        previous.fingerprint === resumeFingerprint(summary)
+      ) {
+        throw previous.error;
+      }
+      this.resumeFailures.delete(sessionId);
+      return this.doResume(sessionId, source, summary, opts).catch((error: unknown) => {
         this.telemetry
           .withContext({ session_id: sessionId })
           .track2('session_load_failed', {
             reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
           });
-        this.resumeFailures.set(sessionId, error instanceof Error ? error : new Error('session resume failed'));
+        throw error;
+      });
+    })()
+      .catch((error: unknown) => {
+        this.resumeFailures.set(sessionId, resumeFailure(error, summary));
         throw error;
       })
       .finally(() => this.resuming.delete(sessionId));
@@ -459,19 +486,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async whenResumeSettled(sessionId: string): Promise<void> {
     await this.resuming.get(sessionId);
     const failure = this.resumeFailures.get(sessionId);
-    if (failure !== undefined) throw failure;
+    if (failure !== undefined) throw failure.error;
   }
 
   private async doResume(
     sessionId: string,
     source: SessionCreateSource,
+    summary: SessionSummary,
     opts?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return live;
 
-    const summary = await this.index.get(sessionId);
-    if (summary === undefined || summary.workspaceId !== this.workspaceId) return undefined;
     const persisted = await this.readMetaFromDisk(sessionId);
     const environment = sessionEnvironment(persisted?.environmentId, persisted?.environmentCwd);
     const workDir = environment !== undefined && environment.environmentId !== LOCAL_ENVIRONMENT_ID
@@ -587,6 +613,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
         }),
       );
+      this.resumeFailures.delete(sessionId);
     } finally {
       lease.release();
     }
@@ -805,6 +832,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           id: targetId,
           workspaceId: this.workspaceId,
           cwd: hostCwd,
+          environmentId: meta.environmentId,
+          environmentCwd: meta.environmentCwd,
           title,
           lastPrompt: meta.lastPrompt,
           createdAt: now,
