@@ -1167,7 +1167,7 @@ describe('conversation feed', () => {
     h.dispatcher.dispose();
   });
 
-  it('keeps streaming after a rerun restore that no undo completion follows, failed reruns included', async () => {
+  it('keeps streaming after a rerun restore that no undo completion follows, and keeps its conversation when a rerun fails', async () => {
     const h = feedHarness([
       prompt(0, 'p1').serialize(),
       userPrompt('p1', 'first').serialize(),
@@ -1185,8 +1185,16 @@ describe('conversation feed', () => {
     await flushed();
     expect(h.events.map((event) => event.type)).toEqual(['reset', 'turn.started', 'item.ended']);
 
+    const kept = (await h.feed.page(undefined, 20)).turns.map((turn) => turn.turn_id);
     h.failNextReplay();
+    h.events.length = 0;
     await expect(h.dispatcher.restore()).rejects.toThrow('wire read failed');
+    expect(h.events.map((event) => event.type)).toEqual(['turn.ended']);
+    expect(kept).toHaveLength(2);
+    expect((await h.feed.page(undefined, 20)).turns.map((turn) => `${turn.turn_id}:${turn.outcome}`)).toEqual([
+      `${kept[0]}:completed`,
+      `${kept[1]}:interrupted`,
+    ]);
     h.events.length = 0;
     await h.dispatcher.dispatch(prompt(2, 'p3'));
     await h.dispatcher.dispatch(userPrompt('p3', 'third'));

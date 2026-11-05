@@ -124,6 +124,7 @@ export class ConversationFeed implements IDisposable {
   private sent: readonly FoldTurn[] = [];
   private started = false;
   private replay: ReplayGate | undefined;
+  private beforeReplay: ConversationState | undefined;
   private flushQueued = false;
   private disposed = false;
   private firstReplay: ((ok: boolean) => void) | undefined;
@@ -246,15 +247,21 @@ export class ConversationFeed implements IDisposable {
 
   private willReplay(): void {
     this.replay ??= replayGate();
+    this.beforeReplay ??= this.state;
     this.dropLive(() => true);
     this.tools.clear();
   }
 
   private didReplay(replayed: ConversationState, ok: boolean): ConversationState {
-    this.state = settleOrphanTurns(replayed, this.runningWork());
-    this.sent = this.state.turns;
+    const kept = ok ? undefined : this.beforeReplay;
+    this.beforeReplay = undefined;
+    this.state = settleOrphanTurns(kept ?? replayed, this.runningWork());
+    if (kept === undefined) this.sent = this.state.turns;
     this.finishReplay();
-    if (this.started) this.emit({ type: 'reset' });
+    if (this.started) {
+      if (kept === undefined) this.emit({ type: 'reset' });
+      else this.flush();
+    }
     this.firstReplay?.(ok);
     this.firstReplay = undefined;
     return this.state;
