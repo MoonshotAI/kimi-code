@@ -404,14 +404,13 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
       const turn = turnForNumber(state, numberField(event.turnId), time);
       const position = state.stepParts[event.stepUuid] ?? 0;
       state.stepParts[event.stepUuid] = position + 1;
-      const stepStart = findStep(state, event.stepUuid)?.step.startedAt;
-      const startedAt = event.startedAt ?? stepStart ?? time;
+      const startedAt = event.startedAt ?? findStep(state, event.stepUuid)?.step.startedAt ?? time;
       const item = contentItem(
         event.part,
         `${event.stepUuid}:${event.block ?? position}`,
         event.step,
         startedAt,
-        event.durationMs ?? elapsedMs(stepStart, time),
+        event.durationMs,
       );
       if (item !== undefined) upsertItem(turn, item);
       return;
@@ -880,10 +879,4 @@ function numberField(value: unknown): number | undefined {
 
 function stringField(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function elapsedMs(from: number | undefined, to: number): number | undefined {
-  if (from === undefined) return undefined;
-  const ms = to - from;
-  return Number.isFinite(ms) && ms >= 0 ? ms : undefined;
 }

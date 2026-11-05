@@ -316,7 +316,7 @@ describe('conversation fold', () => {
     expect(other.turns[0]?.turn_id).not.toBe(original.turn_id);
   });
 
-  it('times reasoning by its streamed block and falls back to the step span for untimed records', () => {
+  it('times reasoning by its streamed block and leaves untimed records without a duration', () => {
     const state = fold([
       turnPrompt(0, 'p1'),
       userMessage('p1', 'hello'),
@@ -328,7 +328,8 @@ describe('conversation fold', () => {
     const turn = state.turns[0];
     const stepStart = iso(state.steps[turn!.turn_id]![0]!.startedAt);
     expect(turn?.items[1]).toMatchObject({ type: 'reasoning', created_at: iso(5_000), started_at: iso(5_000), duration_ms: 1_200 });
-    expect(turn?.items[2]).toMatchObject({ type: 'reasoning', started_at: stepStart, duration_ms: 2 });
+    expect(turn?.items[2]).toMatchObject({ type: 'reasoning', started_at: stepStart });
+    expect(turn?.items[2]).toEqual(expect.not.objectContaining({ duration_ms: expect.anything() }));
   });
 
   it('places in-turn steers and legacy steer records inside the running turn', () => {
