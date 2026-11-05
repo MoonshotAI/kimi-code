@@ -153,6 +153,49 @@ const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
 
 const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
 
+function toolOutputOf(message: HistoryMessage): unknown {
+  const output: HistoryContentPart[] = [];
+  let hasDaemonMedia = false;
+  for (const part of message.content ?? []) {
+    if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
+      output.push(part);
+      continue;
+    }
+    if (part.type === 'image' || part.type === 'video') {
+      if ('source' in part && (part.source as HistoryMediaSource).kind === 'session_media') {
+        hasDaemonMedia = true;
+        output.push(part);
+      }
+      continue;
+    }
+    const ref = daemonFileRefFromPairingPart(part);
+    if (ref !== undefined) {
+      hasDaemonMedia = true;
+      output.push({
+        type: ref.kind,
+        source: { kind: 'session_media', file_id: ref.ref.fileId },
+        name: ref.name,
+      });
+      continue;
+    }
+    if ((part.type === 'image_url' || part.type === 'video_url') && 'source' in part) {
+      const source = part.source as NativeHistoryMediaSource;
+      if (source.kind === 'url') {
+        const daemonRef = parseDaemonFileRef(source.url);
+        if (daemonRef !== undefined) {
+          hasDaemonMedia = true;
+          output.push({
+            type: part.type === 'image_url' ? 'image' : 'video',
+            source: { kind: 'session_media', file_id: daemonRef.fileId },
+            name: part.name,
+          });
+        }
+      }
+    }
+  }
+  return hasDaemonMedia ? output : textOf(message);
+}
+
 export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
   options?: {
@@ -519,12 +562,12 @@ export function groupMessagesIntoSnapshot(
     if (message.role === 'tool') {
       const frame = currentTurnToolFrame(turn, message.toolCallId);
       if (frame && frame.kind === 'tool') {
-        const output = textOf(message);
+        const output = toolOutputOf(message);
         const patched: TranscriptFrame = {
           ...frame,
           state: message.isError ? 'error' : 'done',
           output,
-          error: message.isError ? output : undefined,
+          error: message.isError ? textOf(message) : undefined,
         };
         replaceToolFrame(turn!, message.toolCallId!, patched);
         syncTurnItem(items, turn!);
