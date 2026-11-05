@@ -7,6 +7,7 @@ import { mapError } from '../transport/errors';
 export const sessionConflictErrors = {
   [ErrorCode.SESSION_OCCUPIED]: {},
   [ErrorCode.SESSION_STALE]: {},
+  [ErrorCode.SESSION_WORKSPACE_UNAVAILABLE]: {},
 } as const;
 
 export function sendMappedError(

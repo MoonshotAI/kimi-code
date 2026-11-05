@@ -13,7 +13,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import {
   Error2,
   ErrorCodes,
+  AgentTaskPersistence,
+  IAtomicDocumentStore,
   IBootstrapService,
+  IAgentTaskService,
+  ISessionIndex,
   IOAuthService,
   type Event2,
   type IOAuthService as IOAuthServiceType,
@@ -28,6 +32,7 @@ import {
   IEventDispatcher,
   IEventService,
   IEnvironmentService,
+  IFileSystemStorageService,
   ITelemetryService,
   ISessionManager,
   ISessionMetadata,
@@ -36,10 +41,13 @@ import {
   IWorkspaceInstanceManager,
   IWorkspaceService,
   MAIN_AGENT_ID,
+  agentScopeOf,
   closeSessionById,
   getLiveSessionById,
   resumeSessionById,
   sessionDirOf,
+  sessionScopeOf,
+  workspacePersistenceScope,
   type ContextMessage,
   type ScopeSeed,
   type TelemetryAppenderRecord,
@@ -59,6 +67,7 @@ import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 import { ensureMainAgent } from '../src/transport/mainAgent';
 import { readAgentState, readUsageState } from '../src/transport/ws/v1/agentState';
+import { createTaskSource, readColdTaskList } from '../src/transport/ws/v1/taskRequests';
 
 interface Envelope<T> {
   code: number;
@@ -2500,7 +2509,10 @@ describe('server-v2 /api/v1/sessions', () => {
       for (let attempt = 0; attempt < 100; attempt += 1) {
         await expect(
           resumeSessionById((server as RunningServer).core.accessor, id),
-        ).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+        ).rejects.toMatchObject({
+          code: ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE,
+          details: { cause_code: ErrorCodes.FS_PATH_NOT_FOUND, retryable: false },
+        });
       }
       const failureCount = () => records.filter((record) =>
         record.event === 'session_load_failed' &&
@@ -2522,6 +2534,82 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('reads persisted tasks without a cold resume and resumes for task commands', async () => {
+    await restartWithFreshHome();
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const manager = (server as RunningServer).core.accessor.get(ISessionManager);
+    await closeSessionById((server as RunningServer).core.accessor, id);
+    const summary = await manager.status(id);
+    if (summary === undefined) throw new Error('expected a session summary');
+    const bootstrap = (server as RunningServer).core.accessor.get(IBootstrapService);
+    const handlerScope = workspacePersistenceScope(bootstrap.scope('sessions'), summary.workspaceId);
+    const sessionScope = sessionScopeOf(handlerScope, id);
+    const sessionDir = sessionDirOf(bootstrap.homeDir, handlerScope, id);
+    const persistence = new AgentTaskPersistence(
+      join(sessionDir, 'agents', 'main'),
+      agentScopeOf(sessionScope, 'main'),
+      (server as RunningServer).core.accessor.get(IAtomicDocumentStore),
+      (server as RunningServer).core.accessor.get(IFileSystemStorageService),
+      { dir: sessionDir, scope: sessionScope },
+    );
+    const taskId = 'bash-test0001';
+    await persistence.writeTask({
+      taskId,
+      kind: 'process',
+      command: 'echo hello',
+      pid: 123,
+      exitCode: null,
+      description: 'persisted task',
+      status: 'running',
+      detached: true,
+      startedAt: 1,
+      endedAt: null,
+    });
+    await persistence.appendTaskOutput(taskId, 'hello\n');
+
+    const source = createTaskSource((server as RunningServer).core);
+    const resume = vi.spyOn(manager, 'resume');
+    const read = await source(id, 'main', taskId, 'read');
+    expect(read.kind).toBe('found');
+    expect(resume).not.toHaveBeenCalled();
+    if (read.kind === 'found') {
+      expect(read.tasks.getTask(taskId)).toMatchObject({ status: 'lost' });
+      const tail = await read.tasks.readOutputTail(taskId, 100);
+      expect(Buffer.from(tail.data).toString('utf-8')).toBe('hello\n');
+      const firstLost = read.tasks.getTask(taskId);
+      const secondRead = await source(id, 'main', taskId, 'read');
+      if (secondRead.kind === 'found') {
+        expect(secondRead.tasks.getTask(taskId)).toEqual(firstLost);
+      }
+    }
+    await expect(readColdTaskList((server as RunningServer).core, id, 'main')).resolves.toEqual([]);
+    await expect(source(id, 'main', 'x', 'read')).resolves.toEqual({ kind: 'task_not_found' });
+    await expect(source(id, '../outside', taskId, 'read')).resolves.toEqual({ kind: 'task_not_found' });
+
+    const index = (server as RunningServer).core.accessor.get(ISessionIndex);
+    const originalGet = index.get.bind(index);
+    vi.spyOn(index, 'get').mockImplementationOnce(async (sessionId) => {
+      const result = await originalGet(sessionId);
+      await manager.resume(id);
+      return result;
+    });
+    const raced = await source(id, 'main', taskId, 'read');
+    expect(raced.kind).toBe('found');
+    expect(resume).toHaveBeenCalledTimes(1);
+    const live = getLiveSessionById((server as RunningServer).core.accessor, id);
+    const liveAgent = live === undefined ? undefined : await ensureMainAgent(live);
+    if (raced.kind === 'found' && liveAgent !== undefined) {
+      expect(raced.tasks).toBe(liveAgent.accessor.get(IAgentTaskService));
+    }
+
+    const command = await source(id, 'main', taskId, 'command');
+    expect(command.kind).toBe('found');
+    expect(resume).toHaveBeenCalledTimes(2);
+  });
+
   it('retries a cached missing-workspace failure through normal reload', async () => {
     await restartWithFreshHome();
     const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-resume-reload-'));
@@ -2541,7 +2629,7 @@ describe('server-v2 /api/v1/sessions', () => {
       );
       await expect(
         resumeSessionById((server as RunningServer).core.accessor, id),
-      ).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+      ).rejects.toMatchObject({ code: ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE });
 
       createOrTouch.mockRestore();
       await mkdir(cwd, { recursive: true });

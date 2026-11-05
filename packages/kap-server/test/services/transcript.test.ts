@@ -9,6 +9,7 @@ import {
   IAgentConversationUndoParticipantRegistry,
   IAgentLoopService,
   IAgentScopeContext,
+  IConfigService,
   IEventBus,
   IBlobStore,
   ISessionIndex,
@@ -49,6 +50,7 @@ import {
   AgentTranscriptProjector,
   type ProjectorBusEvent,
 } from '../../src/services/transcript/coreEventMap';
+import { projectColdAgentFeed } from '../../src/services/transcript/coldAgentFeed';
 import {
   healTurnOps,
   TranscriptService,
@@ -56,6 +58,23 @@ import {
   TRANSCRIPT_OPS_JOURNAL_CAPACITY,
 } from '../../src/services/transcript/transcriptService';
 import { WireRecordCache, type ContextRecord } from '../../src/services/transcript/wireCache';
+
+const wireFsControl = vi.hoisted(() => ({ replaceOnSecondStat: '', calls: 0 }));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    stat: async (path: string) => {
+      wireFsControl.calls += 1;
+      if (wireFsControl.replaceOnSecondStat === path && wireFsControl.calls === 2) {
+        await actual.rename(`${path}.replacement`, path);
+        wireFsControl.replaceOnSecondStat = '';
+      }
+      return actual.stat(path);
+    },
+  };
+});
 
 function ev(payload: Record<string, unknown>): ProjectorBusEvent {
   return payload as unknown as ProjectorBusEvent;
@@ -2281,6 +2300,219 @@ describe('AgentTranscriptProjector', () => {
         expect.objectContaining({ kind: 'marker', marker: 'goal', markerId: 'm1' }),
         expect.objectContaining({ kind: 'marker', marker: 'plan.enter', markerId: 'm2' }),
       ]);
+      await expect(service.readColdAgentFeed('s1', 'main')).resolves.toMatchObject({
+        agent: { status: 'idle', plan_mode: true, swarm_mode: false, tower_mode: false },
+        goal: { objective: 'fix the bug', status: 'active' },
+        todos: [{ title: 'write tests', status: 'in_progress' }],
+      });
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('projectColdAgentFeed replays swarm and tower mode transitions', () => {
+    const active = [
+      { type: 'swarm_mode.enter' },
+      { type: 'tower_mode.enter' },
+    ];
+    expect(projectColdAgentFeed(active).agent).toMatchObject({ swarm_mode: true, tower_mode: true });
+    expect(projectColdAgentFeed([...active, { type: 'swarm_mode.exit' }]).agent).toMatchObject({
+      swarm_mode: false,
+      tower_mode: true,
+    });
+    expect(projectColdAgentFeed([...active, { type: 'tower_mode.exit' }]).agent).toMatchObject({
+      swarm_mode: true,
+      tower_mode: false,
+    });
+  });
+
+  it('projectColdAgentFeed uses the final folded goal state', () => {
+    const feed = projectColdAgentFeed([
+      { type: 'goal.create', goalId: 'g1', objective: 'initial objective', time: 1000 },
+      {
+        type: 'goal.update',
+        objective: 'updated objective',
+        turnsUsed: 3,
+        tokensUsed: 42,
+        wallClockMs: 500,
+        time: 2000,
+      },
+    ]);
+
+    expect(feed.goal).toMatchObject({
+      objective: 'updated objective',
+      status: 'active',
+      turns_used: 3,
+      tokens_used: 42,
+      wall_clock_ms: 500,
+    });
+  });
+
+  it('projectColdAgentFeed honors token counting strategies', () => {
+    const records = [
+      {
+        type: 'context.append_message',
+        message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        time: 1000,
+      },
+      { type: 'token_counting.measured', length: 1, tokens: 10 },
+      { type: 'token_counting.truncated', length: 0, tokens: 5 },
+      { type: 'token_counting.rebased', length: 0, tokens: 7, measured: true },
+      { type: 'token_counting.turn_recorded', length: 1, tokens: 12, turnId: 1 },
+    ];
+
+    expect(projectColdAgentFeed(records, 'measured').usage).toEqual({
+      context_tokens: 7,
+      max_context_tokens: undefined,
+    });
+    expect(projectColdAgentFeed(records, 'estimated').usage?.context_tokens).toBeGreaterThan(0);
+    expect(projectColdAgentFeed(records).usage).toEqual({
+      context_tokens: 12,
+      max_context_tokens: undefined,
+    });
+  });
+
+  it('readColdAgentFeed uses the configured token counting strategy', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-strategy-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'context.append_message',
+          message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+          time: 1000,
+        },
+        { type: 'token_counting.measured', length: 1, tokens: 10 },
+        { type: 'token_counting.truncated', length: 0, tokens: 5 },
+        { type: 'token_counting.rebased', length: 0, tokens: 7, measured: true },
+        { type: 'token_counting.turn_recorded', length: 1, tokens: 12, turnId: 1 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+      const service = new TranscriptService({
+        homeDir: home,
+        core: {
+          accessor: {
+            get: (token: unknown) => {
+              if (token === ISessionManager) return { get: () => undefined, list: () => [] };
+              if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
+              if (token === IConfigService) return { get: () => ({ strategy: 'measured' }) };
+              return undefined;
+            },
+          },
+        } as unknown as Scope,
+      });
+
+      await expect(service.readColdAgentFeed('s1', 'main')).resolves.toMatchObject({
+        usage: { context_tokens: 7 },
+      });
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('projectColdAgentFeed restores profile bindings in journal order', () => {
+    const feed = projectColdAgentFeed([
+      { type: 'profile.bind', modelAlias: 'k1', thinkingEffort: 'low' },
+      { type: 'config.update', modelAlias: 'k2', thinkingEffort: 'high' },
+      { type: 'profile.bind', modelAlias: 'k3', thinkingEffort: 'medium' },
+      { type: 'config.update', thinkingEffort: 'high' },
+    ]);
+
+    expect(feed.agent).toMatchObject({ model: 'k3', thinking: 'high' });
+    expect(projectColdAgentFeed([
+      { type: 'profile.bind', modelAlias: 'k1', thinkingEffort: 'low' },
+    ]).agent).toMatchObject({ model: 'k1', thinking: 'low' });
+  });
+
+  it('projectColdAgentFeed uses journal order for goal clearing', () => {
+    expect(projectColdAgentFeed([
+      { type: 'goal.create', goalId: 'g1', objective: 'same timestamp', time: 1000 },
+      { type: 'goal.clear', time: 1000 },
+    ]).goal).toBeUndefined();
+    expect(projectColdAgentFeed([
+      { type: 'goal.create', goalId: 'g1', objective: 'backward clock', time: 2000 },
+      { type: 'goal.clear', time: 1000 },
+    ]).goal).toBeUndefined();
+    expect(projectColdAgentFeed([
+      { type: 'goal.clear', time: 3000 },
+      { type: 'goal.create', goalId: 'g2', objective: 'new goal', time: 2000 },
+    ]).goal).toMatchObject({ objective: 'new goal' });
+  });
+
+  it('projectColdAgentFeed replays durable token usage', () => {
+    const feed = projectColdAgentFeed([
+      {
+        type: 'context.append_message',
+        message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        time: 1000,
+      },
+      { type: 'token_counting.measured', length: 1, tokens: 10 },
+      { type: 'token_counting.truncated', length: 0, tokens: 5 },
+      { type: 'token_counting.rebased', length: 0, tokens: 7, measured: true },
+      { type: 'token_counting.turn_recorded', length: 1, tokens: 12, turnId: 1 },
+    ]);
+
+    expect(feed.usage).toEqual({ context_tokens: 12, max_context_tokens: undefined });
+  });
+
+  it('projectColdAgentFeed clears inherited goals at the fork boundary', () => {
+    const inherited = [
+      { type: 'goal.create', goalId: 'g1', objective: 'source goal', time: 1000 },
+      { type: 'forked', time: 2000 },
+    ];
+
+    expect(projectColdAgentFeed(inherited).goal).toBeUndefined();
+    expect(
+      projectColdAgentFeed([
+        ...inherited,
+        { type: 'goal.create', goalId: 'g2', objective: 'new goal', time: 3000 },
+      ]).goal,
+    ).toMatchObject({ objective: 'new goal' });
+  });
+
+  it('readColdSnapshot migrates legacy tool calls', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-migration-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        { type: 'metadata', protocol_version: '1.0', created_at: 1000 },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'running' }],
+            toolCalls: [
+              {
+                type: 'function',
+                id: 'call_1',
+                function: { name: 'Bash', arguments: '{"command":"ls"}' },
+              },
+            ],
+          },
+          time: 1000,
+        },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+      const service = new TranscriptService({
+        homeDir: home,
+        core: {
+          accessor: {
+            get: (token: unknown) => {
+              if (token === ISessionManager) return { get: () => undefined, list: () => [] };
+              if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
+              return undefined;
+            },
+          },
+        } as unknown as Scope,
+      });
+
+      const snapshot = await service.readColdSnapshot('s1', 'main');
+      expect(JSON.stringify(snapshot)).toContain('"name":"Bash"');
+      expect(JSON.stringify(snapshot)).not.toContain('"function"');
       service.dropSession('s1');
     } finally {
       await rm(home, { recursive: true, force: true });
@@ -4024,7 +4256,29 @@ describe('WireRecordCache', () => {
     }
   });
 
-  it('skips a corrupt trailing fragment but throws on a corrupt terminated line', async () => {
+  it('does not truncate a concurrently replaced journal', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-concurrent-replace-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      const a = userMessage('one', 1);
+      const b = userMessage('two', 2);
+      await writeFile(wirePath, `${JSON.stringify(a)}\n{"type":broken}\n`);
+      await writeFile(`${wirePath}.replacement`, wireText([b]));
+      wireFsControl.replaceOnSecondStat = wirePath;
+      wireFsControl.calls = 0;
+      const cache = new WireRecordCache();
+
+      await expect(cache.read(wirePath)).resolves.toEqual([]);
+      await expect(cache.read(wirePath)).resolves.toEqual([b]);
+      await expect(readFile(wirePath, 'utf8')).resolves.toBe(wireText([b]));
+      wireFsControl.replaceOnSecondStat = '';
+    } finally {
+      wireFsControl.replaceOnSecondStat = '';
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('skips a corrupt trailing fragment and repairs a corrupt terminated line', async () => {
     const home = await mkdtemp(join(tmpdir(), 'wire-cache-corrupt-'));
     try {
       const a = userMessage('one', 1);
@@ -4038,8 +4292,9 @@ describe('WireRecordCache', () => {
         strictPath,
         `${JSON.stringify(a)}\n{"type":broken}\n${JSON.stringify(userMessage('two', 2))}\n`,
       );
-      await expect(cache.read(strictPath)).rejects.toThrow(/corrupted line 2/);
-      await expect(cache.read(strictPath)).rejects.toThrow(/corrupted line 2/);
+      await expect(cache.read(strictPath)).resolves.toEqual([a]);
+      await expect(cache.read(strictPath)).resolves.toEqual([a]);
+      await expect(readFile(strictPath, 'utf8')).resolves.toBe(`${JSON.stringify(a)}\n`);
 
       await writeFile(strictPath, wireText([a]));
       expect(await cache.read(strictPath)).toEqual([a]);

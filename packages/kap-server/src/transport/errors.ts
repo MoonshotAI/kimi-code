@@ -35,6 +35,7 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.SESSION_FORK_ACTIVE_TURN]: ErrorCode.SESSION_BUSY,
   [ErrorCodes.SESSION_OCCUPIED]: ErrorCode.SESSION_OCCUPIED,
   [ErrorCodes.SESSION_STALE]: ErrorCode.SESSION_STALE,
+  [ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE]: ErrorCode.SESSION_WORKSPACE_UNAVAILABLE,
   [ErrorCodes.COMPACTION_UNABLE]: ErrorCode.COMPACTION_UNABLE,
   [ErrorCodes.FILE_NOT_FOUND]: ErrorCode.FILE_NOT_FOUND,
   [ErrorCodes.SKILL_NOT_FOUND]: ErrorCode.SKILL_NOT_FOUND,
@@ -61,6 +62,7 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
 const PUBLIC_DETAIL_CODES: ReadonlySet<string> = new Set([
   ErrorCodes.SESSION_OCCUPIED,
   ErrorCodes.SESSION_STALE,
+  ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE,
 ]);
 
 export function mapError(err: unknown, requestId: string): ReturnType<typeof errEnvelope> {

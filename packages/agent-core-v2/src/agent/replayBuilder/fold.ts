@@ -27,6 +27,7 @@ import type { AgentReplayRecord, AgentReplayRecordPayload } from './types';
 export interface WireReplayFold {
   readonly replay: readonly AgentReplayRecord[];
   readonly toolStore: Readonly<Record<string, unknown>>;
+  readonly goal?: GoalSnapshot;
 }
 
 export const FOLD_RELEVANT_WIRE_TYPES: ReadonlySet<string> = new Set([
@@ -98,27 +99,30 @@ export function foldWireRecords(
       ? { ...record, [REPLAY_TURN_ID]: turnIdByAppend.get(record) }
       : record,
   );
-  for (const record of migrateJournalRecords(annotated)) {
+  for (const record of migrateWireJournalRecords(annotated)) {
     fold.apply(decodePersistent === undefined ? record : decodePersistent(record));
   }
   fold.finish();
-  return { replay: fold.replay, toolStore: fold.toolStore };
+  return {
+    replay: fold.replay,
+    toolStore: fold.toolStore,
+    goal: fold.goal === undefined ? undefined : goalSnapshot(fold.goal),
+  };
 }
 
-function migrateJournalRecords(records: readonly WireRecord[]): WireRecord[] {
-  if (records.length === 0) return [];
-  const first = records[0]!;
-  let migrations: readonly WireMigration[];
-  if (first.type === 'metadata') {
-    if (!isWireMetadataRecord(first)) {
-      throw new Error('Agent wire metadata is malformed');
-    }
-    migrations = isNewerWireVersion(first.protocol_version)
-      ? []
-      : resolveWireMigrations(first.protocol_version);
-  } else {
-    migrations = [migrateV1_4ToV1_5];
+export function wireJournalMigrations(first: WireRecord): readonly WireMigration[] {
+  if (first.type !== 'metadata') return [migrateV1_4ToV1_5];
+  if (!isWireMetadataRecord(first)) {
+    throw new Error('Agent wire metadata is malformed');
   }
+  return isNewerWireVersion(first.protocol_version)
+    ? []
+    : resolveWireMigrations(first.protocol_version);
+}
+
+export function migrateWireJournalRecords(records: readonly WireRecord[]): WireRecord[] {
+  if (records.length === 0) return [];
+  const migrations = wireJournalMigrations(records[0]!);
   return records.map((record) => migrateWireRecord(record, migrations));
 }
 
@@ -141,7 +145,7 @@ class WireReplayFoldState {
   private readonly openSteps = new Map<string, ContextMessage>();
   private readonly pendingToolResultIds = new Set<string>();
   private deferredMessages: { readonly message: ContextMessage; readonly turnId?: number }[] = [];
-  private goal: FoldGoalState | undefined;
+  goal: FoldGoalState | undefined;
   private nextTurnId = 0;
   private readonly cancelledTurnIds = new Set<number>();
 

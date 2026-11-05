@@ -6,7 +6,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-import type { AgentTaskInfo, AgentTaskStatus } from './types';
+import { TERMINAL_STATUSES, type AgentTaskInfo, type AgentTaskStatus } from './types';
 
 const VALID_TASK_ID: RegExp = /^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-z]{8}$/;
 
@@ -52,8 +52,17 @@ interface TaskOutputData {
   readonly data: Uint8Array;
 }
 
+export function isValidTaskId(taskId: string): boolean {
+  return VALID_TASK_ID.test(taskId);
+}
+
+export function reconcilePersistedTask(task: AgentTaskInfo): AgentTaskInfo {
+  if (TERMINAL_STATUSES.has(task.status)) return task;
+  return { ...task, status: 'lost', endedAt: task.endedAt ?? Date.now() };
+}
+
 function validateTaskId(taskId: string): void {
-  if (!VALID_TASK_ID.test(taskId)) {
+  if (!isValidTaskId(taskId)) {
     throw new BugIndicatingError(`Invalid task id: "${taskId}"`);
   }
 }
