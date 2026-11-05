@@ -109,6 +109,7 @@ export const attachmentSchema = z.object({
   url: z.string().optional(),
   name: z.string().optional(),
   media_type: z.string().optional(),
+  size: z.number().int().nonnegative().optional(),
   ordinal: z.number().int().positive(),
 });
 export type Attachment = z.infer<typeof attachmentSchema>;
@@ -130,7 +131,7 @@ export const userMessageItemSchema = z.object({
   text: z.string(),
   attachments: z.array(attachmentSchema),
   skills: z.array(z.object({ name: z.string(), args: z.string().optional() })),
-  client_metadata: z.record(z.string(), z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 export type UserMessageItem = z.infer<typeof userMessageItemSchema>;
 

@@ -40,6 +40,9 @@ const CLIENT_SUBMITTED_ORIGINS: ReadonlySet<UserMessageOrigin['kind']> = new Set
 const EXIT_PLAN_MODE = 'ExitPlanMode';
 const PLAN_SAVED_TO_MARKER = 'Plan saved to: ';
 const PLAN_BODY_MARKERS = ['## Approved Plan:\n', '## Plan (auto-approved, not user-reviewed):\n'];
+const ATTACHED_FILE_NOTICE = /^Attached file "(.+)" \((.+), (\d+) bytes\): (.+) — open it with the Read tool$/s;
+const UPLOADED_FILE_PATH = /(?:^|[\\/])(f_(?:[0-9A-Za-z]{26}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}))-[^\\/]*$/;
+const IMAGE_COMPRESSION_CAPTION = /^<system>Image compressed to fit model limits:[\s\S]*<\/system>$/;
 
 const STEP_TIMING_NAMES = {
   llmFirstTokenLatencyMs: 'first_token_ms',
@@ -64,6 +67,21 @@ export function userMessageItem(
   time: number,
 ): UserMessageItem {
   const presented = originOf(origin);
+  const text: string[] = [];
+  const attachments: Attachment[] = [];
+  for (const part of content) {
+    const file = part.type === 'text' ? ATTACHED_FILE_NOTICE.exec(part.text) : null;
+    if (file !== null) {
+      const [, name, mediaType, size, path] = file;
+      const fileId = UPLOADED_FILE_PATH.exec(path!)?.[1];
+      attachments.push({ kind: 'file', file_id: fileId, name, media_type: mediaType, size: Number(size), ordinal: attachments.length + 1 });
+    } else if (part.type === 'text') {
+      if (!IMAGE_COMPRESSION_CAPTION.test(part.text)) text.push(part.text);
+    } else if (isMediaPart(part)) {
+      const name = mediaFields(part)?.name;
+      attachments.push({ ...mediaOf(part), name: typeof name === 'string' ? name : undefined, ordinal: attachments.length + 1 });
+    }
+  }
   return {
     type: 'user_message',
     item_id: id,
@@ -73,15 +91,12 @@ export function userMessageItem(
     prompt_ids: promptIdsOf(presented, promptId === undefined ? [] : [promptId]),
     placement,
     origin: presented,
-    text: content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n'),
-    attachments: content.filter(isMediaPart).map((part, index): Attachment => {
-      const name = mediaFields(part)?.name;
-      return { ...mediaOf(part), name: typeof name === 'string' ? name : undefined, ordinal: index + 1 };
-    }),
+    text: text.join('\n'),
+    attachments,
     skills: origin?.kind === 'user'
       ? (origin.skillActivations ?? []).map(({ skillName, skillArgs }) => ({ name: skillName, args: skillArgs }))
       : [],
-    client_metadata: origin?.kind === 'user' || origin?.kind === 'skill_activation' ? origin.clientMetadata?.[0] : undefined,
+    metadata: origin?.kind === 'user' || origin?.kind === 'skill_activation' ? origin.clientMetadata?.[0] : undefined,
   };
 }
 

@@ -175,7 +175,8 @@ describe('conversation fold', () => {
     expect(turn?.items[3]).toMatchObject({ name: 'Bash', input: { command: 'ls' }, output: 'a\nb', outcome: 'completed', step_index: 1 });
   });
 
-  it('keeps the visible text, skills and client metadata of a user message and no server paths', () => {
+  it('keeps the visible text, attachments, skills and client metadata of a user message and no server paths', () => {
+    const fileId = 'f_0a1b2c3d-0000-4000-8000-000000000001';
     const state = fold([
       turnPrompt(0, 'p1'),
       record('context.append_message', {
@@ -193,6 +194,9 @@ describe('conversation fold', () => {
             { type: 'text', text: 'check this diff' },
             { type: 'text', text: 'and this', meta: { source: 'user prompt submit hook' } },
             { type: 'text', text: 'second line' },
+            { type: 'text', text: `Attached file "notes.md" (text/markdown, 4 bytes): /home/example/attachments/${fileId}-notes.md — open it with the Read tool` },
+            { type: 'text', text: 'Attached file "local.txt" (text/plain, 9 bytes): /home/example/local.txt — open it with the Read tool' },
+            { type: 'text', text: '<system>Image compressed to fit model limits: original 3000x2000 image/png -> sent 2000x1333 image/png.</system>' },
           ],
           toolCalls: [],
         },
@@ -204,8 +208,12 @@ describe('conversation fold', () => {
       type: 'user_message',
       origin: { kind: 'user' },
       text: 'check this diff\nsecond line',
+      attachments: [
+        { kind: 'file', file_id: fileId, name: 'notes.md', media_type: 'text/markdown', size: 4, ordinal: 1 },
+        { kind: 'file', name: 'local.txt', media_type: 'text/plain', size: 9, ordinal: 2 },
+      ],
       skills: [{ name: 'review', args: '--deep' }],
-      client_metadata: { display_text: 'check this diff' },
+      metadata: { display_text: 'check this diff' },
     });
     expect(JSON.stringify(opener)).not.toContain('/home/example');
   });
