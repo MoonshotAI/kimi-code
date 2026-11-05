@@ -1,9 +1,9 @@
-import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { IModelCatalog, IWorkspaceInstanceManager, IWorkspaceService } from '@moonshot-ai/agent-core-v2';
+import { IEnvironmentService, IModelCatalog, IWorkspaceInstanceManager, IWorkspaceService } from '@moonshot-ai/agent-core-v2';
+import { RemoteSession } from '@moonshot-ai/agent-core-v2/remote';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
@@ -471,6 +471,68 @@ function mappingHostFs(remoteRoot: string): IHostFileSystem {
     realpath: async (path) => unmap(await inner.realpath(map(path))),
   };
 }
+
+describe('server-v2 /api/v1/environments::test', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-environment-test-'));
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterAll(async () => {
+    await server?.close();
+    await rm(home as string, { recursive: true, force: true });
+  });
+
+  it('connects a draft, checks its directory, and disposes it without registering an environment', async () => {
+    const realpath = vi.fn(async (path: string) => path);
+    const readdir = vi.fn(async () => []);
+    const dispose = vi.fn(async () => undefined);
+    const connect = vi.spyOn(RemoteSession, 'connect').mockResolvedValue({
+      host: { homeDir: '/home/dev' },
+      fs: { realpath, readdir },
+      dispose,
+    } as unknown as RemoteSession);
+
+    const res = await fetch(`${base}/api/v1/environments:test`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ definition: { type: 'ssh', host: 'dev@example.test', defaultCwd: '/srv/app' }, path: '/srv/app' }),
+    });
+    const body = await res.json() as Envelope<{ connected: boolean }>;
+
+    expect(body.code).toBe(0);
+    expect(body.data.connected).toBe(true);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(realpath).toHaveBeenCalledWith('/srv/app');
+    expect(readdir).toHaveBeenCalledWith('/srv/app');
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(server!.core.accessor.get(IEnvironmentService).snapshot().environments.some((entry) => entry.environmentId === 'connection-test')).toBe(false);
+  });
+
+  it('reports a draft connection failure without creating a config entry', async () => {
+    vi.spyOn(RemoteSession, 'connect').mockRejectedValue(new Error('SSH handshake failed'));
+
+    const res = await fetch(`${base}/api/v1/environments:test`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ definition: { type: 'ssh', host: 'bad.example.test' } }),
+    });
+    const body = await res.json() as Envelope<null>;
+
+    expect(body.code).toBe(ErrorCode.ENVIRONMENT_UNAVAILABLE);
+    expect(body.msg).toBe('SSH handshake failed');
+    expect(server!.core.accessor.get(IEnvironmentService).snapshot().environments.some((entry) => entry.environmentId === 'connection-test')).toBe(false);
+  });
+});
 
 describe('server-v2 /api/v1 fs:browse, fs:content and fs:mkdir with environment_id', () => {
   let server: RunningServer | undefined;

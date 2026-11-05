@@ -208,6 +208,38 @@ describe('server-v2 /api/v1/config', () => {
     });
   });
 
+  it('POST { environments } replaces the section and preserves environment ids and field names', async () => {
+    await boot([
+      '[environments]',
+      'default = "old_box"',
+      '',
+      '[environments.old_box]',
+      'type = "ssh"',
+      'host = "old.example.test"',
+      'default_cwd = "/srv/old"',
+      '',
+      '[environments.container]',
+      'type = "docker"',
+      'container = "example-container"',
+      '',
+    ].join('\n'));
+
+    const cfg = await patchConfig({
+      environments: {
+        new_box: { type: 'ssh', host: 'dev@new.example.test', default_cwd: '/srv/new', remote_bin: '/usr/local/bin/kimi' },
+        container: { type: 'docker', container: 'example-container', default_cwd: '/workspace' },
+      },
+    });
+    expect(cfg['environments']).toMatchObject({
+      new_box: { type: 'ssh', host: 'dev@new.example.test', defaultCwd: '/srv/new', remoteBin: '/usr/local/bin/kimi' },
+      container: { type: 'docker', container: 'example-container', defaultCwd: '/workspace' },
+    });
+    expect(cfg['environments']).not.toHaveProperty('old_box');
+
+    const after = await getConfig();
+    expect(after['environments']).toEqual(cfg['environments']);
+  });
+
   it('GET reports has_api_key for an api_key_env provider only while the variable is set', async () => {
     await boot('[providers.acme]\ntype = "openai"\napi_key_env = "KIMI_TEST_CONFIG_ROUTE_KEY"\n');
     try {
