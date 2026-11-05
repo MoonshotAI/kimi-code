@@ -104,6 +104,31 @@ describe('acp-server config surface', () => {
   );
 
   it(
+    'session/set_mode plan succeeds when default_plan_mode already entered plan mode',
+    async () => {
+      homeDir = await mkdtemp(join(tmpdir(), 'acp-config-'));
+      await writeFile(join(homeDir, 'config.toml'), 'default_plan_mode = true\n', 'utf8');
+      client = await createTestClient({ homeDir });
+      await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+      const { sessionId, modes } = (await client!.send('session/new', {
+        cwd: homeDir,
+        mcpServers: [],
+      })) as NewSessionResult;
+      // The engine entered plan mode at create time, so session/new must report
+      // it — a client that then sets an explicit plan mode must not hit the
+      // "Already in plan mode" guard.
+      expect(modes?.currentModeId).toBe('plan');
+
+      const result = await client!.send('session/set_mode', {
+        sessionId,
+        modeId: 'plan',
+      });
+      expect(result).toEqual({});
+    },
+    30_000,
+  );
+
+  it(
     'session/set_mode pushes current_mode_update alongside config_option_update',
     async () => {
       await boot();
@@ -133,6 +158,7 @@ describe('acp-server config surface', () => {
       const session = Object.create(AcpSession.prototype) as AcpSession;
       const updates: unknown[] = [];
       const agent = {
+        getPlan: async () => null,
         enterPlan: async () => {
           throw new Error('plan toggle failed');
         },
