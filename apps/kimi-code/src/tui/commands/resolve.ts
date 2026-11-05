@@ -56,7 +56,7 @@ export interface ResolveSlashCommandInput {
   readonly pluginCommandMap: ReadonlyMap<string, string>;
   readonly isStreaming: boolean;
   readonly isCompacting: boolean;
-  readonly skillVariantPathForCommand?: (commandName: string) => string | undefined;
+  readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
 }
 
 export function resolveSlashCommandInput(options: ResolveSlashCommandInput): SlashCommandIntent {
@@ -148,28 +148,22 @@ export function resolveUserInput(options: ResolveSlashCommandInput): {
   readonly activations: readonly InlineSkillActivation[];
 } {
   const intent = resolveSlashCommandInput(options);
-  if (intent.kind !== 'skill' && intent.kind !== 'message' && intent.kind !== 'not-command') {
+  if (
+    intent.kind !== 'skill' &&
+    intent.kind !== 'message' &&
+    intent.kind !== 'not-command' &&
+    !(intent.kind === 'builtin' && intent.name === 'btw')
+  ) {
     return { intent, activations: [] };
   }
   const text = options.input.trim();
-  const activations = extractInlineSkillActivations(text, options.skillCommandMap, {
+  const selectedActivations = extractInlineSkillActivations(text, options.skillCommandMap, {
     includeLeading: true,
+    skillVariantPathForCommand: options.skillVariantPathForCommand,
   });
   const tokens = findInlineSkillTokens(text, {
     isKnownSkill: (name) => resolveSkillCommand(options.skillCommandMap, name) !== undefined,
     includeLeading: true,
-  });
-  const selectedPaths = new Map<string, string>();
-  for (const token of tokens) {
-    const skillName = resolveSkillCommand(options.skillCommandMap, token.commandName);
-    const path = options.skillVariantPathForCommand?.(token.commandName);
-    if (skillName !== undefined && path !== undefined && !selectedPaths.has(skillName)) {
-      selectedPaths.set(skillName, path);
-    }
-  }
-  const selectedActivations = activations.map((activation) => {
-    const path = selectedPaths.get(activation.skillName);
-    return path === undefined ? activation : { ...activation, path };
   });
   const token = tokens[0];
   if (selectedActivations.length === 1 && tokens.length === 1 && token?.start === 0) {
@@ -179,6 +173,7 @@ export function resolveUserInput(options: ResolveSlashCommandInput): {
       activations: [{
         skillName: selectedActivations[0]!.skillName,
         path: selectedActivations[0]!.path,
+        start: selectedActivations[0]!.start,
         args: text.slice(token.end).trim(),
       }],
     };
@@ -197,16 +192,25 @@ export function skillVariantPathsForInput(
   text: string,
   activations: readonly InlineSkillActivation[],
   skillCommandMap: ReadonlyMap<string, string>,
-): Array<{ commandName: string; path: string }> {
+): Array<{ commandName: string; path: string; start: number }> {
   const tokens = findInlineSkillTokens(text, {
     isKnownSkill: (commandName) => resolveSkillCommand(skillCommandMap, commandName) !== undefined,
     includeLeading: true,
   });
-  const selected: Array<{ commandName: string; path: string }> = [];
+  const claimed = new Set<number>();
+  const selected: Array<{ commandName: string; path: string; start: number }> = [];
   for (const activation of activations) {
     if (activation.path === undefined) continue;
-    const token = tokens.find((candidate) => resolveSkillCommand(skillCommandMap, candidate.commandName) === activation.skillName);
-    if (token !== undefined) selected.push({ commandName: token.commandName, path: activation.path });
+    const token = tokens.find((candidate) =>
+      !claimed.has(candidate.start) &&
+      resolveSkillCommand(skillCommandMap, candidate.commandName) === activation.skillName &&
+      (activation.start === undefined || candidate.start === activation.start)
+    );
+    if (token !== undefined) {
+      claimed.add(token.start);
+      const commandName = token.commandName.startsWith('skill:') ? token.commandName : `skill:${token.commandName}`;
+      selected.push({ commandName, path: activation.path, start: token.start });
+    }
   }
   return selected;
 }

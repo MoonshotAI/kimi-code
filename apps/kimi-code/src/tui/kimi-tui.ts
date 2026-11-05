@@ -388,7 +388,7 @@ export class KimiTUI {
   private surveySettingSubscription: Unsubscribe | undefined;
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
-  private readonly skillVariantPaths = new Map<string, string>();
+  private readonly skillVariantPaths = new Map<number, { commandName: string; path: string }>();
   private pluginCommands: readonly KimiSlashCommand[] = [];
   readonly pluginCommandMap = new Map<string, string>();
   private readonly imageStore = new ImageAttachmentStore();
@@ -641,8 +641,11 @@ export class KimiTUI {
       () => this.state.appState.inputMode,
       skillCommandNames,
       remoteSuggest,
-      ({ commandName, path }) => {
-        this.skillVariantPaths.set(commandName, path);
+      ({ commandName, path, start }) => {
+        this.skillVariantPaths.set(start, {
+          commandName: commandName.startsWith('skill:') ? commandName : `skill:${commandName}`,
+          path,
+        });
       },
     );
     this.state.editor.setAutocompleteProvider(provider);
@@ -729,14 +732,19 @@ export class KimiTUI {
   retainSkillVariantSelection(text: string): void {
     if (this.skillVariantPaths.size === 0) return;
     const tokens = findInlineSkillTokens(text, { isKnownSkill: () => true, includeLeading: true });
-    const commandNames = new Set(tokens.flatMap((token) => [token.commandName, `skill:${token.commandName}`]));
-    for (const commandName of this.skillVariantPaths.keys()) {
-      if (!commandNames.has(commandName)) this.skillVariantPaths.delete(commandName);
+    for (const [start, selection] of this.skillVariantPaths) {
+      const token = tokens.find((candidate) => candidate.start === start);
+      const commandName = token?.commandName;
+      if (commandName !== selection.commandName && `skill:${commandName}` !== selection.commandName) {
+        this.skillVariantPaths.delete(start);
+      }
     }
   }
 
-  skillVariantPathForCommand(commandName: string): string | undefined {
-    return this.skillVariantPaths.get(commandName) ?? this.skillVariantPaths.get(`skill:${commandName}`);
+  skillVariantPathForCommand(commandName: string, tokenStart: number): string | undefined {
+    const selection = this.skillVariantPaths.get(tokenStart);
+    if (selection?.commandName !== commandName && selection?.commandName !== `skill:${commandName}`) return undefined;
+    return selection.path;
   }
 
   async refreshPluginCommands(session?: Session): Promise<void> {
@@ -2049,8 +2057,8 @@ export class KimiTUI {
         : [],
     );
     if (isPromptQueuedMessage(last)) {
-      for (const { commandName, path } of skillVariantPathsForInput(last.text, last.inlineSkillActivations ?? [], this.skillCommandMap)) {
-        this.skillVariantPaths.set(commandName, path);
+      for (const { commandName, path, start } of skillVariantPathsForInput(last.text, last.inlineSkillActivations ?? [], this.skillCommandMap)) {
+        this.skillVariantPaths.set(start, { commandName, path });
       }
     }
     return last;
@@ -5007,8 +5015,8 @@ export class KimiTUI {
 
   restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void {
     this.restoreEditor();
-    for (const { commandName, path } of skillVariantPathsForInput(text, inlineSkillActivations ?? [], this.skillCommandMap)) {
-      this.skillVariantPaths.set(commandName, path);
+    for (const { commandName, path, start } of skillVariantPathsForInput(text, inlineSkillActivations ?? [], this.skillCommandMap)) {
+      this.skillVariantPaths.set(start, { commandName, path });
     }
     this.state.editor.setText(text);
     this.updateEditorBorderHighlight(text);

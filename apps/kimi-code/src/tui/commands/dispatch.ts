@@ -225,7 +225,7 @@ export interface SlashCommandHost {
   ): void;
   readonly skillCommandMap: Map<string, string>;
   readonly pluginCommandMap: Map<string, string>;
-  readonly skillVariantPathForCommand?: (commandName: string) => string | undefined;
+  readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
 
   // Controller refs
   readonly streamingUI: StreamingUIController;
@@ -248,9 +248,9 @@ export function dispatchInput(host: SlashCommandHost, text: string): void {
     isCompacting: host.state.appState.isCompacting,
     skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
       ? undefined
-      : (commandName) => host.skillVariantPathForCommand!(commandName),
+      : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
   });
-  if (intent.kind === 'skill' || activations.length > 0) {
+  if (intent.kind === 'skill' || (activations.length > 0 && intent.kind !== 'builtin')) {
     const leading = activations[0];
     if (intent.kind === 'skill' && leading?.args !== undefined && host.state.appState.model.trim().length > 0) {
       host.track('input_command', {
@@ -262,7 +262,7 @@ export function dispatchInput(host: SlashCommandHost, text: string): void {
     return;
   }
   if (intent.kind !== 'not-command') {
-    void executeSlashCommand(host, text, intent);
+    void executeSlashCommand(host, text, intent, activations);
     return;
   }
   host.sendNormalUserInput(text);
@@ -272,6 +272,7 @@ async function executeSlashCommand(
   host: SlashCommandHost,
   input: string,
   intent: Exclude<SlashCommandIntent, { readonly kind: 'skill' | 'not-command' }>,
+  activations: readonly InlineSkillActivation[],
 ): Promise<void> {
   const parsedCommand = parseSlashInput(input);
 
@@ -337,7 +338,7 @@ async function executeSlashCommand(
         host.track('clear');
       }
       try {
-        await handleBuiltInSlashCommand(host, intent.name, intent.args, input);
+        await handleBuiltInSlashCommand(host, intent.name, intent.args, input, activations);
       } catch (error) {
         host.showError(formatErrorMessage(error));
       }
@@ -374,6 +375,7 @@ async function handleBuiltInSlashCommand(
   name: BuiltinSlashCommandName,
   args: string,
   input: string,
+  activations: readonly InlineSkillActivation[],
 ): Promise<void> {
   if (host.session === undefined && SESSION_REQUIRING_COMMANDS.has(name)) {
     const session = await ensureSessionForCommand(host);
@@ -507,7 +509,7 @@ async function handleBuiltInSlashCommand(
       await handleFeedbackCommand(host);
       return;
     case 'btw':
-      await handleBtwCommand(host, args);
+      await handleBtwCommand(host, args, activations);
       return;
     case 'title':
       await handleTitleCommand(host, args);

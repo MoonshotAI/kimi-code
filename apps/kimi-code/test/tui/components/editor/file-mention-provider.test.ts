@@ -105,7 +105,7 @@ describe('FileMentionProvider', () => {
   });
 
   it('exposes workspace metadata and reports the selected variant', async () => {
-    const selections: Array<{ commandName: string; path: string }> = [];
+    const selections: Array<{ commandName: string; path: string; start: number }> = [];
     const command = {
       name: 'skill:review',
       description: 'Review',
@@ -125,7 +125,10 @@ describe('FileMentionProvider', () => {
     const suggestions = await provider.getSuggestions(['/skill:rev'], 0, 10, { signal: ctrl() });
     expect(suggestions?.items[0]?.data?.['workspaceLabel']).toBe('B');
     provider.applyCompletion(['/skill:rev'], 0, 10, suggestions!.items[0]!, suggestions!.prefix);
-    expect(selections).toEqual([{ commandName: 'skill:review', path: '/work/B/review/SKILL.md' }]);
+    expect(selections).toEqual([{ commandName: 'skill:review', path: '/work/B/review/SKILL.md', start: 0 }]);
+
+    provider.applyCompletion(['first line', 'check /rev'], 1, 10, suggestions!.items[0]!, '/rev');
+    expect(selections[1]).toEqual({ commandName: 'skill:review', path: '/work/B/review/SKILL.md', start: 17 });
   });
 
   it('exposes global and built-in source labels when no workspace directory exists', async () => {

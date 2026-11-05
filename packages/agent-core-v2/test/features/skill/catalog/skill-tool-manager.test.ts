@@ -360,6 +360,34 @@ describe('ToolManager SkillTool wire behavior', () => {
     expect(JSON.stringify(nested[0])).toContain('nested-skill');
     expect(JSON.stringify(nested[0])).not.toContain('child from A');
   });
+  it('keeps the bundled parent workspace for nested model-tool calls', async () => {
+    skills.registerVariants([
+      { ...makeSkill('parent'), path: '/work/A/parent/SKILL.md', dir: '/work/A/parent', content: 'parent from A', workspaceDir: '/work/A' },
+      { ...makeSkill('parent'), path: '/work/B/parent/SKILL.md', dir: '/work/B/parent', content: 'parent from B', workspaceDir: '/work/B' },
+      { ...makeSkill('child'), path: '/work/A/child/SKILL.md', dir: '/work/A/child', content: 'child from A', workspaceDir: '/work/A' },
+      { ...makeSkill('child'), path: '/work/B/child/SKILL.md', dir: '/work/B/child', content: 'child from B', workspaceDir: '/work/B' },
+    ], { replace: true });
+    const childCall: ToolCall = {
+      type: 'function',
+      id: 'call_child',
+      name: 'Skill',
+      arguments: '{"skill":"child"}',
+    };
+    ctx.mockNextResponse({ type: 'text', text: 'Load its child.' }, childCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.promptWithSkills({
+      input: [{ type: 'text', text: 'Use the parent skill' }],
+      skills: [{ name: 'parent', path: '/work/B/parent/SKILL.md' }],
+    });
+    await ctx.untilTurnEnd();
+
+    const nested = persistence.records.filter((record) => recordContainsSkillLoaded(record, 'child'));
+    expect(nested).toHaveLength(1);
+    expect(JSON.stringify(nested[0])).toContain('child from B');
+    expect(JSON.stringify(nested[0])).toContain('/work/B/child/SKILL.md');
+    expect(JSON.stringify(nested[0])).toContain('nested-skill');
+    expect(JSON.stringify(nested[0])).not.toContain('child from A');
+  });
 });
 
 describe('ToolManager SkillTool restore behavior', () => {

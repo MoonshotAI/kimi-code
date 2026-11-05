@@ -51,7 +51,7 @@ export interface EditorKeyboardHost {
   readonly modelMigration?: ModelMigrationController;
   readonly skillCommandMap: Map<string, string>;
   readonly pluginCommandMap: Map<string, string>;
-  readonly skillVariantPathForCommand?: (commandName: string) => string | undefined;
+  readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
   retainSkillVariantSelection?(text: string): void;
   steerQueuedMessagesIntoRunningTurn(manual?: boolean): void;
   validateMediaCapabilities(extraction: {
@@ -356,7 +356,7 @@ export class EditorKeyboardController {
           isCompacting: host.state.appState.isCompacting,
           skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
             ? undefined
-            : (commandName) => host.skillVariantPathForCommand!(commandName),
+            : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
         });
         host.state.queuedMessages.push({
           text,

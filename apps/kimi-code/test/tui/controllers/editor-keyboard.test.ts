@@ -533,7 +533,7 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
     queued: Array<Record<string, unknown>>;
     skillCommandMap?: Map<string, string>;
     pluginCommandMap?: Map<string, string>;
-    skillVariantPathForCommand?: (commandName: string) => string | undefined;
+    skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
     steering?: boolean;
   }) {
     const steerQueuedMessagesIntoRunningTurn = vi.fn();
@@ -642,9 +642,9 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
   });
 
   it.each([
-    ['/skill:review src/app.ts', [{ skillName: 'review', args: 'src/app.ts' }]],
-    ['check /skill:review', [{ skillName: 'review' }]],
-    ['/skill:review check /skill:review', [{ skillName: 'review' }]],
+    ['/skill:review src/app.ts', [{ skillName: 'review', path: undefined, start: 0, args: 'src/app.ts' }]],
+    ['check /skill:review', [{ skillName: 'review', path: undefined, start: 6 }]],
+    ['/skill:review check /skill:review', [{ skillName: 'review', path: undefined, start: 0 }]],
   ])('parses skill draft %s before asking the coordinator to steer', (text, activations) => {
     const { host, setText, steerQueuedMessagesIntoRunningTurn, onCtrlS } = createCtrlSHarness({
       editorText: text,
@@ -662,16 +662,12 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
   });
 
   it('preserves selected variant paths for multi-skill drafts', () => {
-    const text = '/skill:security /skill:review';
-    const paths: Record<string, string> = {
-      'skill:security': '/work/B/security/SKILL.md',
-      'skill:review': '/work/B/review/SKILL.md',
-    };
+    const text = '/skill:review /skill:review';
     const { host, onCtrlS } = createCtrlSHarness({
       editorText: text,
       queued: [],
-      skillCommandMap: new Map([['skill:security', 'security'], ['skill:review', 'review']]),
-      skillVariantPathForCommand: (commandName) => paths[commandName],
+      skillCommandMap: new Map([['skill:review', 'review']]),
+      skillVariantPathForCommand: (_commandName, start) => `/work/${start === 0 ? 'A' : 'B'}/review/SKILL.md`,
     });
 
     onCtrlS();
@@ -680,8 +676,8 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       {
         text,
         inlineSkillActivations: [
-          { skillName: 'security', path: paths['skill:security'] },
-          { skillName: 'review', path: paths['skill:review'] },
+          { skillName: 'review', path: '/work/A/review/SKILL.md', start: 0 },
+          { skillName: 'review', path: '/work/B/review/SKILL.md', start: 14 },
         ],
       },
     ]);

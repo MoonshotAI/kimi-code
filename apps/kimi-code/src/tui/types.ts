@@ -311,6 +311,7 @@ export interface InlineSkillActivation {
   readonly skillName: string;
   readonly path?: string;
   readonly args?: string;
+  readonly start?: number;
 }
 
 export type ModelSwitchPersistence = 'session' | 'model' | 'model-and-effort';

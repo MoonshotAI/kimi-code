@@ -59,7 +59,7 @@ describe('resolveUserInput', () => {
     { input: '/example:deploy /skill:review', skills: [] },
     { input: 'check src/app.ts https://example.com/review and 1/2', skills: [] },
   ])('resolves $input without changing argument or command precedence', ({ input, skills }) => {
-    expect(resolveUserInput({ ...options, input }).activations).toEqual(skills);
+    expect(resolveUserInput({ ...options, input }).activations.map(({ start: _start, ...activation }) => activation)).toEqual(skills);
   });
 
   it('attaches selected variant paths to every matching activation', () => {
@@ -67,10 +67,11 @@ describe('resolveUserInput', () => {
       'skill:review': '/work/B/review/SKILL.md',
       'skill:security': '/work/B/security/SKILL.md',
     };
-    const skillVariantPathForCommand = (commandName: string) => paths[commandName];
+    const skillVariantPathForCommand = (commandName: string, start: number) =>
+      start === 0 ? paths[commandName] : undefined;
     expect(
       resolveUserInput({ ...options, input: '/skill:review src/app.ts', skillVariantPathForCommand }).activations,
-    ).toEqual([{ skillName: 'review', path: paths['skill:review'], args: 'src/app.ts' }]);
+    ).toEqual([{ skillName: 'review', path: paths['skill:review'], start: 0, args: 'src/app.ts' }]);
     expect(
       resolveUserInput({
         ...options,
@@ -78,22 +79,60 @@ describe('resolveUserInput', () => {
         skillVariantPathForCommand,
       }).activations,
     ).toEqual([
-      { skillName: 'security', path: paths['skill:security'] },
-      { skillName: 'review', path: paths['skill:review'] },
+      { skillName: 'security', path: paths['skill:security'], start: 0 },
+      { skillName: 'review', start: 16 },
+    ]);
+  });
+
+  it('keeps different variants of the same skill at their own token positions', () => {
+    const text = '/skill:review /skill:review';
+    const activations = resolveUserInput({
+      ...options,
+      input: text,
+      skillVariantPathForCommand: (_commandName, start) => `/work/${start === 0 ? 'A' : 'B'}/review/SKILL.md`,
+    }).activations;
+
+    expect(activations).toEqual([
+      { skillName: 'review', path: '/work/A/review/SKILL.md', start: 0 },
+      { skillName: 'review', path: '/work/B/review/SKILL.md', start: 14 },
+    ]);
+    expect(skillVariantPathsForInput(text, activations, options.skillCommandMap)).toEqual([
+      { commandName: 'skill:review', path: '/work/A/review/SKILL.md', start: 0 },
+      { commandName: 'skill:review', path: '/work/B/review/SKILL.md', start: 14 },
+    ]);
+    expect(resolveUserInput({
+      ...options,
+      input: text,
+      skillVariantPathForCommand: () => '/work/A/review/SKILL.md',
+    }).activations).toEqual([
+      { skillName: 'review', path: '/work/A/review/SKILL.md', start: 0 },
+    ]);
+  });
+
+  it('passes selected paths through /btw without treating the builtin as a skill', () => {
+    const resolved = resolveUserInput({
+      ...options,
+      input: '/btw compare /skill:review',
+      skillVariantPathForCommand: () => '/work/B/review/SKILL.md',
+    });
+
+    expect(resolved.intent).toMatchObject({ kind: 'builtin', name: 'btw' });
+    expect(resolved.activations).toEqual([
+      { skillName: 'review', path: '/work/B/review/SKILL.md', start: 13 },
     ]);
   });
 
   it('maps returned activations back to their command names', () => {
     const path = '/work/B/review/SKILL.md';
     expect(skillVariantPathsForInput('/review', [{ skillName: 'review', path }], options.skillCommandMap)).toEqual([
-      { commandName: 'review', path },
+      { commandName: 'skill:review', path, start: 0 },
     ]);
     expect(skillVariantPathsForInput('/skill:security /skill:review', [
       { skillName: 'security', path: '/work/B/security/SKILL.md' },
       { skillName: 'review', path },
     ], options.skillCommandMap)).toEqual([
-      { commandName: 'skill:security', path: '/work/B/security/SKILL.md' },
-      { commandName: 'skill:review', path },
+      { commandName: 'skill:security', path: '/work/B/security/SKILL.md', start: 0 },
+      { commandName: 'skill:review', path, start: 16 },
     ]);
   });
 });

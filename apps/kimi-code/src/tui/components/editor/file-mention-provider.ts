@@ -65,7 +65,7 @@ export class FileMentionProvider implements AutocompleteProvider {
     private readonly getInputMode: () => 'prompt' | 'bash' = () => 'prompt',
     private readonly skillCommandNames?: ReadonlySet<string>,
     private readonly remoteSuggest?: RemoteMentionSuggest,
-    private readonly onSkillVariantSelected?: (selection: { commandName: string; path: string }) => void,
+    private readonly onSkillVariantSelected?: (selection: { commandName: string; path: string; start: number }) => void,
   ) {
     this.additionalDirs = additionalDirs.map((dir) => resolveMentionDirectory(workDir, dir));
     // Build an expanded list that includes alias entries so that
@@ -319,7 +319,12 @@ export class FileMentionProvider implements AutocompleteProvider {
   ): { lines: string[]; cursorLine: number; cursorCol: number } {
     const skillPath = item.data?.['skillPath'];
     if (typeof skillPath === 'string' && skillPath.length > 0) {
-      this.onSkillVariantSelected?.({ commandName: item.value, path: skillPath });
+      const lineStart = lines.slice(0, cursorLine).reduce((start, line) => start + line.length + 1, 0);
+      this.onSkillVariantSelected?.({
+        commandName: item.value,
+        path: skillPath,
+        start: lineStart + cursorCol - prefix.length,
+      });
     }
     // Inline skill selection mid-input: pi-tui's default applyCompletion
     // treats mid-line slash prefixes as file paths and drops the `/`. Preserve
