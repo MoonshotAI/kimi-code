@@ -614,6 +614,48 @@ describe('AgentToolSelectService gate', () => {
 });
 
 describe('AgentToolSelectService S0 baseline (gate closed)', () => {
+  it.each([false, true])('uses updated initial schemas without dynamic loading (restored: %s)', async (restoring) => {
+    flagEnabled = true;
+    const h = createHarness();
+    const old = new StubMcpTool('SchemaTool');
+    const registration = h.registry.register(old, { source: 'builtin' });
+    disposables.add(registration);
+    registerBuiltin(h, new EchoTool('Unchanged'));
+    disposables.add(h.registry.register(h.ix.createInstance(SelectToolsTool), { source: 'builtin' }));
+    await h.sut.prepareForRequest();
+    registration.dispose();
+    const updated = new StubMcpTool('SchemaTool', 'ok', REQUIRED_PAYLOAD_PARAMETERS);
+    disposables.add(h.registry.register(updated, { source: 'builtin' }));
+    registerBuiltin(h, new EchoTool('LateTool'));
+    await h.sut.prepareForRequest();
+    const persisted = JSON.stringify(h.ix.get(IAgentStateService).get(toolSelectKey));
+    const current = restoring ? createHarness() : h;
+    if (restoring) {
+      disposables.add(current.registry.register(updated, { source: 'builtin' }));
+      registerBuiltin(current, new EchoTool('Unchanged'));
+      registerBuiltin(current, new EchoTool('LateTool'));
+      disposables.add(current.registry.register(current.ix.createInstance(SelectToolsTool), { source: 'builtin' }));
+      current.ix.get(IAgentStateService).set(toolSelectKey, JSON.parse(persisted));
+    }
+    current.contextMemory.history.push({
+      role: 'system', content: [],
+      tools: [{ name: updated.name, description: updated.description, parameters: updated.parameters }],
+    }, userMessage('continue'));
+    const history = structuredClone(current.contextMemory.history);
+    const capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
+    const resolved = await resolveWith(current, { messages: current.contextMemory.get(), capabilities });
+    expect(resolved.profile?.tools?.map((tool) => tool.name)).toEqual(['SchemaTool', 'Unchanged']);
+    expect(resolved.profile?.tools?.find((tool) => tool.name === updated.name)?.parameters).toEqual(REQUIRED_PAYLOAD_PARAMETERS);
+    expect(resolved.content.messages).toEqual([userMessage('continue')]);
+    expect(current.contextMemory.history).toEqual(history);
+    expect(JSON.stringify(current.ix.get(IAgentStateService).get(toolSelectKey))).toBe(persisted);
+    expect(current.ix.get(IAgentStateService).get(toolSelectKey).initial?.find((tool) => tool.name === old.name)?.parameters)
+      .toEqual(old.parameters);
+    activeToolNames = new Set(['Unchanged']);
+    const filtered = await resolveWith(current, { messages: current.contextMemory.get(), capabilities });
+    expect(filtered.profile?.tools?.map((tool) => tool.name)).toEqual(['Unchanged']);
+  });
+
   it('shapeTools returns the identical array when dynamically_loaded_tools is absent', () => {
     const h = createHarness();
     registerBuiltin(h, new EchoTool());
