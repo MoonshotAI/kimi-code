@@ -4,6 +4,7 @@ import { createControlledPromise } from '@antfu/utils';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { summarizeSkill } from '#/features/skill/catalog/types';
 import { IAgentSkillService } from '#/features/skill/skillService';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { LlmRequester } from '#human/llm-requester/requester';
 import {
   ISkillTool,
@@ -151,6 +152,35 @@ describe('SkillTool', () => {
     expect(SkillToolInputSchema.safeParse({ skill: 'commit' }).success).toBe(true);
     expect(SkillToolInputSchema.safeParse({ skill: 'commit', args: '-m fix' }).success).toBe(true);
     expect(SkillToolInputSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('describes tool-mediated loading with an example and a direct-read exception', () => {
+    const description = makeTool().description;
+
+    expect(description).toContain('before taking any task action');
+    expect(description).toContain(`{ "skill": "commit", "args": "-m 'Fix bug'" }`);
+    expect(description.match(/^- `\{ "skill":/gm)).toHaveLength(1);
+    expect(description).toContain('Do not read `SKILL.md` to invoke a skill');
+    expect(description).toContain('only to inspect or edit the skill itself');
+  });
+
+  it('renders arguments and session context through the model-tool path', async () => {
+    skills.register(
+      stubSkill('rename-session', {
+        content: 'Run "$ARGUMENTS" with "${KIMI_SESSION_ID}"',
+      }),
+    );
+
+    const result = await executeTool(
+      makeTool(),
+      toolContext({ skill: 'rename-session', args: 'Tokenizer Myths' }),
+    );
+    const part = result.delivery?.message.content[0];
+    const text = part?.type === 'text' ? part.text : '';
+    const sessionId = ctx.get(ISessionContext).sessionId;
+
+    expect(text).toContain(`Run "Tokenizer Myths" with "${sessionId}"`);
+    expect(text).not.toContain('${KIMI_SESSION_ID}');
   });
 
   it('returns a tool error when the skill is unknown', async () => {

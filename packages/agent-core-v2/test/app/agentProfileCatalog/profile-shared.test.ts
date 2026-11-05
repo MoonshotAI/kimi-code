@@ -64,6 +64,13 @@ describe('systemPromptVars', () => {
     expect(vars['skills_section']).toContain('SKILLS');
   });
 
+  it('requires Skill tool invocation in the system prompt', () => {
+    const section = systemPromptVars({ skills: 'SKILLS' }, { skillActive: true })['skills_section'];
+
+    expect(section).toContain('invoke them with the `Skill` tool');
+    expect(section).not.toContain('read the skill file for its instructions');
+  });
+
   it('renders missing context fields as empty strings', () => {
     const vars = systemPromptVars({}, { skillActive: true });
 
