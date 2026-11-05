@@ -98,27 +98,26 @@ export function foldWireRecords(
       ? { ...record, [REPLAY_TURN_ID]: turnIdByAppend.get(record) }
       : record,
   );
-  for (const record of migrateJournalRecords(annotated)) {
+  for (const record of migrateWireJournalRecords(annotated)) {
     fold.apply(decodePersistent === undefined ? record : decodePersistent(record));
   }
   fold.finish();
   return { replay: fold.replay, toolStore: fold.toolStore };
 }
 
-function migrateJournalRecords(records: readonly WireRecord[]): WireRecord[] {
-  if (records.length === 0) return [];
-  const first = records[0]!;
-  let migrations: readonly WireMigration[];
-  if (first.type === 'metadata') {
-    if (!isWireMetadataRecord(first)) {
-      throw new Error('Agent wire metadata is malformed');
-    }
-    migrations = isNewerWireVersion(first.protocol_version)
-      ? []
-      : resolveWireMigrations(first.protocol_version);
-  } else {
-    migrations = [migrateV1_4ToV1_5];
+export function wireJournalMigrations(first: WireRecord): readonly WireMigration[] {
+  if (first.type !== 'metadata') return [migrateV1_4ToV1_5];
+  if (!isWireMetadataRecord(first)) {
+    throw new Error('Agent wire metadata is malformed');
   }
+  return isNewerWireVersion(first.protocol_version)
+    ? []
+    : resolveWireMigrations(first.protocol_version);
+}
+
+export function migrateWireJournalRecords(records: readonly WireRecord[]): WireRecord[] {
+  if (records.length === 0) return [];
+  const migrations = wireJournalMigrations(records[0]!);
   return records.map((record) => migrateWireRecord(record, migrations));
 }
 

@@ -820,6 +820,23 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
           message: 'OAuth flow timed out',
         });
 
+        listSpy.mockRejectedValueOnce(
+          new Error2('session.workspace_unavailable', 'workspace is unavailable', {
+            details: { cause_code: 'fs.path_not_found', retryable: false },
+          }),
+        );
+        const workspaceError = await captureRejection(client.listGlobalMcpServers());
+        expect(isKimiError(workspaceError)).toBe(true);
+        expect(workspaceError).toMatchObject({
+          code: 'session.workspace_unavailable',
+          message: 'workspace is unavailable',
+          retryable: false,
+        });
+        expect(toKimiErrorPayload(workspaceError)).toMatchObject({
+          code: 'session.workspace_unavailable',
+          retryable: false,
+        });
+
         // A code this build's registry does not declare (a newer engine than
         // the pinned SDK) restates as `internal` instead of minting an
         // undeclared KimiError code the serializer would reject.

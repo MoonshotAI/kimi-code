@@ -8,7 +8,7 @@ import type {
   AgentTaskStatus,
 } from './types';
 
-export { AgentTaskPersistence } from './persist';
+export { AgentTaskPersistence, isValidTaskId, reconcilePersistedTask } from './persist';
 export type {
   AgentTask,
   AgentTaskInfo,

@@ -2281,6 +2281,57 @@ describe('AgentTranscriptProjector', () => {
         expect.objectContaining({ kind: 'marker', marker: 'goal', markerId: 'm1' }),
         expect.objectContaining({ kind: 'marker', marker: 'plan.enter', markerId: 'm2' }),
       ]);
+      await expect(service.readColdAgentFeed('s1', 'main')).resolves.toMatchObject({
+        agent: { status: 'idle', plan_mode: true, swarm_mode: false, tower_mode: false },
+        goal: { objective: 'fix the bug', status: 'active' },
+        todos: [{ title: 'write tests', status: 'in_progress' }],
+      });
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot migrates legacy tool calls', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-migration-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        { type: 'metadata', protocol_version: '1.0', created_at: 1000 },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'running' }],
+            toolCalls: [
+              {
+                type: 'function',
+                id: 'call_1',
+                function: { name: 'Bash', arguments: '{"command":"ls"}' },
+              },
+            ],
+          },
+          time: 1000,
+        },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+      const service = new TranscriptService({
+        homeDir: home,
+        core: {
+          accessor: {
+            get: (token: unknown) => {
+              if (token === ISessionManager) return { get: () => undefined, list: () => [] };
+              if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
+              return undefined;
+            },
+          },
+        } as unknown as Scope,
+      });
+
+      const snapshot = await service.readColdSnapshot('s1', 'main');
+      expect(JSON.stringify(snapshot)).toContain('"name":"Bash"');
+      expect(JSON.stringify(snapshot)).not.toContain('"function"');
       service.dropSession('s1');
     } finally {
       await rm(home, { recursive: true, force: true });

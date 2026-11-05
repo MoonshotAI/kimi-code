@@ -22,6 +22,7 @@ export const ErrorCodes = {
   SESSION_FORK_ACTIVE_TURN: 'session.fork_active_turn',
   SESSION_OCCUPIED: 'session.occupied',
   SESSION_STALE: 'session.stale',
+  SESSION_WORKSPACE_UNAVAILABLE: 'session.workspace_unavailable',
   SESSION_EXPORT_NOT_FOUND: 'session.export_not_found',
   SESSION_EXPORT_MISSING_VERSION: 'session.export_missing_version',
   SESSION_CLOSED: 'session.closed',
@@ -169,6 +170,12 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Reload the session to load the latest updates, then retry.',
+  },
+  'session.workspace_unavailable': {
+    title: 'Session workspace unavailable',
+    retryable: false,
+    public: true,
+    action: 'Restore the session workspace, then resume or reload the session.',
   },
   'session.export_not_found': {
     title: 'Session export directory missing',

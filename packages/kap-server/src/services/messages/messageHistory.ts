@@ -14,6 +14,8 @@ import {
   fromPersistentWireRecord,
   getLiveSessionById,
   makeAgentScopeContext,
+  migrateWireRecord,
+  wireJournalMigrations,
   sessionScopeOf,
   workspacePersistenceScope,
   type ContextMessage,
@@ -128,10 +130,12 @@ async function loadMessages(core: Scope, sessionId: string): Promise<Message[]> 
   );
   const scope = agentScopeOf(sessionScopeOf(handlerScope, sessionId), MAIN_AGENT_ID);
   const reducer = createContextTranscriptReducer();
+  let migrations: ReturnType<typeof wireJournalMigrations> | undefined;
   for await (const record of core.accessor
     .get(IAppendLogStore)
     .read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
-    reducer.add(fromPersistentWireRecord(record));
+    migrations ??= wireJournalMigrations(record);
+    reducer.add(fromPersistentWireRecord(migrateWireRecord(record, migrations)));
   }
   const transcript = reducer.result();
   const blobs = new AgentBlobServiceImpl(

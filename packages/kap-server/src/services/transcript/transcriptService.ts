@@ -16,11 +16,14 @@ import {
   followSessionLifecycles,
   getLiveSessionById,
   isUndoAnchor,
+  migrateWireJournalRecords,
   reduceContextTranscript,
   type ContextMessage,
   type IDisposable,
   type Scope,
   type SessionMeta,
+  type SessionSummary,
+  type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
 import {
   TranscriptStore,
@@ -38,6 +41,7 @@ import {
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
 
+import { projectColdAgentFeed, type ColdAgentFeed } from './coldAgentFeed';
 import { WireRecordCache, type ContextRecord } from './wireCache';
 import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts } from '../messages/messageProjection';
@@ -531,15 +535,12 @@ export class TranscriptService {
     );
   }
 
-  async readColdSnapshot(
+  private async readColdWire(
     sessionId: string,
-    agentId: string = MAIN_AGENT_ID,
-  ): Promise<AgentTranscriptSnapshot | undefined> {
+    agentId: string,
+  ): Promise<{ readonly summary: SessionSummary; readonly records: WireRecord[] } | undefined> {
     const summary = await this.deps.core.accessor.get(ISessionIndex).get(sessionId);
-    if (summary === undefined) return undefined;
-    if (!isPlainAgentId(agentId)) {
-      return groupMessagesIntoSnapshot([]);
-    }
+    if (summary === undefined || !isPlainAgentId(agentId)) return undefined;
     const wirePath = join(
       this.deps.homeDir,
       SESSIONS_ROOT,
@@ -552,15 +553,33 @@ export class TranscriptService {
     const liveAgents = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService);
     await this.drainLiveWire(liveAgents, sessionId, agentId);
-    let records: ContextRecord[];
     try {
-      records = flattenChain(await this.wireCache.read(wirePath));
+      return { summary, records: flattenChain(await this.wireCache.read(wirePath)) as WireRecord[] };
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return groupMessagesIntoSnapshot([]);
-      }
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { summary, records: [] };
       throw error;
     }
+  }
+
+  async readColdAgentFeed(
+    sessionId: string,
+    agentId: string = MAIN_AGENT_ID,
+  ): Promise<ColdAgentFeed | undefined> {
+    const cold = await this.readColdWire(sessionId, agentId);
+    return cold === undefined ? undefined : projectColdAgentFeed(cold.records);
+  }
+
+  async readColdSnapshot(
+    sessionId: string,
+    agentId: string = MAIN_AGENT_ID,
+  ): Promise<AgentTranscriptSnapshot | undefined> {
+    if (!isPlainAgentId(agentId)) return groupMessagesIntoSnapshot([]);
+    const cold = await this.readColdWire(sessionId, agentId);
+    if (cold === undefined) return undefined;
+    const { summary } = cold;
+    const records = migrateWireJournalRecords(cold.records);
+    const liveAgents = getLiveSessionById(this.deps.core.accessor, sessionId)
+      ?.accessor.get(IAgentLifecycleService);
     const agentScope = `${SESSIONS_ROOT}/${summary.workspaceId}/${sessionId}/${AGENTS_DIR}/${agentId}`;
     const blobs = new AgentBlobServiceImpl(
       this.deps.core.accessor.get(IBlobStore),

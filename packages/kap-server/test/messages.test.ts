@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,6 +6,7 @@ import {
   IAgentContextMemoryService,
   IAgentLifecycleService,
   IWireService,
+  ISessionIndex,
   ITelemetryService,
   getLiveSessionById,
   IModelCatalog,
@@ -346,5 +347,51 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
 
     const missing = await getJson<null>(`/api/v1/sessions/${id}/messages/msg_does_not_exist`);
     expect(missing.body.code).toBe(40403);
+  });
+
+  it('applies wire migrations when reading cold message history', async () => {
+    const id = await createSession();
+    const session = getLiveSessionById(server!.core.accessor, id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    agent.accessor.get(IAgentContextMemoryService).append({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'calling Read' }],
+      toolCalls: [{ type: 'function', id: 'call_1', name: 'Read', arguments: '{"path":"example.txt"}' }],
+    });
+    await agent.accessor.get(IWireService).flush();
+    const summary = await server!.core.accessor.get(ISessionIndex).get(id);
+    if (summary === undefined) throw new Error(`session ${id} summary not found`);
+    const wirePath = join(home as string, 'sessions', summary.workspaceId, id, 'agents', 'main', 'wire.jsonl');
+    const records = (await readFile(wirePath, 'utf-8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    for (const record of records) {
+      if (record['type'] === 'metadata') record['protocol_version'] = '1.0';
+      if (record['type'] !== 'context.append_message') continue;
+      const message = record['message'] as { toolCalls?: Record<string, unknown>[] };
+      message.toolCalls = message.toolCalls?.map((call) => ({
+        type: 'function',
+        id: call['id'],
+        function: { name: call['name'], arguments: call['arguments'] },
+      }));
+    }
+    await writeFile(wirePath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`, 'utf-8');
+
+    await server!.close();
+    server = undefined;
+    await boot();
+
+    const { body } = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
+    expect(body.code).toBe(0);
+    expect(body.data.items.flatMap((message) => message.content)).toContainEqual(
+      expect.objectContaining({
+        type: 'tool_use',
+        tool_name: 'Read',
+        input: { path: 'example.txt' },
+      }),
+    );
   });
 });

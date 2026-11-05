@@ -65,7 +65,8 @@ import type { TranscriptService } from '../../../services/transcript/transcriptS
 import { ensureMainAgent } from '../../mainAgent';
 import { SessionAgentFeed } from './sessionAgentFeed';
 import { SessionTaskFeed } from './sessionTaskFeed';
-import { toTaskMessage } from './taskState';
+import { readColdTaskList } from './taskRequests';
+import { toTaskMessage, toTaskState } from './taskState';
 
 export interface EventEnvelope {
   readonly type: string;
@@ -199,7 +200,7 @@ export class SessionEventBroadcaster {
     const session = getLiveSessionById(this.opts.core.accessor, sessionId);
     if (session === undefined) {
       try {
-        return await this.subscribeCold(sessionId, target, transcriptGrades);
+        return await this.subscribeCold(sessionId, target, transcriptGrades, transcriptSince);
       } catch (error) {
         this.opts.logger?.warn(
           { sessionId, err: error instanceof Error ? error.message : String(error) },
@@ -233,9 +234,13 @@ export class SessionEventBroadcaster {
     sessionId: string,
     target: BroadcastTarget,
     spec: TranscriptGradeSpec,
+    transcriptSince?: Record<string, number>,
   ): Promise<boolean> {
     const summary = await this.opts.core.accessor.get(ISessionManager).status?.(sessionId);
     if (summary === undefined) return false;
+    if (getLiveSessionById(this.opts.core.accessor, sessionId) !== undefined) {
+      return this.subscribe(sessionId, target, spec, transcriptSince);
+    }
     let state = this.sessions.get(sessionId);
     if (state === undefined) {
       state = {
@@ -250,29 +255,84 @@ export class SessionEventBroadcaster {
       this.sessions.set(sessionId, state);
     }
     state.targets.set(target, spec);
-    const service = this.opts.transcriptService;
-    if (service !== undefined) {
-      const roster = (await service.readColdRoster(sessionId)) ?? [];
-      const backfill = new Set(
-        Object.keys(spec).filter((agentId) => agentId !== '*' && gradeFor(spec, agentId) !== 'off'),
-      );
-      for (const descriptor of roster) backfill.add(descriptor.agentId);
-      for (const agentId of backfill) {
-        if (gradeFor(spec, agentId) === 'off') continue;
-        const snapshot = await service.readColdSnapshot(sessionId, agentId);
-        if (snapshot === undefined) continue;
-        target.send(
-          buildTranscriptEnvelope(sessionId, 'transcript.reset', {
-            agent_id: agentId,
-            snapshot: redactSnapshotForGrade(gradeFor(spec, agentId), snapshot),
-            has_more_older: snapshot.hasMoreOlder ?? false,
-            seq: 0,
-          }),
+    try {
+      const service = this.opts.transcriptService;
+      if (service !== undefined) {
+        const roster = (await service.readColdRoster(sessionId)) ?? [];
+        const backfill = new Set(
+          Object.keys(spec).filter((agentId) => agentId !== '*' && gradeFor(spec, agentId) !== 'off'),
         );
+        for (const descriptor of roster) backfill.add(descriptor.agentId);
+        if (gradeFor(spec, 'main') !== 'off') backfill.add('main');
+        for (const agentId of backfill) {
+          if (gradeFor(spec, agentId) === 'off') continue;
+          const [snapshot, feed, tasks] = await Promise.all([
+            service.readColdSnapshot(sessionId, agentId),
+            service.readColdAgentFeed(sessionId, agentId),
+            readColdTaskList(this.opts.core, sessionId, agentId),
+          ]);
+          const eventCreatedAt = new Date().toISOString();
+          if (feed !== undefined) {
+            const frames: BroadcastFrame[] = [
+              {
+                type: 'task.list',
+                session_id: sessionId,
+                agent_id: agentId,
+                tasks: (tasks ?? []).map(toTaskState),
+              },
+              {
+                type: 'agent',
+                session_id: sessionId,
+                agent_id: agentId,
+                event_created_at: eventCreatedAt,
+                ...feed.agent,
+              },
+            ];
+            if (feed.usage !== undefined) {
+              frames.push({
+                type: 'usage',
+                session_id: sessionId,
+                agent_id: agentId,
+                event_created_at: eventCreatedAt,
+                ...feed.usage,
+              });
+            }
+            if (agentId === 'main') {
+              frames.push({
+                type: 'goal',
+                session_id: sessionId,
+                agent_id: agentId,
+                event_created_at: eventCreatedAt,
+                goal: feed.goal,
+              });
+            }
+            frames.push({
+              type: 'todo',
+              session_id: sessionId,
+              agent_id: agentId,
+              event_created_at: eventCreatedAt,
+              items: [...feed.todos],
+            });
+            for (const frame of frames) target.send(frame);
+          }
+          if (snapshot !== undefined) {
+            target.send(
+              buildTranscriptEnvelope(sessionId, 'transcript.reset', {
+                agent_id: agentId,
+                snapshot: redactSnapshotForGrade(gradeFor(spec, agentId), snapshot),
+                has_more_older: snapshot.hasMoreOlder ?? false,
+                seq: 0,
+              }),
+            );
+          }
+        }
       }
+      if (state.targets.has(target)) state.transcriptSeeded.add(target);
+      return true;
+    } catch (error) {
+      this.unsubscribe(sessionId, target);
+      throw error;
     }
-    if (state.targets.has(target)) state.transcriptSeeded.add(target);
-    return true;
   }
 
   unsubscribe(sessionId: string, target: BroadcastTarget): void {

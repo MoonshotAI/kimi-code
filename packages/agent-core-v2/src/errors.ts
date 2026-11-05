@@ -120,6 +120,7 @@ export type KimiErrorCode =
   | 'session.fork_active_turn'
   | 'session.occupied'
   | 'session.stale'
+  | 'session.workspace_unavailable'
   | 'session.undo_unavailable'
   | 'session.export_not_found'
   | 'session.export_missing_version'

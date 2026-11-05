@@ -8,21 +8,25 @@ import {
   IBootstrapService,
   IFileSystemStorageService,
   ISessionIndex,
+  ISessionManager,
   agentScopeOf,
   getLiveSessionById,
   getOrRestoreAgent,
   isError2,
+  isValidTaskId,
+  reconcilePersistedTask,
   resumeSessionById,
   sessionDirOf,
   sessionScopeOf,
   workspacePersistenceScope,
+  type AgentTaskInfo,
   type AgentTaskOutputChunk,
   type AgentTaskOutputTail,
   IAgentTaskService,
   type IDisposable,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
+import { isPlainAgentId } from '@moonshot-ai/transcript';
 
 import { ErrorCode } from '../../../protocol/error-codes';
 import {
@@ -57,8 +61,15 @@ export type TaskSource = (
 
 export function createTaskSource(core: Scope): TaskSource {
   return async (sessionId, agentId, taskId, mode = 'command') => {
-    const live = mode === 'read' ? getLiveSessionById(core.accessor, sessionId) : undefined;
-    if (mode === 'read' && live === undefined) return readColdTask(core, sessionId, agentId, taskId);
+    if (!isPlainAgentId(agentId) || (mode === 'read' && !isValidTaskId(taskId))) {
+      return { kind: 'task_not_found' };
+    }
+    let live = mode === 'read' ? getLiveSessionById(core.accessor, sessionId) : undefined;
+    if (mode === 'read' && live === undefined) {
+      const cold = await readColdTask(core, sessionId, agentId, taskId);
+      live = getLiveSessionById(core.accessor, sessionId);
+      if (live === undefined) return cold;
+    }
     const session = live ?? await resumeSessionById(core.accessor, sessionId);
     if (session === undefined) return { kind: 'session_not_found' };
     const agent =
@@ -71,6 +82,38 @@ export function createTaskSource(core: Scope): TaskSource {
   };
 }
 
+function coldTaskPersistence(
+  core: Scope,
+  workspaceId: string,
+  sessionId: string,
+  agentId: string,
+): AgentTaskPersistence {
+  const bootstrap = core.accessor.get(IBootstrapService);
+  const handlerScope = workspacePersistenceScope(bootstrap.scope('sessions'), workspaceId);
+  const sessionDir = sessionDirOf(bootstrap.homeDir, handlerScope, sessionId);
+  return new AgentTaskPersistence(
+    join(sessionDir, 'agents', agentId),
+    agentScopeOf(sessionScopeOf(handlerScope, sessionId), agentId),
+    core.accessor.get(IAtomicDocumentStore),
+    core.accessor.get(IFileSystemStorageService),
+    agentId === MAIN_AGENT_ID
+      ? { dir: sessionDir, scope: sessionScopeOf(handlerScope, sessionId) }
+      : undefined,
+  );
+}
+
+export async function readColdTaskList(
+  core: Scope,
+  sessionId: string,
+  agentId: string,
+): Promise<readonly AgentTaskInfo[] | undefined> {
+  if (!isPlainAgentId(agentId)) return undefined;
+  const summary = await core.accessor.get(ISessionManager).status?.(sessionId);
+  if (summary === undefined) return undefined;
+  const tasks = await coldTaskPersistence(core, summary.workspaceId, sessionId, agentId).listTasks();
+  return tasks.map(reconcilePersistedTask).filter((task) => task.status === 'running');
+}
+
 async function readColdTask(
   core: Scope,
   sessionId: string,
@@ -79,21 +122,10 @@ async function readColdTask(
 ): Promise<TaskSourceResult> {
   const summary = await core.accessor.get(ISessionIndex).get(sessionId);
   if (summary === undefined) return { kind: 'session_not_found' };
-  const bootstrap = core.accessor.get(IBootstrapService);
-  const handlerScope = workspacePersistenceScope(bootstrap.scope('sessions'), summary.workspaceId);
-  const sessionDir = sessionDirOf(bootstrap.homeDir, handlerScope, sessionId);
-  const scope = agentScopeOf(sessionScopeOf(handlerScope, sessionId), agentId);
-  const persistence = new AgentTaskPersistence(
-    join(sessionDir, 'agents', agentId),
-    scope,
-    core.accessor.get(IAtomicDocumentStore),
-    core.accessor.get(IFileSystemStorageService),
-    agentId === MAIN_AGENT_ID
-      ? { dir: sessionDir, scope: sessionScopeOf(handlerScope, sessionId) }
-      : undefined,
-  );
+  const persistence = coldTaskPersistence(core, summary.workspaceId, sessionId, agentId);
   const task = await persistence.readTask(taskId);
   if (task === undefined) return { kind: 'task_not_found' };
+  const reconciled = reconcilePersistedTask(task);
   const unavailable = (): never => {
     throw new Error2(
       ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE,
@@ -104,7 +136,7 @@ async function readColdTask(
   return {
     kind: 'found',
     tasks: {
-      getTask: () => task,
+      getTask: () => reconciled,
       readOutputTail: async (id, maxBytes) =>
         (await persistence.readTaskOutputTail(id, maxBytes)) ?? { offset: 0, data: new Uint8Array() },
       onDidAppendOutput: () => ({ dispose: () => {} }),
