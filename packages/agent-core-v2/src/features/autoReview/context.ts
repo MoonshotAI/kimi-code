@@ -1,7 +1,11 @@
 import { createUserMessage, type ContentPart } from '#human/llm/message';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import { renderPrompt } from '#/_base/utils/render-prompt';
 
+import REVIEW_REQUEST from './auto-review-request.md?raw';
+
+const SECTION_TAG = /<(\/?(?:environment|project_instructions|history|pending_action)\b)/gi;
 const MAX_AUTHORIZATION_TOTAL_CHARS = 48000;
 const MAX_AUTHORIZATION_ENTRY_CHARS = 8000;
 const MAX_RECENT_ACTIONS = 20;
@@ -27,15 +31,15 @@ export function buildReviewMessages(
     authorizationChars += content.reduce((total, part) => total + (part.type === 'text' ? part.text.length : 0), 0);
     return [{ ...entry, content }];
   }).toReversed();
-  return [
-    `ENVIRONMENT\n${JSON.stringify({ cwd })}`,
-    `PROJECT_INSTRUCTIONS\n${JSON.stringify({
+  return [createUserMessage(renderPrompt(REVIEW_REQUEST, {
+    environment: sectionJson({ cwd }),
+    project_instructions: sectionJson({
       role: 'constraint',
       paths: instructionPaths ?? [],
       content: instructions ?? '',
-    })}`,
-    `FILTERED_HISTORY\n${JSON.stringify({ authorization, recentActions })}`,
-    `PENDING_ACTION\n${JSON.stringify({
+    }),
+    history: sectionJson({ authorization, recentActions }),
+    pending_action: sectionJson({
       name: context.toolCall.name,
       arguments: context.args,
       toolMetadata: {
@@ -43,8 +47,12 @@ export function buildReviewMessages(
         description: context.tool?.description ?? '',
         parameters: context.tool?.parameters ?? {},
       },
-    })}`,
-  ].map(createUserMessage);
+    }),
+  }))];
+}
+
+function sectionJson(value: unknown): string {
+  return JSON.stringify(value).replace(SECTION_TAG, '\\u003c$1');
 }
 
 export function authorizationEntries(messages: readonly ContextMessage[]): string[] {
