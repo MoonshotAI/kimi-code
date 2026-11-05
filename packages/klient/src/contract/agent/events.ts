@@ -205,6 +205,23 @@ export const agentStatusUpdatedEventSchema = z.looseObject({
   phase: z.string().optional(),
 });
 
+/** Subagent lifecycle payloads (spawn/progress/finish/suspend); kept loose. */
+export const subagentSpawnedEventSchema = z.looseObject({
+  time: z.number().optional(),
+});
+export const subagentCompletedEventSchema = z.looseObject({
+  time: z.number().optional(),
+});
+export const subagentFailedEventSchema = z.looseObject({
+  time: z.number().optional(),
+});
+export const subagentCancelledEventSchema = z.looseObject({
+  time: z.number().optional(),
+});
+export const subagentSuspendedEventSchema = z.looseObject({
+  time: z.number().optional(),
+});
+
 // ── registrations ───────────────────────────────────────────────────────────
 
 /** Public event name → payload type. Keys must stay in sync with `agentEvents`. */
@@ -228,6 +245,11 @@ export interface AgentEventPayloads {
   error: z.infer<typeof errorEventSchema>;
   warning: z.infer<typeof warningEventSchema>;
   'agent.status.updated': z.infer<typeof agentStatusUpdatedEventSchema>;
+  'subagent.spawned': z.infer<typeof subagentSpawnedEventSchema>;
+  'subagent.completed': z.infer<typeof subagentCompletedEventSchema>;
+  'subagent.failed': z.infer<typeof subagentFailedEventSchema>;
+  'subagent.cancelled': z.infer<typeof subagentCancelledEventSchema>;
+  'subagent.suspended': z.infer<typeof subagentSuspendedEventSchema>;
 }
 
 export type AgentEventName = keyof AgentEventPayloads;
@@ -287,5 +309,35 @@ export const agentEvents = {
     name: 'events',
     type: 'agent.status.updated',
     schema: agentStatusUpdatedEventSchema,
+  },
+  'subagent.spawned': {
+    kind: 'stream',
+    name: 'events',
+    type: 'subagent.spawned',
+    schema: subagentSpawnedEventSchema,
+  },
+  'subagent.completed': {
+    kind: 'stream',
+    name: 'events',
+    type: 'subagent.completed',
+    schema: subagentCompletedEventSchema,
+  },
+  'subagent.failed': {
+    kind: 'stream',
+    name: 'events',
+    type: 'subagent.failed',
+    schema: subagentFailedEventSchema,
+  },
+  'subagent.cancelled': {
+    kind: 'stream',
+    name: 'events',
+    type: 'subagent.cancelled',
+    schema: subagentCancelledEventSchema,
+  },
+  'subagent.suspended': {
+    kind: 'stream',
+    name: 'events',
+    type: 'subagent.suspended',
+    schema: subagentSuspendedEventSchema,
   },
 } satisfies Record<AgentEventName, AgentEventRegistration>;
