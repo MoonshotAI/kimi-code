@@ -11,6 +11,7 @@ import type {
   TodoItemState,
   UsageState,
 } from '../../protocol/ws-agent';
+import { readColdTokenUsage } from './coldTokenUsage';
 
 export interface ColdAgentFeed {
   readonly agent: AgentState;
@@ -27,21 +28,21 @@ export function projectColdAgentFeed(records: readonly WireRecord[]): ColdAgentF
   let planMode = false;
   let swarmMode = false;
   let towerMode = false;
-  let contextTokens: number | undefined;
+  let contextTokens = readColdTokenUsage(records);
   let maxContextTokens: number | undefined;
   let goal: GoalSnapshot | undefined;
-  let goalClearedAt = Number.NEGATIVE_INFINITY;
+  let goalCleared = false;
   for (const record of records) {
     if (record.type === 'goal.clear' || record.type === 'forked') {
-      goalClearedAt = Math.max(goalClearedAt, record.time ?? 0);
+      goalCleared = true;
+    } else if (record.type === 'goal.create' || record.type === 'goal.update') {
+      goalCleared = false;
     }
   }
 
   for (const entry of replay) {
     switch (entry.type) {
       case 'config_updated':
-        model = entry.config.modelAlias ?? model;
-        thinking = entry.config.thinkingLevel ?? thinking;
         break;
       case 'permission_updated':
         permission = entry.mode;
@@ -50,7 +51,7 @@ export function projectColdAgentFeed(records: readonly WireRecord[]): ColdAgentF
         planMode = entry.enabled;
         break;
       case 'goal_updated':
-        if (entry.time >= goalClearedAt) goal = entry.snapshot;
+        if (!goalCleared) goal = entry.snapshot;
         break;
       default:
         break;
@@ -58,6 +59,11 @@ export function projectColdAgentFeed(records: readonly WireRecord[]): ColdAgentF
   }
 
   for (const record of records) {
+    if (record.type === 'profile.bind' || record.type === 'config.update') {
+      model = stringValue(record['modelAlias']) ?? model;
+      thinking = stringValue(record['thinkingEffort'] ?? record['thinkingLevel']) ?? thinking;
+      continue;
+    }
     if (record.type === 'agent.status.updated') {
       const status = readStatus(record);
       model = status.model ?? model;

@@ -84,7 +84,7 @@ export class WireRecordCache {
       entry.tail = EMPTY_BUFFER;
     }
     if (st.size > entry.size) {
-      await this.readAppended(wirePath, entry, st.size);
+      await this.readAppended(wirePath, entry, st.size, st.ino);
     }
     entry.size = entry.offset + entry.tail.length;
     entry.mtimeMs = st.mtimeMs;
@@ -93,7 +93,7 @@ export class WireRecordCache {
     return snapshotRecords(entry);
   }
 
-  private async readAppended(wirePath: string, entry: WireCacheEntry, size: number): Promise<void> {
+  private async readAppended(wirePath: string, entry: WireCacheEntry, size: number, sourceIno: number): Promise<void> {
     const handle = await open(wirePath, 'r');
     let region: Buffer;
     try {
@@ -140,6 +140,15 @@ export class WireRecordCache {
     entry.lineCount = lineCount;
     entry.offset += start;
     if (corrupted) {
+      const current = await stat(wirePath);
+      if (current.ino !== sourceIno || current.size !== size) {
+        entry.offset = 0;
+        entry.size = 0;
+        entry.lineCount = 0;
+        entry.records = [];
+        entry.tail = EMPTY_BUFFER;
+        return;
+      }
       await truncate(wirePath, entry.offset);
       entry.tail = EMPTY_BUFFER;
     } else {

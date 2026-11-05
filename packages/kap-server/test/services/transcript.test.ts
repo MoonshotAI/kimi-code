@@ -58,6 +58,23 @@ import {
 } from '../../src/services/transcript/transcriptService';
 import { WireRecordCache, type ContextRecord } from '../../src/services/transcript/wireCache';
 
+const wireFsControl = vi.hoisted(() => ({ replaceOnSecondStat: '', calls: 0 }));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    stat: async (path: string) => {
+      wireFsControl.calls += 1;
+      if (wireFsControl.replaceOnSecondStat === path && wireFsControl.calls === 2) {
+        await actual.rename(`${path}.replacement`, path);
+        wireFsControl.replaceOnSecondStat = '';
+      }
+      return actual.stat(path);
+    },
+  };
+});
+
 function ev(payload: Record<string, unknown>): ProjectorBusEvent {
   return payload as unknown as ProjectorBusEvent;
 }
@@ -2293,6 +2310,51 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('projectColdAgentFeed restores profile bindings in journal order', () => {
+    const feed = projectColdAgentFeed([
+      { type: 'profile.bind', modelAlias: 'k1', thinkingEffort: 'low' },
+      { type: 'config.update', modelAlias: 'k2', thinkingEffort: 'high' },
+      { type: 'profile.bind', modelAlias: 'k3', thinkingEffort: 'medium' },
+      { type: 'config.update', thinkingEffort: 'high' },
+    ]);
+
+    expect(feed.agent).toMatchObject({ model: 'k3', thinking: 'high' });
+    expect(projectColdAgentFeed([
+      { type: 'profile.bind', modelAlias: 'k1', thinkingEffort: 'low' },
+    ]).agent).toMatchObject({ model: 'k1', thinking: 'low' });
+  });
+
+  it('projectColdAgentFeed uses journal order for goal clearing', () => {
+    expect(projectColdAgentFeed([
+      { type: 'goal.create', goalId: 'g1', objective: 'same timestamp', time: 1000 },
+      { type: 'goal.clear', time: 1000 },
+    ]).goal).toBeUndefined();
+    expect(projectColdAgentFeed([
+      { type: 'goal.create', goalId: 'g1', objective: 'backward clock', time: 2000 },
+      { type: 'goal.clear', time: 1000 },
+    ]).goal).toBeUndefined();
+    expect(projectColdAgentFeed([
+      { type: 'goal.clear', time: 3000 },
+      { type: 'goal.create', goalId: 'g2', objective: 'new goal', time: 2000 },
+    ]).goal).toMatchObject({ objective: 'new goal' });
+  });
+
+  it('projectColdAgentFeed replays durable token usage', () => {
+    const feed = projectColdAgentFeed([
+      {
+        type: 'context.append_message',
+        message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        time: 1000,
+      },
+      { type: 'token_counting.measured', length: 1, tokens: 10 },
+      { type: 'token_counting.truncated', length: 0, tokens: 5 },
+      { type: 'token_counting.rebased', length: 0, tokens: 7, measured: true },
+      { type: 'token_counting.turn_recorded', length: 1, tokens: 12, turnId: 1 },
+    ]);
+
+    expect(feed.usage).toEqual({ context_tokens: 12, max_context_tokens: undefined });
+  });
+
   it('projectColdAgentFeed clears inherited goals at the fork boundary', () => {
     const inherited = [
       { type: 'goal.create', goalId: 'g1', objective: 'source goal', time: 1000 },
@@ -4087,6 +4149,28 @@ describe('WireRecordCache', () => {
       expect(await cache.read(wirePath)).toEqual([a, b]);
       expect(await cache.read(wirePath)).toEqual([a, b]);
     } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('does not truncate a concurrently replaced journal', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wire-cache-concurrent-replace-'));
+    try {
+      const wirePath = join(home, 'wire.jsonl');
+      const a = userMessage('one', 1);
+      const b = userMessage('two', 2);
+      await writeFile(wirePath, `${JSON.stringify(a)}\n{"type":broken}\n`);
+      await writeFile(`${wirePath}.replacement`, wireText([b]));
+      wireFsControl.replaceOnSecondStat = wirePath;
+      wireFsControl.calls = 0;
+      const cache = new WireRecordCache();
+
+      await expect(cache.read(wirePath)).resolves.toEqual([]);
+      await expect(cache.read(wirePath)).resolves.toEqual([b]);
+      await expect(readFile(wirePath, 'utf8')).resolves.toBe(wireText([b]));
+      wireFsControl.replaceOnSecondStat = '';
+    } finally {
+      wireFsControl.replaceOnSecondStat = '';
       await rm(home, { recursive: true, force: true });
     }
   });
