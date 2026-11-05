@@ -13,6 +13,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import {
   Error2,
   ErrorCodes,
+  AgentTaskPersistence,
+  IAtomicDocumentStore,
   IBootstrapService,
   IOAuthService,
   type Event2,
@@ -28,6 +30,7 @@ import {
   IEventDispatcher,
   IEventService,
   IEnvironmentService,
+  IFileSystemStorageService,
   ITelemetryService,
   ISessionManager,
   ISessionMetadata,
@@ -36,10 +39,13 @@ import {
   IWorkspaceInstanceManager,
   IWorkspaceService,
   MAIN_AGENT_ID,
+  agentScopeOf,
   closeSessionById,
   getLiveSessionById,
   resumeSessionById,
   sessionDirOf,
+  sessionScopeOf,
+  workspacePersistenceScope,
   type ContextMessage,
   type ScopeSeed,
   type TelemetryAppenderRecord,
@@ -59,6 +65,7 @@ import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
 import { ensureMainAgent } from '../src/transport/mainAgent';
 import { readAgentState, readUsageState } from '../src/transport/ws/v1/agentState';
+import { createTaskSource } from '../src/transport/ws/v1/taskRequests';
 
 interface Envelope<T> {
   code: number;
@@ -2500,7 +2507,10 @@ describe('server-v2 /api/v1/sessions', () => {
       for (let attempt = 0; attempt < 100; attempt += 1) {
         await expect(
           resumeSessionById((server as RunningServer).core.accessor, id),
-        ).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+        ).rejects.toMatchObject({
+          code: ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE,
+          details: { cause_code: ErrorCodes.FS_PATH_NOT_FOUND, retryable: false },
+        });
       }
       const failureCount = () => records.filter((record) =>
         record.event === 'session_load_failed' &&
@@ -2520,6 +2530,57 @@ describe('server-v2 /api/v1/sessions', () => {
       await closeSessionById((server as RunningServer).core.accessor, id).catch(() => undefined);
       await rm(cwd, { recursive: true, force: true });
     }
+  });
+
+  it('reads persisted tasks without a cold resume and resumes for task commands', async () => {
+    await restartWithFreshHome();
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const manager = (server as RunningServer).core.accessor.get(ISessionManager);
+    await closeSessionById((server as RunningServer).core.accessor, id);
+    const summary = await manager.status(id);
+    if (summary === undefined) throw new Error('expected a session summary');
+    const bootstrap = (server as RunningServer).core.accessor.get(IBootstrapService);
+    const handlerScope = workspacePersistenceScope(bootstrap.scope('sessions'), summary.workspaceId);
+    const sessionScope = sessionScopeOf(handlerScope, id);
+    const sessionDir = sessionDirOf(bootstrap.homeDir, handlerScope, id);
+    const persistence = new AgentTaskPersistence(
+      join(sessionDir, 'agents', 'main'),
+      agentScopeOf(sessionScope, 'main'),
+      (server as RunningServer).core.accessor.get(IAtomicDocumentStore),
+      (server as RunningServer).core.accessor.get(IFileSystemStorageService),
+      { dir: sessionDir, scope: sessionScope },
+    );
+    const taskId = 'bash-test0001';
+    await persistence.writeTask({
+      taskId,
+      kind: 'process',
+      command: 'echo hello',
+      pid: 123,
+      exitCode: null,
+      description: 'persisted task',
+      status: 'running',
+      detached: true,
+      startedAt: 1,
+      endedAt: null,
+    });
+    await persistence.appendTaskOutput(taskId, 'hello\n');
+
+    const source = createTaskSource((server as RunningServer).core);
+    const resume = vi.spyOn(manager, 'resume');
+    const read = await source(id, 'main', taskId, 'read');
+    expect(read.kind).toBe('found');
+    expect(resume).not.toHaveBeenCalled();
+    if (read.kind === 'found') {
+      const tail = await read.tasks.readOutputTail(taskId, 100);
+      expect(Buffer.from(tail.data).toString('utf-8')).toBe('hello\n');
+    }
+
+    const command = await source(id, 'main', taskId, 'command');
+    expect(command.kind).toBe('found');
+    expect(resume).toHaveBeenCalledTimes(1);
   });
 
   it('merges metadata via profile and keeps cwd authoritative', async () => {

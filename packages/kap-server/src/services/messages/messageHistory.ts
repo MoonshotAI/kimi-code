@@ -4,17 +4,25 @@ import {
   IAgentContextMemoryService,
   IAgentScopeContext,
   IAppendLogStore,
+  IBlobStore,
+  IBootstrapService,
   ISessionIndex,
   IWireService,
+  MAIN_AGENT_ID,
+  agentScopeOf,
   createContextTranscriptReducer,
   fromPersistentWireRecord,
-  resumeSessionById,
+  getLiveSessionById,
+  makeAgentScopeContext,
+  sessionScopeOf,
+  workspacePersistenceScope,
   type ContextMessage,
   type ContextTranscript,
   type IAgentScopeHandle,
   type Scope,
   type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
+import { AgentBlobServiceImpl } from '@moonshot-ai/agent-core-v2/agent/blob/agentBlobServiceImpl';
 
 import { ensureMainAgent } from '../../transport/mainAgent';
 import type { Message, MessageRole } from '../../protocol/message';
@@ -108,11 +116,37 @@ async function loadMessages(core: Scope, sessionId: string): Promise<Message[]> 
     throw new SessionNotFoundError(sessionId);
   }
 
-  const session = await resumeSessionById(core.accessor, sessionId);
-  if (session === undefined) return [];
-  const agent = await ensureMainAgent(session);
+  const session = getLiveSessionById(core.accessor, sessionId);
+  if (session !== undefined) {
+    const agent = await ensureMainAgent(session);
+    return loadMessageHistory(core, agent, sessionId, summary.createdAt);
+  }
 
-  return loadMessageHistory(core, agent, sessionId, summary.createdAt);
+  const handlerScope = workspacePersistenceScope(
+    core.accessor.get(IBootstrapService).scope('sessions'),
+    summary.workspaceId,
+  );
+  const scope = agentScopeOf(sessionScopeOf(handlerScope, sessionId), MAIN_AGENT_ID);
+  const reducer = createContextTranscriptReducer();
+  for await (const record of core.accessor
+    .get(IAppendLogStore)
+    .read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
+    reducer.add(fromPersistentWireRecord(record));
+  }
+  const transcript = reducer.result();
+  const blobs = new AgentBlobServiceImpl(
+    core.accessor.get(IBlobStore),
+    makeAgentScopeContext({ agentId: MAIN_AGENT_ID, agentScope: scope }),
+  );
+  const merged = mergeLiveTail(transcript, []);
+  const entries = await rehydrate(blobs, merged.messages);
+  let previousMs = Number.NEGATIVE_INFINITY;
+  return entries.map((msg, index) => {
+    const baseMs = merged.times[index] ?? summary.createdAt + index;
+    const createdAtMs = Math.max(previousMs + 1, baseMs);
+    previousMs = createdAtMs;
+    return toProtocolMessage(sessionId, index, msg, summary.createdAt, createdAtMs);
+  });
 }
 
 export async function loadMessageHistory(
@@ -124,7 +158,7 @@ export async function loadMessageHistory(
   const transcript = await readTranscript(core, agent);
   const contextMessages = agent.accessor.get(IAgentContextMemoryService).get();
   const merged = mergeLiveTail(transcript, contextMessages);
-  const entries = await rehydrate(agent, merged.messages);
+  const entries = await rehydrate(agent.accessor.get(IAgentBlobService), merged.messages);
 
   let previousMs = Number.NEGATIVE_INFINITY;
   return entries.map((msg, index) => {
@@ -136,10 +170,9 @@ export async function loadMessageHistory(
 }
 
 async function rehydrate(
-  agent: IAgentScopeHandle,
+  blobs: Pick<IAgentBlobService, 'loadParts'>,
   messages: readonly ContextMessage[],
 ): Promise<readonly ContextMessage[]> {
-  const blobs = agent.accessor.get(IAgentBlobService);
   let changed = false;
   const out: ContextMessage[] = [];
   for (const msg of messages) {

@@ -1,9 +1,24 @@
+import { join } from 'node:path';
+
 import {
+  AgentTaskPersistence,
+  Error2,
+  ErrorCodes,
+  IAtomicDocumentStore,
+  IBootstrapService,
+  IFileSystemStorageService,
+  ISessionIndex,
+  agentScopeOf,
+  getLiveSessionById,
   getOrRestoreAgent,
-  IAgentTaskService,
+  isError2,
   resumeSessionById,
+  sessionDirOf,
+  sessionScopeOf,
+  workspacePersistenceScope,
   type AgentTaskOutputChunk,
   type AgentTaskOutputTail,
+  IAgentTaskService,
   type IDisposable,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -23,20 +38,28 @@ import {
 import { ensureMainAgent, MAIN_AGENT_ID } from '../../mainAgent';
 import { toTaskState } from './taskState';
 
+type TaskService = Pick<
+  IAgentTaskService,
+  'getTask' | 'readOutputTail' | 'onDidAppendOutput' | 'stopByUser' | 'detach'
+>;
+
 export type TaskSourceResult =
   | { readonly kind: 'session_not_found' }
   | { readonly kind: 'task_not_found' }
-  | { readonly kind: 'found'; readonly tasks: IAgentTaskService };
+  | { readonly kind: 'found'; readonly tasks: TaskService };
 
 export type TaskSource = (
   sessionId: string,
   agentId: string,
   taskId: string,
+  mode?: 'read' | 'command',
 ) => Promise<TaskSourceResult>;
 
 export function createTaskSource(core: Scope): TaskSource {
-  return async (sessionId, agentId, taskId) => {
-    const session = await resumeSessionById(core.accessor, sessionId);
+  return async (sessionId, agentId, taskId, mode = 'command') => {
+    const live = mode === 'read' ? getLiveSessionById(core.accessor, sessionId) : undefined;
+    if (mode === 'read' && live === undefined) return readColdTask(core, sessionId, agentId, taskId);
+    const session = live ?? await resumeSessionById(core.accessor, sessionId);
     if (session === undefined) return { kind: 'session_not_found' };
     const agent =
       agentId === MAIN_AGENT_ID
@@ -45,6 +68,49 @@ export function createTaskSource(core: Scope): TaskSource {
     const tasks = agent?.accessor.get(IAgentTaskService);
     if (tasks?.getTask(taskId) === undefined) return { kind: 'task_not_found' };
     return { kind: 'found', tasks };
+  };
+}
+
+async function readColdTask(
+  core: Scope,
+  sessionId: string,
+  agentId: string,
+  taskId: string,
+): Promise<TaskSourceResult> {
+  const summary = await core.accessor.get(ISessionIndex).get(sessionId);
+  if (summary === undefined) return { kind: 'session_not_found' };
+  const bootstrap = core.accessor.get(IBootstrapService);
+  const handlerScope = workspacePersistenceScope(bootstrap.scope('sessions'), summary.workspaceId);
+  const sessionDir = sessionDirOf(bootstrap.homeDir, handlerScope, sessionId);
+  const scope = agentScopeOf(sessionScopeOf(handlerScope, sessionId), agentId);
+  const persistence = new AgentTaskPersistence(
+    join(sessionDir, 'agents', agentId),
+    scope,
+    core.accessor.get(IAtomicDocumentStore),
+    core.accessor.get(IFileSystemStorageService),
+    agentId === MAIN_AGENT_ID
+      ? { dir: sessionDir, scope: sessionScopeOf(handlerScope, sessionId) }
+      : undefined,
+  );
+  const task = await persistence.readTask(taskId);
+  if (task === undefined) return { kind: 'task_not_found' };
+  const unavailable = (): never => {
+    throw new Error2(
+      ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE,
+      `session ${sessionId} workspace is unavailable`,
+      { details: { cause_code: ErrorCodes.WORKSPACE_NOT_FOUND, retryable: false } },
+    );
+  };
+  return {
+    kind: 'found',
+    tasks: {
+      getTask: () => task,
+      readOutputTail: async (id, maxBytes) =>
+        (await persistence.readTaskOutputTail(id, maxBytes)) ?? { offset: 0, data: new Uint8Array() },
+      onDidAppendOutput: () => ({ dispose: () => {} }),
+      stopByUser: unavailable,
+      detach: unavailable,
+    },
   };
 }
 
@@ -131,9 +197,9 @@ export class TaskRequests {
 
     let resolved: TaskSourceResult;
     try {
-      resolved = await this.source(sessionId, agentId, taskId);
-    } catch {
-      fail(ErrorCode.INTERNAL_ERROR, 'internal error');
+      resolved = await this.source(sessionId, agentId, taskId, 'read');
+    } catch (error) {
+      fail(taskRequestErrorCode(error), taskRequestErrorMessage(error));
       return;
     }
     if (resolved.kind === 'session_not_found') {
@@ -197,12 +263,12 @@ export class TaskRequests {
   private async command(
     requestId: string,
     request: TaskAddress,
-    run: (tasks: IAgentTaskService, taskId: string) => Promise<AgentTaskInfo | undefined>,
+    run: (tasks: TaskService, taskId: string) => Promise<AgentTaskInfo | undefined>,
     refuse?: (info: AgentTaskInfo) => { readonly code: number; readonly msg: string } | undefined,
   ): Promise<void> {
     if (this.disposed) return;
     try {
-      const resolved = await this.source(request.session_id, request.agent_id, request.task_id);
+      const resolved = await this.source(request.session_id, request.agent_id, request.task_id, 'command');
       if (resolved.kind === 'session_not_found') {
         this.sink.respond(requestId, ErrorCode.SESSION_NOT_FOUND, 'session not found');
         return;
@@ -219,8 +285,8 @@ export class TaskRequests {
         return;
       }
       this.sink.respond(requestId, ErrorCode.SUCCESS, undefined, state);
-    } catch {
-      this.sink.respond(requestId, ErrorCode.INTERNAL_ERROR, 'internal error');
+    } catch (error) {
+      this.sink.respond(requestId, taskRequestErrorCode(error), taskRequestErrorMessage(error));
     }
   }
 
@@ -228,6 +294,18 @@ export class TaskRequests {
     this.watches.get(key)?.dispose();
     this.watches.delete(key);
   }
+}
+
+function taskRequestErrorCode(error: unknown): number {
+  return isError2(error) && error.code === ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE
+    ? ErrorCode.SESSION_WORKSPACE_UNAVAILABLE
+    : ErrorCode.INTERNAL_ERROR;
+}
+
+function taskRequestErrorMessage(error: unknown): string {
+  return isError2(error) && error.code === ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE
+    ? error.message
+    : 'internal error';
 }
 
 function firstChunk(

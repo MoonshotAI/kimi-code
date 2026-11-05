@@ -20,7 +20,6 @@ import {
   ISessionManager,
   followSessionLifecycles,
   getLiveSessionById,
-  resumeSessionById,
   interactions,
   toDisposable,
 } from '@moonshot-ai/agent-core-v2';
@@ -197,25 +196,25 @@ export class SessionEventBroadcaster {
     transcriptGrades: TranscriptGradeSpec,
     transcriptSince?: Record<string, number>,
   ): Promise<boolean> {
-    let session: ISessionScopeHandle | undefined;
-    try {
-      session = await resumeSessionById(this.opts.core.accessor, sessionId);
-    } catch (error) {
-      this.opts.logger?.warn(
-        { sessionId, err: error instanceof Error ? error.message : String(error) },
-        'session subscribe resume failed',
-      );
-      return false;
-    }
-    if (session !== undefined) {
+    const session = getLiveSessionById(this.opts.core.accessor, sessionId);
+    if (session === undefined) {
       try {
-        await ensureMainAgent(session);
+        return await this.subscribeCold(sessionId, target, transcriptGrades);
       } catch (error) {
         this.opts.logger?.warn(
           { sessionId, err: error instanceof Error ? error.message : String(error) },
-          'session subscribe main agent failed',
+          'session cold subscribe failed',
         );
+        return false;
       }
+    }
+    try {
+      await ensureMainAgent(session);
+    } catch (error) {
+      this.opts.logger?.warn(
+        { sessionId, err: error instanceof Error ? error.message : String(error) },
+        'session subscribe main agent failed',
+      );
     }
     const state = await this.ensureState(sessionId);
     if (state === undefined || this.sessions.get(sessionId) !== state) return false;
@@ -226,6 +225,52 @@ export class SessionEventBroadcaster {
       state.transcriptSeeded.delete(target);
     }
     await this.subscribeTranscript(state, target, transcriptGrades, prev, transcriptSince);
+    if (state.targets.has(target)) state.transcriptSeeded.add(target);
+    return true;
+  }
+
+  private async subscribeCold(
+    sessionId: string,
+    target: BroadcastTarget,
+    spec: TranscriptGradeSpec,
+  ): Promise<boolean> {
+    const summary = await this.opts.core.accessor.get(ISessionManager).status?.(sessionId);
+    if (summary === undefined) return false;
+    let state = this.sessions.get(sessionId);
+    if (state === undefined) {
+      state = {
+        sessionId,
+        detached: true,
+        targets: new Map(),
+        lifecycleDisposables: [],
+        knownInteractions: new Map(),
+        transcriptSeeded: new Set(),
+        listedAgents: new Map(),
+      };
+      this.sessions.set(sessionId, state);
+    }
+    state.targets.set(target, spec);
+    const service = this.opts.transcriptService;
+    if (service !== undefined) {
+      const roster = (await service.readColdRoster(sessionId)) ?? [];
+      const backfill = new Set(
+        Object.keys(spec).filter((agentId) => agentId !== '*' && gradeFor(spec, agentId) !== 'off'),
+      );
+      for (const descriptor of roster) backfill.add(descriptor.agentId);
+      for (const agentId of backfill) {
+        if (gradeFor(spec, agentId) === 'off') continue;
+        const snapshot = await service.readColdSnapshot(sessionId, agentId);
+        if (snapshot === undefined) continue;
+        target.send(
+          buildTranscriptEnvelope(sessionId, 'transcript.reset', {
+            agent_id: agentId,
+            snapshot: redactSnapshotForGrade(gradeFor(spec, agentId), snapshot),
+            has_more_older: snapshot.hasMoreOlder ?? false,
+            seq: 0,
+          }),
+        );
+      }
+    }
     if (state.targets.has(target)) state.transcriptSeeded.add(target);
     return true;
   }

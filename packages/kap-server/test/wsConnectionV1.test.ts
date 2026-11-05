@@ -1,6 +1,7 @@
 import type { WebSocket } from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Error2, ErrorCodes } from '@moonshot-ai/agent-core-v2';
 import type { AgentTaskOutputChunk, IAgentTaskService } from '@moonshot-ai/agent-core-v2';
 import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 
@@ -1100,6 +1101,23 @@ describe('WsConnectionV1 task output', () => {
 
     expect(taskFrames(socket)).toEqual([
       { type: 'response', request_id: 'r1', code: 50001, msg: 'internal error' },
+    ]);
+    conn.close();
+  });
+
+  it('replies with the workspace-unavailable error for task commands', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, {
+      taskSource: async () => {
+        throw new Error2(ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE, 'session workspace unavailable');
+      },
+    });
+
+    send(socket, { type: 'task.stop', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
+
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 40935, msg: 'session workspace unavailable' },
     ]);
     conn.close();
   });

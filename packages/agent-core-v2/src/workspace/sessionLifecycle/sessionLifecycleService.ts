@@ -100,7 +100,7 @@ import { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
 import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
-import { resumeFailure, resumeFingerprint, type ResumeFailure } from './resumeFailure';
+import { resumeFailure, resumeFingerprint, sessionWorkspaceUnavailable, type ResumeFailure } from './resumeFailure';
 import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
 import {
   assertForkTurnIndex,
@@ -473,8 +473,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       });
     })()
       .catch((error: unknown) => {
-        this.resumeFailures.set(sessionId, resumeFailure(error, summary));
-        throw error;
+        const failure = resumeFailure(error, summary);
+        const wrapped = sessionWorkspaceUnavailable(error, sessionId);
+        this.resumeFailures.set(sessionId, { ...failure, error: wrapped });
+        throw wrapped;
       })
       .finally(() => this.resuming.delete(sessionId));
     this.resuming.set(sessionId, promise);

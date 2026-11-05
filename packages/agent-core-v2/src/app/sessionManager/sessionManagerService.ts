@@ -27,7 +27,7 @@ import {
   type SessionWillCloseEvent,
   type SessionWillCreateEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
-import { resumeFailure, resumeFingerprint, type ResumeFailure } from '#/workspace/sessionLifecycle/resumeFailure';
+import { resumeFailure, resumeFingerprint, sessionWorkspaceUnavailable, type ResumeFailure } from '#/workspace/sessionLifecycle/resumeFailure';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceInstanceManager, type WorkspaceInstanceLease, type WorkspaceInstanceRef } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
@@ -224,11 +224,13 @@ export class SessionManager implements ISessionManager {
         options,
         this.reclaimed.has(sessionId) ? 'reclaimed' : 'resume',
       ));
+    }).catch((error: unknown) => {
+      const failure = resumeFailure(error, summary);
+      const wrapped = sessionWorkspaceUnavailable(error, sessionId);
+      this.resumeFailures.set(sessionId, { ...failure, error: wrapped });
+      throw wrapped;
     }).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
-    void promise.catch((error: unknown) => {
-      this.resumeFailures.set(sessionId, resumeFailure(error, summary));
-    });
     return promise;
   }
 
@@ -356,11 +358,15 @@ export class SessionManager implements ISessionManager {
   }
 
   async restore(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
-    const handle = await this.serializeLifecycle(sessionId, () =>
-      this.restoreInner(sessionId, { ...options, forceRetry: true }),
-    );
-    if (handle !== undefined) this.resumeFailures.delete(sessionId);
-    return handle;
+    try {
+      const handle = await this.serializeLifecycle(sessionId, () =>
+        this.restoreInner(sessionId, { ...options, forceRetry: true }),
+      );
+      if (handle !== undefined) this.resumeFailures.delete(sessionId);
+      return handle;
+    } catch (error) {
+      throw sessionWorkspaceUnavailable(error, sessionId);
+    }
   }
 
   async delete(sessionId: string): Promise<void> {

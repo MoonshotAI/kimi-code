@@ -38,6 +38,16 @@ describe('/api/v1/debug transport mapError', () => {
     expect(env.details).toEqual(details);
   });
 
+  it('maps workspace unavailability with its cause and retry semantics', () => {
+    const details = { cause_code: 'fs.path_not_found', retryable: false };
+    const env = mapError(
+      new Error2(ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE, 'missing', { details }),
+      'req-1',
+    );
+    expect(env.code).toBe(ErrorCode.SESSION_WORKSPACE_UNAVAILABLE);
+    expect(env.details).toEqual(details);
+  });
+
   it('falls back to INTERNAL_ERROR for coded errors without a wire equivalent', () => {
     const env = mapError(new Error2(ErrorCodes.OS_FS_UNKNOWN, 'boom'), 'req-1');
     expect(env.code).toBe(ErrorCode.INTERNAL_ERROR);

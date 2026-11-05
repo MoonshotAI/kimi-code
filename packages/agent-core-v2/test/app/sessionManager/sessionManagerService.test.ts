@@ -517,7 +517,10 @@ describe('SessionManager', () => {
     (fake.service as unknown as { restore: unknown }).restore = restore;
 
     for (let attempt = 0; attempt < 100; attempt += 1) {
-      await expect(manager.resume(summary.id)).rejects.toBe(error);
+      await expect(manager.resume(summary.id)).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE,
+        details: { cause_code: ErrorCodes.WORKSPACE_NOT_FOUND, retryable: false },
+      });
     }
     expect(acquire).toHaveBeenCalledTimes(1);
     expect(track2).toHaveBeenCalledTimes(1);
@@ -559,7 +562,10 @@ describe('SessionManager', () => {
     );
 
     const attempts = Array.from({ length: 20 }, () => manager.resume(summary.id));
-    await Promise.all(attempts.map((attempt) => expect(attempt).rejects.toBe(error)));
+    await Promise.all(attempts.map((attempt) => expect(attempt).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE,
+      details: { cause_code: ErrorCodes.FS_PATH_NOT_FOUND, retryable: false },
+    })));
     expect(resume).toHaveBeenCalledTimes(1);
     manager.dispose();
   });

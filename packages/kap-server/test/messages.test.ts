@@ -6,6 +6,7 @@ import {
   IAgentContextMemoryService,
   IAgentLifecycleService,
   IWireService,
+  ITelemetryService,
   getLiveSessionById,
   IModelCatalog,
   type ContextMessage,
@@ -309,7 +310,13 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     server = undefined;
     await boot();
 
+    const records: { event: string }[] = [];
+    const appender = server!.core.accessor.get(ITelemetryService).addAppender({
+      track: (record) => records.push(record),
+    });
     const { body } = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
+    appender.dispose();
+    expect(records.filter((record) => record.event === 'session_started')).toEqual([]);
     expect(body.code).toBe(0);
     expect(body.data.items).toHaveLength(4);
     expect(body.data.items.every((m) => MSG_ID.test(m.id))).toBe(true);
