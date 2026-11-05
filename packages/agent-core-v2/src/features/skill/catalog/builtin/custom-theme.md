@@ -73,7 +73,9 @@ Only set tokens from this set — unknown keys are silently ignored at load. If 
 | `warning` | Warning state: auto/yolo badges, stale markers, plan-mode hint |
 | `error` | Error state: error messages, failed tool output |
 | `diffAdded` | Diff added lines |
+| `diffAddedBg` | Diff added line background |
 | `diffRemoved` | Diff removed lines |
+| `diffRemovedBg` | Diff removed line background |
 | `diffAddedStrong` | Diff intra-line changed words, added (bold) |
 | `diffRemovedStrong` | Diff intra-line changed words, removed (bold) |
 | `diffGutter` | Diff line-number gutter |

@@ -20,7 +20,9 @@ Kimi Code CLI 可以使用内置配色，也可以使用自定义 JSON 主题文
 | `warning` | `#E8A838` | `#92660A` | 警告态。auto/yolo 徽章、过期标记、Plan 模式提示 |
 | `error` | `#E85454` | `#B91C1C` | 错误态。错误信息、失败的工具输出 |
 | `diffAdded` | `#4EC87E` | `#0E7A38` | diff 新增行 |
+| `diffAddedBg` | `#173326` | `#E8F5EE` | diff 新增行背景 |
 | `diffRemoved` | `#E85454` | `#B91C1C` | diff 删除行 |
+| `diffRemovedBg` | `#32181D` | `#FDECEC` | diff 删除行背景 |
 | `diffAddedStrong` | `#7AD99B` | `#0E7A38` | diff 行内改动的新增词（加粗高亮） |
 | `diffRemovedStrong` | `#F08585` | `#B91C1C` | diff 行内改动的删除词（加粗高亮） |
 | `diffGutter` | `#6B6B6B` | `#737373` | diff 行号槽 |
