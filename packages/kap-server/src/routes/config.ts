@@ -54,7 +54,7 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
       },
-      description: 'Update the global Kimi configuration (merge semantics)',
+      description: 'Update the global Kimi configuration (merge semantics; map-valued sections replace their map)',
       tags: ['config'],
     },
     async (req, reply) => {
@@ -68,8 +68,8 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
         delete camelPatch['yolo'];
         for (const domain of Object.keys(camelPatch)) {
           const patch = camelPatch[domain];
-          if (domain === 'secondaryModel' && patch === null) {
-            await config.replace(domain, null);
+          if ((domain === 'secondaryModel' && patch === null) || domain === 'environments') {
+            await config.replace(domain, patch);
           } else {
             await config.set(domain, patch);
           }
@@ -198,7 +198,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-const MAP_VALUED_CONFIG_KEYS = new Set(['providers', 'models', 'experimental', 'raw']);
+const MAP_VALUED_CONFIG_KEYS = new Set(['providers', 'models', 'environments', 'experimental', 'raw']);
 
 function convertKeysSnakeToCamel(obj: unknown, preserveKeys = false): unknown {
   if (Array.isArray(obj)) {
