@@ -172,6 +172,9 @@ export function notificationItem(id: string, notification: TaskNotification, tim
     output: output === undefined
       ? undefined
       : { file: output.file, preview: output.preview, bytes: output.bytes, truncated: output.truncated },
+    answer: notification.answer === undefined
+      ? undefined
+      : { answers: { ...notification.answer.answers }, note: notification.answer.note },
   };
 }
 

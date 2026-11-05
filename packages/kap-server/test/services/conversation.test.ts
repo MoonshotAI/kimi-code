@@ -373,6 +373,14 @@ describe('conversation fold', () => {
     expect(state.turns[2]?.items.map((item) => item.item_id)).toEqual(['n-c', 'n-c:1']);
   });
 
+  it('reads the answer of a background question into structured fields', () => {
+    const answer = '\n<answer>\n{"answers":{"Pick one?":"B"},"note":"because"}\n</answer>';
+    const state = fold([userMessage(undefined, notificationXml('question-1', answer), { kind: 'task', taskId: 'question-1' })]);
+
+    expect(state.turns[0]?.items[0]).toMatchObject({ type: 'notification', answer: { answers: { 'Pick one?': 'B' }, note: 'because' } });
+    expect(state.turns[0]?.items[0]).toEqual(expect.not.objectContaining({ output: expect.anything() }));
+  });
+
   it('attaches an approval to the new call when an ended call of an earlier turn reused its id', () => {
     const state = fold([
       turnPrompt(0, 'p1'),

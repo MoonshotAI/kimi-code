@@ -5,6 +5,11 @@ export interface TaskNotificationOutput {
   readonly truncated?: boolean;
 }
 
+export interface TaskAnswer {
+  readonly answers: Readonly<Record<string, string | true>>;
+  readonly note?: string;
+}
+
 export interface TaskNotification {
   readonly id: string;
   readonly type: string;
@@ -15,6 +20,7 @@ export interface TaskNotification {
   readonly severity: 'info' | 'warning' | 'error';
   readonly body: string;
   readonly output?: TaskNotificationOutput;
+  readonly answer?: TaskAnswer;
 }
 
 interface XmlElement {
@@ -38,6 +44,8 @@ export function plainTaskNotification(sourceKind: string, sourceId: string, body
 function notificationOf(rawAttributes: string, content: string): TaskNotification {
   const attributes = xmlAttributes(rawAttributes);
   const severity = SEVERITY_RE.exec(content)?.[1]?.trim();
+  const answerText = answerTextOf(content);
+  const answer = answerText === undefined ? undefined : taskAnswerOf(answerText);
   return {
     id: attributes['id'] ?? '',
     type: attributes['type'] ?? '',
@@ -47,7 +55,32 @@ function notificationOf(rawAttributes: string, content: string): TaskNotificatio
     title: unescapeXml(TITLE_RE.exec(content)?.[1]?.trim() ?? ''),
     severity: severity === 'warning' || severity === 'error' ? severity : 'info',
     body: unescapeXml(bodyOf(content)),
-    output: outputOf(content),
+    output: answer !== undefined ? undefined : answerText !== undefined ? { preview: answerText, truncated: false } : outputOf(content),
+    answer,
+  };
+}
+
+function answerTextOf(content: string): string | undefined {
+  const answer = xmlElements(content, 'answer').next().value;
+  if (answer === undefined) return undefined;
+  return answer.content.replace(/^\n/, '').replace(/\n$/, '').replaceAll('&lt;', '<').replaceAll('&gt;', '>');
+}
+
+function taskAnswerOf(text: string): TaskAnswer | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const { answers, note } = value as { answers?: unknown; note?: unknown };
+  if (typeof answers !== 'object' || answers === null || Array.isArray(answers)) return undefined;
+  return {
+    answers: Object.fromEntries(
+      Object.entries(answers).filter((entry): entry is [string, string | true] => typeof entry[1] === 'string' || entry[1] === true),
+    ),
+    note: typeof note === 'string' && note.length > 0 ? note : undefined,
   };
 }
 
@@ -61,11 +94,6 @@ function bodyOf(content: string): string {
 }
 
 function outputOf(content: string): TaskNotificationOutput | undefined {
-  const answer = xmlElements(content, 'answer').next().value;
-  if (answer !== undefined) {
-    const text = answer.content.replace(/^\n/, '').replace(/\n$/, '');
-    return { preview: text.replaceAll('&lt;', '<').replaceAll('&gt;', '>'), truncated: false };
-  }
   const file = xmlElements(content, 'output-file').next().value;
   const preview = xmlElements(content, 'output-preview').next().value;
   if (file === undefined && preview === undefined) return undefined;

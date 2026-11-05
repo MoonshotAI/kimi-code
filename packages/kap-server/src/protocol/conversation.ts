@@ -220,6 +220,12 @@ export const notificationItemSchema = z.object({
       truncated: z.boolean().optional(),
     })
     .optional(),
+  answer: z
+    .object({
+      answers: z.record(z.string(), z.union([z.string(), z.literal(true)])),
+      note: z.string().optional(),
+    })
+    .optional(),
 });
 export type NotificationItem = z.infer<typeof notificationItemSchema>;
 
