@@ -1,5 +1,22 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import os from 'node:os';
+
+export function isAllInterfaces(host: string): boolean {
+  return host === '0.0.0.0' || host === '::';
+}
+
+export function getLocalNetworkAddresses(port: number): string[] {
+  const addresses: string[] = [];
+  for (const [, ifaceList] of Object.entries(os.networkInterfaces())) {
+    for (const iface of ifaceList ?? []) {
+      if (!iface.internal && iface.family === 'IPv4') {
+        addresses.push(`http://${iface.address}:${port}/`);
+      }
+    }
+  }
+  return addresses;
+}
 
 /** Resolve KIMI_CODE_HOME (env > ~/.kimi-code). */
 export function resolveKimiCodeHome(): string {
