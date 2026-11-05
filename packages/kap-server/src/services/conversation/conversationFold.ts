@@ -250,6 +250,7 @@ export function undoConversationTurns(state: ConversationState, count: number): 
   }
   const cutIndex = anchor.itemCount > 0 ? anchorIndex + 1 : anchorIndex;
   const removed = new Set(state.turns.splice(cutIndex).map((turn) => turn.turn_id));
+  state.nextOrdinal = (state.turns.at(-1)?.ordinal ?? -1) + 1;
   for (const turnId of removed) delete state.steps[turnId];
   if (state.openTurnId !== undefined && removed.has(state.openTurnId)) state.openTurnId = undefined;
   state.pendingPrompt = undefined;
@@ -635,6 +636,7 @@ function addForkBoundary(state: ConversationState, fork: ConversationFork, time:
 
 function clearConversation(state: ConversationState): void {
   state.turns = [];
+  state.nextOrdinal = 0;
   state.steps = {};
   state.tools = {};
   state.interactions = {};
@@ -694,20 +696,20 @@ function endTurn(state: ConversationState, turn: ConversationTurn, end: TurnEnd,
   turn.retry = undefined;
   turn.ended_at = isoTime(time);
   turn.duration_ms = Math.max(0, time - Date.parse(turn.started_at));
-  for (const item of turn.items) endItem(state, item, end.outcome, time);
+  for (const item of turn.items) endItem(state, item, time);
   delete state.provisionalEnds[turn.turn_id];
   if (state.openTurnId === turn.turn_id) {
     state.openTurnId = state.turns.findLast((candidate) => candidate.status === 'running')?.turn_id;
   }
 }
 
-function endItem(state: ConversationState, item: ConversationItem, outcome: ConversationOutcome, time: number): void {
+function endItem(state: ConversationState, item: ConversationItem, time: number): void {
   if (item.type === 'tool_call') {
     const interaction = state.tools[item.item_id]?.interaction;
     if (interaction?.pending === true) interaction.pending = false;
     if (item.status !== 'ended') {
       item.status = 'ended';
-      item.outcome = outcome === 'completed' ? 'completed' : 'interrupted';
+      item.outcome = 'interrupted';
       item.ended_at = isoTime(time);
     }
     refreshTool(state, item);

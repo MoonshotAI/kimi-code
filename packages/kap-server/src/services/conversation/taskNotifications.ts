@@ -76,10 +76,10 @@ function taskAnswerOf(text: string): TaskAnswer | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
   const { answers, note } = value as { answers?: unknown; note?: unknown };
   if (typeof answers !== 'object' || answers === null || Array.isArray(answers)) return undefined;
+  const entries = Object.entries(answers);
+  if (!entries.every((entry): entry is [string, string | true] => typeof entry[1] === 'string' || entry[1] === true)) return undefined;
   return {
-    answers: Object.fromEntries(
-      Object.entries(answers).filter((entry): entry is [string, string | true] => typeof entry[1] === 'string' || entry[1] === true),
-    ),
+    answers: Object.fromEntries(entries),
     note: typeof note === 'string' && note.length > 0 ? note : undefined,
   };
 }

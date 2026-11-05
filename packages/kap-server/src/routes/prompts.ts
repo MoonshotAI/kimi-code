@@ -566,6 +566,7 @@ export interface PromptAttempt {
 interface PromptAttemptRecord {
   readonly fingerprint: string;
   readonly response: Promise<unknown>;
+  settled: boolean;
 }
 
 const PROMPT_ATTEMPTS_PER_SESSION = 256;
@@ -593,11 +594,15 @@ export function beginPromptAttempt(sessionId: string, promptId: string | undefin
     resolve = settleOk;
     reject = settleError;
   });
-  response.catch(() => {});
-  attempts.set(promptId, { fingerprint, response });
-  for (const oldest of attempts.keys()) {
+  const record: PromptAttemptRecord = { fingerprint, response, settled: false };
+  const settle = (): void => {
+    record.settled = true;
+  };
+  response.then(settle, settle);
+  attempts.set(promptId, record);
+  for (const [oldest, candidate] of attempts) {
     if (attempts.size <= PROMPT_ATTEMPTS_PER_SESSION) break;
-    attempts.delete(oldest);
+    if (candidate.settled) attempts.delete(oldest);
   }
   let enqueued = false;
   return {

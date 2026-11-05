@@ -420,6 +420,23 @@ describe('conversation fold', () => {
     expect(state.turns[1]?.items[1]).toEqual(expect.not.objectContaining({ interaction_id: expect.anything() }));
   });
 
+  it('interrupts a call left without a result and restarts ordinals after a clear', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'first'),
+      stepBegin(0, 1, 's1'),
+      toolCall(0, 1, 's1', 'call-1', 'Bash', { command: 'ls' }),
+      turnEnded(0, 'completed'),
+      record('context.clear', {}),
+      turnPrompt(1, 'p2'),
+      userMessage('p2', 'second'),
+    ]);
+
+    expect(state.turns.map((turn) => turn.ordinal)).toEqual([0]);
+    const cleared = fold([turnPrompt(0, 'p1'), userMessage('p1', 'first'), stepBegin(0, 1, 's1'), toolCall(0, 1, 's1', 'call-1', 'Bash'), turnEnded(0, 'completed')]);
+    expect(cleared.turns[0]?.items[1]).toMatchObject({ item_id: 'call-1', status: 'ended', outcome: 'interrupted' });
+  });
+
   it('attaches interactions recorded before the tool call and subagent links to tool items', () => {
     const state = fold([
       turnPrompt(0, 'p1'),
