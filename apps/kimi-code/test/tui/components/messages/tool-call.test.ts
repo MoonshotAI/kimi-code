@@ -4,8 +4,10 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
+import { TruncatedHeaderLine } from '#/tui/components/messages/truncated-header-line';
 import { NOTIFY_USER_MARK, STATUS_BULLET } from '#/tui/constant/symbols';
 import { darkColors } from '#/tui/theme/colors';
+import { setRenderCacheEnabled } from '#/tui/utils/render-cache';
 
 import { captureProcessWrite } from '../../../helpers/process';
 
@@ -3372,5 +3374,114 @@ describe('ToolCallComponent hasHiddenContent while arguments stream', () => {
     );
     expect(bash.hasHiddenContent()).toBe(true);
     bash.dispose();
+  });
+});
+
+describe('ToolCallComponent render cache', () => {
+  const readCall = { id: 'call_cache', name: 'Read', args: { path: 'foo.ts' } };
+  const readResult = { tool_call_id: 'call_cache', output: 'content', is_error: false };
+
+  it('returns the same array when nothing changed between renders', () => {
+    const component = new ToolCallComponent(readCall, readResult);
+    const first = component.render(100);
+    expect(component.render(100)).toBe(first);
+    component.dispose();
+  });
+
+  it('renders the same text as a fresh card after a width change and back', () => {
+    const component = new ToolCallComponent(readCall, readResult);
+    const wide = component.render(100);
+    const narrow = component.render(20);
+    expect(narrow).toEqual(new ToolCallComponent(readCall, readResult).render(20));
+    expect(component.render(100)).toEqual(wide);
+    component.dispose();
+  });
+
+  it('re-renders when the result arrives', () => {
+    const component = new ToolCallComponent(readCall, undefined);
+    const pending = component.render(100);
+    component.setResult(readResult, { known: false });
+    const done = component.render(100);
+    expect(done).not.toBe(pending);
+    expect(done).toEqual(new ToolCallComponent(readCall, readResult).render(100));
+    component.dispose();
+  });
+
+  describe('with the render cache disabled', () => {
+    beforeEach(() => setRenderCacheEnabled(false));
+    afterEach(() => setRenderCacheEnabled(true));
+
+    it('renders the card again with equal text', () => {
+      const component = new ToolCallComponent(readCall, readResult);
+      const first = component.render(100);
+      const second = component.render(100);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+      component.dispose();
+    });
+
+    it('renders the spacer again with equal text', () => {
+      const component = new ToolCallComponent(readCall, readResult);
+      const spacer = component.children.find((child) => child.constructor.name === 'StableSpacer');
+      if (spacer === undefined) throw new Error('spacer not found');
+      const first = spacer.render(100);
+      const second = spacer.render(100);
+      expect(second).not.toBe(first);
+      expect(second).toEqual(first);
+      component.dispose();
+    });
+  });
+});
+
+describe('ToolCallComponent expanded clip detection', () => {
+  const bashCall = { id: 'call_clip', name: 'Bash', args: { command: 'echo hi' } };
+  const longLine = 'x'.repeat(200);
+  const bashResult = { tool_call_id: 'call_clip', output: longLine, is_error: false };
+
+  it('tracks the render width instead of keeping the first answer', () => {
+    const component = new ToolCallComponent(bashCall, bashResult);
+    component.setExpanded(true);
+    component.render(400);
+    expect(component.hasHiddenContent()).toBe(false);
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(true);
+    component.dispose();
+  });
+
+  it('forgets the answer when the result changes', () => {
+    const component = new ToolCallComponent(bashCall, { ...bashResult, output: 'short' });
+    component.setExpanded(true);
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(false);
+    component.setResult(bashResult, { known: false });
+    component.render(60);
+    expect(component.hasHiddenContent()).toBe(true);
+    component.dispose();
+  });
+
+  it('measures the output again on every render when the render cache is disabled', () => {
+    const measure = vi.spyOn(TruncatedHeaderLine.prototype, 'render');
+    const countRenderCalls = (cacheEnabled: boolean): number[] => {
+      setRenderCacheEnabled(cacheEnabled);
+      const component = new ToolCallComponent(bashCall, { ...bashResult, output: 'short' });
+      component.setExpanded(true);
+      const counts: number[] = [];
+      for (let pass = 0; pass < 2; pass += 1) {
+        measure.mockClear();
+        component.render(60);
+        counts.push(measure.mock.calls.length);
+      }
+      component.dispose();
+      return counts;
+    };
+    try {
+      const [first, second] = countRenderCalls(true);
+      expect(first).toBeGreaterThan(0);
+      expect(second).toBeLessThan(first!);
+      expect(countRenderCalls(false)).toEqual([first, first]);
+    } finally {
+      setRenderCacheEnabled(true);
+      measure.mockRestore();
+    }
   });
 });

@@ -786,6 +786,16 @@ class ToolOutputMarkdown extends Markdown {
   }
 }
 
+class StableSpacer extends Spacer {
+  private cache: { width: number; lines: string[] } | undefined;
+
+  override render(width: number): string[] {
+    if (!isRenderCacheEnabled()) return super.render(width);
+    if (this.cache?.width !== width) this.cache = { width, lines: super.render(width) };
+    return this.cache.lines;
+  }
+}
+
 export class ToolCallComponent extends Container {
   private expanded = false;
   private toolCall: ToolCallBlockData;
@@ -916,7 +926,7 @@ export class ToolCallComponent extends Container {
     this.ui = ui;
     this.applySubagentReplay(toolCall.subagent);
 
-    this.addChild(new Spacer(1));
+    this.addChild(new StableSpacer(1));
     this.headerText =
       toolCall.name === 'NotifyUser'
         ? new NotifyUserHeader(this.buildHeader())
@@ -1050,7 +1060,13 @@ export class ToolCallComponent extends Container {
     return this.hiddenContent || this.truncatedAtLastRender;
   }
 
+  private collapsedOutcomeClipCache: { width: number; clips: boolean } | undefined;
+
   private collapsedOutcomeClips(width: number): boolean {
+    const cacheEnabled = isRenderCacheEnabled();
+    if (cacheEnabled && this.collapsedOutcomeClipCache?.width === width) {
+      return this.collapsedOutcomeClipCache.clips;
+    }
     const result = this.result;
     if (result === undefined || result.output.length === 0 || result.is_error === true) {
       return false;
@@ -1064,12 +1080,14 @@ export class ToolCallComponent extends Container {
       result.output,
       name === 'Bash' && !leadsWithMetadata ? 'last' : 'first',
     );
+    let clips = false;
     for (const row of rows) {
       if (!(row instanceof TruncatedHeaderLine)) continue;
       row.render(width);
-      if (row.wasTruncated()) return true;
+      if (row.wasTruncated()) clips = true;
     }
-    return false;
+    if (cacheEnabled) this.collapsedOutcomeClipCache = { width, clips };
+    return clips;
   }
 
   /** Whether the global ctrl+o toggle currently has this card expanded. */
@@ -2136,6 +2154,7 @@ export class ToolCallComponent extends Container {
 
   private rebuildContent(): void {
     this.hiddenContent = undefined;
+    this.collapsedOutcomeClipCache = undefined;
     while (this.children.length > this.callPreviewEndIndex) {
       this.children.pop();
     }
@@ -2148,6 +2167,7 @@ export class ToolCallComponent extends Container {
 
   private rebuildBody(): void {
     this.hiddenContent = undefined;
+    this.collapsedOutcomeClipCache = undefined;
     while (this.children.length > CARD_PREAMBLE_CHILDREN) {
       this.children.pop();
     }
