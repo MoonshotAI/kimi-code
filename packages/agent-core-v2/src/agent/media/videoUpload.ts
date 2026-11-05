@@ -16,7 +16,7 @@ export function isVideoUploadUnsupportedError(error: unknown): error is VideoUpl
 }
 
 export function inlineVideoSupportedForProtocol(protocol: Protocol): boolean {
-  return protocol !== 'openai' && protocol !== 'openai_responses';
+  return protocol !== 'openai_responses';
 }
 
 export function inlineVideoPart(data: Uint8Array, mimeType: string): VideoURLPart {

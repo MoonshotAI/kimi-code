@@ -568,7 +568,10 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
           memoize: true,
         };
       }
-      return { part: videoTag(tagPath), memoize: false };
+      return {
+        part: inlineSupported ? inlineVideoPart(bytes, mimeType) : videoTag(tagPath),
+        memoize: false,
+      };
     }
   }
 

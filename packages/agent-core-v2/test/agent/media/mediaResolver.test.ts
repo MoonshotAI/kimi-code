@@ -396,10 +396,10 @@ describe('AgentMediaResolverService video strategy', () => {
       req: (upload) => requester({ videoIn: false, uploadVideo: upload }),
     },
     {
-      name: 'a no-upload provider whose wire drops inline video (openai family)',
+      name: 'a no-upload provider whose wire drops video (openai responses)',
       files: new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]),
       fileId: FILE_ID,
-      req: () => requester({ protocol: 'openai', uploadVideo: undefined }),
+      req: () => requester({ protocol: 'openai_responses', uploadVideo: undefined }),
     },
     {
       name: 'the bytes do not sniff as a video',
@@ -487,22 +487,21 @@ describe('AgentMediaResolverService video strategy', () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  it('retries the upload on a later step after a transient failure instead of freezing the tag', async () => {
+  it('inlines a transient upload failure and retries on a later step', async () => {
     let uploadCalls = 0;
     const upload = vi.fn(async (): Promise<VideoURLPart> => {
       uploadCalls += 1;
       if (uploadCalls === 1) throw new Error('files endpoint unavailable');
       return msPart('prov-1');
     });
-    const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
     const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]), sessionDir);
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
     const req = requester({ uploadVideo: upload });
 
     const failed = await resolveMedia(res, [message], req);
     expect(firstPart(failed)).toEqual({
-      type: 'text',
-      text: `<video path="${canonical}"></video>`,
+      type: 'video_url',
+      videoUrl: { url: `data:video/mp4;base64,${VIDEO_BYTES.toString('base64')}` },
     });
 
     const retried = await resolveMedia(res, [message], req);
