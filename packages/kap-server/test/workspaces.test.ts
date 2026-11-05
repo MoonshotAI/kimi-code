@@ -739,3 +739,118 @@ describe('server-v2 /api/v1/workspaces', () => {
     }
   });
 });
+
+
+describe('empty implicit workspace filtering', () => {
+  it('hides only empty implicit projects without deleting registry data or checking roots', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'kimi-empty-implicit-filter-'));
+    let server: RunningServer | undefined;
+    try {
+      const emptyImplicitRoot = join(home, 'missing-empty-implicit');
+      const emptyManagedRoot = join(home, 'missing-empty-managed');
+      const archivedImplicitRoot = join(home, 'missing-archived-implicit');
+      const presentImplicitRoot = join(home, 'present-implicit');
+      const emptyImplicitId = encodeWorkDirKey(emptyImplicitRoot);
+      const archivedImplicitId = encodeWorkDirKey(archivedImplicitRoot);
+      const presentImplicitId = encodeWorkDirKey(presentImplicitRoot);
+      const emptyManagedId = 'wm_empty';
+      const projects = {
+        schema_version: 2,
+        projects: {
+          [emptyImplicitId]: {
+            root: emptyImplicitRoot,
+            name: 'empty-implicit',
+            kind: 'implicit',
+            created_at: '2026-01-01T00:00:00.000Z',
+            last_opened_at: '2026-01-01T00:00:00.000Z',
+          },
+          [emptyManagedId]: {
+            root: emptyManagedRoot,
+            name: 'empty-managed',
+            kind: 'managed',
+            created_at: '2026-01-01T00:00:00.000Z',
+            last_opened_at: '2026-01-01T00:00:00.000Z',
+          },
+          [archivedImplicitId]: {
+            root: archivedImplicitRoot,
+            name: 'archived-implicit',
+            kind: 'implicit',
+            created_at: '2026-01-01T00:00:00.000Z',
+            last_opened_at: '2026-01-01T00:00:00.000Z',
+          },
+          [presentImplicitId]: {
+            root: presentImplicitRoot,
+            name: 'present-implicit',
+            kind: 'implicit',
+            created_at: '2026-01-01T00:00:00.000Z',
+            last_opened_at: '2026-01-01T00:00:00.000Z',
+          },
+        },
+        deleted_project_ids: [],
+      };
+      const projectsPath = join(home, 'projects.json');
+      await writeFile(projectsPath, JSON.stringify(projects), 'utf8');
+      const before = await readFile(projectsPath, 'utf8');
+      const seed = async (
+        workspaceId: string,
+        sessionId: string,
+        cwd: string,
+        archived: boolean,
+      ): Promise<void> => {
+        const sessionDir = join(home, 'sessions', workspaceId, sessionId);
+        await mkdir(sessionDir, { recursive: true });
+        await writeFile(
+          join(sessionDir, 'state.json'),
+          JSON.stringify({ version: 2, cwd, createdAt: 1, updatedAt: 1, archived }),
+          'utf8',
+        );
+      };
+      await seed(archivedImplicitId, 's-archived', archivedImplicitRoot, true);
+      await seed(presentImplicitId, 's-present', presentImplicitRoot, false);
+
+      server = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: home,
+        logLevel: 'silent',
+      });
+      const base = `http://127.0.0.1:${server.port}`;
+      const get = async <T,>(path: string): Promise<Envelope<T>> => {
+        const response = await fetch(`${base}${path}`, {
+          headers: authHeaders(server as RunningServer),
+        });
+        return (await response.json()) as Envelope<T>;
+      };
+
+      await vi.waitFor(async () => {
+        const listed = await get<ListWire>('/api/v1/workspaces');
+        expect(listed.code).toBe(0);
+        expect(
+          listed.data.items.find((item) => item.id === archivedImplicitId)?.session_count,
+        ).toBe(1);
+      });
+      const listed = await get<ListWire>('/api/v1/workspaces');
+      expect(listed.data.items.map((item) => item.id).toSorted()).toEqual(
+        [emptyManagedId, archivedImplicitId, presentImplicitId].toSorted(),
+      );
+      expect(listed.data.items.find((item) => item.id === archivedImplicitId)?.session_count).toBe(1);
+      expect(await readFile(projectsPath, 'utf8')).toBe(before);
+
+      const v1 = await get<{ items: { id: string }[] }>('/api/v1/sessions?include_archive=true');
+      expect(v1.data.items.map((item) => item.id).toSorted()).toEqual(['s-archived', 's-present']);
+      const v2 = await get<{ groups: { workspace: { id: string } }[]; total: number }>(
+        '/api/v2/sessions?view=by_workspace&meta.archived=all',
+      );
+      expect(v2.data.total).toBe(2);
+      const direct = await get<{ id: string; metadata: { cwd: string } }>(
+        '/api/v1/sessions/s-archived',
+      );
+      expect(direct.code).toBe(0);
+      expect(direct.data.metadata.cwd).toBe(archivedImplicitRoot);
+    } finally {
+      if (server !== undefined) await server.close();
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+});
