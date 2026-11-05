@@ -688,6 +688,29 @@ describe('conversation fold', () => {
     });
   });
 
+  it('merges the summary of a legacy compaction that completed before its summary was applied', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'first'),
+      turnEnded(0, 'completed'),
+      record('full_compaction.begin', { source: 'manual', instruction: 'keep the notes' }),
+      record('full_compaction.complete', {}),
+      record('context.apply_compaction', { summary: 'Compacted notes.', compactedCount: 1, tokensBefore: 120, tokensAfter: 24 }),
+    ]);
+
+    const compactions = turnsOf(state).flatMap((turn) => turn.items).filter((item) => item.type === 'system' && item.kind === 'compaction');
+    expect(compactions).toEqual([
+      expect.objectContaining({
+        trigger: 'manual',
+        instruction: 'keep the notes',
+        summary: 'Compacted notes.',
+        compacted_count: 1,
+        tokens_before: 120,
+        tokens_after: 24,
+      }),
+    ]);
+  });
+
   it('shows completed compactions only, between turns as a system turn and inside a running turn as an item', () => {
     const state = fold([
       record('full_compaction.begin', { source: 'manual', instruction: 'keep the migration notes' }),

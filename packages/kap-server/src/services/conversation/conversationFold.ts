@@ -716,11 +716,17 @@ function applyCompactionSummary(state: ConversationState, record: WireRecord, ti
     tokensAfter: numberField(record['tokensAfter']),
     compactedCount: numberField(record['compactedCount']) ?? numberField(record['count']),
   };
-  if (state.compaction === undefined) {
-    appendCompaction(state, { trigger: 'auto', ...details }, time);
+  if (state.compaction !== undefined) {
+    state.compaction = { ...state.compaction, ...details };
     return;
   }
-  state.compaction = { ...state.compaction, ...details };
+  const last = state.turns.at(-1);
+  const completed = last?.items.at(-1);
+  if (last !== undefined && completed?.type === 'system' && completed.kind === 'compaction' && completed.summary === undefined) {
+    upsertItem(last, { ...completed, ...details });
+    return;
+  }
+  appendCompaction(state, { trigger: 'auto', ...details }, time);
 }
 
 function completeCompaction(state: ConversationState, time: number): void {
