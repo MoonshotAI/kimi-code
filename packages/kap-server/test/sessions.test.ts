@@ -2579,6 +2579,11 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(read.tasks.getTask(taskId)).toMatchObject({ status: 'lost' });
       const tail = await read.tasks.readOutputTail(taskId, 100);
       expect(Buffer.from(tail.data).toString('utf-8')).toBe('hello\n');
+      const firstLost = read.tasks.getTask(taskId);
+      const secondRead = await source(id, 'main', taskId, 'read');
+      if (secondRead.kind === 'found') {
+        expect(secondRead.tasks.getTask(taskId)).toEqual(firstLost);
+      }
     }
     await expect(readColdTaskList((server as RunningServer).core, id, 'main')).resolves.toEqual([]);
     await expect(source(id, 'main', 'x', 'read')).resolves.toEqual({ kind: 'task_not_found' });

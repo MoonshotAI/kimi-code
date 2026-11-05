@@ -126,6 +126,7 @@ async function readColdTask(
   const task = await persistence.readTask(taskId);
   if (task === undefined) return { kind: 'task_not_found' };
   const reconciled = reconcilePersistedTask(task);
+  if (reconciled !== task) await persistence.writeTask(reconciled);
   const unavailable = (): never => {
     throw new Error2(
       ErrorCodes.SESSION_WORKSPACE_UNAVAILABLE,

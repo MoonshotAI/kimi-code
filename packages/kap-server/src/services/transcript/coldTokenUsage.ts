@@ -5,6 +5,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { normalizeAnchorLength } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCountingOps';
 import { estimateTokensForMessages } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/tokens';
+import type { TokenCountingStrategy } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCounting';
 
 interface ColdTokenAnchor {
   readonly length: number;
@@ -19,7 +20,10 @@ const TOKEN_RECORD_TYPES = new Set([
   'token_counting.turn_recorded',
 ]);
 
-export function readColdTokenUsage(records: readonly WireRecord[]): number | undefined {
+export function readColdTokenUsage(
+  records: readonly WireRecord[],
+  strategy: TokenCountingStrategy = 'measured+estimated',
+): number | undefined {
   if (!records.some((record) => TOKEN_RECORD_TYPES.has(record.type))) return undefined;
   let anchors: ColdTokenAnchor[] = [];
   for (const record of records) {
@@ -47,12 +51,14 @@ export function readColdTokenUsage(records: readonly WireRecord[]): number | und
   }
 
   const context = reduceContextTranscript(migrateWireJournalRecords(records)).entries;
+  if (strategy === 'estimated') return estimateTokensForMessages(context);
+  const measured = [...anchors].toReversed().find((candidate) => candidate.measured)?.tokens ?? 0;
+  if (strategy === 'measured') return measured;
   const anchor = [...anchors].toReversed().find((candidate) => candidate.length <= context.length) ?? {
     length: 0,
     tokens: 0,
     measured: true,
   };
-  const measured = [...anchors].toReversed().find((candidate) => candidate.measured)?.tokens ?? 0;
   const size = anchor.tokens + estimateTokensForMessages(context.slice(anchor.length));
   return Math.max(size, measured);
 }

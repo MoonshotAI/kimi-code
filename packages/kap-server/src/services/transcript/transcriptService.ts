@@ -11,6 +11,7 @@ import {
   ISessionIndex,
   ISessionMetadata,
   IAgentLoopService,
+  IConfigService,
   flattenChain,
   makeAgentScopeContext,
   followSessionLifecycles,
@@ -25,6 +26,10 @@ import {
   type SessionSummary,
   type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
+import {
+  TOKEN_COUNTING_SECTION,
+  type TokenCountingConfig,
+} from '@moonshot-ai/agent-core-v2/agent/tokenCounting/configSection';
 import {
   TranscriptStore,
   foldWireRecordFacts,
@@ -566,7 +571,10 @@ export class TranscriptService {
     agentId: string = MAIN_AGENT_ID,
   ): Promise<ColdAgentFeed | undefined> {
     const cold = await this.readColdWire(sessionId, agentId);
-    return cold === undefined ? undefined : projectColdAgentFeed(cold.records);
+    if (cold === undefined) return undefined;
+    const config = this.deps.core.accessor.get(IConfigService) as IConfigService | undefined;
+    const strategy = config?.get<TokenCountingConfig>(TOKEN_COUNTING_SECTION)?.strategy ?? 'measured+estimated';
+    return projectColdAgentFeed(cold.records, strategy);
   }
 
   async readColdSnapshot(

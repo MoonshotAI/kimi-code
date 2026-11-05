@@ -3,7 +3,7 @@ import {
   fromPersistentWireRecord,
   type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
-import type { GoalSnapshot } from '@moonshot-ai/agent-core-v2/features/goal/types';
+import type { TokenCountingStrategy } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCounting';
 
 import type {
   AgentState,
@@ -20,25 +20,19 @@ export interface ColdAgentFeed {
   readonly todos: readonly TodoItemState[];
 }
 
-export function projectColdAgentFeed(records: readonly WireRecord[]): ColdAgentFeed {
-  const { replay, toolStore } = foldWireRecords(records, fromPersistentWireRecord);
+export function projectColdAgentFeed(
+  records: readonly WireRecord[],
+  strategy: TokenCountingStrategy = 'measured+estimated',
+): ColdAgentFeed {
+  const { replay, toolStore, goal } = foldWireRecords(records, fromPersistentWireRecord);
   let model: string | undefined;
   let thinking: string | undefined;
   let permission: AgentState['permission_mode'];
   let planMode = false;
   let swarmMode = false;
   let towerMode = false;
-  let contextTokens = readColdTokenUsage(records);
+  let contextTokens = readColdTokenUsage(records, strategy);
   let maxContextTokens: number | undefined;
-  let goal: GoalSnapshot | undefined;
-  let goalCleared = false;
-  for (const record of records) {
-    if (record.type === 'goal.clear' || record.type === 'forked') {
-      goalCleared = true;
-    } else if (record.type === 'goal.create' || record.type === 'goal.update') {
-      goalCleared = false;
-    }
-  }
 
   for (const entry of replay) {
     switch (entry.type) {
@@ -50,15 +44,28 @@ export function projectColdAgentFeed(records: readonly WireRecord[]): ColdAgentF
       case 'plan_updated':
         planMode = entry.enabled;
         break;
-      case 'goal_updated':
-        if (!goalCleared) goal = entry.snapshot;
-        break;
       default:
         break;
     }
   }
 
   for (const record of records) {
+    if (record.type === 'swarm_mode.enter') {
+      swarmMode = true;
+      continue;
+    }
+    if (record.type === 'swarm_mode.exit') {
+      swarmMode = false;
+      continue;
+    }
+    if (record.type === 'tower_mode.enter') {
+      towerMode = true;
+      continue;
+    }
+    if (record.type === 'tower_mode.exit') {
+      towerMode = false;
+      continue;
+    }
     if (record.type === 'profile.bind' || record.type === 'config.update') {
       model = stringValue(record['modelAlias']) ?? model;
       thinking = stringValue(record['thinkingEffort'] ?? record['thinkingLevel']) ?? thinking;

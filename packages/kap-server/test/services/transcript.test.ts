@@ -9,6 +9,7 @@ import {
   IAgentConversationUndoParticipantRegistry,
   IAgentLoopService,
   IAgentScopeContext,
+  IConfigService,
   IEventBus,
   IBlobStore,
   ISessionIndex,
@@ -2303,6 +2304,108 @@ describe('AgentTranscriptProjector', () => {
         agent: { status: 'idle', plan_mode: true, swarm_mode: false, tower_mode: false },
         goal: { objective: 'fix the bug', status: 'active' },
         todos: [{ title: 'write tests', status: 'in_progress' }],
+      });
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('projectColdAgentFeed replays swarm and tower mode transitions', () => {
+    const active = [
+      { type: 'swarm_mode.enter' },
+      { type: 'tower_mode.enter' },
+    ];
+    expect(projectColdAgentFeed(active).agent).toMatchObject({ swarm_mode: true, tower_mode: true });
+    expect(projectColdAgentFeed([...active, { type: 'swarm_mode.exit' }]).agent).toMatchObject({
+      swarm_mode: false,
+      tower_mode: true,
+    });
+    expect(projectColdAgentFeed([...active, { type: 'tower_mode.exit' }]).agent).toMatchObject({
+      swarm_mode: true,
+      tower_mode: false,
+    });
+  });
+
+  it('projectColdAgentFeed uses the final folded goal state', () => {
+    const feed = projectColdAgentFeed([
+      { type: 'goal.create', goalId: 'g1', objective: 'initial objective', time: 1000 },
+      {
+        type: 'goal.update',
+        objective: 'updated objective',
+        turnsUsed: 3,
+        tokensUsed: 42,
+        wallClockMs: 500,
+        time: 2000,
+      },
+    ]);
+
+    expect(feed.goal).toMatchObject({
+      objective: 'updated objective',
+      status: 'active',
+      turns_used: 3,
+      tokens_used: 42,
+      wall_clock_ms: 500,
+    });
+  });
+
+  it('projectColdAgentFeed honors token counting strategies', () => {
+    const records = [
+      {
+        type: 'context.append_message',
+        message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        time: 1000,
+      },
+      { type: 'token_counting.measured', length: 1, tokens: 10 },
+      { type: 'token_counting.truncated', length: 0, tokens: 5 },
+      { type: 'token_counting.rebased', length: 0, tokens: 7, measured: true },
+      { type: 'token_counting.turn_recorded', length: 1, tokens: 12, turnId: 1 },
+    ];
+
+    expect(projectColdAgentFeed(records, 'measured').usage).toEqual({
+      context_tokens: 7,
+      max_context_tokens: undefined,
+    });
+    expect(projectColdAgentFeed(records, 'estimated').usage?.context_tokens).toBeGreaterThan(0);
+    expect(projectColdAgentFeed(records).usage).toEqual({
+      context_tokens: 12,
+      max_context_tokens: undefined,
+    });
+  });
+
+  it('readColdAgentFeed uses the configured token counting strategy', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-strategy-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const records = [
+        {
+          type: 'context.append_message',
+          message: { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+          time: 1000,
+        },
+        { type: 'token_counting.measured', length: 1, tokens: 10 },
+        { type: 'token_counting.truncated', length: 0, tokens: 5 },
+        { type: 'token_counting.rebased', length: 0, tokens: 7, measured: true },
+        { type: 'token_counting.turn_recorded', length: 1, tokens: 12, turnId: 1 },
+      ];
+      await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+      const service = new TranscriptService({
+        homeDir: home,
+        core: {
+          accessor: {
+            get: (token: unknown) => {
+              if (token === ISessionManager) return { get: () => undefined, list: () => [] };
+              if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
+              if (token === IConfigService) return { get: () => ({ strategy: 'measured' }) };
+              return undefined;
+            },
+          },
+        } as unknown as Scope,
+      });
+
+      await expect(service.readColdAgentFeed('s1', 'main')).resolves.toMatchObject({
+        usage: { context_tokens: 7 },
       });
       service.dropSession('s1');
     } finally {

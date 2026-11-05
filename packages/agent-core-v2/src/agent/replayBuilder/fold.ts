@@ -27,6 +27,7 @@ import type { AgentReplayRecord, AgentReplayRecordPayload } from './types';
 export interface WireReplayFold {
   readonly replay: readonly AgentReplayRecord[];
   readonly toolStore: Readonly<Record<string, unknown>>;
+  readonly goal?: GoalSnapshot;
 }
 
 export const FOLD_RELEVANT_WIRE_TYPES: ReadonlySet<string> = new Set([
@@ -102,7 +103,11 @@ export function foldWireRecords(
     fold.apply(decodePersistent === undefined ? record : decodePersistent(record));
   }
   fold.finish();
-  return { replay: fold.replay, toolStore: fold.toolStore };
+  return {
+    replay: fold.replay,
+    toolStore: fold.toolStore,
+    goal: fold.goal === undefined ? undefined : goalSnapshot(fold.goal),
+  };
 }
 
 export function wireJournalMigrations(first: WireRecord): readonly WireMigration[] {
@@ -140,7 +145,7 @@ class WireReplayFoldState {
   private readonly openSteps = new Map<string, ContextMessage>();
   private readonly pendingToolResultIds = new Set<string>();
   private deferredMessages: { readonly message: ContextMessage; readonly turnId?: number }[] = [];
-  private goal: FoldGoalState | undefined;
+  goal: FoldGoalState | undefined;
   private nextTurnId = 0;
   private readonly cancelledTurnIds = new Set<number>();
 
