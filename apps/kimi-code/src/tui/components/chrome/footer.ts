@@ -18,6 +18,7 @@ import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState, EnvironmentSlotState } from '#/tui/types';
 import { PERMISSION_MODE_DISPLAY_NAMES } from '#/tui/utils/permission-mode';
+import { sessionWorkDir } from '#/tui/utils/session-work-dir';
 import { SpinnerTicker } from '#/tui/utils/spinner-ticker';
 import {
   StatusLineCommandRunner,
@@ -604,9 +605,7 @@ export class FooterComponent implements Component {
     const state = this.state;
     return {
       model: modelDisplayName(state),
-      cwd: isRemoteEnvironment(state.environment) && state.environment.cwd !== undefined
-        ? state.environment.cwd
-        : state.workDir,
+      cwd: sessionWorkDir(state),
       gitBranch: this.gitCache?.getStatus()?.branch ?? null,
       permissionMode: state.permissionMode,
       planMode: state.planMode,

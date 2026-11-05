@@ -1,5 +1,25 @@
 # @moonshot-ai/kimi-code
 
+## 2.5.1
+
+### Patch Changes
+
+- [#4687](https://github.com/MoonshotAI/kimi-code/pull/4687) [`2af56d2`](https://github.com/MoonshotAI/kimi-code/commit/2af56d29aec857778705c33d80f23e0eddd63ec5) Thanks [@sailist](https://github.com/sailist)! - Fix repeated HTTP 400 errors in sessions caused by empty system messages for dynamic tool schemas.
+
+- [#4705](https://github.com/MoonshotAI/kimi-code/pull/4705) [`2391a77`](https://github.com/MoonshotAI/kimi-code/commit/2391a77f678d42f179f9f2345d7666d476426cd9) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Fix session titles not being generated automatically after the first turn of a new session.
+
+- [#4705](https://github.com/MoonshotAI/kimi-code/pull/4705) [`2391a77`](https://github.com/MoonshotAI/kimi-code/commit/2391a77f678d42f179f9f2345d7666d476426cd9) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Fix local images not displaying when their paths contain spaces.
+
+- [#4694](https://github.com/MoonshotAI/kimi-code/pull/4694) [`6dad2c8`](https://github.com/MoonshotAI/kimi-code/commit/6dad2c8de42c46f0dc1dc0895dbceba69ae43864) Thanks [@sailist](https://github.com/sailist)! - Fix missing image and video previews in live and reloaded tool results.
+
+- [#4705](https://github.com/MoonshotAI/kimi-code/pull/4705) [`2391a77`](https://github.com/MoonshotAI/kimi-code/commit/2391a77f678d42f179f9f2345d7666d476426cd9) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Fix the session info panel automatically floating over and covering chat messages in narrow layouts.
+
+- [#4678](https://github.com/MoonshotAI/kimi-code/pull/4678) [`b4e4a84`](https://github.com/MoonshotAI/kimi-code/commit/b4e4a84fc7e425d9836187f9f7deb169f47c438c) Thanks [@liruifengv](https://github.com/liruifengv)! - Hide sessions belonging to deleted workspaces from session lists.
+
+- [#4705](https://github.com/MoonshotAI/kimi-code/pull/4705) [`2391a77`](https://github.com/MoonshotAI/kimi-code/commit/2391a77f678d42f179f9f2345d7666d476426cd9) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Hide stale empty implicit workspaces from the workspace list.
+
+- [#4705](https://github.com/MoonshotAI/kimi-code/pull/4705) [`2391a77`](https://github.com/MoonshotAI/kimi-code/commit/2391a77f678d42f179f9f2345d7666d476426cd9) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Fix tool call summaries repeatedly expanding and collapsing while a response is in progress.
+
 ## 2.5.0
 
 ### Minor Changes

@@ -11583,6 +11583,53 @@ capabilities = ["image_in", "video_in"]
     });
   });
 
+  it('renders /status with the remote session working directory', async () => {
+    const session = makeSession({
+      getEnvironmentState: vi.fn(async () => ({
+        environmentId: 'dev-box',
+        type: 'ssh',
+        status: 'ready',
+        cwd: '/remote/project',
+      })),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.handleUserInput('/status');
+
+    await vi.waitFor(() => {
+      const output = stripSgr(driver.state.transcriptContainer.render(120).join('\n'));
+      expect(output).toContain(' Status ');
+      expect(output).toContain('/remote/project');
+      expect(output).not.toContain('/tmp/proj-a');
+    });
+  });
+
+  it('exports Markdown metadata with the remote session working directory', async () => {
+    const session = makeSession({
+      getEnvironmentState: vi.fn(async () => ({
+        environmentId: 'dev-box',
+        type: 'ssh',
+        status: 'ready',
+        cwd: '/remote/project',
+      })),
+      getContext: vi.fn(async () => ({
+        history: [{ role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] }],
+        tokenCount: 1,
+      })),
+    });
+    const { driver } = await makeDriver(session);
+    const outputDir = await mkdtemp(join(tmpdir(), 'kimi-code-remote-export-'));
+    tempDirs.push(outputDir);
+    const outputPath = join(outputDir, 'session.md');
+
+    driver.handleUserInput(`/export-md ${outputPath}`);
+
+    await vi.waitFor(() => expect(existsSync(outputPath)).toBe(true));
+    const markdown = await readFile(outputPath, 'utf8');
+    expect(markdown).toContain('work_dir: /remote/project');
+    expect(markdown).not.toContain('work_dir: /tmp/proj-a');
+  });
+
   it('renders /mcp using a fresh MCP server snapshot', async () => {
     const session = makeSession({
       listMcpServers: vi.fn(async () => [

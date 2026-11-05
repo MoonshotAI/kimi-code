@@ -545,12 +545,33 @@ describe('AgentTranscriptProjector', () => {
       },
     });
 
-    const ops = projector.map(ev({ type: 'tool.result', toolCallId: 'call_1', output: 'file.txt' }));
+    const ops = projector.map(
+      ev({
+        type: 'tool.result',
+        toolCallId: 'call_1',
+        output: [
+          {
+            type: 'image_url',
+            imageUrl: { url: 'kimi-file://f_img1?path=%2Fprivate%2Fimg.png', name: 'img.png' },
+          },
+        ],
+      }),
+    );
     expect(ops).toHaveLength(1);
     tx.apply(ops);
     const turn = turnOps('t0', tx.getItems());
     const tool = turn.steps[0]?.frames.find((frame) => frame.kind === 'tool');
-    expect(tool).toMatchObject({ toolCallId: 'call_1', state: 'done', output: 'file.txt' });
+    expect(tool).toMatchObject({
+      toolCallId: 'call_1',
+      state: 'done',
+      output: [
+        {
+          type: 'image',
+          source: { kind: 'session_media', file_id: 'f_img1' },
+          name: 'img.png',
+        },
+      ],
+    });
   });
 
   it('adopts a seeded parent tool frame when subagent.spawned links the child', () => {
