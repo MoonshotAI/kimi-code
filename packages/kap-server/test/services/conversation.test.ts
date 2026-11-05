@@ -342,14 +342,17 @@ describe('conversation fold', () => {
     ]);
   });
 
-  it('hides CLI shell commands and injections', () => {
+  it('shows CLI shell commands as their raw text in ended turns and hides injections', () => {
     const state = fold([
       userMessage(undefined, '<bash-input>\nls\n</bash-input>', { kind: 'shell_command', phase: 'input' }),
       userMessage(undefined, '<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>', { kind: 'shell_command', phase: 'output' }),
       userMessage(undefined, '<system-reminder>', { kind: 'injection', variant: 'example' }),
     ]);
 
-    expect(state.turns).toEqual([]);
+    expect(turnsOf(state).map((turn) => [turn.status, turn.items.map((item) => (item.type === 'user_message' ? [item.origin, item.text] : item.type))])).toEqual([
+      ['ended', [[{ kind: 'system' }, '<bash-input>\nls\n</bash-input>']]],
+      ['ended', [[{ kind: 'system' }, '<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>']]],
+    ]);
     expect(state.openTurnId).toBeUndefined();
   });
 

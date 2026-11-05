@@ -257,7 +257,7 @@ export function createConversationState(agentId: string, fork?: ConversationFork
 }
 
 const COMPLETED: TurnEnd = { outcome: 'completed' };
-const HIDDEN_ORIGIN_KINDS: ReadonlySet<string> = new Set(['injection', 'shell_command']);
+const HIDDEN_ORIGIN_KINDS: ReadonlySet<string> = new Set(['injection']);
 const TASK_ORIGIN_KINDS: ReadonlySet<string> = new Set(['task', 'background_task', 'task_notification']);
 const TURN_OPENING_SYSTEM_TRIGGERS: ReadonlySet<string> = new Set(['goal_continuation', 'subagent']);
 
