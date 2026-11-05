@@ -17,6 +17,7 @@ import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
 import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
 import {
   imageUploaderFor,
+  mediaAcceptsInlineMime,
   mediaAcceptsMime,
   mediaAcceptsSource,
   mediaCredentialProvider,
@@ -193,9 +194,12 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const pending = new Map<string, number>();
     for (const entry of entries) {
       if (dropped.has(entry.key)) {
-        await this.replaceWithMediaTag(out, entry);
-        changed = true;
-        continue;
+        if (entry.bytes > 0) {
+          await this.replaceWithMediaTag(out, entry);
+          changed = true;
+          continue;
+        }
+        dropped.delete(entry.key);
       }
       pending.set(entry.key, (pending.get(entry.key) ?? 0) + entry.bytes);
     }
@@ -513,7 +517,8 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     }
     const mimeType = fileType.mimeType;
 
-    const inlineSupported = support.sources.includes('inline');
+    const inlineSupported =
+      support.sources.includes('inline') && mediaAcceptsInlineMime(support, mimeType);
     const uploadSupported = support.sources.includes('file') || support.sources.includes('url');
     const uploader = uploadSupported
       ? createVideoUploader(videoUploaderFor(model, request), {

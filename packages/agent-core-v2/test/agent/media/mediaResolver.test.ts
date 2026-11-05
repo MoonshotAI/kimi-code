@@ -384,6 +384,7 @@ describe('AgentMediaResolverService video strategy', () => {
     files: Map<string, { name: string; bytes: Buffer }>;
     fileId: string;
     modelUnsupported?: boolean;
+    unsupportedInline?: boolean;
     req: (upload: VideoUploader | undefined) => TestMediaResolution;
   };
 
@@ -396,9 +397,10 @@ describe('AgentMediaResolverService video strategy', () => {
       req: (upload) => requester({ videoIn: false, uploadVideo: upload }),
     },
     {
-      name: 'the bytes do not sniff as a video',
+      name: 'the bytes are invalid or the MIME cannot be inlined',
       files: new Map([[FILE_ID, { name: 'clip.mp4', bytes: PNG_BYTES }]]),
       fileId: FILE_ID,
+      unsupportedInline: true,
       req: (upload) => requester({ uploadVideo: upload }),
     },
     {
@@ -407,7 +409,7 @@ describe('AgentMediaResolverService video strategy', () => {
       fileId: 'missing',
       req: (upload) => requester({ uploadVideo: upload }),
     },
-  ])('degrades when $name', async ({ files, fileId, modelUnsupported, req }) => {
+  ])('degrades when $name', async ({ files, fileId, modelUnsupported, unsupportedInline, req }) => {
     const upload = vi.fn();
     const canonical =
       fileId === FILE_ID ? await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES) : undefined;
@@ -426,6 +428,28 @@ describe('AgentMediaResolverService video strategy', () => {
             : `<video path="${canonical}"></video>`,
     });
     expect(upload).not.toHaveBeenCalled();
+
+    if (unsupportedInline === true) {
+      const wmvFileId = 'wmv-file';
+      const wmvPath = await plantCanonical(wmvFileId, '.wmv', VIDEO_BYTES);
+      const wmvUpload = vi.fn(async () => {
+        throw new Error('files endpoint unavailable');
+      });
+      const wmvRes = resolver(
+        new Map([[wmvFileId, { name: 'clip.wmv', bytes: Buffer.from([1, 2, 3]) }]]),
+        sessionDir,
+      );
+      const wmvOut = await resolveMedia(
+        wmvRes,
+        [videoMessage(buildKimiFileUrl(wmvFileId))],
+        requester({ protocol: 'anthropic', providerType: 'anthropic', uploadVideo: wmvUpload }),
+      );
+      expect(firstPart(wmvOut)).toEqual({
+        type: 'text',
+        text: `<video path="${wmvPath}"></video>`,
+      });
+      expect(wmvUpload).toHaveBeenCalledTimes(1);
+    }
   });
 
   it('rethrows an auth failure so it can drive credential refresh', async () => {
@@ -481,14 +505,22 @@ describe('AgentMediaResolverService video strategy', () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  it('inlines a transient upload failure and retries on a later step', async () => {
+  it('inlines transient failures and recovers after later uploads', async () => {
     let uploadCalls = 0;
     const upload = vi.fn(async (): Promise<VideoURLPart> => {
       uploadCalls += 1;
       if (uploadCalls === 1) throw new Error('files endpoint unavailable');
       return msPart('prov-1');
     });
-    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]), sessionDir);
+    const bigFileId = 'big-file';
+    const bigBytes = Buffer.concat([VIDEO_BYTES, Buffer.alloc(20 * 1024 * 1024)]);
+    const res = resolver(
+      new Map([
+        [FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }],
+        [bigFileId, { name: 'big.mp4', bytes: bigBytes }],
+      ]),
+      sessionDir,
+    );
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
     const req = requester({ uploadVideo: upload });
 
@@ -501,6 +533,25 @@ describe('AgentMediaResolverService video strategy', () => {
     const retried = await resolveMedia(res, [message], req);
     expect(firstPart(retried)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(2);
+
+    let bigUploadCalls = 0;
+    const bigUpload = vi.fn(async (): Promise<VideoURLPart> => {
+      bigUploadCalls += 1;
+      if (bigUploadCalls === 1) throw new Error('files endpoint unavailable');
+      return msPart('big-prov');
+    });
+    const bigPath = await plantCanonical(bigFileId, '.mp4', VIDEO_BYTES);
+    const bigMessage = videoMessage(buildKimiFileUrl(bigFileId));
+    const bigReq = requester({ uploadVideo: bigUpload });
+    const bigFailed = await resolveMedia(res, [bigMessage], bigReq);
+    expect(firstPart(bigFailed)).toEqual({
+      type: 'text',
+      text: `<video path="${bigPath}"></video>`,
+    });
+
+    const bigRetried = await resolveMedia(res, [bigMessage], bigReq);
+    expect(firstPart(bigRetried)).toEqual(msPart('big-prov'));
+    expect(bigUpload).toHaveBeenCalledTimes(2);
   });
 
   it('emits an unavailable placeholder when a stale reference has no canonical copy', async () => {

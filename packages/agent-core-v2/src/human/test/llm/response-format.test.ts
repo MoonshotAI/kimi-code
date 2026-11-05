@@ -243,6 +243,7 @@ describe('openai-responses requester responseFormat', () => {
         content: [
           { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AQID' } },
           { type: 'video_url', videoUrl: { url: 'ms://file-1', id: 'file-1' } },
+          { type: 'video_url', videoUrl: { url: 'data:video/x-ms-wmv;base64,AQID' } },
         ],
       },
     ];
@@ -255,6 +256,7 @@ describe('openai-responses requester responseFormat', () => {
     expect(input[0]?.['content']).toEqual([
       { type: 'input_file', file_data: 'AQID', filename: 'inline.mp4' },
       { type: 'input_file', file_url: 'ms://file-1' },
+      { type: 'input_text', text: '[video omitted for provider compatibility; re-read the file to view it]' },
     ]);
 
     await requester.generate(
@@ -266,6 +268,7 @@ describe('openai-responses requester responseFormat', () => {
     expect(input[0]?.['content']).toEqual([
       { type: 'input_text', text: '(video omitted: not supported by this provider)' },
       { type: 'input_text', text: '(video omitted: not supported by this provider)' },
+      { type: 'input_text', text: '[video omitted for provider compatibility; re-read the file to view it]' },
     ]);
   });
 });

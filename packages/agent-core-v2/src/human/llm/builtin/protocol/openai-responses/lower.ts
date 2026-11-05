@@ -319,7 +319,12 @@ export const openAIResponsesMedia: MediaSupport = {
   kinds: {
     image: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
     audio: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
-    video: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
+    video: {
+      mimes: 'any',
+      inlineMimes: new Set(Object.keys(VIDEO_FILE_EXTENSIONS).map((subtype) => `video/${subtype}`)),
+      sources: ['url', 'inline', 'file'],
+      inToolResult: 'native',
+    },
   },
 };
 
