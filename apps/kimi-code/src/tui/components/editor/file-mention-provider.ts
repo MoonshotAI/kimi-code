@@ -56,6 +56,7 @@ export type RemoteMentionSuggest = (
 export class FileMentionProvider implements AutocompleteProvider {
   private readonly inner: CombinedAutocompleteProvider;
   private readonly additionalDirs: readonly string[];
+  private readonly workspaceLabels: ReadonlyMap<string, string>;
 
   constructor(
     private readonly slashCommands: SlashAutocompleteCommand[],
@@ -67,6 +68,7 @@ export class FileMentionProvider implements AutocompleteProvider {
     private readonly remoteSuggest?: RemoteMentionSuggest,
     private readonly onSkillVariantSelected?: (selection: { commandName: string; path: string; start: number }) => void,
   ) {
+    this.workspaceLabels = workspaceLabelsForCommands(slashCommands);
     this.additionalDirs = additionalDirs.map((dir) => resolveMentionDirectory(workDir, dir));
     // Build an expanded list that includes alias entries so that
     // inner's argument completion can find commands by alias too.
@@ -225,7 +227,7 @@ export class FileMentionProvider implements AutocompleteProvider {
               skillPath: m.cmd.skillPath,
               workspaceLabel: m.cmd.workspaceDir === undefined
                 ? skillSourceLabel(m.cmd.skillSource)
-                : basename(m.cmd.workspaceDir) || m.cmd.workspaceDir,
+                : this.workspaceLabels.get(m.cmd.workspaceDir) ?? m.cmd.workspaceDir,
             },
           })),
           prefix: textBeforeCursor,
@@ -456,6 +458,24 @@ function isExecutableFd(fdPath: string): boolean {
  * starts with `.` (see registry.ts). pi-tui's path completer sets `label` to
  * the entry basename, with a trailing `/` for directories.
  */
+function workspaceLabelsForCommands(
+  commands: readonly SlashAutocompleteCommand[],
+): ReadonlyMap<string, string> {
+  const counts = new Map<string, number>();
+  for (const command of commands) {
+    if (command.workspaceDir === undefined) continue;
+    const label = basename(command.workspaceDir) || command.workspaceDir;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const labels = new Map<string, string>();
+  for (const command of commands) {
+    if (command.workspaceDir === undefined) continue;
+    const label = basename(command.workspaceDir) || command.workspaceDir;
+    labels.set(command.workspaceDir, counts.get(label)! > 1 ? command.workspaceDir : label);
+  }
+  return labels;
+}
+
 function isDotPrefixedEntry(item: AutocompleteItem): boolean {
   const name = item.label.endsWith('/') ? item.label.slice(0, -1) : item.label;
   return name.startsWith('.');

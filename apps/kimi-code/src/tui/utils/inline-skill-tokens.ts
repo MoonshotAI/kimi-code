@@ -7,6 +7,21 @@ export interface InlineSkillToken {
   readonly end: number;
 }
 
+export function rebaseInlineSkillActivations(
+  activations: readonly InlineSkillActivation[],
+  offset: number,
+): InlineSkillActivation[] {
+  if (offset === 0) return [...activations];
+  return activations.map((activation) => ({
+    ...activation,
+    start: activation.start === undefined ? undefined : activation.start + offset,
+    occurrences: activation.occurrences?.map((occurrence) => ({
+      ...occurrence,
+      start: occurrence.start + offset,
+    })),
+  }));
+}
+
 export interface FindInlineSkillTokensOptions {
   /** Decide whether a syntactically valid token names a known skill. */
   readonly isKnownSkill: (commandName: string) => boolean;

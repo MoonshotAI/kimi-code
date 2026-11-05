@@ -38,12 +38,22 @@ export class SkillTool implements ISkillTool {
   ) {}
 
   resolveExecution(args: SkillToolInput): ToolExecution {
+    const context = this.queryDepth === 0 && this.workspaceDir === undefined
+      ? this.skill.modelToolContext()
+      : { queryDepth: this.queryDepth, workspaceDir: this.workspaceDir };
     return {
       description: `Invoke skill ${args.skill}`,
       display: { kind: 'skill_call', skill_name: args.skill, args: args.args },
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.skill),
-      execute: () => this.execution(args),
+      execute: () => executeModelSkill(
+        this.catalog,
+        this.skill,
+        args,
+        context.queryDepth,
+        this.sessionContext.sessionId,
+        context.workspaceDir,
+      ),
     };
   }
 
@@ -52,20 +62,6 @@ export class SkillTool implements ISkillTool {
     clone.queryDepth = initialQueryDepth;
     clone.workspaceDir = workspaceDir;
     return clone;
-  }
-
-  private async execution(args: SkillToolInput): Promise<ExecutableToolResult> {
-    const context = this.queryDepth === 0 && this.workspaceDir === undefined
-      ? this.skill.modelToolContext()
-      : { queryDepth: this.queryDepth, workspaceDir: this.workspaceDir };
-    return executeModelSkill(
-      this.catalog,
-      this.skill,
-      args,
-      context.queryDepth,
-      this.sessionContext.sessionId,
-      context.workspaceDir,
-    );
   }
 }
 

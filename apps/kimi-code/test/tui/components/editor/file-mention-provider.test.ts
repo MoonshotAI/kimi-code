@@ -131,6 +131,29 @@ describe('FileMentionProvider', () => {
     expect(selections[1]).toEqual({ commandName: 'skill:review', path: '/work/B/review/SKILL.md', start: 17 });
   });
 
+  it('expands only duplicate workspace basenames to full paths', async () => {
+    const commands = [
+      { name: 'skill:review', description: 'Review A', workspaceDir: '/repos/acme/service' },
+      { name: 'skill:review', description: 'Review B', workspaceDir: '/tmp/service' },
+      { name: 'skill:other', description: 'Other', workspaceDir: '/work/other' },
+    ];
+    const provider = new FileMentionProvider(
+      commands,
+      workDir,
+      NO_FD,
+      [],
+      () => 'prompt',
+      new Set(['skill:review', 'skill:other']),
+    );
+
+    const suggestions = await provider.getSuggestions(['/'], 0, 1, { signal: ctrl() });
+    expect(suggestions?.items.map((item) => item.data?.['workspaceLabel'])).toEqual([
+      '/repos/acme/service',
+      '/tmp/service',
+      'other',
+    ]);
+  });
+
   it('exposes global and built-in source labels when no workspace directory exists', async () => {
     const provider = new FileMentionProvider([
       { name: 'skill:global', description: 'Global', skillSource: 'user' },
