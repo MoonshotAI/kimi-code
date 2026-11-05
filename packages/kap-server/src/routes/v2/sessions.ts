@@ -7,7 +7,6 @@ import {
   ISessionIndex,
   ISessionIndexMirror,
   IWorkspaceAliases,
-  IWorkspaceService,
   environmentBindingId,
   LOCAL_ENVIRONMENT_ID,
   setSessionArchivedBatch,
