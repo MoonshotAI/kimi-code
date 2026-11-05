@@ -477,6 +477,8 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
         toolCalls: [
           { id: 'c1', name: 'Read', arguments: '{"path":"/a"}' },
           { id: 'c2', name: 'ReadMediaFile', arguments: '{"path":"/b.png"}' },
+          { id: 'c3', name: 'ReadMediaFile', arguments: '{"path":"/c.mp3"}' },
+          { id: 'c4', name: 'ReadMediaFile', arguments: '{"path":"/d.png"}' },
         ],
       },
       { role: 'tool', content: [{ type: 'text', text: 'file body' }], toolCallId: 'c1', toolCalls: [] },
@@ -488,6 +490,22 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
           { type: 'video_url', source: { kind: 'url', url: 'kimi-file://f_vid' }, name: 'clip.mp4' },
         ],
         toolCallId: 'c2',
+        toolCalls: [],
+      },
+      {
+        role: 'tool',
+        content: [{ type: 'audio_url', audioUrl: { url: 'data:audio/mpeg;base64,AAAA' } } as HistoryContentPart],
+        toolCallId: 'c3',
+        toolCalls: [],
+      },
+      {
+        role: 'tool',
+        content: [
+          { type: 'text', text: 'boom' },
+          { type: 'image_url', imageUrl: { url: 'kimi-file://f_err' } } as HistoryContentPart,
+        ],
+        toolCallId: 'c4',
+        isError: true,
         toolCalls: [],
       },
       {
@@ -524,6 +542,14 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       { type: 'image', source: { kind: 'session_media', file_id: 'f_img' }, name: 'img.png' },
       { type: 'video', source: { kind: 'session_media', file_id: 'f_vid' }, name: 'clip.mp4' },
     ]);
+    const audioTool = firstTurn.steps[0]?.frames.find((f) => f.kind === 'tool' && f.toolCallId === 'c3');
+    expect(audioTool?.kind === 'tool' && audioTool.output).toBe('');
+    const failedTool = firstTurn.steps[0]?.frames.find((f) => f.kind === 'tool' && f.toolCallId === 'c4');
+    expect(failedTool?.kind === 'tool' && failedTool.output).toEqual([
+      { type: 'text', text: 'boom' },
+      { type: 'image', source: { kind: 'session_media', file_id: 'f_err' } },
+    ]);
+    expect(failedTool?.kind === 'tool' && failedTool.error).toBe('boom');
     const marker = snapshot.items[3];
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
   });

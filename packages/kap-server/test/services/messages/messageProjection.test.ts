@@ -168,6 +168,7 @@ describe('toProtocolMessage', () => {
         { type: 'image_url', imageUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fpic.png', name: 'pic.png' } },
         { type: 'audio_url', audioUrl: { url: 'https://example.com/audio.mp3' } },
         { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
+        { type: 'video_url', source: { kind: 'url', url: 'kimi-file://file_10' }, name: 'clip.mp4' } as unknown as ContextMessage['content'][number],
       ],
       toolCallId: 'call_media',
     };
@@ -194,6 +195,11 @@ describe('toProtocolMessage', () => {
           {
             type: 'video_url',
             videoUrl: expect.objectContaining({ url: 'ms://video-1', id: 'video-1' }),
+          },
+          {
+            type: 'video',
+            source: { kind: 'session_media', file_id: 'file_10' },
+            name: 'clip.mp4',
           },
         ],
       },

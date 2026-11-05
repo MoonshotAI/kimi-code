@@ -156,8 +156,8 @@ const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
 function toolOutputOf(message: HistoryMessage): unknown {
   const content = message.content ?? [];
   const hasMedia = content.some((part) =>
-    part.type === 'image' || part.type === 'video' || part.type === 'audio' ||
-    part.type === 'image_url' || part.type === 'video_url' || part.type === 'audio_url'
+    part.type === 'image' || part.type === 'video' ||
+    part.type === 'image_url' || part.type === 'video_url'
   );
   if (!hasMedia) return textOf(message);
   return content.map((part) => {
@@ -557,7 +557,7 @@ export function groupMessagesIntoSnapshot(
           ...frame,
           state: message.isError ? 'error' : 'done',
           output,
-          error: message.isError && typeof output === 'string' ? output : undefined,
+          error: message.isError ? textOf(message) : undefined,
         };
         replaceToolFrame(turn!, message.toolCallId!, patched);
         syncTurnItem(items, turn!);

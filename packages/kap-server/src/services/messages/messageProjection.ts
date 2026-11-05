@@ -41,9 +41,14 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
   }
 }
 
-function isCoreMediaPart(
-  part: unknown,
-): part is Extract<ContentPart, { type: 'image_url' | 'audio_url' | 'video_url' }> {
+interface CoreMediaPart {
+  readonly type: 'image_url' | 'audio_url' | 'video_url';
+  readonly source:
+    | { readonly kind: 'url'; readonly url: string }
+    | { readonly kind: 'inline' | 'file' | 'store' };
+}
+
+function isCoreMediaPart(part: unknown): part is CoreMediaPart {
   if (typeof part !== 'object' || part === null || !('type' in part) || !('source' in part)) {
     return false;
   }
@@ -61,7 +66,17 @@ function isCoreMediaPart(
 }
 
 function projectToolResultMediaPart(part: unknown): unknown {
-  const legacy = (isCoreMediaPart(part) ? fromCorePart(part) : part) as ContentPart;
+  if (isCoreMediaPart(part)) {
+    if (part.source.kind !== 'url' || part.type === 'audio_url') return part;
+    const ref = parseDaemonFileUrl(part.source.url);
+    if (ref === undefined) return part;
+    return {
+      type: part.type === 'image_url' ? 'image' : 'video',
+      source: { kind: 'session_media', file_id: ref.fileId },
+      name: (part as { name?: unknown }).name,
+    };
+  }
+  const legacy = part as ContentPart;
   if (typeof legacy !== 'object' || legacy === null) return legacy;
   const ref = daemonFileRefFromPart(legacy);
   if (ref === undefined) return legacy;
