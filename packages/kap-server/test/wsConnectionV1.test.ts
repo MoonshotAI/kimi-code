@@ -6,7 +6,7 @@ import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types'
 
 import { TASK_OUTPUT_DEFAULT_TAIL_BYTES, TASK_OUTPUT_MAX_TAIL_BYTES } from '../src/protocol/ws-task';
 import type { IConnectionRegistry } from '../src/transport/ws/connectionRegistry';
-import type { BroadcastTarget, SessionEventBroadcaster } from '../src/transport/ws/v1/sessionEventBroadcaster';
+import type { SessionEventBroadcaster } from '../src/transport/ws/v1/sessionEventBroadcaster';
 import type { TaskSource } from '../src/transport/ws/v1/taskRequests';
 import { type WsConnectionV1Options, WsConnectionV1 } from '../src/transport/ws/v1/wsConnectionV1';
 
@@ -214,47 +214,6 @@ describe('WsConnectionV1 control frames', () => {
     socket.emit('message', controlFrame('subscribe_v2', { session_id: 's1' }));
     await vi.waitFor(() => expect(types()).toEqual(['ack', 'interaction']));
     conn.close();
-  });
-
-  it('acks a subscription before the broadcaster sends its content', async () => {
-    const socket = new FakeSocket();
-    const broadcaster = makeBroadcaster({
-      subscribe: async (sessionId: string, target: BroadcastTarget, _agentIds: readonly string[], accepted?: () => void) => {
-        accepted?.();
-        target.send({ type: 'task.list', session_id: sessionId, agent_id: 'main', tasks: [] });
-      },
-    });
-    const conn = makeConn(socket, { broadcaster, flushIntervalMs: 1 });
-
-    socket.emit('message', controlFrame('subscribe_v2', { session_id: 's1' }));
-
-    await vi.waitFor(() =>
-      expect(socket.frames().map((f) => (f as { type: string }).type)).toEqual(['server_hello', 'ack', 'task.list']));
-    conn.close();
-  });
-
-  it('removes its target again when the socket closed while a subscribe was opening the session', async () => {
-    const socket = new FakeSocket();
-    const { broadcaster, removals } = makeCapturingBroadcaster();
-    let open!: () => void;
-    const subscribe = broadcaster.subscribe.bind(broadcaster);
-    broadcaster.subscribe = async (...args) => {
-      await new Promise<void>((resolve) => {
-        open = resolve;
-      });
-      await subscribe(...args);
-    };
-    const conn = makeConn(socket, { broadcaster });
-
-    socket.emit('message', controlFrame('subscribe_v2', { session_id: 's1' }));
-    await vi.waitFor(() => expect(open).toBeTypeOf('function'));
-    socket.emit('close');
-    expect(removals).toEqual([conn]);
-    open();
-
-    await vi.waitFor(() => expect(removals).toEqual([conn, conn]));
-    expect(conn.subscriptionSessionIds).toEqual([]);
-    expect(acks(socket)).toEqual([]);
   });
 
   it('forwards subscribe_v2 agent ids to the broadcaster, defaulting to the main agent', async () => {

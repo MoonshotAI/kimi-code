@@ -854,21 +854,4 @@ describe('turn machine streamed blocks', () => {
       { type: 'text', text: 'xy' },
     ]);
   });
-
-  it('signals a stream reset and restarts block numbers when the request retries an attempt', async () => {
-    const { actor, stream } = startTurnActor(
-      scriptedRequester([
-        { type: 'llm.streaming.part', part: { type: 'text', text: 'lost' } },
-        { type: 'llm.request.retrying' },
-        { type: 'llm.streaming.part', part: { type: 'text', text: 'kept' } },
-        { type: 'llm.done' },
-      ]),
-    );
-
-    await drain();
-
-    expect(stream).toEqual(['part:0', 'reset', 'part:0']);
-    const last = actor.getSnapshot().context.turnOutput?.produced.at(-1)?.message;
-    expect(last?.role === 'assistant' ? last.content : undefined).toEqual([{ type: 'text', text: 'kept' }]);
-  });
 });

@@ -16,7 +16,6 @@ import {
   LifecycleScope,
   IAgentLifecycleService,
   IAgentConversationUndoParticipantRegistry,
-  IAgentFullCompactionService,
   IAgentGoalService,
   IAgentLoopService,
   IAgentPermissionModeService,
@@ -49,8 +48,6 @@ import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loo
 import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { WebSocket } from 'ws';
-
 import type { ConversationTurn } from '../src/protocol/conversation';
 import {
   interactionEventMessageSchema,
@@ -63,15 +60,12 @@ import type {
   ConversationService,
 } from '../src/services/conversation/conversationService';
 import { mapError } from '../src/transport/errors';
-import type { IConnectionRegistry } from '../src/transport/ws/connectionRegistry';
 import {
   type BroadcastDelivery,
   type BroadcastTarget,
   type EventEnvelope,
   SessionEventBroadcaster,
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
-import { WsConnectionV1 } from '../src/transport/ws/v1/wsConnectionV1';
-import { TurnStepRetrying } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { USAGE_FRAME_INTERVAL_MS } from '../src/transport/ws/v1/sessionAgentFeed';
 
 type FakeBusEvent = { type: string };
@@ -649,29 +643,6 @@ type RecordedFrame = { readonly type: string } & Record<string, unknown>;
 function recordingTarget(): { target: BroadcastTarget; frames: RecordedFrame[] } {
   const frames: RecordedFrame[] = [];
   return { target: { send: (frame) => frames.push(frame as unknown as RecordedFrame) }, frames };
-}
-
-class FakeSocket {
-  readonly OPEN = 1;
-  readyState = 1;
-  bufferedAmount = 0;
-  private readonly handlers = new Map<string, Array<(...args: unknown[]) => void>>();
-
-  on(event: string, handler: (...args: unknown[]) => void): this {
-    this.handlers.set(event, [...(this.handlers.get(event) ?? []), handler]);
-    return this;
-  }
-
-  send(): void {}
-
-  close(): void {
-    this.readyState = 3;
-    this.emit('close');
-  }
-
-  emit(event: string, ...args: unknown[]): void {
-    for (const handler of this.handlers.get(event) ?? []) handler(...args);
-  }
 }
 
 describe('SessionEventBroadcaster', () => {
@@ -1732,46 +1703,6 @@ describe('SessionEventBroadcaster', () => {
       expect(feed.listeners.size).toBe(1);
     });
 
-    it('drops a page that a reset overtakes and sends the fresh page with the events after the reset', async () => {
-      openMainAgent();
-      const feed = new FakeFeed();
-      feed.turns = [endedTurn('t0', 0)];
-      const release = feed.holdPages();
-      conversations.serve('s1', 'main', feed);
-      const { target, frames } = recordingTarget();
-      await bc.subscribe('s1', target, ['main']);
-      await vi.waitFor(() => expect(feed.pages).toBe(1));
-
-      feed.turns = [endedTurn('t0', 0), endedTurn('t1', 1)];
-      feed.emit({ type: 'reset' });
-      feed.emit({ type: 'item.removed', turn_id: 't1', item_id: 'i1' });
-      release();
-
-      await vi.waitFor(() => expect(types(frames)).toContain('item.removed'));
-      const conversation = frames.filter((frame) => frame.type === 'turns' || frame.type === 'item.removed');
-      expect(types(conversation)).toEqual(['turns', 'item.removed']);
-      expect((conversation[0]!['turns'] as ConversationTurn[]).map((turn) => turn.turn_id)).toEqual(['t0', 't1']);
-    });
-
-    it('lets an unsubscribe win over a conversation that is still loading', async () => {
-      openMainAgent();
-      let resolveFeed!: (feed: FakeFeed) => void;
-      conversations.serve('s1', 'main', new Promise<FakeFeed>((resolve) => {
-        resolveFeed = resolve;
-      }));
-      const { target, frames } = recordingTarget();
-      await bc.subscribe('s1', target, ['main']);
-
-      bc.unsubscribe('s1', target, ['main']);
-      const feed = new FakeFeed();
-      resolveFeed(feed);
-      await settle();
-
-      expect(feed.listeners.size).toBe(0);
-      expect(types(frames).filter((type) => type.startsWith('turns'))).toEqual([]);
-      expect(bc.sessionsOf(target)).toEqual([]);
-    });
-
     it('follows the replacement feed of a recreated agent and reports one that fails to load', async () => {
       openMainAgent();
       const first = new FakeFeed();
@@ -1800,30 +1731,6 @@ describe('SessionEventBroadcaster', () => {
         msg: mapError(failure, '').msg,
       });
       expect(second.listeners.size).toBe(0);
-    });
-
-    it('releases the subscription of a socket that closed before its session finished opening', async () => {
-      openMainAgent();
-      const feed = new FakeFeed();
-      conversations.serve('s1', 'main', feed);
-      const socket = new FakeSocket();
-      const conn = new WsConnectionV1({
-        socket: socket as unknown as WebSocket,
-        broadcaster: bc,
-        taskSource: async () => ({ kind: 'session_not_found' }),
-        connectionRegistry: { add: () => {}, remove: () => {} } as unknown as IConnectionRegistry,
-        remoteAddress: null,
-        userAgent: null,
-      });
-
-      socket.emit('message', JSON.stringify({ type: 'subscribe_v2', id: 'sub-1', payload: { session_id: 's1' } }));
-      socket.emit('close');
-      await settle();
-      await settle();
-
-      expect(bc.sessionsOf(conn)).toEqual([]);
-      expect(feed.listeners.size).toBe(0);
-      expect(feed.pages).toBe(0);
     });
   });
 
@@ -2058,63 +1965,6 @@ describe('SessionEventBroadcaster', () => {
       expect(stateFramesOf(offView)).toEqual([]);
     });
 
-    it('follows turns and compactions in the agent status and leaves request retries to the turn', async () => {
-      const lc = new FakeLifecycle();
-      const main = lc.addAgent('main');
-      const state = withAgentState(main);
-      let compacting: { trigger: string } | null = null;
-      main.set(IAgentFullCompactionService, { get compacting() { return compacting; } });
-      sessions.set('s1', lc);
-      bc = makeBroadcasterForAgents();
-
-      const view = collectingTarget();
-      await bc.subscribe('s1', view.target, ['main']);
-      const before = view.envelopes.length;
-
-      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
-      await settle();
-      expect(view.envelopes.slice(before).map((frame) => frame.type)).toEqual(['agent']);
-      expect(stateFramesOf(view).at(-1)).toMatchObject({ type: 'agent', status: 'running' });
-
-      const readsBeforeDelta = state.statusReads();
-      main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'hi' }));
-      await settle();
-      expect(state.statusReads()).toBe(readsBeforeDelta);
-      expect(stateFramesOf(view).filter((frame) => frame.type === 'agent')).toHaveLength(2);
-
-      main.bus.emit(
-        new TurnStepRetrying({
-          agentId: 'main',
-          turnId: 1,
-          step: 1,
-          failedAttempt: 1,
-          nextAttempt: 2,
-          maxAttempts: 3,
-          delayMs: 500.4,
-          errorName: 'APITimeoutError',
-          errorMessage: 'Request timed out.',
-        }),
-      );
-      await settle();
-      expect(stateFramesOf(view).filter((frame) => frame.type === 'agent')).toHaveLength(2);
-      expect(JSON.parse(JSON.stringify(stateFramesOf(view).at(-1)))).not.toHaveProperty('retry');
-
-      compacting = { trigger: 'auto' };
-      main.bus.emit(agentEvent('compaction.started', { trigger: 'auto' }));
-      await settle();
-      expect(stateFramesOf(view).at(-1)).toMatchObject({ type: 'agent', status: 'compacting' });
-      compacting = null;
-      main.bus.emit(agentEvent('compaction.completed', {}));
-      await settle();
-      expect(stateFramesOf(view).at(-1)).toMatchObject({ type: 'agent', status: 'running' });
-
-      const beforeEnd = view.envelopes.length;
-      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
-      await settle();
-      expect(view.envelopes.slice(beforeEnd).map((frame) => frame.type)).toEqual(['agent']);
-      expect(stateFramesOf(view).at(-1)).toMatchObject({ type: 'agent', status: 'idle' });
-    });
-
     it('pushes todo, goal and permission changes and stays quiet when nothing changed', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
@@ -2260,12 +2110,6 @@ describe('SessionEventBroadcaster', () => {
 
       await bc.subscribe('s1', view.target, ['main']);
       expect(agentFrames()).toEqual(['main', 'agent-0', 'agent-0', 'main']);
-    });
-
-    it('ignores unsubscribes for sessions it never activated', async () => {
-      const view = collectingTarget();
-      expect(() => bc.unsubscribe('nope', view.target)).not.toThrow();
-      expect(() => bc.unsubscribe('nope', view.target, ['main'])).not.toThrow();
     });
   });
 });

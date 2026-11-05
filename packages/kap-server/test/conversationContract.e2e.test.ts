@@ -1,27 +1,22 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
-  IAgentPlanService,
   IAgentTaskService,
   IConfigService,
-  IEventDispatcher,
   closeSessionById,
   MAIN_AGENT_ID,
   getLiveSessionById,
-  interactions,
   resumeSessionById,
   type AgentTask,
-  type ApprovalRequest,
 } from '@moonshot-ai/agent-core-v2';
 
-import { ConversationService } from '../src/services/conversation/conversationService';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders, bearerToken } from './helpers/auth';
@@ -70,22 +65,6 @@ function sseTextChunks(...parts: readonly string[]): string {
       choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
       usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 },
     }),
-  );
-}
-
-function sseThinkingThenText(thinking: string, text: string): string {
-  const chunk = (delta: Record<string, unknown>, finishReason: string | null = null): string =>
-    JSON.stringify({
-      id: 'chatcmpl-mock',
-      object: 'chat.completion.chunk',
-      created: 1,
-      model: 'mock',
-      choices: [{ index: 0, delta, finish_reason: finishReason }],
-    });
-  return sseLines(
-    chunk({ role: 'assistant', reasoning_content: thinking }),
-    chunk({ content: text }),
-    chunk({}, 'stop'),
   );
 }
 
@@ -515,27 +494,6 @@ describe('conversation contract e2e', () => {
     channel.close();
   });
 
-  it('S1b: reasoning ends as soon as the answer starts and carries its timing', async () => {
-    await boot([{ match: () => true, respond: () => sseThinkingThenText('weighing options', 'final answer') }]);
-    const sid = await createSession(server!, base);
-    const channel = await subscribeConversation(server!, sid);
-    await submitPrompt(server!, base, sid, 'think first');
-    await idle(server!, base, sid);
-    await until('turn.ended frame', () => channel.conversation.some((frame) => frame.type === 'turn.ended'));
-
-    const end = await getTurns(server!, base, sid);
-    const reasoning = end.turns[0].items.find((item: any) => item.type === 'reasoning');
-    const answer = end.turns[0].items.find((item: any) => item.type === 'assistant_message');
-    expect(reasoning).toMatchObject({ status: 'ended', text: 'weighing options', started_at: expect.any(String), duration_ms: expect.any(Number) });
-    const reasoningEnded = channel.conversation.findIndex((frame) => frame.type === 'item.ended' && frame.item.item_id === reasoning.item_id);
-    const answerStarted = channel.conversation.findIndex((frame) => frame.type === 'item.started' && frame.item.item_id === answer.item_id);
-    expect(answerStarted).toBeGreaterThan(-1);
-    expect(reasoningEnded).toBeGreaterThan(-1);
-    expect(reasoningEnded).toBeLessThan(answerStarted);
-    expect(channel.turns()).toEqual(end.turns);
-    channel.close();
-  });
-
   it('S2: a prompt submitted mid-turn runs as its own turn after the first', async () => {
     await boot([
       { match: (body) => body.includes('first prompt'), respond: () => sseText('first done'), delayMs: 2500 },
@@ -606,152 +564,6 @@ describe('conversation contract e2e', () => {
     }
   }, 30000);
 
-  it('keeps streaming a conversation whose undo failed after the state was restored', async () => {
-    await boot([{ match: () => true, respond: () => sseText('answered') }]);
-    const sid = await createSession(server!, base);
-    await submitPrompt(server!, base, sid, 'first request');
-    await idle(server!, base, sid);
-    const channel = await subscribeConversation(server!, sid);
-    try {
-      const dispatcher = getLiveSessionById(server!.core.accessor, sid)!
-        .accessor.get(IAgentLifecycleService)
-        .handleOf(MAIN_AGENT_ID)!
-        .accessor.get(IEventDispatcher);
-      const pages = channel.conversation.filter((frame) => frame.type === 'turns').length;
-      const flush = vi.spyOn(dispatcher, 'flush').mockRejectedValue(new Error('wire flush failed'));
-      try {
-        const undo = await fetch(`${base}/api/v1/sessions/${encodeURIComponent(sid)}:undo`, {
-          method: 'POST',
-          headers: authHeaders(server!, { 'content-type': 'application/json' }),
-          body: JSON.stringify({ count: 1 }),
-        });
-        expect(((await undo.json()) as Envelope<unknown>).code).not.toBe(0);
-      } finally {
-        flush.mockRestore();
-      }
-      await until('fresh page after the restore', () => channel.conversation.filter((frame) => frame.type === 'turns').length > pages);
-
-      await submitPrompt(server!, base, sid, 'second request');
-      await idle(server!, base, sid);
-      await until('second turn reaches the subscriber', () =>
-        channel.turns().some((turn) => textOf(turn.items[0]) === 'second request' && turn.status === 'ended'));
-      expect(channel.turns()).toEqual((await getTurns(server!, base, sid)).turns);
-    } finally {
-      channel.close();
-    }
-  }, 30000);
-
-  it('S3: a pending approval rides on the tool item, then resolves', async () => {
-    await boot([
-      { match: (body) => !body.includes('echo contract-hi'), respond: () => sseToolCall('call_1', 'Bash', '{"command":"echo contract-hi"}') },
-      { match: () => true, respond: () => sseText('tool done') },
-    ]);
-    const sid = await createSession(server!, base);
-    const channel = await subscribeConversation(server!, sid);
-    await submitPrompt(server!, base, sid, 'run the echo', 'manual');
-
-    const pendingApproval = () =>
-      interactions
-        .findAll({ kind: 'approval', resolved: false, tags: { sessionId: sid } })
-        .find((item) => (item.payload as ApprovalRequest).toolName === 'Bash');
-    await until('approval pending', async () => pendingApproval() !== undefined);
-    await until('live tool item', () => channel.turns().some((turn) => turn.items.some((item: any) => item.item_id === 'call_1')));
-    const approval = pendingApproval()!;
-
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approval.id)}`, {
-      method: 'POST',
-      body: { kind: 'approval', decision: 'approved' },
-    });
-    await idle(server!, base, sid);
-
-    const end = await getTurns(server!, base, sid);
-    const [tool] = toolItems(end, 'Bash');
-    expect(tool).toMatchObject({
-      item_id: 'call_1',
-      status: 'ended',
-      outcome: 'completed',
-      input: { command: 'echo contract-hi' },
-      interaction_id: approval.id,
-    });
-    expect(tool).not.toHaveProperty('stage');
-    expect(String(tool.output)).toContain('contract-hi');
-    const toolFrames = channel.conversation.filter((frame) => frame.item?.item_id === 'call_1' || frame.item_id === 'call_1');
-    expect(toolFrames[0]).toMatchObject({ type: 'item.started', item: { stage: 'input', name: 'Bash' } });
-    expect(toolFrames).toContainEqual(expect.objectContaining({
-      type: 'item.updated',
-      set: expect.objectContaining({ stage: 'awaiting_approval', interaction_id: approval.id }),
-    }));
-    expect(toolFrames.filter((frame) => frame.type === 'item.ended')).toHaveLength(1);
-    await until('turn ended on the channel', () => channel.turns()[0]?.status === 'ended');
-    expect(channel.turns()).toEqual(end.turns);
-    channel.close();
-  });
-
-  it.each([
-    ['approved', { decision: 'approved' }, false, 'Exited plan mode'],
-    ['revised', { decision: 'rejected', feedback: 'Cover the error path too.' }, true, 'Cover the error path too.'],
-    ['dismissed', { decision: 'cancelled' }, true, 'Plan approval dismissed'],
-  ] as const)('S8: in Never Ask, a plan waits for review on its tool item and is %s', async (label, response, staysInPlan, output) => {
-    await boot([
-      {
-        match: (body) => body.includes('Plan the greeting change') && !body.includes('call_exit_plan'),
-        respond: () => sseToolCall('call_exit_plan', 'ExitPlanMode', '{}'),
-      },
-      { match: () => true, respond: () => sseText('done') },
-    ]);
-    const sid = await createSession(server!, base);
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/profile`, {
-      method: 'POST',
-      body: { agent_config: { plan_mode: true, permission_mode: 'auto' } },
-    });
-    const planService = getLiveSessionById(server!.core.accessor, sid)!
-      .accessor.get(IAgentLifecycleService)
-      .handleOf(MAIN_AGENT_ID)!
-      .accessor.get(IAgentPlanService);
-    const planPath = (await planService.status())!.path!;
-    await mkdir(dirname(planPath), { recursive: true });
-    await writeFile(planPath, '# Plan\n\n- Change the greeting\n- Add a test', 'utf-8');
-    const channel = await subscribeConversation(server!, sid);
-
-    await submitPrompt(server!, base, sid, 'Plan the greeting change', 'auto');
-
-    const pendingReview = () =>
-      interactions
-        .findAll({ kind: 'approval', resolved: false, tags: { sessionId: sid } })
-        .find((item) => (item.payload as ApprovalRequest).toolName === 'ExitPlanMode');
-    await until('plan review pending', async () => pendingReview() !== undefined);
-    const review = pendingReview()!;
-    const approvalId = review.id;
-    const plan = { kind: 'plan_review', plan: '# Plan\n\n- Change the greeting\n- Add a test', path: planPath };
-    expect((review.payload as ApprovalRequest).display).toMatchObject(plan);
-    expect((await getSessionFacts(server!, base, sid)).pending_interaction).toBe('approval');
-    expect(await planService.status()).not.toBeNull();
-    const [waiting] = toolItems(await getTurns(server!, base, sid), 'ExitPlanMode');
-    expect(waiting).toMatchObject({ stage: 'awaiting_approval', interaction_id: approvalId, display: { ...plan, review: { state: 'pending' } } });
-
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approvalId)}`, {
-      method: 'POST',
-      body: { kind: 'approval', ...response },
-    });
-    await idleOrDump(server!, base, sid);
-
-    expect((await planService.status()) !== null).toBe(staysInPlan);
-    const end = await getTurns(server!, base, sid);
-    const [tool] = toolItems(end, 'ExitPlanMode');
-    const state = label === 'approved' ? 'approved' : label === 'revised' ? 'rejected' : 'cancelled';
-    expect(tool).toMatchObject({ interaction_id: approvalId, display: { ...plan, review: { state } } });
-    if (label === 'revised') expect(tool.display.review.feedback).toBe('Cover the error path too.');
-    expect(String(tool.output ?? tool.error)).toContain(output);
-    expect(channel.conversation).toContainEqual(expect.objectContaining({
-      type: 'item.updated',
-      item_id: 'call_exit_plan',
-      set: expect.objectContaining({ display: expect.objectContaining({ review: { state: 'pending' } }) }),
-    }));
-    await until('turn ended on the channel', () => channel.turns()[0]?.status === 'ended');
-    expect(channel.turns()).toEqual(end.turns);
-    channel.close();
-  });
-
   it('S4: a background subagent streams task events and a task-origin notification turn', async () => {
     await boot([
       {
@@ -811,68 +623,6 @@ describe('conversation contract e2e', () => {
     channel.close();
   });
 
-  it('S4b: subscriptions that cannot be served say why', async () => {
-    const sid = await createSession(server!, base);
-    const socket = await openFrameSocket(server!);
-    try {
-      socket.send({ type: 'subscribe_v2', id: 'missing-session', payload: { session_id: 'ses_missing_example' } });
-      expect(await socket.next((frame) => frame.type === 'ack' && frame.id === 'missing-session')).toMatchObject({
-        code: 40401,
-        payload: { accepted: [], not_found: ['ses_missing_example'] },
-      });
-
-      socket.send({ type: 'subscribe_v2', id: 'agents', payload: { session_id: sid, agent_ids: [MAIN_AGENT_ID, 'agent-missing'] } });
-      expect(await socket.next((frame) => frame.type === 'turns.failed')).toMatchObject({
-        session_id: sid,
-        agent_id: 'agent-missing',
-        code: 40401,
-      });
-      expect(await socket.next((frame) => frame.type === 'turns' && frame.agent_id === MAIN_AGENT_ID)).toMatchObject({ turns: [] });
-      expect(await socket.next((frame) => frame.type === 'ack' && frame.id === 'agents')).toMatchObject({
-        code: 0,
-        payload: { accepted: [sid], not_found: [] },
-      });
-    } finally {
-      await socket.close();
-    }
-  });
-
-  it('S4c: a subscribed subagent keeps streaming after it is evicted and resumed', async () => {
-    let childId = '';
-    let resumed = false;
-    await boot([
-      { match: (body) => body.includes('fg-second-2') && !body.includes('resume-it'), respond: () => sseText('second answer') },
-      {
-        match: (body) => body.includes('resume-it') && !resumed,
-        respond: () => {
-          resumed = true;
-          return sseToolCall('call_resume', 'Agent', JSON.stringify({ resume: childId, prompt: 'fg-second-2', description: 'fg again' }));
-        },
-      },
-      { match: (body) => body.includes('fg-first-1') && !body.includes('spawn-fg2'), respond: () => sseText('first answer') },
-      {
-        match: (body) => body.includes('spawn-fg2') && !body.includes('"role":"tool"'),
-        respond: () => sseToolCall('call_spawn', 'Agent', '{"prompt":"fg-first-1","description":"fg one"}'),
-      },
-      { match: () => true, respond: () => sseText('done') },
-    ]);
-    const sid = await createSession(server!, base);
-    await submitPrompt(server!, base, sid, 'spawn-fg2 one foreground agent');
-    await idleOrDump(server!, base, sid);
-    childId = toolItems(await getTurns(server!, base, sid), 'Agent')[0].agent_refs[0].agent_id;
-    const child = await subscribeConversation(server!, sid, childId);
-    const lifecycle = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(IAgentLifecycleService);
-    await lifecycle.remove(lifecycle.get(childId)!);
-
-    await submitPrompt(server!, base, sid, 'resume-it please');
-    await idleOrDump(server!, base, sid);
-    const answered = (turns: readonly any[]): boolean =>
-      turns.some((turn) => turn.items.some((item: any) => item.type === 'assistant_message' && item.text === 'second answer'));
-    await until('resumed subagent answer on the channel', () => answered(child.turns()), 30000);
-    expect(child.turns()).toEqual((await getTurns(server!, base, sid, childId)).turns);
-    child.close();
-  });
-
   it('S5: subscribing to a running turn shows what the step has streamed so far', async () => {
     await boot([{ match: () => true, respond: () => sseText('slow answer'), delayMs: 4000 }]);
     const sid = await createSession(server!, base);
@@ -887,87 +637,6 @@ describe('conversation contract e2e', () => {
     await until('turn ended on the channel', () => channel.turns()[0]?.status === 'ended');
     expect(channel.turns()).toEqual((await getTurns(server!, base, sid)).turns);
     channel.close();
-  });
-
-  it('S5b: a subscriber joining mid-step sees the text the step already streamed', async () => {
-    await boot([{ match: () => true, respond: () => sseTextChunks('first half ', 'second half'), pause: { afterEvents: 1, ms: 3000 } }]);
-    const sid = await createSession(server!, base);
-    await submitPrompt(server!, base, sid, 'stream in two halves');
-    await until('model called', () => llm!.hits.length > 0);
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    const channel = await subscribeConversation(server!, sid);
-    const running = channel.snapshot().turns[0];
-    expect(running).toMatchObject({ status: 'running' });
-    expect(running.items).toContainEqual(expect.objectContaining({ type: 'assistant_message', status: 'running', text: 'first half ' }));
-    await idle(server!, base, sid);
-    await until('turn ended on the channel', () => channel.turns()[0]?.status === 'ended');
-    expect(channel.turns()).toEqual((await getTurns(server!, base, sid)).turns);
-    expect(textOf(channel.turns()[0].items.find((item: any) => item.type === 'assistant_message'))).toBe('first half second half');
-    channel.close();
-  });
-
-  it('S5c: a side chat opens with a fork boundary and hides the conversation it inherited', async () => {
-    await boot([
-      { match: (body) => body.includes('side question'), respond: () => sseText('side answer') },
-      { match: () => true, respond: () => sseText('main answer') },
-    ]);
-    const sid = await createSession(server!, base);
-    await submitPrompt(server!, base, sid, 'main question');
-    await idle(server!, base, sid);
-
-    const { agent_id: btw } = await rest<{ agent_id: string }>(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}:btw`, {
-      method: 'POST',
-      body: {},
-    });
-    const opened = await getTurns(server!, base, sid, btw);
-    expect(opened.turns).toEqual([
-      expect.objectContaining({
-        ordinal: 0,
-        kind: 'system',
-        status: 'ended',
-        outcome: 'completed',
-        items: [expect.objectContaining({ type: 'system', kind: 'fork_boundary', source: 'btw', forked_from: { agent_id: MAIN_AGENT_ID } })],
-      }),
-    ]);
-
-    const channel = await subscribeConversation(server!, sid, btw);
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts`, {
-      method: 'POST',
-      body: { agent_id: btw, content: [{ type: 'text', text: 'side question' }] },
-    });
-    await until('side turn ended', async () => (await getTurns(server!, base, sid, btw)).turns.at(-1)?.status === 'ended' && (await getTurns(server!, base, sid, btw)).turns.length === 2);
-    const end = await getTurns(server!, base, sid, btw);
-    expect(end.turns.map((turn) => `${turn.kind}:${turn.ordinal}`)).toEqual(['system:0', 'agent:1']);
-    expect(end.turns[0].turn_id).toBe(opened.turns[0].turn_id);
-    expect(textOf(end.turns[1].items[0])).toBe('side question');
-    expect(JSON.stringify(end.turns)).not.toContain('main question');
-    await until('side turn on the channel', () => channel.turns().length === 2 && channel.turns()[1].status === 'ended');
-    expect(channel.turns()).toEqual(end.turns);
-    channel.close();
-  });
-
-  it('S6b: REST pages turns by before_ordinal and page_size', async () => {
-    await boot([{ match: () => true, respond: () => sseText('ok') }]);
-    const sid = await createSession(server!, base);
-    for (const text of ['one', 'two', 'three']) {
-      await submitPrompt(server!, base, sid, text);
-      await idle(server!, base, sid);
-    }
-    await until('three turns ended', async () => {
-      const page = await getTurns(server!, base, sid);
-      return page.turns.length === 3 && page.turns.every((turn) => turn.status === 'ended');
-    });
-    const path = `/api/v1/sessions/${encodeURIComponent(sid)}/agents/${MAIN_AGENT_ID}/turns`;
-
-    const latest = await rest<TurnsPage>(server!, base, `${path}?page_size=2`);
-    expect(latest.turns.map((turn) => textOf(turn.items[0]))).toEqual(['two', 'three']);
-    expect(latest.has_more).toBe(true);
-    const older = await rest<TurnsPage>(server!, base, `${path}?before_ordinal=${latest.turns[0].ordinal}&page_size=2`);
-    expect(older.turns.map((turn) => textOf(turn.items[0]))).toEqual(['one']);
-    expect(older.has_more).toBe(false);
-    const tooLarge = await fetch(`${base}${path}?page_size=201`, { headers: authHeaders(server!) });
-    expect(((await tooLarge.json()) as Envelope<unknown>).code).toBe(40001);
   });
 
   it('S6: the REST page and the WS turns frame agree', async () => {

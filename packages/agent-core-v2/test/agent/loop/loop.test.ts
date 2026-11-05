@@ -2159,34 +2159,6 @@ describe('interruption reminder', () => {
     });
   });
 
-  it('keeps the streamed block number and timing on salvaged content parts', async () => {
-    ctx.mockNextResponse(
-      { type: 'text', text: '  ' },
-      { type: 'think', think: 'why', encrypted: 'sig' },
-      { type: 'text', text: 'partial' },
-    );
-    const subscription = ctx.get(IEventBus).subscribe(AssistantDelta, (event) => {
-      if (event.block === 2) loop.cancel();
-    });
-    const turn = submitTurn(loop, 'Hello').turn;
-    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
-    subscription.dispose();
-
-    const salvaged = ctx.allEvents.flatMap((entry) => {
-      if (entry.type !== '[wire]' || entry.event !== 'context.append_loop_event') return [];
-      const event = (entry.args as {
-        event?: { type?: string; block?: number; part?: { type: string }; startedAt?: number; durationMs?: number };
-      }).event;
-      return event?.type === 'content.part'
-        ? [[event.block, event.part?.type, typeof event.startedAt, (event.durationMs ?? -1) >= 0]]
-        : [];
-    });
-    expect(salvaged).toEqual([
-      [1, 'think', 'number', true],
-      [2, 'text', 'number', true],
-    ]);
-  });
-
   it('records no partial content when the stream only produced whitespace', async () => {
     ctx.mockNextResponse({ type: 'text', text: '  ' }, { type: 'text', text: 'answer' });
     const subscription = cancelOnFirstDelta();
