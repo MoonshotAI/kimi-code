@@ -110,6 +110,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/environments:ssh-hosts",
+    ],
+    [
+      "GET",
       "/api/v1/files/{file_id}",
     ],
     [

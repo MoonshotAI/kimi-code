@@ -2,6 +2,8 @@ import {
   Error2,
   ErrorCodes,
   IAgentEnvironmentBindingService,
+  IBootstrapService,
+  IHostFileSystem,
   IEnvironmentDeclarationService,
   ISessionContext,
   IEnvironmentService,
@@ -17,6 +19,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { HandshakeError, RemoteSession, connectWithGuidance, toLauncherSpec } from '@moonshot-ai/agent-core-v2/remote';
 import { RemoteEnvironmentEntrySchema } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
+import { readSshConfigHosts } from '@moonshot-ai/agent-core-v2/remote/declaration/sshConfigHosts';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -50,6 +53,17 @@ interface EnvironmentRouteHost {
     ) => Promise<void> | void,
   ): unknown;
 }
+
+const sshConfigHostsResponseSchema = z.object({
+  config_path: z.string(),
+  exists: z.boolean(),
+  hosts: z.array(z.object({
+    alias: z.string(),
+    host_name: z.string().optional(),
+    user: z.string().optional(),
+    port: z.number().int().optional(),
+  })),
+});
 
 const testEnvironmentRequestSchema = z.object({
   definition: RemoteEnvironmentEntrySchema,
@@ -100,6 +114,30 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
     },
   );
   app.get(listAllRoute.path, listAllRoute.options, listAllRoute.handler as Parameters<EnvironmentRouteHost['get']>[2]);
+
+  const sshHostsRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/environments::ssh-hosts',
+      success: { data: sshConfigHostsResponseSchema },
+      description: 'List concrete Host aliases declared in the local ~/.ssh/config, following Include directives',
+      tags: ['environments'],
+    },
+    async (req, reply) => {
+      const result = await readSshConfigHosts(core.accessor.get(IHostFileSystem), core.accessor.get(IBootstrapService).osHomeDir);
+      reply.send(okEnvelope({
+        config_path: result.configPath,
+        exists: result.exists,
+        hosts: result.hosts.map((host) => ({
+          alias: host.alias,
+          ...(host.hostName !== undefined ? { host_name: host.hostName } : {}),
+          ...(host.user !== undefined ? { user: host.user } : {}),
+          ...(host.port !== undefined ? { port: host.port } : {}),
+        })),
+      }, req.id));
+    },
+  );
+  app.get(sshHostsRoute.path, sshHostsRoute.options, sshHostsRoute.handler as Parameters<EnvironmentRouteHost['get']>[2]);
 
   const testRoute = defineRoute(
     {
