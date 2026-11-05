@@ -31,6 +31,7 @@ export interface ForkSessionOptions {
 export interface ResumeSessionOptions {
   readonly additionalDirs?: readonly string[];
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
+  readonly forceRetry?: boolean;
 }
 
 export interface CreateChildSessionOptions {

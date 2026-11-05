@@ -3,7 +3,6 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager, type ISessionManager as SessionManager } from '#/app/sessionManager/sessionManager';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, isError2 } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ResumeSessionOptions } from '#/workspace/sessionLifecycle/sessionLifecycle';
@@ -35,17 +34,7 @@ export async function resumeSessionById(
   sessionId: string,
   opts?: ResumeSessionOptions,
 ): Promise<ISessionScopeHandle | undefined> {
-  try {
-    return await accessor.get(ISessionManager).resume(sessionId, opts);
-  } catch (error) {
-    accessor
-      .get(ITelemetryService)
-      .withContext({ session_id: sessionId })
-      .track2('session_load_failed', {
-        reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
-      });
-    throw error;
-  }
+  return accessor.get(ISessionManager).resume(sessionId, opts);
 }
 
 export function getLiveSessionById(
