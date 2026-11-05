@@ -117,12 +117,12 @@ describe('isRetryableGenerateError', () => {
     expect(isRetryableGenerateError(new APIProviderOverloadedError(529, 'Overloaded'))).toBe(
       true,
     );
-    expect(isRetryableGenerateError(new APIStatusError(503, 'Service unavailable'))).toBe(true);
+    expect(isRetryableGenerateError(new APIStatusError(503, 'Service unavailable', true))).toBe(true);
   });
 
   it('does not retry deterministic client failures', () => {
-    expect(isRetryableGenerateError(new APIStatusError(400, 'Bad request'))).toBe(false);
-    expect(isRetryableGenerateError(new APIStatusError(401, 'Unauthorized'))).toBe(false);
+    expect(isRetryableGenerateError(new APIStatusError(400, 'Bad request', false))).toBe(false);
+    expect(isRetryableGenerateError(new APIStatusError(401, 'Unauthorized', false))).toBe(false);
   });
 
   it('does not retry provider-filtered empty responses', () => {
@@ -169,11 +169,11 @@ describe('classifyApiError', () => {
   });
 
   it('classifies status errors by status code', () => {
-    expect(classifyApiError(new APIStatusError(401, 'Unauthorized')).kind).toBe('auth');
-    expect(classifyApiError(new APIStatusError(403, 'Forbidden')).kind).toBe('auth');
-    expect(classifyApiError(new APIStatusError(500, 'Internal')).kind).toBe('5xx_server');
-    expect(classifyApiError(new APIStatusError(422, 'Nope')).kind).toBe('4xx_client');
-    expect(classifyApiError(new APIStatusError(413, 'Request exceeds the maximum size')).kind).toBe(
+    expect(classifyApiError(new APIStatusError(401, 'Unauthorized', false)).kind).toBe('auth');
+    expect(classifyApiError(new APIStatusError(403, 'Forbidden', false)).kind).toBe('auth');
+    expect(classifyApiError(new APIStatusError(500, 'Internal', true)).kind).toBe('5xx_server');
+    expect(classifyApiError(new APIStatusError(422, 'Nope', false)).kind).toBe('4xx_client');
+    expect(classifyApiError(new APIStatusError(413, 'Request exceeds the maximum size', false)).kind).toBe(
       '4xx_client',
     );
     expect(classifyApiError(normalizeAPIStatusError(413, 'context length exceeded')).kind).toBe(
@@ -189,24 +189,8 @@ describe('classifyApiError', () => {
 
 describe('model error HTTP status source', () => {
   it('uses normalized retryability instead of HTTP status when deciding whether to retry', () => {
-    const retryableClientError = new APIStatusError(
-      400,
-      'retry this',
-      null,
-      null,
-      undefined,
-      undefined,
-      true,
-    );
-    const deterministicServerError = new APIStatusError(
-      503,
-      'do not retry this',
-      null,
-      null,
-      undefined,
-      undefined,
-      false,
-    );
+    const retryableClientError = new APIStatusError(400, 'retry this', true);
+    const deterministicServerError = new APIStatusError(503, 'do not retry this', false);
 
     expect(isRetryableGenerateError(retryableClientError)).toBe(true);
     expect(isRetryableGenerateError(deterministicServerError)).toBe(false);
@@ -312,10 +296,11 @@ describe('model error HTTP status source', () => {
     });
   });
 
-  it('preserves a provider error code in the sixth constructor argument', () => {
+  it('preserves a provider error code in the seventh constructor argument', () => {
     const error = new APIStatusError(
       403,
       'Forbidden',
+      false,
       null,
       null,
       { requestId: 'req-diagnostics' },
@@ -332,8 +317,8 @@ describe('model error HTTP status source', () => {
   });
 
   it('does not apply message recovery patterns without a real HTTP status', () => {
-    const structural = new APIStatusError(undefined, 'tool_use followed by tool_result');
-    const image = new APIStatusError(undefined, 'unsupported image format');
+    const structural = new APIStatusError(undefined, 'tool_use followed by tool_result', false);
+    const image = new APIStatusError(undefined, 'unsupported image format', false);
 
     expect(isRecoverableRequestStructureError(structural)).toBe(false);
     expect(isImageFormatError(image)).toBe(false);

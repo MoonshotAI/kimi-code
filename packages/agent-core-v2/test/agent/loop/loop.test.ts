@@ -783,6 +783,7 @@ describe('Agent loop', () => {
         error: new APIStatusError(
           503,
           'final attempt unavailable',
+          true,
           'req-final-503',
           null,
           'trace-final-503',

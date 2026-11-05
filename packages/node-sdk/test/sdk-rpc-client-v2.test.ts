@@ -723,34 +723,18 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     });
 
     const message = '<html><title>Backend title</title><body>Backend body</body></html>\r\n';
-    expect(toKimiErrorPayload(new APIStatusError(502, message))).toMatchObject({
+    expect(toKimiErrorPayload(new APIStatusError(502, message, true))).toMatchObject({
       message,
     });
 
-    const retryableClientError = new APIStatusError(
-      400,
-      'explicitly retryable',
-      null,
-      null,
-      undefined,
-      undefined,
-      true,
-    );
+    const retryableClientError = new APIStatusError(400, 'explicitly retryable', true);
     expect(toKimiErrorPayload(retryableClientError)).toMatchObject({
       code: ErrorCodes.PROVIDER_API_ERROR,
       message: 'explicitly retryable',
       retryable: true,
     });
 
-    const deterministicServerError = new APIStatusError(
-      503,
-      'explicitly deterministic',
-      null,
-      null,
-      undefined,
-      undefined,
-      false,
-    );
+    const deterministicServerError = new APIStatusError(503, 'explicitly deterministic', false);
     expect(toKimiErrorPayload(deterministicServerError)).toMatchObject({
       code: ErrorCodes.PROVIDER_API_ERROR,
       message: 'explicitly deterministic',
