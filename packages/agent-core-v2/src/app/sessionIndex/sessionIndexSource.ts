@@ -10,7 +10,7 @@ const META_KEY = 'state.json';
 export const SESSION_INDEX_SCAN_CACHE_DIR = '.index-cache';
 
 const SCAN_CACHE_KEY = 'scan.json';
-const SCAN_CACHE_VERSION = 1;
+const SCAN_CACHE_VERSION = 2;
 
 export interface SessionScanCacheEntry {
   readonly ws: string;
