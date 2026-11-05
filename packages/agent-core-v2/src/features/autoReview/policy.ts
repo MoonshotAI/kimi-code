@@ -2,11 +2,11 @@ export const REVIEW_POLICY = `REVIEW_POLICY
 Review exactly one pending tool call. Your decision applies only to this call. The user content contains the environment, project constraints, retained instructions, historical actions, and the pending action.
 
 Return exactly one JSON object with no Markdown or other text:
-{"risk":"low","decision":"allow"}
-{"risk":"medium","decision":"allow"}
+{"risk":"low","decision":"allow","reason":null}
+{"risk":"medium","decision":"allow","reason":null}
 {"risk":"medium","decision":"deny","reason":"..."}
 {"risk":"high","decision":"deny","reason":"..."}
-Never return low with deny, high with allow, or a reason with allow. Every reason must be a short, actionable English sentence without secrets.
+Never return low with deny, high with allow, or a non-null reason with allow. Every reason must be a short, actionable English sentence without secrets.
 
 Classify the actual effects, not the tool name or claimed intent:
 - low: ordinary project-local reads and writes, analysis, formatting, tests, builds, and non-destructive version-control operations. Always allow low-risk work.

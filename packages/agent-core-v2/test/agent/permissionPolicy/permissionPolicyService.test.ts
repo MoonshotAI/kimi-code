@@ -19,6 +19,7 @@ import type { Model } from '#/llm-adapter/model/catalog';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AutoReviewService } from '#/features/autoReview/reviewService';
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
+import { REVIEW_POLICY } from '#/features/autoReview/policy';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -620,6 +621,11 @@ describe('AutoReviewService', () => {
     const content = JSON.stringify(requestOverrides?.messages);
     expect(content).toContain('Do not delete user-data.');
     expect(content).not.toContain('Changed after initialization.');
+  });
+
+  it.each(REVIEW_POLICY.split('\n').filter((line) => line.startsWith('{')))('accepts the policy example: %s', async (text) => {
+    response.message.content = [{ type: 'text', text }];
+    await expect(service().review(policyContext({ toolName: 'Bash', args: { command: 'echo test' } }))).resolves.toMatchObject({ kind: 'decision' });
   });
 
   it.each([
