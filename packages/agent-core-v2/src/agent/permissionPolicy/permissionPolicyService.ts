@@ -55,15 +55,33 @@ export class AgentPermissionPolicyService
     ];
   }
 
-  async evaluate(
+  evaluate(
     context: ResolvedToolExecutionHookContext,
   ): Promise<PermissionPolicyEvaluation | undefined> {
-    for (const policy of this.policies) {
-      const result = await policy.evaluate(context);
-      if (result !== undefined) return { policyName: policy.name, result };
-    }
-    return undefined;
+    return evaluatePolicies(this.policies, context);
   }
+
+  evaluateWithoutModeApproval(
+    context: ResolvedToolExecutionHookContext,
+  ): Promise<PermissionPolicyEvaluation | undefined> {
+    return evaluatePolicies(
+      this.policies.filter((policy) => policy.modeApproval !== true),
+      context,
+    );
+  }
+}
+
+async function evaluatePolicies(
+  policies: readonly PermissionPolicy[],
+  context: ResolvedToolExecutionHookContext,
+): Promise<PermissionPolicyEvaluation | undefined> {
+  for (const policy of policies) {
+    const result = await policy.evaluate(context);
+    if (result !== undefined) {
+      return { policyName: policy.name, result, modeApproval: policy.modeApproval };
+    }
+  }
+  return undefined;
 }
 
 registerScopedService(

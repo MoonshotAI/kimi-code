@@ -12,17 +12,21 @@ export type AutoReviewResult =
 
 export interface IAutoReviewService {
   readonly _serviceBrand: undefined;
-  review(context: ResolvedToolExecutionHookContext): Promise<AutoReviewResult>;
+  review(context: ResolvedToolExecutionHookContext, trigger: string): Promise<AutoReviewResult>;
 }
 
 export const IAutoReviewService = createDecorator<IAutoReviewService>('autoReviewService');
 
 export interface IAutoReviewGate {
   readonly _serviceBrand: undefined;
-  applies(context: ResolvedToolExecutionHookContext, evaluation: PermissionPolicyEvaluation): boolean;
+  trigger(
+    context: ResolvedToolExecutionHookContext,
+    evaluation: PermissionPolicyEvaluation,
+  ): Promise<string | undefined>;
   resolve(
     context: ResolvedToolExecutionHookContext,
     evaluation: PermissionPolicyEvaluation,
+    trigger: string,
   ): Promise<PermissionPolicyEvaluation>;
 }
 

@@ -28,7 +28,6 @@ export class SessionApprovalHistoryPermissionPolicyService implements Permission
       if (match !== undefined) {
         return {
           kind: 'approve',
-          approvedByUser: true,
           reason: {
             has_rule_args: match.hasRuleArgs,
             match_strategy: match.strategy,

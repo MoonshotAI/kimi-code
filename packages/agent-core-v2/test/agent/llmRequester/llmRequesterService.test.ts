@@ -191,7 +191,6 @@ function createService(
     readonly env?: Record<string, string>;
     readonly modelAlias?: () => string;
     readonly prefixRevision?: () => number;
-    readonly selectedModels?: string[];
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -273,10 +272,7 @@ function createService(
   ix.stub(ITelemetryService, telemetry);
   ix.stub(IModelCatalog, {
     _serviceBrand: undefined,
-    get: (alias) => {
-      options.selectedModels?.push(alias);
-      return requester.model;
-    },
+    get: () => requester.model,
     findByName: () => [],
   });
   ix.stub(IModelService, {
@@ -316,53 +312,6 @@ function createService(
   };
 }
 
-describe('AgentLoopRequester operation overrides', () => {
-  it('selects another model and passes the response format for an independent operation', async () => {
-    const inputs: ModelRequestInput[] = [];
-    const requester = createRequester({ value: 0 }, null, [], inputs);
-    const selectedModels: string[] = [];
-    const { service } = createService(requester, { selectedModels });
-
-    await service.request({
-      modelAlias: 'review-model',
-      responseFormat: { type: 'json_object' },
-      messages: history,
-      tools: [],
-      source: { type: 'operation', requestKind: 'auto_review' },
-    });
-
-    expect(inputs).toHaveLength(1);
-    expect(inputs[0]).toMatchObject({
-      tools: [],
-      messages: history,
-      responseFormat: { type: 'json_object' },
-    });
-    expect(selectedModels).toEqual(['review-model']);
-  });
-
-  it('sends explicit sampling and the selected model thinking effort only when requested', async () => {
-    const requester = createRequester({ value: 0 }, null);
-    const base = requester.request.bind(requester);
-    const sent: Parameters<typeof base>[2][] = [];
-    requester.request = (input, signal, options) => {
-      sent.push(options);
-      return base(input, signal, options);
-    };
-    const { service } = createService(requester);
-
-    await service.request({ messages: history, modelAlias: 'review-model', sampling: { temperature: 0 } });
-    await service.request({ messages: history, modelAlias: 'review-model' });
-    await service.request({ messages: history });
-
-    expect(sent[0]).toMatchObject({ sampling: { temperature: 0 } });
-    expect(typeof sent[0]?.thinkingEffort).toBe('string');
-    expect(sent[1]?.sampling).toBeUndefined();
-    expect(sent[2]?.sampling).toBeUndefined();
-    expect(sent[2]?.thinkingEffort).toBeUndefined();
-    expect(sent).toHaveLength(3);
-  });
-});
-
 describe('AgentLoopRequester measured anchors', () => {
   it('skips the measured anchor when the stream reports no usage', async () => {
     const { service, measuredCalls } = createService(createRequester({ value: 0 }));
@@ -389,28 +338,6 @@ describe('AgentLoopRequester measured anchors', () => {
 
     expect(measuredCalls).toHaveLength(1);
     expect(measuredCalls[0]?.usage.inputOther).toBe(40);
-  });
-
-  it('does not write the measured anchor for a detached request', async () => {
-    const requester = createRequester({ value: 0 });
-    const base = requester.request.bind(requester);
-    requester.request = async function* (input, signal, options) {
-      yield {
-        type: 'usage',
-        usage: { inputOther: 40, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
-        model: 'wire-model',
-      };
-      yield* base(input, signal, options);
-    };
-    const { service, measuredCalls } = createService(requester);
-
-    await service.request({
-      messages: history,
-      detached: true,
-      source: { type: 'operation', requestKind: 'auto_review' },
-    });
-
-    expect(measuredCalls).toHaveLength(0);
   });
 });
 

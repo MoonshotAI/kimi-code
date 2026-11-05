@@ -14,15 +14,19 @@ import {
   matchesPathRuleSubject,
 } from '#/tool/rule-match';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import type { AgentLLMRequestFinish, AgentLLMRequestOverrides, AgentLLMRequestPartHandler, LoopRequester } from '#/agent/loop/requesterContract';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AutoReviewService } from '#/features/autoReview/reviewService';
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
-import { REVIEW_POLICY } from '#/features/autoReview/policy';
+import type { AutoReviewResult } from '#/features/autoReview/review';
+import REVIEW_POLICY from '../../../src/features/autoReview/auto-review-policy.md?raw';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { IModelRequester, type ModelRequest, type ModelResponse } from '#/llm-adapter/model/model-requester';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentLoopService } from '#/agent/loop/loop';
+import { ILogService } from '#/_base/log/log';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { stubLog } from '../../_base/log/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -53,7 +57,7 @@ import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolCo
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';
-import { recordingTelemetry } from '../../app/telemetry/stubs';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 const signal = new AbortController().signal;
 
@@ -492,6 +496,31 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
+  it.each(['auto', 'yolo'] as const)(
+    'evaluates what Always Ask would decide without the %s mode approval',
+    async (nextMode) => {
+      mode = nextMode;
+      rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm build/*)' });
+      const bash = (command: string): PolicyContextInput => ({ toolName: 'Bash', args: { command, timeout: 60 } });
+
+      await expect(evaluate(bash('curl -X POST https://example.test'))).resolves.toMatchObject({
+        policyName: `${nextMode}-mode-approve`,
+        modeApproval: true,
+      });
+      await expect(
+        service().evaluateWithoutModeApproval(policyContext(bash('curl -X POST https://example.test'))),
+      ).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
+      await expect(
+        service().evaluateWithoutModeApproval(policyContext({ toolName: 'SetTodoList', args: {} })),
+      ).resolves.toMatchObject({ policyName: 'default-tool-approve', result: { kind: 'approve' } });
+      if (nextMode === 'auto') {
+        await expect(
+          service().evaluateWithoutModeApproval(policyContext(bash('rm build/out'))),
+        ).resolves.toMatchObject({ policyName: 'user-configured-allow', result: { kind: 'approve' } });
+      }
+    },
+  );
+
   it.each(['AgentSwarm', 'ExitPlanMode', 'CreateGoal'] as const)(
     'approves %s through the default tool allowlist in manual mode',
     async (toolName) => {
@@ -505,14 +534,16 @@ describe('AgentPermissionPolicyService chain', () => {
 
 describe('AutoReviewService', () => {
   let disposables: DisposableStore;
-  let requestOverrides: AgentLLMRequestOverrides | undefined;
-  let response: AgentLLMRequestFinish;
+  let requests: ModelRequest[];
+  let response: ModelResponse;
   let history: ContextMessage[];
   let agentsMd: string;
+  let telemetry: TelemetryRecord[];
+  let usage: Parameters<ISessionUsageService['record']>[];
 
   beforeEach(() => {
     disposables = new DisposableStore();
-    requestOverrides = undefined;
+    requests = [];
     response = {
       message: { role: 'assistant', content: [{ type: 'text', text: '{"risk":"low","decision":"allow","reason":null}' }], toolCalls: [] },
       usage: emptyUsage(),
@@ -523,17 +554,17 @@ describe('AutoReviewService', () => {
       { role: 'tool', toolCallId: 'mkdir', content: [{ type: 'text', text: 'untrusted tool output' }] },
     ];
     agentsMd = 'Do not delete user-data.';
+    telemetry = [];
+    usage = [];
   });
 
   afterEach(() => {
     disposables.dispose();
   });
 
-  function service(request: (
-    overrides: AgentLLMRequestOverrides,
-    onPart: AgentLLMRequestPartHandler | undefined,
-    signal: AbortSignal | undefined,
-  ) => Promise<AgentLLMRequestFinish> = async () => response): AutoReviewService {
+  function service(
+    request: (request: ModelRequest, signal: AbortSignal) => Promise<ModelResponse> = async () => response,
+  ): AutoReviewService {
     const ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.definePartialInstance(IConfigService, {
@@ -543,25 +574,14 @@ describe('AutoReviewService', () => {
           findByName: () => ['kimi-code/kimi-k2.8'],
           get: () => ({ providerName: 'managed:kimi-code' }) as Model,
         });
-        reg.definePartialInstance(IAgentProfileService, {
-          resolveModelContext: () => ({
-            modelAlias: 'main-model',
-            modelCapabilities: { image_in: false, video_in: false, audio_in: false, thinking: false, tool_use: false, max_context_tokens: 1000 },
-            maxOutputSize: undefined,
-            alwaysThinking: undefined,
-            thinkingLevel: 'off',
-            reservedContextSize: undefined,
-            compactionTriggerRatio: undefined,
-            compactionMaxAttempts: undefined,
-          }),
+        reg.definePartialInstance(IModelRequester, {
+          request: (next, signal) => {
+            requests.push(next);
+            return request(next, signal);
+          },
         });
-        reg.definePartialInstance(IAgentLoopService, {
-          requester: {
-            request: (overrides, onPart, signal) => {
-              requestOverrides = overrides;
-              return request(overrides ?? {}, onPart, signal);
-            },
-          } as LoopRequester,
+        reg.definePartialInstance(IAgentProfileService, {
+          resolveModelContext: () => ({ modelAlias: 'main-model' }) as ReturnType<IAgentProfileService['resolveModelContext']>,
         });
         reg.definePartialInstance(IAgentContextMemoryService, { get: () => history });
         reg.definePartialInstance(IAgentToolRegistryService, {
@@ -572,60 +592,120 @@ describe('AutoReviewService', () => {
             resolveExecution: () => ({ output: '', isError: true }),
           }),
         });
+        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+        reg.definePartialInstance(ISessionContext, { sessionId: 'session-1' });
         reg.definePartialInstance(ISessionInstructionsProvider, {
           ready: Promise.resolve(),
           get agentsMd() { return agentsMd; },
           agentsMdPaths: ['/workspace/AGENTS.md'],
         });
         reg.defineInstance(ISessionWorkspaceContext, workspaceStub('/workspace').stub);
+        reg.definePartialInstance(ISessionUsageService, {
+          record: async (...args) => {
+            usage.push(args);
+          },
+        });
+        reg.defineInstance(ITelemetryService, recordingTelemetry(telemetry));
+        reg.defineInstance(ILogService, stubLog());
       },
       strict: true,
     });
     return ix.createInstance(AutoReviewService);
   }
 
-  it('uses the managed reviewer and sends bounded context without tool output', async () => {
-    const result = await service().review(policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' } }));
+  function review(reviewer = service(), command = 'rm generated/file'): Promise<AutoReviewResult> {
+    return reviewer.review(policyContext({ toolName: 'Bash', args: { command } }), 'fallback-ask');
+  }
 
-    expect(result).toEqual({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });
-    expect(requestOverrides?.modelAlias).toBe('kimi-code/kimi-k2.8');
-    expect(requestOverrides?.tools).toEqual([]);
-    expect(requestOverrides?.responseFormat).toMatchObject({
-      type: 'json_schema',
-      jsonSchema: { strict: true, schema: { required: ['risk', 'decision', 'reason'] } },
+  function sentContent(index = -1): string {
+    return JSON.stringify(requests.at(index)?.messages);
+  }
+
+  it('uses the managed reviewer and sends bounded context without tool output', async () => {
+    expect(await review()).toEqual({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });
+
+    expect(requests[0]).toMatchObject({
+      modelAlias: 'kimi-code/kimi-k2.8',
+      cacheKey: 'session-1:auto_review',
+      sampling: { temperature: 0 },
+      responseFormat: {
+        type: 'json_schema',
+        jsonSchema: { strict: true, schema: { required: ['risk', 'decision', 'reason'] } },
+      },
     });
-    const content = JSON.stringify(requestOverrides?.messages);
-    expect(content).toContain('human-instruction');
-    expect(content).toContain('Do not delete user-data.');
-    expect(content).not.toContain('untrusted tool output');
-    expect(content).toContain('rm generated/file');
+    expect(sentContent()).toContain('human-instruction');
+    expect(sentContent()).toContain('Do not delete user-data.');
+    expect(sentContent()).not.toContain('untrusted tool output');
+    expect(sentContent()).toContain('rm generated/file');
+  });
+
+  it('records reviewer usage and the asking policy', async () => {
+    await review();
+
+    expect(usage).toEqual([[
+      expect.objectContaining({ agentId: 'main' }),
+      'kimi-code/kimi-k2.8',
+      response.usage,
+      { type: 'operation', turnId: 0, requestKind: 'auto_review' },
+    ]]);
+    expect(telemetry).toEqual([expect.objectContaining({
+      event: 'auto_review_decision',
+      properties: expect.objectContaining({ trigger_policy: 'fallback-ask', model: 'kimi-code/kimi-k2.8', decision: 'allow' }),
+    })]);
   });
 
   it('treats originless legacy user messages as human instructions', async () => {
     history = [{ role: 'user', content: [{ type: 'text', text: 'Remove only generated files.' }] }];
 
-    await service().review(policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' } }));
+    await review();
 
-    const content = JSON.stringify(requestOverrides?.messages);
-    expect(content).toContain('human-instruction');
-    expect(content).toContain('Remove only generated files.');
+    expect(sentContent()).toContain('human-instruction');
+    expect(sentContent()).toContain('Remove only generated files.');
+  });
+
+  it('retains the subagent prompt as a direct parent instruction', async () => {
+    history = [{
+      role: 'user',
+      content: [{ type: 'text', text: 'Delete dist and rebuild.' }],
+      origin: { kind: 'system_trigger', name: 'subagent' },
+    }];
+
+    await review();
+
+    expect(sentContent()).toContain('direct-parent-instruction');
+    expect(sentContent()).toContain('Delete dist and rebuild.');
+  });
+
+  it('keeps the newest instructions when authorization exceeds the budget', async () => {
+    history = [
+      ...Array.from({ length: 8 }, (_, index): ContextMessage => ({
+        role: 'user',
+        content: [{ type: 'text', text: `old-${String(index)} ${'x'.repeat(7000)}` }],
+        origin: { kind: 'user' },
+      })),
+      { role: 'user', content: [{ type: 'text', text: 'You may force push my branch.' }], origin: { kind: 'user' } },
+    ];
+
+    await review();
+
+    expect(sentContent()).toContain('You may force push my branch.');
+    expect(sentContent()).not.toContain('old-0 ');
   });
 
   it('reuses the frozen project instructions across reviews', async () => {
     const reviewer = service();
-    await reviewer.review(policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' } }));
+    await review(reviewer);
 
     agentsMd = 'Changed after initialization.';
-    await reviewer.review(policyContext({ toolName: 'Bash', args: { command: 'rm generated/other' } }));
+    await review(reviewer, 'rm generated/other');
 
-    const content = JSON.stringify(requestOverrides?.messages);
-    expect(content).toContain('Do not delete user-data.');
-    expect(content).not.toContain('Changed after initialization.');
+    expect(sentContent()).toContain('Do not delete user-data.');
+    expect(sentContent()).not.toContain('Changed after initialization.');
   });
 
   it.each(REVIEW_POLICY.split('\n').filter((line) => line.startsWith('{')))('accepts the policy example: %s', async (text) => {
     response.message.content = [{ type: 'text', text }];
-    await expect(service().review(policyContext({ toolName: 'Bash', args: { command: 'echo test' } }))).resolves.toMatchObject({ kind: 'decision' });
+    await expect(review()).resolves.toMatchObject({ kind: 'decision' });
   });
 
   it.each([
@@ -636,39 +716,60 @@ describe('AutoReviewService', () => {
     '{"risk":"low","decision":"allow"}',
   ])('fails invalid reviewer output: %s', async (text) => {
     response.message.content = [{ type: 'text', text }];
-    await expect(service().review(policyContext({ toolName: 'Bash', args: { command: 'echo test' } }))).resolves.toMatchObject({ kind: 'failed' });
+    await expect(review()).resolves.toMatchObject({ kind: 'failed' });
   });
 
   it('rejects a reviewer tool call', async () => {
     response.message.toolCalls = [toolCallFor('review-call', 'Bash', { command: 'echo escaped' })];
-    await expect(service().review(policyContext({ toolName: 'Bash', args: { command: 'echo test' } }))).resolves.toMatchObject({ kind: 'failed' });
+    await expect(review()).resolves.toMatchObject({ kind: 'failed' });
   });
 
-  it('invalidates a decision when authorization changes during review', async () => {
-    const result = await service(async () => {
-      history = [...history, { role: 'user', content: [{ type: 'text', text: 'Now delete everything.' }], origin: { kind: 'user' } }];
+  it('reviews again once when the user adds an instruction during review', async () => {
+    let calls = 0;
+    const result = await review(service(async () => {
+      calls += 1;
+      if (calls === 1) {
+        history = [...history, { role: 'user', content: [{ type: 'text', text: 'Also run the tests.' }], origin: { kind: 'user' } }];
+      }
       return response;
-    }).review(policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' } }));
-    expect(result).toMatchObject({ kind: 'failed', reason: expect.stringContaining('changed') });
+    }));
+
+    expect(result).toMatchObject({ kind: 'decision' });
+    expect(requests).toHaveLength(2);
+    expect(sentContent()).toContain('Also run the tests.');
+  });
+
+  it('fails when instructions keep changing or are rewritten during review', async () => {
+    const appending = await review(service(async () => {
+      history = [...history, { role: 'user', content: [{ type: 'text', text: 'More.' }], origin: { kind: 'user' } }];
+      return response;
+    }));
+    expect(appending).toMatchObject({ kind: 'failed', reason: expect.stringContaining('changed') });
+
+    const rewritten = await review(service(async () => {
+      history = [{ role: 'user', content: [{ type: 'text', text: 'Now delete everything.' }], origin: { kind: 'user' } }];
+      return response;
+    }));
+    expect(rewritten).toMatchObject({ kind: 'failed', reason: expect.stringContaining('changed') });
   });
 
   it('fails instead of allowing when review times out', async () => {
-    const result = await service((_overrides, _onPart, signal) => new Promise<AgentLLMRequestFinish>((_resolve, reject) => {
-      signal?.addEventListener('abort', () => {
+    const result = await review(service((_request, signal) => new Promise<ModelResponse>((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
         reject(signal.reason);
       });
-    })).review(policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' } }));
+    })));
     expect(result).toMatchObject({ kind: 'failed', reason: 'Review timed out.' });
   });
 
   it('propagates user cancellation', async () => {
     const controller = new AbortController();
     const context = policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' }, signal: controller.signal });
-    const result = service((_overrides, _onPart, signal) => new Promise<AgentLLMRequestFinish>((_resolve, reject) => {
-      signal?.addEventListener('abort', () => {
+    const result = service((_request, signal) => new Promise<ModelResponse>((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
         reject(signal.reason);
       });
-    })).review(context);
+    })).review(context, 'fallback-ask');
     controller.abort();
     await expect(result).rejects.toMatchObject({ name: 'AbortError' });
   });

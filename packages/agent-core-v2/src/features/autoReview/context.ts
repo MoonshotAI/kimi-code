@@ -22,17 +22,13 @@ export function buildReviewMessages(
   context: ResolvedToolExecutionHookContext,
 ): ReturnType<typeof createUserMessage>[] {
   const recentActions = messages.flatMap((message) => actionEntries(message, context.toolCall.id)).slice(-MAX_RECENT_ACTIONS);
-  const retained = messages.filter((message) => authorizationRole(message) !== undefined);
   let authorizationChars = 0;
-  const authorization = retained.flatMap((message) => {
+  const authorization = messages.flatMap(authorizationEntry).toReversed().flatMap((entry) => {
     if (authorizationChars >= MAX_AUTHORIZATION_TOTAL_CHARS) return [];
-    const [entry] = authorizationEntry(message);
-    if (entry === undefined) return [];
-    const remaining = MAX_AUTHORIZATION_TOTAL_CHARS - authorizationChars;
-    const content = boundedContent(entry.content, Math.min(MAX_AUTHORIZATION_ENTRY_CHARS, remaining));
+    const content = boundedContent(entry.content, MAX_AUTHORIZATION_TOTAL_CHARS - authorizationChars);
     authorizationChars += content.reduce((total, part) => total + (part.type === 'text' ? part.text.length : 0), 0);
     return [{ ...entry, content }];
-  });
+  }).toReversed();
   return [
     `ENVIRONMENT\n${JSON.stringify({ cwd })}`,
     `PROJECT_INSTRUCTIONS\n${JSON.stringify({
@@ -50,8 +46,8 @@ export function buildReviewMessages(
   ].map(createUserMessage);
 }
 
-export function authorizationFingerprint(messages: readonly ContextMessage[]): string {
-  return JSON.stringify(messages.flatMap(authorizationEntry));
+export function authorizationEntries(messages: readonly ContextMessage[]): string[] {
+  return messages.flatMap(authorizationEntry).map((entry) => JSON.stringify(entry));
 }
 
 function authorizationEntry(message: ContextMessage): ReviewText[] {
@@ -65,14 +61,11 @@ function authorizationEntry(message: ContextMessage): ReviewText[] {
 function authorizationRole(
   message: ContextMessage,
 ): 'human-instruction' | 'direct-parent-instruction' | undefined {
-  if (message.origin === undefined) return 'human-instruction';
-  if (message.origin?.kind === 'user' || message.origin?.kind === 'plugin_command') {
-    return 'human-instruction';
-  }
-  if (message.origin?.kind === 'skill_activation' && message.origin.trigger === 'user-slash') {
-    return 'human-instruction';
-  }
-  if (message.name === 'Agent' || message.name === 'Task') return 'direct-parent-instruction';
+  const { origin } = message;
+  if (origin === undefined) return 'human-instruction';
+  if (origin.kind === 'user' || origin.kind === 'plugin_command') return 'human-instruction';
+  if (origin.kind === 'skill_activation' && origin.trigger === 'user-slash') return 'human-instruction';
+  if (origin.kind === 'system_trigger' && origin.name === 'subagent') return 'direct-parent-instruction';
   return undefined;
 }
 

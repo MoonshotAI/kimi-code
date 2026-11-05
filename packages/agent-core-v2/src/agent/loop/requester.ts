@@ -39,7 +39,7 @@ import {
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import { IModelService } from '#/llm-adapter/model/model';
 import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
-import { resolveThinkingKeep, resolveThinkingEffortForModel, requiresStrictThinkingValidation, type ThinkingConfig } from '#/llm-adapter/model/thinking';
+import { resolveThinkingKeep, type ThinkingConfig } from '#/llm-adapter/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { IProtocolAdapterRegistry, type Protocol } from '#/llm-adapter/protocol/protocol';
 import type { ApiErrorEvent, CacheBreakDetectedEvent } from '#/app/telemetry/events';
@@ -123,8 +123,6 @@ interface ResolvedLLMRequest {
   readonly systemPrompt: string;
   readonly tools?: readonly Tool[];
   readonly messages: Message[];
-  readonly responseFormat: AgentLLMRequestOverrides['responseFormat'];
-  readonly detached: boolean;
   readonly contextRevision: number;
   readonly promptCacheProbe: 'compaction' | undefined;
   readonly source: AgentLLMRequestSource | undefined;
@@ -391,7 +389,6 @@ export class AgentLoopRequester implements LoopRequester {
           systemPrompt: request.systemPrompt,
           tools: request.tools,
           messages: request.messages,
-          responseFormat: request.responseFormat,
         },
         signal,
         {
@@ -544,12 +541,7 @@ export class AgentLoopRequester implements LoopRequester {
         });
       }
       const inputTokens = usage === undefined ? undefined : inputTotal(usage);
-      if (
-        !request.detached &&
-        usage !== undefined &&
-        inputTokens !== undefined &&
-        inputTokens + usage.output > 0
-      ) {
+      if (usage !== undefined && inputTokens !== undefined && inputTokens + usage.output > 0) {
         const measured: MeasuredRequest = {
           modelAlias: request.modelAlias,
           contextRevision: request.contextRevision,
@@ -576,7 +568,7 @@ export class AgentLoopRequester implements LoopRequester {
         usage,
         request.source,
       );
-      if (usage !== undefined && !request.detached) {
+      if (usage !== undefined) {
         this.tokenCounting.measured(this.scopeContext.agentContext, request.messages, [message], usage);
       }
       this.logResponse(request.logFields, usage ?? emptyUsage(), timing);
@@ -734,11 +726,10 @@ export class AgentLoopRequester implements LoopRequester {
   private resolveRequest(overrides: AgentLLMRequestOverrides): ResolvedLLMRequest {
     const turnConfig = this.resolveTurnConfig(overrides.source);
     const resolved = turnConfig?.resolved ?? this.profile.resolveModelContext();
-    const modelAlias = overrides.modelAlias ?? resolved.modelAlias;
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
-    const model = this.modelCatalog.get(modelAlias);
-    const modelOverrides = this.config.get<ModelOverrides>('modelOverrides');
-    const maxCompletionTokensCap = modelOverrides?.maxCompletionTokens;
+    const model = this.modelCatalog.get(resolved.modelAlias);
+    const maxCompletionTokensCap =
+      this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens;
     const usedContextTokens =
       overrides.usedContextTokens ??
       (overrides.messages === undefined
@@ -749,35 +740,15 @@ export class AgentLoopRequester implements LoopRequester {
         maxOutputSize: overrides.maxOutputSize ?? resolved.maxOutputSize,
         maxCompletionTokensCap,
       }),
-      capability: model.capabilities,
+      capability: resolved.modelCapabilities,
       usedContextTokens,
     });
     const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
-    const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
-    const thinkingEffort = modelAlias === resolved.modelAlias
-      ? resolved.thinkingLevel
-      : resolveThinkingEffortForModel(
-          undefined,
-          thinkingConfig,
-          model,
-          requiresStrictThinkingValidation(this.protocolRegistry, model.protocol, model.providerType),
-        );
     const params: ModelRequestParams = {
       ...baseParams,
       ...budgetParams,
       ...(usedContextTokens === undefined ? {} : { usedContextTokens }),
       ...(optedOut ? { maxCompletionTokens: maxCompletionTokensCap } : {}),
-      ...(modelAlias === resolved.modelAlias
-        ? {}
-        : {
-            thinkingEffort,
-            thinkingKeep: resolveThinkingKeep(
-              modelOverrides?.thinkingKeep,
-              thinkingConfig?.keep,
-              thinkingEffort,
-            ),
-          }),
-      sampling: overrides.sampling ?? baseParams.sampling,
     };
 
     const messages = overrides.messages ?? this.context.get();
@@ -785,13 +756,11 @@ export class AgentLoopRequester implements LoopRequester {
       request: this.protocolRegistry.request(model, params),
       model,
       params,
-      modelAlias,
-      thinkingEffort,
+      modelAlias: resolved.modelAlias,
+      thinkingEffort: resolved.thinkingLevel,
       systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),
       tools: overrides.tools === undefined ? undefined : [...overrides.tools],
       messages: [...messages],
-      responseFormat: overrides.responseFormat,
-      detached: overrides.detached === true,
       contextRevision: this.context.prefixRevision(),
       promptCacheProbe: overrides.promptCacheProbe,
       source: overrides.source,

@@ -43,7 +43,6 @@ export type PermissionPolicyResult =
       readonly kind: 'approve';
       readonly reason?: PermissionDecisionReason;
       readonly executionMetadata?: unknown;
-      readonly approvedByUser?: boolean;
     }
   | {
       readonly kind: 'deny';
@@ -65,6 +64,7 @@ export type PermissionPolicyResult =
 
 export interface PermissionPolicy {
   readonly name: string;
+  readonly modeApproval?: boolean;
   evaluate(
     context: PermissionPolicyContext,
   ): PermissionPolicyResult | undefined | Promise<PermissionPolicyResult | undefined>;

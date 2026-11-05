@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
 import {
@@ -23,7 +23,7 @@ import {
 } from '#/llm-adapter/contract/errors';
 import type { Message } from '#human/llm/message';
 import { createMediaDegradeRecovery } from '#human/llm/builtin/policy/media-degrade';
-import type { Model } from '#/llm-adapter/model/catalog';
+import type { IModelCatalog, Model } from '#/llm-adapter/model/catalog';
 import {
   effectiveMaxCompletionTokens,
   generateModel,
@@ -33,6 +33,9 @@ import {
   type ModelRequestPolicy,
 } from '#/llm-adapter/model/generate';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import type { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
+import { ModelRequester } from '#/llm-adapter/model/model-requester-service';
+import type { IConfigService } from '#/app/config/config';
 import {
   buildStreamTiming,
   coreRequesterFromA,
@@ -571,5 +574,96 @@ describe('buildStreamTiming', () => {
       clientConsumeMs: 60,
       clientBlockedMs: 80,
     });
+  });
+});
+
+describe('ModelRequester', () => {
+  function transientFailure(emit: (event: LlmRequestEvent) => void, statusCode: number): void {
+    emit({
+      type: 'llm.failed.remote',
+      error: {
+        kind: 'status',
+        statusCode,
+        message: `status ${String(statusCode)}`,
+        requestId: null,
+        retryAfterMs: 1,
+        headers: null,
+        retryable: statusCode !== 401,
+      },
+    });
+  }
+
+  function modelRequester(model: Model, requester: FakeLlmRequester): ModelRequester {
+    const registry = new ProtocolAdapterRegistry();
+    const protocols: Partial<IProtocolAdapterRegistry> = {
+      resolveAdapterIdentity: (protocol, providerType) =>
+        registry.resolveAdapterIdentity(protocol, providerType),
+      request: (target, params) =>
+        coreRequesterFromA(
+          registry.request(target, params).with({
+            endpoint: { credentials: { resolve: () => target.credentialProvider?.resolve() } },
+          }),
+          requester,
+        ),
+    };
+    const config: Partial<IConfigService> = { get: (() => undefined) as IConfigService['get'] };
+    return new ModelRequester(
+      { get: () => model } as Partial<IModelCatalog> as IModelCatalog,
+      protocols as IProtocolAdapterRegistry,
+      config as IConfigService,
+    );
+  }
+
+  const REQUEST = { modelAlias: 'reviewer', systemPrompt: 'sys', messages: [] };
+
+  it('sends the cache key and response format and retries transient failures', async () => {
+    const requester = new FakeLlmRequester();
+    requester.handler = (index, emit) => {
+      if (index === 0) transientFailure(emit, 503);
+      else textStream(emit, '{"ok":true}');
+    };
+
+    const response = await modelRequester(modelWith(createStaticCredentialProvider('sk')), requester).request(
+      { ...REQUEST, cacheKey: 'session-1:auto_review', responseFormat: { type: 'json_object' }, maxAttempts: 2 },
+      new AbortController().signal,
+    );
+
+    expect(response.message.content).toEqual([{ type: 'text', text: '{"ok":true}' }]);
+    expect(requester.calls).toHaveLength(2);
+    expect(requester.calls[0]?.config.cacheKey).toBe('session-1:auto_review');
+    expect(requester.calls[0]?.config.responseFormat).toEqual({ type: 'json_object' });
+  });
+
+  it('makes a single attempt by default', async () => {
+    const requester = new FakeLlmRequester();
+    requester.handler = (_index, emit) => {
+      transientFailure(emit, 503);
+    };
+
+    await expect(
+      modelRequester(modelWith(createStaticCredentialProvider('sk')), requester).request(
+        REQUEST,
+        new AbortController().signal,
+      ),
+    ).rejects.toBeDefined();
+    expect(requester.calls).toHaveLength(1);
+  });
+
+  it('refreshes OAuth credentials of the selected model after a 401', async () => {
+    const requester = new FakeLlmRequester();
+    requester.handler = (index, emit) => {
+      if (index === 0) transientFailure(emit, 401);
+      else textStream(emit);
+    };
+    const getToken = vi.fn(async (options?: { readonly force?: boolean }) =>
+      options?.force === true ? 'fresh' : 'stale',
+    );
+
+    await modelRequester(modelWith(createOAuthCredentialProvider(getToken)), requester).request(
+      REQUEST,
+      new AbortController().signal,
+    );
+
+    expect(requester.calls.map((call) => call.config.model.apiKey)).toEqual(['stale', 'fresh']);
   });
 });

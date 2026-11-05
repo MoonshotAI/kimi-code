@@ -6,6 +6,7 @@ import type {
 
 export class AutoModeApprovePermissionPolicyService implements PermissionPolicy {
   readonly name = 'auto-mode-approve';
+  readonly modeApproval = true;
 
   constructor(
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,

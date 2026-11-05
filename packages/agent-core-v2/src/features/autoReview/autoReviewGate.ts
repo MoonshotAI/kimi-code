@@ -1,7 +1,9 @@
 import { IFlagService } from '#/app/flag/flag';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import type { PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
+import {
+  IAgentPermissionPolicyService,
+  type PermissionPolicyEvaluation,
+} from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 
@@ -10,70 +12,45 @@ import { IAutoReviewGate, IAutoReviewService, type AutoReviewResult } from './re
 
 const AUTO_REVIEW_ORIGIN = 'auto-review';
 
-const EXEMPT_TOOLS = new Set([
-  'Read',
-  'ReadMediaFile',
-  'Grep',
-  'Glob',
-  'TodoList',
-  'TaskList',
-  'TaskOutput',
-  'CronList',
-  'GetGoal',
-  'ExitPlanMode',
-]);
-
 export class AutoReviewGate implements IAutoReviewGate {
   declare readonly _serviceBrand: undefined;
 
   constructor(
     @IFlagService private readonly flags: IFlagService,
     @IAgentPermissionModeService private readonly modes: IAgentPermissionModeService,
+    @IAgentPermissionPolicyService private readonly policies: IAgentPermissionPolicyService,
     @IAutoReviewService private readonly reviewService: IAutoReviewService,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
-  applies(context: ResolvedToolExecutionHookContext, { result }: PermissionPolicyEvaluation): boolean {
-    if (result.kind === 'deny') return false;
-    if (result.kind === 'approve' && result.approvedByUser === true) return false;
-    const mode = this.modes.mode;
-    return (
-      (mode === 'auto' || mode === 'yolo') &&
-      this.flags.enabled(AUTO_REVIEW_FLAG_ID) &&
-      !EXEMPT_TOOLS.has(context.toolCall.name)
-    );
+  async trigger(
+    context: ResolvedToolExecutionHookContext,
+    evaluation: PermissionPolicyEvaluation,
+  ): Promise<string | undefined> {
+    if (evaluation.modeApproval !== true || !this.flags.enabled(AUTO_REVIEW_FLAG_ID)) return undefined;
+    const withoutModeApproval = await this.policies.evaluateWithoutModeApproval(context);
+    return withoutModeApproval?.result.kind === 'ask' ? withoutModeApproval.policyName : undefined;
   }
 
   async resolve(
     context: ResolvedToolExecutionHookContext,
     evaluation: PermissionPolicyEvaluation,
+    trigger: string,
   ): Promise<PermissionPolicyEvaluation> {
-    const startedAt = Date.now();
-    const review = await this.reviewService.review(context);
-    this.track(context, review, startedAt);
+    const review = await this.reviewService.review(context, trigger);
     const mode = this.modes.mode;
     const allowed = review.kind === 'decision' && review.decision.decision === 'allow';
     if (allowed && mode !== 'manual') return evaluation;
     if (mode === 'auto') {
       return { policyName: AUTO_REVIEW_ORIGIN, result: denial(context, review) };
     }
-    if (evaluation.result.kind === 'ask') return evaluation;
-    return { policyName: AUTO_REVIEW_ORIGIN, result: fallbackAsk(context, review, evaluation.result) };
-  }
-
-  private track(context: ResolvedToolExecutionHookContext, review: AutoReviewResult, startedAt: number): void {
-    this.telemetry.track2('auto_review_decision', {
-      turn_id: context.turnId,
-      tool_call_id: context.toolCall.id,
-      tool_name: context.toolCall.name,
-      decision: review.kind === 'failed' ? 'failed' : review.decision.decision,
-      risk: review.kind === 'failed' ? undefined : review.decision.risk,
-      duration_ms: Date.now() - startedAt,
-    });
+    return { policyName: AUTO_REVIEW_ORIGIN, result: fallbackAsk(context, review) };
   }
 }
 
-function denial(context: ResolvedToolExecutionHookContext, review: AutoReviewResult): PermissionPolicyResult {
+function denial(
+  context: ResolvedToolExecutionHookContext,
+  review: AutoReviewResult,
+): Extract<PermissionPolicyResult, { kind: 'deny' }> {
   if (review.kind === 'failed') {
     return {
       kind: 'deny',
@@ -91,13 +68,12 @@ function denial(context: ResolvedToolExecutionHookContext, review: AutoReviewRes
 function fallbackAsk(
   context: ResolvedToolExecutionHookContext,
   review: AutoReviewResult,
-  approved: PermissionPolicyResult | undefined,
 ): PermissionPolicyResult {
   if (review.kind === 'failed') {
     return {
       kind: 'ask',
       reason: { review_error: true },
-      resolveApproval: (response) => response.decision === 'approved' ? approved : undefined,
+      resolveNonInteractive: () => denial(context, review),
       resolveError: () => ({
         kind: 'deny',
         message: 'Auto Review and the fallback approval both failed; the tool was not executed.',
@@ -107,17 +83,14 @@ function fallbackAsk(
   }
   const { decision } = review;
   if (decision.decision === 'allow') {
-    return {
-      kind: 'ask',
-      reason: { review_risk: decision.risk, review_mode_changed: true },
-      resolveApproval: (response) => response.decision === 'approved' ? approved : undefined,
-    };
+    return { kind: 'ask', reason: { review_risk: decision.risk, review_mode_changed: true } };
   }
   return {
     kind: 'ask',
     reason: { review_risk: decision.risk },
+    resolveNonInteractive: () => denial(context, review),
     resolveApproval: (response) => response.decision === 'approved'
-      ? approved
+      ? undefined
       : {
           kind: 'deny',
           message: `Tool "${context.toolCall.name}" was not run after Auto Review denial.${reasonSuffix(review)}`,
