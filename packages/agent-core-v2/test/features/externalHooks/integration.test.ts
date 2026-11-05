@@ -14,12 +14,7 @@ import {
 } from '#/_base/di/test';
 import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
 import { emptyUsage } from '#human/llm-requester/usage';
-import { buildContextCompactionShape } from '#/agent/contextMemory/compactionHandoff';
-import {
-  IAgentContextMemoryService,
-  type ContextCompactionInput,
-  type ContextCompactionResult,
-} from '#/agent/contextMemory/contextMemory';
+import { appendContext, stubContextMemory } from '../../agent/contextMemory/stubs';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import {
   HookDefSchema,
@@ -113,33 +108,6 @@ function makeAfterStep(signal: AbortSignal): AfterStepContext {
     usage: emptyUsage(),
     finishReason: 'completed',
     stopTurn: false,
-  };
-}
-
-function stubContextMemory(): IAgentContextMemoryService & {
-  readonly messages: readonly ContextMessage[];
-} {
-  const messages: ContextMessage[] = [];
-  return {
-    _serviceBrand: undefined,
-    get: () => [...messages],
-    prefixRevision: () => 0,
-    append: (...inserted) => {
-      messages.push(...inserted);
-    },
-    appendLoopEvent: () => {},
-    publishTrailingRemoval: () => false,
-    clear: () => {
-      messages.splice(0);
-    },
-    applyCompaction: (input: ContextCompactionInput): ContextCompactionResult => {
-      const shape = buildContextCompactionShape(messages, input);
-      messages.splice(0, messages.length, ...shape.messages);
-      const { messages: _messages, ...result } = shape;
-      void _messages;
-      return result;
-    },
-    messages,
   };
 }
 
@@ -279,7 +247,7 @@ function registerHookTestServices(reg: ServiceRegistration): void {
   reg.defineInstance(ISessionMetadata, stubSessionMetadata());
   reg.definePartialInstance(IConfigService, {});
   reg.definePartialInstance(IPluginService, {});
-  reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
+  reg.defineInstance(IAgentLoopService, stubContextMemory());
   registerAgentEventBus(reg);
   reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
   reg.definePartialInstance(IAgentPermissionGate, {});
@@ -367,7 +335,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
-          reg.defineInstance(IAgentContextMemoryService, context);
+          reg.defineInstance(IAgentLoopService, context);
           reg.defineInstance(IAgentLoopService, loop);
           registerAgentEventBus(reg);
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
@@ -397,6 +365,7 @@ describe('IExternalHooksRunnerService integration', () => {
       const first = makeAfterStep(signal);
       await loop.hooks.onDidFinishStep.run(first);
       expect(loop.snapshot().hasPendingRequests).toBe(true);
+      loop.drainNextBatch(context);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
           role: 'user',
@@ -404,7 +373,7 @@ describe('IExternalHooksRunnerService integration', () => {
           origin: { kind: 'system_trigger', name: 'stop_hook' },
         }),
       );
-      expect(loop.drainNextBatch(context)).toBeDefined();
+      expect(loop.drainNextBatch(context)).toBeUndefined();
 
       const second = makeAfterStep(signal);
       await loop.hooks.onDidFinishStep.run(second);
@@ -423,6 +392,7 @@ describe('IExternalHooksRunnerService integration', () => {
       const nextTurn = makeAfterStep(signal);
       await loop.hooks.onDidFinishStep.run(nextTurn);
       expect(loop.snapshot().hasPendingRequests).toBe(true);
+      loop.drainNextBatch(context);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
           role: 'user',
@@ -430,7 +400,7 @@ describe('IExternalHooksRunnerService integration', () => {
           origin: { kind: 'system_trigger', name: 'stop_hook' },
         }),
       );
-      expect(loop.drainNextBatch(context)).toBeDefined();
+      expect(loop.drainNextBatch(context)).toBeUndefined();
       expect(stopInputs).toEqual([{ stopHookActive: false }, { stopHookActive: false }]);
     } finally {
       ix?.dispose();
@@ -472,7 +442,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
-          reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
+          reg.defineInstance(IAgentLoopService, stubContextMemory());
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
@@ -677,7 +647,7 @@ describe('IExternalHooksRunnerService integration', () => {
             enabledHooks: async () => [],
             onDidReload: Event.None as IPluginService['onDidReload'],
           });
-          reg.defineInstance(IAgentContextMemoryService, context);
+          reg.defineInstance(IAgentLoopService, context);
           reg.defineInstance(IAgentLoopService, loop);
           registerAgentEventBus(reg);
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
@@ -712,6 +682,7 @@ describe('IExternalHooksRunnerService integration', () => {
       await pending;
 
       expect(loop.snapshot().hasPendingRequests).toBe(true);
+      loop.drainNextBatch(context);
       expect(context.messages.at(-1)).toEqual(
         expect.objectContaining({
           role: 'user',
@@ -1230,7 +1201,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));
           reg.definePartialInstance(IConfigService, {});
           reg.definePartialInstance(IPluginService, {});
-          reg.defineInstance(IAgentContextMemoryService, stubContextMemory());
+          reg.defineInstance(IAgentLoopService, stubContextMemory());
           reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
           registerAgentEventBus(reg);
           reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());

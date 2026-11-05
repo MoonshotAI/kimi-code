@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IAgentContextMemoryService, IAgentProfileService } from '#/index';
+import { IAgentLoopService, IAgentProfileService } from '#/index';
+import { compactContext } from '../contextMemory/stubs';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import {
   anchorsEqual,
@@ -108,14 +109,14 @@ async function dispatchReference(ctx: TestAgentContext, event: ReferenceEvent): 
 
 describe('Agent token counting', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let tokenCounting: TestAgentContext['tokenCounting'];
   let profile: IAgentProfileService;
   let usage: TestAgentContext['usage'];
 
   beforeEach(async () => {
     ctx = createTestAgent();
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     tokenCounting = ctx.tokenCounting;
     profile = ctx.get(IAgentProfileService);
     usage = ctx.usage;
@@ -139,10 +140,10 @@ describe('Agent token counting', () => {
 
     const exchangeTotal = totalOf(usage.status().total);
     expect(exchangeTotal).toBeGreaterThan(0);
-    expect(context.get()).toHaveLength(2);
+    expect(context.history()).toHaveLength(2);
 
     expect(tokenCountingState(ctx)).toEqual({
-      anchors: [{ length: context.get().length, tokens: exchangeTotal, measured: true }],
+      anchors: [{ length: context.history().length, tokens: exchangeTotal, measured: true }],
       tokens: exchangeTotal,
     });
 
@@ -166,11 +167,11 @@ describe('Agent token counting', () => {
 
     const lastExchangeTotal = totalOf(usage.status().currentTurn);
     expect(lastExchangeTotal).toBeGreaterThan(0);
-    expect(context.get()).toHaveLength(4);
+    expect(context.history()).toHaveLength(4);
 
     expect(tokenCountingState(ctx).anchors).toHaveLength(2);
     expect(tokenCountingState(ctx).anchors[1]).toEqual({
-      length: context.get().length,
+      length: context.history().length,
       tokens: lastExchangeTotal,
       measured: true,
     });
@@ -186,7 +187,7 @@ describe('Agent token counting', () => {
     expect(size.estimated).toBeGreaterThan(0);
     expect(size.size).toBe(size.estimated);
 
-    tokenCounting.measured(context.get(), [], {
+    tokenCounting.measured(context.history(), [], {
       inputOther: 10,
       output: 2,
       inputCacheRead: undefined,
@@ -201,7 +202,7 @@ describe('Agent token counting', () => {
     await ctx.dispatcher.dispatch(new TokenCountingMeasured({ agentId: 'main', length: 5, tokens: 1234 }));
     const size = tokenCounting.get();
     expect(size.measured).toBe(0);
-    expect(size.size).toBe(estimateTokensForMessages(context.get()));
+    expect(size.size).toBe(estimateTokensForMessages(context.history()));
   });
 
   it('restores the REAL size of the surviving prefix when undo truncates the ledger', async () => {
@@ -211,7 +212,7 @@ describe('Agent token counting', () => {
 
     await ctx.undoHistory(1);
 
-    expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(context.history().map((m) => m.role)).toEqual(['user', 'assistant']);
     expect(tokenCounting.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
     expect(tokenCounting.latestMeasured()).toBe(1_000);
   });
@@ -219,14 +220,14 @@ describe('Agent token counting', () => {
   it('rebases the ledger on compaction and blends in the measured summary tokens', () => {
     ctx.appendTurnExchange('u1', 'a1', 1_000);
 
-    context.applyCompaction({
+    compactContext(context,{
       summary: 'summary of u1',
       compactedCount: 2,
       tokensBefore: 1_000,
       summaryOutputTokens: 500,
     });
 
-    const history = context.get();
+    const history = context.history();
     const kept = estimateTokensForMessages(history.filter((m) => m.origin?.kind !== 'compaction_summary'));
     const expected = 500 + kept;
     expect(tokenCountingState(ctx).anchors).toEqual([
@@ -239,7 +240,7 @@ describe('Agent token counting', () => {
     ctx.appendAssistantTextWithUsage(1, 'answer', 1_000);
     expect(tokenCounting.get().measured).toBe(1_000);
 
-    context.clear();
+    context.replaceHistory([], 'test');
 
     expect(tokenCounting.get()).toEqual({ size: 0, measured: 0, estimated: 0 });
     expect(tokenCountingState(ctx).anchors).toEqual([
@@ -256,7 +257,7 @@ describe('Agent token counting', () => {
 
       measured.appendUserMessage([{ type: 'text', text: 'hello world, not measured yet' }]);
       const tailEstimate = estimateTokensForMessages(
-        measured.get(IAgentContextMemoryService).get(),
+        measured.get(IAgentLoopService).history(),
       );
       expect(tailEstimate).toBeGreaterThan(0);
       expect(counting.get()).toEqual({ size: tailEstimate, measured: 0, estimated: tailEstimate });
@@ -329,7 +330,7 @@ describe('Agent token counting', () => {
     try {
       const counting = estimated.tokenCounting;
       estimated.appendTurnExchange('u1', 'a1', 1_000_000);
-      const estimate = estimateTokensForMessages(estimated.get(IAgentContextMemoryService).get());
+      const estimate = estimateTokensForMessages(estimated.get(IAgentLoopService).history());
       expect(counting.latestMeasured()).toBe(1_000_000);
       expect(counting.statusSize()).toBe(estimate);
     } finally {
@@ -363,7 +364,7 @@ describe('Agent token counting', () => {
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
         agentId: 'main',
-        length: live.get(IAgentContextMemoryService).get().length,
+        length: live.get(IAgentLoopService).history().length,
         tokens: reported,
       });
       expect(tokenCountingState(live).anchors).toEqual([
@@ -397,14 +398,14 @@ describe('Agent token counting', () => {
     );
     expect(tokenCountingState(ctx).anchors).toHaveLength(1);
 
-    context.applyCompaction({
+    compactContext(context,{
       summary: 'summary of the tail',
       compactedCount: 1,
       tokensBefore: 100,
       summaryOutputTokens: 50,
     });
 
-    const history = context.get();
+    const history = context.history();
     const anchors = tokenCountingState(ctx).anchors;
     expect(anchors).toHaveLength(1);
     expect(anchors[0]).toEqual({

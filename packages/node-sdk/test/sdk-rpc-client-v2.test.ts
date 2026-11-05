@@ -51,7 +51,7 @@ import {
   IAgentConversationUndoService,
   IAgentFullCompactionService,
   IAgentPluginCommandService,
-  IAgentPromptChannel,
+  IAgentLoopService,
   IAgentSkillService,
   IAgentToolActivationService,
   IAgentToolRegistryService,
@@ -832,7 +832,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       const main = getLiveSessionById(client.engineAccessor, 'ses_steer_result')!
         .accessor.get(IAgentLifecycleService)
         .handleOf('main')!;
-      vi.spyOn(main.accessor.get(IAgentPromptChannel), 'submitSteer').mockResolvedValue({
+      vi.spyOn(main.accessor.get(IAgentLoopService), 'notifyClient').mockResolvedValue({
         prompt_id: 'prompt-steer',
         created_at: '2026-01-01T00:00:00.000Z',
         state: 'queued',
@@ -885,8 +885,8 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       const main = getLiveSessionById(client.engineAccessor, 'ses_lock')!
         .accessor.get(IAgentLifecycleService)
         .handleOf('main')!;
-      const submitSpy = vi.spyOn(main.accessor.get(IAgentPromptChannel), 'submit');
-      const steerSpy = vi.spyOn(main.accessor.get(IAgentPromptChannel), 'submitSteer');
+      const submitSpy = vi.spyOn(main.accessor.get(IAgentLoopService), 'submit');
+      const steerSpy = vi.spyOn(main.accessor.get(IAgentLoopService), 'notifyClient');
       const skillsSpy = vi.spyOn(main.accessor.get(IAgentSkillService), 'promptWithSkills');
       const beginSpy = vi.spyOn(main.accessor.get(IAgentFullCompactionService), 'begin');
       const undoSpy = vi.spyOn(main.accessor.get(IAgentConversationUndoService), 'undo');

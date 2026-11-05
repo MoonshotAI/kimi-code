@@ -1,6 +1,5 @@
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
 import { annotateBundledSkillParts, isSkillActivationPart } from '#human/agent/origin';
@@ -22,7 +21,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly context: IAgentLoopService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
   ) {}
 
@@ -86,7 +85,7 @@ export class AgentTitlePromptSourceService implements IAgentTitlePromptSource {
 
   private combinedMessages(): ContextMessage[] {
     const snapshot = this.loop.snapshot();
-    const all = [...this.context.get()];
+    const all = [...this.context.history()];
     const activeHandle =
       snapshot.activePromptId === undefined
         ? undefined

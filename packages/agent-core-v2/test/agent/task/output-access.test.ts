@@ -15,7 +15,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
-import { createAgentTaskPersistence, type TaskServiceTestManager } from './stubs';
+import { createAgentTaskPersistence, restoreTaskHistory, type TaskServiceTestManager } from './stubs';
 import { agentService, taskServices, createTestAgent, homeDirServices, type TestAgentContext } from '../../harness';
 import { executeTool, type TestExecutableToolContext } from '../../tools/fixtures/execute-tool';
 
@@ -97,7 +97,7 @@ async function waitForTaskNotifications(
     expect(loop.snapshot().hasPendingRequests).toBe(false);
   });
 
-  const origins = ctx.context.get().map((message) => message.origin);
+  const origins = ctx.context.history().map((message) => message.origin);
   for (const task of tasks) {
     expect(origins).toContainEqual({
       kind: 'task',
@@ -267,7 +267,7 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     await manager.wait(taskId);
   });
 
-  it('readOutput falls back to disk for ghost tasks', async () => {
+  it('readOutput falls back to disk for historical tasks', async () => {
     const taskId = registerProcess(
       manager,
       immediateProcess(0, 'persisted line\n'),
@@ -275,13 +275,13 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
       'demo',
     );
     await waitForOutput(manager, taskId, 'persisted line');
-    await manager.wait(taskId);
+    const info = await manager.wait(taskId);
+    if (info === undefined) throw new Error('missing completed task');
 
     const freshFixture = createTaskService(sessionDir);
     const fresh = freshFixture.manager;
     try {
-      await fresh.loadFromDisk();
-      await fresh.reconcile();
+      await restoreTaskHistory(freshFixture.ctx, [info]);
 
       expect(await fresh.readOutput(taskId)).toContain('persisted line');
       await freshFixture.ctx.expectResumeMatches();
@@ -290,7 +290,7 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     }
   });
 
-  it('TaskOutputTool reads persisted output for a ghost task loaded after restart', async () => {
+  it('TaskOutputTool reads persisted output for a historical task loaded after restart', async () => {
     const taskId = registerProcess(
       manager,
       immediateProcess(0, 'persisted output\n'),
@@ -298,13 +298,13 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
       'persist output test',
     );
     await waitForOutput(manager, taskId, 'persisted output');
-    await manager.wait(taskId);
+    const info = await manager.wait(taskId);
+    if (info === undefined) throw new Error('missing completed task');
 
     const freshFixture = createTaskService(sessionDir);
     const fresh = freshFixture.manager;
     try {
-      await fresh.loadFromDisk();
-      await fresh.reconcile();
+      await restoreTaskHistory(freshFixture.ctx, [info]);
 
       const result = await executeTool(
         new TaskOutputTool(fresh),

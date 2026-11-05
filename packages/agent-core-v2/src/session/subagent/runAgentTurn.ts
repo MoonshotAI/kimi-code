@@ -5,7 +5,6 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { codePointBoundaryStart } from '#/_base/text/code-points';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { Error2, ErrorCodes, toKimiErrorPayload, type KimiErrorPayload } from '#/errors';
 import {
@@ -84,7 +83,7 @@ async function awaitRun(
   };
   try {
     const result = classifyTurnResult(await awaitTurn(turn, controller, cancelTurn));
-    const summary = latestAssistantText(target.accessor.get(IAgentContextMemoryService).get());
+    const summary = latestAssistantText(target.accessor.get(IAgentLoopService).history());
     const stopReason = result.stopReason;
     if (summary.trim().length === 0) {
       throw new Error2(

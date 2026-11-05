@@ -190,8 +190,8 @@ import {
   setModelResultSchema,
   setPermissionPayloadSchema,
   shellCommandResultSchema,
-  steerPayloadSchema,
   steerResultSchema,
+  steerEntrySchema,
   stopTaskPayloadSchema,
   tokenUsageSchema,
   usageStatusSchema,
@@ -330,7 +330,7 @@ import {
 } from '../src/contract/global/workspaces.js';
 
 import type { AssertWire, MutableDeep } from './helpers/typeAssert.js';
-import type { AgentFacade } from '../src/core/facade/agent.js';
+import type { AgentFacade, AgentSteerEntry } from '../src/core/facade/agent.js';
 
 /** One-directional: the engine type must be assignable TO the schema's infer. */
 type AssertEngineToWire<TSchema extends z.ZodType, TEngine> = [MutableDeep<TEngine>] extends [
@@ -620,7 +620,6 @@ type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
 type TokenUsage = NonNullable<UsageStatus['total']>;
 type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'video_url' }>;
 type PromptPayload = Parameters<AgentFacade['prompt']>[0];
-type SteerPayload = Parameters<AgentFacade['steer']>[0];
 
 type EmptyPayload = {};
 type CancelPayload = NonNullable<Parameters<AgentFacade['cancel']>[0]>;
@@ -649,7 +648,7 @@ const _promptWithSkillsPayload: AssertWireToEngine<
   typeof promptWithSkillsPayloadSchema,
   PromptWithSkillsPayload
 > = true;
-const _steerPayload: AssertWireToEngine<typeof steerPayloadSchema, SteerPayload> = true;
+const _steerEntry: AssertWireToEngine<typeof steerEntrySchema, AgentSteerEntry> = true;
 const _activateSkillPayload: AssertWire<typeof activateSkillPayloadSchema, ActivateSkillPayload> =
   true;
 const _promptLaunchResult: AssertWire<typeof promptLaunchResultSchema, PromptLaunchResult> = true;

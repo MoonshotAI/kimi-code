@@ -6,7 +6,6 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { AgentGoalService, IAgentGoalService } from '#/features/goal/goalService';
 import { IGoalDeadlineScheduler } from '#/features/goal/goalDeadlineScheduler';
@@ -227,7 +226,7 @@ async function runGoalStep(loopService: StubLoop, turn: StubTurn): Promise<boole
   };
   await loopService.hooks.onWillBeginStep.run(step);
   await loopService.hooks.onDidFinishStep.run(afterStep);
-  return loopService.drainNextBatch({ append: () => {} }) !== undefined;
+  return loopService.drainNextBatch() !== undefined;
 }
 
 async function recordStepUsage(
@@ -296,7 +295,7 @@ function endTurn(
 
 describe('AgentGoalService', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let goals: GoalServiceTestManager;
   let records: WireRecord[];
   let events: GoalUpdated[];
@@ -310,7 +309,7 @@ describe('AgentGoalService', () => {
       wireRecordPersistenceServices(persistence),
       telemetryServices(recordingTelemetry(telemetry)),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     goals = ctx.get(IAgentGoalService);
     records = persistence.records;
     const eventBus = ctx.get(IEventBus);
@@ -580,7 +579,7 @@ describe('AgentGoalService', () => {
       const removed = await goals.cancelGoal();
       expect(removed.status).toBe('active');
       expect(goals.getGoal()).toEqual({ goal: null });
-      const reminder = context.get().at(-1);
+      const reminder = context.history().at(-1);
       expect(reminder?.origin).toEqual({
         kind: 'injection',
         variant: 'goal_cancelled',
@@ -784,7 +783,7 @@ describe('AgentGoalService', () => {
         wireRecordPersistenceServices(persistence),
         telemetryServices(recordingTelemetry(telemetry)),
       );
-      context = ctx.get(IAgentContextMemoryService);
+      context = ctx.get(IAgentLoopService);
       goals = ctx.get(IAgentGoalService);
       records = persistence.records;
       ctx.get(IEventBus).subscribe(GoalUpdated, (event) => events.push(event));
@@ -922,7 +921,7 @@ describe('AgentGoalService goal-start review', () => {
 
 describe('AgentGoalService core workflow hooks', () => {
   let ctx: TestAgentContext | undefined;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let goals: IAgentGoalService;
   let loopService: StubLoop;
   let toolExecutor: IAgentToolExecutorService;
@@ -938,7 +937,7 @@ describe('AgentGoalService core workflow hooks', () => {
       agentService(IAgentLoopService, loopService),
       permissionModeServices('auto'),
     );
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     goals = ctx.get(IAgentGoalService);
     toolExecutor = ctx.get(IAgentToolExecutorService);
     usageService = ctx.usage;
@@ -978,7 +977,7 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(resumed.status).toBe('active');
     expect(loopService.launches).toHaveLength(1);
     expect(loopService.drainNextBatch(context)).toBeDefined();
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(context.history().at(-1)?.origin).toEqual({
       kind: 'system_trigger',
       name: 'goal_continuation',
     });
@@ -1009,7 +1008,7 @@ describe('AgentGoalService core workflow hooks', () => {
         expect(loopService.launches).toHaveLength(1);
       });
       expect(loopService.drainNextBatch(context)).toBeDefined();
-      expect(context.get().at(-1)?.origin).toEqual({
+      expect(context.history().at(-1)?.origin).toEqual({
         kind: 'system_trigger',
         name: 'goal_continuation',
       });
@@ -1089,7 +1088,7 @@ describe('AgentGoalService core workflow hooks', () => {
     });
     expect(goals.getGoal().goal).toMatchObject({ objective: 'new task', status: 'active' });
     expect(loopService.drainNextBatch(context)).toBeDefined();
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(context.history().at(-1)?.origin).toEqual({
       kind: 'system_trigger',
       name: 'goal_continuation',
     });
@@ -1458,7 +1457,7 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(resumed.status).toBe('active');
     expect(loopService.launches).toEqual([]);
     expect(loopService.drainNextBatch(context)).toBeDefined();
-    expect(context.get().at(-1)?.origin).toEqual(USER_PROMPT_ORIGIN);
+    expect(context.history().at(-1)?.origin).toEqual(USER_PROMPT_ORIGIN);
   });
 
   it('launches only one continuation when blocked resume is repeated', async () => {
@@ -1519,11 +1518,11 @@ describe('AgentGoalService core workflow hooks', () => {
     });
     expect(loopService.launches).toHaveLength(1);
     expect(loopService.drainNextBatch(context)).toBeDefined();
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(context.history().at(-1)?.origin).toEqual({
       kind: 'system_trigger',
       name: 'goal_continuation',
     });
-    expect(JSON.stringify(context.get().at(-1)?.content)).toContain('Continue working toward');
+    expect(JSON.stringify(context.history().at(-1)?.content)).toContain('Continue working toward');
   });
 
   it('blocks the next continuation only after the final allowed turn ends', async () => {
@@ -1763,8 +1762,8 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(loopService.snapshot().hasPendingRequests).toBe(true);
     expect(goals.getGoal().goal).toBeNull();
     expect(loopService.launches).toEqual([]);
-    expect(JSON.stringify(context.get())).not.toContain('goal_completion_summary');
-    expect(JSON.stringify(context.get())).not.toContain('goal_blocked_reason');
+    expect(JSON.stringify(context.history())).not.toContain('goal_completion_summary');
+    expect(JSON.stringify(context.history())).not.toContain('goal_blocked_reason');
 
     expect(loopService.drainNextBatch(context)).toBeDefined();
     const secondAfterStep: AfterStepContext = {
@@ -1806,11 +1805,11 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(goals.getGoal().goal).toMatchObject({ status: 'active', turnsUsed: 1 });
     expect(loopService.launches).toHaveLength(1);
     expect(loopService.drainNextBatch(context)).toBeDefined();
-    expect(context.get().at(-1)?.origin).toEqual({
+    expect(context.history().at(-1)?.origin).toEqual({
       kind: 'system_trigger',
       name: 'goal_continuation',
     });
-    const prompt = JSON.stringify(context.get().at(-1)?.content);
+    const prompt = JSON.stringify(context.history().at(-1)?.content);
     expect(prompt).toContain('per-turn step limit');
     expect(prompt).toContain('Pick up where that turn stopped');
   });
@@ -2318,7 +2317,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
         }),
       );
 
-      const history = ctx.get(IAgentContextMemoryService).get();
+      const history = ctx.get(IAgentLoopService).history();
       const toolResultIndex = history.findIndex((message) => message.role === 'tool');
       const reminderIndex = history.findIndex(
         (message) =>
@@ -2375,7 +2374,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
         }),
       );
 
-      const history = ctx.get(IAgentContextMemoryService).get();
+      const history = ctx.get(IAgentLoopService).history();
       expect(JSON.stringify(history)).toContain('Final status: budget exhausted.');
       expect(JSON.stringify(history)).not.toContain('This step should never run.');
       expect(goals.getGoal().goal).toMatchObject({
@@ -2421,7 +2420,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
         }),
       );
 
-      const history = ctx.get(IAgentContextMemoryService).get();
+      const history = ctx.get(IAgentLoopService).history();
       const toolResults = history.filter((message) => message.role === 'tool');
       expect(toolResults).toHaveLength(2);
       expect(JSON.stringify(toolResults.at(-1))).toContain(
@@ -2466,7 +2465,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
       await ctx.untilTurnEnd();
 
       expect(ctx.llmCalls).toHaveLength(2);
-      const history = ctx.get(IAgentContextMemoryService).get();
+      const history = ctx.get(IAgentLoopService).history();
       expect(JSON.stringify(history)).toContain(
         'Goal budget exhausted; tool calls are rejected. Write your final message.',
       );
@@ -2541,17 +2540,23 @@ describe('AgentGoalService goal outcome tool result flow', () => {
       ctx.mockNextResponse({ type: 'text', text: 'Blocked because credentials are unavailable.' });
 
       const turnEnd = ctx.untilTurnEnd();
+      const startedTurnIds: number[] = [];
+      ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+        startedTurnIds.push(event.turnId);
+      });
       await goals.resumeGoal({ continueIfBlocked: true });
       const events = await turnEnd;
+      await ctx.get(IAgentLoopService).settled();
 
       expect(ctx.llmCalls).toHaveLength(2);
+      expect(startedTurnIds).toHaveLength(1);
       expect(events).toContainEqual(
         expect.objectContaining({
           event: 'turn.ended',
           args: expect.objectContaining({ reason: 'completed' }),
         }),
       );
-      const history = ctx.get(IAgentContextMemoryService).get();
+      const history = ctx.get(IAgentLoopService).history();
       expect(JSON.stringify(history)).toContain('Blocked because credentials are unavailable.');
       expect(history.at(-1)?.role).toBe('assistant');
       expect(goals.getGoal().goal?.status).toBe('blocked');
@@ -2594,7 +2599,7 @@ describe('AgentGoalService goal outcome tool result flow', () => {
         }),
       );
       expect((await ctx.rpc.getGoal({})).goal).toBeNull();
-      const history = ctx.get(IAgentContextMemoryService).get();
+      const history = ctx.get(IAgentLoopService).history();
       expect(JSON.stringify(history)).toContain('Write a concise final message');
       expect(JSON.stringify(history)).not.toContain('This summary should not run.');
       expect(history.at(-1)?.role).toBe('tool');
@@ -2606,12 +2611,12 @@ describe('AgentGoalService goal outcome tool result flow', () => {
 
 describe('AgentGoalService fork boundaries', () => {
   let ctx: TestAgentContext;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
   let goals: IAgentGoalService;
 
   beforeEach(() => {
     ctx = createUnrestoredTestAgent(wireRecordPersistenceServices(new InMemoryWireRecordPersistence()));
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     goals = ctx.get(IAgentGoalService);
   });
 
@@ -2630,7 +2635,7 @@ describe('AgentGoalService fork boundaries', () => {
     ]);
 
     expect(goals.getGoal().goal).toBeNull();
-    const reminder = context.get().at(-1);
+    const reminder = context.history().at(-1);
     expect(reminder?.origin).toEqual({
       kind: 'injection',
       variant: 'goal_fork_cleared',
@@ -2658,15 +2663,15 @@ describe('AgentGoalService fork boundaries', () => {
       },
     ]);
 
-    expect(context.get()).toHaveLength(1);
-    expect(context.get()[0]?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
+    expect(context.history()).toHaveLength(1);
+    expect(context.history()[0]?.origin).toEqual({ kind: 'system_trigger', name: 'goal_fork_cleared' });
   });
 
   it('does not append a fork-cleared reminder when the fork had no goal', async () => {
     await restoreGoalRecords(ctx, goals, [{ type: 'forked' }]);
 
     expect(goals.getGoal().goal).toBeNull();
-    expect(context.get()).toEqual([]);
+    expect(context.history()).toEqual([]);
   });
 
   it('does not append a fork-cleared reminder when the goal was cleared before the fork', async () => {
@@ -2676,7 +2681,7 @@ describe('AgentGoalService fork boundaries', () => {
       { type: 'forked' },
     ]);
 
-    expect(context.get()).toEqual([]);
+    expect(context.history()).toEqual([]);
   });
 });
 

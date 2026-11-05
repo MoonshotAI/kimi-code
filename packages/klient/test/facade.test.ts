@@ -409,8 +409,8 @@ describe('session skills routing', () => {
     const agent = klient.session('s1').agent('main');
     const scope = { sessionId: 's1', agentId: 'main' };
 
-    channel.results.set('agentPromptService.submit', { turn_id: 1 });
-    channel.results.set('agentPromptService.submitSteer', {
+    channel.results.set('agentLoopService.submit', { turn_id: 1 });
+    channel.results.set('agentLoopService.notifyClient', {
       turn_id: 1,
       prompt_id: 'prompt-steer-1',
       created_at: '2026-01-01T00:00:00.000Z',
@@ -430,15 +430,20 @@ describe('session skills routing', () => {
     expect(channel.calls).toEqual([
       {
         scope,
-        service: 'agentPromptService',
+        service: 'agentLoopService',
         method: 'submit',
         args: [{ input: [{ type: 'text', text: 'hi' }] }],
       },
       {
         scope,
-        service: 'agentPromptService',
-        method: 'submitSteer',
-        args: [{ input: [{ type: 'text', text: 'steer' }] }],
+        service: 'agentLoopService',
+        method: 'notifyClient',
+        args: [
+          {
+            message: { role: 'user', content: [{ type: 'text', text: 'steer' }] },
+            meta: { origin: { kind: 'user' }, tracked: true },
+          },
+        ],
       },
       { scope, service: 'agentLoopService', method: 'cancelFromUser', args: [2] },
       { scope, service: 'agentLoopService', method: 'cancelFromUser', args: [] },

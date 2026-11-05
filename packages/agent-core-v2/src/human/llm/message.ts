@@ -284,7 +284,7 @@ export function salvageInterruptedMessage(message: AssistantMessage): AssistantM
 }
 
 export interface MessageAccumulator {
-  push(part: StreamedMessagePart): void;
+  push(part: StreamedMessagePart): StreamedMessagePart;
   toolCallEnd(index?: number | string): ToolCall | undefined;
   finish(): AssistantMessage;
 }
@@ -335,22 +335,23 @@ export function createMessageAccumulator(): MessageAccumulator {
                 ? part.argumentsPart
                 : target.arguments + part.argumentsPart;
           }
-          return;
+          return part;
         }
       }
       if (part.type === 'text') deferredThink = null;
       if (pending === null) {
         pending = structuredClone(part);
-        return;
+        return pending;
       }
       if (pending.type === 'text' && part.type === 'think' && isVacuousContentPart(part)) {
         deferredThink = structuredClone(part);
-        return;
+        return deferredThink;
       }
       if (!mergeInPlace(pending, part)) {
         flush();
         pending = structuredClone(part);
       }
+      return pending;
     },
     toolCallEnd(index) {
       if (

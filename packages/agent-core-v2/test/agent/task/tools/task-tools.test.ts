@@ -9,10 +9,7 @@ import {
   type AgentTaskInfo,
   type AgentTaskOutputChunk,
   type AgentTaskOutputSnapshot,
-  type AgentTaskTrackOptions,
   type AgentTaskWaitDelivery,
-  type ForegroundTaskReleaseReason,
-  type IAgentTaskEntry,
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import { type AgentTaskStatus, TERMINAL_STATUSES } from '#/agent/task/types';
@@ -27,7 +24,6 @@ import { WaitForInputSchema } from '#/agent/tools/task/task-wait/task-wait';
 import { WaitForTool, startWaitProgress, waitForProgressUpdate } from '#/agent/tools/task/task-wait/taskWaitTool';
 import { abortError } from '#/_base/utils/abort';
 import { Event } from '#/_base/event';
-import type { ITaskHandle } from '#/app/task/task';
 import type { IHostProcess } from '#/os/interface/hostProcess';
 import { compileToolArgsValidator, validateToolArgs } from '#/tool/args-validator';
 import { ProcessTask, type ProcessTaskInfo } from '#/agent/tools/os/bash/process-task';
@@ -158,10 +154,6 @@ class FakeTaskService implements IAgentTaskService {
     } as AgentTaskInfo;
   }
 
-  track(_handle: ITaskHandle, _options: AgentTaskTrackOptions): IAgentTaskEntry {
-    throw new Error('track is not implemented in FakeTaskService.');
-  }
-
   registerTask(_task: AgentTask, _options?: RegisterAgentTaskOptions): string {
     throw new Error('registerTask is not implemented in FakeTaskService.');
   }
@@ -277,11 +269,6 @@ class FakeTaskService implements IAgentTaskService {
     return this.entries.get(taskId)?.info;
   }
 
-  async waitForForegroundRelease(
-    taskId: string,
-  ): Promise<ForegroundTaskReleaseReason | undefined> {
-    return this.entries.has(taskId) ? 'detached' : undefined;
-  }
 }
 
 describe('TaskListTool', () => {
@@ -1321,7 +1308,7 @@ describe('WaitForTool (harness)', () => {
       await steered;
       await waitForTerminal(tasks, taskId);
       await vi.waitFor(() => {
-        const deliveries = ctx.context.get().filter((message) =>
+        const deliveries = ctx.context.history().filter((message) =>
           (message.origin?.kind === 'task' && message.origin.taskId === taskId) ||
           (message.role === 'tool' && message.toolCallId === 'racing-wait' && message.content.some((part) =>
             part.type === 'text' && part.text.includes('wait_status: completed'),
@@ -1331,7 +1318,7 @@ describe('WaitForTool (harness)', () => {
       });
       await ctx.get(IAgentLoopService).settled();
 
-      const history = ctx.context.get();
+      const history = ctx.context.history();
       expect(await tasks.readOutput(taskId)).toBe('BACKGROUND-RESULT');
       expect(history.filter((message) => message.content.some((part) =>
         part.type === 'text' && part.text === 'Handle the new request too.',
@@ -1399,7 +1386,7 @@ describe('WaitForTool (harness)', () => {
 
       expect(loop.snapshot().hasPendingRequests).toBe(false);
       loop.drainNextBatch(ctx.context);
-      expect(ctx.context.get().some((message) => message.origin?.kind === 'task')).toBe(false);
+      expect(ctx.context.history().some((message) => message.origin?.kind === 'task')).toBe(false);
       expect(ctx.allEvents.some((event) => event.event === 'task.notified')).toBe(false);
       expect(ctx.llmCalls).toHaveLength(0);
       expect(
@@ -1447,7 +1434,14 @@ describe('WaitForTool (harness)', () => {
       expect(output).not.toContain(taskB);
       expect(output).not.toContain('[completed_during_wait]');
       await ctx.persistedWireRecords();
-      expect(ctx.allEvents.filter((event) => event.event === 'task.waitDelivered')).toHaveLength(1);
+      const deliveries = ctx.allEvents.filter((event) => event.event === 'task.waitDelivered');
+      expect(deliveries).not.toHaveLength(0);
+      const deliveredKeys = deliveries.flatMap(
+        (event) => (event.args as { readonly keys: readonly string[] }).keys,
+      );
+      expect(new Set(deliveredKeys)).toEqual(
+        new Set([`${taskA}\0completed\0task:${taskA}:completed`]),
+      );
     } finally {
       await ctx.dispose();
     }

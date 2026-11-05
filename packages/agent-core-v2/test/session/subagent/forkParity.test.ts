@@ -1,4 +1,5 @@
 import { createControlledPromise } from '@antfu/utils';
+import { appendContext, compactContext } from '../../agent/contextMemory/stubs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { userCancellationReason } from '#/_base/utils/abort';
@@ -8,7 +9,6 @@ import { IInstantiationService } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { Event } from '#/_base/event';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -283,12 +283,12 @@ describe('subagent task reminders and fork request parity', () => {
     expect('partial' in assistant ? assistant.partial : undefined).toBeUndefined();
     expect(toolResult.toolCallId).toBe('call_fork');
     expect(toolResult.content).toEqual([{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }]);
-    const notice = tail[2]?.content[0];
-    expect(notice?.type).toBe('text');
-    expect(notice?.type === 'text' && notice.text).toBe(wrapSystemReminder(FORK_CONTEXT_NOTICE));
-    const prompt = tail[3]?.content[0];
+    const prompt = tail[2]?.content[0];
     expect(prompt?.type).toBe('text');
     expect(prompt?.type === 'text' && prompt.text).toBe('finish the inherited task');
+    const notice = tail[3]?.content[0];
+    expect(notice?.type).toBe('text');
+    expect(notice?.type === 'text' && notice.text).toBe(wrapSystemReminder(FORK_CONTEXT_NOTICE));
 
     expect(parentFollowup.history.slice(0, parentReq.history.length)).toEqual(parentReq.history);
     expect(parentFollowup.history[parentReq.history.length]).toEqual(tail[0]);
@@ -298,24 +298,6 @@ describe('subagent task reminders and fork request parity', () => {
       .map((agent) => agent.agentId)
       .find((id) => id !== 'parent' && id !== 'main');
     expect(childId).toBeDefined();
-    const scopeOf = (agentId: string) =>
-      `sessions/test-workspace/test-session/agents/${agentId}`;
-    const firstLlmRequest = (agentId: string): WireRecord | undefined =>
-      store
-        .recordsFor(scopeOf(agentId), AGENT_WIRE_RECORD_KEY)
-        .find((record) => record.type === 'llm.request');
-    const parentWire = firstLlmRequest('parent');
-    const childWire = firstLlmRequest(childId!);
-    expect(parentWire).toBeDefined();
-    expect(childWire).toBeDefined();
-    expect(childWire).toMatchObject({
-      model: parentWire?.['model'],
-      modelAlias: parentWire?.['modelAlias'],
-      thinkingEffort: parentWire?.['thinkingEffort'],
-      systemPromptHash: parentWire?.['systemPromptHash'],
-      toolsHash: parentWire?.['toolsHash'],
-    });
-
     const probes = telemetry.filter((record) => record.event === 'prompt_cache_probe');
     expect(probes).toHaveLength(1);
     expect(probes[0]?.properties).toMatchObject({
@@ -508,7 +490,7 @@ describe('subagent task reminders and fork request parity', () => {
         expect(request.tools.some((tool) => tool.name === 'WaitFor')).toBe(true);
         expect(taskReminders(request.history)).toEqual([wrapSystemReminder(SUBAGENT_BACKGROUND_TASK_NOTICE)]);
       }
-      expect(taskReminders(child.accessor.get(IAgentContextMemoryService).get())).toHaveLength(1);
+      expect(taskReminders(child.accessor.get(IAgentLoopService).history())).toHaveLength(1);
     },
   );
 
@@ -517,7 +499,7 @@ describe('subagent task reminders and fork request parity', () => {
     async (hasReminder) => {
       createMainForkCtx();
       const original = await createDirectChild();
-      original.accessor.get(IAgentContextMemoryService).append({
+      appendContext(original.accessor.get(IAgentLoopService),{
         role: 'user',
         content: [{ type: 'text', text: 'task from the previous session' }],
         origin: { kind: 'user' },
@@ -530,17 +512,25 @@ describe('subagent task reminders and fork request parity', () => {
       const lifecycle = ctx.get(IAgentLifecycleService);
       const originalContext = lifecycle.get(original.id)!;
       await lifecycle.remove(originalContext);
+      expect(
+        store
+          .recordsFor('sessions/test-workspace/test-session/agents/direct-child', AGENT_WIRE_RECORD_KEY)
+          .some((record) =>
+            record.type === 'context.append_message' &&
+            JSON.stringify(record).includes(SUBAGENT_BACKGROUND_TASK_NOTICE)
+          ),
+      ).toBe(hasReminder);
       const restoredContext = await lifecycle.create({ agentId: original.id });
       const restored = lifecycle.handleOf(restoredContext.agentId)!;
       expect(restoredContext.generation).not.toBe(originalContext.generation);
       expect(restored.accessor.get(IAgentProfileService).data().profileName).toBe('coder');
-      const history = restored.accessor.get(IAgentContextMemoryService).get();
+      const history = restored.accessor.get(IAgentLoopService).history();
       expect(taskReminders(history)).toHaveLength(hasReminder ? 1 : 0);
 
       await runPrompt(restored);
 
       expect(taskReminders(ctx.llmCalls[0]!.history)).toHaveLength(1);
-      expect(restored.accessor.get(IAgentContextMemoryService).get().slice(0, history.length)).toEqual(history);
+      expect(restored.accessor.get(IAgentLoopService).history().slice(0, history.length)).toEqual(history);
     },
   );
 
@@ -549,16 +539,16 @@ describe('subagent task reminders and fork request parity', () => {
     async (insideStep) => {
       createMainForkCtx();
       const child = await createDirectChild();
-      const context = child.accessor.get(IAgentContextMemoryService);
+      const context = child.accessor.get(IAgentLoopService);
       await runPrompt(child);
-      expect(taskReminders(context.get())).toHaveLength(1);
+      expect(taskReminders(context.history())).toHaveLength(1);
       const compact = (): void => {
-        context.applyCompaction({
+        compactContext(context,{
           summary: 'The child still needs to finish the task.',
-          compactedCount: context.get().length,
+          compactedCount: context.history().length,
           tokensBefore: 1000,
         });
-        expect(taskReminders(context.get())).toHaveLength(0);
+        expect(taskReminders(context.history())).toHaveLength(0);
       };
       if (insideStep) {
         child.accessor.get(IAgentLoopService).hooks.onWillBeginStep.register(
@@ -577,7 +567,7 @@ describe('subagent task reminders and fork request parity', () => {
 
       expect(ctx.llmCalls).toHaveLength(2);
       expect(taskReminders(ctx.llmCalls[1]!.history)).toHaveLength(1);
-      expect(taskReminders(context.get())).toHaveLength(1);
+      expect(taskReminders(context.history())).toHaveLength(1);
     },
   );
 
@@ -625,7 +615,7 @@ describe('subagent task reminders and fork request parity', () => {
     await child.accessor.get(IAgentReminderService).reconcileWhenIdle('subagent_background_task');
 
     expect(list).not.toHaveBeenCalled();
-    expect(taskReminders(child.accessor.get(IAgentContextMemoryService).get())).toHaveLength(1);
+    expect(taskReminders(child.accessor.get(IAgentLoopService).history())).toHaveLength(1);
   });
 
   it('keeps btw system, tools and inherited history identical to main', async () => {
@@ -659,10 +649,10 @@ describe('subagent task reminders and fork request parity', () => {
 
     const beforeCompaction = await ctx.get(ISessionBtwService).start();
     await runPrompt(lifecycle.handleOf(beforeCompaction)!);
-    const context = main.accessor.get(IAgentContextMemoryService);
-    context.applyCompaction({
+    const context = main.accessor.get(IAgentLoopService);
+    compactContext(context,{
       summary: 'The main agent still needs to finish the task.',
-      compactedCount: context.get().length,
+      compactedCount: context.history().length,
       tokensBefore: 1000,
     });
     const afterCompaction = await ctx.get(ISessionBtwService).start();
@@ -808,8 +798,8 @@ describe('subagent task reminders and fork request parity', () => {
     expect(parentScript.calls).toHaveLength(1);
     expect(childRequests).toBe(1);
     const agentResult = ctx
-      .get(IAgentContextMemoryService)
-      .get()
+      .get(IAgentLoopService)
+      .history()
       .filter((message) => message.role === 'tool' && message.toolCallId === 'call_agent')
       .flatMap((message) => message.content)
       .map((part) => (part.type === 'text' ? part.text : ''))

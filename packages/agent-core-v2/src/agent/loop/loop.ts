@@ -2,20 +2,27 @@ import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { Error2, isError2, type Error2Options } from '#/_base/errors/errors';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { AgentTaskInfo } from '#/agent/task/types';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
 import type { ContentPart, TextPart } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm-requester/usage';
 import type { Hooks } from '#/hooks';
-import type { UserEntry } from '#human/agent/turn';
+import type { HistoryMessage, UserEntry } from '#human/agent/turn';
 import type { LoopRequester } from './requesterContract';
 import { LoopErrors } from './errors';
-import type {
-  MachineEngine,
-  MachineEngineAttachBundle,
-  MachineEngineAttachRef,
-  MachineEngineRetrySnapshot,
-  MachineEngineToolCallSnapshot,
-} from './machine/engine';
+export interface AgentActivityRetrySnapshot {
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+  readonly errorName?: string;
+  readonly statusCode?: number;
+}
+
+export interface AgentActivityToolCallSnapshot {
+  readonly toolCallId: string;
+  readonly name: string;
+}
 
 export interface AgentActivityTurnSnapshot {
   readonly turnId: number;
@@ -23,8 +30,8 @@ export interface AgentActivityTurnSnapshot {
   readonly step: number;
   readonly ending: boolean;
   readonly endingReason?: 'aborted';
-  readonly retry?: MachineEngineRetrySnapshot;
-  readonly activeToolCalls: readonly MachineEngineToolCallSnapshot[];
+  readonly retry?: AgentActivityRetrySnapshot;
+  readonly activeToolCalls: readonly AgentActivityToolCallSnapshot[];
   readonly since?: number;
 }
 
@@ -128,11 +135,6 @@ export interface Turn {
   cancel(reason?: unknown): boolean;
 }
 
-export interface LoopSubmitOptions {
-  readonly steerIfActive?: boolean;
-  readonly onMaterialize?: () => void;
-}
-
 export interface LoopSubmitResult {
   readonly id: string;
 }
@@ -175,10 +177,6 @@ export interface PromptPayload {
   readonly promptId?: string;
 }
 
-export interface SteerPayload {
-  readonly input: readonly ContentPart[];
-}
-
 export interface PromptLaunchResult {
   readonly turn_id: number;
 }
@@ -206,9 +204,17 @@ export interface LoopNotify {
   readonly onDrop?: () => void;
 }
 
+export type LoopNotifyEntry = UserEntry & { readonly meta: NonNullable<UserEntry['meta']> };
+
 export interface LoopNotifyHandle {
   readonly dropped: boolean;
   drop(): void;
+}
+
+export interface LoopDetachedTask {
+  readonly taskId: string;
+  readonly toolCallId: string;
+  info(): AgentTaskInfo;
 }
 
 export interface IAgentLoopService {
@@ -216,29 +222,42 @@ export interface IAgentLoopService {
 
   readonly requester: LoopRequester;
 
-  submit(input: UserEntry, options?: LoopSubmitOptions): LoopSubmitResult;
+  history(): readonly ContextMessage[];
+
+  historyRevision(): number;
+
+  replaceHistory(messages: readonly HistoryMessage[], reason?: string, onAccepted?: () => void): boolean;
+
+  initializeHistory(messages: readonly HistoryMessage[]): Promise<void>;
+
+  submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined>;
+  submit(input: UserEntry): LoopSubmitResult;
 
   steer(promptIds: readonly string[]): Promise<void>;
 
   cancel(target?: LoopCancelTarget, reason?: unknown): boolean;
 
+  detachTool(task: LoopDetachedTask, text?: string): void;
+
+  abortTool(toolCallId: string, reason?: unknown): void;
+
   snapshot(): LoopSnapshot;
 
   settled(): Promise<void>;
+
+  close(): Promise<void>;
 
   tryAcquireQuiescence(): IDisposable | undefined;
 
   tryAcquireHistorySnapshot(): IDisposable | undefined;
 
+  notifyClient(input: LoopNotifyEntry): Promise<SteerResult>;
+  notify(input: LoopNotifyEntry): LoopSubmitResult;
   notify(note?: LoopNotify): LoopNotifyHandle;
 
-  remind(note?: LoopNotify): LoopNotifyHandle;
+  remind(...entries: readonly HistoryMessage[]): void;
 
-  buildAttachBundle(): MachineEngineAttachBundle;
-
-  attachEngine(ref: MachineEngineAttachRef, bundle: MachineEngineAttachBundle): MachineEngine;
-
-  resetMachineEngine(): Promise<void>;
+  flushReminders(): void;
 
   promptHandle(id: string): PromptHandle | undefined;
 
@@ -249,6 +268,7 @@ export interface IAgentLoopService {
 
   readonly hooks: Hooks<{
     onWillBeginStep: BeforeStepContext;
+    /** After onDidFinishStep, Core consumes queued reminders before assembling the next LLM request. */
     onDidFinishStep: AfterStepContext;
     onBeforeSubmitPrompt: PromptSubmitContext;
   }>;

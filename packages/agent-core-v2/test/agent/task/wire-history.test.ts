@@ -1,0 +1,283 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'pathe';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  type AgentTask,
+  type AgentTaskInfo,
+  IAgentTaskService,
+} from '#/agent/task/task';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { IEventBus } from '#/app/event/eventBus';
+import { IWireService } from '#/wire/wire';
+import { stubAgentWire } from '../../wire/stubs';
+import {
+  agentService,
+  createTestAgent,
+  homeDirServices,
+  taskServices,
+  type TestAgentContext,
+} from '../../harness';
+import {
+  createAgentTaskPersistence,
+  restoreTaskHistory,
+  taskHistoryRecords,
+} from './stubs';
+
+function processInfo(
+  overrides: Partial<Extract<AgentTaskInfo, { kind: 'process' }>> = {},
+): Extract<AgentTaskInfo, { kind: 'process' }> {
+  return {
+    taskId: 'bash-00000001',
+    kind: 'process',
+    command: 'sleep 60',
+    description: 'historical process',
+    pid: 1234,
+    startedAt: 100,
+    endedAt: null,
+    exitCode: null,
+    status: 'running',
+    detached: true,
+    ...overrides,
+  };
+}
+
+function liveProcess(description: string): AgentTask {
+  return {
+    idPrefix: 'bash',
+    kind: 'process',
+    description,
+    start: () => {},
+    toInfo: (base) => ({
+      ...base,
+      kind: 'process',
+      command: 'sleep 60',
+      pid: 4321,
+      exitCode: null,
+    }),
+  };
+}
+
+describe('AgentTaskService Wire history', () => {
+  let sessionDir: string;
+  let ctx: TestAgentContext;
+
+  beforeEach(async () => {
+    sessionDir = await mkdtemp(join(tmpdir(), 'kimi-task-wire-history-'));
+    ctx = createTestAgent(homeDirServices(sessionDir), taskServices());
+  });
+
+  afterEach(async () => {
+    await ctx.dispose();
+    await rm(sessionDir, { recursive: true, force: true });
+  });
+
+  it('restores an empty read model from an empty journal', async () => {
+    await ctx.restore([]);
+
+    expect(ctx.get(IAgentTaskService).list(false)).toEqual([]);
+  });
+
+  it('projects a restored running task as lost without manufacturing endedAt', async () => {
+    await restoreTaskHistory(ctx, [processInfo()]);
+
+    expect(ctx.get(IAgentTaskService).getTask('bash-00000001')).toMatchObject({
+      status: 'lost',
+      startedAt: 100,
+      endedAt: null,
+    });
+  });
+
+  it('does not dispatch or persist TaskTerminated for a restored running task', async () => {
+    const emitted: string[] = [];
+    ctx.get(IEventBus).subscribe((event) => {
+      emitted.push(event.type);
+    });
+
+    await restoreTaskHistory(ctx, [processInfo()]);
+
+    expect(emitted.filter((type) => type === 'task.terminated')).toEqual([]);
+    expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
+  });
+
+  it('preserves the complete terminal fields of a completed task', async () => {
+    const completed = processInfo({
+      status: 'completed',
+      endedAt: 200,
+      exitCode: 0,
+      stopReason: 'finished',
+      timeoutMs: 5000,
+      terminalNotificationSuppressed: true,
+    });
+
+    await restoreTaskHistory(ctx, [completed]);
+
+    expect(ctx.get(IAgentTaskService).getTask(completed.taskId)).toEqual(completed);
+  });
+
+  it('preserves timed_out and its domain-specific terminal fields', async () => {
+    const timedOut = processInfo({
+      status: 'timed_out',
+      endedAt: 500,
+      exitCode: 124,
+      stopReason: 'deadline',
+      timeoutMs: 100,
+      terminalNotificationSuppressed: true,
+    });
+
+    await restoreTaskHistory(ctx, [timedOut]);
+
+    expect(ctx.get(IAgentTaskService).getTask(timedOut.taskId)).toEqual(timedOut);
+  });
+
+  it('reduces started and terminated records to one latest historical entry', async () => {
+    const completed = processInfo({
+      status: 'completed',
+      endedAt: 200,
+      exitCode: 0,
+      terminalNotificationSuppressed: true,
+    });
+
+    await restoreTaskHistory(ctx, [completed]);
+
+    expect(ctx.get(IAgentTaskService).list(false)).toEqual([completed]);
+  });
+
+  it('reads the full restore journal rather than only the active restorable chain', async () => {
+    const journal = taskHistoryRecords([processInfo()]);
+    const wire = {
+      ...stubAgentWire(),
+      readRestoreChains: async () => ({ restorable: [], journal }),
+    };
+    const subject = createTestAgent(
+      taskServices(),
+      agentService(IWireService, wire),
+    );
+    try {
+      await subject.restorePersisted();
+
+      expect(subject.get(IAgentTaskService).getTask('bash-00000001')).toMatchObject({
+        status: 'lost',
+        endedAt: null,
+      });
+    } finally {
+      await subject.dispose();
+    }
+  });
+
+  it('prefers a live entry over journal history with the same task id', async () => {
+    const tasks = ctx.get(IAgentTaskService);
+    const taskId = tasks.registerTask(liveProcess('live process'));
+    const historical = processInfo({
+      taskId,
+      description: 'historical process',
+      status: 'completed',
+      endedAt: 200,
+      exitCode: 0,
+      terminalNotificationSuppressed: true,
+    });
+
+    await restoreTaskHistory(ctx, [historical]);
+
+    expect(tasks.getTask(taskId)).toMatchObject({
+      description: 'live process',
+      status: 'running',
+      endedAt: null,
+    });
+    expect(tasks.list(false).filter((info) => info.taskId === taskId)).toHaveLength(1);
+  });
+
+  it('lists live tasks as active and includes lost tasks only in full history', async () => {
+    await restoreTaskHistory(ctx, [processInfo()]);
+    const tasks = ctx.get(IAgentTaskService);
+    const liveId = tasks.registerTask(liveProcess('live process'));
+
+    expect(tasks.list(true).map((info) => info.taskId)).toEqual([liveId]);
+    expect(tasks.list(false).map((info) => info.taskId)).toEqual([
+      liveId,
+      'bash-00000001',
+    ]);
+  });
+
+  it('ignores journal records owned by another agent', async () => {
+    await restoreTaskHistory(ctx, [processInfo()], 'agent-other');
+
+    expect(ctx.get(IAgentTaskService).list(false)).toEqual([]);
+  });
+
+  it('restores an undelivered terminal notification once', async () => {
+    const completed = processInfo({ status: 'completed', endedAt: 200, exitCode: 0 });
+
+    await restoreTaskHistory(ctx, [completed]);
+    ctx.get(IAgentLoopService).flushReminders();
+
+    const origins = ctx.get(IAgentLoopService).history().map((message) => message.origin);
+    expect(origins.filter((origin) => origin?.kind === 'task' && origin.taskId === completed.taskId)).toHaveLength(1);
+    expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(1);
+  });
+
+  it('does not restore a terminal notification already present in Loop history', async () => {
+    const completed = processInfo({ status: 'completed', endedAt: 200, exitCode: 0 });
+    const origin = {
+      kind: 'task',
+      taskId: completed.taskId,
+      status: 'completed',
+      notificationId: `task:${completed.taskId}:completed`,
+    } as const;
+    const records = [
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'already delivered' }],
+          toolCalls: [],
+          origin,
+        },
+      },
+      ...taskHistoryRecords([completed]),
+    ];
+
+    await ctx.restore(records);
+    ctx.get(IAgentLoopService).flushReminders();
+
+    const origins = ctx.get(IAgentLoopService).history().map((message) => message.origin);
+    expect(origins.filter((candidate) => candidate?.kind === 'task' && candidate.taskId === completed.taskId)).toHaveLength(1);
+    expect(ctx.allEvents.filter((event) => event.event === 'task.notified')).toHaveLength(0);
+  });
+
+  it('reads restored output exclusively from output.log', async () => {
+    const completed = processInfo({
+      status: 'completed',
+      endedAt: 200,
+      exitCode: 0,
+      terminalNotificationSuppressed: true,
+    });
+    const persistence = createAgentTaskPersistence(sessionDir);
+    await persistence.appendTaskOutput(completed.taskId, 'persisted output');
+
+    await restoreTaskHistory(ctx, [completed]);
+
+    const tasks = ctx.get(IAgentTaskService);
+    expect(await tasks.readOutput(completed.taskId)).toBe('persisted output');
+    expect(await tasks.getOutputSnapshot(completed.taskId, 100)).toMatchObject({
+      outputPath: persistence.taskOutputFile(completed.taskId),
+      outputSizeBytes: 16,
+      fullOutputAvailable: true,
+      preview: 'persisted output',
+    });
+  });
+
+  it('keeps repeated restores idempotent without synthesizing terminal records', async () => {
+    await restoreTaskHistory(ctx, [processInfo()]);
+    await vi.waitFor(() => {
+      expect(ctx.get(IAgentTaskService).getTask('bash-00000001')?.status).toBe('lost');
+    });
+    await restoreTaskHistory(ctx, [processInfo()]);
+
+    expect(ctx.get(IAgentTaskService).list(false)).toHaveLength(1);
+    expect(ctx.get(IAgentTaskService).getTask('bash-00000001')?.endedAt).toBeNull();
+    expect((await ctx.persistedWireRecords()).filter((record) => record.type === 'task.terminated')).toEqual([]);
+  });
+});

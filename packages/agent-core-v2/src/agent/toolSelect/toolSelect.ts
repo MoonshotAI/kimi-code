@@ -60,6 +60,8 @@ export interface IAgentToolSelectService {
 
   defaultTools(disclosure?: boolean): readonly Tool[];
 
+  requestTools(base: readonly Tool[] | undefined, disclosure?: boolean, dynamic?: boolean): readonly Tool[];
+
   shapeTools(entries: readonly ToolInfo[], disclosure?: boolean): readonly ShapedToolEntry[];
 
   shapeHistory(

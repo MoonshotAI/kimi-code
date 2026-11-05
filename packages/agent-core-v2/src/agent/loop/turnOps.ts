@@ -8,11 +8,11 @@ import {
   ContextClear,
   ContextUndo,
 } from '#/agent/contextMemory/contextEvents';
-import { isUndoAnchorOrigin } from '#/agent/contextMemory/conversationTime';
+import { isUndoAnchorTurnPrompt, isValidUndoCount } from '#/agent/undo/turnUndo';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { AgentEvent2, type SerializedEvent2 } from '#/app/event/event2';
 import type { ContentPart } from '#human/llm/message';
-import { defineState } from '#/state/state';
+import { defineState, registerUndoableProtocol } from '#/state/state';
 
 import type { TurnEndReason, TurnInterruptReason } from './turnEvents';
 
@@ -33,11 +33,12 @@ const turnPromptSchema = z.object({
   origin: z.custom<PromptOrigin>(),
   promptId: z.string().optional(),
   turnId: z.number().optional(),
+  trigger: z.enum(['normal', 'notify', 'continue']).optional(),
 });
 
 export class TurnPrompt extends AgentEvent2<z.infer<typeof turnPromptSchema>> {
   static override readonly type = 'turn.prompt';
-  static override readonly durable = true;
+  static override readonly durable = false;
   static override readonly observable = true;
   static override readonly schema = turnPromptSchema;
 }
@@ -47,6 +48,7 @@ export interface TurnPrompt {
   readonly origin: PromptOrigin;
   readonly promptId?: string;
   readonly turnId?: number;
+  readonly trigger?: 'normal' | 'notify' | 'continue';
 }
 
 const turnSteerSchema = z.object({
@@ -60,7 +62,7 @@ const turnSteerSchema = z.object({
 
 export class TurnSteer extends AgentEvent2<z.infer<typeof turnSteerSchema>> {
   static override readonly type = 'turn.steer';
-  static override readonly durable = true;
+  static override readonly durable = false;
   static override readonly observable = true;
   static override readonly schema = turnSteerSchema;
 }
@@ -115,7 +117,7 @@ export interface TurnEndedPayload {
 
 export class TurnEnded extends AgentEvent2<TurnEndedPayload> {
   static override readonly type = 'turn.ended';
-  static override readonly durable = true;
+  static override readonly durable = false;
   static override readonly observable = true;
   static override readonly schema = turnEndedSchema;
 
@@ -155,7 +157,7 @@ export const turnKey = defineState(
   .on(TurnPrompt, (s, e) => {
     const assigned = e.turnId ?? s.nextTurnId;
     const next = advanceTurnClock(s, assigned + 1);
-    if (!isUndoAnchorOrigin(e.origin)) return next;
+    if (!isUndoAnchorTurnPrompt(e)) return next;
     return { ...next, anchorTurnIds: [...s.anchorTurnIds, assigned] };
   })
   .on(TurnSteer, () => {})
@@ -210,3 +212,17 @@ function advanceTurnClock(
     cancelledTurnIds: [...pendingCancellations].toSorted((a, b) => a - b),
   };
 }
+
+registerUndoableProtocol({
+  events: {
+    appendLoopEvent: ContextAppendLoopEvent,
+    turnPrompt: TurnPrompt,
+    turnSteer: TurnSteer,
+    turnEnded: TurnEnded,
+    applyCompaction: ContextApplyCompaction,
+    clear: ContextClear,
+    undo: ContextUndo,
+  },
+  isUndoAnchor: (prompt) => isUndoAnchorTurnPrompt(prompt as TurnPrompt),
+  isValidUndoCount,
+});

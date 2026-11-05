@@ -1,14 +1,12 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { isUndoAnchor } from '#/agent/contextMemory/conversationTime';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
-import { TurnEnded } from '#/agent/loop/turnOps';
+import { isUserCancellation } from '#/_base/utils/abort';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IEventBus } from '#/app/event/eventBus';
 
 import { IAgentInterruptionReminderService } from './interruptionReminder';
 import { INTERRUPTION_REMINDER_VARIANT, interruptionReminderKey } from './interruptionReminderOps';
@@ -26,25 +24,23 @@ export class AgentInterruptionReminderService
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IEventBus eventBus: IEventBus,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly context: IAgentLoopService,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentStateService agentState: IAgentStateService,
   ) {
     super();
     agentState.contributeState(interruptionReminderKey);
-    this._register(
-      eventBus.subscribe(TurnEnded, (event) => {
-        if (event.reason !== 'cancelled' || event.interruptReason !== 'user_cancelled') return;
-        const history = this.context.get();
-        const origin = lastComparableMessage(history)?.origin;
-        if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;
-        this.reminder.notify(INTERRUPTION_REMINDER, {
-          variant: INTERRUPTION_REMINDER_VARIANT,
-          ownerPromptId: history.findLast(isUndoAnchor)?.id,
-        });
-      }),
-    );
+  }
+
+  notifyUserCancellation(reason: unknown): void {
+    if (!isUserCancellation(reason)) return;
+    const history = this.context.history();
+    const origin = lastComparableMessage(history)?.origin;
+    if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;
+    this.reminder.notify(INTERRUPTION_REMINDER, {
+      variant: INTERRUPTION_REMINDER_VARIANT,
+      ownerPromptId: this.context.snapshot().activePromptId,
+    });
   }
 }
 

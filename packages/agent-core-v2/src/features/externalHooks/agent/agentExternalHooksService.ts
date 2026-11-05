@@ -6,17 +6,16 @@ import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTaskService, type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { historyEntryFromContext } from '#/agent/loop/history';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import {
   IAgentFullCompactionService,
   type FullCompactionTask,
 } from '#/agent/fullCompaction/fullCompaction';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
-import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
+import { IAgentLoopService, type AfterStepContext, type PromptSubmitContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { type PromptSubmitContext } from '#/agent/loop/loop';
 import { PromptQueued } from '#/agent/prompt/promptEvents';
 import { TaskNotified, TaskStarted } from '#/agent/task/taskOps';
 import {
@@ -72,7 +71,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
   constructor(
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IEventBus private readonly eventBus: IEventBus,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionContext private readonly sessionContext: ISessionContext,
@@ -273,12 +272,13 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         const reason = await this.runStop(ctx);
         if (reason !== undefined) {
           this.stopHookContinuationUsed = true;
-          this.context.append({
-            role: 'user',
-            content: [{ type: 'text', text: reason }],
-            origin: { kind: 'system_trigger', name: 'stop_hook' },
+          loop.notify({
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: reason }],
+              origin: { kind: 'system_trigger', name: 'stop_hook' },
+            },
           });
-          loop.notify();
           return;
         }
       }),
@@ -381,12 +381,12 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     const block = renderUserPromptHookBlockResult(results);
     if (block !== undefined) {
-      this.context.append({
+      this.loop.remind(historyEntryFromContext({
         role: 'assistant',
         content: [{ type: 'text', text: block.text }],
         toolCalls: [],
         origin: { kind: 'hook_result', event: block.event, blocked: true },
-      });
+      }));
       void this.dispatcher.dispatch(
         new HookResult({
           agentId: this.scopeContext.agentId,

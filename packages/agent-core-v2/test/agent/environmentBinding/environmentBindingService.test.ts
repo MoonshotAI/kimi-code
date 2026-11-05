@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ISessionEventBus } from '#/app/event/eventBus';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import '#/agent/contextMemory/conversationTime';
+import '#/agent/loop/turnOps';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { AgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { AgentEnvironmentBindingService, PROJECT_CONTEXT_REMINDER_VARIANT } from '#/agent/environmentBinding/environmentBindingService';

@@ -5,7 +5,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml } from '#/_base/utils/xml-escape';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { historyEntryFromContext } from '#/agent/loop/history';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -74,7 +74,6 @@ export class AgentShellCommandService implements IAgentShellCommandService {
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -231,33 +230,33 @@ export class AgentShellCommandService implements IAgentShellCommandService {
 
   private appendShellInput(command: string): void {
     const text = `<bash-input>\n${escapeXml(command)}\n</bash-input>`;
-    this.context.append({
+    this.loop.remind(historyEntryFromContext({
       role: 'user',
       content: [{ type: 'text', text }],
       origin: { kind: 'shell_command', phase: 'input' },
-    });
+    }));
   }
 
   private appendShellOutput(stdout: string, stderr: string, isError?: boolean): void {
     const text = `<bash-stdout>${escapeXml(stdout)}</bash-stdout><bash-stderr>${escapeXml(stderr)}</bash-stderr>`;
-    this.context.append({
+    this.loop.remind(historyEntryFromContext({
       role: 'user',
       content: [{ type: 'text', text }],
       origin:
         isError === true
           ? { kind: 'shell_command', phase: 'output', isError: true }
           : { kind: 'shell_command', phase: 'output' },
-    });
+    }));
   }
 
   private notifyBackgrounded(output: string): void {
-    this.loop.submit(
-      {
-        message: { role: 'user', content: [{ type: 'text', text: output }] },
-        meta: { origin: { kind: 'injection', variant: 'shell_command_backgrounded' } as PromptOrigin },
+    this.loop.notify({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: output }],
+        origin: { kind: 'injection', variant: 'shell_command_backgrounded' } as PromptOrigin,
       },
-      { steerIfActive: true },
-    );
+    });
   }
 }
 

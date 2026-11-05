@@ -4,7 +4,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { createReminderStub } from '../reminder/stubs';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type {
   ApprovalResponse,
@@ -209,7 +209,7 @@ describe('AgentPlanService plan-guard listener', () => {
           sessionScope: 'sessions/session',
           cwd: '/workspace',
         }));
-        reg.definePartialInstance(IAgentContextMemoryService, {});
+        reg.definePartialInstance(IAgentLoopService, {});
         reg.defineInstance(IAgentReminderService, createReminderStub());
         reg.defineInstance(IAgentToolExecutorService, executorEvents.executor);
         reg.defineInstance(IAgentToolApprovalService, toolApproval);

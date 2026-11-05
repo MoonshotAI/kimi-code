@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from '#human/message';
 
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { compactContext } from '../../../agent/contextMemory/stubs';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
@@ -54,12 +54,12 @@ function lookupCall(): ToolCall {
 describe('GoalInjection content', () => {
   let ctx: TestAgentContext;
   let goals: GoalServiceTestManager;
-  let context: IAgentContextMemoryService;
+  let context: IAgentLoopService;
 
   beforeEach(async () => {
     ctx = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()));
     goals = ctx.get(IAgentGoalService);
-    context = ctx.get(IAgentContextMemoryService);
+    context = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
   });
 
@@ -87,7 +87,7 @@ describe('GoalInjection content', () => {
     const local = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()));
     await local.dispatcher.restore();
     const localGoals = local.get(IAgentGoalService);
-    const localContext = local.get(IAgentContextMemoryService);
+    const localContext = local.get(IAgentLoopService);
     const localLoop = local.get(IAgentLoopService) as StubLoop;
     await localGoals.createGoal({ objective: 'work' });
 
@@ -95,16 +95,16 @@ describe('GoalInjection content', () => {
     expect(lastGoalReminder(localContext)).toContain('<untrusted_objective>');
     expect(
       localContext
-        .get()
+        .history()
         .filter(
           (message) => message.origin?.kind === 'injection' && message.origin.variant === 'goal',
         ),
     ).toHaveLength(1);
 
     await local.dispose();
-    const count = localContext.get().length;
+    const count = localContext.history().length;
     await runWillBeginStepHooks(localLoop, true);
-    expect(localContext.get()).toHaveLength(count);
+    expect(localContext.history()).toHaveLength(count);
   });
 
   it('wraps the objective for a paused goal', async () => {
@@ -303,9 +303,9 @@ describe('GoalInjection content', () => {
     await injectDynamic(ctx, true);
     await injectDynamic(ctx, true);
     expect(lastGoalReminder(context)).toContain('The full audit is in the earlier goal reminder.');
-    context.applyCompaction({
+    compactContext(context,{
       summary: 'Earlier goal work.',
-      compactedCount: context.get().length,
+      compactedCount: context.history().length,
       tokensBefore: 100,
     });
 
@@ -331,8 +331,8 @@ async function flushedGoalReminderRecords(
   return goalReminderRecords(persistence);
 }
 
-function lastGoalReminder(context: IAgentContextMemoryService): string | undefined {
-  const message = context.get().findLast((item) => {
+function lastGoalReminder(context: IAgentLoopService): string | undefined {
+  const message = context.history().findLast((item) => {
     return item.origin?.kind === 'injection' && item.origin.variant === 'goal';
   });
   if (message === undefined) return undefined;

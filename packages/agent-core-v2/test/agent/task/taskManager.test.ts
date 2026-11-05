@@ -433,10 +433,14 @@ describe('AgentTaskService', () => {
     });
   });
 
-  it('tracks foreground tasks and releases their waiter when detached', async () => {
+  it('keeps waiting for real completion after a foreground task detaches', async () => {
     const { manager } = createAgentTaskService();
+    let finish!: (value: { result: string }) => void;
+    const completion = new Promise<{ result: string }>((resolve) => {
+      finish = resolve;
+    });
     const taskId = manager.registerTask(
-      agentTask(new Promise(() => {}), 'foreground agent'),
+      agentTask(completion, 'foreground agent'),
       { detached: false },
     );
 
@@ -444,24 +448,30 @@ describe('AgentTaskService', () => {
       detached: false,
     });
 
-    const waiting = manager.waitForForegroundRelease(taskId);
-    await Promise.resolve();
-
+    const waiting = manager.wait(taskId, Number.POSITIVE_INFINITY);
+    let settled = false;
+    void waiting.then(() => {
+      settled = true;
+    });
     expect(manager.detach(taskId)).toMatchObject({
       taskId,
       detached: true,
     });
-    await expect(waiting).resolves.toBe('detached');
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    finish({ result: 'done' });
+    await expect(waiting).resolves.toMatchObject({ status: 'completed' });
   });
 
-  it('releases foreground waiters when a foreground task completes', async () => {
+  it('settles foreground waiters when a foreground task completes', async () => {
     const { manager } = createAgentTaskService();
     const taskId = manager.registerTask(
       agentTask(Promise.resolve({ result: 'done' }), 'foreground agent'),
       { detached: false },
     );
 
-    await expect(manager.waitForForegroundRelease(taskId)).resolves.toBe('terminal');
+    await expect(manager.wait(taskId, Number.POSITIVE_INFINITY)).resolves.toMatchObject({ status: 'completed' });
     expect(manager.getTask(taskId)).toMatchObject({
       detached: false,
       status: 'completed',
@@ -480,10 +490,10 @@ describe('AgentTaskService', () => {
       },
     );
 
-    const waiting = manager.waitForForegroundRelease(taskId);
+    const waiting = manager.wait(taskId, Number.POSITIVE_INFINITY);
     controller.abort();
 
-    await expect(waiting).resolves.toBe('terminal');
+    await expect(waiting).resolves.toMatchObject({ status: 'killed' });
     expect(killSpy).toHaveBeenCalledWith('SIGTERM');
     expect(manager.getTask(taskId)).toMatchObject({
       status: 'killed',
@@ -503,11 +513,9 @@ describe('AgentTaskService', () => {
       },
     );
 
-    const waiting = manager.waitForForegroundRelease(taskId);
     expect(manager.detach(taskId)).toMatchObject({ detached: true });
     controller.abort();
 
-    await expect(waiting).resolves.toBe('detached');
     expect(killSpy).not.toHaveBeenCalled();
     expect(manager.getTask(taskId)).toMatchObject({
       status: 'running',
@@ -1164,10 +1172,8 @@ describe('AgentTaskService', () => {
       detachTimeoutMs: 5_000,
       autoBackgroundOnTimeout: true,
     });
-    const waiting = manager.waitForForegroundRelease(taskId);
 
     await vi.advanceTimersByTimeAsync(1_000);
-    await expect(waiting).resolves.toBe('timeout_detached');
     expect(killSpy).not.toHaveBeenCalled();
     expect(manager.getTask(taskId)).toMatchObject({ status: 'running', detached: true });
 
@@ -1187,15 +1193,15 @@ describe('AgentTaskService', () => {
       timeoutMs: 1_000,
       detachTimeoutMs: 5_000,
     });
-    const waiting = manager.waitForForegroundRelease(taskId);
+    const waiting = manager.wait(taskId, Number.POSITIVE_INFINITY);
 
     await vi.advanceTimersByTimeAsync(1_000);
-    await expect(waiting).resolves.toBe('terminal');
+    await expect(waiting).resolves.toMatchObject({ status: 'timed_out' });
     expect(killSpy).toHaveBeenCalled();
     expect(manager.getTask(taskId)?.status).toBe('timed_out');
   });
 
-  it('persists graceful process shutdown as killed when stop was requested', async () => {
+  it('does not restore graceful process shutdown from task metadata', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-stop-race-'));
     try {
       const writer = createAgentTaskService({ sessionDir }).manager;
@@ -1207,14 +1213,7 @@ describe('AgentTaskService', () => {
       await stopPromise;
 
       const reader = createAgentTaskService({ sessionDir }).manager;
-      await reader.loadFromDisk();
-
-      expect(reader.getTask(taskId)).toMatchObject({
-        kind: 'process',
-        status: 'killed',
-        exitCode: 0,
-        stopReason: 'user requested',
-      });
+      expect(reader.getTask(taskId)).toBeUndefined();
     } finally {
       await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
@@ -1420,7 +1419,7 @@ describe('AgentTaskService', () => {
 
       expect(manager.getTask('bash-bogusss0')).toBeUndefined();
 
-      expect(await persistence!.listTasks()).toEqual([]);
+      expect(await persistence!.taskOutputExists('bash-bogusss0')).toBe(false);
       await ctx.get(ISessionMetadata).ready;
     } finally {
       await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
