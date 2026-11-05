@@ -587,7 +587,7 @@ describe('isToolExchangeAdjacencyError', () => {
     expect(isToolExchangeAdjacencyError(new APIStatusError(400, 'resource not found', false))).toBe(false);
     expect(
       isToolExchangeAdjacencyError(
-        new APIStatusError(400, '400 Not supported model mimo-v2.5-pro-ultraspeed', false),
+        new APIStatusError(400, '400 Not supported model example-model', false),
       ),
     ).toBe(false);
     expect(isToolExchangeAdjacencyError(new APIStatusError(500, ANTHROPIC_MISSING_RESULT, true))).toBe(
