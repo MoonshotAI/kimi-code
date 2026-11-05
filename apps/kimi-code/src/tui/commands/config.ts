@@ -20,12 +20,25 @@ import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selec
 import { ModelSwitchConfirmDialogComponent } from '../components/dialogs/model-switch-confirm-dialog';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
-import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
+import {
+  SettingsSelectorComponent,
+  TranscriptGroupThinkingSelectorComponent,
+  TranscriptGroupToolsSelectorComponent,
+  type SettingsSelection,
+} from '../components/dialogs/settings-selector';
 import { SurveyPreferenceSelectorComponent } from '../components/dialogs/survey-preference-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
 import { TuiModeSelectorComponent } from '../components/dialogs/tui-mode-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
-import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, saveTuiConfig, type MarkdownConfig, type TuiConfig, type TuiMode } from '../config';
+import {
+  DEFAULT_MARKDOWN_CONFIG,
+  DEFAULT_TUI_CONFIG,
+  saveTuiConfig,
+  type MarkdownConfig,
+  type TranscriptConfig,
+  type TuiConfig,
+  type TuiMode,
+} from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import {
@@ -86,7 +99,15 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     upgrade: host.state.appState.upgrade,
     statusLine: host.state.appState.statusLine ?? DEFAULT_TUI_CONFIG.statusLine,
     markdown: host.state.appState.markdown ?? DEFAULT_MARKDOWN_CONFIG,
+    transcript: host.state.appState.transcript,
   };
+}
+
+export function applyTranscriptPresentation(host: SlashCommandHost): void {
+  host.state.transcriptContainer.setPresentationOptions({
+    ...host.state.appState.transcript,
+    fullscreen: host.state.ui.mode === 'fullscreen',
+  });
 }
 
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -1094,6 +1115,76 @@ export async function applyMermaidPreferenceChoice(
   host.showStatus(`Mermaid diagrams ${enabled ? 'enabled' : 'disabled'}.`);
 }
 
+function showTranscriptGroupToolsPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new TranscriptGroupToolsSelectorComponent({
+      currentValue: host.state.appState.transcript.groupTools,
+      onSelect: (groupTools) => {
+        host.restoreEditor();
+        void applyTranscriptConfigChoice(host, {
+          ...host.state.appState.transcript,
+          groupTools,
+        });
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+function showTranscriptGroupThinkingPicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new TranscriptGroupThinkingSelectorComponent({
+      currentValue: host.state.appState.transcript.groupThinking,
+      onSelect: (groupThinking) => {
+        host.restoreEditor();
+        void applyTranscriptConfigChoice(host, {
+          ...host.state.appState.transcript,
+          groupThinking,
+        });
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+export async function applyTranscriptConfigChoice(
+  host: SlashCommandHost,
+  transcript: TranscriptConfig,
+): Promise<void> {
+  const current = host.state.appState.transcript;
+  if (
+    transcript.groupTools === current.groupTools &&
+    transcript.groupThinking === current.groupThinking
+  ) {
+    host.showStatus('Transcript display settings unchanged.');
+    return;
+  }
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host),
+      transcript,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save transcript display settings: ${formatErrorMessage(error)}`,
+      'error',
+    );
+    return;
+  }
+  host.setAppState({ transcript });
+  applyTranscriptPresentation(host);
+  host.track('transcript_display_settings', {
+    group_tools: transcript.groupTools,
+    group_thinking: transcript.groupThinking,
+    source: 'settings',
+  });
+  host.showStatus('Transcript display settings updated.', 'success');
+}
+
 export function showTuiModePicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new TuiModeSelectorComponent({
@@ -1145,6 +1236,7 @@ export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): P
 export function showSettingsSelector(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new SettingsSelectorComponent({
+      fullscreen: host.state.ui.mode === 'fullscreen',
       onSelect: (value) => {
         handleSettingsSelection(host, value);
       },
@@ -1162,6 +1254,8 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
     case 'tuiMode': showTuiModePicker(host); return;
+    case 'groupTools': showTranscriptGroupToolsPicker(host); return;
+    case 'groupThinking': showTranscriptGroupThinkingPicker(host); return;
     case 'mermaid': showMermaidPreferencePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'survey': showSurveyPreferencePicker(host); return;

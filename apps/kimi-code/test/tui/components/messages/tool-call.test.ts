@@ -113,7 +113,7 @@ describe('ToolCallComponent', () => {
       );
 
       vi.advanceTimersByTime(5_000);
-      component.setResult({ tool_call_id: 'call_bash_short', output: 'hi', is_error: false });
+      component.setResult({ tool_call_id: 'call_bash_short', output: 'hi', is_error: false }, { known: false });
       vi.advanceTimersByTime(10_000);
 
       expect(strip(component.render(100).join('\n'))).not.toContain(
@@ -321,7 +321,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_shell_live_done',
       output: 'final-only\n',
       is_error: false,
-    });
+    }, { known: false });
     component.setExpanded(true);
 
     const out = strip(component.render(100).join('\n'));
@@ -364,7 +364,7 @@ describe('ToolCallComponent', () => {
         tool_call_id: 'call_bash_done',
         output: 'step a\nstep b\nstep c\ndone',
         is_error: false,
-      });
+      }, { known: false });
 
       const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
       expect(collapsed).toHaveLength(2);
@@ -683,7 +683,7 @@ describe('ToolCallComponent', () => {
         tool_call_id: 'call_notify_transition',
         output: 'Update shown to the user.',
         is_error: false,
-      });
+      }, { known: false });
       rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
       expect(rows).toEqual([`${NOTIFY_USER_MARK} Root cause`]);
       expect(component.hasHiddenContent()).toBe(true);
@@ -831,7 +831,7 @@ describe('ToolCallComponent', () => {
       expect(header.render(100)).toBe(first);
       expect(header.render(80)).not.toBe(first);
 
-      component.setResult({ tool_call_id: 'call_bash_cached', output: 'ok', is_error: false });
+      component.setResult({ tool_call_id: 'call_bash_cached', output: 'ok', is_error: false }, { known: false });
       const finished = header.render(100);
       expect(finished).not.toBe(first);
       expect(strip(finished[0]!)).toContain('Ran a command');
@@ -1623,7 +1623,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_agent',
       output: 'parent duplicate result',
       is_error: false,
-    });
+    }, { known: false });
     vi.setSystemTime(30_000);
 
     out = strip(component.render(120).join('\n'));
@@ -1699,7 +1699,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_agent_detach',
       output: 'agent_id: sub_detach_1\nactual_subagent_type: explore\n',
       is_error: false,
-    });
+    }, { known: false });
     out = strip(component.render(120).join('\n'));
     expect(out).toContain('Backgrounded');
     expect(out).not.toContain('Completed');
@@ -2182,7 +2182,7 @@ describe('ToolCallComponent', () => {
     const runningLines = strip(component.render(120).join('\n')).split('\n').length;
 
     component.onSubagentCompleted({ resultSummary: 'short answer' });
-    component.setResult({ tool_call_id: 'call_agent_height', output: 'done', is_error: false });
+    component.setResult({ tool_call_id: 'call_agent_height', output: 'done', is_error: false }, { known: false });
 
     const doneLines = strip(component.render(120).join('\n')).split('\n').length;
 
@@ -2286,7 +2286,7 @@ describe('ToolCallComponent', () => {
       );
       component.setBackgroundTaskTerminalStatus('lost');
       // Now the spawn-success result lands.
-      component.setResult({ ...spawnSuccessResult, tool_call_id: 'call_bg_agent' });
+      component.setResult({ ...spawnSuccessResult, tool_call_id: 'call_bg_agent' }, { known: false });
       expect(component.getSubagentSnapshot().phase).toBe('failed');
     });
 
@@ -2544,7 +2544,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_write_snap',
       output: 'Wrote big.txt',
       is_error: false,
-    });
+    }, { known: false });
 
     const after = strip(component.render(100).join('\n'));
     expect(after).toContain('line1');
@@ -2711,7 +2711,7 @@ describe('ToolCallComponent', () => {
       tool_call_id: 'call_edit_timer',
       output: 'Replaced 1 occurrence in foo.ts',
       is_error: false,
-    });
+    }, { known: false });
     vi.advanceTimersByTime(1000);
     expect(ui.requestRender).not.toHaveBeenCalled();
 
@@ -3033,7 +3033,7 @@ describe('ToolCallComponent hasHiddenContent', () => {
     expect(component.hasHiddenContent()).toBe(false);
     component.appendLiveOutput('one\ntwo\n');
     expect(component.hasHiddenContent()).toBe(true);
-    component.setResult({ tool_call_id: 'tc', output: 'one\ntwo', is_error: false });
+    component.setResult({ tool_call_id: 'tc', output: 'one\ntwo', is_error: false }, { known: false });
     expect(component.hasHiddenContent()).toBe(false);
     component.dispose();
   });
@@ -3114,7 +3114,7 @@ describe('ToolCallComponent hasHiddenContent for a solo subagent card', () => {
       tool_call_id: 'call_agent',
       output: 'line 1\nline 2\nline 3\nline 4\nline 5',
       is_error: false,
-    });
+    }, { known: false });
     expect(component.hasHiddenContent()).toBe(false);
     component.dispose();
   });
