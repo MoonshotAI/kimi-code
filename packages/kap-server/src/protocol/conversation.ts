@@ -366,6 +366,12 @@ export const itemRemovedMessageSchema = z.object({
   item_id: z.string().min(1),
 });
 
+export const turnsRemovedMessageSchema = z.object({
+  type: z.literal('turns.removed'),
+  ...conversationFrameFields,
+  turn_ids: z.array(z.string().min(1)),
+});
+
 export const turnsFailedMessageSchema = z.object({
   type: z.literal('turns.failed'),
   ...conversationFrameFields,
@@ -385,6 +391,7 @@ export type ItemMessage = z.infer<typeof itemMessageSchema>;
 export type ItemUpdatedMessage = z.infer<typeof itemUpdatedMessageSchema>;
 export type ItemDeltaMessage = z.infer<typeof itemDeltaMessageSchema>;
 export type ItemRemovedMessage = z.infer<typeof itemRemovedMessageSchema>;
+export type TurnsRemovedMessage = z.infer<typeof turnsRemovedMessageSchema>;
 export type TurnsFailedMessage = z.infer<typeof turnsFailedMessageSchema>;
 export type NoticeMessage = z.infer<typeof noticeMessageSchema>;
 
@@ -396,5 +403,6 @@ export type ConversationMessage =
   | ItemUpdatedMessage
   | ItemDeltaMessage
   | ItemRemovedMessage
+  | TurnsRemovedMessage
   | TurnsFailedMessage
   | NoticeMessage;

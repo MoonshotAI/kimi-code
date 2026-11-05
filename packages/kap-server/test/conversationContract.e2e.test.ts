@@ -206,6 +206,9 @@ function replayFrames(frames: readonly any[]): any[] {
       case 'turns':
         turns = structuredClone(frame.turns);
         break;
+      case 'turns.removed':
+        turns = turns.filter((turn) => !frame.turn_ids.includes(turn.turn_id));
+        break;
       case 'turn.started':
       case 'turn.ended': {
         const index = turns.findIndex((turn) => turn.turn_id === frame.turn.turn_id);
@@ -294,6 +297,7 @@ interface ConversationChannel {
 
 const CONVERSATION_FRAME_TYPES = new Set([
   'turns',
+  'turns.removed',
   'turn.started',
   'turn.updated',
   'turn.ended',
@@ -539,7 +543,9 @@ describe('conversation contract e2e', () => {
       const pages = channel.conversation.filter((frame) => frame.type === 'turns').length;
       await rest(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { count: 1 } });
       expect((await getTurns(server!, base, sid)).turns).toEqual([]);
-      await until('fresh page reaches subscriber', () => channel.conversation.filter((frame) => frame.type === 'turns').length > pages);
+      await until('removal reaches subscriber', () => channel.conversation.some((frame) => frame.type === 'turns.removed'));
+      expect(channel.conversation.find((frame) => frame.type === 'turns.removed').turn_ids).toEqual([before.turns[0].turn_id]);
+      expect(channel.conversation.filter((frame) => frame.type === 'turns').length).toBe(pages);
       expect(channel.turns()).toEqual([]);
       const reconnected = await subscribeConversation(server!, sid);
       try {

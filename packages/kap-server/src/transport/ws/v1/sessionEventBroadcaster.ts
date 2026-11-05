@@ -326,8 +326,7 @@ export class SessionEventBroadcaster {
     event: ConversationEvent,
   ): void {
     if (state.targets.get(target)?.get(agentId)?.conversation !== attachment) return;
-    if (event.type === 'reset') void this.sendPage(state, target, agentId, attachment);
-    else if (attachment.pending !== undefined) attachment.pending.push(event);
+    if (attachment.pending !== undefined) attachment.pending.push(event);
     else this.sendConversation(target, state.sessionId, agentId, event);
   }
 
@@ -340,7 +339,7 @@ export class SessionEventBroadcaster {
     const pending: ConversationEvent[] = [];
     attachment.pending = pending;
     const page = await attachment.feed.page(undefined, CONVERSATION_PAGE_TURNS);
-    if (state.targets.get(target)?.get(agentId)?.conversation !== attachment || attachment.pending !== pending) return;
+    if (state.targets.get(target)?.get(agentId)?.conversation !== attachment) return;
     attachment.pending = undefined;
     try {
       target.send({

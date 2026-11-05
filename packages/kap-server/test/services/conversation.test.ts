@@ -10,10 +10,10 @@ import {
   type IAgentScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 import type { CollectionView } from '@moonshot-ai/agent-core-v2/_base/di/collection';
-import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear, ContextUndo } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { AssistantDelta, ToolCallDelta } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { AgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentStateService';
 import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { EventBusService } from '@moonshot-ai/agent-core-v2/app/event/eventBusService';
@@ -775,6 +775,7 @@ interface FeedHarness {
   readonly warn: ReturnType<typeof vi.fn>;
   failNextReplay(): void;
   holdNextReplay(): { readonly reached: Promise<void>; readonly release: () => void };
+  rewind(length: number): void;
 }
 
 function feedHarness(records: readonly WireRecord[], blobs: IAgentBlobService = passThroughBlobs): FeedHarness {
@@ -837,6 +838,9 @@ function feedHarness(records: readonly WireRecord[], blobs: IAgentBlobService = 
       hold = { reach, released };
       return { reached, release };
     },
+    rewind: (length) => {
+      journal.splice(length);
+    },
   };
 }
 
@@ -886,12 +890,12 @@ describe('conversation feed', () => {
     const before = (await h.feed.page(undefined, 20)).turns.map((turn) => turn.turn_id);
 
     await h.dispatcher.restore();
-    expect(h.events.map((event) => event.type)).toEqual(['reset']);
+    expect(h.events).toEqual([]);
     expect((await h.feed.page(undefined, 20)).turns.map((turn) => turn.turn_id)).toEqual(before);
     await h.dispatcher.dispatch(prompt(1, 'p2'));
     await h.dispatcher.dispatch(userPrompt('p2', 'second'));
     await flushed();
-    expect(h.events.map((event) => event.type)).toEqual(['reset', 'turn.started', 'item.ended']);
+    expect(h.events.map((event) => event.type)).toEqual(['turn.started', 'item.ended']);
 
     const kept = (await h.feed.page(undefined, 20)).turns.map((turn) => turn.turn_id);
     h.failNextReplay();
@@ -911,42 +915,31 @@ describe('conversation feed', () => {
     h.dispatcher.dispose();
   });
 
-  it('resends the turns page instead of removing turns when the context is cleared', async () => {
-    const h = feedHarness([]);
+  it('removes the turns a replay no longer has and every turn on a context clear', async () => {
+    const h = feedHarness([
+      prompt(0, 'p1').serialize(),
+      userPrompt('p1', 'first').serialize(),
+      new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }).serialize(),
+    ]);
     await h.dispatcher.restore();
     await h.feed.ready;
-    await h.dispatcher.dispatch(prompt(0, 'p1'));
-    await h.dispatcher.dispatch(userPrompt('p1', 'before the clear'));
-    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }));
+    await h.dispatcher.dispatch(prompt(1, 'p2'));
+    await h.dispatcher.dispatch(userPrompt('p2', 'second'));
+    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed' }));
     await flushed();
+    const [first, second] = (await h.feed.page(undefined, 20)).turns.map((turn) => turn.turn_id);
     h.events.length = 0;
 
+    h.rewind(3);
+    await h.dispatcher.restore();
+    expect(h.events).toEqual([{ type: 'turns.removed', turn_ids: [second] }]);
+    expect((await h.feed.page(undefined, 20)).turns.map((turn) => turn.turn_id)).toEqual([first]);
+
+    h.events.length = 0;
     await h.dispatcher.dispatch(new ContextClear({ agentId: 'main' }));
     await flushed();
-
-    expect(h.events.map((event) => event.type)).toEqual(['reset']);
+    expect(h.events).toEqual([{ type: 'turns.removed', turn_ids: [first] }]);
     expect((await h.feed.page(undefined, 20)).turns).toEqual([]);
-    h.dispatcher.dispose();
-  });
-
-  it('resends the turns page when an undo cuts the items after a steer out of a kept turn', async () => {
-    const h = feedHarness([]);
-    await h.dispatcher.restore();
-    await h.feed.ready;
-    await h.dispatcher.dispatch(prompt(0, 'p1'));
-    await h.dispatcher.dispatch(userPrompt('p1', 'first'));
-    await h.dispatcher.dispatch(loopEvent({ type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }));
-    await h.dispatcher.dispatch(new TurnSteer({ agentId: 'main', input: [{ type: 'text', text: 'wait' }], origin: { kind: 'user' } }));
-    await h.dispatcher.dispatch(userPrompt('p2', 'wait'));
-    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }));
-    await flushed();
-    h.events.length = 0;
-
-    await h.dispatcher.dispatch(new ContextUndo({ agentId: 'main', count: 1 }));
-    await flushed();
-
-    expect(h.events.map((event) => event.type)).toEqual(['reset']);
-    expect((await h.feed.page(undefined, 20)).turns.map(shape)).toEqual([['opener:first']]);
     h.dispatcher.dispose();
   });
 

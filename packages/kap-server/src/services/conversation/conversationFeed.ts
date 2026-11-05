@@ -64,9 +64,7 @@ import { isoTime, mediaPartOf, mediaTypeOf, mediaUrlOf } from './conversationIte
 
 type Unframed<T> = T extends unknown ? Omit<T, 'session_id' | 'agent_id' | 'event_created_at'> : never;
 
-export type ConversationEvent =
-  | { readonly type: 'reset' }
-  | Unframed<Exclude<ConversationMessage, TurnsMessage | TurnsFailedMessage>>;
+export type ConversationEvent = Unframed<Exclude<ConversationMessage, TurnsMessage | TurnsFailedMessage>>;
 
 export type ConversationListener = (event: ConversationEvent) => void;
 
@@ -258,11 +256,7 @@ export class ConversationFeed implements IDisposable {
     const kept = ok ? undefined : this.beforeReplay;
     this.beforeReplay = undefined;
     this.state = settleOrphanTurns(kept ?? replayed, this.runningWork());
-    if (kept === undefined) this.sent = this.state.turns;
-    if (this.started) {
-      if (kept === undefined) this.emit({ type: 'reset' });
-      else this.flush();
-    }
+    if (this.started) this.flush();
     this.firstReplay?.(ok);
     this.firstReplay = undefined;
   }
@@ -293,15 +287,14 @@ export class ConversationFeed implements IDisposable {
     if (previous === next) return;
     this.sent = next;
     const nextById = new Map(next.map((turn) => [turn.turn_id, turn]));
-    const removed = new Set(previous.filter((turn) => !nextById.has(turn.turn_id)).map((turn) => turn.turn_id));
-    const truncated = previous.some((turn) => (nextById.get(turn.turn_id)?.items.length ?? Infinity) < turn.items.length);
-    if (removed.size > 0 || truncated) {
-      this.dropLive((entry) => removed.has(entry.turnId), false);
+    const removed = previous.filter((turn) => !nextById.has(turn.turn_id)).map((turn) => turn.turn_id);
+    if (removed.length > 0) {
+      const gone = new Set(removed);
+      this.dropLive((entry) => gone.has(entry.turnId), false);
       for (const [toolCallId, tool] of this.tools) {
-        if (removed.has(tool.turnId)) this.tools.delete(toolCallId);
+        if (gone.has(tool.turnId)) this.tools.delete(toolCallId);
       }
-      this.emit({ type: 'reset' });
-      return;
+      this.emit({ type: 'turns.removed', turn_ids: removed });
     }
     const previousById = new Map(previous.map((turn) => [turn.turn_id, turn]));
     for (const turn of next) {
