@@ -29,7 +29,6 @@ export type Summarize = (input: {
 
 export interface CreateSummarizeOptions {
   requester: LoopLlmRequester;
-  systemPrompt?: string;
   maxShrinkAttempts?: number;
   timeoutMs?: number;
 }
@@ -87,7 +86,6 @@ function runSummaryRequest(
 ): Promise<LlmOutcome> {
   return options.requester.generate(
     {
-      profile: { systemPrompt: options.systemPrompt, tools: [] },
       content: { messages: toRequestMessages(history), usedTokens: usedContextTokens(history) },
     },
     { signal: AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS)]) },

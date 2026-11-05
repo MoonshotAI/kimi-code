@@ -10,6 +10,7 @@ import { createUserEntry, type HistoryMessage } from '@moonshot-ai/agent-core/hi
 import { useInject, type ShallowRef } from '#/composition-api/index';
 import { createAssistantMessage, createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
+import { contentsOf, mergeFields, type LlmRequestPart } from '@moonshot-ai/agent-core/llm/requester';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import { memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
@@ -30,13 +31,17 @@ function textOutcome(text: string): LlmOutcome {
   return { type: 'done', message: createAssistantMessage([{ type: 'text', text }]) };
 }
 
-function scriptedRequester(next: (rest: GenerateRest) => LlmOutcome | Promise<LlmOutcome>): LoopLlmRequester {
-  const self: LoopLlmRequester = {
-    with: () => self,
-    request: (part) => part as unknown as LlmRequest,
-    generate: async (rest, _control) => next(rest),
+function scriptedRequester(
+  next: (rest: GenerateRest) => LlmOutcome | Promise<LlmOutcome>,
+  filled: LlmRequestPart = {},
+): LoopLlmRequester {
+  const complete = (part: LlmRequestPart) =>
+    mergeFields(filled as Record<string, unknown>, part as Record<string, unknown>) as unknown as LlmRequest;
+  return {
+    with: (part: LlmRequestPart | LoopLlmRequester) => scriptedRequester(next, complete(contentsOf(part))),
+    request: complete,
+    generate: async (rest, _control) => next(complete(rest)),
   };
-  return self;
 }
 
 function echoRequester(calls?: string[][]): LoopLlmRequester {
@@ -359,14 +364,18 @@ describe('compaction feature', () => {
     await env.dispose();
   });
 
-  it('default summarize rides the loop requester: instruction prompt, empty tools, seed lands in history', async () => {
+  it('default summarize preserves the loop profile and lands the seed in history', async () => {
     let budgetMax = 1;
-    const calls: { messages: string[]; tools: unknown }[] = [];
+    const profile = {
+      systemPrompt: 'SYSTEM PROMPT',
+      tools: [{ name: 'probe', description: 'Probe', parameters: { type: 'object' } }],
+    };
+    const calls: { messages: string[]; profile: LlmRequest['profile'] }[] = [];
     const requester = scriptedRequester((rest) => {
       const messages = rest.content?.messages ?? [];
       calls.push({
         messages: messages.map((message) => extractText(message)),
-        tools: rest.profile?.tools,
+        profile: rest.profile,
       });
       if (calls.length === 1) {
         budgetMax = 1_000_000;
@@ -380,23 +389,26 @@ describe('compaction feature', () => {
       budgetMax: () => budgetMax,
       requester,
     });
+    env.agent.loop.setSystemPrompt(profile.systemPrompt);
+    env.agent.loop.setTools(profile.tools);
 
     const outcome = await env.agent.loop.runTurn(user('go'));
     expect(outcome.type).toBe('done');
     await env.agent.flush();
 
     expect(calls).toHaveLength(2);
-    expect(calls[0]!.messages[0]).toBe('go');
-    expect(calls[0]!.messages.at(-1)).toContain('You are about to run out of context');
-    expect(calls[0]!.tools).toEqual([]);
-    expect(calls[1]!.messages[0]).toBe('go');
-    expect(calls[1]!.messages[1]).toContain('SUMMARY FROM MODEL');
-    expect(calls[1]!.messages[2]).toContain('Context compaction is complete');
+    expect(calls[0]?.messages[0]).toBe('go');
+    expect(calls[0]?.messages.at(-1)).toContain('You are about to run out of context');
+    expect(calls[0]?.profile).toEqual(profile);
+    expect(calls[1]?.messages[0]).toBe('go');
+    expect(calls[1]?.messages[1]).toContain('SUMMARY FROM MODEL');
+    expect(calls[1]?.messages[2]).toContain('Context compaction is complete');
+    expect(calls[1]?.profile).toEqual(profile);
 
     const history = env.agent.view.getState().messages;
     expect(history.map((entry) => entry.message.role)).toEqual(['user', 'user', 'user', 'assistant']);
     expect(history[1]?.meta).toMatchObject({ source: 'compaction', key: 'summary' });
-    expect(extractText(history[1]!.message)).toContain('SUMMARY FROM MODEL');
+    expect(history[1] && extractText(history[1].message)).toContain('SUMMARY FROM MODEL');
 
     await env.dispose();
   });

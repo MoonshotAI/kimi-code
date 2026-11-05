@@ -31,6 +31,27 @@ describe('loop.wait', () => {
     const event = await pending;
     expect(event.turnId).toBe(1);
     expect(event.outcome.type).toBe('done');
+
+    let submissionState: unknown;
+    const stopSubmission = loop.subscribe((event) => {
+      if (event.type !== 'prompt.submitted') return;
+      submissionState = {
+        status: loop.state.status,
+        turnId: loop.state.turn?.id,
+        normal: loop.state.inbox.normal.length,
+      };
+    });
+    expect(loop.submit(prompt('three'))).toMatchObject({ type: 'prompt.submitted' });
+    stopSubmission();
+    expect(submissionState).toEqual({ status: 'running', turnId: 2, normal: 0 });
+    expect(loop.state.status).toBe('running');
+    await loop.waitForIdle();
+    const active = loop.runTurn(prompt('four'));
+    loop.submit(createUserEntry(createHistoryMessageBuilder().plain('cancelled').userMessage(), { promptId: 'cancelled' }));
+    expect(loop.cancel('cancelled')).toMatchObject({ type: 'prompt.canceled', canceled: true });
+    await active;
+    await loop.waitForIdle();
+    expect(loop.state.nextTurnId).toBe(4);
     await loop.close();
   });
 
@@ -44,12 +65,45 @@ describe('loop.wait', () => {
     await loop.close();
   });
 
-  it('rejects when the external signal aborts', async () => {
+  it('rejects when the external signal aborts and honors abort grace', async () => {
     const loop = createLoop({ requester: echoRequester(), executor: noopExecutor });
     const controller = new AbortController();
     const pending = loop.wait('turn.ended', { signal: controller.signal });
     controller.abort(new Error('stop-waiting'));
     await expect(pending).rejects.toThrow('stop-waiting');
     await loop.close();
+
+    const never: LoopLlmRequester = {
+      with: () => never,
+      request: (part) => part as unknown as LlmRequest,
+      generate: (_rest, control) => {
+        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'pending' } });
+        return new Promise<LlmOutcome>(() => {});
+      },
+    };
+    const aborting = createLoop({ requester: never, executor: noopExecutor, abortGraceMs: 5 });
+    const firstRequest = aborting.wait('llm.streaming.part');
+    const graceful = aborting.runTurn(prompt('graceful'));
+    await firstRequest;
+    aborting.abort('grace');
+    expect((await graceful).type).toBe('aborted');
+
+    const secondRequest = aborting.wait('llm.streaming.part');
+    const forced = aborting.runTurn(prompt('forced'));
+    await secondRequest;
+    aborting.abort('first');
+    aborting.abort('second');
+    expect((await forced).type).toBe('aborted');
+    await aborting.close();
+
+    const reentrant = createLoop({ requester: echoRequester(), executor: noopExecutor });
+    const steps: number[] = [];
+    reentrant.subscribe((event) => {
+      if (event.type === 'step.started') steps.push(event.step);
+      if (event.type === 'step.ended') reentrant.abort('listener');
+    });
+    expect((await reentrant.runTurn(prompt('reentrant'))).type).toBe('aborted');
+    expect(steps).toEqual([1]);
+    await reentrant.close();
   });
 });

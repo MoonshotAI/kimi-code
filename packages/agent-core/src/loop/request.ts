@@ -33,6 +33,14 @@ function isAborted(signal: AbortSignal, error: unknown): boolean {
   }
 }
 
+export function requestProfileOf(profile: LoopProfile): LlmRequestProfile {
+  const { systemPrompt, tools } = profile;
+  return {
+    ...(systemPrompt === undefined || systemPrompt === '' ? {} : { systemPrompt }),
+    ...(tools === undefined ? {} : { tools }),
+  };
+}
+
 export function runLoopRequest(
   getRequester: () => LoopLlmRequester,
   input: LoopRequestInput,
@@ -57,11 +65,7 @@ export function runLoopRequest(
     try {
       const requester = getRequester();
       const messages = toRequestMessages(input.messages);
-      const { systemPrompt, tools } = input.profile;
-      const requestProfile: LlmRequestProfile = {
-        ...(systemPrompt === undefined || systemPrompt === '' ? {} : { systemPrompt }),
-        ...(tools === undefined ? {} : { tools }),
-      };
+      const requestProfile = requestProfileOf(input.profile);
       const { model, profile } = requester.request({ content: { messages }, profile: requestProfile });
       onProgress({ type: 'llm.prepared', model: model?.spec });
       const usedTokens = usedContextTokens(input.messages, profile);

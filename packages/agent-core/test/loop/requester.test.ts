@@ -33,7 +33,7 @@ function listOf<T>(value: readonly T[] | (() => readonly T[]) | undefined): read
 }
 
 describe('loop.requester', () => {
-  it('fills the host requester with the live history and delegates terminal calls to it', async () => {
+  it('fills the host requester with the live history and profile and delegates terminal calls to it', async () => {
     const seen: LlmRequest[] = [];
     const loop = createLoop({
       requester:
@@ -58,14 +58,18 @@ describe('loop.requester', () => {
     expect((await loop.runTurn(createUserEntry(createUserMessage('hello')))).type).toBe('done');
     expect(listOf(seen[0]?.policy?.resolvers)).toEqual([resolver]);
     seen.length = 0;
+    const tools = [{ name: 'probe', description: 'Probe', parameters: { type: 'object' } }];
+    loop.setSystemPrompt('loop');
+    loop.setTools(tools);
     const filled = loop.requester.request({});
     expect(filled.content.messages.map((message) => extractText(message))).toEqual(['hello', 'reply']);
+    expect(filled.profile).toEqual({ systemPrompt: 'loop', tools });
     const outcome = await loop.requester
       .with({ profile: { systemPrompt: 'side' } })
       .generate({}, { signal: new AbortController().signal });
     expect(outcome.type).toBe('done');
     expect(seen).toHaveLength(1);
-    expect(seen[0]?.profile?.systemPrompt).toBe('side');
+    expect(seen[0]?.profile).toEqual({ systemPrompt: 'side', tools });
     expect(seen[0]?.content.messages.map((message) => extractText(message))).toEqual(['hello', 'reply']);
     expect(typeof seen[0]?.content.usedTokens).toBe('number');
     removeResolver();

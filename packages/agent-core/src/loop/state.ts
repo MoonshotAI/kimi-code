@@ -1,7 +1,5 @@
 import {
   createAssistantEntry,
-  createUserEntry,
-  mergeSteerMessages,
   type AssistantEntry,
   type HistoryMessage,
   type ToolEntry,
@@ -12,16 +10,11 @@ import type { LlmModelSpec } from '#/llm/request';
 import type { LlmOutcome } from '#/llm/response';
 import type { ToolResult } from '#/tool/index';
 import { withAbort, type AbortScope } from '#/utils/abort';
-import type { LoopInput } from './contract/command';
-import type { LoopAck, LoopEmitted } from './contract/emitted';
 import type { Inbox, MessageSource, QueuedItem, TurnTrigger } from './contract/inbox';
-import { CRASHED, type Cause, type StepOutcome, type ToolCallOutcome, type TurnOutcome } from './contract/outcome';
+import type { Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from './contract/outcome';
 import type { LoopProfile } from './contract/profile';
 import type { HookFailure } from './hook/failure';
-import { loopProjection, type LoopRecord, type LoopRecordState } from './record';
-import { abortedToolOutcome } from './tool/outcome';
-
-export type LoopPhase = 'idle' | 'running' | 'closed';
+import type { LoopRecordState } from './record';
 
 export interface LoopTurn {
   readonly id: number;
@@ -108,56 +101,9 @@ export interface LiveTool {
   readonly waiters: Set<() => void>;
 }
 
-export interface AgentState {
-  phase: LoopPhase;
-  held: boolean;
-  inbox: Inbox;
-  durable: LoopRecordState;
-  seq: number;
-  turn?: LiveTurn;
-  step?: StepState;
-  readonly tools: Map<string, LiveTool>;
-}
-
 export type AppendedItem =
   | { source: MessageSource; entry: HistoryMessage; blocked?: Cause }
   | { source: 'notify'; entry: UserEntry; failure: HookFailure };
-
-export type StateOutput =
-  | { readonly type: 'event'; readonly event: LoopEmitted }
-  | { readonly type: 'start'; readonly turn: LiveTurn }
-  | { readonly type: 'effect'; readonly effect: () => void };
-
-export interface StateTx {
-  ctx: AgentState;
-  readonly root: AbortScope;
-  readonly out: StateOutput[];
-}
-
-const projection = loopProjection();
-
-export function createTransaction(ctx: AgentState, root: AbortScope): StateTx {
-  return { ctx, root, out: [] };
-}
-
-export function patch(tx: StateTx, next: Partial<AgentState>): void {
-  tx.ctx = { ...tx.ctx, ...next };
-}
-
-export function record<E extends LoopEmitted>(tx: StateTx, event: E): E {
-  const { durable, seq } = tx.ctx;
-  patch(tx, { seq: seq + 1, durable: projection.reduce(durable, { seq, time: 0, event: event as LoopRecord }) });
-  tx.out.push({ type: 'event', event });
-  return event;
-}
-
-export function effect(tx: StateTx, fn: () => void): void {
-  tx.out.push({ type: 'effect', effect: fn });
-}
-
-export function hasTrigger(inbox: Inbox): boolean {
-  return inbox.normal.length > 0 || inbox.notify.length > 0;
-}
 
 export function canContinue(messages: readonly HistoryMessage[]): boolean {
   const role = messages.at(-1)?.message.role;
@@ -183,31 +129,6 @@ export function isResumable(durable: LoopRecordState): boolean {
   return !stopped && (unresolved.length > 0 || canContinue(durable.messages));
 }
 
-export function sideItems(inbox: Inbox): QueuedItem[] {
-  return [
-    ...inbox.notify.map((entry) => ({ kind: 'notify' as const, entry })),
-    ...inbox.remind.map((entry) => ({ kind: 'remind' as const, entry })),
-  ];
-}
-
-export function restorePending(inbox: Inbox, pending: readonly QueuedItem[]): Inbox {
-  const restored: Inbox = { normal: [], notify: [], remind: [] };
-  for (const item of pending) {
-    if (item.kind === 'remind') restored.remind.push(item.entry);
-    else restored[item.kind].push(item.entry);
-  }
-  return {
-    normal: [...restored.normal, ...inbox.normal],
-    notify: [...restored.notify, ...inbox.notify],
-    remind: [...restored.remind, ...inbox.remind],
-  };
-}
-
-export function editable(context: AgentState): boolean {
-  if (context.phase === 'running') return context.turn?.phase === 'ending';
-  return context.phase === 'idle' && context.durable.unfinished === undefined;
-}
-
 interface CreateTurnInput {
   readonly id: number;
   readonly trigger: TurnTrigger;
@@ -230,161 +151,6 @@ export function createTurn(root: AbortScope, input: CreateTurnInput): LiveTurn {
     ...(input.resumed === true ? { resumed: true as const } : {}),
     ...(input.completion === undefined ? {} : { completion: input.completion }),
     ...(input.signal === undefined ? {} : { signal: input.signal }),
-  };
-}
-
-export function start(tx: StateTx, turn: LiveTurn): void {
-  patch(tx, { phase: 'running', held: false, turn, step: undefined });
-  tx.out.push({ type: 'start', turn });
-}
-
-export function settleUnfinished(tx: StateTx, outcome: StepOutcome): void {
-  const unfinished = tx.ctx.durable.unfinished;
-  if (unfinished === undefined) return;
-  const { turnId, step } = unfinished;
-  for (const toolCall of trailingCalls(tx.ctx.durable.messages).unresolved) {
-    const result = abortedToolOutcome(toolCall, CRASHED);
-    record(tx, { type: 'tool.ended', toolCallId: toolCall.id, outcome: result, detached: false });
-    record(tx, { type: 'message.appended', turnId, step, source: 'tool', entry: result.entry });
-  }
-  if (unfinished.stepUnfinished) record(tx, { type: 'step.ended', turnId, step, outcome });
-}
-
-export function closeUnfinished(tx: StateTx): void {
-  const unfinished = tx.ctx.durable.unfinished;
-  if (unfinished === undefined) return;
-  const outcome = { type: 'aborted' as const, reason: CRASHED };
-  settleUnfinished(tx, outcome);
-  record(tx, { type: 'turn.ended', turnId: unfinished.turnId, outcome });
-}
-
-export function schedule(tx: StateTx): void {
-  if (tx.ctx.held || tx.ctx.phase !== 'idle') return;
-  closeUnfinished(tx);
-  const { inbox } = tx.ctx;
-  if (!hasTrigger(inbox)) return;
-  const [head, ...normal] = inbox.normal;
-  patch(tx, { inbox: { normal, notify: [], remind: [] } });
-  start(
-    tx,
-    createTurn(tx.root, {
-      id: tx.ctx.durable.nextTurnId,
-      trigger: head === undefined ? 'notify' : 'normal',
-      step: 0,
-      pending: [
-        ...(head === undefined ? [] : [{ kind: 'normal' as const, entry: head }]),
-        ...sideItems(inbox),
-      ],
-    }),
-  );
-}
-
-export function release(tx: StateTx): void {
-  patch(tx, { held: false });
-  schedule(tx);
-}
-
-export function queueNotify(tx: StateTx, entries: readonly UserEntry[]): void {
-  if (entries.length === 0) return;
-  patch(tx, { inbox: { ...tx.ctx.inbox, notify: [...tx.ctx.inbox.notify, ...entries] } });
-  release(tx);
-}
-
-export function steer(tx: StateTx, promptIds: readonly string[]): LoopAck<'prompt.steered'> {
-  const { inbox } = tx.ctx;
-  const steered = inbox.normal.filter(
-    (entry) => entry.meta?.promptId !== undefined && promptIds.includes(entry.meta.promptId),
-  );
-  const ids = steered.map((entry) => entry.meta?.promptId as string);
-  if (steered.length === 0) return record(tx, { type: 'prompt.steered', promptIds: ids });
-  const merged = mergeSteerMessages(
-    steered.map((entry) => ({ content: entry.message.content, origin: entry.meta?.origin })),
-  );
-  const entry = createUserEntry({ role: 'user', content: merged.content }, { source: 'input', origin: merged.origin });
-  patch(tx, {
-    inbox: {
-      ...inbox,
-      normal: inbox.normal.filter((item) => !steered.includes(item)),
-      notify: [...inbox.notify, entry],
-    },
-  });
-  const ack = record(tx, { type: 'prompt.steered', promptIds: ids, entry });
-  release(tx);
-  return ack;
-}
-
-export function cont(tx: StateTx): void {
-  if (tx.ctx.phase !== 'idle') return;
-  const unfinished = tx.ctx.durable.unfinished;
-  if (unfinished !== undefined && isResumable(tx.ctx.durable)) {
-    settleUnfinished(tx, { type: 'continue', cause: CRASHED });
-    start(
-      tx,
-      createTurn(tx.root, {
-        id: unfinished.turnId,
-        trigger: unfinished.trigger,
-        step: unfinished.step,
-        pending: [],
-        resumed: true,
-      }),
-    );
-    return;
-  }
-  closeUnfinished(tx);
-  if (!hasTrigger(tx.ctx.inbox) && canContinue(tx.ctx.durable.messages)) {
-    start(
-      tx,
-      createTurn(tx.root, {
-        id: tx.ctx.durable.nextTurnId,
-        trigger: 'continue',
-        step: 0,
-        pending: [],
-      }),
-    );
-    return;
-  }
-  release(tx);
-}
-
-export function initialState(input: LoopInput): AgentState {
-  const { unfinished, profile = {} } = input;
-  return {
-    phase: 'idle',
-    held: true,
-    inbox: {
-      normal: [...(input.inbox?.normal ?? [])],
-      notify: [...(input.inbox?.notify ?? [])],
-      remind: [...(input.inbox?.remind ?? [])],
-    },
-    durable: {
-      profile: {
-        ...(profile.systemPrompt === undefined ? {} : { systemPrompt: profile.systemPrompt }),
-        ...(profile.tools === undefined ? {} : { tools: [...profile.tools] }),
-      },
-      messages: [...(input.messages ?? [])],
-      nextTurnId: Math.max(input.nextTurnId ?? 0, unfinished === undefined ? 0 : unfinished.turnId + 1),
-      turns: [],
-      notify: [],
-      ...(unfinished === undefined ? {} : { unfinished: { ...unfinished } }),
-    },
-    seq: 0,
-    tools: new Map(),
-  };
-}
-
-export function viewOf({ phase, held, inbox, durable, turn, tools }: AgentState): LoopState {
-  const { profile, messages, nextTurnId, unfinished } = durable;
-  const current =
-    turn ?? (unfinished === undefined ? undefined : { id: unfinished.turnId, trigger: unfinished.trigger, step: unfinished.step });
-  return {
-    status: phase === 'running' ? 'running' : unfinished !== undefined ? 'interrupted' : 'idle',
-    held,
-    inbox,
-    profile,
-    messages,
-    nextTurnId,
-    ...(current === undefined ? {} : { turn: { id: current.id, trigger: current.trigger, step: current.step } }),
-    calls: Array.from(tools.values(), (slot) => ({ toolCall: slot.toolCall, turnId: slot.turnId, detached: slot.detached })),
   };
 }
 

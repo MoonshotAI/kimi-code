@@ -3,7 +3,7 @@ import type { ToolDescription } from '#/llm/message';
 import type { PolicyRegistry } from '#/llm/policy/registry';
 import type { ToolExecutor } from '#/tool/index';
 import type { WaitOpts } from '#/utils/wait';
-import { AgentMachine } from './agent-machine';
+import { createActorLoop } from './loop-actor';
 import type { LoopInput } from './contract/command';
 import type { LoopAck, LoopEmitted } from './contract/emitted';
 import type { HookRegistration } from './contract/hook';
@@ -52,5 +52,5 @@ export interface Loop {
 }
 
 export function createLoop(options: CreateLoopOptions): Loop {
-  return new AgentMachine(options);
+  return createActorLoop(options);
 }
