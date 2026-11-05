@@ -1455,6 +1455,39 @@ describe('conversation feed', () => {
     huge.dispatcher.dispose();
   });
 
+  it('loads blob-backed media only for the turns that fit the page', async () => {
+    const loaded: string[] = [];
+    const blobs = {
+      ...passThroughBlobs,
+      loadParts: async (parts: readonly ContentPart[]) => {
+        for (const part of parts) if (part.type === 'image_url') loaded.push(part.imageUrl.url);
+        return parts.map(() => ({ type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } }));
+      },
+    } as unknown as IAgentBlobService;
+    const turnRecords = (turnId: number): WireRecord[] => [
+      prompt(turnId, `p${turnId}`).serialize(),
+      userPrompt(`p${turnId}`, `${turnId}:${'x'.repeat(400 * 1024)}`).serialize(),
+      loopEvent({ type: 'step.begin', uuid: `s${turnId}`, turnId: String(turnId), step: 1 }).serialize(),
+      loopEvent({ type: 'tool.call', stepUuid: `s${turnId}`, toolCallId: `call-${turnId}`, name: 'ReadMediaFile', turnId: String(turnId), step: 1 }).serialize(),
+      loopEvent({
+        type: 'tool.result',
+        toolCallId: `call-${turnId}`,
+        result: { output: [{ type: 'image_url', imageUrl: { url: `blobref:image/png;turn-${turnId}` } }] },
+      }).serialize(),
+      new TurnEnded({ agentId: 'main', turnId, reason: 'completed' }).serialize(),
+    ];
+    const h = feedHarness([0, 1, 2].flatMap(turnRecords), blobs);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+
+    const page = await h.feed.page(undefined, 10);
+
+    expect(page.turns.map((turn) => turn.ordinal)).toEqual([1, 2]);
+    expect(page.has_more).toBe(true);
+    expect(loaded.toSorted()).toEqual(['blobref:image/png;turn-1', 'blobref:image/png;turn-2']);
+    h.dispatcher.dispose();
+  });
+
   it('serves the stored reference of media that fails to load instead of failing the page', async () => {
     const blobs = {
       ...passThroughBlobs,

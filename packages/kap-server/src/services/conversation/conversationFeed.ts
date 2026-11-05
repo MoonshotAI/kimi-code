@@ -164,8 +164,17 @@ export class ConversationFeed implements IDisposable {
     const stop = end === -1 ? turns.length : end;
     const start = Math.max(0, stop - limit);
     const selected = turns.slice(start, stop).map((turn) => ({ turn, items: this.itemsOf(turn) }));
-    const resolve = await this.loadMedia(selected.flatMap(({ items }) => items));
-    const page = fitPageBudget(selected.map(({ turn, items }) => presentTurn(turn, items, resolve)));
+    const page: ConversationTurn[] = [];
+    let bytes = 0;
+    for (const { turn, items } of selected.toReversed()) {
+      const remaining = PAGE_BYTES - PAGE_ENVELOPE_BYTES - bytes;
+      if (page.length > 0 && turnBytes(presentTurn(turn, items)) > remaining) break;
+      const presented = presentTurn(turn, items, await this.loadMedia(items));
+      const size = turnBytes(presented);
+      if (page.length > 0 && size > remaining) break;
+      bytes += size;
+      page.unshift(presented);
+    }
     return { turns: page, has_more: start > 0 || page.length < selected.length };
   }
 
@@ -553,16 +562,8 @@ function replayGate(): ReplayGate {
   return { done, finish };
 }
 
-function fitPageBudget(turns: readonly ConversationTurn[]): ConversationTurn[] {
-  let bytes = 0;
-  let start = turns.length;
-  while (start > 0) {
-    const size = Buffer.byteLength(JSON.stringify(turns[start - 1])) + 1;
-    if (start < turns.length && bytes + size > PAGE_BYTES - PAGE_ENVELOPE_BYTES) break;
-    bytes += size;
-    start -= 1;
-  }
-  return turns.slice(start);
+function turnBytes(turn: ConversationTurn): number {
+  return Buffer.byteLength(JSON.stringify(turn)) + 1;
 }
 
 function liveStepOpen(turn: FoldTurn, stepId: string): boolean {
