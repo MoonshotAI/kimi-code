@@ -60,12 +60,31 @@ function isCoreMediaPart(
   );
 }
 
-export function projectToolResultOutput(output: unknown): unknown {
-  if (!Array.isArray(output)) return output;
-  return output.map((part) => (isCoreMediaPart(part) ? fromCorePart(part) : part));
+function sessionMediaUrl(sessionId: string, fileId: string): string {
+  return `/api/v1/sessions/${encodeURIComponent(sessionId)}/media/${encodeURIComponent(fileId)}`;
 }
 
-function buildProtocolContent(msg: ContextMessage): MessageContent[] {
+function projectToolResultMediaPart(part: unknown, sessionId: string): unknown {
+  const legacy = (isCoreMediaPart(part) ? fromCorePart(part) : part) as ContentPart;
+  if (typeof legacy !== 'object' || legacy === null) return legacy;
+  const ref = daemonFileRefFromPart(legacy);
+  if (ref === undefined) return legacy;
+  const url = sessionMediaUrl(sessionId, ref.ref.fileId);
+  if (legacy.type === 'image_url') {
+    return { ...legacy, imageUrl: { ...legacy.imageUrl, url } };
+  }
+  if (legacy.type === 'video_url') {
+    return { ...legacy, videoUrl: { ...legacy.videoUrl, url } };
+  }
+  return legacy;
+}
+
+export function projectToolResultOutput(output: unknown, sessionId: string): unknown {
+  if (!Array.isArray(output)) return output;
+  return output.map((part) => projectToolResultMediaPart(part, sessionId));
+}
+
+function buildProtocolContent(msg: ContextMessage, sessionId: string): MessageContent[] {
   const visibleContent = msg.content.filter((p) => p.type !== 'think' || p.hidden !== true);
   if (msg.role === 'tool') {
     if (msg.toolCallId === undefined) {
@@ -75,7 +94,7 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
       (p) => p.type === 'image_url' || p.type === 'video_url' || p.type === 'audio_url',
     );
     const output: unknown = hasMediaPart
-      ? projectToolResultOutput(visibleContent)
+      ? projectToolResultOutput(visibleContent, sessionId)
       : visibleContent.map((p) => (p.type === 'text' ? p.text : '')).join('');
     const part: MessageContent =
       msg.isError === true
@@ -161,7 +180,7 @@ export function toProtocolMessage(
 ): Message {
   const id = msg.id ?? deriveMessageId(sessionId, index);
   const role = toProtocolRole(msg.role);
-  const content = buildProtocolContent(msg);
+  const content = buildProtocolContent(msg, sessionId);
   const createdAtMs = createdAtMsOverride ?? sessionCreatedAtMs + index;
   const metadata = msg.origin !== undefined ? { origin: msg.origin } : undefined;
   return {

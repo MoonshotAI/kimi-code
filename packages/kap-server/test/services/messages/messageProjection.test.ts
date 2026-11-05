@@ -165,6 +165,7 @@ describe('toProtocolMessage', () => {
       content: [
         { type: 'text', text: 'image result' },
         { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fpic.png', name: 'pic.png' } },
         { type: 'audio_url', audioUrl: { url: 'https://example.com/audio.mp3' } },
         { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
       ],
@@ -180,6 +181,13 @@ describe('toProtocolMessage', () => {
           {
             type: 'image_url',
             imageUrl: expect.objectContaining({ url: 'data:image/png;base64,AAAA' }),
+          },
+          {
+            type: 'image_url',
+            imageUrl: {
+              url: `/api/v1/sessions/${SESSION_ID}/media/file_9`,
+              name: 'pic.png',
+            },
           },
           {
             type: 'audio_url',
