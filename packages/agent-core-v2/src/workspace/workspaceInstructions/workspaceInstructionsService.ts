@@ -35,7 +35,9 @@ export class WorkspaceInstructionsService
   private readonly onDidChangeEmitter = this._register(new Emitter<readonly WatchChange[]>());
   readonly onDidChange: Event<readonly WatchChange[]> = this.onDidChangeEmitter.event;
   private readonly watchDebounce = this._register(new TimeoutTimer());
+  private readonly dirsReloadDebounce = this._register(new TimeoutTimer());
   private reloadTail: Promise<void> = Promise.resolve();
+  private reloading: Promise<void> | undefined;
   private loaded = false;
   private readonly pendingChanges = new Map<string, WatchChange>();
   private watchers: DisposableStore | undefined;
@@ -55,9 +57,11 @@ export class WorkspaceInstructionsService
     this.states.contributeState(workspaceInstructionsCurrentKey);
     this._register(
       this.dirs.onDidChange(() => {
-        void this.reload().catch((error) => {
-          this.log.warn(`AGENTS.md reload failed: ${String(error)}`);
-        });
+        this.dirsReloadDebounce.cancelAndSet(() => {
+          void this.reload().catch((error) => {
+            this.log.warn(`AGENTS.md reload failed: ${String(error)}`);
+          });
+        }, 0);
       }),
     );
     this.ready = this.reload();
@@ -76,6 +80,7 @@ export class WorkspaceInstructionsService
   }
 
   reload(): Promise<void> {
+    if (this.reloading !== undefined) return this.reloading;
     const tail = this.reloadTail.catch(() => undefined).then(async () => {
       const result = await loadAgentsMdForRoots(
         { fs: this.fs, homeDir: this.env.homeDir },
@@ -101,7 +106,16 @@ export class WorkspaceInstructionsService
         this.onDidChangeEmitter.fire(changes);
       }
     });
+    this.reloading = tail;
     this.reloadTail = tail;
+    void tail.then(
+      () => {
+        if (this.reloading === tail) this.reloading = undefined;
+      },
+      () => {
+        if (this.reloading === tail) this.reloading = undefined;
+      },
+    );
     return tail;
   }
 

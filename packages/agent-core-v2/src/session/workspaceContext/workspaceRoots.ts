@@ -18,8 +18,8 @@ export function resolveEffectiveWorkspaceRoots(
   host?: Pick<HostEnvironmentInfo, 'cwd' | 'homeDir'>,
 ): EffectiveWorkspaceRoots {
   const environmentId = binding?.environmentId ?? LOCAL_ENVIRONMENT_ID;
-  const primaryDir = workspace.primaryByWorkspace[session.workspaceId];
   const local = environmentId === LOCAL_ENVIRONMENT_ID;
+  const primaryDir = local ? workspace.primaryByWorkspace[session.workspaceId] : undefined;
   const followsPrimary = local && binding?.cwd === undefined && primaryDir !== undefined;
   const workDir = binding?.cwd ??
     (local

@@ -472,7 +472,12 @@ describe('AgentEnvironmentService workspaceRoots', () => {
       ...REMOTE_HOST,
       cwd: '/remote/initial',
     }));
-    expect(remote.agentEnvironment.workspaceRoots().workDir).toBe('/remote/initial');
+    expect(remote.agentEnvironment.workspaceRoots()).toEqual({
+      workDir: '/remote/initial',
+      primaryDir: undefined,
+      additionalDirs: [],
+      followsPrimary: false,
+    });
   });
 });
 

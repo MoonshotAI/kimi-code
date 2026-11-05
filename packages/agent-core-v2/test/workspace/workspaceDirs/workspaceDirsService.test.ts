@@ -78,6 +78,7 @@ describe('WorkspaceDirsService (registry source)', () => {
     cwd: string,
     workspaceId: string,
     kind: 'managed' | 'implicit' = 'implicit',
+    environmentId = 'local',
   ): WorkspaceDirsService {
     const bootstrap = stubBootstrap(homeDir);
     const hostFs = new HostFileSystem();
@@ -97,6 +98,7 @@ describe('WorkspaceDirsService (registry source)', () => {
         persistence,
         noopLog,
         new WorkspaceStateService(),
+        environmentId,
       ),
     );
   }
@@ -350,6 +352,21 @@ describe('WorkspaceDirsService (registry source)', () => {
       expect(dirs.additionalDirs).toEqual([dirA, dirC]);
     });
     expect(dirs.primary).toBe(dirB);
+  });
+
+  it('keeps a remote workdir rooted at its environment cwd without local registry roots', async () => {
+    const project = await workspaces.create({
+      root: dirA,
+      additionalDirs: [dirB],
+      name: 'proj',
+    });
+    const remoteCwd = join(dirC, 'remote-workdir');
+    const dirs = createDirs(remoteCwd, project.id, 'managed', 'ssh-dev');
+    await dirs.ready;
+
+    expect(dirs.primary).toBe(remoteCwd);
+    expect(dirs.additionalDirs).toEqual([]);
+    expect(dirs.sessionInfo().primaryByWorkspace).toEqual({});
   });
 
   it('does not fire for project rename or touch', async () => {
