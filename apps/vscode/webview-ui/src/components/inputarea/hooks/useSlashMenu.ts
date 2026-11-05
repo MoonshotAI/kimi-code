@@ -46,8 +46,13 @@ interface UseSlashMenuResult {
   resetSlashMenu: () => void;
 }
 
-export function useSlashMenu(activeToken: ActiveToken | null, onSelectCommand: (name: string) => void, onCancel: () => void): UseSlashMenuResult {
-  const [selectedIndex, setSelectedIndex] = useState(0);
+export function useSlashMenu(
+  activeToken: ActiveToken | null,
+  onSelectCommand: (name: string) => void,
+  onCompleteCommand: (name: string) => void,
+  onCancel: () => void,
+): UseSlashMenuResult {
+  const [rawSelectedIndex, setSelectedIndex] = useState(0);
   const { slashCommands } = useSettingsStore();
 
   const showSlashMenu = activeToken?.trigger === "/";
@@ -63,6 +68,14 @@ export function useSlashMenu(activeToken: ActiveToken | null, onSelectCommand: (
     return slashCommands.filter((cmd) => fuzzyMatch(cmd.name, q) || fuzzyMatch(cmd.description, q));
   }, [showSlashMenu, activeToken?.query, slashCommands]);
 
+  const [lastFilteredCommands, setLastFilteredCommands] = useState(filteredCommands);
+  if (lastFilteredCommands !== filteredCommands) {
+    setLastFilteredCommands(filteredCommands);
+    setSelectedIndex(0);
+  }
+
+  const selectedIndex = Math.min(rawSelectedIndex, Math.max(filteredCommands.length - 1, 0));
+
   const resetSlashMenu = useCallback(() => {
     setSelectedIndex(0);
   }, []);
@@ -76,18 +89,22 @@ export function useSlashMenu(activeToken: ActiveToken | null, onSelectCommand: (
       switch (e.key) {
         case "ArrowDown":
           e.preventDefault();
-          setSelectedIndex((i) => Math.min(i + 1, filteredCommands.length - 1));
+          setSelectedIndex(Math.min(selectedIndex + 1, filteredCommands.length - 1));
           return true;
         case "ArrowUp":
           e.preventDefault();
-          setSelectedIndex((i) => Math.max(i - 1, 0));
+          setSelectedIndex(Math.max(selectedIndex - 1, 0));
           return true;
         case "Tab":
         case "Enter": {
           e.preventDefault();
           const cmd = filteredCommands[selectedIndex];
           if (cmd) {
-            onSelectCommand(cmd.name);
+            if (e.key === "Tab") {
+              onCompleteCommand(cmd.name);
+            } else {
+              onSelectCommand(cmd.name);
+            }
           }
           return true;
         }
@@ -99,7 +116,7 @@ export function useSlashMenu(activeToken: ActiveToken | null, onSelectCommand: (
           return false;
       }
     },
-    [showSlashMenu, filteredCommands, selectedIndex, onSelectCommand, onCancel],
+    [showSlashMenu, filteredCommands, selectedIndex, onSelectCommand, onCompleteCommand, onCancel],
   );
 
   return {
