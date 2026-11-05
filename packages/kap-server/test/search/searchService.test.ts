@@ -11,6 +11,8 @@ import type {
   IConfigService,
   ILogService,
   ISessionIndex,
+  IWorkspaceAliases,
+  IWorkspaceService,
   SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
 import { DATABASE_SECTION } from '@moonshot-ai/agent-core-v2';
@@ -66,6 +68,33 @@ function staticIndex(summaries: SessionSummary[]): ISessionIndex {
   return makeSessionIndex(async () => ({ items: summaries, nextCursor: undefined }));
 }
 
+function workspaceVisibility(ids: readonly string[] = [WS]): {
+  workspaces: IWorkspaceService;
+  aliases: IWorkspaceAliases;
+} {
+  const entries = ids.map((id) => ({
+    id,
+    root: `/repo/${id}`,
+    name: id,
+    kind: 'implicit' as const,
+    additionalDirs: [],
+    createdAt: 1,
+    lastOpenedAt: 1,
+  }));
+  return {
+    workspaces: {
+      _serviceBrand: undefined,
+      list: async () => entries,
+    } as unknown as IWorkspaceService,
+    aliases: {
+      _serviceBrand: undefined,
+      resolveAliasIds: async (id: string) => [id],
+    } as IWorkspaceAliases,
+  };
+}
+
+const defaultVisibility = workspaceVisibility();
+
 function userLine(text: string, time: number, origin?: unknown): string {
   return JSON.stringify({
     type: 'context.append_message',
@@ -111,8 +140,9 @@ async function writeWire(
   sessionId: string,
   agentId: string,
   lines: string[],
+  workspaceId = WS,
 ): Promise<string> {
-  const dir = join(home, 'sessions', WS, sessionId, 'agents', agentId);
+  const dir = join(home, 'sessions', workspaceId, sessionId, 'agents', agentId);
   await mkdir(dir, { recursive: true });
   const file = join(dir, 'wire.jsonl');
   await writeFile(file, lines.map((l) => `${l}\n`).join(''), 'utf8');
@@ -140,14 +170,36 @@ function makeConfig(searchEnabled: boolean, extra?: Record<string, unknown>): IC
   } as unknown as IConfigService;
 }
 
-function makeService(home: string, index: ISessionIndex): GlobalSearchService {
-  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeConfig(true));
+function makeService(
+  home: string,
+  index: ISessionIndex,
+  visibility = defaultVisibility,
+): GlobalSearchService {
+  const service = new GlobalSearchService(
+    index,
+    makeBootstrap(home),
+    noopLog,
+    makeConfig(true),
+    visibility.workspaces,
+    visibility.aliases,
+  );
   service.syncDebounceMs = 0;
   return service;
 }
 
-function makeInlineService(home: string, index: ISessionIndex): GlobalSearchService {
-  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeConfig(false));
+function makeInlineService(
+  home: string,
+  index: ISessionIndex,
+  visibility = defaultVisibility,
+): GlobalSearchService {
+  const service = new GlobalSearchService(
+    index,
+    makeBootstrap(home),
+    noopLog,
+    makeConfig(false),
+    visibility.workspaces,
+    visibility.aliases,
+  );
   service.syncDebounceMs = 0;
   return service;
 }
@@ -310,6 +362,32 @@ describe('GlobalSearchService', () => {
 
     const injected = await service.search({ query: '忽略我' });
     expect(injected.items).toEqual([]);
+  });
+
+  it.each([makeService, makeInlineService])('filters hidden workspaces and removes their previously indexed documents (%#)', async (make) => {
+    const visible = summary('s-visible', 'visible');
+    const hidden: SessionSummary = {
+      ...summary('s-hidden', 'hidden'),
+      workspaceId: 'wm_missing',
+      cwd: '/repo/missing',
+    };
+    const summaries = [visible, hidden];
+    await writeWire(home!, visible.id, 'main', [userLine('needle visible', T1)]);
+    await writeWire(home!, hidden.id, 'main', [userLine('needle hidden', T2)], 'wm_missing');
+    const visibility = workspaceVisibility([WS, 'wm_missing']);
+    const writer = track(make(home!, staticIndex(summaries), visibility));
+    await writer.reindex();
+    expect((await writer.search({ query: 'needle' })).items.map((hit) => hit.sessionId).toSorted()).toEqual([
+      's-hidden',
+      's-visible',
+    ]);
+
+    visibility.workspaces.list = () => defaultVisibility.workspaces.list();
+    await settleSync(writer);
+    expect((await writer.search({ query: 'needle' })).items.map((hit) => hit.sessionId)).toEqual([
+      's-visible',
+    ]);
+    expect((await writer.status()).sessions).toBe(1);
   });
 
   it.each([makeService, makeInlineService])('filters deleted sources before pagination without waiting for a writer sync (%#)', async (make) => {
@@ -2513,6 +2591,8 @@ describe('GlobalSearchService', () => {
         makeBootstrap(home!),
         log,
         makeConfig(false),
+        defaultVisibility.workspaces,
+        defaultVisibility.aliases,
       );
       service.syncDebounceMs = 0;
       track(service);
@@ -2557,7 +2637,7 @@ describe('GlobalSearchService', () => {
       await writer.reindex();
 
       const { log, warnings } = recordingLog();
-      const reader = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeConfig(false));
+      const reader = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeConfig(false), defaultVisibility.workspaces, defaultVisibility.aliases);
       reader.syncDebounceMs = 0;
       track(reader);
       await syncNow(reader);
@@ -2593,6 +2673,8 @@ describe('GlobalSearchService', () => {
           makeBootstrap(root),
           noopLog,
           makeConfig(false),
+          defaultVisibility.workspaces,
+          defaultVisibility.aliases,
         );
         service.syncDebounceMs = 0;
         track(service);
@@ -3220,7 +3302,7 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     await writeFile(join(home!, 'search-index', 'db.textindexes.json'), 'not json {{{', 'utf8');
 
     const { log, warnings } = recordingLog();
-    const second = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeConfig(false));
+    const second = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeConfig(false), defaultVisibility.workspaces, defaultVisibility.aliases);
     track(second);
     second.syncDebounceMs = 0;
     await settleSync(second);
@@ -3551,6 +3633,8 @@ describe('search lifecycle diagnostics (stage 5)', () => {
           makeBootstrap(home!),
           noopLog,
           makeConfig(false, { searchSyncSessionCap: 7, searchSyncDebounceMs: 12_345 }),
+          defaultVisibility.workspaces,
+          defaultVisibility.aliases,
         ),
       );
       await settleBackend(service);
@@ -3609,6 +3693,8 @@ describe('global search switched off', () => {
       makeBootstrap(home!),
       noopLog,
       offConfig({ search: true }),
+      defaultVisibility.workspaces,
+      defaultVisibility.aliases,
     );
     service.syncDebounceMs = 0;
     await expectOff(service);
@@ -3620,6 +3706,8 @@ describe('global search switched off', () => {
       makeBootstrap(home!),
       noopLog,
       offConfig({ globalSearch: false, search: false }),
+      defaultVisibility.workspaces,
+      defaultVisibility.aliases,
     );
     service.syncDebounceMs = 0;
     await expectOff(service);

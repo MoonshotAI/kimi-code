@@ -11,6 +11,8 @@ import {
   IConfigService,
   ILogService,
   ISessionIndex,
+  IWorkspaceAliases,
+  IWorkspaceService,
   LifecycleScope,
   ScopeActivation,
   registerScopedService,
@@ -21,6 +23,7 @@ import {
 import { normalizeLiteral, tokenize } from '@moonshot-ai/minidb';
 import type { TranscriptStore } from '@moonshot-ai/transcript';
 
+import { readVisibleWorkspaces } from '../services/workspaceVisibility';
 import {
   GlobalSearchError,
   type GlobalSearchHit,
@@ -245,6 +248,8 @@ export class GlobalSearchService implements IGlobalSearchService {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ILogService private readonly log: ILogService,
     @IConfigService private readonly config: IConfigService,
+    @IWorkspaceService private readonly workspaces: IWorkspaceService,
+    @IWorkspaceAliases private readonly aliases: IWorkspaceAliases,
   ) {
     this.requestSync();
   }
@@ -387,11 +392,12 @@ export class GlobalSearchService implements IGlobalSearchService {
   }
 
   private async listAllSessions(): Promise<SessionSummary[]> {
+    const { visibleWorkspaceIds } = await readVisibleWorkspaces(this.workspaces, this.aliases);
     const out: SessionSummary[] = [];
     let cursor: string | undefined;
     do {
       const page = await this.sessionIndex.listRecent({ before: cursor, limit: SESSION_PAGE_SIZE });
-      out.push(...page.items);
+      out.push(...page.items.filter((summary) => visibleWorkspaceIds.has(summary.workspaceId)));
       cursor = page.nextCursor;
     } while (cursor !== undefined);
     return out;
