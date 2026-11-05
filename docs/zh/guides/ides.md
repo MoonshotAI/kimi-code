@@ -84,6 +84,22 @@ JetBrains 这一侧对 `command` 字段处理较严格——务必填写**绝对
 
 Paseo 的通用 ACP 适配层不会帮你走登录流程，所以请先完成终端登录（见[前置准备](#前置准备)）——否则创建会话会以 `Authentication required` 失败。
 
+## 在 Xcode 中使用
+
+[Xcode](https://developer.apple.com/xcode/) 是 Apple 官方的集成开发环境（IDE），用于开发 macOS、iOS、watchOS、tvOS 和 visionOS 应用，集成了代码编辑、界面构建、调试、性能分析和 App Store 发布等全流程工具。
+
+在 Xcode 26.6 及以上版本提供 ACP 接入。在 `Settings...` 中的 `Intelligence` 中，选择 `Add an Agent...` ，填写以下配置。
+
+| 属性名     | 属性值            |
+| ---------- | ----------------- |
+| Name       | kimi-code         |
+| Executable | ~/.local/bin/kimi |
+| Arguments  | acp               |
+
+`Executable` 建议填写绝对路径，因为 Xcode GUI 启动的子进程通常不会继承终端的 `PATH`,可以在终端执行 `which kimi` 拿到。
+
+配置完成之后，可以在 `Coding Assistant` 中看到 Kimi 。
+
 ## 故障排查
 
 - **会话立刻被中断 / IDE 提示 "agent exited"**：通常是 `command` 路径不对或 kimi 没登录。先在终端跑一次 `kimi acp` 验证：如果阻塞等待标准输入则说明 CLI 本身没问题，问题在 IDE 配置；如果立刻报错则按报错提示处理（多数是没 `/login`）。
