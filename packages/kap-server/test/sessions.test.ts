@@ -2522,6 +2522,38 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('retries a cached missing-workspace failure through normal reload', async () => {
+    await restartWithFreshHome();
+    const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-resume-reload-'));
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    expect(created.body.code).toBe(0);
+    const id = created.body.data.id;
+    const workspaceId = created.body.data.workspace_id;
+    await closeSessionById((server as RunningServer).core.accessor, id);
+    const registry = (server as RunningServer).core.accessor.get(IWorkspaceService);
+    const createOrTouch = vi.spyOn(registry, 'createOrTouch');
+
+    try {
+      await registry.delete(workspaceId);
+      await rm(cwd, { recursive: true, force: true });
+      createOrTouch.mockRejectedValue(
+        new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${cwd} does not exist`),
+      );
+      await expect(
+        resumeSessionById((server as RunningServer).core.accessor, id),
+      ).rejects.toMatchObject({ code: ErrorCodes.FS_PATH_NOT_FOUND });
+
+      createOrTouch.mockRestore();
+      await mkdir(cwd, { recursive: true });
+      const reloaded = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`, {});
+      expect(reloaded.body.code).toBe(0);
+    } finally {
+      createOrTouch.mockRestore();
+      await closeSessionById((server as RunningServer).core.accessor, id).catch(() => undefined);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('merges metadata via profile and keeps cwd authoritative', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });

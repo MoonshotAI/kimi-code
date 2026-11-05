@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Stop repeated cold-resume attempts for sessions with unavailable workspaces.
+Stop repeated automatic cold-resume attempts for unavailable workspaces while allowing explicit resume and reload recovery.
