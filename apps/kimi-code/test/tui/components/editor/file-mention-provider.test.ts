@@ -152,6 +152,13 @@ describe('FileMentionProvider', () => {
       '/tmp/service',
       'other',
     ]);
+
+    const line = 'check /rev';
+    const inline = await provider.getSuggestions([line], 0, line.length, { signal: ctrl() });
+    expect(inline?.items.map((item) => item.data?.['workspaceLabel'])).toEqual([
+      '/repos/acme/service',
+      '/tmp/service',
+    ]);
   });
 
   it('exposes global and built-in source labels when no workspace directory exists', async () => {

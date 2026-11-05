@@ -305,7 +305,7 @@ export class FileMentionProvider implements AutocompleteProvider {
           skillPath: m.cmd.skillPath,
           workspaceLabel: m.cmd.workspaceDir === undefined
             ? skillSourceLabel(m.cmd.skillSource)
-            : basename(m.cmd.workspaceDir) || m.cmd.workspaceDir,
+            : this.workspaceLabels.get(m.cmd.workspaceDir) ?? m.cmd.workspaceDir,
         },
       })),
       prefix,
