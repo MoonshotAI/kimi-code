@@ -800,17 +800,18 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:undo`
 
-将 main agent 的对话回退 `count` 个轮次，并同步修正派生的会话状态（包括会话的 `last_prompt`）。
+撤销 agent 对话中的某一轮及其之后的所有轮次（包括其间的 system 轮与由定时任务等触发的轮），并同步修正派生的会话状态（包括会话的 `last_prompt`）。不回滚文件。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `count` | body | integer | 要撤销的轮次数；正整数。默认 `1` |
-| `page_size` | body | integer | 返回的历史窗口大小，1–100。默认 `50` |
+| `turn_id` | body | string | 要撤销的轮。必须是 `agent` 轮，且开场 `user_message` 来自用户、用户以斜杠调用的 skill 或 plugin command |
+| `agent_id` | body | string | 要撤销其对话的 agent。默认 `main` |
 
-成功时，`data` 为 `{ messages }`：剩余上下文消息按最新在前的 `{ items, has_more }` 分页。
+成功时，`data` 为 `{ removed_turn_ids }`：按 ordinal 升序列出被删除的轮，第一个即 `turn_id`。订阅者会收到 `turn_ids` 相同的 `turns.removed` 帧；响应与该帧到达的先后顺序不固定。
 
-- `40901`：有轮次正在进行或压缩正在运行——等其结束后重试
-- `40911`：无法撤销那么多轮次（遇到压缩边界或检查点丢失）；`data` 携带 `{ reason, requestedCount, undoableCount }`
+- `40421`：这一轮不存在
+- `40901`：agent 正在工作（有运行中的轮、排队的输入或正在压缩上下文）——等其结束后重试
+- `40911`：无法撤销这一轮：开场不是用户输入，或要删除的范围跨过了上下文压缩
 
 #### `POST /api/v1/sessions/{session_id}:abort`
 
@@ -2431,7 +2432,7 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 
 连接开始接收某个 agent 时，先收到 `{ type: "turns", session_id, agent_id, event_created_at, turns, has_more }`，携带最近 10 个轮次，与 REST 分页一样不超过 1 MiB，包括运行中的轮次及其到此刻为止的内容。该 agent 的对话无法加载时，改为收到 `{ type: "turns.failed", session_id, agent_id, event_created_at, code, msg }`——例如 agent 不在该会话中时为 `40401`，或 agent 关闭后被重新加载时恢复失败——该 agent 仍保持订阅。之后再收到的 `turns` 帧会替换客户端最新的这些轮次，agent 关闭后被重新加载时会再发一次。之后：
 
-- `{ type: "turns.removed", session_id, agent_id, event_created_at, turn_ids }` 按 ordinal 升序列出离开对话的轮次：撤销之后是被撤销的轮次，清空上下文之后是全部轮次。客户端按 `turn_id` 删除；撤销接口的响应与该帧到达的先后顺序不固定。
+- `{ type: "turns.removed", session_id, agent_id, event_created_at, turn_ids }` 按 ordinal 升序列出离开对话的轮次：撤销之后是被撤销的轮次（与撤销接口响应的 `removed_turn_ids` 一致），清空上下文之后是全部轮次。客户端按 `turn_id` 删除；撤销接口的响应与该帧到达的先后顺序不固定。
 
 - `turn.started` 与 `turn.ended` 携带不含 `items` 的 `turn`，客户端用它替换本地的轮次并保留已有条目；已结束的轮次被修正时会再发一次 `turn.ended`。
 - `turn.updated` 携带 `turn_id`、每个已结束步骤一次的 `step`（按 `index` 写入 `steps`），以及替换该轮重试状态的 `retry`；不带 `retry` 时清除重试状态。

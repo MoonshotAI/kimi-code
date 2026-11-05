@@ -417,7 +417,7 @@ export const conversationEventOperations = [
     kind: 'event',
     messageSchema: turnsRemovedMessageSchema,
     description:
-      'Turns that left the conversation of an agent, in ordinal order: the undone turns after an undo, or every turn after a context clear. The client removes them by turn_id.',
+      'Turns that left the conversation of an agent, in ordinal order: the undone turns after an undo, matching removed_turn_ids of the undo response, or every turn after a context clear. The client removes them by turn_id.',
   },
   {
     type: 'turns.failed',

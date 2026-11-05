@@ -943,6 +943,24 @@ describe('conversation feed', () => {
     h.dispatcher.dispose();
   });
 
+  it('refuses to undo an unknown turn or a turn that does not open with user input', async () => {
+    const h = feedHarness([
+      prompt(0, 'p1').serialize(),
+      new ContextAppendMessage({
+        agentId: 'main',
+        message: { role: 'user', id: 'g1', content: [{ type: 'text', text: 'continue' }], origin: { kind: 'system_trigger', name: 'goal_continuation' } },
+      }).serialize(),
+      new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }).serialize(),
+    ]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+    const [goal] = h.feed.turns();
+
+    await expect(h.feed.undo('t_missing')).rejects.toMatchObject({ code: 'turn.not_found' });
+    await expect(h.feed.undo(goal!.turn_id)).rejects.toMatchObject({ code: 'session.undo_unavailable' });
+    h.dispatcher.dispose();
+  });
+
   it('announces a turn before the live items streamed into it and streams text as deltas of its field', async () => {
     const h = feedHarness([]);
     await h.dispatcher.restore();

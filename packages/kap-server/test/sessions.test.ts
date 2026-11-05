@@ -1475,17 +1475,15 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(suffix.body.code).toBe(40001);
   });
 
-  it('cold-loads a persisted session on :undo instead of 40401', async () => {
+  it('cold-loads a persisted session on :undo and reports an unknown turn instead of 40401', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
 
     await closeSessionById((server as RunningServer).core.accessor, id);
 
-    const res = await postJson<{ messages: unknown }>(`/api/v1/sessions/${id}:undo`, { count: 1 });
-    expect(res.body.code).toBe(40911);
-    expect(res.body.msg).toMatch(/nothing to undo/i);
-    expect(res.body.stack).toEqual(expect.stringContaining('undoService'));
+    const res = await postJson<null>(`/api/v1/sessions/${id}:undo`, { turn_id: 't_missing' });
+    expect(res.body.code).toBe(40421);
   });
 
   it('returns 40901 when :undo reports a busy session', async () => {
@@ -1498,6 +1496,15 @@ describe('server-v2 /api/v1/sessions', () => {
       .get(IAgentLifecycleService)
       .create({ agentId: MAIN_AGENT_ID });
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    await agent.accessor.get(IEventDispatcher).dispatch(new TurnPrompt({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'first prompt' }],
+      origin: { kind: 'user' },
+    }));
+    agent.accessor.get(IAgentContextMemoryService).append(
+      { role: 'user', content: [{ type: 'text', text: 'first prompt' }], origin: { kind: 'user' } },
+    );
+    const page = await getJson<ConversationTurnsPage>(`/api/v1/sessions/${created.body.data.id}/agents/main/turns`);
     const undo = vi
       .spyOn(agent.accessor.get(IAgentConversationUndoService), 'undo')
       .mockRejectedValue(new Error2(ErrorCodes.SESSION_BUSY, 'session is busy'));
@@ -1505,7 +1512,7 @@ describe('server-v2 /api/v1/sessions', () => {
     try {
       const response = await postJson<null>(
         `/api/v1/sessions/${created.body.data.id}:undo`,
-        { count: 1 },
+        { turn_id: page.body.data.turns[0]!.turn_id },
       );
 
       expect(response.body.code).toBe(40901);
@@ -1742,11 +1749,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(forkedState.titleKind).toBe('custom');
   });
 
-  it.each([
-    { count: 1, code: 0, prompts: [] as string[], texts: [] as string[] },
-    { count: 2, code: 40911, prompts: ['original prompt'], texts: ['answer before steer', 'steered prompt', 'answer after steer', 'second steer', 'answer after second steer'] },
-    { count: 3, code: 40911, prompts: ['original prompt'], texts: ['answer before steer', 'steered prompt', 'answer after steer', 'second steer', 'answer after second steer'] },
-  ])('keeps the correct messages when undoing $count anchors in a steered turn', async ({ count, code, prompts, texts }) => {
+  it('undoes a steered turn by its id together with its in-turn steers', async () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const id = created.body.data.id;
     const session = getLiveSessionById((server as RunningServer).core.accessor, id)!;
@@ -1782,16 +1785,17 @@ describe('server-v2 /api/v1/sessions', () => {
     );
     await agent.accessor.get(IWireService).flush();
     const path = `/api/v1/sessions/${id}/agents/main/turns`;
-    const itemText = (item: ConversationItem): string => ('text' in item ? item.text : '');
     const before = await getJson<ConversationTurnsPage>(path);
     expect(before.body.code).toBe(0);
+    const [turn] = before.body.data.turns;
     expect(before.body.data.turns).toHaveLength(1);
-    const undone = await postJson(`/api/v1/sessions/${id}:undo`, { count });
-    expect(undone.body.code).toBe(code);
-    const after = await getJson<ConversationTurnsPage>(path);
-    const turns = after.body.data.turns;
-    expect(turns.map((turn) => itemText(turn.items[0]!))).toEqual(prompts);
-    expect(turns.flatMap((turn) => turn.items.slice(1)).map(itemText)).toEqual(texts);
+    expect(turn!.items.filter((item) => item.type === 'user_message').map((item) => item.placement)).toEqual(['opener', 'steer', 'steer']);
+
+    expect((await postJson<null>(`/api/v1/sessions/${id}:undo`, {})).body.code).toBe(40001);
+    expect((await postJson<null>(`/api/v1/sessions/${id}:undo`, { turn_id: 't_missing' })).body.code).toBe(40421);
+    const undone = await postJson<{ removed_turn_ids: string[] }>(`/api/v1/sessions/${id}:undo`, { turn_id: turn!.turn_id });
+    expect(undone.body).toMatchObject({ code: 0, data: { removed_turn_ids: [turn!.turn_id] } });
+    expect((await getJson<ConversationTurnsPage>(path)).body.data.turns).toEqual([]);
   });
 
   it('forks an undo-branched wire self-contained and replays it equivalently', async () => {

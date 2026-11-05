@@ -541,7 +541,8 @@ describe('conversation contract e2e', () => {
       expect(channel.turns()).toEqual(before.turns);
 
       const pages = channel.conversation.filter((frame) => frame.type === 'turns').length;
-      await rest(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { count: 1 } });
+      const undone = await rest<{ removed_turn_ids: string[] }>(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { turn_id: before.turns[0].turn_id } });
+      expect(undone.removed_turn_ids).toEqual([before.turns[0].turn_id]);
       expect((await getTurns(server!, base, sid)).turns).toEqual([]);
       await until('removal reaches subscriber', () => channel.conversation.some((frame) => frame.type === 'turns.removed'));
       expect(channel.conversation.find((frame) => frame.type === 'turns.removed').turn_ids).toEqual([before.turns[0].turn_id]);
@@ -566,7 +567,7 @@ describe('conversation contract e2e', () => {
       await closeSessionById(server!.core.accessor, sid);
       const reopened = await getTurns(server!, base, sid);
       expect(reopened.turns).toEqual(resent.turns);
-      await rest(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { count: 1 } });
+      await rest(server!, base, `/api/v1/sessions/${sid}:undo`, { method: 'POST', body: { turn_id: resent.turns[0].turn_id } });
       expect((await getTurns(server!, base, sid)).turns).toEqual([]);
     } finally {
       channel.close();

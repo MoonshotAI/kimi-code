@@ -800,17 +800,18 @@ On success, `data` is an empty object.
 
 #### `POST /api/v1/sessions/{session_id}:undo`
 
-Rewinds the main agent's conversation by `count` turns and reconciles the derived session state (including the session's `last_prompt`).
+Undoes a turn and every turn after it in an agent's conversation, including the system turns and triggered turns in between, and reconciles the derived session state (including the session's `last_prompt`). Files are not rolled back.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `count` | body | integer | Number of turns to undo; positive integer. Default `1` |
-| `page_size` | body | integer | Size of the returned history window, 1–100. Default `50` |
+| `turn_id` | body | string | The turn to undo. It must be an `agent` turn whose opening `user_message` comes from the user, a user-invoked slash skill, or a plugin command |
+| `agent_id` | body | string | The agent whose conversation is undone. Default `main` |
 
-On success, `data` is `{ messages }`: a `{ items, has_more }` page of the remaining context messages, newest first.
+On success, `data` is `{ removed_turn_ids }`: the removed turns in ordinal order, starting with `turn_id`. Subscribers receive a `turns.removed` frame with the same ids; the response and the frame may arrive in either order.
 
-- `40901`: a turn is active or a compaction is running — wait for it to finish, then retry
-- `40911`: that many turns cannot be undone (a compaction boundary or lost checkpoints); `data` carries `{ reason, requestedCount, undoableCount }`
+- `40421`: the turn does not exist
+- `40901`: the agent is working (a running turn, queued input, or a running compaction) — wait for it to finish, then retry
+- `40911`: the turn cannot be undone: it does not open with user input, or the removed range crosses a context compaction
 
 #### `POST /api/v1/sessions/{session_id}:abort`
 
@@ -2430,7 +2431,7 @@ Every item has `{ item_id, type, step_index?, status, outcome?, created_at, debu
 
 When a connection starts receiving an agent it gets `{ type: "turns", session_id, agent_id, event_created_at, turns, has_more }` with the latest 10 turns, within 1 MiB like the REST pages, including the running turn and what it has produced so far. When the agent's conversation cannot be loaded, it gets `{ type: "turns.failed", session_id, agent_id, event_created_at, code, msg }` instead — for example `40401` for an agent that is not in the session, or when an agent loaded again after it was closed fails to restore — and the agent stays subscribed. A later `turns` frame replaces the client's latest turns; it is sent again when the agent is loaded again after it was closed. After that:
 
-- `{ type: "turns.removed", session_id, agent_id, event_created_at, turn_ids }` lists the turns that left the conversation, in ordinal order: the undone turns after an undo, and every turn after a context clear. The client removes them by `turn_id`; the undo response and this frame may arrive in either order.
+- `{ type: "turns.removed", session_id, agent_id, event_created_at, turn_ids }` lists the turns that left the conversation, in ordinal order: the undone turns after an undo (the `removed_turn_ids` of the undo response), and every turn after a context clear. The client removes them by `turn_id`; the undo response and this frame may arrive in either order.
 
 - `turn.started` and `turn.ended` carry `turn` without `items` and replace the client copy of the turn, keeping its items; `turn.ended` is sent again when an ended turn is corrected.
 - `turn.updated` carries `turn_id`, `step` once per ended step (write it into `steps` by `index`), and `retry`, which replaces the turn's retry state; an absent `retry` clears it.

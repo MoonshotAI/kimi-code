@@ -1,9 +1,12 @@
 import {
   CompactionCancelled,
+  Error2,
+  ErrorCodes,
   FullCompactionBegin,
   FullCompactionCancel,
   FullCompactionComplete,
   IAgentBlobService,
+  IAgentConversationUndoService,
   IAgentLoopService,
   IEventBus,
   IEventDispatcher,
@@ -61,6 +64,8 @@ import {
   type RunningWork,
 } from './conversationFold';
 import { isoTime, mediaPartOf, mediaTypeOf, mediaUrlOf } from './conversationItems';
+
+const UNDOABLE_ORIGINS: ReadonlySet<string> = new Set(['user', 'skill', 'plugin_command']);
 
 type Unframed<T> = T extends unknown ? Omit<T, 'session_id' | 'agent_id' | 'event_created_at'> : never;
 
@@ -142,6 +147,20 @@ export class ConversationFeed implements IDisposable {
 
   turns(): readonly ConversationTurn[] {
     return this.state.turns;
+  }
+
+  async undo(turnId: string): Promise<readonly string[]> {
+    const turns = this.state.turns;
+    const index = turns.findIndex((turn) => turn.turn_id === turnId);
+    if (index === -1) throw new Error2(ErrorCodes.TURN_NOT_FOUND, `turn not found: ${turnId}`);
+    const removed = turns.slice(index).map((turn) => turn.turn_id);
+    const gone = new Set(removed);
+    const anchors = this.state.anchors.filter((anchor) => gone.has(anchor.turnId)).length;
+    if (!opensWithUserInput(turns[index]!) || anchors === 0) {
+      throw new Error2(ErrorCodes.SESSION_UNDO_UNAVAILABLE, `turn ${turnId} does not open with user input`);
+    }
+    await this.handle.accessor.get(IAgentConversationUndoService).undo(anchors);
+    return removed;
   }
 
   subscribe(listener: ConversationListener): IDisposable {
@@ -530,6 +549,11 @@ export class ConversationFeed implements IDisposable {
       }
     }
   }
+}
+
+function opensWithUserInput(turn: ConversationTurn): boolean {
+  const opener = turn.items.find((item) => item.type === 'user_message' && item.placement === 'opener');
+  return turn.kind === 'agent' && opener?.type === 'user_message' && UNDOABLE_ORIGINS.has(opener.origin.kind);
 }
 
 function headerOf(turn: ConversationTurn): ConversationTurnHeader {
