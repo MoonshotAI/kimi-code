@@ -13,7 +13,6 @@ import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 
 import type {
-  AgentRef,
   CompactionItem,
   ConversationItem,
   ConversationOutcome,
@@ -67,7 +66,6 @@ export interface ToolTrack {
   turnId?: string;
   interaction?: ToolInteraction;
   planDisplay?: unknown;
-  pendingAgentRefs?: AgentRef[];
 }
 
 type CompactionDetails = Pick<
@@ -574,16 +572,8 @@ function applySubagentSpawned(state: ConversationState, record: WireRecord): voi
   if (toolCallId === undefined || agentId === undefined) return;
   const ref = agentRefOf(agentId, numberField(record['swarmIndex']), stringField(record['taskId']));
   const found = findToolCall(state, toolCallId);
-  if (found !== undefined) {
-    found.item.agent_refs = withAgentRef(found.item.agent_refs, ref);
-    return;
-  }
-  const track = toolTrack(state, toolCallId);
-  track.pendingAgentRefs = withAgentRef(track.pendingAgentRefs, ref);
-}
-
-function withAgentRef(refs: readonly AgentRef[] | undefined, ref: AgentRef): AgentRef[] {
-  return [...(refs ?? []).filter((existing) => existing.agent_id !== ref.agent_id), ref];
+  if (found === undefined) return;
+  found.item.agent_refs = [...(found.item.agent_refs ?? []).filter((existing) => existing.agent_id !== agentId), ref];
 }
 
 function applyCompactionSummary(state: ConversationState, record: WireRecord, time: number): void {
@@ -790,13 +780,9 @@ function findToolCall(state: ConversationState, toolCallId: string): { turn: Con
   return { turn, item };
 }
 
-function toolTrack(state: ConversationState, toolCallId: string): ToolTrack {
-  return (state.tools[toolCallId] ??= {});
-}
-
 function callTrack(state: ConversationState, toolCallId: string): ToolTrack {
   if (findToolCall(state, toolCallId)?.item.status === 'ended') state.tools[toolCallId] = {};
-  return toolTrack(state, toolCallId);
+  return (state.tools[toolCallId] ??= {});
 }
 
 function upsertToolCall(state: ConversationState, turn: ConversationTurn, fresh: ToolCallItem): void {
@@ -809,9 +795,8 @@ function upsertToolCall(state: ConversationState, turn: ConversationTurn, fresh:
     created_at: previous?.created_at ?? fresh.created_at,
     started_at: previous?.started_at ?? fresh.started_at,
     display: fresh.display ?? previous?.display,
-    agent_refs: track.pendingAgentRefs ?? previous?.agent_refs,
+    agent_refs: previous?.agent_refs,
   };
-  delete track.pendingAgentRefs;
   track.turnId = turn.turn_id;
   refreshToolCall(item, track.interaction, track.planDisplay);
   upsertItem(turn, item);

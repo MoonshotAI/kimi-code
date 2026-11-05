@@ -742,7 +742,7 @@ describe('EventDispatcherService', () => {
       },
       onDidReplay: (replayed, { ok }) => {
         calls.push(`did:${ok}:${replayed.items.join(',')}`);
-        return ok ? { items: [...replayed.items, 'settled'] } : replayed;
+        state = ok ? { items: [...replayed.items, 'settled'] } : replayed;
       },
       getState: () => state,
       commit: (next) => { state = next; },

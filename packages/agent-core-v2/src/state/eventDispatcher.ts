@@ -22,7 +22,7 @@ export interface DurableAgentRuntimeParticipant<State = any> {
   readonly transition: StateFold<State>;
   readonly onUndo?: (state: State, count: number) => State;
   onWillReplay?(): void;
-  onDidReplay?(state: State, outcome: ReplayOutcome): State;
+  onDidReplay?(state: State, outcome: ReplayOutcome): void;
   getState(): State;
   commit(state: State): void;
 }

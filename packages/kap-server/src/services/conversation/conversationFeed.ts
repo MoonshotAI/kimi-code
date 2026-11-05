@@ -118,7 +118,6 @@ export class ConversationFeed implements IDisposable {
   private state: ConversationState;
   private sent: readonly ConversationTurn[] = [];
   private started = false;
-  private replay: ReplayGate | undefined;
   private beforeReplay: ConversationState | undefined;
   private flushQueued = false;
   private disposed = false;
@@ -153,8 +152,7 @@ export class ConversationFeed implements IDisposable {
   }
 
   async page(before: number | undefined, limit: number): Promise<ConversationTurnsPage> {
-    while (this.replay !== undefined) await this.replay.done;
-    const turns = this.state.turns;
+    const turns = (this.beforeReplay ?? this.state).turns;
     const end = before === undefined ? turns.length : turns.findIndex((turn) => turn.ordinal >= before);
     const stop = end === -1 ? turns.length : end;
     const start = Math.max(0, stop - limit);
@@ -180,7 +178,6 @@ export class ConversationFeed implements IDisposable {
     this.listeners.clear();
     this.live.clear();
     this.tools.clear();
-    this.finishReplay();
   }
 
   private async start(): Promise<void> {
@@ -224,7 +221,9 @@ export class ConversationFeed implements IDisposable {
       onWillReplay: () => {
         this.willReplay();
       },
-      onDidReplay: (state, { ok }) => this.didReplay(state, ok),
+      onDidReplay: (state, { ok }) => {
+        this.didReplay(state, ok);
+      },
       getState: () => this.state,
       commit: (next) => {
         this.commit(next);
@@ -250,30 +249,22 @@ export class ConversationFeed implements IDisposable {
   }
 
   private willReplay(): void {
-    this.replay ??= replayGate();
     this.beforeReplay ??= this.state;
     this.dropLive(() => true);
     this.tools.clear();
   }
 
-  private didReplay(replayed: ConversationState, ok: boolean): ConversationState {
+  private didReplay(replayed: ConversationState, ok: boolean): void {
     const kept = ok ? undefined : this.beforeReplay;
     this.beforeReplay = undefined;
     this.state = settleOrphanTurns(kept ?? replayed, this.runningWork());
     if (kept === undefined) this.sent = this.state.turns;
-    this.finishReplay();
     if (this.started) {
       if (kept === undefined) this.emit({ type: 'reset' });
       else this.flush();
     }
     this.firstReplay?.(ok);
     this.firstReplay = undefined;
-    return this.state;
-  }
-
-  private finishReplay(): void {
-    this.replay?.finish();
-    this.replay = undefined;
   }
 
   private runningWork(): RunningWork {
@@ -283,7 +274,7 @@ export class ConversationFeed implements IDisposable {
 
   private commit(next: ConversationState): void {
     this.state = next;
-    if (!this.started || this.replay !== undefined || this.flushQueued) return;
+    if (!this.started || this.beforeReplay !== undefined || this.flushQueued) return;
     this.flushQueued = true;
     queueMicrotask(() => {
       this.flushPending();
@@ -296,18 +287,14 @@ export class ConversationFeed implements IDisposable {
 
   private flush(): void {
     this.flushQueued = false;
-    if (this.disposed || this.replay !== undefined) return;
+    if (this.disposed || this.beforeReplay !== undefined) return;
     const previous = this.sent;
     const next = this.state.turns;
     if (previous === next) return;
     this.sent = next;
     const nextById = new Map(next.map((turn) => [turn.turn_id, turn]));
     const removed = new Set(previous.filter((turn) => !nextById.has(turn.turn_id)).map((turn) => turn.turn_id));
-    const shrunk = previous.some((turn) => {
-      const after = nextById.get(turn.turn_id);
-      return after !== undefined && (after.items.length < turn.items.length || after.steps.length < turn.steps.length);
-    });
-    if (removed.size > 0 || shrunk) {
+    if (removed.size > 0) {
       this.dropLive((entry) => removed.has(entry.turnId), false);
       for (const [toolCallId, tool] of this.tools) {
         if (removed.has(tool.turnId)) this.tools.delete(toolCallId);
@@ -378,7 +365,7 @@ export class ConversationFeed implements IDisposable {
     block: number | undefined,
     delta: string,
   ): void {
-    if (block === undefined || delta.length === 0 || this.replay !== undefined) return;
+    if (block === undefined || delta.length === 0 || this.beforeReplay !== undefined) return;
     this.flushPending();
     const target = this.liveTarget(turnNumber);
     if (target === undefined) return;
@@ -407,7 +394,7 @@ export class ConversationFeed implements IDisposable {
     name: string | undefined,
     argumentsPart: string | undefined,
   ): void {
-    if (this.replay !== undefined) return;
+    if (this.beforeReplay !== undefined) return;
     this.flushPending();
     const entry = this.live.get(toolCallId);
     if (entry?.item.type === 'tool_call') {
@@ -437,7 +424,7 @@ export class ConversationFeed implements IDisposable {
   }
 
   private onToolProgress(toolCallId: string, update: ToolUpdate): void {
-    if (this.replay !== undefined) return;
+    if (this.beforeReplay !== undefined) return;
     this.flushPending();
     const target = this.runningTool(toolCallId);
     if (target === undefined) return;
@@ -549,19 +536,6 @@ export class ConversationFeed implements IDisposable {
       }
     }
   }
-}
-
-interface ReplayGate {
-  readonly done: Promise<void>;
-  readonly finish: () => void;
-}
-
-function replayGate(): ReplayGate {
-  let finish!: () => void;
-  const done = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  return { done, finish };
 }
 
 function headerOf(turn: ConversationTurn): ConversationTurnHeader {

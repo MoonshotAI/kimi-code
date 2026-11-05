@@ -851,8 +851,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       const participant = attachment.participant;
       if (participant?.onDidReplay === undefined) continue;
       try {
-        const next = participant.onDidReplay(attachment.getState(), outcome);
-        if (next !== attachment.getState()) attachment.commit(next);
+        participant.onDidReplay(attachment.getState(), outcome);
       } catch (error) {
         onUnexpectedError(error);
       }
