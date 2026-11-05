@@ -44,7 +44,6 @@ import { IAgentMediaResolverService } from './mediaResolver';
 import { createVideoUploader } from './registerMediaTools';
 import {
   inlineVideoPart,
-  inlineVideoSupportedForProtocol,
   isMediaUploadAuthError,
   isVideoUploadUnsupportedError,
 } from './videoUpload';
@@ -514,8 +513,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     }
     const mimeType = fileType.mimeType;
 
-    const inlineSupported =
-      inlineVideoSupportedForProtocol(model.protocol) && support.sources.includes('inline');
+    const inlineSupported = support.sources.includes('inline');
     const uploadSupported = support.sources.includes('file') || support.sources.includes('url');
     const uploader = uploadSupported
       ? createVideoUploader(videoUploaderFor(model, request), {

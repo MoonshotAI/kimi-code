@@ -231,6 +231,43 @@ describe('openai-responses requester responseFormat', () => {
     });
     expect(client.body()['reasoning']).toEqual({ effort: 'high', summary: 'detailed' });
   });
+
+  it('encodes video parts according to model capability', async () => {
+    const client = stubResponsesClient(responsesStreamEvents);
+    const requester = createOpenAIResponsesRequester({
+      clientFactory: client.clientFactory,
+    });
+    const videoMessages: readonly Message[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AQID' } },
+          { type: 'video_url', videoUrl: { url: 'ms://file-1', id: 'file-1' } },
+        ],
+      },
+    ];
+    await requester.generate(
+      { model: { ...model, capability: { ...UNKNOWN_CAPABILITY, video_in: true } } },
+      { messages: videoMessages },
+      { signal: new AbortController().signal },
+    );
+    let input = client.body()['input'] as Record<string, unknown>[];
+    expect(input[0]?.['content']).toEqual([
+      { type: 'input_file', file_data: 'AQID', filename: 'inline.mp4' },
+      { type: 'input_file', file_url: 'ms://file-1' },
+    ]);
+
+    await requester.generate(
+      { model },
+      { messages: videoMessages },
+      { signal: new AbortController().signal },
+    );
+    input = client.body()['input'] as Record<string, unknown>[];
+    expect(input[0]?.['content']).toEqual([
+      { type: 'input_text', text: '(video omitted: not supported by this provider)' },
+      { type: 'input_text', text: '(video omitted: not supported by this provider)' },
+    ]);
+  });
 });
 
 describe('anthropic requester responseFormat', () => {

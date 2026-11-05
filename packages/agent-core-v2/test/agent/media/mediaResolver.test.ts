@@ -396,12 +396,6 @@ describe('AgentMediaResolverService video strategy', () => {
       req: (upload) => requester({ videoIn: false, uploadVideo: upload }),
     },
     {
-      name: 'a no-upload provider whose wire drops video (openai responses)',
-      files: new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]),
-      fileId: FILE_ID,
-      req: () => requester({ protocol: 'openai_responses', uploadVideo: undefined }),
-    },
-    {
       name: 'the bytes do not sniff as a video',
       files: new Map([[FILE_ID, { name: 'clip.mp4', bytes: PNG_BYTES }]]),
       fileId: FILE_ID,
