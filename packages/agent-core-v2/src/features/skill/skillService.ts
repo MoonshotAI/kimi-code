@@ -31,17 +31,24 @@ import type {
 } from './skill';
 import { SkillActivated } from './skillOps';
 
+export interface ModelToolSkillContext {
+  readonly queryDepth: number;
+  readonly workspaceDir?: string;
+}
+
 export interface IAgentSkillService {
   readonly _serviceBrand: undefined;
   activate(input: SkillActivationInput): Promise<PromptLaunchResult>;
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
   recordModelToolActivation(origin: SkillActivationOrigin): void;
+  modelToolContext(): ModelToolSkillContext;
 }
 
 export const IAgentSkillService = createDecorator<IAgentSkillService>('agentSkillService');
 
 export class AgentSkillService implements IAgentSkillService {
   declare readonly _serviceBrand: undefined;
+  private modelToolParent?: ModelToolSkillContext & { readonly turnId: number };
 
   constructor(
     @ISessionSkillCatalog private readonly catalog: ISessionSkillCatalog,
@@ -84,21 +91,20 @@ export class AgentSkillService implements IAgentSkillService {
       ...(input.content ?? []),
     ];
 
-    const turn = await this.recordActivation(
-      {
-        kind: 'skill_activation',
-        activationId: randomUUID(),
-        skillName: skill.name,
-        trigger: 'user-slash',
-        skillType: skill.metadata.type,
-        skillPath: skill.path,
-        skillSource: skill.source,
-        skillArgs: input.args,
-        attachments: input.attachments,
-        clientMetadata: input.clientMetadata,
-      },
-      content,
-    );
+    const origin: SkillActivationOrigin = {
+      kind: 'skill_activation',
+      activationId: randomUUID(),
+      skillName: skill.name,
+      trigger: 'user-slash',
+      skillType: skill.metadata.type,
+      skillPath: skill.path,
+      skillSource: skill.source,
+      skillArgs: input.args,
+      attachments: input.attachments,
+      clientMetadata: input.clientMetadata,
+    };
+    const turn = await this.recordActivation(origin, content);
+    if (turn?.id !== undefined) this.rememberModelToolParent(origin, turn.id);
     if (turn === undefined) {
       throw new Error2(
         ErrorCodes.TURN_AGENT_BUSY,
@@ -191,7 +197,26 @@ export class AgentSkillService implements IAgentSkillService {
   }
 
   recordModelToolActivation(origin: SkillActivationOrigin): void {
+    const turnId = this.loop.snapshot().activeTurnId;
+    if (turnId !== undefined) this.rememberModelToolParent(origin, turnId);
     void this.recordActivation(origin);
+  }
+
+  modelToolContext(): ModelToolSkillContext {
+    const status = this.loop.snapshot();
+    if (status.state !== 'running' || status.activeTurnId === undefined || this.modelToolParent?.turnId !== status.activeTurnId) {
+      return { queryDepth: 0 };
+    }
+    return {
+      queryDepth: this.modelToolParent.queryDepth,
+      workspaceDir: this.modelToolParent.workspaceDir,
+    };
+  }
+
+  private rememberModelToolParent(origin: SkillActivationOrigin, turnId: number): void {
+    const queryDepth = this.modelToolParent?.turnId === turnId ? this.modelToolParent.queryDepth + 1 : 1;
+    const workspaceDir = this.catalog.catalog.listSkills().find((skill) => skill.path === origin.skillPath)?.workspaceDir;
+    this.modelToolParent = { turnId, queryDepth, workspaceDir };
   }
 
   private prepareBundled(input: PromptSkillActivation): {

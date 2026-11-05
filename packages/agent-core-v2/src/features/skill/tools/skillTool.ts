@@ -55,13 +55,16 @@ export class SkillTool implements ISkillTool {
   }
 
   private async execution(args: SkillToolInput): Promise<ExecutableToolResult> {
+    const context = this.queryDepth === 0 && this.workspaceDir === undefined
+      ? this.skill.modelToolContext()
+      : { queryDepth: this.queryDepth, workspaceDir: this.workspaceDir };
     return executeModelSkill(
       this.catalog,
       this.skill,
       args,
-      this.queryDepth,
+      context.queryDepth,
       this.sessionContext.sessionId,
-      this.workspaceDir,
+      context.workspaceDir,
     );
   }
 }

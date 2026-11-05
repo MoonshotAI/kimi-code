@@ -155,29 +155,35 @@ export function resolveUserInput(options: ResolveSlashCommandInput): {
   const activations = extractInlineSkillActivations(text, options.skillCommandMap, {
     includeLeading: true,
   });
-  if (activations.length === 1) {
-    const tokens = findInlineSkillTokens(text, {
-      isKnownSkill: (name) => resolveSkillCommand(options.skillCommandMap, name) !== undefined,
-      includeLeading: true,
-    });
-    const token = tokens[0];
-    const path = token === undefined
-      ? undefined
-      : options.skillVariantPathForCommand?.(token.commandName);
-    if (path !== undefined) activations[0] = { ...activations[0]!, path };
-    if (tokens.length === 1 && token?.start === 0) {
-      if (intent.kind !== 'skill') return { intent, activations: [] };
-      return {
-        intent,
-        activations: [{
-          skillName: activations[0]!.skillName,
-          path: activations[0]!.path,
-          args: text.slice(token.end).trim(),
-        }],
-      };
+  const tokens = findInlineSkillTokens(text, {
+    isKnownSkill: (name) => resolveSkillCommand(options.skillCommandMap, name) !== undefined,
+    includeLeading: true,
+  });
+  const selectedPaths = new Map<string, string>();
+  for (const token of tokens) {
+    const skillName = resolveSkillCommand(options.skillCommandMap, token.commandName);
+    const path = options.skillVariantPathForCommand?.(token.commandName);
+    if (skillName !== undefined && path !== undefined && !selectedPaths.has(skillName)) {
+      selectedPaths.set(skillName, path);
     }
   }
-  return { intent, activations };
+  const selectedActivations = activations.map((activation) => {
+    const path = selectedPaths.get(activation.skillName);
+    return path === undefined ? activation : { ...activation, path };
+  });
+  const token = tokens[0];
+  if (selectedActivations.length === 1 && tokens.length === 1 && token?.start === 0) {
+    if (intent.kind !== 'skill') return { intent, activations: [] };
+    return {
+      intent,
+      activations: [{
+        skillName: selectedActivations[0]!.skillName,
+        path: selectedActivations[0]!.path,
+        args: text.slice(token.end).trim(),
+      }],
+    };
+  }
+  return { intent, activations: selectedActivations };
 }
 
 export function resolveSkillCommand(

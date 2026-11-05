@@ -533,6 +533,7 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
     queued: Array<Record<string, unknown>>;
     skillCommandMap?: Map<string, string>;
     pluginCommandMap?: Map<string, string>;
+    skillVariantPathForCommand?: (commandName: string) => string | undefined;
     steering?: boolean;
   }) {
     const steerQueuedMessagesIntoRunningTurn = vi.fn();
@@ -557,6 +558,7 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       session: { id: 's1' },
       skillCommandMap: options.skillCommandMap ?? new Map(),
       pluginCommandMap: options.pluginCommandMap ?? new Map(),
+      skillVariantPathForCommand: options.skillVariantPathForCommand,
       steerQueuedMessagesIntoRunningTurn,
       isSteeringQueuedMessages: vi.fn(() => options.steering ?? false),
       updateQueueDisplay,
@@ -657,6 +659,32 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
       { text, inlineSkillActivations: activations },
     ]);
     expect(setText).toHaveBeenCalledWith('');
+  });
+
+  it('preserves selected variant paths for multi-skill drafts', () => {
+    const text = '/skill:security /skill:review';
+    const paths: Record<string, string> = {
+      'skill:security': '/work/B/security/SKILL.md',
+      'skill:review': '/work/B/review/SKILL.md',
+    };
+    const { host, onCtrlS } = createCtrlSHarness({
+      editorText: text,
+      queued: [],
+      skillCommandMap: new Map([['skill:security', 'security'], ['skill:review', 'review']]),
+      skillVariantPathForCommand: (commandName) => paths[commandName],
+    });
+
+    onCtrlS();
+
+    expect(host.state.queuedMessages).toEqual([
+      {
+        text,
+        inlineSkillActivations: [
+          { skillName: 'security', path: paths['skill:security'] },
+          { skillName: 'review', path: paths['skill:review'] },
+        ],
+      },
+    ]);
   });
 });
 
