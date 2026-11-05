@@ -1068,7 +1068,7 @@ Submits a user prompt to the session. Media references are validated first, then
 | `session_id` | path | string | **Required.** Session id |
 | `content` | body | array | **Required.** Non-empty array of content parts; variants below |
 | `agent_id` | body | string | Target agent. Default the main agent |
-| `prompt_id` | body | string | Client-chosen prompt id for idempotent submission, also with `skills`; an id already reserved by an in-flight prompt fails `40927`, one that has already completed fails `40903` |
+| `prompt_id` | body | string | Client-chosen prompt id that makes the submission idempotent, also with `skills`: sending the same request again with the same id returns the result of the first submission, waiting for it while it is still being processed, and does not submit again; reusing the id for a different request fails `40927` |
 | `skills` | body | array | Bundled skill activations, at least 1 entry of `{ name, args? }`; every skill must exist and be user-activatable |
 | `profile` | body | string | Agent profile to bind before submitting |
 | `model` | body | string | Model alias to switch the agent to |
@@ -1096,9 +1096,8 @@ On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status,
 - `40401`: session not found
 - `40407`: a referenced `file_id` does not exist (or does not match the part's media kind)
 - `40415`: a `skills` entry names an unknown skill
-- `40903`: `prompt_id` belongs to an already-completed prompt; `data` carries `{ aborted: false }`
 - `40912`: the skill exists but cannot be activated by the user
-- `40927`: `prompt_id` is already reserved by an in-flight prompt
+- `40927`: `prompt_id` is already used by a different request
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`
 
@@ -1294,7 +1293,7 @@ Activates a skill in the session — the REST analogue of the `/<skill>` slash c
 | `session_id` | path | string | **Required.** Session id |
 | `skill_name` | path | string | **Required.** Name of the skill to activate |
 | `args` | body | string | Free-form arguments handed to the skill, like the text after a slash command |
-| `prompt_id` | body | string | Client-chosen id of the activation message; it shows up in the `prompt_ids` of the conversation's `user_message` item |
+| `prompt_id` | body | string | Client-chosen id of the activation message; it shows up in the `prompt_ids` of the conversation's `user_message` item. Like a prompt submission, sending the same request again with the same id returns the first result without activating again |
 | `attachments` | body | array | Media parts attached to the activation. Image and video parts carry a `source` object whose `kind` is `url` / `base64` / `file` / `session_media` (same shapes as the prompt content parts); file parts carry the top-level `file_id`, `name`, `media_type`, and `size` |
 
 On success, `data` is `{ activated: true, skill_name }`.
@@ -1304,7 +1303,7 @@ On success, `data` is `{ activated: true, skill_name }`.
 - `40407`: a referenced attachment file does not exist
 - `40415`: no skill with that name
 - `40912`: the skill exists but its type cannot be activated by the user
-- `40927`: `prompt_id` is already reserved by another prompt
+- `40927`: `prompt_id` is already used by a different request
 
 #### `GET /api/v1/tools`
 

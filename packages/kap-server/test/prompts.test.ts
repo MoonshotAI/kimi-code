@@ -28,6 +28,7 @@ import {
   ErrorCodes,
   closeSessionById,
   getLiveSessionById,
+  resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
@@ -720,8 +721,26 @@ describe('server-v2 /api/v1 prompts', () => {
       prompt_id: 'submission-1',
     });
     expect(afterResume.body.code).toBe(40927);
-    const resumed = getLiveSessionById(server!.core.accessor, id);
+    const resumed = await resumeSessionById(server!.core.accessor, id);
     expect((await resumed!.accessor.get(ISessionMetadata).read()).lastPrompt).toBe('first prompt');
+  });
+
+  it('answers a resubmission with the same prompt_id and request with the first result', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const request = { content: [{ type: 'text', text: 'only once' }], prompt_id: 'submission-2' };
+
+    const [first, again] = await Promise.all([
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, request),
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, request),
+    ]);
+    const later = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, request);
+
+    expect(first.body.code).toBe(0);
+    expect(again.body).toEqual({ ...first.body, request_id: again.body.request_id });
+    expect(later.body).toEqual({ ...first.body, request_id: later.body.request_id });
+    const turns = await call<{ turns: { items: { type: string }[] }[] }>('GET', `/api/v1/sessions/${id}/agents/main/turns`);
+    expect(turns.body.data.turns.flatMap((turn) => turn.items).filter((item) => item.type === 'user_message')).toHaveLength(1);
   });
 
   it('rejects a bundled submission with an unknown skill and records nothing', async () => {

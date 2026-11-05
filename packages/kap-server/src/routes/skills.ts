@@ -64,7 +64,7 @@ import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
 import { sendEnvironmentError } from './environment';
-import { reservePromptId, type PromptIdReservation } from './prompts';
+import { beginPromptAttempt, type PromptAttempt } from './prompts';
 import {
   sendMappedError as sendSessionMappedError,
   sessionConflictErrors,
@@ -230,15 +230,23 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         return;
       }
 
-      const activateOnce = async (): Promise<void> => {
-        const resolved = await resolveActivatedSession(core, session_id, req.id);
-        if ('envelope' in resolved) {
-          reply.send(resolved.envelope);
+      let attempt: PromptAttempt;
+      try {
+        attempt = beginPromptAttempt(session_id, req.body.prompt_id, { route: 'skills', tail, body: req.body });
+        if (attempt.earlier !== undefined) {
+          reply.send(okEnvelope(await attempt.earlier, req.id));
           return;
         }
+      } catch (error) {
+        sendMappedError(reply, req, error);
+        return;
+      }
+
+      const activateOnce = async (): Promise<unknown> => {
+        const resolved = await resolveActivatedSession(core, session_id, req.id);
+        if ('envelope' in resolved) throw new Error2(ErrorCodes.SESSION_NOT_FOUND, resolved.envelope.msg);
 
         let preparedMedia: PromptMediaPreparation | undefined;
-        let reservation: PromptIdReservation | undefined;
         try {
           const attachments = req.body.attachments ?? [];
           const attachmentParts: ContentPart[] = [];
@@ -305,30 +313,30 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
             preparedMedia !== undefined && preparedMedia.attachments.length > 0
               ? preparedMedia.attachments
               : undefined;
-          reservation = reservePromptId(session_id, req.body.prompt_id);
           await mainAgent.accessor.get(IAgentSkillService).activate({
             name: parsed.id,
             args: req.body.args,
-            promptId: reservation.id,
+            promptId: attempt.id,
             clientMetadata: req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)],
             content: attachmentParts,
             attachments: promptAttachments,
           });
-          reservation.submit();
+          attempt.enqueued();
           await preparedMedia?.discard();
           preparedMedia = undefined;
           requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
-          reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
+          return { activated: true, skill_name: parsed.id };
         } catch (error) {
           await preparedMedia?.discardStaged();
           throw error;
-        } finally {
-          reservation?.dispose();
         }
       };
       try {
-        await reloadOnStale(core.accessor, session_id, activateOnce);
+        const response = await reloadOnStale(core.accessor, session_id, activateOnce);
+        attempt.succeed(response);
+        reply.send(okEnvelope(response, req.id));
       } catch (error) {
+        attempt.fail(error);
         sendMappedError(reply, req, error);
       }
     },

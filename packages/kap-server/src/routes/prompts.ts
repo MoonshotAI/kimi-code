@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 import {
@@ -222,9 +223,19 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const { session_id } = req.params;
-      const submitOnce = async (): Promise<void> => {
+      let attempt: PromptAttempt;
+      try {
+        attempt = beginPromptAttempt(session_id, req.body.prompt_id, { route: 'prompts', body: req.body });
+        if (attempt.earlier !== undefined) {
+          reply.send(okEnvelope(await attempt.earlier, req.id));
+          return;
+        }
+      } catch (error) {
+        sendMappedError(reply, req, error);
+        return;
+      }
+      const submitOnce = async (): Promise<unknown> => {
         let preparedMedia: PromptMediaPreparation | undefined;
-        let reservation: PromptIdReservation | undefined;
         let enqueued = false;
         try {
           const session = await resolveSession(core, session_id);
@@ -251,7 +262,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             session.accessor.get(ISessionMediaStore),
           );
           resolved ??= await resolvePromptFromSession(session, req.body.agent_id);
-          reservation = reservePromptId(session_id, req.body.prompt_id);
 
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
           const environmentMedia = environmentMediaTargets(resolved.binding.current, resolved.environment);
@@ -335,7 +345,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             try {
               result = await resolved.skill.promptWithSkills({
                 input: parts,
-                promptId: reservation.id,
+                promptId: attempt.id,
                 clientMetadata,
                 skills: req.body.skills,
                 attachments: promptAttachments,
@@ -344,23 +354,17 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               settlement.dispose();
               throw error;
             }
-            reservation.submit();
+            attempt.enqueued();
             enqueued = true;
             settlement.settle(result.prompt_id, () => preparedMedia?.discard());
-            reply.send(
-              okEnvelope(
-                {
-                  prompt_id: result.prompt_id,
-                  user_message_id: result.prompt_id,
-                  status: result.state,
-                  content: projectPromptContentParts(parts),
-                  created_at: result.created_at,
-                  metadata: clientMetadata?.[0],
-                },
-                req.id,
-              ),
-            );
-            return;
+            return {
+              prompt_id: result.prompt_id,
+              user_message_id: result.prompt_id,
+              status: result.state,
+              content: projectPromptContentParts(parts),
+              created_at: result.created_at,
+              metadata: clientMetadata?.[0],
+            };
           }
           await applyPromptMetadataUpdate({
             metadata: session.accessor.get(ISessionMetadata),
@@ -371,12 +375,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           const { id } = resolved.prompt.submit({
             message: { role: 'user', content: parts },
             meta: {
-              promptId: reservation.id,
+              promptId: attempt.id,
               origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
               tracked: true,
             },
           });
-          reservation.submit();
+          attempt.enqueued();
           enqueued = true;
           const handle = resolved.prompt.promptHandle(id)!;
           if (status.state === 'idle' && !status.paused && status.queue.length === 0) {
@@ -387,17 +391,18 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             () => staging?.discard(),
             () => staging?.discard(),
           );
-          reply.send(okEnvelope(projectPromptHandle(handle), req.id));
+          return projectPromptHandle(handle);
         } catch (error) {
           if (!enqueued) await preparedMedia?.discardStaged();
           throw error;
-        } finally {
-          reservation?.dispose();
         }
       };
       try {
-        await reloadOnStale(core.accessor, session_id, submitOnce);
+        const response = await reloadOnStale(core.accessor, session_id, submitOnce);
+        attempt.succeed(response);
+        reply.send(okEnvelope(response, req.id));
       } catch (error) {
+        attempt.fail(error);
         sendMappedError(reply, req, error);
       }
     },
@@ -550,38 +555,70 @@ export function projectPromptSnapshot(prompt: {
   };
 }
 
-export interface PromptIdReservation {
+export interface PromptAttempt {
   readonly id: string;
-  submit(): void;
-  dispose(): void;
+  readonly earlier?: Promise<unknown>;
+  enqueued(): void;
+  succeed(response: unknown): void;
+  fail(error: unknown): void;
 }
 
-const reservedPromptIds = new Map<string, Set<string>>();
+interface PromptAttemptRecord {
+  readonly fingerprint: string;
+  readonly response: Promise<unknown>;
+}
 
-export function reservePromptId(sessionId: string, promptId?: string): PromptIdReservation {
-  if (promptId !== undefined && promptId.length === 0) {
-    throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_id must not be empty');
+const PROMPT_ATTEMPTS_PER_SESSION = 256;
+const promptAttempts = new Map<string, Map<string, PromptAttemptRecord>>();
+
+export function beginPromptAttempt(sessionId: string, promptId: string | undefined, request: unknown): PromptAttempt {
+  if (promptId === undefined) return { id: newMessageId(), enqueued: () => {}, succeed: () => {}, fail: () => {} };
+  if (promptId.length === 0) throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_id must not be empty');
+  let attempts = promptAttempts.get(sessionId);
+  if (attempts === undefined) {
+    attempts = new Map();
+    promptAttempts.set(sessionId, attempts);
   }
-  let reserved = reservedPromptIds.get(sessionId);
-  if (reserved === undefined) {
-    reserved = new Set<string>();
-    reservedPromptIds.set(sessionId, reserved);
+  const fingerprint = createHash('sha256').update(canonicalJson(request)).digest('hex');
+  const earlier = attempts.get(promptId);
+  if (earlier !== undefined) {
+    if (earlier.fingerprint !== fingerprint) {
+      throw new Error2(ErrorCodes.PROMPT_ID_CONFLICT, `prompt_id '${promptId}' is already used by a different request`);
+    }
+    return { id: promptId, earlier: earlier.response, enqueued: () => {}, succeed: () => {}, fail: () => {} };
   }
-  if (promptId !== undefined && reserved.has(promptId)) {
-    throw new Error2(ErrorCodes.PROMPT_ID_CONFLICT, `prompt_id '${promptId}' is already in use`);
+  let resolve!: (response: unknown) => void;
+  let reject!: (error: unknown) => void;
+  const response = new Promise<unknown>((settleOk, settleError) => {
+    resolve = settleOk;
+    reject = settleError;
+  });
+  response.catch(() => {});
+  attempts.set(promptId, { fingerprint, response });
+  for (const oldest of attempts.keys()) {
+    if (attempts.size <= PROMPT_ATTEMPTS_PER_SESSION) break;
+    attempts.delete(oldest);
   }
-  const id = promptId ?? newMessageId();
-  reserved.add(id);
-  let submitted = false;
+  let enqueued = false;
   return {
-    id,
-    submit: () => {
-      submitted = true;
+    id: promptId,
+    enqueued: () => {
+      enqueued = true;
     },
-    dispose: () => {
-      if (!submitted) reserved.delete(id);
+    succeed: resolve,
+    fail: (error) => {
+      if (!enqueued && attempts.get(promptId)?.response === response) attempts.delete(promptId);
+      reject(error);
     },
   };
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, field: unknown) =>
+    field !== null && typeof field === 'object' && !Array.isArray(field)
+      ? Object.fromEntries(Object.entries(field).toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : field,
+  );
 }
 
 export function watchPromptSettlements(events: IEventBus): {
