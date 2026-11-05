@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { basename, isAbsolute } from 'pathe';
+import { basename } from 'pathe';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
@@ -27,7 +27,6 @@ import {
   collectAliasIds,
   compactSessionIndexIfStale,
   dedupeByRoot,
-  isImplicitBucketSessionLine,
   readSessionIndexEntries,
 } from './workspaceAlias';
 import { IWorkspacePersistence, type WorkspaceCatalog } from './workspacePersistence';
@@ -35,7 +34,7 @@ import { IWorkspacePersistence, type WorkspaceCatalog } from './workspacePersist
 export class WorkspaceService implements IWorkspaceService {
   declare readonly _serviceBrand: undefined;
 
-  private merged = false;
+  private sessionIndexPrepared = false;
   private opQueue: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -50,7 +49,7 @@ export class WorkspaceService implements IWorkspaceService {
 
   list(): Promise<readonly Workspace[]> {
     return this.runExclusive(async () => {
-      await this.ensureMerged();
+      await this.prepareSessionIndex();
       const catalog = await this.loadCatalog();
       const byId = new Map(catalog.workspaces.map((ws) => [ws.id, ws]));
       return dedupeByRoot(byId);
@@ -59,7 +58,7 @@ export class WorkspaceService implements IWorkspaceService {
 
   get(id: string): Promise<Workspace | undefined> {
     return this.runExclusive(async () => {
-      await this.ensureMerged();
+      await this.prepareSessionIndex();
       const catalog = await this.loadCatalog();
       return catalog.workspaces.find((ws) => ws.id === id);
     });
@@ -83,7 +82,7 @@ export class WorkspaceService implements IWorkspaceService {
       if (stat !== undefined && !stat.isDirectory) {
         throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} is not a directory`);
       }
-      await this.ensureMerged();
+      await this.prepareSessionIndex();
       let ws!: Workspace;
       let existing: Workspace | undefined;
       await this.store.update((catalog) => {
@@ -137,7 +136,7 @@ export class WorkspaceService implements IWorkspaceService {
         input.root,
         input.additionalDirs ?? [],
       );
-      await this.ensureMerged();
+      await this.prepareSessionIndex();
       let ws!: Workspace;
       let reused = false;
       await this.store.update((catalog) => {
@@ -193,7 +192,7 @@ export class WorkspaceService implements IWorkspaceService {
 
   touch(id: string): Promise<Workspace | undefined> {
     return this.runExclusive(async () => {
-      await this.ensureMerged();
+      await this.prepareSessionIndex();
       let touched: Workspace | undefined;
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
@@ -215,7 +214,7 @@ export class WorkspaceService implements IWorkspaceService {
 
   update(id: string, patch: WorkspaceUpdate): Promise<Workspace | undefined> {
     return this.runExclusive(async () => {
-      await this.ensureMerged();
+      await this.prepareSessionIndex();
       let updated: Workspace | undefined;
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
@@ -244,7 +243,7 @@ export class WorkspaceService implements IWorkspaceService {
 
   setPrimary(id: string, path: string): Promise<Workspace | undefined> {
     return this.runExclusive(async () => {
-      await this.ensureMerged();
+      await this.prepareSessionIndex();
       let updated: Workspace | undefined;
       let changed = false;
       await this.store.update(async (catalog) => {
@@ -291,7 +290,7 @@ export class WorkspaceService implements IWorkspaceService {
 
   delete(id: string): Promise<void> {
     return this.runExclusive(async () => {
-      await this.ensureMerged();
+      await this.prepareSessionIndex();
       let deletedRoot: string | undefined;
       await this.store.update(async (catalog) => {
         let root = catalog.workspaces.find((ws) => ws.id === id)?.root;
@@ -324,40 +323,9 @@ export class WorkspaceService implements IWorkspaceService {
     });
   }
 
-  private async ensureMerged(): Promise<void> {
-    if (this.merged) return;
-    const loaded = await this.store.load();
-    if (loaded === undefined || loaded.workspaces.length === 0) {
-      await this.store.update(async (catalog) => {
-        const rebuilt = await this.rebuildFromSessionIndex();
-        const byId = new Map(catalog.workspaces.map((ws) => [ws.id, ws]));
-        const deletedIds = new Set(catalog.deletedIds);
-        for (const [id, workspace] of rebuilt) {
-          if (!byId.has(id) && !deletedIds.has(id)) byId.set(id, workspace);
-        }
-        return {
-          workspaces: [...byId.values()],
-          deletedIds: [...deletedIds],
-          idempotencyKeys: catalog.idempotencyKeys,
-        };
-      });
-    } else {
-      const byId = new Map(loaded.workspaces.map((ws) => [ws.id, ws]));
-      const deletedIds = new Set(loaded.deletedIds);
-      if (await this.mergeFromSessionIndex(byId, deletedIds)) {
-        await this.store.update(async (catalog) => {
-          const latestById = new Map(catalog.workspaces.map((ws) => [ws.id, ws]));
-          const latestDeletedIds = new Set(catalog.deletedIds);
-          await this.mergeFromSessionIndex(latestById, latestDeletedIds);
-          return {
-            workspaces: [...latestById.values()],
-            deletedIds: [...latestDeletedIds],
-            idempotencyKeys: catalog.idempotencyKeys,
-          };
-        });
-      }
-    }
-    this.merged = true;
+  private async prepareSessionIndex(): Promise<void> {
+    if (this.sessionIndexPrepared) return;
+    this.sessionIndexPrepared = true;
     await this.compactSessionIndex();
   }
 
@@ -387,55 +355,6 @@ export class WorkspaceService implements IWorkspaceService {
 
   private async loadCatalog(): Promise<WorkspaceCatalog> {
     return (await this.store.load()) ?? { workspaces: [], deletedIds: [] };
-  }
-
-  private async mergeFromSessionIndex(
-    byId: Map<string, Workspace>,
-    deletedIds: ReadonlySet<string>,
-  ): Promise<boolean> {
-    let changed = false;
-    const now = Date.now();
-    for (const entry of await readSessionIndexEntries(this.storage)) {
-      if (!isAbsolute(entry.workDir)) continue;
-      if (!isImplicitBucketSessionLine(entry)) continue;
-      const id = encodeWorkDirKey(entry.workDir);
-      if (byId.has(id) || deletedIds.has(id)) continue;
-      byId.set(id, {
-        id,
-        root: entry.workDir,
-        name: basename(entry.workDir),
-        kind: 'implicit',
-        additionalDirs: [],
-        createdAt: now,
-        lastOpenedAt: now,
-      });
-      changed = true;
-    }
-    return changed;
-  }
-
-  private async rebuildFromSessionIndex(): Promise<Map<string, Workspace>> {
-    const result = new Map<string, Workspace>();
-    const now = Date.now();
-    const seenRootKeys = new Set<string>();
-    for (const entry of await readSessionIndexEntries(this.storage)) {
-      if (!isAbsolute(entry.workDir)) continue;
-      if (!isImplicitBucketSessionLine(entry)) continue;
-      const rootKey = workspaceRootKey(entry.workDir);
-      if (seenRootKeys.has(rootKey)) continue;
-      seenRootKeys.add(rootKey);
-      const id = encodeWorkDirKey(entry.workDir);
-      result.set(id, {
-        id,
-        root: entry.workDir,
-        name: basename(entry.workDir),
-        kind: 'implicit',
-        additionalDirs: [],
-        createdAt: now,
-        lastOpenedAt: now,
-      });
-    }
-    return result;
   }
 
   private async requireDirectory(root: string): Promise<void> {
