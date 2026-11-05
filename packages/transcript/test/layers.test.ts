@@ -455,7 +455,7 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       { role: 'user', content: parts, toolCalls: [], origin: { kind: 'user' } },
     ]);
 
-  it('groups flat messages into turns with folded tool results', () => {
+  it('groups flat messages into turns with folded text and daemon-media tool results', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'system', content: [{ type: 'text', text: 'sys' }] },
       {
@@ -474,9 +474,22 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       {
         role: 'assistant',
         content: [{ type: 'think', think: 'hmm' }, { type: 'text', text: 'checking' }],
-        toolCalls: [{ id: 'c1', name: 'Read', arguments: '{"path":"/a"}' }],
+        toolCalls: [
+          { id: 'c1', name: 'Read', arguments: '{"path":"/a"}' },
+          { id: 'c2', name: 'ReadMediaFile', arguments: '{"path":"/b.png"}' },
+        ],
       },
       { role: 'tool', content: [{ type: 'text', text: 'file body' }], toolCallId: 'c1', toolCalls: [] },
+      {
+        role: 'tool',
+        content: [
+          { type: 'text', text: 'media result' },
+          { type: 'image_url', imageUrl: { url: 'kimi-file://f_img', name: 'img.png' } } as HistoryContentPart,
+          { type: 'video_url', source: { kind: 'url', url: 'kimi-file://f_vid' }, name: 'clip.mp4' },
+        ],
+        toolCallId: 'c2',
+        toolCalls: [],
+      },
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'done' }],
@@ -502,9 +515,15 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     if (firstTurn?.kind !== 'turn') throw new Error('expected turn');
     expect(firstTurn.prompt).toBe('hello');
     expect(firstTurn.steps).toHaveLength(2);
-    const tool = firstTurn.steps[0]?.frames.find((f) => f.kind === 'tool');
+    const tool = firstTurn.steps[0]?.frames.find((f) => f.kind === 'tool' && f.toolCallId === 'c1');
     expect(tool?.kind === 'tool' && tool.output).toBe('file body');
     expect(tool?.kind === 'tool' && tool.input).toEqual({ path: '/a' });
+    const mediaTool = firstTurn.steps[0]?.frames.find((f) => f.kind === 'tool' && f.toolCallId === 'c2');
+    expect(mediaTool?.kind === 'tool' && mediaTool.output).toEqual([
+      { type: 'text', text: 'media result' },
+      { type: 'image', source: { kind: 'session_media', file_id: 'f_img' }, name: 'img.png' },
+      { type: 'video', source: { kind: 'session_media', file_id: 'f_vid' }, name: 'clip.mp4' },
+    ]);
     const marker = snapshot.items[3];
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
   });

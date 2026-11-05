@@ -153,6 +153,39 @@ const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
 
 const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
 
+function toolOutputOf(message: HistoryMessage): unknown {
+  const content = message.content ?? [];
+  const hasMedia = content.some((part) =>
+    part.type === 'image' || part.type === 'video' || part.type === 'audio' ||
+    part.type === 'image_url' || part.type === 'video_url' || part.type === 'audio_url'
+  );
+  if (!hasMedia) return textOf(message);
+  return content.map((part) => {
+    const ref = daemonFileRefFromPairingPart(part);
+    if (ref !== undefined) {
+      return {
+        type: ref.kind,
+        source: { kind: 'session_media', file_id: ref.ref.fileId },
+        name: ref.name,
+      };
+    }
+    if ((part.type === 'image_url' || part.type === 'video_url') && 'source' in part) {
+      const source = part.source as NativeHistoryMediaSource;
+      if (source.kind === 'url') {
+        const daemonRef = parseDaemonFileRef(source.url);
+        if (daemonRef !== undefined) {
+          return {
+            type: part.type === 'image_url' ? 'image' : 'video',
+            source: { kind: 'session_media', file_id: daemonRef.fileId },
+            name: part.name,
+          };
+        }
+      }
+    }
+    return part;
+  });
+}
+
 export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
   options?: {
@@ -519,12 +552,12 @@ export function groupMessagesIntoSnapshot(
     if (message.role === 'tool') {
       const frame = currentTurnToolFrame(turn, message.toolCallId);
       if (frame && frame.kind === 'tool') {
-        const output = textOf(message);
+        const output = toolOutputOf(message);
         const patched: TranscriptFrame = {
           ...frame,
           state: message.isError ? 'error' : 'done',
           output,
-          error: message.isError ? output : undefined,
+          error: message.isError && typeof output === 'string' ? output : undefined,
         };
         replaceToolFrame(turn!, message.toolCallId!, patched);
         syncTurnItem(items, turn!);

@@ -965,7 +965,7 @@ export class AgentTranscriptProjector {
     const hit = this.toolFrames.get(event.toolCallId) ?? this.adoptToolFrame(event.toolCallId);
     if (hit === undefined) return [];
     const isError = event.isError === true;
-    const output = projectToolResultOutput(event.output, this.sessionId);
+    const output = projectToolResultOutput(event.output);
     const frame: ToolCallFrame = {
       ...hit.frame,
       state: isError ? 'error' : 'done',

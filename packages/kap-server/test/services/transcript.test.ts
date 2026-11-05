@@ -566,11 +566,9 @@ describe('AgentTranscriptProjector', () => {
       state: 'done',
       output: [
         {
-          type: 'image_url',
-          imageUrl: {
-            url: `/api/v1/sessions/${TEST_SESSION_ID}/media/f_img1`,
-            name: 'img.png',
-          },
+          type: 'image',
+          source: { kind: 'session_media', file_id: 'f_img1' },
+          name: 'img.png',
         },
       ],
     });

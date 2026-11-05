@@ -159,7 +159,7 @@ describe('toProtocolMessage', () => {
     ]);
   });
 
-  it('projects media parts as legacy tool_result output', () => {
+  it('projects daemon media refs with the UserMessage contract in tool_result output', () => {
     const result: ContextMessage = {
       role: 'tool',
       content: [
@@ -183,11 +183,9 @@ describe('toProtocolMessage', () => {
             imageUrl: expect.objectContaining({ url: 'data:image/png;base64,AAAA' }),
           },
           {
-            type: 'image_url',
-            imageUrl: {
-              url: `/api/v1/sessions/${SESSION_ID}/media/file_9`,
-              name: 'pic.png',
-            },
+            type: 'image',
+            source: { kind: 'session_media', file_id: 'file_9' },
+            name: 'pic.png',
           },
           {
             type: 'audio_url',
