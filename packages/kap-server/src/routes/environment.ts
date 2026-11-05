@@ -26,7 +26,9 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
+  connectEnvironmentRequestSchema,
   environmentBindingResponseSchema,
+  sessionEnvironmentEntrySchema,
   sessionEnvironmentParamsSchema,
   sessionEnvironmentsResponseSchema,
   type EnvironmentBindingResponse,
@@ -176,6 +178,41 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
   );
   app.post(testRoute.path, testRoute.options, testRoute.handler as Parameters<EnvironmentRouteHost['post']>[2]);
 
+  const connectRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/environments::connect',
+      body: connectEnvironmentRequestSchema,
+      success: { data: sessionEnvironmentEntrySchema },
+      errors: {
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+      },
+      description: 'Connect a configured environment now instead of waiting for its next use',
+      tags: ['environments'],
+    },
+    async (req, reply) => {
+      const environments = core.accessor.get(IEnvironmentService);
+      try {
+        const lease = await environments.acquireWhenReady({ environmentId: req.body.environment_id });
+        lease.dispose();
+      } catch (error) {
+        if (!sendEnvironmentError(reply, req.id, error)) {
+          reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id));
+        }
+        return;
+      }
+      const snapshot = environments.snapshot().environments.find((environment) => environment.environmentId === req.body.environment_id);
+      if (snapshot === undefined) {
+        reply.send(errEnvelope(ErrorCode.ENVIRONMENT_NOT_FOUND, `environment ${req.body.environment_id} does not exist`, req.id));
+        return;
+      }
+      const declarations = await resolveDeclarations(core);
+      reply.send(okEnvelope(toEntry(snapshot, declarations.get(snapshot.environmentId)), req.id));
+    },
+  );
+  app.post(connectRoute.path, connectRoute.options, connectRoute.handler as Parameters<EnvironmentRouteHost['post']>[2]);
+
   const listRoute = defineRoute(
     {
       method: 'GET',
@@ -219,17 +256,18 @@ async function resolveEnvironmentAgent(core: Scope, sessionId: string): Promise<
   return ensureMainAgent(session);
 }
 
-async function resolveDeclarations(core: Scope): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {
+export async function resolveDeclarations(core: Scope): Promise<ReadonlyMap<string, RemoteEnvironmentEntry>> {
   const declarations = await core.accessor.get(IEnvironmentDeclarationService).declarations();
   return new Map((declarations?.entries ?? []).map((declaration) => [declaration.id, declaration.entry]));
 }
 
-function toEntry(environment: EnvironmentGenerationSnapshot, entry: RemoteEnvironmentEntry | undefined): SessionEnvironmentEntry {
+export function toEntry(environment: EnvironmentGenerationSnapshot, entry: RemoteEnvironmentEntry | undefined): SessionEnvironmentEntry {
   const info = environmentEntryInfo(environment, entry);
   return {
     environment_id: info.environmentId,
     type: info.type,
     status: info.status,
+    enabled: info.enabled,
     connect_error: info.connectError,
   };
 }

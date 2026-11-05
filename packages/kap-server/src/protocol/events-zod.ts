@@ -57,6 +57,20 @@ export const environmentStatusSchema = z.enum([
   'disposed',
 ]);
 
+export const environmentEntrySchema = z.object({
+  environment_id: z.string(),
+  type: z.enum(['local', 'ssh', 'docker', 'command']),
+  status: environmentStatusSchema,
+  enabled: z.boolean(),
+  connect_error: z.string().optional(),
+});
+
+export const environmentChangedEventSchema = z.object({
+  type: z.literal('event.environment.changed'),
+  environment_id: z.string().min(1),
+  environment: environmentEntrySchema.optional(),
+});
+
 export const configChangedEventSchema = z.object({
   type: z.literal('event.config.changed'),
   changedFields: z.array(z.string().min(1)),
@@ -135,6 +149,7 @@ export const pushEventSchema = z.discriminatedUnion('type', [
   sessionWorkChangedEventSchema,
   configChangedEventSchema,
   configWarningEventSchema,
+  environmentChangedEventSchema,
   modelCatalogChangedEventSchema,
   diUnitChangedEventSchema,
   pluginChangedEventSchema,

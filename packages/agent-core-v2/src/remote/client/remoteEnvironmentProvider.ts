@@ -4,9 +4,10 @@ import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
-import type {
-  RemoteEnvironmentDeclaration,
-  EnvironmentDeclarationSet,
+import {
+  environmentEntryEnabled,
+  type RemoteEnvironmentDeclaration,
+  type EnvironmentDeclarationSet,
 } from '#/remote/declaration/remoteEnvironmentDeclaration';
 import type {
   Environment,
@@ -80,6 +81,7 @@ class DeclaredRemoteEnvironment implements Environment {
     fingerprint: string,
     private readonly open: (launcher: LauncherSpec) => Promise<RemoteSession>,
     private readonly telemetry: ITelemetryService,
+    private enabled: boolean,
   ) {
     this.launcher = launcher;
     this.fingerprint = fingerprint;
@@ -139,6 +141,9 @@ class DeclaredRemoteEnvironment implements Environment {
 
   connect(): Promise<void> {
     if (this.currentStatus === 'disposed') return Promise.reject(new Error('remote environment is disposed'));
+    if (!this.enabled) {
+      return Promise.reject(new EnvironmentError('environment.unavailable', `environment ${this.environmentId} is disabled`));
+    }
     if (this.currentStatus === 'ready') return Promise.resolve();
     if (this.inflight !== undefined) return this.inflight;
     const epoch = this.epoch;
@@ -185,6 +190,16 @@ class DeclaredRemoteEnvironment implements Environment {
     this.inflight = undefined;
     void this.dropSession();
     this.setStatus('disconnected');
+  }
+
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled || this.currentStatus === 'disposed') return;
+    this.enabled = enabled;
+    if (!enabled) {
+      this.lastConnectError = undefined;
+      this.disconnect();
+    }
+    this.statusEmitter.fire(this.currentStatus);
   }
 
   applyLauncher(launcher: LauncherSpec, fingerprint: string): void {
@@ -302,6 +317,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
             }
             continue;
           }
+          record.environment.setEnabled(environmentEntryEnabled(declaration.entry));
           if (record.fingerprint === fingerprint) {
             record.declaration = declaration;
             continue;
@@ -335,7 +351,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
   ): DeclaredEnvironmentRecord {
     const launcher = toLauncherSpec(declaration.entry);
     const fingerprint = declarationFingerprint(declaration.entry);
-    const environment = new DeclaredRemoteEnvironment(declaration.id, launcher, fingerprint, (nextLauncher) => this.open(declaration.id, nextLauncher), host.get(ITelemetryService));
+    const environment = new DeclaredRemoteEnvironment(declaration.id, launcher, fingerprint, (nextLauncher) => this.open(declaration.id, nextLauncher), host.get(ITelemetryService), environmentEntryEnabled(declaration.entry));
     try {
       const handle = host.registerEnvironment(environment);
       return { handle, environment, declaration, fingerprint };

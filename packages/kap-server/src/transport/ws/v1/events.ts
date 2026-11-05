@@ -1,4 +1,5 @@
 import type { ConfigResponse } from '../../../protocol/rest-config';
+import type { SessionEnvironmentEntry } from '../../../protocol/rest-environment';
 import type { Session, SessionPendingInteraction } from '../../../protocol/session';
 import type { Workspace } from '../../../protocol/workspace';
 
@@ -89,6 +90,12 @@ export interface ModelCatalogChangedEvent {
   readonly retired_default?: ModelCatalogRetiredDefault;
 }
 
+export interface EnvironmentChangedEvent {
+  readonly type: 'event.environment.changed';
+  readonly environment_id: string;
+  readonly environment?: SessionEnvironmentEntry;
+}
+
 export interface PluginChangedEvent {
   readonly type: 'event.plugin.changed';
 }
@@ -124,6 +131,7 @@ export type PushEvent =
   | SessionWorkChangedEvent
   | ConfigChangedEvent
   | ConfigWarningEvent
+  | EnvironmentChangedEvent
   | ModelCatalogChangedEvent
   | PluginChangedEvent
   | CapabilityChangedEvent

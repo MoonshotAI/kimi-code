@@ -22,6 +22,8 @@ import {
   IAgentScopeContext,
   IAgentTaskService,
   IAgentTodoService,
+  IEnvironmentDeclarationService,
+  IEnvironmentService,
   IEventBus,
   IEventService,
   IModelCatalog,
@@ -38,6 +40,7 @@ import {
   interactions,
   makeAgentScopeContext,
 } from '@moonshot-ai/agent-core-v2';
+import { Emitter } from '@moonshot-ai/agent-core-v2/_base/event';
 import { Event2 } from '@moonshot-ai/agent-core-v2/app/event/event2';
 import {
   AgentEventBusView,
@@ -921,6 +924,43 @@ describe('SessionEventBroadcaster', () => {
           install: { running: true, step: 'download', percent: 42 },
         },
       });
+    });
+
+    it('fans out environment status changes with the configured entry', async () => {
+      const changes = new Emitter<{ environmentId: string }>();
+      const environments = [{ environmentId: 'dev-box', generation: 'g1', status: 'connecting', capabilities: [] }];
+      const base = core.accessor;
+      const environmentCore = {
+        accessor: {
+          get: (token: unknown) => {
+            if (token === IEnvironmentService) return { onDidChange: changes.event, snapshot: () => ({ environments }) };
+            if (token === IEnvironmentDeclarationService) {
+              return { declarations: async () => ({ entries: [{ id: 'dev-box', entry: { type: 'ssh', host: 'dev-box', enabled: true } }] }) };
+            }
+            return base.get(token as never);
+          },
+        },
+      } as unknown as Scope;
+      const environmentBc = new SessionEventBroadcaster({ core: environmentCore });
+      const globalView = collectingTarget();
+      environmentBc.addGlobalTarget(globalView.target);
+
+      changes.fire({ environmentId: 'dev-box' });
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      environments.length = 0;
+      changes.fire({ environmentId: 'dev-box' });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(2));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.environment.changed',
+        session_id: '__global__',
+        payload: {
+          environment_id: 'dev-box',
+          environment: { environment_id: 'dev-box', type: 'ssh', status: 'connecting', enabled: true },
+        },
+      });
+      expect(globalView.envelopes[1]!.payload).not.toHaveProperty('environment');
+      await environmentBc.close();
     });
 
     it('preserves process termination confirmation in capability events', async () => {

@@ -13,6 +13,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentLifecycleService,
+  IEnvironmentService,
   IEventService,
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
@@ -61,6 +62,7 @@ import {
 import { toWireQuestion } from '../../../protocol/question-wire';
 import type { AgentFeedMessage } from '../../../protocol/ws-agent';
 import type { TaskEventMessage, TaskListMessage } from '../../../protocol/ws-task';
+import { resolveDeclarations, toEntry } from '../../../routes/environment';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
 import { ensureMainAgent } from '../../mainAgent';
@@ -134,6 +136,7 @@ export class SessionEventBroadcaster {
   private readonly deletionSubscription: IDisposable | undefined;
   private readonly createSubscription: IDisposable | undefined;
   private readonly lifecycleSubscription: IDisposable;
+  private readonly environmentSubscription: IDisposable | undefined;
   private closed = false;
 
   constructor(
@@ -176,6 +179,26 @@ export class SessionEventBroadcaster {
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)
       .subscribe((event) => this.onCoreEvent(event));
+    this.environmentSubscription = (opts.core.accessor.get(IEnvironmentService) as IEnvironmentService | undefined)?.onDidChange(
+      (change) => this.enqueueEnvironmentChanged(change.environmentId),
+    );
+  }
+
+  private enqueueEnvironmentChanged(environmentId: string): void {
+    this.enqueueGlobal('event.environment.changed', async () => {
+      const snapshot = this.opts.core.accessor
+        .get(IEnvironmentService)
+        .snapshot()
+        .environments.find((environment) => environment.environmentId === environmentId);
+      const declarations = snapshot === undefined ? undefined : await resolveDeclarations(this.opts.core);
+      return {
+        type: 'event.environment.changed',
+        environment_id: environmentId,
+        ...(snapshot === undefined ? {} : { environment: toEntry(snapshot, declarations?.get(environmentId)) }),
+        agentId: 'main',
+        sessionId: GLOBAL_SESSION_ID,
+      };
+    });
   }
 
   addGlobalTarget(target: BroadcastTarget): void {
@@ -406,6 +429,7 @@ export class SessionEventBroadcaster {
     if (this.closed) return;
     this.closed = true;
     this.coreEventSubscription.dispose();
+    this.environmentSubscription?.dispose();
     this.deletionSubscription?.dispose();
     this.createSubscription?.dispose();
     this.lifecycleSubscription.dispose();

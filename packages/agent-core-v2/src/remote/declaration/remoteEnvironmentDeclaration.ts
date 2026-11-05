@@ -12,6 +12,7 @@ const sshEnvironmentEntrySchema = z
     host: z.string().min(1),
     remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
+    enabled: z.boolean().optional(),
   })
   .strict();
 
@@ -22,6 +23,7 @@ const dockerEnvironmentEntrySchema = z
     context: z.string().min(1).optional(),
     remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
+    enabled: z.boolean().optional(),
   })
   .strict();
 
@@ -32,6 +34,7 @@ const commandEnvironmentEntrySchema = z
     env: z.record(z.string(), z.string()).optional(),
     remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
+    enabled: z.boolean().optional(),
   })
   .strict();
 
@@ -120,6 +123,7 @@ export interface EnvironmentEntryInfo {
   readonly generation: string;
   readonly capabilities: readonly EnvironmentCapability[];
   readonly defaultCwd?: string;
+  readonly enabled: boolean;
   readonly connectError?: string;
 }
 
@@ -137,6 +141,11 @@ export function environmentEntryInfo(
     generation: environment.generation,
     capabilities: [...environment.capabilities],
     defaultCwd: entry?.defaultCwd,
+    enabled: environmentEntryEnabled(entry),
     connectError: environment.connectError,
   };
+}
+
+export function environmentEntryEnabled(entry: RemoteEnvironmentEntry | undefined): boolean {
+  return entry?.enabled !== false;
 }
