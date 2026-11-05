@@ -73,8 +73,12 @@ const VIDEO_FILE_EXTENSIONS: Readonly<Record<string, string>> = {
   webm: 'webm',
   'x-matroska': 'mkv',
   'x-msvideo': 'avi',
+  'x-ms-wmv': 'wmv',
+  'x-m4v': 'm4v',
+  ogg: 'ogv',
   'x-flv': 'flv',
   '3gpp': '3gp',
+  '3gpp2': '3g2',
 };
 
 function mapVideoUrlToInputItem(url: string): NativePart | null {
@@ -89,7 +93,7 @@ function mapVideoUrlToInputItem(url: string): NativePart | null {
   const [subtype = ''] = subtypePart.split(';');
   const ext = VIDEO_FILE_EXTENSIONS[subtype.toLowerCase()];
   if (ext === undefined) return null;
-  return { type: 'input_file', file_data: parts[1], filename: `inline.${ext}` };
+  return { type: 'input_file', file_data: url, filename: `inline.${ext}` };
 }
 
 function contentPartsToInputItems(

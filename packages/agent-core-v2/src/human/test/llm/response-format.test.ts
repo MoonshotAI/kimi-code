@@ -244,6 +244,7 @@ describe('openai-responses requester responseFormat', () => {
           { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AQID' } },
           { type: 'video_url', videoUrl: { url: 'ms://file-1', id: 'file-1' } },
           { type: 'video_url', videoUrl: { url: 'data:video/x-ms-wmv;base64,AQID' } },
+          { type: 'video_url', videoUrl: { url: 'data:video/mp4;codecs=avc1;base64,AQID' } },
         ],
       },
     ];
@@ -254,9 +255,10 @@ describe('openai-responses requester responseFormat', () => {
     );
     let input = client.body()['input'] as Record<string, unknown>[];
     expect(input[0]?.['content']).toEqual([
-      { type: 'input_file', file_data: 'AQID', filename: 'inline.mp4' },
+      { type: 'input_file', file_data: 'data:video/mp4;base64,AQID', filename: 'inline.mp4' },
       { type: 'input_file', file_url: 'ms://file-1' },
-      { type: 'input_text', text: '(video omitted: not supported by this provider)' },
+      { type: 'input_file', file_data: 'data:video/x-ms-wmv;base64,AQID', filename: 'inline.wmv' },
+      { type: 'input_file', file_data: 'data:video/mp4;codecs=avc1;base64,AQID', filename: 'inline.mp4' },
     ]);
 
     await requester.generate(
@@ -266,6 +268,7 @@ describe('openai-responses requester responseFormat', () => {
     );
     input = client.body()['input'] as Record<string, unknown>[];
     expect(input[0]?.['content']).toEqual([
+      { type: 'input_text', text: '(video omitted: not supported by this provider)' },
       { type: 'input_text', text: '(video omitted: not supported by this provider)' },
       { type: 'input_text', text: '(video omitted: not supported by this provider)' },
       { type: 'input_text', text: '(video omitted: not supported by this provider)' },
