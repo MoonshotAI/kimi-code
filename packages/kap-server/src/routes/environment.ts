@@ -15,7 +15,9 @@ import {
   type EnvironmentGenerationSnapshot,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { HandshakeError } from '@moonshot-ai/agent-core-v2/remote';
+import { HandshakeError, RemoteSession, connectWithGuidance, toLauncherSpec } from '@moonshot-ai/agent-core-v2/remote';
+import { RemoteEnvironmentEntrySchema } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
+import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
@@ -39,9 +41,22 @@ interface EnvironmentRouteHost {
       reply: { send(payload: unknown): void },
     ) => Promise<void> | void,
   ): unknown;
+  post(
+    path: string,
+    options: { schema?: Record<string, unknown> },
+    handler: (
+      req: { id: string; body: unknown },
+      reply: { send(payload: unknown): void },
+    ) => Promise<void> | void,
+  ): unknown;
 }
 
-export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope): void {
+const testEnvironmentRequestSchema = z.object({
+  definition: RemoteEnvironmentEntrySchema,
+  path: z.string().min(1).optional(),
+}).strict();
+
+export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope, clientVersion?: string): void {
   const getRoute = defineRoute(
     {
       method: 'GET',
@@ -85,6 +100,43 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
     },
   );
   app.get(listAllRoute.path, listAllRoute.options, listAllRoute.handler as Parameters<EnvironmentRouteHost['get']>[2]);
+
+  const testRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/environments::test',
+      body: testEnvironmentRequestSchema,
+      success: { data: z.object({ connected: z.literal(true) }) },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
+      },
+      description: 'Test a draft remote environment without changing configured environments',
+      tags: ['environments'],
+    },
+    async (req, reply) => {
+      let session: RemoteSession | undefined;
+      try {
+        const launcher = toLauncherSpec(req.body.definition);
+        session = await connectWithGuidance(
+          (spec) => RemoteSession.connect({ environmentId: 'connection-test', launcher: spec, clientVersion }),
+          { launcher },
+        );
+        const target = req.body.path ?? session.host.homeDir;
+        const path = await session.fs.realpath(target);
+        await session.fs.readdir(path);
+        reply.send(okEnvelope({ connected: true as const }, req.id));
+      } catch (error) {
+        if (!sendEnvironmentError(reply, req.id, error)) {
+          reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id));
+        }
+      } finally {
+        await session?.dispose();
+      }
+    },
+  );
+  app.post(testRoute.path, testRoute.options, testRoute.handler as Parameters<EnvironmentRouteHost['post']>[2]);
 
   const listRoute = defineRoute(
     {
