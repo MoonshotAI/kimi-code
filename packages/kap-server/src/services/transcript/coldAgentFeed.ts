@@ -32,7 +32,9 @@ export function projectColdAgentFeed(records: readonly WireRecord[]): ColdAgentF
   let goal: GoalSnapshot | undefined;
   let goalClearedAt = Number.NEGATIVE_INFINITY;
   for (const record of records) {
-    if (record.type === 'goal.clear') goalClearedAt = Math.max(goalClearedAt, record.time ?? 0);
+    if (record.type === 'goal.clear' || record.type === 'forked') {
+      goalClearedAt = Math.max(goalClearedAt, record.time ?? 0);
+    }
   }
 
   for (const entry of replay) {

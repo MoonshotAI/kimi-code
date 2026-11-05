@@ -133,7 +133,7 @@ async function loadMessages(core: Scope, sessionId: string): Promise<Message[]> 
   let migrations: ReturnType<typeof wireJournalMigrations> | undefined;
   for await (const record of core.accessor
     .get(IAppendLogStore)
-    .read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
+    .read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY, { onTruncate: () => {} })) {
     migrations ??= wireJournalMigrations(record);
     reducer.add(fromPersistentWireRecord(migrateWireRecord(record, migrations)));
   }

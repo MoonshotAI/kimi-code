@@ -728,6 +728,43 @@ describe('SessionEventBroadcaster', () => {
     expect(readColdSnapshot).not.toHaveBeenCalled();
   });
 
+  it('stops cold replay after live reattachment', async () => {
+    const manager = core.accessor.get(ISessionManager);
+    manager.status = async () => ({
+      id: 'cold',
+      workspaceId: 'wd',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+    });
+    await bc.close();
+    let finishRoster!: (value: { agentId: string; type: string }[]) => void;
+    const readColdSnapshot = vi.fn(async () => groupMessagesIntoSnapshot([]));
+    const transcriptService = {
+      readColdRoster: () => new Promise((resolve) => {
+        finishRoster = resolve;
+      }),
+      readColdSnapshot,
+      readColdAgentFeed: async () => coldFeed(),
+      forSessionLive: () => undefined,
+      dropSession: () => {},
+    } as unknown as TranscriptService;
+    bc = new SessionEventBroadcaster({ core, transcriptService });
+    const { target, envelopes } = collectingTarget();
+    const pending = bc.subscribe('cold', target, { '*': 'turn' });
+    await settle();
+    const lifecycle = new FakeLifecycle('cold');
+    lifecycle.addAgent('main');
+    sessions.set('cold', lifecycle);
+    managerEvents.fireDidCreate('cold', sessionHandle(core, 'cold'));
+
+    finishRoster([]);
+
+    expect(await pending).toBe(true);
+    expect(readColdSnapshot).not.toHaveBeenCalled();
+    expect(envelopes.filter((frame) => frame.type === 'transcript.reset')).toEqual([]);
+  });
+
   it('removes the target when cold replay fails', async () => {
     const manager = core.accessor.get(ISessionManager);
     manager.status = async () => ({

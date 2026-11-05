@@ -49,6 +49,7 @@ import {
   AgentTranscriptProjector,
   type ProjectorBusEvent,
 } from '../../src/services/transcript/coreEventMap';
+import { projectColdAgentFeed } from '../../src/services/transcript/coldAgentFeed';
 import {
   healTurnOps,
   TranscriptService,
@@ -2292,6 +2293,21 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('projectColdAgentFeed clears inherited goals at the fork boundary', () => {
+    const inherited = [
+      { type: 'goal.create', goalId: 'g1', objective: 'source goal', time: 1000 },
+      { type: 'forked', time: 2000 },
+    ];
+
+    expect(projectColdAgentFeed(inherited).goal).toBeUndefined();
+    expect(
+      projectColdAgentFeed([
+        ...inherited,
+        { type: 'goal.create', goalId: 'g2', objective: 'new goal', time: 3000 },
+      ]).goal,
+    ).toMatchObject({ objective: 'new goal' });
+  });
+
   it('readColdSnapshot migrates legacy tool calls', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-migration-'));
     try {
@@ -4075,7 +4091,7 @@ describe('WireRecordCache', () => {
     }
   });
 
-  it('skips a corrupt trailing fragment but throws on a corrupt terminated line', async () => {
+  it('skips a corrupt trailing fragment and repairs a corrupt terminated line', async () => {
     const home = await mkdtemp(join(tmpdir(), 'wire-cache-corrupt-'));
     try {
       const a = userMessage('one', 1);
@@ -4089,8 +4105,9 @@ describe('WireRecordCache', () => {
         strictPath,
         `${JSON.stringify(a)}\n{"type":broken}\n${JSON.stringify(userMessage('two', 2))}\n`,
       );
-      await expect(cache.read(strictPath)).rejects.toThrow(/corrupted line 2/);
-      await expect(cache.read(strictPath)).rejects.toThrow(/corrupted line 2/);
+      await expect(cache.read(strictPath)).resolves.toEqual([a]);
+      await expect(cache.read(strictPath)).resolves.toEqual([a]);
+      await expect(readFile(strictPath, 'utf8')).resolves.toBe(`${JSON.stringify(a)}\n`);
 
       await writeFile(strictPath, wireText([a]));
       expect(await cache.read(strictPath)).toEqual([a]);

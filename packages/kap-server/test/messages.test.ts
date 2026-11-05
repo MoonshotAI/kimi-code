@@ -349,6 +349,35 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     expect(missing.body.code).toBe(40403);
   });
 
+  it('reads the valid prefix of a cold journal with a corrupt record', async () => {
+    const id = await createSession();
+    const session = getLiveSessionById(server!.core.accessor, id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    agent.accessor.get(IAgentContextMemoryService).append({
+      role: 'user',
+      content: [{ type: 'text', text: 'valid before corruption' }],
+    });
+    await agent.accessor.get(IWireService).flush();
+    const summary = await server!.core.accessor.get(ISessionIndex).get(id);
+    if (summary === undefined) throw new Error(`session ${id} summary not found`);
+    const wirePath = join(home as string, 'sessions', summary.workspaceId, id, 'agents', 'main', 'wire.jsonl');
+    const original = await readFile(wirePath, 'utf-8');
+    await writeFile(wirePath, `${original}${original.endsWith('\n') ? '' : '\n'}{"type":broken}\n`, 'utf-8');
+
+    await server!.close();
+    server = undefined;
+    await boot();
+
+    const { body } = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
+    expect(body.code).toBe(0);
+    expect(body.data.items.flatMap((message) => message.content)).toContainEqual({
+      type: 'text',
+      text: 'valid before corruption',
+    });
+  });
+
   it('applies wire migrations when reading cold message history', async () => {
     const id = await createSession();
     const session = getLiveSessionById(server!.core.accessor, id);

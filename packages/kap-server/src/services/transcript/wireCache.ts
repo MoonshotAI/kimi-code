@@ -1,4 +1,4 @@
-import { open, stat } from 'node:fs/promises';
+import { open, stat, truncate } from 'node:fs/promises';
 
 export interface ContextRecord {
   readonly type: string;
@@ -116,23 +116,35 @@ export class WireRecordCache {
     }
     let start = 0;
     let lineCount = entry.lineCount;
+    let corrupted = false;
     const parsed: ContextRecord[] = [];
     for (;;) {
       const nl = region.indexOf(0x0a, start);
       if (nl === -1) break;
+      let record: ContextRecord | undefined;
+      try {
+        record = parseWireLine(
+          region.subarray(start, nl).toString('utf8'),
+          wirePath,
+          lineCount + 1,
+        );
+      } catch {
+        corrupted = true;
+        break;
+      }
       lineCount += 1;
-      const record = parseWireLine(
-        region.subarray(start, nl).toString('utf8'),
-        wirePath,
-        lineCount,
-      );
       if (record !== undefined) parsed.push(record);
       start = nl + 1;
     }
     for (const record of parsed) entry.records.push(record);
     entry.lineCount = lineCount;
     entry.offset += start;
-    entry.tail = start === region.length ? EMPTY_BUFFER : Buffer.from(region.subarray(start));
+    if (corrupted) {
+      await truncate(wirePath, entry.offset);
+      entry.tail = EMPTY_BUFFER;
+    } else {
+      entry.tail = start === region.length ? EMPTY_BUFFER : Buffer.from(region.subarray(start));
+    }
   }
 
   private evict(wirePath: string, entry: WireCacheEntry): void {

@@ -255,10 +255,12 @@ export class SessionEventBroadcaster {
       this.sessions.set(sessionId, state);
     }
     state.targets.set(target, spec);
+    const isStillCold = () => this.sessions.get(sessionId) === state && state.detached === true;
     try {
       const service = this.opts.transcriptService;
       if (service !== undefined) {
         const roster = (await service.readColdRoster(sessionId)) ?? [];
+        if (!isStillCold()) return true;
         const backfill = new Set(
           Object.keys(spec).filter((agentId) => agentId !== '*' && gradeFor(spec, agentId) !== 'off'),
         );
@@ -271,6 +273,7 @@ export class SessionEventBroadcaster {
             service.readColdAgentFeed(sessionId, agentId),
             readColdTaskList(this.opts.core, sessionId, agentId),
           ]);
+          if (!isStillCold()) return true;
           const eventCreatedAt = new Date().toISOString();
           if (feed !== undefined) {
             const frames: BroadcastFrame[] = [
