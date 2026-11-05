@@ -13,6 +13,7 @@ import {
   type LlmRemoteErrorMessage,
 } from '#human/llm-requester/errors';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
+import { isTransientHttpStatus } from '#human/llm/protocol/rules/status';
 import type { LlmErrorDiagnostics } from '#human/llm/response';
 
 export {
@@ -61,8 +62,6 @@ function codeForStatusError(statusCode: number | undefined): ProviderErrorCode {
   if (statusCode === 529) return PROVIDER_OVERLOADED_ERROR_CODE;
   return PROVIDER_API_ERROR_CODE;
 }
-
-const RETRYABLE_HTTP_STATUS_CODES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
 
 export class ChatProviderError extends Error2 {
   readonly diagnostics: LlmErrorDiagnostics | undefined;
@@ -119,11 +118,11 @@ export class APIStatusError extends ChatProviderError {
   constructor(
     statusCode: number | undefined,
     message: string,
+    retryable: boolean,
     requestId?: string | null,
     retryAfterMs?: number | null,
     diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     codeOrTraceId?: string | null,
-    retryable = statusCode !== undefined && RETRYABLE_HTTP_STATUS_CODES.has(statusCode),
     traceId?: string | null,
   ) {
     const diagnostics =
@@ -176,11 +175,11 @@ export class APIContextOverflowError extends APIStatusError {
     super(
       statusCode,
       message,
+      false,
       requestId,
       retryAfterMs,
       diagnosticsOrTraceId,
       CONTEXT_OVERFLOW_ERROR_CODE,
-      false,
       traceId,
     );
     this.name = 'APIContextOverflowError';
@@ -196,7 +195,7 @@ export class APIRequestTooLargeError extends APIStatusError {
     diagnosticsOrTraceId?: LlmErrorDiagnostics | string | null,
     traceId?: string | null,
   ) {
-    super(statusCode, message, requestId, retryAfterMs, diagnosticsOrTraceId, traceId, false);
+    super(statusCode, message, false, requestId, retryAfterMs, diagnosticsOrTraceId, traceId);
     this.name = 'APIRequestTooLargeError';
   }
 }
@@ -213,11 +212,11 @@ export class APIProviderRateLimitError extends APIStatusError {
     super(
       options === undefined ? 429 : options.statusCode,
       message,
+      true,
       requestId,
       retryAfterMs,
       diagnosticsOrTraceId,
       PROVIDER_RATE_LIMIT_ERROR_CODE,
-      true,
       traceId,
     );
     this.name = 'APIProviderRateLimitError';
@@ -236,11 +235,11 @@ export class APIProviderQuotaExhaustedError extends APIStatusError {
     super(
       options === undefined ? 429 : options.statusCode,
       message,
+      false,
       requestId,
       retryAfterMs,
       diagnosticsOrTraceId,
       PROVIDER_API_ERROR_CODE,
-      false,
       traceId,
     );
     this.name = 'APIProviderQuotaExhaustedError';
@@ -259,11 +258,11 @@ export class APIProviderOverloadedError extends APIStatusError {
     super(
       statusCode,
       message,
+      true,
       requestId,
       retryAfterMs,
       diagnosticsOrTraceId,
       PROVIDER_OVERLOADED_ERROR_CODE,
-      true,
       traceId,
     );
     this.name = 'APIProviderOverloadedError';
@@ -379,6 +378,7 @@ export function normalizeAPIStatusError(
   return new APIStatusError(
     statusCode,
     appendThinkingEffortConfigHint(statusCode, message),
+    isTransientHttpStatus(statusCode),
     requestId,
     retryAfterMs,
     diagnostics,
@@ -597,11 +597,11 @@ export function errorFromLlmMessage(
       return new APIStatusError(
         error.statusCode,
         error.message,
+        error.retryable,
         error.requestId,
         error.retryAfterMs,
         diagnostics,
         undefined,
-        error.retryable,
         traceIdFromHeadersRecord(error.headers),
       );
     case 'empty_response':

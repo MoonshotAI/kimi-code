@@ -40,6 +40,10 @@ import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selecto
 import { kimiCodePluginMarketplaceUrl } from '#/constant/app';
 import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import { promptApiKey, promptPlatformSelection } from '#/tui/commands/prompts';
+import { applyTranscriptConfigChoice } from '#/tui/commands/config';
+import type { SlashCommandHost } from '#/tui/commands/dispatch';
+import type { TranscriptConfig } from '#/tui/config';
+import { isReadonlyBash } from '#/utils/readonly-bash';
 import {
   AgentSwarmProgressComponent,
   agentSwarmGridHeightForTerminalRows,
@@ -240,6 +244,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      transcript: { groupTools: 'auto', groupThinking: true },
       statusLine: { items: null, command: null },
     },
     version: '0.0.0-test',
@@ -479,6 +484,28 @@ function makeActiveGoalSnapshot(): GoalSnapshot {
 
 function renderTranscript(driver: MessageDriver): string {
   return driver.state.transcriptContainer.render(120).join('\n');
+}
+
+function clickTranscriptLine(driver: MessageDriver, needle: string): void {
+  const width = 120;
+  const lines = driver.state.transcriptContainer.render(width);
+  const y = lines.findIndex((line) => stripSgr(line).includes(needle));
+  expect(y).toBeGreaterThanOrEqual(0);
+  const event: TuiMouseEvent = {
+    type: 'click',
+    button: 'left',
+    x: 2,
+    y,
+    screenX: 2,
+    screenY: y,
+    width,
+    height: lines.length,
+    shift: false,
+    alt: false,
+    ctrl: false,
+    clickCount: 1,
+  };
+  driver.state.transcriptContainer.handleMouse(event);
 }
 
 function turnSwarmModeOn(driver: MessageDriver): void {
@@ -4403,6 +4430,37 @@ command = "vim"
     expect(harness.deleteFile).toHaveBeenCalledTimes(1);
   });
 
+  it('stops transcript group timers during shutdown', async () => {
+    const { driver } = await makeDriver();
+    vi.useFakeTimers();
+    try {
+      driver.state.transcriptContainer.setPresentationOptions({
+        fullscreen: true,
+        groupTools: 'auto',
+        groupThinking: true,
+      });
+      driver.state.transcriptContainer.addChild(new ToolCallComponent(
+        { id: 'shutdown-live', name: 'Read', args: { path: '/work/a.ts' } },
+        undefined,
+        driver.state.ui,
+        '/work',
+      ));
+      driver.state.transcriptContainer.setTurnActive(true);
+      renderTranscript(driver);
+
+      const stopped = (driver as unknown as { stop(): Promise<void> }).stop();
+      await vi.advanceTimersByTimeAsync(1_500);
+      await stopped;
+      vi.mocked(driver.state.ui.requestRender).mockClear();
+      vi.advanceTimersByTime(200);
+
+      expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      driver.state.transcriptContainer.clear();
+    }
+  });
+
   it('force-exits instead of waiting for shutdown hooks when Ctrl+C is pressed during stop', async () => {
     const { driver } = await makeDriver();
     const stopUiForExit = vi
@@ -8011,7 +8069,7 @@ capabilities = ["image_in", "video_in"]
     );
     const session = makeSession({ runShellCommand });
     const { driver } = await makeDriver(session);
-    driver.state.toolOutputExpanded = true;
+    driver.state.transcriptContainer.toggleToolOutputExpansion();
     driver.state.appState.inputMode = 'bash';
     driver.state.editor.inputMode = 'bash';
 
@@ -8678,7 +8736,7 @@ capabilities = ["image_in", "video_in"]
     driver.state.editor.onToggleToolExpand?.();
 
     const expanded = driver.state.transcriptContainer.render(120).map(stripSgr).join('\n');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
     expect(expanded).toContain('Keep the src/tui compaction notes.');
   });
 
@@ -8687,7 +8745,7 @@ capabilities = ["image_in", "video_in"]
     const sendQueued = vi.fn();
 
     driver.state.editor.onToggleToolExpand?.();
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
 
     driver.sessionEventHandler.handleEvent(
       {
@@ -9443,7 +9501,7 @@ capabilities = ["image_in", "video_in"]
 
     requestRender.mockClear();
     driver.state.editor.onToggleToolExpand?.();
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
     expect(panel.render(80).map(stripSgr)).toEqual(tiny);
   });
 
@@ -13054,7 +13112,7 @@ capabilities = ["image_in", "video_in"]
 
   it('renders newly streamed thinking expanded when ctrl+o toggle was already active', async () => {
     const { driver } = await makeDriver();
-    driver.state.toolOutputExpanded = true;
+    driver.state.transcriptContainer.toggleToolOutputExpansion();
 
     const longThinking = ['t1', 't2', 't3', 't4', 't5', 't6', 't7'].join('\n');
     driver.sessionEventHandler.handleEvent(
@@ -13515,6 +13573,90 @@ describe('transcript step and assistant folding', () => {
     expect(assistantEntries).toHaveLength(cycles);
   });
 
+  async function makeGroupingDriver() {
+    const base = makeStartupInput();
+    const startup = {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const },
+    };
+    const { driver, session } = await makeDriver(makeSession(), {}, startup);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    return { driver };
+  }
+
+  it('keeps all assistant replies when transcript grouping is active', async () => {
+    const { driver } = await makeGroupingDriver();
+    driver.handleUserInput('fold me');
+    const cycles = 10;
+    driveSteps(driver, cycles);
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'turn.ended',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        reason: 'completed',
+      } as Event,
+      vi.fn(),
+    );
+
+    const children = driver.state.transcriptContainer.children;
+    expect(children.filter((child) => child instanceof AssistantMessageComponent)).toHaveLength(cycles);
+    expect(children.filter((child) => child instanceof StepSummaryComponent)).toHaveLength(0);
+  });
+
+  it('does not destroy steps when transcript grouping is active', async () => {
+    const { driver } = await makeGroupingDriver();
+    expect(driver.state.ui.mode).toBe('fullscreen');
+    driver.handleUserInput('keep every step');
+    driveSteps(driver, 35);
+
+    const children = driver.state.transcriptContainer.children;
+    expect(children.filter((child) => child instanceof ToolCallComponent)).toHaveLength(35);
+    expect(children.filter((child) => child instanceof StepSummaryComponent)).toHaveLength(0);
+  });
+
+  it('keeps thirty-step merging in fullscreen when every grouping option is off', async () => {
+    const base = makeStartupInput();
+    const startup = {
+      ...base,
+      tuiConfig: {
+        ...base.tuiConfig,
+        tuiMode: 'fullscreen' as const,
+        transcript: { groupTools: 'off' as const, groupThinking: false },
+      },
+    };
+    const { driver, session } = await makeDriver(makeSession(), {}, startup);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    expect(driver.state.ui.mode).toBe('fullscreen');
+    driver.handleUserInput('merge old steps');
+    driveSteps(driver, 35);
+
+    const children = driver.state.transcriptContainer.children;
+    expect(children.filter((child) => child instanceof ToolCallComponent))
+      .toHaveLength(TRANSCRIPT_KEEP_RECENT_STEPS);
+    expect(children.filter((child) => child instanceof StepSummaryComponent)).toHaveLength(1);
+  });
+
+  it('reports transcript display settings at startup only in fullscreen', async () => {
+    const base = makeStartupInput();
+    const fullscreen = await makeDriver(makeSession(), {}, {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const },
+    });
+    expect(fullscreen.harness.track).toHaveBeenCalledWith('transcript_display_settings', {
+      group_tools: 'auto',
+      group_thinking: true,
+      source: 'startup',
+    });
+
+    const regular = await makeDriver();
+    expect(regular.harness.track)
+      .not.toHaveBeenCalledWith('transcript_display_settings', expect.anything());
+  });
+
   it('does not fold a turn within the caps', async () => {
     const { driver } = await makeDriver();
     driver.handleUserInput('small turn');
@@ -13636,6 +13778,412 @@ describe('footer ctrl+o hint', () => {
 
     driver.toggleToolOutputExpansion();
     expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
+  });
+
+  it('hides the hint while transcript grouping is active and keeps it when grouping is off', async () => {
+    async function fullscreenDriver(transcript: { groupTools: 'auto' | 'off'; groupThinking: boolean }) {
+      const base = makeStartupInput();
+      const { driver, session } = await makeDriver(makeSession(), {}, {
+        ...base,
+        tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const, transcript },
+      });
+      await driver.setSession(session);
+      await driver.syncRuntimeState(session);
+      emitBashResult(driver, 'call_bash', ['line1', 'line2', 'line3', 'line4', 'Tests 5 passed'].join('\n'));
+      return driver;
+    }
+
+    const grouped = await fullscreenDriver({ groupTools: 'auto', groupThinking: true });
+    expect(stripSgr(renderTranscript(grouped))).not.toContain('line1');
+    expect(renderFooterLine1(grouped)).not.toContain('ctrl+o');
+    grouped.toggleToolOutputExpansion();
+    expect(stripSgr(renderTranscript(grouped))).toContain('line1');
+    expect(renderFooterLine1(grouped)).not.toContain('ctrl+o');
+
+    const ungrouped = await fullscreenDriver({ groupTools: 'off', groupThinking: false });
+    expect(renderFooterLine1(ungrouped)).toContain('ctrl+o expand');
+  });
+});
+
+describe('activity bar Ctrl+B hint', () => {
+  it.each([false, true])('handles run_in_background=%s without changing the card hint contract', async (runInBackground) => {
+    const base = makeStartupInput();
+    const startup = {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const },
+    };
+    const { driver, session } = await makeDriver(makeSession(), {}, startup);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    const activityLine = (): string => stripSgr(driver.state.activityContainer.render(200).join('\n'));
+
+    try {
+      vi.useFakeTimers();
+      driver.handleUserInput('run a slow command');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_slow',
+          name: 'Bash',
+          args: { command: 'sleep 30', run_in_background: runInBackground },
+        } as Event,
+        vi.fn(),
+      );
+      vi.advanceTimersByTime(9_999);
+      expect(activityLine()).not.toContain('Press Ctrl+B to run in background');
+
+      vi.advanceTimersByTime(1);
+      if (runInBackground) {
+        expect(activityLine()).not.toContain('Press Ctrl+B to run in background');
+      } else {
+        expect(activityLine()).toContain('Working… · Press Ctrl+B to run in background');
+        expect(activityLine()).not.toContain('Tip: Press Ctrl+B');
+        expect(stripSgr(driver.state.footer.render(200)[0] ?? ''))
+          .not.toContain('Press Ctrl+B to run in background');
+      }
+
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.result',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_slow',
+          output: 'done',
+          isError: false,
+        } as Event,
+        vi.fn(),
+      );
+      expect(activityLine()).not.toContain('Press Ctrl+B to run in background');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.ended',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          reason: 'completed',
+        } as Event,
+        vi.fn(),
+      );
+    } finally {
+      vi.useRealTimers();
+      driver.state.transcriptContainer.clear();
+    }
+  });
+  it.each([
+    [
+      'step retry',
+      {
+        type: 'turn.step.retrying',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        step: 1,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 6,
+        delayMs: 30_000,
+        errorName: 'RateLimitError',
+        errorMessage: 'too many requests',
+        statusCode: 429,
+      } as Event,
+      'Retrying (2/6) · RateLimitError',
+    ],
+    [
+      'compaction',
+      { type: 'compaction.started', agentId: 'main', sessionId: 'ses-1', trigger: 'auto' } as Event,
+      'Compacting…',
+    ],
+  ])('keeps the %s label beside the hint', async (_mode, event, label) => {
+    const base = makeStartupInput();
+    const startup = {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const },
+    };
+    const { driver, session } = await makeDriver(makeSession(), {}, startup);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    const activityLine = (): string => stripSgr(driver.state.activityContainer.render(200).join('\n'));
+
+    try {
+      vi.useFakeTimers();
+      driver.handleUserInput('run a slow command');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_slow',
+          name: 'Bash',
+          args: { command: 'sleep 30' },
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(event, vi.fn());
+      vi.advanceTimersByTime(9_999);
+      expect(activityLine()).toContain(label);
+      expect(activityLine()).not.toContain('Press Ctrl+B to run in background');
+
+      vi.advanceTimersByTime(1);
+      const hinted = activityLine();
+      expect(hinted).toContain(label);
+      expect(hinted).toContain('Press Ctrl+B to run in background');
+      expect(hinted).not.toContain('Working…');
+    } finally {
+      vi.useRealTimers();
+      driver.state.transcriptContainer.clear();
+    }
+  });
+  it('keeps the random tip when every grouping option is off', async () => {
+    const base = makeStartupInput();
+    const startup = {
+      ...base,
+      tuiConfig: {
+        ...base.tuiConfig,
+        tuiMode: 'fullscreen' as const,
+        transcript: { groupTools: 'off' as const, groupThinking: false },
+      },
+    };
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {}, startup);
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    const activityLine = (): string => stripSgr(driver.state.activityContainer.render(200).join('\n'));
+
+    try {
+      vi.useFakeTimers();
+      driver.handleUserInput('run a slow command');
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.call.started',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_without_grouping',
+          name: 'Bash',
+          args: { command: 'sleep 30' },
+        } as Event,
+        vi.fn(),
+      );
+      vi.advanceTimersByTime(9_999);
+      const randomTip = activityLine().split(' · Tip: ').at(-1);
+      expect(randomTip).toBeTruthy();
+
+      vi.advanceTimersByTime(1);
+      expect(activityLine()).toContain(` · Tip: ${randomTip ?? ''}`);
+      expect(activityLine()).not.toContain('Press Ctrl+B to run in background');
+
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'tool.result',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          toolCallId: 'call_without_grouping',
+          output: 'done',
+          isError: false,
+        } as Event,
+        vi.fn(),
+      );
+      driver.sessionEventHandler.handleEvent(
+        {
+          type: 'turn.ended',
+          agentId: 'main',
+          sessionId: 'ses-1',
+          turnId: 1,
+          reason: 'completed',
+        } as Event,
+        vi.fn(),
+      );
+    } finally {
+      vi.useRealTimers();
+      driver.state.transcriptContainer.clear();
+    }
+  });
+
+  const AUTO: TranscriptConfig = { groupTools: 'auto', groupThinking: true };
+
+  function hintCounts(driver: MessageDriver): { readonly transcript: number; readonly activity: number } {
+    const hint = 'Press Ctrl+B to run in background';
+    return {
+      transcript: countOccurrences(stripSgr(renderTranscript(driver)), hint),
+      activity: countOccurrences(stripSgr(driver.state.activityContainer.render(200).join('\n')), hint),
+    };
+  }
+
+  function emitSlowBash(driver: MessageDriver, event: Record<string, unknown>): void {
+    driver.sessionEventHandler.handleEvent(
+      { agentId: 'main', sessionId: 'ses-1', turnId: 1, toolCallId: 'call_slow', ...event } as Event,
+      vi.fn(),
+    );
+  }
+
+  async function withTenSecondBash(
+    transcript: TranscriptConfig,
+    command: string,
+    check: (driver: MessageDriver) => Promise<void> | void,
+    opening: 'started' | 'preview' = 'started',
+  ): Promise<void> {
+    process.env['KIMI_CODE_HOME'] = await makeTempHome();
+    const base = makeStartupInput();
+    const { driver, session } = await makeDriver(makeSession(), {}, {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const, transcript },
+    });
+    await driver.setSession(session);
+    await driver.syncRuntimeState(session);
+    try {
+      vi.useFakeTimers();
+      driver.handleUserInput('run a slow command');
+      const events = opening === 'preview'
+        ? [{ type: 'tool.call.delta', name: 'Bash', argumentsPart: JSON.stringify({ command }) }]
+        : [
+            { type: 'tool.call.started', name: 'Bash', args: { command } },
+            { type: 'tool.progress', update: { kind: 'stdout', text: 'out-1\nout-2\nout-3\n' } },
+          ];
+      for (const event of events) emitSlowBash(driver, event);
+      vi.advanceTimersByTime(9_999);
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 0 });
+      vi.advanceTimersByTime(1);
+      await check(driver);
+    } finally {
+      vi.useRealTimers();
+      driver.state.transcriptContainer.clear();
+    }
+  }
+
+  it('shows the hint once, in the card, when only thinking folds', async () => {
+    await withTenSecondBash({ groupTools: 'off', groupThinking: true }, 'sleep 30', (driver) => {
+      expect(hintCounts(driver)).toEqual({ transcript: 1, activity: 0 });
+    });
+  });
+
+  it.each([
+    ['npm install', false, { transcript: 1, activity: 0 }],
+    ['ls -la', true, { transcript: 0, activity: 1 }],
+  ] as const)('shows the hint for `%s` once when only read-only tools fold', async (command, readonly, counts) => {
+    expect(isReadonlyBash(command)).toBe(readonly);
+    await withTenSecondBash({ groupTools: 'explore', groupThinking: true }, command, (driver) => {
+      expect(hintCounts(driver)).toEqual(counts);
+    });
+  });
+
+  it.each([
+    ['ctrl+o', (driver: MessageDriver) => {
+      driver.toggleToolOutputExpansion();
+    }],
+    ['a click on the group', (driver: MessageDriver) => {
+      clickTranscriptLine(driver, 'sleep 30');
+    }],
+  ])('keeps the hint only on the activity line after %s opens the group', async (_name, open) => {
+    await withTenSecondBash(AUTO, 'sleep 30', (driver) => {
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+      expect(stripSgr(renderTranscript(driver))).not.toContain('out-1');
+
+      open(driver);
+      expect(stripSgr(renderTranscript(driver))).toContain('out-1');
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+    });
+  });
+
+  it.each([
+    ['a click', (driver: MessageDriver) => {
+      clickTranscriptLine(driver, 'out-1');
+    }],
+    ['ctrl+o twice', (driver: MessageDriver) => {
+      driver.toggleToolOutputExpansion();
+      driver.toggleToolOutputExpansion();
+    }],
+  ])('moves the hint from an opened card to the activity line when %s folds the card', async (_name, close) => {
+    await withTenSecondBash({ groupTools: 'off', groupThinking: true }, 'sleep 30', async (driver) => {
+      expect(stripSgr(renderTranscript(driver))).not.toContain('out-1');
+      clickTranscriptLine(driver, 'out-3');
+      await applyTranscriptConfigChoice(driver as unknown as SlashCommandHost, AUTO);
+      expect(stripSgr(renderTranscript(driver))).toContain('out-1');
+      expect(hintCounts(driver)).toEqual({ transcript: 1, activity: 0 });
+
+      close(driver);
+      expect(stripSgr(renderTranscript(driver))).not.toContain('out-1');
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+    });
+  });
+
+  it.each([
+    ['thinking still folds', { groupTools: 'off', groupThinking: true }],
+    ['nothing folds', { groupTools: 'off', groupThinking: false }],
+  ] as const)('moves the hint when /settings stops tool folding while %s, and back', async (_name, unfolded) => {
+    await withTenSecondBash(AUTO, 'sleep 30', async (driver) => {
+      const host = driver as unknown as SlashCommandHost;
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+
+      await applyTranscriptConfigChoice(host, unfolded);
+      expect(hintCounts(driver)).toEqual({ transcript: 1, activity: 0 });
+
+      await applyTranscriptConfigChoice(host, AUTO);
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+    });
+  });
+
+  it.each([
+    ['only read-only tools fold', { groupTools: 'explore', groupThinking: true }, { transcript: 1, activity: 0 }],
+    ['every tool folds', AUTO, { transcript: 0, activity: 1 }],
+  ] as const)('keeps one hint when a folded argument preview becomes `npm install` while %s', async (_name, transcript, counts) => {
+    await withTenSecondBash(transcript, 'npm install', (driver) => {
+      expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
+
+      emitSlowBash(driver, { type: 'tool.call.started', name: 'Bash', args: { command: 'npm install' } });
+      expect(hintCounts(driver)).toEqual(counts);
+    }, 'preview');
+  });
+
+  it('keeps ctrl+o expansion to the last three turns when a session replays', async () => {
+    const turns = [1, 2, 3, 4, 5];
+    const replay = turns.flatMap((turn) => [
+      { role: 'user', content: [{ type: 'text', text: `question ${turn}` }], toolCalls: [], origin: { kind: 'user' } },
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [{ type: 'function', id: `call_${turn}`, name: 'Bash', arguments: JSON.stringify({ command: `echo ${turn}` }) }],
+      },
+      { role: 'tool', toolCallId: `call_${turn}`, content: [{ type: 'text', text: `output of turn ${turn}` }], toolCalls: [] },
+      { role: 'assistant', content: [{ type: 'text', text: `answer ${turn}` }], toolCalls: [] },
+    ]).map((message, index) => ({ type: 'message', time: index + 1, message }));
+    const session = makeSession();
+    (session.getResumeState as ReturnType<typeof vi.fn>).mockReturnValue({
+      sessionMetadata: {},
+      agents: {
+        main: {
+          config: { modelCapabilities: { max_context_tokens: 100 }, modelAlias: 'k2' },
+          plan: null,
+          permission: { mode: 'manual' },
+          swarmMode: false,
+          context: { history: [], tokenCount: 0 },
+          background: [],
+          toolStore: {},
+          replay,
+        },
+      },
+    });
+    const base = makeStartupInput();
+    const { driver } = await makeDriver(session, {}, {
+      ...base,
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const, transcript: AUTO },
+    });
+    try {
+      driver.toggleToolOutputExpansion();
+      await driver.switchToSession(session as unknown as Session, 'Resumed session.');
+
+      const transcript = stripSgr(renderTranscript(driver));
+      expect(turns.map((turn) => transcript.includes(`$ echo ${turn}`))).toEqual([true, true, true, true, true]);
+      expect(turns.map((turn) => transcript.includes(`output of turn ${turn}`)))
+        .toEqual([false, false, true, true, true]);
+    } finally {
+      driver.state.transcriptContainer.clear();
+    }
   });
 });
 
@@ -14220,8 +14768,6 @@ describe('KimiTUI editor replacement disposal', () => {
 });
 
 describe('transcript fold block clicks', () => {
-  const transcriptWidth = 120;
-
   function hiddenOutput(name: string): string {
     return [`${name}-body`, `${name}-mid`, `${name}-more`, `${name}-tail`].join('\n');
   }
@@ -14262,27 +14808,6 @@ describe('transcript fold block clicks', () => {
     return stripSgr(driver.state.footer.render(160)[0] ?? '');
   }
 
-  function clickTranscriptLine(driver: MessageDriver, needle: string): void {
-    const lines = driver.state.transcriptContainer.render(transcriptWidth);
-    const y = lines.findIndex((line) => stripSgr(line).includes(needle));
-    expect(y).toBeGreaterThanOrEqual(0);
-    const event: TuiMouseEvent = {
-      type: 'click',
-      button: 'left',
-      x: 2,
-      y,
-      screenX: 2,
-      screenY: y,
-      width: transcriptWidth,
-      height: lines.length,
-      shift: false,
-      alt: false,
-      ctrl: false,
-      clickCount: 1,
-    };
-    driver.state.transcriptContainer.handleMouse(event);
-  }
-
   it('opens only the clicked tool card while the footer still offers expand', async () => {
     const { driver } = await makeDriver();
     emitBash(driver, 'call_alpha', 'echo alpha', hiddenOutput('alpha'));
@@ -14299,7 +14824,7 @@ describe('transcript fold block clicks', () => {
     const opened = stripSgr(renderTranscript(driver));
     expect(opened).toContain('alpha-body');
     expect(opened).not.toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
 
     clickTranscriptLine(driver, 'alpha-body');
@@ -14307,7 +14832,7 @@ describe('transcript fold block clicks', () => {
     const closed = stripSgr(renderTranscript(driver));
     expect(closed).not.toContain('alpha-body');
     expect(closed).not.toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
   });
 
@@ -14322,7 +14847,7 @@ describe('transcript fold block clicks', () => {
     const expanded = stripSgr(renderTranscript(driver));
     expect(expanded).toContain('alpha-body');
     expect(expanded).toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
     expect(renderFooterLine1(driver)).toContain('ctrl+o collapse');
 
     clickTranscriptLine(driver, 'alpha-body');
@@ -14330,7 +14855,7 @@ describe('transcript fold block clicks', () => {
     const oneClosed = stripSgr(renderTranscript(driver));
     expect(oneClosed).not.toContain('alpha-body');
     expect(oneClosed).toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
     expect(renderFooterLine1(driver)).toContain('ctrl+o collapse');
 
     driver.toggleToolOutputExpansion();
@@ -14338,7 +14863,7 @@ describe('transcript fold block clicks', () => {
     const collapsed = stripSgr(renderTranscript(driver));
     expect(collapsed).not.toContain('alpha-body');
     expect(collapsed).not.toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
   });
 
@@ -14366,7 +14891,7 @@ describe('transcript fold block clicks', () => {
     const oldClosed = stripSgr(renderTranscript(driver));
     expect(oldClosed).not.toContain('old-body');
     expect(oldClosed).toContain('recent-body');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
 
     clickTranscriptLine(driver, 'old-tail');
     expect(stripSgr(renderTranscript(driver))).not.toContain('old-body');
@@ -14375,7 +14900,7 @@ describe('transcript fold block clicks', () => {
     driver.toggleToolOutputExpansion();
     expect(stripSgr(renderTranscript(driver))).not.toContain('old-body');
     expect(stripSgr(renderTranscript(driver))).not.toContain('recent-body');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
 
     driver.toggleToolOutputExpansion();
     const reopened = stripSgr(renderTranscript(driver));
@@ -14400,7 +14925,7 @@ describe('transcript fold block clicks', () => {
     expect(transcript).toContain('plain user sentence');
     expect(transcript).not.toContain('alpha-body');
     expect(transcript).toContain('alpha-tail');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
   });
 
@@ -14451,11 +14976,11 @@ describe('transcript fold block clicks', () => {
     driver.toggleToolOutputExpansion();
     expect(stripSgr(renderTranscript(driver))).toContain('think-four');
     expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
 
     driver.toggleToolOutputExpansion();
     expect(stripSgr(renderTranscript(driver))).not.toContain('think-four');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
   });
 
@@ -14470,7 +14995,7 @@ describe('transcript fold block clicks', () => {
     const opened = stripSgr(renderTranscript(driver));
     expect(opened).toContain('alpha-body');
     expect(opened).toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
     expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
   });
 
@@ -14487,7 +15012,7 @@ describe('transcript fold block clicks', () => {
     const closed = stripSgr(renderTranscript(driver));
     expect(closed).not.toContain('alpha-body');
     expect(closed).not.toContain('beta-body');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
     expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
   });
 
@@ -14514,7 +15039,7 @@ describe('transcript fold block clicks', () => {
     const closed = stripSgr(renderTranscript(driver));
     expect(closed).not.toContain(marker);
     expect(closed).toContain('ctrl+o to expand');
-    expect(driver.state.toolOutputExpanded).toBe(false);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(false);
   });
 
   it('closes a wide tool card that mounted while the transcript was expanded', async () => {
@@ -14530,6 +15055,6 @@ describe('transcript fold block clicks', () => {
     const closed = stripSgr(renderTranscript(driver));
     expect(closed).not.toContain('wide-tail');
     expect(closed).toContain('wide-head');
-    expect(driver.state.toolOutputExpanded).toBe(true);
+    expect(driver.state.transcriptContainer.toolOutputExpanded).toBe(true);
   });
 });

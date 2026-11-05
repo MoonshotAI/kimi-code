@@ -27,6 +27,7 @@ export class AssistantMessageComponent implements Component {
   private lastText = '';
   private lastTransient = false;
   private showBullet: boolean;
+  private projectionVersion = 0;
 
   private renderCache: { width: number; lines: string[] } | undefined;
 
@@ -51,6 +52,9 @@ export class AssistantMessageComponent implements Component {
 
     if (displayText === this.lastText && transient === this.lastTransient) return;
 
+    if ((this.lastText.length === 0) !== (displayText.length === 0)) {
+      this.projectionVersion += 1;
+    }
     this.lastText = displayText;
     this.lastTransient = transient;
     this.markRenderDirty();
@@ -82,6 +86,14 @@ export class AssistantMessageComponent implements Component {
     }
 
     this.markdown.setText(displayText);
+  }
+
+  get transcriptProjectionVersion(): number {
+    return this.projectionVersion;
+  }
+
+  get hasVisibleContent(): boolean {
+    return this.lastText.length > 0;
   }
 
   invalidate(): void {

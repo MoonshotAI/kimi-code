@@ -3,6 +3,7 @@
  */
 
 import { performance } from "node:perf_hooks";
+import { type AnimationClock, AnimationFrameScheduler } from "./animation-frame.ts";
 import { isKeyRelease, matchesKey } from "./keys.ts";
 import type { Terminal } from "./terminal.ts";
 import {
@@ -487,6 +488,17 @@ export interface TUI extends Component {
 	stop(options?: TuiStopOptions): void;
 	renderNow(force?: boolean): void;
 	requestRender(force?: boolean): void;
+	/**
+	 * Works like the browser's `window.requestAnimationFrame`: calls `callback` once, on the next
+	 * frame, with that frame's timestamp in milliseconds on the same clock as `performance.now()`.
+	 * Request again from inside the callback to keep animating. Frames are at least
+	 * `ANIMATION_FRAME_INTERVAL_MS` apart, and every callback of a frame gets the same timestamp.
+	 * A frame does not render by itself: call `requestRender()` when the callback changes what is
+	 * drawn. Returns a handle for `cancelAnimationFrame`.
+	 */
+	requestAnimationFrame(callback: (time: number) => void): number;
+	/** Cancels a request that has not run yet. A handle that already ran or never existed is ignored. */
+	cancelAnimationFrame(handle: number): void;
 	addInputListener(listener: TuiInputListener): () => void;
 	removeInputListener(listener: TuiInputListener): void;
 	onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void;
@@ -526,6 +538,7 @@ export abstract class TuiBase extends Container implements TUI {
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
+	private readonly animationFrames: AnimationFrameScheduler;
 	private showHardwareCursor = false;
 	private clearOnShrink = false;
 	protected fullRedrawCount = 0;
@@ -550,10 +563,11 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 	private overlayFocusRestore: OverlayFocusRestoreState = { status: "inactive" };
 
-	constructor(terminal: Terminal, showHardwareCursor?: boolean, logDirectory?: string) {
+	constructor(terminal: Terminal, showHardwareCursor?: boolean, logDirectory?: string, animationClock?: AnimationClock) {
 		super();
 		this.terminal = terminal;
 		this.logDirectory = logDirectory;
+		this.animationFrames = new AnimationFrameScheduler(animationClock);
 		if (showHardwareCursor !== undefined) {
 			this.showHardwareCursor = showHardwareCursor;
 		}
@@ -972,6 +986,7 @@ export abstract class TuiBase extends Container implements TUI {
 			this.terminal.write("\x1b[?2031h");
 		}
 		this.queryCellSize();
+		this.animationFrames.resume();
 		this.requestRender();
 	}
 
@@ -1017,6 +1032,7 @@ export abstract class TuiBase extends Container implements TUI {
 		this.stopped = true;
 		process.off("exit", this.exitRestoreHandler);
 		this.cancelRenderTimer();
+		this.animationFrames.pause();
 		if (this.terminalColorSchemeNotificationsEnabled) {
 			this.terminal.write("\x1b[?2031l");
 		}
@@ -1032,6 +1048,14 @@ export abstract class TuiBase extends Container implements TUI {
 		this.cancelRenderTimer();
 		this.lastRenderAt = performance.now();
 		this.doRender();
+	}
+
+	requestAnimationFrame(callback: (time: number) => void): number {
+		return this.animationFrames.requestAnimationFrame(callback);
+	}
+
+	cancelAnimationFrame(handle: number): void {
+		this.animationFrames.cancelAnimationFrame(handle);
 	}
 
 	requestRender(force = false): void {

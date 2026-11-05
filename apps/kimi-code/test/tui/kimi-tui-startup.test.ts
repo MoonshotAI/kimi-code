@@ -123,6 +123,7 @@ function makeStartupInput(
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      transcript: { groupTools: 'auto', groupThinking: true },
       statusLine: { items: null, command: null },
       ...tuiConfig,
     },
