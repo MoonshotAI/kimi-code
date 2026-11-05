@@ -1911,7 +1911,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       if (live !== undefined) {
         await closeSessionById(this.engineAccessor, sessionId);
       }
-      const handle = await resumeSessionById(this.engineAccessor, sessionId);
+      const handle = await resumeSessionById(this.engineAccessor, sessionId, { forceRetry: true });
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
       const main = handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
       await main?.accessor.get(IAgentPluginService).refreshSessionStart();

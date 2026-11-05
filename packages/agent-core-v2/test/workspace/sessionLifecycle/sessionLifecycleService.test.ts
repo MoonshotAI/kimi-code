@@ -91,6 +91,31 @@ describe('SessionLifecycleService', () => {
     expect(doResume).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    { code: 'ENOENT', expected: 'environment.invalid_cwd' },
+    { code: 'ENOTDIR', expected: 'environment.invalid_cwd' },
+    { code: undefined, expected: 'environment.unavailable' },
+  ])('classifies remote stat failures with code $code as $expected', async ({ code, expected }) => {
+    const summary = summaryFixture();
+    const { service } = resumeService(summary);
+    const error = Object.assign(new Error('remote stat failed'), { code });
+    const lease = {
+      environment: { fs: { stat: vi.fn().mockRejectedValue(error) } },
+      dispose: vi.fn(),
+    };
+    Object.assign(service as unknown as Record<string, unknown>, {
+      environments: { acquireWhenReady: async () => lease },
+      acquireWorkdir: vi.fn(),
+    });
+
+    await expect(
+      (service as unknown as {
+        openWorkdir(environment: { environmentId: string; cwd: string }): Promise<unknown>;
+      }).openWorkdir({ environmentId: 'remote', cwd: '/workspace' }),
+    ).rejects.toMatchObject({ code: expected });
+    expect(lease.dispose).toHaveBeenCalledOnce();
+  });
+
   it('allows a real retry after the environment binding changes', async () => {
     const summary = summaryFixture();
     const { service } = resumeService(summary);
