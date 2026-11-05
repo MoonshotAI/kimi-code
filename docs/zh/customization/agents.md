@@ -10,7 +10,7 @@ Kimi Code CLI 内置三种 subagent，开箱即用，分别面向不同任务形
 
 - **`coder`**：默认 subagent，通用软件工程助手，可以读写文件、执行命令、搜索代码并落地具体改动。
 - **`explore`**：代码库探索专用，只做只读操作，不修改任何文件。适合在不改动文件的前提下快速搜索、阅读和总结仓库。
-- **`plan`**：实现规划与架构设计专用，连 Shell 命令都不提供，专注于"想清楚怎么做"而不是"动手做"。
+- **`plan`**：实现规划与架构设计专用，只能用 Bash 做只读的文件搜索和文本读取，不能修改文件。
 
 三种类型之外，使用 subagent 还有三条约定，分别关于工具边界、委派深度和完成时机：
 
@@ -98,9 +98,8 @@ description: 严格的代码审查 Agent，按严重度分级报告问题
 whenToUse: 代码评审与 PR 检查
 override: false
 tools:
-  - Read
-  - Grep
-  - Glob
+  - ReadMediaFile
+  - Bash
   - mcp__github__*
 disallowedTools:
   - Bash
@@ -125,7 +124,7 @@ disallowedTools:
 
 - 在 `mcp__` 模式之外使用通配符：`disallowedTools` 里单独的 `*` 什么也禁不掉。
 - 写不全的 `mcp__` 字面量：`mcp__github` 匹配不到任何工具；匹配整个服务器要用 `mcp__github__*`。
-- 任何已注册或内置工具都没有的名字：通常是笔误，如把 `Read` 写成 `read`。
+- 任何已注册或内置工具都没有的名字：通常是笔误，如把 `ReadMediaFile` 写成 `readmediafile`。
 
 正文即 Agent 的系统提示词，每次构建提示词时都会作为模板渲染。`${var}` 占位符替换为实时上下文值：未知变量保持原样，单独的 `$` 没有特殊含义，上下文中缺失的变量渲染为空字符串。`${base_prompt}` 会在放置它的位置嵌入有效默认系统提示词（内置默认，或存在时为你的 `SYSTEM.md` 覆盖），因此文件可以包裹默认行为而不是替换它。如果文件替换默认提示词后仍要保留已启用 plugin 提供的指令，把 `${plugin_sections}` 放在希望出现这些指令的位置即可。可用变量见 [SYSTEM.md 变量表](#用-systemmd-覆盖-main-agent-的系统提示词)。
 

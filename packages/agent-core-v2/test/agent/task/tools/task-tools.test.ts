@@ -504,9 +504,15 @@ describe('TaskOutputTool', () => {
     expect(output).toContain('status: completed');
     expect(output).toContain('output_path: /tmp/session/tasks/bash-persist1/output.log');
     expect(output).toContain('full_output_available: true');
-    expect(output).toContain('full_output_tool: Read');
+    expect(output).toContain('full_output_tool: Bash');
     expect(output).toContain('full_output_hint:');
     expect(output).toContain('[output]\nSTDOUT-PAYLOAD-LINE');
+  });
+
+  it('keeps the output schema limited to the task id', () => {
+    const parameters = new TaskOutputTool(new FakeTaskService()).parameters;
+    expect(parameters).not.toHaveProperty('properties.offset');
+    expect(parameters).not.toHaveProperty('properties.limit');
   });
 
   it('returns agent metadata and final summary without process fields', async () => {
@@ -650,7 +656,7 @@ describe('TaskOutputTool', () => {
     expect(output).toContain('output_truncated: true');
     expect(output).toContain('output_size_bytes: 204800');
     expect(output).toContain('full_output_available: true');
-    expect(output).toContain('full_output_tool: Read');
+    expect(output).toContain('full_output_tool: Bash');
     expect(output).toContain(
       '[Truncated. Full output: /tmp/session/tasks/bash-trunc001/output.log]',
     );

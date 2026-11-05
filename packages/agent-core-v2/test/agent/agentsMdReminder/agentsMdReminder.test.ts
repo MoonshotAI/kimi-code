@@ -300,11 +300,8 @@ function didCtx(
 function testAccesses(name: string, args: unknown): ToolAccessesType | undefined {
   if (typeof args !== 'object' || args === null) return undefined;
   const path = (args as Record<string, unknown>)['path'];
-  if (name === 'Read' || name === 'Edit' || name === 'Write') {
+  if (name === 'ReadMediaFile' || name === 'Edit' || name === 'Write') {
     return typeof path === 'string' ? ToolAccesses.readFile(path) : undefined;
-  }
-  if (name === 'Glob' || name === 'Grep') {
-    return ToolAccesses.searchTree(typeof path === 'string' ? path : workDir);
   }
   return undefined;
 }
@@ -356,7 +353,7 @@ describe('agentsMdReminder instructions change announcements', () => {
     expect(h.reminders).toHaveLength(0);
     expect(agentsMdMessages(h)).toHaveLength(0);
 
-    await fire(h, didCtx('Read', { path: join(workDir, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(workDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
     expect(reminderText(h)).toContain(rootAgentsMd);
   });
@@ -370,7 +367,7 @@ describe('agentsMdReminder path-carrying tools', () => {
     const subAgentsMd = await writeAgentsMd(subDir, 'package instructions');
     h.reminder.seedInjected([rootAgentsMd], workDir);
 
-    const result = await fire(h, didCtx('Read', { path: join(subDir, 'src', 'index.ts') }));
+    const result = await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'src', 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(1);
@@ -391,7 +388,7 @@ describe('agentsMdReminder path-carrying tools', () => {
     const subDir = join(workDir, 'packages', 'kap-server');
     const subAgentsMd = await writeAgentsMd(subDir);
 
-    const first = await fire(h, didCtx('Read', { path: join(subDir, 'a.ts') }));
+    const first = await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'a.ts') }));
     const second = await fire(h, didCtx('Edit', { path: join(subDir, 'b.ts') }));
 
     expect(outputText(first)).toBe('original result');
@@ -405,11 +402,11 @@ describe('agentsMdReminder path-carrying tools', () => {
     const subDir = join(workDir, 'packages', 'kap-server');
     const subAgentsMd = await writeAgentsMd(subDir);
 
-    const direct = await fire(h, didCtx('Read', { path: subAgentsMd }));
+    const direct = await fire(h, didCtx('ReadMediaFile', { path: subAgentsMd }));
     expect(outputText(direct)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(0);
 
-    const after = await fire(h, didCtx('Read', { path: join(subDir, 'src', 'index.ts') }));
+    const after = await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'src', 'index.ts') }));
     expect(outputText(after)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(1);
     expect(reminderText(h)).toContain(subAgentsMd);
@@ -422,7 +419,7 @@ describe('agentsMdReminder path-carrying tools', () => {
     await writeAgentsMd(join(subDir, '.kimi-code'), 'dot kimi instructions');
     const plain = await writeAgentsMd(subDir);
 
-    const result = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    const result = await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
     const text = reminderText(h);
@@ -449,7 +446,7 @@ describe('agentsMdReminder path-carrying tools', () => {
     const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
     h.reminder.seedInjected([rootAgentsMd], workDir);
 
-    const result = await fire(h, didCtx('Glob', { pattern: '**/*.ts' }));
+    const result = await fire(h, didCtx('Bash', { command: 'rg --files' }));
 
     expect(outputText(result)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(0);
@@ -460,13 +457,13 @@ describe('agentsMdReminder path-carrying tools', () => {
     const subDir = join(workDir, 'packages', 'kap-server');
     await writeAgentsMd(subDir);
 
-    await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
 
     expect(h.telemetryEvents).toHaveLength(1);
     expect(h.telemetryEvents[0]!.event).toBe('agents_md_reminder_shown');
     expect(h.telemetryEvents[0]!.properties).toMatchObject({
       turn_id: 1,
-      tool_name: 'Read',
+      tool_name: 'ReadMediaFile',
       reminded_count: 1,
     });
   });
@@ -487,13 +484,13 @@ describe('agentsMdReminder re-injection after context loss', () => {
     const subAgentsMd = await writeAgentsMd(subDir);
     h.reminder.seedInjected([], workDir);
 
-    await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
 
     compact(h);
     expect(agentsMdMessages(h)).toHaveLength(0);
 
-    await fire(h, didCtx('Read', { path: join(subDir, 'other.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'other.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
     expect(reminderText(h)).toContain(subAgentsMd);
   });
@@ -504,12 +501,12 @@ describe('agentsMdReminder re-injection after context loss', () => {
     const subAgentsMd = await writeAgentsMd(subDir);
     h.reminder.seedInjected([], workDir);
 
-    await fire(h, didCtx('Read', { path: subAgentsMd }));
+    await fire(h, didCtx('ReadMediaFile', { path: subAgentsMd }));
     expect(agentsMdMessages(h)).toHaveLength(0);
 
     compact(h);
 
-    await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
     expect(reminderText(h)).toContain(subAgentsMd);
   });
@@ -521,7 +518,7 @@ describe('agentsMdReminder re-injection after context loss', () => {
 
     compact(h);
 
-    await fire(h, didCtx('Read', { path: join(workDir, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(workDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(0);
   });
 
@@ -531,13 +528,13 @@ describe('agentsMdReminder re-injection after context loss', () => {
     const subAgentsMd = await writeAgentsMd(subDir);
     h.reminder.seedInjected([], workDir);
 
-    await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
 
     h.context.clear();
     expect(agentsMdMessages(h)).toHaveLength(0);
 
-    await fire(h, didCtx('Read', { path: join(subDir, 'other.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'other.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
     expect(reminderText(h)).toContain(subAgentsMd);
   });
@@ -548,14 +545,14 @@ describe('agentsMdReminder re-injection after context loss', () => {
     const subAgentsMd = await writeAgentsMd(subDir);
     h.reminder.seedInjected([], workDir);
 
-    await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
 
     await rm(subAgentsMd);
     h.instructionsChange.fire([{ path: subAgentsMd, action: 'deleted', kind: 'file' }]);
     compact(h);
 
-    await fire(h, didCtx('Read', { path: join(subDir, 'other.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'other.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(0);
   });
 
@@ -569,7 +566,7 @@ describe('agentsMdReminder re-injection after context loss', () => {
       role: 'user',
       content: [{ type: 'text', text: 'prompt' }],
     });
-    await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
 
     h.context.undo(1);
@@ -578,7 +575,7 @@ describe('agentsMdReminder re-injection after context loss', () => {
     await h.step();
     expect(agentsMdMessages(h)).toHaveLength(0);
 
-    await fire(h, didCtx('Read', { path: join(subDir, 'other.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'other.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
     expect(reminderText(h)).toContain(subAgentsMd);
   });
@@ -589,7 +586,7 @@ describe('agentsMdReminder re-injection after context loss', () => {
     await writeAgentsMd(subDir);
     h.reminder.seedInjected([], workDir);
 
-    await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
     await h.step();
     await h.step();
 
@@ -604,8 +601,8 @@ describe('agentsMdReminder re-injection after context loss', () => {
     const agentsMdB = await writeAgentsMd(dirB, 'instructions b');
     h.reminder.seedInjected([], workDir);
 
-    await fire(h, didCtx('Read', { path: join(dirA, 'index.ts') }));
-    await fire(h, didCtx('Read', { path: join(dirB, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(dirA, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(dirB, 'index.ts') }));
 
     const messages = agentsMdMessages(h);
     expect(messages).toHaveLength(2);
@@ -624,7 +621,7 @@ describe('agentsMdReminder re-injection after context loss', () => {
 
     compact(h);
 
-    await fire(h, didCtx('Read', { path: join(workDir, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(workDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
     expect(reminderText(h)).toContain(rootAgentsMd);
   });
@@ -635,7 +632,7 @@ describe('agentsMdReminder re-injection after context loss', () => {
     await writeAgentsMd(subDir);
     h.reminder.seedInjected([], workDir);
 
-    await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
 
     compact(h);
@@ -722,7 +719,7 @@ describe('agentsMdReminder result shapes and edge cases', () => {
     const result = await fire(
       h,
       didCtx(
-        'Read',
+        'ReadMediaFile',
         { path: join(workDir, 'packages', 'kap-server', 'index.ts') },
         { result: { output: [{ type: 'text', text: 'part one' }] } },
       ),
@@ -740,13 +737,13 @@ describe('agentsMdReminder result shapes and edge cases', () => {
 
     const failed = await fire(
       h,
-      didCtx('Read', { path: agentsMdPath }, { result: { output: 'not found', isError: true } }),
+      didCtx('ReadMediaFile', { path: agentsMdPath }, { result: { output: 'not found', isError: true } }),
     );
     expect(outputText(failed)).toBe('not found');
     expect(agentsMdMessages(h)).toHaveLength(0);
 
     await writeAgentsMd(subDir);
-    const after = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    const after = await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
     expect(outputText(after)).toBe('original result');
     expect(reminderText(h)).toContain(agentsMdPath);
   });
@@ -758,8 +755,8 @@ describe('agentsMdReminder duplicate calls', () => {
     const subAgentsMd = await writeAgentsMd(join(workDir, 'packages', 'kap-server'));
     const args = { path: join(workDir, 'packages', 'kap-server', 'index.ts') };
 
-    const first = await fire(h, didCtx('Read', args, { id: 'call-1' }));
-    const second = await fire(h, didCtx('Read', args, { id: 'call-2' }));
+    const first = await fire(h, didCtx('ReadMediaFile', args, { id: 'call-1' }));
+    const second = await fire(h, didCtx('ReadMediaFile', args, { id: 'call-2' }));
 
     expect(outputText(first)).toBe('original result');
     expect(outputText(second)).toBe('original result');
@@ -772,8 +769,8 @@ describe('agentsMdReminder duplicate calls', () => {
     h.ix.get(IAgentToolDedupeService);
     const subAgentsMd = await writeAgentsMd(join(workDir, 'packages', 'kap-server'));
 
-    class ReadTool implements ExecutableTool<Record<string, unknown>> {
-      readonly name = 'Read';
+    class ReadMediaFileTool implements ExecutableTool<Record<string, unknown>> {
+      readonly name = 'ReadMediaFile';
       readonly description = 'Returns file contents.';
       readonly parameters = { type: 'object', additionalProperties: true };
       resolveExecution(args: Record<string, unknown>): ToolExecution {
@@ -784,12 +781,12 @@ describe('agentsMdReminder duplicate calls', () => {
         };
       }
     }
-    h.ix.get(IAgentToolRegistryService).register(new ReadTool());
+    h.ix.get(IAgentToolRegistryService).register(new ReadMediaFileTool());
 
     const args = { path: join(workDir, 'packages', 'kap-server', 'index.ts') };
     const calls: ToolCall[] = [
-      { type: 'function', id: 'call-1', name: 'Read', arguments: JSON.stringify(args) },
-      { type: 'function', id: 'call-2', name: 'Read', arguments: JSON.stringify(args) },
+      { type: 'function', id: 'call-1', name: 'ReadMediaFile', arguments: JSON.stringify(args) },
+      { type: 'function', id: 'call-2', name: 'ReadMediaFile', arguments: JSON.stringify(args) },
     ];
     const results = [];
     for await (const item of h.ix
@@ -818,7 +815,7 @@ describe('agentsMdReminder lazy seeding after a restore', () => {
 
     const result = await fire(
       h,
-      didCtx('Read', { path: join(workDir, 'packages', 'kap-server', 'index.ts') }),
+      didCtx('ReadMediaFile', { path: join(workDir, 'packages', 'kap-server', 'index.ts') }),
     );
 
     expect(outputText(result)).toBe('original result');
@@ -831,7 +828,7 @@ describe('agentsMdReminder lazy seeding after a restore', () => {
     const h = createHarness();
     await writeAgentsMd(homeDir, 'brand instructions');
 
-    const result = await fire(h, didCtx('Read', { path: join(homeDir, 'notes.txt') }));
+    const result = await fire(h, didCtx('ReadMediaFile', { path: join(homeDir, 'notes.txt') }));
 
     expect(outputText(result)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(0);
@@ -852,7 +849,7 @@ describe('agentsMdReminder persisted restore provenance', () => {
     });
 
     await h.dispatcher.hooks.onDidRestore.run({});
-    const result = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    const result = await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
     expect(reminderText(h)).toContain(subAgentsMd);
@@ -867,7 +864,7 @@ describe('agentsMdReminder persisted restore provenance', () => {
     });
 
     await h.dispatcher.hooks.onDidRestore.run({});
-    const result = await fire(h, didCtx('Read', { path: join(workDir, 'index.ts') }));
+    const result = await fire(h, didCtx('ReadMediaFile', { path: join(workDir, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(0);
@@ -909,7 +906,7 @@ describe('agentsMdReminder probing boundaries', () => {
     await mkdir(subDir, { recursive: true });
     await writeFile(join(subDir, 'AGENTS.md'), '', 'utf-8');
 
-    const result = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    const result = await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(0);
@@ -922,7 +919,7 @@ describe('agentsMdReminder probing boundaries', () => {
 
     const result = await fire(
       h,
-      didCtx('Read', { path: join(subDir, 'missing.ts') }, {
+      didCtx('ReadMediaFile', { path: join(subDir, 'missing.ts') }, {
         result: { output: 'not found', isError: true },
       }),
     );
@@ -942,7 +939,7 @@ describe('agentsMdReminder probing boundaries', () => {
     expect(agentsMdMessages(h)).toHaveLength(0);
 
     await writeAgentsMd(subDir);
-    const after = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    const after = await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
     expect(outputText(after)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(1);
     expect(reminderText(h)).toContain(agentsMdPath);
@@ -954,8 +951,8 @@ describe('agentsMdReminder probing boundaries', () => {
     await writeAgentsMd(subDir);
 
     const [first, second] = await Promise.all([
-      fire(h, didCtx('Read', { path: join(subDir, 'a.ts') }, { id: 'call-a' })),
-      fire(h, didCtx('Read', { path: join(subDir, 'b.ts') }, { id: 'call-b' })),
+      fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'a.ts') }, { id: 'call-a' })),
+      fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'b.ts') }, { id: 'call-b' })),
     ]);
 
     expect(outputText(first)).toBe('original result');
@@ -970,10 +967,10 @@ describe('agentsMdReminder probing boundaries', () => {
     h.reminder.seedInjected([], workDir);
 
     await h.events.didExecuteSlot.run(
-      didCtx('Read', { path: join(subDir, 'a.ts') }, { id: 'call-a' }),
+      didCtx('ReadMediaFile', { path: join(subDir, 'a.ts') }, { id: 'call-a' }),
     );
     await h.events.didExecuteSlot.run(
-      didCtx('Read', { path: join(subDir, 'b.ts') }, { id: 'call-b' }),
+      didCtx('ReadMediaFile', { path: join(subDir, 'b.ts') }, { id: 'call-b' }),
     );
     await h.step();
 
@@ -989,10 +986,10 @@ describe('agentsMdReminder probing boundaries', () => {
     h.reminder.seedInjected([], workDir);
 
     await h.events.didExecuteSlot.run(
-      didCtx('Read', { path: join(subDir, 'a.ts') }, { id: 'call-a' }),
+      didCtx('ReadMediaFile', { path: join(subDir, 'a.ts') }, { id: 'call-a' }),
     );
     await h.events.didExecuteSlot.run(
-      didCtx('Read', { path: subAgentsMd }, { id: 'call-b' }),
+      didCtx('ReadMediaFile', { path: subAgentsMd }, { id: 'call-b' }),
     );
     await h.step();
 
@@ -1006,16 +1003,16 @@ describe('agentsMdReminder probing boundaries', () => {
     h.reminder.seedInjected([], workDir);
 
     await h.events.didExecuteSlot.run(
-      didCtx('Read', { path: subAgentsMd }, { id: 'call-read' }),
+      didCtx('ReadMediaFile', { path: subAgentsMd }, { id: 'call-read' }),
     );
     await h.events.didExecuteSlot.run(
-      didCtx('Read', { path: join(subDir, 'a.ts') }, { id: 'call-access' }),
+      didCtx('ReadMediaFile', { path: join(subDir, 'a.ts') }, { id: 'call-access' }),
     );
     await h.step();
 
     expect(agentsMdMessages(h)).toHaveLength(0);
 
-    await fire(h, didCtx('Read', { path: join(subDir, 'b.ts') }));
+    await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'b.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);
     expect(reminderText(h)).toContain(subAgentsMd);
   });
@@ -1027,7 +1024,7 @@ describe('agentsMdReminder probing boundaries', () => {
     h.reminder.seedInjected([], workDir);
 
     await h.events.didExecuteSlot.run(
-      didCtx('Read', { path: join(subDir, 'a.ts') }, { id: 'call-a' }),
+      didCtx('ReadMediaFile', { path: join(subDir, 'a.ts') }, { id: 'call-a' }),
     );
     h.instructionsChange.fire([{ path: subAgentsMd, action: 'deleted', kind: 'file' }]);
     await h.step();
@@ -1042,7 +1039,7 @@ describe('agentsMdReminder probing boundaries', () => {
     const rootAgentsMd = await writeAgentsMd(workDir, 'outer instructions');
     const nestedAgentsMd = await writeAgentsMd(nested, 'nested instructions');
 
-    const result = await fire(h, didCtx('Read', { path: join(nested, 'index.ts') }));
+    const result = await fire(h, didCtx('ReadMediaFile', { path: join(nested, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
     const text = reminderText(h);
@@ -1058,7 +1055,7 @@ describe('agentsMdReminder probing boundaries', () => {
     const leafAgentsMd = await writeAgentsMd(leaf, 'leaf instructions');
 
     try {
-      const result = await fire(h, didCtx('Read', { path: join(leaf, 'index.ts') }));
+      const result = await fire(h, didCtx('ReadMediaFile', { path: join(leaf, 'index.ts') }));
 
       expect(outputText(result)).toBe('original result');
       const text = reminderText(h);
@@ -1076,7 +1073,7 @@ describe('agentsMdReminder probing boundaries', () => {
     await symlink(target, join(workDir, 'link'));
 
     try {
-      const result = await fire(h, didCtx('Read', { path: join(workDir, 'link', 'index.ts') }));
+      const result = await fire(h, didCtx('ReadMediaFile', { path: join(workDir, 'link', 'index.ts') }));
 
       expect(outputText(result)).toBe('original result');
       const text = reminderText(h);
@@ -1096,7 +1093,7 @@ describe('agentsMdReminder round-2 hardening', () => {
 
     const result = await fire(
       h,
-      didCtx('Read', { path: join(subDir, 'index.ts') }, { preflightRejected: true }),
+      didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }, { preflightRejected: true }),
     );
 
     expect(outputText(result)).toBe('original result');
@@ -1126,7 +1123,7 @@ describe('agentsMdReminder round-2 hardening', () => {
     await mkdir(subDir, { recursive: true });
     await writeFile(join(subDir, 'AGENTS.md'), '  \n\t \n', 'utf-8');
 
-    const result = await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    const result = await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(0);
@@ -1138,8 +1135,8 @@ describe('agentsMdReminder round-2 hardening', () => {
     const first = createHarness();
     const second = createHarness();
 
-    const firstResult = await fire(first, didCtx('Read', { path: join(subDir, 'index.ts') }));
-    const secondResult = await fire(second, didCtx('Read', { path: join(subDir, 'index.ts') }));
+    const firstResult = await fire(first, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
+    const secondResult = await fire(second, didCtx('ReadMediaFile', { path: join(subDir, 'index.ts') }));
 
     expect(outputText(firstResult)).toBe('original result');
     expect(outputText(secondResult)).toBe('original result');
@@ -1161,12 +1158,12 @@ describe('agentsMdReminder round-2 hardening', () => {
     const subDir = join(workDir, 'packages', 'kap-server');
     const subAgentsMd = await writeAgentsMd(subDir);
 
-    const failed = await fire(h, didCtx('Read', { path: join(subDir, 'a.ts') }));
+    const failed = await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'a.ts') }));
     expect(outputText(failed)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(0);
 
     shouldThrow = false;
-    const retried = await fire(h, didCtx('Read', { path: join(subDir, 'b.ts') }));
+    const retried = await fire(h, didCtx('ReadMediaFile', { path: join(subDir, 'b.ts') }));
     expect(outputText(retried)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(1);
     expect(reminderText(h)).toContain(subAgentsMd);
@@ -1177,7 +1174,7 @@ describe('agentsMdReminder round-2 hardening', () => {
     const subAgentsMd = await writeAgentsMd(join(workDir, 'packages', 'kap-server'));
 
     class BigTool implements ExecutableTool<Record<string, unknown>> {
-      readonly name = 'Read';
+      readonly name = 'ReadMediaFile';
       readonly description = 'Returns a huge output.';
       readonly parameters = { type: 'object', additionalProperties: true };
       resolveExecution(args: Record<string, unknown>): ToolExecution {
@@ -1193,7 +1190,7 @@ describe('agentsMdReminder round-2 hardening', () => {
     const toolCall: ToolCall = {
       type: 'function',
       id: 'call-big-1',
-      name: 'Read',
+      name: 'ReadMediaFile',
       arguments: JSON.stringify({ path: join(workDir, 'packages', 'kap-server', 'big.ts') }),
     };
     const results = [];
@@ -1221,7 +1218,7 @@ describe('agentsMdReminder round-2 hardening', () => {
     const homeAgentsMd = await writeAgentsMd(homePackage, 'home package instructions');
 
     class ResolvedReadTool implements ExecutableTool<Record<string, unknown>> {
-      readonly name = 'Read';
+      readonly name = 'ReadMediaFile';
       readonly description = 'Returns a resolved file result.';
       readonly parameters = { type: 'object', additionalProperties: true };
 
@@ -1241,7 +1238,7 @@ describe('agentsMdReminder round-2 hardening', () => {
         {
           type: 'function',
           id: 'call-resolved-read',
-          name: 'Read',
+          name: 'ReadMediaFile',
           arguments: JSON.stringify({ path: '~/pkg/index.ts' }),
         },
       ],
@@ -1265,8 +1262,8 @@ describe('agentsMdReminder round-2 hardening', () => {
     const stat = vi.spyOn(hostFs, 'stat');
     const readText = vi.spyOn(hostFs, 'readText');
 
-    class ReadTool implements ExecutableTool<Record<string, unknown>> {
-      readonly name = 'Read';
+    class ReadMediaFileTool implements ExecutableTool<Record<string, unknown>> {
+      readonly name = 'ReadMediaFile';
       readonly description = 'Returns file contents.';
       readonly parameters = { type: 'object', additionalProperties: true };
 
@@ -1280,7 +1277,7 @@ describe('agentsMdReminder round-2 hardening', () => {
         };
       }
     }
-    h.ix.get(IAgentToolRegistryService).register(new ReadTool());
+    h.ix.get(IAgentToolRegistryService).register(new ReadMediaFileTool());
     h.ix.get(IAgentToolExecutorService).onBeforeExecuteTool((event) => {
       event.veto({ output: 'permission denied', isError: true });
     });
@@ -1291,7 +1288,7 @@ describe('agentsMdReminder round-2 hardening', () => {
         {
           type: 'function',
           id: 'call-denied-read',
-          name: 'Read',
+          name: 'ReadMediaFile',
           arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
         },
       ],
@@ -1346,8 +1343,8 @@ describe('agentsMdReminder cancellation outcomes', () => {
       }
     }
 
-    class ReadTool implements ExecutableTool<Record<string, unknown>> {
-      readonly name = 'Read';
+    class ReadMediaFileTool implements ExecutableTool<Record<string, unknown>> {
+      readonly name = 'ReadMediaFile';
       readonly description = 'Reads a file.';
       readonly parameters = { type: 'object', additionalProperties: true };
 
@@ -1361,7 +1358,7 @@ describe('agentsMdReminder cancellation outcomes', () => {
     }
 
     h.ix.get(IAgentToolRegistryService).register(new BlockingBash());
-    h.ix.get(IAgentToolRegistryService).register(new ReadTool());
+    h.ix.get(IAgentToolRegistryService).register(new ReadMediaFileTool());
     const controller = new AbortController();
     const calls: ToolCall[] = [
       {
@@ -1373,7 +1370,7 @@ describe('agentsMdReminder cancellation outcomes', () => {
       {
         type: 'function',
         id: 'call-queued-read',
-        name: 'Read',
+        name: 'ReadMediaFile',
         arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
       },
     ];
@@ -1405,7 +1402,7 @@ describe('agentsMdReminder cancellation outcomes', () => {
         {
           type: 'function',
           id: 'call-real-read',
-          name: 'Read',
+          name: 'ReadMediaFile',
           arguments: JSON.stringify({ path: join(subDir, 'index.ts') }),
         },
       ],
@@ -1547,7 +1544,7 @@ describe('agentsMdReminder environment degradation', () => {
     await writeAgentsMd(dir, 'pkg instructions');
     h.reminder.seedInjected([], workDir);
 
-    const result = await fire(h, didCtx('Read', { path: join(dir, 'index.ts') }));
+    const result = await fire(h, didCtx('ReadMediaFile', { path: join(dir, 'index.ts') }));
 
     expect(outputText(result)).toBe('original result');
     expect(agentsMdMessages(h)).toHaveLength(0);

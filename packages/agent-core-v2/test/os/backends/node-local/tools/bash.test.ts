@@ -28,6 +28,7 @@ import { type ISessionContext, makeSessionContext } from '#/session/sessionConte
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
+import { BashParserService } from '#/app/bashParser/bashParserService';
 import { AgentWorkspaceContextService } from '#/session/workspaceContext/agentWorkspaceContextService';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import {
@@ -751,7 +752,7 @@ function bashTool(
     },
   );
   const environment = stubAgentEnvironment(backend, { workDir: ctx.cwd });
-  return new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
+  return new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config, new BashParserService());
 }
 
 describe('BashTool', () => {
@@ -803,6 +804,37 @@ describe('BashTool', () => {
         disable_timeout: true,
       }).success,
     ).toBe(true);
+  });
+
+  it('blocks literal sensitive file operands without spawning the command', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput());
+    const tool = bashTool(runner);
+
+    const result = await executeTool(tool, context({ command: 'cat .env' }));
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('sensitive-file');
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a search pattern as a sensitive file operand', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput());
+    const tool = bashTool(runner);
+
+    const result = await executeTool(tool, context({ command: 'rg credentials src && grep id_rsa file' }));
+
+    expect(result.isError).not.toBe(true);
+    expect(exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows bounded file reads and searches', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput({ stdout: 'export class Example {}\n' }));
+    const tool = bashTool(runner);
+
+    const result = await executeTool(tool, context({ command: "rg 'class Example' src && sed -n '1,80p' src/example.ts" }));
+
+    expect(result.isError).not.toBe(true);
+    expect(exec).toHaveBeenCalledTimes(1);
   });
 
   it('describes the cwd, command, run_in_background, description, and disable_timeout parameters', () => {

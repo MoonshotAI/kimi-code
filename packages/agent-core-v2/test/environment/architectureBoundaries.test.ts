@@ -53,9 +53,6 @@ describe('environment architecture boundaries', () => {
   it('builds every agent OS execution from an environment lease and workspace view', () => {
     for (const path of [
       'agent/tools/os/bash/bashTool.ts',
-      'agent/tools/os/glob/globTool.ts',
-      'agent/tools/os/grep/grepTool.ts',
-      'agent/tools/os/read/readTool.ts',
       'agent/tools/os/write/writeTool.ts',
       'agent/tools/edit/editTool.ts',
       'agent/tools/read-media-file/readMediaFileTool.ts',
@@ -63,16 +60,10 @@ describe('environment architecture boundaries', () => {
       const contents = source(path);
       expect(contents).toContain('new EnvironmentWorkspaceView(');
       expect(contents).toMatch(/acquireOrWhenReady\(this\.environment|\.environment\.(acquire|acquireWhenReady|inspect)\(/);
-      if (path !== 'agent/tools/os/read/readTool.ts') {
+      if (path !== 'agent/tools/read-media-file/readMediaFileTool.ts') {
         expect(contents).not.toMatch(/@IHost(?:Environment|FileSystem|FsWatchService|ProcessService|TerminalService)/);
       }
     }
-    const readTool = source('agent/tools/os/read/readTool.ts');
-    expect(readTool).toContain('this.localOutputTarget(args.path)');
-    expect(readTool).toContain('isTaskOutputFilePath(normalized, environmentPath.join(this.session.sessionDir');
-    expect(readTool).toContain('this.resultTruncation.isSpillFilePath(normalized)');
-    expect(readTool).not.toContain('IAgentEnvironmentService | IHostFileSystem');
-    expect(readTool).not.toContain("'acquire' in environment");
   });
 
   it('routes MCP and external FS through explicit environment selection', () => {

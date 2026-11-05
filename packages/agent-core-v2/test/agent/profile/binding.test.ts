@@ -136,7 +136,7 @@ describe('AgentProfileService.bind', () => {
           normalizeAgentProfile({
             name: 'code-reviewer',
             description: 'Reviews code',
-            tools: ['Read'],
+            tools: ['ReadMediaFile'],
             systemPrompt: () => 'reviewer',
           }),
         ],
@@ -164,7 +164,7 @@ describe('AgentProfileService.bind', () => {
           normalizeAgentProfile({
             name: 'code-reviewer',
             description: 'Reviews code',
-            tools: ['Read'],
+            tools: ['ReadMediaFile'],
             systemPrompt: () => 'reviewer',
           }),
         ],
@@ -294,7 +294,7 @@ describe('AgentProfileService.bind', () => {
       modelAlias: MOCK_MODEL,
       thinkingEffort: 'on',
       systemPrompt: expect.stringContaining('Kimi Code CLI'),
-      activeToolNames: expect.arrayContaining(['Read', 'Write', 'Bash']),
+      activeToolNames: expect.arrayContaining(['Write', 'Bash']),
       disallowedTools: [],
     });
   });
@@ -568,7 +568,7 @@ describe('AgentToolPolicyService tool denylist', () => {
     });
     registerAgentProfile({
       name: 'deny-over-allow',
-      tools: ['Read', 'Bash'],
+      tools: ['ReadMediaFile', 'Bash'],
       disallowedTools: ['Bash'],
       systemPrompt: () => 'deny test',
     });
@@ -600,13 +600,13 @@ describe('AgentToolPolicyService tool denylist', () => {
   it('blocks a denied builtin tool while others stay active', async () => {
     const svc = await bindProfile('deny-builtin');
     expect(svc.isToolActive('Bash')).toBe(false);
-    expect(svc.isToolActive('Read')).toBe(true);
+    expect(svc.isToolActive('ReadMediaFile')).toBe(true);
   });
 
   it('denylist wins over the allowlist', async () => {
     const svc = await bindProfile('deny-over-allow');
     expect(svc.isToolActive('Bash')).toBe(false);
-    expect(svc.isToolActive('Read')).toBe(true);
+    expect(svc.isToolActive('ReadMediaFile')).toBe(true);
     expect(svc.isToolActive('Write')).toBe(false);
   });
 
@@ -614,7 +614,7 @@ describe('AgentToolPolicyService tool denylist', () => {
     const svc = await bindProfile('deny-mcp');
     expect(svc.isToolActive('mcp__github__create_pr', 'mcp')).toBe(false);
     expect(svc.isToolActive('mcp__other__ping', 'mcp')).toBe(true);
-    expect(svc.isToolActive('Read')).toBe(true);
+    expect(svc.isToolActive('ReadMediaFile')).toBe(true);
   });
 
   it('distinguishes explicit denies from allowlist misses via isToolDenied', async () => {
@@ -660,7 +660,7 @@ describe('AgentToolPolicyService tool denylist', () => {
     expect(persistence.records.find((record) => record.type === 'profile.bind')).toMatchObject({
       activeToolNames: undefined,
     });
-    expect(toolPolicy.isToolActive('Read')).toBe(true);
+    expect(toolPolicy.isToolActive('ReadMediaFile')).toBe(true);
     expect(toolPolicy.isToolActive('Bash')).toBe(false);
   });
 
@@ -695,7 +695,7 @@ describe('AgentToolPolicyService tool denylist', () => {
 
     expect(resumed.profile.data().profileName).toBe('deny-builtin');
     expect(resumed.toolPolicy.isToolActive('Bash')).toBe(false);
-    expect(resumed.toolPolicy.isToolActive('Read')).toBe(true);
+    expect(resumed.toolPolicy.isToolActive('ReadMediaFile')).toBe(true);
   });
 });
 
@@ -703,7 +703,7 @@ describe('AgentToolPolicyService global [tools] config', () => {
   beforeAll(() => {
     registerAgentProfile({
       name: 'config-intersect',
-      tools: ['Read', 'Bash'],
+      tools: ['ReadMediaFile', 'Bash'],
       disallowedTools: ['Bash'],
       systemPrompt: () => 'config intersect test',
     });
@@ -731,21 +731,21 @@ describe('AgentToolPolicyService global [tools] config', () => {
   }
 
   it('treats a non-empty enabled list as a global allowlist', async () => {
-    const svc = await bindWithToolsConfig({ enabled: ['Read'] });
-    expect(svc.isToolActive('Read')).toBe(true);
+    const svc = await bindWithToolsConfig({ enabled: ['ReadMediaFile'] });
+    expect(svc.isToolActive('ReadMediaFile')).toBe(true);
     expect(svc.isToolActive('Bash')).toBe(false);
   });
 
   it('treats an empty enabled list as unconstrained', async () => {
     const svc = await bindWithToolsConfig({ enabled: [] });
-    expect(svc.isToolActive('Read')).toBe(true);
+    expect(svc.isToolActive('ReadMediaFile')).toBe(true);
     expect(svc.isToolActive('Bash')).toBe(true);
   });
 
   it('applies disabled as a global denylist', async () => {
     const svc = await bindWithToolsConfig({ disabled: ['Bash'] });
     expect(svc.isToolActive('Bash')).toBe(false);
-    expect(svc.isToolActive('Read')).toBe(true);
+    expect(svc.isToolActive('ReadMediaFile')).toBe(true);
   });
 
   it('fingerprints live global allowlist and denylist changes', async () => {
@@ -764,7 +764,7 @@ describe('AgentToolPolicyService global [tools] config', () => {
     const svc = await bindWithToolsConfig({ disabled: ['mcp__github__*'] });
     expect(svc.isToolActive('mcp__github__create_pr', 'mcp')).toBe(false);
     expect(svc.isToolActive('mcp__other__ping', 'mcp')).toBe(true);
-    expect(svc.isToolActive('Read')).toBe(true);
+    expect(svc.isToolActive('ReadMediaFile')).toBe(true);
   });
 
   it('marks globally disabled names as denied via isToolDenied', async () => {
@@ -776,8 +776,8 @@ describe('AgentToolPolicyService global [tools] config', () => {
   });
 
   it('intersects the global config with the profile policy instead of overriding it', async () => {
-    const svc = await bindWithToolsConfig({ enabled: ['Read', 'Bash'] }, 'config-intersect');
-    expect(svc.isToolActive('Read')).toBe(true);
+    const svc = await bindWithToolsConfig({ enabled: ['ReadMediaFile'] }, 'config-intersect');
+    expect(svc.isToolActive('ReadMediaFile')).toBe(true);
     expect(svc.isToolActive('Bash')).toBe(false);
     expect(svc.isToolActive('Write')).toBe(false);
   });
@@ -823,7 +823,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
 
     await svc.setSessionDisabledTools(['Bash']);
     expect(svc.isToolActive('Bash')).toBe(false);
-    expect(svc.isToolActive('Read')).toBe(true);
+    expect(svc.isToolActive('ReadMediaFile')).toBe(true);
 
     await svc.setSessionDisabledTools(['Edit']);
     expect(svc.isToolActive('Bash')).toBe(true);
@@ -911,7 +911,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
 
     expect(resumed.toolPolicy.isToolActive('Bash')).toBe(false);
     expect(resumed.toolPolicy.isToolActive('Write')).toBe(false);
-    expect(resumed.toolPolicy.isToolActive('Read')).toBe(true);
+    expect(resumed.toolPolicy.isToolActive('ReadMediaFile')).toBe(true);
 
     await resumed.toolPolicy.setSessionDisabledTools(['Edit']);
     expect(resumed.toolPolicy.isToolActive('Bash')).toBe(true);

@@ -455,16 +455,6 @@ export interface TodoTurnEndedEvent {
   updated_in_turn: boolean;
 }
 
-export interface GrepToolRgFallbackEvent {
-  source?: 'share-bin-cached' | 'vendor' | 'share-bin-downloaded';
-  outcome: 'resolved' | 'failed';
-}
-
-export interface GlobToolRgFallbackEvent {
-  source?: 'share-bin-cached' | 'vendor' | 'share-bin-downloaded';
-  outcome: 'resolved' | 'failed';
-}
-
 export interface FsGrepNodeFallbackEvent {
   reason: 'rg_missing';
 }
@@ -1255,22 +1245,6 @@ export const telemetryEventDefinitions = {
       item_count: 'Number of items in the list when the turn ended; 0 when the list was cleared during the turn',
       open_count: 'Number of items still pending or in_progress when the turn ended',
       updated_in_turn: 'Whether the list changed during this turn',
-    },
-  }),
-  grep_tool_rg_fallback: defineAgentTelemetryEvent<GrepToolRgFallbackEvent>({
-    owner: 'kimi-code',
-    comment: 'The grep tool falls back when resolving ripgrep.',
-    properties: {
-      source: 'Where ripgrep was resolved from',
-      outcome: 'Whether the fallback resolved or failed',
-    },
-  }),
-  glob_tool_rg_fallback: defineAgentTelemetryEvent<GlobToolRgFallbackEvent>({
-    owner: 'kimi-code',
-    comment: 'The glob tool falls back when resolving ripgrep.',
-    properties: {
-      source: 'Where ripgrep was resolved from',
-      outcome: 'Whether the fallback resolved or failed',
     },
   }),
   fs_grep_node_fallback: defineTelemetryEvent<FsGrepNodeFallbackEvent>({

@@ -153,7 +153,7 @@ export interface TaskOutputWindow {
  *
  * Reads at most `maxBytes` bytes starting at byte `offset`. A window past EOF
  * is clamped to whatever remains; an offset at/after EOF yields empty content.
- * Mirrors the engine's `readTaskOutputBytes` so large logs page identically.
+ * Provides byte-range pagination for the visual log viewer.
  */
 export async function readTaskOutput(
   agentDir: string,

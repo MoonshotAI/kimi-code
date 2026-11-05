@@ -38,7 +38,7 @@ https://moonshotai.github.io/kimi-code/en/configuration/config-files.html
 
 ## Prerequisite 2: read the target file before any change
 
-Before any modification, use **Read** on the target config file (decide whether it's `config.toml` or `tui.toml` per the above):
+Before any modification, inspect the target config file with Bash (decide whether it's `config.toml` or `tui.toml` per the above):
 
 - Location: `<KIMI_CODE_HOME>/config.toml` or `<KIMI_CODE_HOME>/tui.toml`. For other scopes/files, defer to the official docs.
 - A missing or empty file is fine — you'll create a minimal skeleton later.
@@ -60,7 +60,7 @@ When the user asks "what config is there", "what does this setting do", or "how 
 Don't edit the target file in place, and **don't rewrite it from scratch** — instead copy it, Edit the copy, and keep the original out of any broken state the whole time:
 
 1. **Clarify intent**: which key, what value, and which file (`config.toml` or `tui.toml`). Ask in one line if ambiguous; for discrete choices (e.g. scope) AskUserQuestion is fine, but use plain questions for free-form input.
-2. **Read the target file** (Prerequisite 2): Read it to understand the current state and confirm it parses.
+2. **Inspect the target file** (Prerequisite 2): read it to understand the current state and confirm it parses.
 3. **Copy out a candidate (do not create from scratch)**: use **Bash** to copy the target verbatim — `cp config.toml config-new.toml` (same directory, `-new` suffix; for tui.toml, `cp tui.toml tui-new.toml`). **Leave the original untouched for now.**
    - Only when the target doesn't exist (nothing to copy) should you use **Write** to create a minimal skeleton candidate (e.g. just the comment line `# <KIMI_CODE_HOME>/config.toml`).
 4. **Edit the candidate**: use the **Edit** tool on the candidate to **change/add only the target key** — never rewrite the whole file. That way every existing section, entry, comment, and bit of formatting stays exactly as-is; only what should change changes. The candidate is identical to the original, so use the content you read in step 2 to locate the Edit anchor. Check the change against the official docs (key / section / value type / allowed values, snake_case).

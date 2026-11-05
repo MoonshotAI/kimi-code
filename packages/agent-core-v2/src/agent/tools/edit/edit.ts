@@ -13,12 +13,12 @@ export const EditInputSchema = z.object({
     .string()
     .min(1)
     .describe(
-      'Exact content to replace from the Read output view, without the line-number prefix. Use LF for pure CRLF files; use actual \\r escapes where Read shows \\r.',
+      'Exact file content to replace. Use LF for pure CRLF files; use actual \\r escapes for literal carriage returns.',
     ),
   new_string: z
     .string()
     .describe(
-      'Replacement text in the same Read output view. LF is written back as CRLF only for pure CRLF files.',
+      'Replacement file content. LF is written back as CRLF only for pure CRLF files.',
     ),
   replace_all: z
     .boolean()

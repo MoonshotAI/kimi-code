@@ -161,7 +161,7 @@ class ToolContributions {
 const SENT_ONLY_WITH_DYNAMIC_TOOL_LOADING: ReadonlySet<string> = new Set([SELECT_TOOLS_TOOL_NAME]);
 
 const PARENT_SYSTEM_PROMPT = 'You are the parity probe parent.';
-const ACTIVE_TOOL_NAMES = ['Agent', 'Bash', 'Read'];
+const ACTIVE_TOOL_NAMES = ['Agent', 'Bash'];
 const CHILD_FINAL_TEXT = 'The inherited task is done.';
 
 function taskReminders(history: readonly Pick<ContextMessage, 'content'>[]): string[] {

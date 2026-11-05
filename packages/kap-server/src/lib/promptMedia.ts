@@ -649,7 +649,7 @@ function pathMediaMime(
 }
 
 function buildAttachedFileNotice(name: string, mediaType: string, size: number, path: string): string {
-  return `Attached file "${name}" (${mediaType}, ${size} bytes): ${path} — open it with the Read tool`;
+  return `Attached file "${name}" (${mediaType}, ${size} bytes): ${path} — read text with a bounded Bash command, or use ReadMediaFile for supported media`;
 }
 
 async function readFileOrStream(file: GetResult): Promise<Buffer> {

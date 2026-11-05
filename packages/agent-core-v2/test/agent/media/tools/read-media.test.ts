@@ -316,13 +316,13 @@ describe('ReadMediaFileTool', () => {
     expect(result.output).toContain('File path cannot be empty');
   });
 
-  it('redirects text files to the Read tool', async () => {
+  it('rejects text files with Bash read guidance', async () => {
     const result = await execute(
       makeTool({ '/workspace/note.txt': { data: Buffer.from('hello world') } }),
       { path: '/workspace/note.txt' },
     );
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('Use Read');
+    expect(result.output).toContain('bounded Bash command');
   });
 
   it('rejects unsupported binary formats', async () => {

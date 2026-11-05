@@ -13,43 +13,22 @@ import {
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
-import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import type { IAgentProfileService } from '#/agent/profile/profile';
-import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { ToolAccesses, type ExecutableToolContext, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
-import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { EditTool } from '#/agent/tools/edit/editTool';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
-import { GlobTool } from '#/agent/tools/os/glob/globTool';
-import { GrepTool } from '#/agent/tools/os/grep/grepTool';
-import { ReadTool } from '#/agent/tools/os/read/readTool';
 import { WriteTool } from '#/agent/tools/os/write/writeTool';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
 import { stubConfigService } from '../../../app/config/stubs';
-import { stubToolResultTruncationService } from '../../toolResultTruncation/stubs';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
-
-vi.mock('#/os/backends/node-local/tools/rgLocator', async (importOriginal) => {
-  const original = await importOriginal<typeof import('#/os/backends/node-local/tools/rgLocator')>();
-  return { ...original, ensureRgPath: vi.fn() };
-});
-
-const ensureRgPathMock = vi.mocked(ensureRgPath);
 
 const ENVIRONMENT_CHANGED_OUTPUT = 'Environment changed before execution. Retry the tool call.';
 const BINDING: EnvironmentBinding = { environmentId: 'remote' };
 const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
 
-const skillCatalog = { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog;
-const profile = {
-  getModelCapabilities: () => ({ image_in: true, video_in: true }),
-} as unknown as IAgentProfileService;
-const toolPolicy = { isToolActive: () => true } as unknown as IAgentToolPolicyService;
-const toolRegistry = { resolve: () => ({}) } as unknown as IAgentToolRegistryService;
+const toolPolicy = { isToolActive: () => true } as never;
 
 const attachmentStore = { put: async () => 'kimi-file://a' } as unknown as ISessionMediaStore;
 
@@ -133,19 +112,6 @@ function replacementReadyEnvironment(): Environment {
   );
 }
 
-async function* linesOf(content: string): AsyncGenerator<string> {
-  yield `${content}\n`;
-}
-
-function textFs(content: string): IHostFileSystem {
-  const bytes = Buffer.from(content, 'utf8');
-  return createFakeHostFs({
-    stat: async () => ({ isFile: true, isDirectory: false, size: bytes.length }),
-    readBytes: async (_path, n) => (n === undefined ? bytes : bytes.subarray(0, n)),
-    readLines: () => linesOf(content),
-  });
-}
-
 function writableFs(): IHostFileSystem {
   return createFakeHostFs({
     stat: async () => ({ isFile: false, isDirectory: true, size: 0 }),
@@ -181,25 +147,6 @@ function toolCases(): readonly ToolCase[] {
   const workspace = stubWorkspaceContext('/workspace');
   return [
     {
-      name: 'Read',
-      fs: textFs('visible content'),
-      resolve: (service, path = '/workspace/a.txt') =>
-        new ReadTool(
-          service,
-          workspace,
-          skillCatalog,
-          stubToolResultTruncationService(),
-          stubConfigService(),
-          profile,
-          toolPolicy,
-          toolRegistry,
-        ).resolveExecution({ path }),
-      expectOutcome: (result) => {
-        expect(result.isError).not.toBe(true);
-        expect(result.output).toContain('visible content');
-      },
-    },
-    {
       name: 'Write',
       fs: writableFs(),
       resolve: (service, path = '/workspace/a.txt') =>
@@ -224,29 +171,11 @@ function toolCases(): readonly ToolCase[] {
       },
     },
     {
-      name: 'Grep',
-      fs: createFakeHostFs(),
-      resolve: (service) =>
-        new GrepTool(service, workspace, noopTelemetryService).resolveExecution({ pattern: 'needle' }),
-      expectOutcome: (result) => {
-        expect(outputText(result)).toContain('ripgrep');
-      },
-    },
-    {
-      name: 'Glob',
-      fs: writableFs(),
-      resolve: (service) =>
-        new GlobTool(service, workspace, noopTelemetryService).resolveExecution({ pattern: '**/*.ts' }),
-      expectOutcome: (result) => {
-        expect(outputText(result)).toContain('ripgrep');
-      },
-    },
-    {
       name: 'ReadMediaFile',
       fs: pngFs(),
-      resolve: (service) =>
+      resolve: (service, path = '/workspace/a.png') =>
         new ReadMediaFileTool(service, WORKSPACE, attachmentStore, noopTelemetryService).resolveExecution({
-          path: '/workspace/a.png',
+          path: path ?? '/workspace/a.png',
         }),
       expectOutcome: () => {},
     },
@@ -273,7 +202,6 @@ function outputText(result: ExecutableToolResult): string {
 describe('tool environment generation guard', () => {
   for (const tool of toolCases()) {
     it(`${tool.name} executes against the reconnected environment when the resolve-time environment was pending`, async () => {
-      ensureRgPathMock.mockRejectedValue(new Error('rg bootstrap failed'));
       const harness = connectSwappingHarness(tool.fs);
 
       const result = await finish(tool.resolve(harness.service));
@@ -296,13 +224,16 @@ describe('tool environment generation guard', () => {
     });
   }
 
-  for (const tool of toolCases().filter(({ name }) => ['Read', 'Write', 'Edit'].includes(name))) {
+  for (const tool of toolCases().filter(({ name }) => ['Write', 'Edit', 'ReadMediaFile'].includes(name))) {
     it(`${tool.name} resolves home paths with the reconnected environment host`, async () => {
       const harness = connectSwappingHarness(tool.fs);
 
       const execution = await tool.resolve(harness.service, '~/a.txt');
       if (execution.isError === true) throw new Error('expected a runnable execution');
-      expect(execution.display).toMatchObject({ kind: 'file_io', path: '/home/fake/a.txt' });
+      expect(execution.display).toMatchObject({
+        kind: 'file_io',
+        path: '/home/fake/a.txt',
+      });
 
       const result = await finish(execution);
       expect(harness.calls).toEqual(['connect']);
@@ -343,11 +274,11 @@ describe('tilde resolution against the reconnected host', () => {
 
   it('resolves ~ against the reconnected host home instead of /', async () => {
     const { service, calls } = pendingThenReadyHarness({ homeDir: '/home/me' });
-    const tool = new GlobTool(service, stubWorkspaceContext('/workspace'), noopTelemetryService);
-    const execution = await tool.resolveExecution({ pattern: '**/*.ts', path: '~/projects' });
+    const tool = new ReadMediaFileTool(service, WORKSPACE, attachmentStore, noopTelemetryService);
+    const execution = await tool.resolveExecution({ path: '~/projects/a.png' });
     expect(calls).toEqual(['connect']);
     expect((execution as Extract<ToolExecution, { execute: unknown }>).accesses).toEqual(
-      ToolAccesses.searchTree('/home/me/projects'),
+      ToolAccesses.readFile('/home/me/projects/a.png'),
     );
   });
 
@@ -366,8 +297,8 @@ describe('tilde resolution against the reconnected host', () => {
       },
     );
     registry.register(pending);
-    const tool = new GlobTool(registryBackedService(registry), stubWorkspaceContext('/workspace'), noopTelemetryService);
-    await expect(tool.resolveExecution({ pattern: '**/*.ts', path: '~/projects' })).rejects.toThrow(
+    const tool = new ReadMediaFileTool(registryBackedService(registry), WORKSPACE, attachmentStore, noopTelemetryService);
+    await expect(tool.resolveExecution({ path: '~/projects/a.png' })).rejects.toThrow(
       'connection refused',
     );
   });

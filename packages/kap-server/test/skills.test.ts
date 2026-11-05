@@ -380,7 +380,7 @@ describe('server-v2 /api/v1 skills', () => {
       expect(notice?.type).toBe('text');
       expect(notice?.text).toContain('Attached file "note.txt"');
       expect(notice?.text).toContain(`${noteBytes.length} bytes`);
-      const attachedPath = /bytes\): (.+) — open it with the Read tool$/.exec(notice?.text ?? '')?.[1];
+      const attachedPath = /bytes\): (.+) — read text with a bounded Bash command/.exec(notice?.text ?? '')?.[1];
       expect(attachedPath).toBeDefined();
       expect(attachedPath).toContain('/attachments/');
       expect(await readFile(attachedPath!)).toEqual(noteBytes);
@@ -427,7 +427,7 @@ describe('server-v2 /api/v1 skills', () => {
       const notice = userMsg!.content[1];
       expect(notice).toEqual({
         type: 'text',
-        text: `Attached file "note.txt" (application/octet-stream, ${noteBytes.length} bytes): ${sourcePath} — open it with the Read tool`,
+        text: `Attached file "note.txt" (application/octet-stream, ${noteBytes.length} bytes): ${sourcePath} — read text with a bounded Bash command, or use ReadMediaFile for supported media`,
       });
 
       const transcript = await getJson<{

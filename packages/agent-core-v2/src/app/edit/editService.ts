@@ -12,7 +12,7 @@ export type EditApplyResult =
   | { readonly ok: false; readonly error: string };
 
 function notFoundMessage(path: string): string {
-  return `old_string not found in ${path}, the file contents may be out of date. Please use the Read Tool to reload the content.
+  return `old_string not found in ${path}, the file contents may be out of date. Inspect the file and retry with its current content.
 `;
 }
 

@@ -243,11 +243,9 @@ export class AgentAgentsMdReminderService
     const env = lease.environment.host ?? DEFAULT_ENVIRONMENT_HOST;
     lease.dispose();
     switch (ctx.toolCall.name) {
-      case 'Read':
+      case 'ReadMediaFile':
       case 'Edit':
       case 'Write':
-      case 'Glob':
-      case 'Grep':
         return this.targetDirsFromAccesses(ctx);
       case 'Bash': {
         const args = ctx.args;
@@ -293,7 +291,7 @@ export class AgentAgentsMdReminderService
     const dirs: string[] = [];
     const selfKnown: string[] = [];
     const targetsFiles =
-      ctx.toolCall.name === 'Read' ||
+      ctx.toolCall.name === 'ReadMediaFile' ||
       ctx.toolCall.name === 'Edit' ||
       ctx.toolCall.name === 'Write';
     for (const access of ctx.accesses ?? []) {

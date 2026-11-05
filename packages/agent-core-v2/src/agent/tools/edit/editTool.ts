@@ -136,7 +136,7 @@ export class EditTool implements IEditTool {
     const word = result.count === 1 ? 'occurrence' : 'occurrences';
     return {
       output: `Replaced ${String(result.count)} ${word} in ${args.path}`,
-      note: '<system>The change is applied; there is no need to Read the file back to check it.</system>',
+      note: '<system>The change is applied; there is no need to read the file back to check it.</system>',
     };
   }
 }

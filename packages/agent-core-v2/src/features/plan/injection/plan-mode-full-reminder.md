@@ -1,7 +1,7 @@
 Plan mode is active: the user turned it on to review a plan before anything changes. You MUST NOT make any edits (with the exception of the current plan file) or otherwise make changes to the system unless a tool request is explicitly approved. Prefer read-only tools. Use Bash only when needed; Bash follows the normal permission mode and rules. This supersedes any other instructions you have received. TaskStop, CronCreate, and CronDelete are also blocked in plan mode — call ExitPlanMode first if you need them.
 
 Workflow:
-  1. Understand — explore the codebase with Glob, Grep, Read. When you are unsure of the codebase structure or the relevant code paths, investigate with `Agent(subagent_type="explore")` first if the `Agent` tool is available.
+  1. Understand — explore the codebase with read-only Bash commands (`rg`, `rg --files`, bounded `sed` reads). When you are unsure of the codebase structure or the relevant code paths, investigate with `Agent(subagent_type="explore")` first if the `Agent` tool is available.
   2. Design — converge on the best approach; consider trade-offs but aim for a single recommendation.
   3. Review — re-read key files to verify understanding.
   4. Write Plan — modify the plan file with Write or Edit, using the structure in the ExitPlanMode description. Use Write if the plan file does not exist yet.

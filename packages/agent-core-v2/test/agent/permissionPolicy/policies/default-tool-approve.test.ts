@@ -40,9 +40,6 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
   const policy = new DefaultToolApprovePermissionPolicyService();
 
   it.each([
-    ['Read', { path: '/workspace/notes.md' }],
-    ['Grep', { pattern: 'TODO', path: '/workspace' }],
-    ['Glob', { pattern: '**/*.ts', path: '/workspace' }],
     ['ReadMediaFile', { path: '/workspace/image.png' }],
     ['SetTodoList', { items: [] }],
     ['TodoList', {}],
@@ -73,6 +70,9 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
   });
 
   it.each([
+    ['Read', { path: '/workspace/notes.md' }],
+    ['Grep', { pattern: 'TODO' }],
+    ['Glob', { pattern: '*.ts' }],
     ['Bash', { command: 'printf first', timeout: 60 }],
     ['Write', { path: '/workspace/a.ts', content: 'x' }],
     ['Edit', { path: '/workspace/a.ts', old_string: 'a', new_string: 'b' }],
@@ -80,8 +80,6 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     ['CronCreate', { cron: '*/5 * * * *', prompt: 'ping' }],
     ['CronDelete', { id: 'job_1' }],
   ] as const)('does not approve %s', (toolName, args) => {
-    expect(
-      policy.evaluate(policyContext(toolName, args)),
-    ).toBeUndefined();
+    expect(policy.evaluate(policyContext(toolName, args))).toBeUndefined();
   });
 });

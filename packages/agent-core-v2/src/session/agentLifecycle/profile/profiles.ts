@@ -9,11 +9,8 @@ import {
 import EXPLORE_ROLE from './explore-overlay.md?raw';
 
 const AGENT_TOOLS = [
-  'Read',
   'Write',
   'Edit',
-  'Grep',
-  'Glob',
   'Bash',
   'TaskList',
   'TaskOutput',
@@ -49,9 +46,6 @@ const CODER_TOOLS = [
   'CronDelete',
   'CronList',
   'Edit',
-  'Glob',
-  'Grep',
-  'Read',
   'ReadMediaFile',
   'Skill',
   'TaskList',
@@ -68,10 +62,7 @@ const CODER_TOOLS = [
 const EXPLORE_TOOLS = [
   'NotifyUser',
   'Bash',
-  'Read',
   'ReadMediaFile',
-  'Glob',
-  'Grep',
   'WebSearch',
   'FetchURL',
 ] as const;

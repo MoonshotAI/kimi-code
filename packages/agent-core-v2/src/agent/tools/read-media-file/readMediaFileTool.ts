@@ -247,15 +247,13 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       if (fileType.kind === 'text') {
         return {
           isError: true,
-          output: `"${args.path}" is a text file. Use Read to read text files.`,
+          output: `"${args.path}" is a text file. Read it with a bounded Bash command.`,
         };
       }
       if (fileType.kind === 'unknown') {
         return {
           isError: true,
-          output:
-            `"${args.path}" is not a supported image or video file. ` +
-            'Use Read for text files, or Bash or an MCP tool for other binary formats.',
+          output: `"${args.path}" is not a supported image or video file. Read text with a bounded Bash command.`,
         };
       }
 

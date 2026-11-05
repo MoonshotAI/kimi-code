@@ -76,7 +76,7 @@ api_key = ""
 
 [[permission.rules]]
 decision = "allow"
-pattern = "Read"
+pattern = "ReadMediaFile"
 
 [[permission.rules]]
 decision = "deny"
@@ -424,7 +424,7 @@ This section is read by the `agent-core-v2` engine, which powers every Kimi Code
 | `enabled` | `array<string>` | — | Global allowlist: when non-empty, only the listed tools are available; omitting the field or setting an empty array imposes no constraint |
 | `disabled` | `array<string>` | — | Global denylist, applied after `enabled` |
 
-Name matching follows the same rules as the same-named fields in an agent file: built-in tools match by exact name (such as `Read`), and MCP tools match with globs (such as `mcp__github__*`). Three entry shapes never match anything and are reported with a warning: a wildcard outside an `mcp__` pattern (`enabled = ["*"]` disables every tool, `disabled = ["*"]` disables none), an `mcp__` literal missing the tool segment (`mcp__github`; use `mcp__github__*` for a whole server), and a name no registered or built-in tool has (matching is case-sensitive).
+Name matching follows the same rules as the same-named fields in an agent file: built-in tools match by exact name (such as `ReadMediaFile`), and MCP tools match with globs (such as `mcp__github__*`). Three entry shapes never match anything and are reported with a warning: a wildcard outside an `mcp__` pattern (`enabled = ["*"]` disables every tool, `disabled = ["*"]` disables none), an `mcp__` literal missing the tool segment (`mcp__github`; use `mcp__github__*` for a whole server), and a name no registered or built-in tool has (matching is case-sensitive).
 
 ```toml
 [tools]
@@ -437,20 +437,7 @@ Like the `tools` / `disallowedTools` fields of an agent file, this section shape
 
 ## `read`
 
-`read` controls the character limits for the [`Read` tool](../reference/tools.md). The limit includes file content, line numbers, and the status block; it does not impose a separate line-count or UTF-8 byte limit.
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `default_max_chars` | `integer` | `100000` | Character budget when the tool call omits `max_chars` |
-| `max_chars` | `integer` | `100000` | Maximum character budget a tool call may request |
-
-```toml
-[read]
-default_max_chars = 100000
-max_chars = 100000
-```
-
-Both values must be positive integers. A call's `max_chars` overrides the default, but is capped at the configured maximum; the result reports the effective budget. If the configured default exceeds the maximum, the maximum also limits default reads. Each call also stops at about `max_chars` / 4 estimated tokens, counting one token per non-ASCII character and per four ASCII characters, so text with many non-ASCII characters, such as Chinese, returns fewer characters per call. Raise `max_chars` to let a call return more than 100000 characters or about 25000 tokens, and raise `default_max_chars` as well when you want larger documents to be returned in one call without the agent requesting a larger budget.
+`read` was removed together with the dedicated `Read`, `Grep`, and `Glob` tools. Existing `[read]` settings no longer affect file reads; use `Bash` for bounded text reads, including text attachments. `ReadMediaFile` handles supported images and videos. See [Built-in tools](../reference/tools.md).
 
 ## `image`
 
@@ -541,25 +528,25 @@ api_key = "sk-xxx"
 
 `permission` sets permission rules that are automatically loaded when a session starts, controlling whether the Agent needs user confirmation before calling a tool. Rules are written as a `[[permission.rules]]` array of tables, matched in order; the first matching rule takes effect.
 
-You can also set `dangerous_command_guard = false` under `[permission]` to turn off every built-in guard confirmation policy entirely: dangerous commands, access to sensitive files such as `.env` or `id_rsa`, and access to git control paths no longer ask for confirmation in Always Ask and Ask When Needed mode (these policies are never active in Never Ask mode); the default is `true`. An environment variable `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` overrides the file setting. With all built-in guards off, only `ask` rules you configured yourself can still prompt in Ask When Needed mode; in Always Ask mode, tools that are not auto-approved continue to prompt as before. The hard block that stops `Read`/`Write`/`Edit` from touching secret files stays in effect. Use this switch only for environments that already gate commands outside the agent.
+You can also set `dangerous_command_guard = false` under `[permission]` to turn off every built-in guard confirmation policy entirely: dangerous commands, access to sensitive files such as `.env` or `id_rsa`, and access to git control paths no longer ask for confirmation in Always Ask and Ask When Needed mode (these policies are never active in Never Ask mode); the default is `true`. An environment variable `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` overrides the file setting. With all built-in guards off, only `ask` rules you configured yourself can still prompt in Ask When Needed mode; in Always Ask mode, tools that are not auto-approved continue to prompt as before. The hard block that stops `Write`/`Edit` from touching secret files stays in effect. Use this switch only for environments that already gate commands outside the agent.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `decision` | `string` | Yes | Action on match: `allow` (permit immediately), `deny` (reject immediately), `ask` (prompt each time) |
 | `scope` | `string` | No | Rule scope: `turn-override`, `session-runtime`, `project`, `user`; defaults to `user` |
-| `pattern` | `string` | Yes | Match pattern in the form `ToolName` or `ToolName(arg-pattern)`, e.g. `Read` or `Bash(rm -rf*)` |
+| `pattern` | `string` | Yes | Match pattern in the form `ToolName` or `ToolName(arg-pattern)`, e.g. `ReadMediaFile` or `Bash(rm -rf*)` |
 | `reason` | `string` | No | Rule description for debugging and auditing |
 
-Built-in tool names are listed in [Built-in tools](../reference/tools.md). Most built-in tools that accept rule arguments define their own matching subject, such as `Bash(command-pattern)` or `Read(path-pattern)`. `AgentSwarm`, MCP tools, and custom tools can only be matched by tool name; argument patterns are not supported for them.
+Built-in tool names are listed in [Built-in tools](../reference/tools.md). Most built-in tools that accept rule arguments define their own matching subject, such as `Bash(command-pattern)` or `ReadMediaFile(path-pattern)`. `AgentSwarm`, MCP tools, and custom tools can only be matched by tool name; argument patterns are not supported for them.
 
 ```toml
 [[permission.rules]]
 decision = "allow"
-pattern = "Read"
+pattern = "ReadMediaFile"
 
 [[permission.rules]]
 decision = "allow"
-pattern = "Grep"
+pattern = "Bash(rg*)"
 
 [[permission.rules]]
 decision = "deny"

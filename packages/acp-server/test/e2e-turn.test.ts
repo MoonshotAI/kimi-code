@@ -328,19 +328,19 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(result.stopReason).toBe('cancelled');
   }, 30_000);
 
-  it('attaches locations to a file tool call and its terminal update', async () => {
-    const c = await boot();
-    const filePath = join(homeDir!, 'note.txt');
-    await writeFile(filePath, 'location probe');
+  it('attaches locations to a ReadMediaFile tool call and its terminal update', async () => {
+    const c = await boot({}, true);
+    const filePath = join(homeDir!, 'note.png');
+    await writeFile(filePath, Buffer.from(solidPngBase64(32, 32), 'base64'));
     scripted!.mockNextResponse({
       type: 'function',
       id: 'call_read',
-      name: 'Read',
+      name: 'ReadMediaFile',
       arguments: JSON.stringify({ path: filePath }),
     });
     scripted!.mockNextText('read it');
 
-    // Auto-approve in case the manual permission mode gates the Read.
+    // Auto-approve in case the manual permission mode gates the media read.
     c.onRequest('session/request_permission', () => ({
       outcome: { outcome: 'selected', optionId: 'approve_once' },
     }));
@@ -498,7 +498,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(mediaUpdates[0]?.sessionUpdate).toBe('tool_call');
     expect(mediaUpdates[0]?.status).toBe('pending');
     expect(mediaUpdates[0]?.title).toBe('ReadMediaFile');
-    expect(mediaUpdates[0]?.kind).toBe('other');
+    expect(mediaUpdates[0]?.kind).toBe('read');
     expect(mediaUpdates[0]?.rawInput).toBeUndefined();
     expect(textOf(mediaUpdates[0])).toBe(args.slice(0, splitAt));
     expect(mediaUpdates[1]?.sessionUpdate).toBe('tool_call_update');
@@ -506,7 +506,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(textOf(mediaUpdates[1])).toBe(args);
     expect(mediaUpdates[2]?.sessionUpdate).toBe('tool_call_update');
     expect(mediaUpdates[2]?.status).toBe('in_progress');
-    expect(mediaUpdates[2]?.kind).toBe('other');
+    expect(mediaUpdates[2]?.kind).toBe('read');
     expect(mediaUpdates[2]?.rawInput).toEqual({ path: mediaPath });
 
     const terminal = mediaUpdates.at(-1);

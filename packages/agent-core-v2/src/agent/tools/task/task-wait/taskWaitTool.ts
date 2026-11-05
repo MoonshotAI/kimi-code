@@ -49,17 +49,10 @@ function fullOutputHint(output: AgentTaskOutputSnapshot): string | undefined {
   if (output.truncated) {
     return (
       `Only the last ${String(OUTPUT_PREVIEW_BYTES)} bytes are shown above. ` +
-      'Use the Read tool with the output_path to page through the full log ' +
-      `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
-      'lines per page).'
+      `Read the full log with a bounded Bash command, for example sed -n '1,${String(PAGING_HINT_LINES)}p' output_path.`
     );
   }
-  return (
-    'The preview above is the complete output. Use the Read tool with the output_path ' +
-    'if you need to re-read the full log later ' +
-    `(parameters: path, line_offset, n_lines; read about ${String(PAGING_HINT_LINES)} ` +
-    'lines per page).'
-  );
+  return 'The preview above is the complete output. Re-read the output_path with a bounded Bash command if needed.';
 }
 
 export function waitForProgressUpdate(
@@ -380,7 +373,7 @@ export class WaitForTool implements IWaitForTool {
         outputTruncated: output.truncated,
         fullOutputAvailable: output.fullOutputAvailable,
         fullOutputTool:
-          output.fullOutputAvailable && output.outputPath !== undefined ? 'Read' : undefined,
+          output.fullOutputAvailable && output.outputPath !== undefined ? 'Bash' : undefined,
         fullOutputHint: fullOutputHint(output),
       }),
       '',
