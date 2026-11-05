@@ -529,12 +529,12 @@ describe('session rating lifecycle', () => {
     expect(appeared?.properties).toMatchObject({ kfc_trace_id: 'trace-1', user_turn_count: 1 });
   });
 
-  it('does not load sessions when evaluating or reporting unknown appearances', async () => {
+  it('does not load a session to report an unknown appearance and offers nothing for a stale turn', async () => {
     const id = await client.createSession(home);
     await closeSessionById(server.core.accessor, id);
-    expect(await client.evaluate(id, 'turn-1')).toMatchObject({ code: 0, data: { appearance: null } });
     expect(await client.respond(id, 'unknown', 'good')).toMatchObject({ code: 0, data: null });
     expect(getLiveSessionById(server.core.accessor, id)).toBeUndefined();
+    expect(await client.evaluate(id, 'turn-1')).toMatchObject({ code: 0, data: { appearance: null } });
   });
 
   it('does not recover unfinished appearances after server restart', async () => {

@@ -132,7 +132,6 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerSessionRatingRoutes>[0],
         opts.sessionRating,
         opts.conversations,
-        core,
       );
       registerSessionExportRoute(
         apiV1 as unknown as Parameters<typeof registerSessionExportRoute>[0],

@@ -206,11 +206,6 @@ export function applyConversationRecord(state: ConversationState, record: WireRe
     case 'context.clear':
       clearConversation(state);
       return;
-    case 'context.undo': {
-      const count = numberField(record['count']);
-      if (count !== undefined && count > 0) undoConversationTurns(state, count);
-      return;
-    }
   }
 }
 

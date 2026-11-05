@@ -28,11 +28,11 @@ import {
   applyConversationRecord,
   createConversationState,
   settleOrphanTurns,
+  undoConversationTurns,
   type ConversationFork,
   type ConversationState,
 } from '../../src/services/conversation/conversationFold';
 import { ConversationFeed, type ConversationEvent } from '../../src/services/conversation/conversationFeed';
-import { parseWireRecords } from '../../src/services/conversation/conversationService';
 
 let clock = 1_000;
 
@@ -613,7 +613,7 @@ describe('conversation fold', () => {
     expect(shape(state.turns[0])).toEqual(['opener:work', 'assistant_message:done']);
   });
 
-  it('applies legacy undo records at message granularity', () => {
+  it('undoes legacy records at message granularity', () => {
     const state = fold([
       turnPrompt(undefined, undefined),
       userMessage('a', 'first'),
@@ -624,11 +624,11 @@ describe('conversation fold', () => {
       record('turn.steer', { input: [{ type: 'text', text: 'wait' }], origin: { kind: 'user' } }),
       userMessage('c', 'wait'),
       message('assistant', 'three'),
-      record('context.undo', { count: 1 }),
-      record('context.undo', { count: 1 }),
-      turnPrompt(undefined, undefined),
-      userMessage('d', 'third'),
     ]);
+    undoConversationTurns(state, 1);
+    undoConversationTurns(state, 1);
+    applyConversationRecord(state, turnPrompt(undefined, undefined));
+    applyConversationRecord(state, userMessage('d', 'third'));
 
     expect(state.turns.map(shape)).toEqual([
       ['opener:first', 'assistant_message:one'],
@@ -951,16 +951,5 @@ describe('conversation feed', () => {
     await huge.feed.ready;
     expect(await huge.feed.page(undefined, 10)).toMatchObject({ turns: [{ ordinal: 0 }], has_more: false });
     huge.dispatcher.dispose();
-  });
-});
-
-describe('cold wire records', () => {
-  it('rejects a corrupted complete line and tolerates a torn last line', () => {
-    const line = JSON.stringify({ type: 'context.clear', time: 1 });
-
-    expect(parseWireRecords(`${line}\n{"type":"conte`, 'example/wire.jsonl')).toEqual([JSON.parse(line)]);
-    expect(() => parseWireRecords(`${line}\n{"type":"conte\n${line}\n`, 'example/wire.jsonl')).toThrow(
-      'wire.jsonl: corrupted line 2 in example/wire.jsonl',
-    );
   });
 });

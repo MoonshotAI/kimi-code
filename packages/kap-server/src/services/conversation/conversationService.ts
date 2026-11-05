@@ -1,45 +1,26 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-
 import {
   BTW_AGENT_LABEL,
   Error2,
   ErrorCodes,
   IAgentLifecycleService,
-  IBootstrapService,
-  ISessionIndex,
   ISessionManager,
   ISessionStateService,
   MAIN_AGENT_ID,
   agentContextOf,
-  flattenChain,
-  getLiveSessionById,
   getOrRestoreAgent,
   resumeSessionById,
-  sessionDirOf,
   sessionMetadataDataKey,
-  workspacePersistenceScope,
   type AgentContext,
   type IAgentScopeHandle,
   type IDisposable,
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  AGENT_WIRE_RECORD_KEY,
-  assertWireRecordsReaderVersion,
-  type WireRecord,
-} from '@moonshot-ai/agent-core-v2/wire/record';
 
 import type { ConversationTurn } from '../../protocol/conversation';
 import { ensureMainAgent } from '../../transport/mainAgent';
 import { ConversationFeed } from './conversationFeed';
-import {
-  applyConversationRecord,
-  createConversationState,
-  settleOrphanTurns,
-  type ConversationFork,
-} from './conversationFold';
+import type { ConversationFork } from './conversationFold';
 
 export interface ConversationFeedCreated {
   readonly sessionId: string;
@@ -86,33 +67,12 @@ export class ConversationService implements IDisposable {
     return this.attach(sessionId, this.watch(sessionId, session), handle).ready;
   }
 
-  async mainTurnsWithoutLoading(sessionId: string): Promise<readonly ConversationTurn[] | undefined> {
-    const session = getLiveSessionById(this.core.accessor, sessionId);
-    const handle = session?.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
-    if (session !== undefined && handle !== undefined) {
-      return (await this.attach(sessionId, this.watch(sessionId, session), handle).ready).turns();
-    }
-    const summary = await this.core.accessor.get(ISessionIndex).get(sessionId);
-    if (summary === undefined) return undefined;
-    const bootstrap = this.core.accessor.get(IBootstrapService);
-    const sessionDir = sessionDirOf(
-      bootstrap.homeDir,
-      workspacePersistenceScope(bootstrap.scope('sessions'), summary.workspaceId),
-      sessionId,
-    );
-    const wirePath = join(sessionDir, 'agents', MAIN_AGENT_ID, AGENT_WIRE_RECORD_KEY);
-    let text: string;
-    try {
-      text = await readFile(wirePath, 'utf-8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-      throw error;
-    }
-    const records = parseWireRecords(text, wirePath);
-    assertWireRecordsReaderVersion(records);
-    const state = createConversationState(MAIN_AGENT_ID);
-    for (const record of flattenChain(records)) applyConversationRecord(state, record);
-    return settleOrphanTurns(state).turns;
+  async mainTurns(sessionId: string): Promise<readonly ConversationTurn[] | undefined> {
+    const session = await resumeSessionById(this.core.accessor, sessionId);
+    if (session === undefined) return undefined;
+    const handle = await getOrRestoreAgent(session, MAIN_AGENT_ID);
+    if (handle === undefined) return undefined;
+    return (await this.attach(sessionId, this.watch(sessionId, session), handle).ready).turns();
   }
 
   onDidCreateFeed(listener: (created: ConversationFeedCreated) => void): IDisposable {
@@ -179,22 +139,4 @@ function forkOf(session: ISessionScopeHandle, agentId: string): ConversationFork
   const agent = states.has(sessionMetadataDataKey) ? states.get(sessionMetadataDataKey)?.agents?.[agentId] : undefined;
   if (agent?.forkedFrom === undefined) return undefined;
   return { forkedFrom: agent.forkedFrom, source: agent.labels?.[BTW_AGENT_LABEL] === 'true' ? 'btw' : 'fork' };
-}
-
-export function parseWireRecords(text: string, wirePath: string): WireRecord[] {
-  const lines = text.split('\n');
-  const tail = lines.pop() ?? '';
-  const records = lines.flatMap((line, index): WireRecord[] => {
-    if (line.trim().length === 0) return [];
-    try {
-      return [JSON.parse(line) as WireRecord];
-    } catch (error) {
-      throw new Error(`wire.jsonl: corrupted line ${index + 1} in ${wirePath}`, { cause: error });
-    }
-  });
-  try {
-    if (tail.trim().length > 0) records.push(JSON.parse(tail) as WireRecord);
-  } catch {
-  }
-  return records;
 }
