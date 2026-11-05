@@ -1,4 +1,4 @@
-import { parseDaemonFileUrl, type PromptOrigin } from '@moonshot-ai/agent-core-v2';
+import { matchSingleMediaPathTag, parseDaemonFileUrl, type PromptOrigin } from '@moonshot-ai/agent-core-v2';
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import {
   isMediaPart,
@@ -41,7 +41,9 @@ const EXIT_PLAN_MODE = 'ExitPlanMode';
 const PLAN_SAVED_TO_MARKER = 'Plan saved to: ';
 const PLAN_BODY_MARKERS = ['## Approved Plan:\n', '## Plan (auto-approved, not user-reviewed):\n'];
 const ATTACHED_FILE_NOTICE = /^Attached file "(.+)" \((.+), (\d+) bytes\): (.+) — open it with the Read tool$/s;
-const UPLOADED_FILE_PATH = /(?:^|[\\/])(f_(?:[0-9A-Za-z]{26}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}))-[^\\/]*$/;
+const FILE_ID = String.raw`f_(?:[0-9A-Za-z]{26}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})`;
+const UPLOADED_FILE_PATH = new RegExp(String.raw`(?:^|[\\/])(${FILE_ID})-[^\\/]*$`);
+const CACHED_MEDIA_PATH = new RegExp(String.raw`(?:^|[\\/])(${FILE_ID})\.[^\\/.]+$`);
 const IMAGE_COMPRESSION_CAPTION = /^<system>Image compressed to fit model limits:[\s\S]*<\/system>$/;
 
 const STEP_TIMING_NAMES = {
@@ -70,13 +72,19 @@ export function userMessageItem(
   const text: string[] = [];
   const attachments: Attachment[] = [];
   for (const part of content) {
-    const file = part.type === 'text' ? ATTACHED_FILE_NOTICE.exec(part.text) : null;
-    if (file !== null) {
-      const [, name, mediaType, size, path] = file;
-      const fileId = UPLOADED_FILE_PATH.exec(path!)?.[1];
-      attachments.push({ kind: 'file', file_id: fileId, name, media_type: mediaType, size: Number(size), ordinal: attachments.length + 1 });
-    } else if (part.type === 'text') {
-      if (!IMAGE_COMPRESSION_CAPTION.test(part.text)) text.push(part.text);
+    if (part.type === 'text') {
+      const file = ATTACHED_FILE_NOTICE.exec(part.text);
+      const tag = file === null ? matchSingleMediaPathTag(part.text) : undefined;
+      const cachedId = tag !== undefined && tag.kind !== 'file' ? CACHED_MEDIA_PATH.exec(tag.path)?.[1] : undefined;
+      if (file !== null) {
+        const [, name, mediaType, size, path] = file;
+        const fileId = UPLOADED_FILE_PATH.exec(path!)?.[1];
+        attachments.push({ kind: 'file', file_id: fileId, name, media_type: mediaType, size: Number(size), ordinal: attachments.length + 1 });
+      } else if (tag !== undefined && tag.kind !== 'file' && cachedId !== undefined) {
+        attachments.push({ kind: tag.kind, file_id: cachedId, ordinal: attachments.length + 1 });
+      } else if (!IMAGE_COMPRESSION_CAPTION.test(part.text)) {
+        text.push(part.text);
+      }
     } else if (isMediaPart(part)) {
       const name = mediaFields(part)?.name;
       attachments.push({ ...mediaOf(part), name: typeof name === 'string' ? name : undefined, ordinal: attachments.length + 1 });

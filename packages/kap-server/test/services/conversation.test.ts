@@ -197,6 +197,7 @@ describe('conversation fold', () => {
             { type: 'text', text: `Attached file "notes.md" (text/markdown, 4 bytes): /home/example/attachments/${fileId}-notes.md — open it with the Read tool` },
             { type: 'text', text: 'Attached file "local.txt" (text/plain, 9 bytes): /home/example/local.txt — open it with the Read tool' },
             { type: 'text', text: '<system>Image compressed to fit model limits: original 3000x2000 image/png -> sent 2000x1333 image/png.</system>' },
+            { type: 'text', text: `<video path="/home/example/cache/${fileId}.mp4"></video>` },
           ],
           toolCalls: [],
         },
@@ -211,6 +212,7 @@ describe('conversation fold', () => {
       attachments: [
         { kind: 'file', file_id: fileId, name: 'notes.md', media_type: 'text/markdown', size: 4, ordinal: 1 },
         { kind: 'file', name: 'local.txt', media_type: 'text/plain', size: 9, ordinal: 2 },
+        { kind: 'video', file_id: fileId, ordinal: 3 },
       ],
       skills: [{ name: 'review', args: '--deep' }],
       metadata: { display_text: 'check this diff' },
