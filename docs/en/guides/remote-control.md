@@ -114,26 +114,25 @@ The access URL itself contains no session data or local token — everything is 
 
 ## FAQ
 
-### The link won't open from inside WeChat — what do I do?
-
+::: details The link won't open from inside WeChat — what do I do?
 WeChat's in-app browser restricts some external webpages under its own security policies, so the Remote Control access URL (`https://code-rc.kimi.com/…`) opened directly in WeChat may be blocked with a "web page access stopped" notice.
 
 The fix: tap the "…" menu in the top-right corner and open the page in your default browser, or copy the link and paste it into a system browser such as Safari or Chrome. The same applies when scanning the startup QR code with WeChat's scanner — open it in a browser to get the full session functionality.
+:::
 
-### Does the task stop when I close the browser?
-
+::: details Does the task stop when I close the browser?
 No. The browser is just a window — the task runs on your machine. Closing the page doesn't affect it; reopen the link to get the view back.
+:::
 
-### Can I keep going after closing the local terminal?
-
+::: details Can I keep going after closing the local terminal?
 No. Remote Control depends on the Remote Control process on your machine staying alive; once the process exits, the remote connection drops. Restart it to recover.
+:::
 
-### Can a phone access local files directly?
-
+::: details Can a phone access local files directly?
 No. The phone has no direct channel to your machine's file system: what you see on the phone is the content rendered inside the session interface (such as diffs and file cards after the AI edits files), while all file reads/writes and command execution happen on the machine. The phone cannot browse, open, or download local files outside of a session.
+:::
 
-### How to troubleshoot a failed remote connection
-
+::: details How to troubleshoot a failed remote connection
 Check in this order:
 
 1. **Wake state**: make sure the machine is awake and hasn't gone to sleep
@@ -141,6 +140,7 @@ Check in this order:
 3. **Process status**: is the Remote Control process running on the machine
 4. **Account match**: is the web side logged in with the same Kimi account
 5. **Firewall and proxy**: is your corporate network or proxy blocking `code-rc.kimi.com`
+:::
 
 ## Next steps
 
