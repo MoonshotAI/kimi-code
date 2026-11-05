@@ -8,6 +8,7 @@ import {
   type TUI,
 } from '@moonshot-ai/pi-tui';
 
+import { TranscriptContainer } from '#/tui/components/messages/transcript-container';
 import { TranscriptView } from '#/tui/components/messages/transcript-view';
 import { clipboard } from '#/utils/clipboard/clipboard-native';
 import { openUrl } from '#/utils/open-url';
@@ -45,7 +46,8 @@ import { createTerminalState, type TerminalState } from './utils/terminal-state'
 export interface TUIState {
   ui: TUI;
   terminal: ProcessTerminal;
-  transcriptContainer: GutterContainer;
+  transcriptContainer: TranscriptContainer;
+  transcriptView?: TranscriptView;
   activityContainer: Container;
   notifyPanelContainer: Container;
   notifyPanel: NotifyPanelComponent;
@@ -76,7 +78,6 @@ export interface TUIState {
   transcriptEntries: TranscriptEntry[];
   terminalState: TerminalState;
   activitySpinner: { instance: MoonLoader; style: SpinnerStyle } | null;
-  toolOutputExpanded: boolean;
   sessions: SessionRow[];
   loadingSessions: boolean;
   /** Keyset cursor for the next older page; `undefined` when the listing is exhausted. */
@@ -151,7 +152,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     ui.requestRender(true);
   });
 
-  const transcriptContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
+  const transcriptContainer = new TranscriptContainer(CHROME_GUTTER, CHROME_GUTTER, ui);
   const activityContainer = new GutterContainer(CHROME_GUTTER, CHROME_GUTTER);
   // Docked panels carry their own gutter, so their fullscreen slot is a
   // layout node rather than a GutterContainer (which the layout treats as one
@@ -168,10 +169,15 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const editor = new CustomEditor(ui, {
     disablePasteBurst: initialAppState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
   });
-  const footer = new FooterComponent({ ...initialAppState }, () => {
-    ui.requestRender();
-  });
+  const footer = new FooterComponent(
+    { ...initialAppState },
+    () => {
+      ui.requestRender();
+    },
+    fullscreen,
+  );
 
+  let transcriptView: TranscriptView | undefined;
   let dockContainer: VStack | undefined;
   let editorSlot: VStack | undefined;
   if (ui instanceof TuiAltScreen) {
@@ -182,7 +188,8 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     // from basis 0 and grows; the dock keeps its intrinsic height, with the
     // editor never squeezed below its 3 rows (top border / input / bottom
     // border) and the footer below 1 — otherwise the box outline gets clipped.
-    const transcriptView = new TranscriptView(transcriptContainer);
+    const fullscreenView = new TranscriptView(transcriptContainer);
+    transcriptView = fullscreenView;
     dockContainer = new VStack();
     dockContainer.addChild(activityContainer, { shrink: 1, minSize: 0 });
     dockContainer.addChild(notifyPanelContainer, { shrink: 1, minSize: 0 });
@@ -196,11 +203,11 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     editorSlot.addChild(editorContainer, EDITOR_SLOT_ENTRY);
     dockContainer.addChild(editorSlot, EDITOR_SLOT_ENTRY);
     const root = new VStack();
-    root.addChild(transcriptView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
+    root.addChild(fullscreenView, { basis: 0, grow: 1, shrink: 1, minSize: 1 });
     root.addChild(dockContainer, { basis: 'auto', grow: 0, shrink: 1, minSize: 1 });
     ui.setLayoutRoot(root);
     ui.addLayoutEffect(() => {
-      if (ui.getLayoutRoot() === root && transcriptView.updateStickyMessage()) ui.requestRender();
+      if (ui.getLayoutRoot() === root && fullscreenView.updateStickyMessage()) ui.requestRender();
     });
   }
 
@@ -208,6 +215,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     ui,
     terminal,
     transcriptContainer,
+    transcriptView,
     activityContainer,
     notifyPanelContainer,
     notifyPanel,
@@ -227,7 +235,6 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     transcriptEntries: [],
     terminalState: createTerminalState(),
     activitySpinner: null,
-    toolOutputExpanded: false,
     sessions: [],
     loadingSessions: false,
     sessionsNextCursor: undefined,

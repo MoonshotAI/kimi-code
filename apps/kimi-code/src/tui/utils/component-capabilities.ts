@@ -15,6 +15,10 @@ export interface OmitsExpandHint {
   omitsExpandHint(): boolean;
 }
 
+export interface HasRowDetail {
+  renderRowDetail(width: number): string[];
+}
+
 export interface Disposable {
   dispose(): void;
 }
@@ -59,6 +63,15 @@ export function isExpandedComponent(obj: unknown): boolean {
     'isExpanded' in obj &&
     typeof (obj as HidesContent).isExpanded === 'function' &&
     (obj as HidesContent).isExpanded()
+  );
+}
+
+export function hasRowDetail(obj: unknown): obj is HasRowDetail {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'renderRowDetail' in obj &&
+    typeof (obj as HasRowDetail).renderRowDetail === 'function'
   );
 }
 

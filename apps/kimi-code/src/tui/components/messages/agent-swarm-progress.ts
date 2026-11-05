@@ -224,6 +224,7 @@ export class AgentSwarmProgressComponent implements Component {
   private activitySpinnerText: (() => string) | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
   private renderVersion = 0;
+  private projectionVersion = 0;
   private renderCache: AgentSwarmRenderCache | undefined;
 
   constructor(options: AgentSwarmProgressOptions) {
@@ -283,12 +284,17 @@ export class AgentSwarmProgressComponent implements Component {
 
   markToolCallEnded(): void {
     this.toolCallActive = false;
+    this.projectionVersion += 1;
     this.activitySpinnerText = undefined;
     this.markDirty();
   }
 
   isToolCallActive(): boolean {
     return this.toolCallActive;
+  }
+
+  get transcriptProjectionVersion(): number {
+    return this.projectionVersion;
   }
 
   isRequestStreaming(): boolean {
@@ -342,6 +348,7 @@ export class AgentSwarmProgressComponent implements Component {
   markInputComplete(): void {
     if (!this.inputComplete) {
       this.inputComplete = true;
+      this.projectionVersion += 1;
       for (const member of this.members) {
         if (member.phase === 'pending') member.phase = 'queued';
       }
@@ -358,7 +365,10 @@ export class AgentSwarmProgressComponent implements Component {
     const member = this.findMemberForSubagent(input.agentId, input.swarmIndex);
     if (member === undefined) return;
     this.assignMemberAgentId(member, input.agentId);
-    if (member.phase === 'pending') member.phase = 'queued';
+    if (member.phase === 'pending') {
+      member.phase = 'queued';
+      this.projectionVersion += 1;
+    }
     this.markDirty();
     this.startAnimationIfNeeded();
   }
@@ -427,6 +437,7 @@ export class AgentSwarmProgressComponent implements Component {
     this.assignMemberAgentId(member, input.agentId);
     this.progressEstimator.markQueued(member.id, Date.now());
     member.phase = 'suspended';
+    this.projectionVersion += 1;
     clearMemberState(member, ...TERMINAL_CLEAR_KEYS);
     this.markDirty();
     this.startAnimationIfNeeded();
@@ -443,6 +454,7 @@ export class AgentSwarmProgressComponent implements Component {
 
   markSwarmFailed(failureText?: string): void {
     this.failed = true;
+    this.projectionVersion += 1;
     this.aborted = false;
     const nowMs = Date.now();
     for (const member of this.members) {
@@ -462,6 +474,7 @@ export class AgentSwarmProgressComponent implements Component {
 
   markActiveCancelled(): void {
     this.aborted = true;
+    this.projectionVersion += 1;
     const nowMs = Date.now();
     for (const member of this.members) {
       if (isTerminalPhase(member.phase)) continue;
@@ -837,6 +850,7 @@ export class AgentSwarmProgressComponent implements Component {
       ...this.members,
       ...createMembers(count, this.inputComplete ? 'queued' : 'pending').slice(this.members.length),
     ];
+    this.projectionVersion += 1;
     const nowMs = Date.now();
     for (let index = previousLength; index < this.members.length; index += 1) {
       const member = this.members[index];
@@ -896,6 +910,7 @@ export class AgentSwarmProgressComponent implements Component {
   private promoteToRunning(member: AgentSwarmMember, nowMs?: number, setTicks = false): void {
     if (member.phase === 'pending' || member.phase === 'queued' || member.phase === 'suspended') {
       member.phase = 'running';
+      this.projectionVersion += 1;
       if (nowMs !== undefined) this.progressEstimator.markStarted(member.id, nowMs);
       if (setTicks) member.ticks = Math.max(member.ticks, 1);
     }
@@ -904,6 +919,7 @@ export class AgentSwarmProgressComponent implements Component {
 
   private completeMember(member: AgentSwarmMember, nowMs: number, completedText?: string): void {
     if (member.phase !== 'completed') {
+      this.projectionVersion += 1;
       this.progressEstimator.markCompleted(member.id, nowMs);
       member.completedAtMs = nowMs;
     }
@@ -924,6 +940,7 @@ export class AgentSwarmProgressComponent implements Component {
 
   private failMember(member: AgentSwarmMember, nowMs: number, failureText?: string): void {
     if (member.phase !== 'failed') {
+      this.projectionVersion += 1;
       this.progressEstimator.markFailed(member.id, nowMs);
       member.failedAtMs = nowMs;
     }
@@ -938,6 +955,7 @@ export class AgentSwarmProgressComponent implements Component {
 
   private cancelMember(member: AgentSwarmMember, nowMs: number): void {
     const previousPhase = member.phase;
+    this.projectionVersion += 1;
     this.progressEstimator.markCancelled(member.id, nowMs);
     member.phase = 'cancelled';
     clearMemberState(member, ...CANCELLED_CLEAR_KEYS);

@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FooterComponent } from '#/tui/components/chrome/footer';
+import { buildWeightedTips, FooterComponent } from '#/tui/components/chrome/footer';
+import { ALL_TIPS, TRANSCRIPT_GROUPING_TIP } from '#/tui/constant/tips';
 import { BRAILLE_SPINNER_INTERVAL_MS } from '#/tui/constant/rendering';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
@@ -89,6 +90,7 @@ const appState: AppState = {
   editorCommand: null,
   notifications: { enabled: true, condition: 'unfocused' },
   upgrade: { autoInstall: true },
+  transcript: { groupTools: 'auto', groupThinking: true },
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,
@@ -397,6 +399,60 @@ describe('FooterComponent ctrl+o hint with a status_line command', () => {
     expect(line2).toContain('ctrl+o expand');
     expect(line2).toContain('context:');
     footer.dispose();
+  });
+});
+
+describe('transcript grouping tip', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('appears only when the running fullscreen UI has settings that create groups', () => {
+    const rotation = buildWeightedTips([...ALL_TIPS, TRANSCRIPT_GROUPING_TIP]);
+    const index = rotation.findIndex((tip) => tip.text === TRANSCRIPT_GROUPING_TIP.text);
+    expect(index).toBeGreaterThanOrEqual(0);
+    vi.setSystemTime(index * 10_000);
+
+    const fullscreenFooter = (state: AppState) => new FooterComponent(state, undefined, true);
+    const fullscreenState = { ...appState, tuiMode: 'fullscreen' as const };
+    const grouping = fullscreenFooter(fullscreenState);
+    expect(grouping.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
+    grouping.dispose();
+
+    const toolGroups = fullscreenFooter({
+      ...fullscreenState,
+      transcript: { groupTools: 'explore', groupThinking: false },
+    });
+    expect(toolGroups.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
+    toolGroups.dispose();
+
+    const noGroups = fullscreenFooter({
+      ...fullscreenState,
+      transcript: { groupTools: 'off', groupThinking: false },
+    });
+    expect(noGroups.render(240)[0]).not.toContain(TRANSCRIPT_GROUPING_TIP.text);
+    noGroups.dispose();
+
+    const thoughtGroups = fullscreenFooter({
+      ...fullscreenState,
+      transcript: { groupTools: 'off', groupThinking: true },
+    });
+    expect(thoughtGroups.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
+    thoughtGroups.dispose();
+
+    const regularMode = new FooterComponent({ ...appState, tuiMode: 'regular' });
+    expect(regularMode.render(240)[0]).not.toContain(TRANSCRIPT_GROUPING_TIP.text);
+    regularMode.dispose();
+
+    const switchedToFullscreen = new FooterComponent({ ...appState, tuiMode: 'regular' });
+    switchedToFullscreen.setState({ ...appState, tuiMode: 'fullscreen' });
+    expect(switchedToFullscreen.render(240)[0]).not.toContain(TRANSCRIPT_GROUPING_TIP.text);
+    switchedToFullscreen.dispose();
+
+    const switchedToRegular = fullscreenFooter(fullscreenState);
+    switchedToRegular.setState({ ...fullscreenState, tuiMode: 'regular' });
+    expect(switchedToRegular.render(240)[0]).toContain(TRANSCRIPT_GROUPING_TIP.text);
+    switchedToRegular.dispose();
   });
 });
 
