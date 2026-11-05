@@ -17,6 +17,8 @@ import type {
   NotificationItem,
   PlanReviewDisplay,
   ReasoningItem,
+  RequestDebug,
+  RequestTiming,
   RetryState,
   StepSummary,
   ToolCallItem,
@@ -35,6 +37,8 @@ export interface ToolInteraction {
   response?: unknown;
 }
 
+type StepEndEvent = Extract<LoopRecordedEvent, { type: 'step.end' }>;
+
 const CLIENT_SUBMITTED_ORIGINS: ReadonlySet<UserMessageOrigin['kind']> = new Set(['user', 'skill', 'plugin_command']);
 const EXIT_PLAN_MODE = 'ExitPlanMode';
 const PLAN_SAVED_TO_MARKER = 'Plan saved to: ';
@@ -44,6 +48,15 @@ const FILE_ID = String.raw`f_(?:[0-9A-Za-z]{26}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[
 const UPLOADED_FILE_PATH = new RegExp(String.raw`(?:^|[\\/])(${FILE_ID})-[^\\/]*$`);
 const CACHED_MEDIA_PATH = new RegExp(String.raw`(?:^|[\\/])(${FILE_ID})\.[^\\/.]+$`);
 const IMAGE_COMPRESSION_CAPTION = /^<system>Image compressed to fit model limits:[\s\S]*<\/system>$/;
+const REQUEST_TIMING_NAMES = {
+  llmFirstTokenLatencyMs: 'first_token_ms',
+  llmStreamDurationMs: 'stream_ms',
+  llmRequestBuildMs: 'request_build_ms',
+  llmServerFirstTokenMs: 'server_first_token_ms',
+  llmServerDecodeMs: 'server_decode_ms',
+  llmClientConsumeMs: 'client_consume_ms',
+  llmClientBlockedMs: 'client_blocked_ms',
+} as const satisfies Record<string, keyof RequestTiming>;
 
 export function isoTime(ms: number): string {
   return new Date(ms).toISOString();
@@ -195,7 +208,7 @@ export function stepSummary(
   startedAt: number,
   endedAt: number,
   interruptReason: string | undefined,
-  end: Extract<LoopRecordedEvent, { type: 'step.end' }>,
+  end: StepEndEvent,
 ): StepSummary {
   return {
     index,
@@ -203,15 +216,32 @@ export function stepSummary(
     started_at: isoTime(startedAt),
     ended_at: isoTime(endedAt),
     finish_reason: end.finishReason,
-    usage: end.usage === undefined
-      ? undefined
-      : {
-          input_other: end.usage.inputOther ?? 0,
-          output: end.usage.output ?? 0,
-          input_cache_read: end.usage.inputCacheRead ?? 0,
-          input_cache_creation: end.usage.inputCacheCreation ?? 0,
-        },
+    usage: usageOf(end),
   };
+}
+
+export function requestDebug(end: StepEndEvent): RequestDebug {
+  const timing: RequestTiming = {};
+  for (const [field, name] of Object.entries(REQUEST_TIMING_NAMES) as [keyof typeof REQUEST_TIMING_NAMES, keyof RequestTiming][]) {
+    const value = end[field];
+    if (typeof value === 'number') timing[name] = value;
+  }
+  return {
+    finish_reason: end.finishReason,
+    usage: usageOf(end),
+    timing: Object.keys(timing).length === 0 ? undefined : timing,
+  };
+}
+
+function usageOf(end: StepEndEvent): Usage | undefined {
+  return end.usage === undefined
+    ? undefined
+    : {
+        input_other: end.usage.inputOther ?? 0,
+        output: end.usage.output ?? 0,
+        input_cache_read: end.usage.inputCacheRead ?? 0,
+        input_cache_creation: end.usage.inputCacheCreation ?? 0,
+      };
 }
 
 export function stepOutcome(interruptReason: string | undefined, finishReason: string | undefined): ConversationOutcome {

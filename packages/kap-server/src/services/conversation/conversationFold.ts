@@ -33,6 +33,7 @@ import {
   notificationItem,
   promptIdsOf,
   refreshToolCall,
+  requestDebug,
   retryStateOf,
   stepOutcome,
   stepSummary,
@@ -87,6 +88,7 @@ interface UndoAnchor {
 
 export interface ConversationState {
   readonly agentId: string;
+  readonly debug: boolean;
   fork?: ConversationFork;
   inheriting: boolean;
   clock: number;
@@ -106,9 +108,10 @@ export interface ConversationState {
   compaction?: CompactionDetails;
 }
 
-export function createConversationState(agentId: string, fork?: ConversationFork): ConversationState {
+export function createConversationState(agentId: string, fork?: ConversationFork, debug = false): ConversationState {
   return {
     agentId,
+    debug,
     fork,
     inheriting: fork !== undefined,
     clock: 0,
@@ -252,6 +255,12 @@ export function undoConversationTurns(state: ConversationState, count: number): 
   const removed = new Set(state.turns.splice(cutIndex).map((turn) => turn.turn_id));
   state.nextOrdinal = (state.turns.at(-1)?.ordinal ?? -1) + 1;
   for (const turnId of removed) delete state.steps[turnId];
+  for (const toolCallId of Object.keys(state.tools)) {
+    if (findToolCall(state, toolCallId) === undefined) delete state.tools[toolCallId];
+  }
+  for (const [interactionId, toolCallId] of Object.entries(state.interactions)) {
+    if (state.tools[toolCallId] === undefined) delete state.interactions[interactionId];
+  }
   if (state.openTurnId !== undefined && removed.has(state.openTurnId)) state.openTurnId = undefined;
   state.pendingPrompt = undefined;
   state.pendingSteers = 0;
@@ -397,6 +406,10 @@ function applyLoopEvent(state: ConversationState, event: LoopRecordedEvent | und
         (a, b) => a.index - b.index,
       );
       turn.usage = totalUsage(turn.steps);
+      if (state.debug) {
+        const last = turn.items.findLast((item) => item.step_index === step.index);
+        if (last !== undefined) last.debug = requestDebug(event);
+      }
       return;
     }
     case 'content.part': {

@@ -132,7 +132,7 @@ export class ConversationFeed implements IDisposable {
     private readonly handle: IAgentScopeHandle,
     fork?: ConversationFork,
   ) {
-    this.state = createConversationState(handle.id, fork);
+    this.state = createConversationState(handle.id, fork, process.env['KIMI_CODE_DEBUG'] === '1');
     this.ready = this.start().then(
       () => this,
       (error: unknown) => {
@@ -294,7 +294,8 @@ export class ConversationFeed implements IDisposable {
     this.sent = next;
     const nextById = new Map(next.map((turn) => [turn.turn_id, turn]));
     const removed = new Set(previous.filter((turn) => !nextById.has(turn.turn_id)).map((turn) => turn.turn_id));
-    if (removed.size > 0) {
+    const truncated = previous.some((turn) => (nextById.get(turn.turn_id)?.items.length ?? Infinity) < turn.items.length);
+    if (removed.size > 0 || truncated) {
       this.dropLive((entry) => removed.has(entry.turnId), false);
       for (const [toolCallId, tool] of this.tools) {
         if (removed.has(tool.turnId)) this.tools.delete(toolCallId);

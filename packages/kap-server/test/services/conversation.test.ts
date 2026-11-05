@@ -10,10 +10,10 @@ import {
   type IAgentScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 import type { CollectionView } from '@moonshot-ai/agent-core-v2/_base/di/collection';
-import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
+import { ContextAppendLoopEvent, ContextAppendMessage, ContextClear, ContextUndo } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
 import type { LoopRecordedEvent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { AssistantDelta, ToolCallDelta } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { AgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentStateService';
 import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { EventBusService } from '@moonshot-ai/agent-core-v2/app/event/eventBusService';
@@ -84,8 +84,8 @@ const turnEnded = (turnId: number, reason: string, extra: Record<string, unknown
 const notificationXml = (taskId: string, extra = ''): string =>
   `<notification id="task:${taskId}:completed" category="task" type="task.completed" source_kind="background_task" source_id="${taskId}">\nTitle: Background process completed\nSeverity: info\n${taskId} completed.${extra}\n</notification>`;
 
-function fold(records: readonly WireRecord[], fork?: ConversationFork): ConversationState {
-  const state = createConversationState('main', fork);
+function fold(records: readonly WireRecord[], fork?: ConversationFork, debug?: boolean): ConversationState {
+  const state = createConversationState('main', fork, debug);
   for (const entry of records) applyConversationRecord(state, entry);
   return state;
 }
@@ -172,6 +172,33 @@ describe('conversation fold', () => {
     });
     expect(turn?.items.map((item) => item.item_id)).toEqual(['p1', 's1:0', 's1:2', 'call-1']);
     expect(turn?.items[3]).toMatchObject({ name: 'Bash', input: { command: 'ls' }, output: 'a\nb', outcome: 'completed', step_index: 1 });
+  });
+
+  it('attaches the request debug to the last item of each step only when debugging', () => {
+    const records = [
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'text', text: 'answer' }, 0),
+      toolCall(0, 1, 's1', 'call-1', 'Bash', { command: 'ls' }),
+      stepEnd(0, 1, 's1', {
+        finishReason: 'tool_use',
+        usage: { inputOther: 3, output: 2, inputCacheCreation: 1 },
+        llmFirstTokenLatencyMs: 40,
+        llmServerDecodeMs: 7,
+      }),
+    ];
+
+    expect(fold(records).turns[0]?.items.map((item) => item.debug)).toEqual([undefined, undefined, undefined]);
+    expect(fold(records, undefined, true).turns[0]?.items.map((item) => item.debug)).toEqual([
+      undefined,
+      undefined,
+      {
+        finish_reason: 'tool_use',
+        usage: { input_other: 3, output: 2, input_cache_read: 0, input_cache_creation: 1 },
+        timing: { first_token_ms: 40, server_decode_ms: 7 },
+      },
+    ]);
   });
 
   it('keeps the visible text, attachments, skills and client metadata of a user message and no server paths', () => {
@@ -663,6 +690,25 @@ describe('conversation fold', () => {
     ]);
   });
 
+  it('forgets the tool bookkeeping of undone turns so a reused call id starts clean', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'first'),
+      turnEnded(0, 'completed'),
+      turnPrompt(1, 'p2'),
+      userMessage('p2', 'second'),
+      stepBegin(1, 1, 's1'),
+      toolCall(1, 1, 's1', 'Bash:0', 'Bash', { command: 'ls' }),
+      turnEnded(1, 'completed'),
+    ]);
+    expect(state.tools['Bash:0']).toBeDefined();
+
+    undoConversationTurns(state, 1);
+
+    expect(state.turns).toHaveLength(1);
+    expect(state.tools['Bash:0']).toBeUndefined();
+  });
+
   it('folds legacy assistant and tool messages', () => {
     const state = fold([
       turnPrompt(undefined, undefined),
@@ -880,6 +926,27 @@ describe('conversation feed', () => {
 
     expect(h.events.map((event) => event.type)).toEqual(['reset']);
     expect((await h.feed.page(undefined, 20)).turns).toEqual([]);
+    h.dispatcher.dispose();
+  });
+
+  it('resends the turns page when an undo cuts the items after a steer out of a kept turn', async () => {
+    const h = feedHarness([]);
+    await h.dispatcher.restore();
+    await h.feed.ready;
+    await h.dispatcher.dispatch(prompt(0, 'p1'));
+    await h.dispatcher.dispatch(userPrompt('p1', 'first'));
+    await h.dispatcher.dispatch(loopEvent({ type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }));
+    await h.dispatcher.dispatch(new TurnSteer({ agentId: 'main', input: [{ type: 'text', text: 'wait' }], origin: { kind: 'user' } }));
+    await h.dispatcher.dispatch(userPrompt('p2', 'wait'));
+    await h.dispatcher.dispatch(new TurnEnded({ agentId: 'main', turnId: 0, reason: 'completed' }));
+    await flushed();
+    h.events.length = 0;
+
+    await h.dispatcher.dispatch(new ContextUndo({ agentId: 'main', count: 1 }));
+    await flushed();
+
+    expect(h.events.map((event) => event.type)).toEqual(['reset']);
+    expect((await h.feed.page(undefined, 20)).turns.map(shape)).toEqual([['opener:first']]);
     h.dispatcher.dispose();
   });
 

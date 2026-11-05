@@ -59,9 +59,28 @@ export const stepSummarySchema = z.object({
 });
 export type StepSummary = z.infer<typeof stepSummarySchema>;
 
+export const requestTimingSchema = z.object({
+  first_token_ms: z.number().optional(),
+  stream_ms: z.number().optional(),
+  request_build_ms: z.number().optional(),
+  server_first_token_ms: z.number().optional(),
+  server_decode_ms: z.number().optional(),
+  client_consume_ms: z.number().optional(),
+  client_blocked_ms: z.number().optional(),
+});
+export type RequestTiming = z.infer<typeof requestTimingSchema>;
+
+export const requestDebugSchema = z.object({
+  finish_reason: z.string().optional(),
+  usage: usageSchema.optional(),
+  timing: requestTimingSchema.optional(),
+});
+export type RequestDebug = z.infer<typeof requestDebugSchema>;
+
 const itemFields = {
   item_id: z.string().min(1),
   step_index: z.number().int().positive().optional(),
+  debug: requestDebugSchema.optional(),
   status: conversationStatusSchema,
   outcome: conversationOutcomeSchema.optional(),
   created_at: isoDateTimeSchema,
