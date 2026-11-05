@@ -13,8 +13,10 @@ import {
   closeSessionById,
   MAIN_AGENT_ID,
   getLiveSessionById,
+  interactions,
   resumeSessionById,
   type AgentTask,
+  type ApprovalRequest,
 } from '@moonshot-ai/agent-core-v2';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -563,6 +565,52 @@ describe('conversation contract e2e', () => {
       channel.close();
     }
   }, 30000);
+
+  it('S3: a pending approval rides on the tool item, then resolves', async () => {
+    await boot([
+      { match: (body) => !body.includes('echo contract-hi'), respond: () => sseToolCall('call_1', 'Bash', '{"command":"echo contract-hi"}') },
+      { match: () => true, respond: () => sseText('tool done') },
+    ]);
+    const sid = await createSession(server!, base);
+    const channel = await subscribeConversation(server!, sid);
+    await submitPrompt(server!, base, sid, 'run the echo', 'manual');
+
+    const pendingApproval = () =>
+      interactions
+        .findAll({ kind: 'approval', resolved: false, tags: { sessionId: sid } })
+        .find((item) => (item.payload as ApprovalRequest).toolName === 'Bash');
+    await until('approval pending', async () => pendingApproval() !== undefined);
+    await until('live tool item', () => channel.turns().some((turn) => turn.items.some((item: any) => item.item_id === 'call_1')));
+    const approval = pendingApproval()!;
+
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approval.id)}`, {
+      method: 'POST',
+      body: { kind: 'approval', decision: 'approved' },
+    });
+    await idle(server!, base, sid);
+
+    const end = await getTurns(server!, base, sid);
+    const [tool] = toolItems(end, 'Bash');
+    expect(tool).toMatchObject({
+      item_id: 'call_1',
+      status: 'ended',
+      outcome: 'completed',
+      input: { command: 'echo contract-hi' },
+      interaction_id: approval.id,
+    });
+    expect(tool).not.toHaveProperty('stage');
+    expect(String(tool.output)).toContain('contract-hi');
+    const toolFrames = channel.conversation.filter((frame) => frame.item?.item_id === 'call_1' || frame.item_id === 'call_1');
+    expect(toolFrames[0]).toMatchObject({ type: 'item.started', item: { stage: 'input', name: 'Bash' } });
+    expect(toolFrames).toContainEqual(expect.objectContaining({
+      type: 'item.updated',
+      set: expect.objectContaining({ stage: 'awaiting_approval', interaction_id: approval.id }),
+    }));
+    expect(toolFrames.filter((frame) => frame.type === 'item.ended')).toHaveLength(1);
+    await until('turn ended on the channel', () => channel.turns()[0]?.status === 'ended');
+    expect(channel.turns()).toEqual(end.turns);
+    channel.close();
+  });
 
   it('S4: a background subagent streams task events and a task-origin notification turn', async () => {
     await boot([
