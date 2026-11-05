@@ -821,11 +821,21 @@ describe('message-level tools', () => {
       { signal: new AbortController().signal },
     );
     const bodyMessages = client.body()['messages'] as Record<string, unknown>[];
-    expect(bodyMessages[0]?.['tools']).toEqual([
+    expect(bodyMessages).toEqual([
       {
-        type: 'function',
-        function: { name: 'get_weather', description: 'get weather', parameters: { type: 'object' } },
+        role: 'system',
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'get_weather',
+              description: 'get weather',
+              parameters: { type: 'object' },
+            },
+          },
+        ],
       },
+      { role: 'user', content: 'hi' },
     ]);
   });
 
