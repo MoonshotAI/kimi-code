@@ -66,6 +66,9 @@ export class WrappingSelectList extends SelectList {
     for (let i = startIndex; i < endIndex; i++) {
       const item = filteredItems[i];
       if (!item) continue;
+      if (item.data?.['group'] === 'skill' && filteredItems[i - 1]?.data?.['group'] !== 'skill') {
+        lines.push(theme.description('  Skills'));
+      }
       lines.push(...this.renderItemLines(item, i === selectedIndex, width, primaryColumnWidth));
     }
 

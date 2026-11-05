@@ -9,6 +9,7 @@ export interface KimiSlashCommand<Name extends string = string> extends SlashCom
   readonly description: string;
   readonly skillPath?: string;
   readonly skillSource?: SkillSummary['source'];
+  readonly isSkill?: boolean;
   readonly workspaceDir?: string;
   readonly priority?: number;
   readonly availability?: SlashCommandAvailability | ((args: string) => SlashCommandAvailability);

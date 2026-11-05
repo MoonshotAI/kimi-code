@@ -142,6 +142,29 @@ describe('FileMentionProvider', () => {
     });
   });
 
+  it('places ordinary commands before one continuous skill group with and without fuzzy matching', async () => {
+    const provider = new FileMentionProvider([
+      { name: 'skill:lark-calendar', description: 'Calendar', isSkill: true },
+      { name: 'plan', description: 'Toggle plan mode' },
+      { name: 'skill:lark-approval', description: 'Approval', isSkill: true },
+      { name: 'skill:lark-vc', description: 'Video calls', isSkill: true },
+    ], workDir, NO_FD);
+    const expected = [
+      'plan',
+      'skill:lark-calendar',
+      'skill:lark-approval',
+      'skill:lark-vc',
+    ];
+
+    const all = await provider.getSuggestions(['/'], 0, 1, { signal: ctrl() });
+    const suggestions = await provider.getSuggestions(['/la'], 0, 3, { signal: ctrl() });
+
+    expect(all?.items.map((item) => item.value)).toEqual(expected);
+    expect(suggestions?.items.map((item) => item.value)).toEqual(expected);
+    expect(suggestions?.items[0]?.data?.['group']).toBeUndefined();
+    expect(suggestions?.items.slice(1).every((item) => item.data?.['group'] === 'skill')).toBe(true);
+  });
+
   it('does not complete slash arguments before existing free text', async () => {
     const provider = new FileMentionProvider([GOAL_COMMAND], workDir, NO_FD);
     const line = '/goal Fix the checkout docs';

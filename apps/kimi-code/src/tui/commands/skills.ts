@@ -33,9 +33,9 @@ function getSkillSlashCommandGroup(source: SkillSummary['source']): number {
   return source === 'builtin' ? 0 : 1;
 }
 
-export function skillSourceLabel(source: SkillSummary['source']): string | undefined {
+export function skillSourceLabel(source: SkillSummary['source'] | undefined): string | undefined {
   if (source === 'builtin') return 'Built-in';
-  if (source === 'user' || source === 'extra' || source === 'plugin') return 'Global';
+  if (source === 'user' || source === 'extra') return 'Global';
   return undefined;
 }
 
@@ -54,6 +54,7 @@ export function buildSkillSlashCommands(skills: readonly SkillSummary[]): SkillS
       description: skill.description ?? '',
       skillPath: skill.path,
       skillSource: skill.source,
+      isSkill: true,
       workspaceDir: skill.workspaceDir,
     };
   });

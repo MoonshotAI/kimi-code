@@ -153,3 +153,18 @@ describe('WrappingSelectList', () => {
     }
   });
 });
+
+describe('skill grouping', () => {
+  it('renders one English skills heading before the first skill row', () => {
+    const lines = makeList([
+      { value: 'plan', label: 'plan', description: 'Toggle plan mode' },
+      { value: 'skill:lark-calendar', label: 'skill:lark-calendar', description: 'Calendar', data: { group: 'skill' } },
+      { value: 'skill:lark-approval', label: 'skill:lark-approval', description: 'Approval', data: { group: 'skill' } },
+    ]).render(80);
+
+    expect(lines.filter((line) => line.includes('Skills'))).toHaveLength(1);
+    expect(lines[1]).toBe('[D]  Skills');
+    expect(lines[2]).toContain('skill:lark-calendar');
+    expect(lines[3]).toContain('skill:lark-approval');
+  });
+});

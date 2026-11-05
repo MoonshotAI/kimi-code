@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Keep same-name workspace skills selectable in the TUI, with directory names or global and built-in labels shown to distinguish their sources.
+Keep same-name workspace skills selectable in a dedicated TUI Skills group, with directory names or global and built-in labels distinguishing their sources.

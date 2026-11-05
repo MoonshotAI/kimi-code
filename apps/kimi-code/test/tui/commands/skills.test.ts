@@ -130,7 +130,6 @@ describe('skill slash commands', () => {
   it('labels global and built-in sources without changing project metadata', () => {
     expect(skillSourceLabel('user')).toBe('Global');
     expect(skillSourceLabel('extra')).toBe('Global');
-    expect(skillSourceLabel('plugin')).toBe('Global');
     expect(skillSourceLabel('builtin')).toBe('Built-in');
     expect(skillSourceLabel('project')).toBeUndefined();
     expect(skillSourceLabel(undefined)).toBeUndefined();
@@ -141,6 +140,7 @@ describe('skill slash commands', () => {
       skill('project', 'prompt', { source: 'project' }),
     ]);
     expect(built.commands.map((command) => command.skillSource)).toEqual(['builtin', 'user', 'project']);
+    expect(built.commands.every((command) => command.isSkill === true)).toBe(true);
   });
 
   it('filters skills restricted to other scopes', () => {

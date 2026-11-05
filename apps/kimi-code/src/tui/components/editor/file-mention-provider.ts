@@ -10,6 +10,7 @@ import {
   type AutocompleteSuggestions,
   type SlashCommand,
 } from '@moonshot-ai/pi-tui';
+import type { SkillSummary } from '@moonshot-ai/kimi-code-sdk';
 
 import { findInlineSkillTokens } from '../../utils/inline-skill-tokens';
 import { skillSourceLabel } from '../../commands/skills';
@@ -21,7 +22,8 @@ const MAX_FALLBACK_SUGGESTIONS = 50;
 export interface SlashAutocompleteCommand extends SlashCommand {
   readonly aliases?: readonly string[];
   readonly skillPath?: string;
-  readonly skillSource?: string;
+  readonly skillSource?: SkillSummary['source'];
+  readonly isSkill?: boolean;
   readonly workspaceDir?: string;
 }
 
@@ -206,7 +208,11 @@ export class FileMentionProvider implements AutocompleteProvider {
         }
 
         // Primary-name matches outrank alias matches on score ties.
-        matches.sort((a, b) => a.score - b.score || Number(a.viaAlias) - Number(b.viaAlias));
+        matches.sort((a, b) =>
+          Number(a.cmd.isSkill === true) - Number(b.cmd.isSkill === true) ||
+          a.score - b.score ||
+          Number(a.viaAlias) - Number(b.viaAlias),
+        );
 
         if (matches.length === 0) return null;
         return {
@@ -215,6 +221,7 @@ export class FileMentionProvider implements AutocompleteProvider {
             label: m.label,
             description: formatSlashCommandDescription(m.cmd),
             data: {
+              group: m.cmd.isSkill === true ? 'skill' : undefined,
               skillPath: m.cmd.skillPath,
               workspaceLabel: m.cmd.workspaceDir === undefined
                 ? skillSourceLabel(m.cmd.skillSource)
@@ -291,6 +298,7 @@ export class FileMentionProvider implements AutocompleteProvider {
         label: m.cmd.name,
         description: formatSlashCommandDescription(m.cmd),
         data: {
+          group: m.cmd.isSkill === true ? 'skill' : undefined,
           inlineSkill: true,
           skillPath: m.cmd.skillPath,
           workspaceLabel: m.cmd.workspaceDir === undefined
