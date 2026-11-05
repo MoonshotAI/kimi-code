@@ -80,6 +80,8 @@ function isUtf8Encoding(encoding: BufferEncoding): boolean {
 export class RemoteFileSystem implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
 
+  readonly strictTextReads = true;
+
   constructor(private readonly connection: ExecChannel) {}
 
   private async call<T>(method: string, params: unknown): Promise<T> {
@@ -143,7 +145,7 @@ export class RemoteFileSystem implements IHostFileSystem {
     if (n === 0) return new Uint8Array(0);
     const chunks: Uint8Array[] = [];
     let total = 0;
-    for await (const chunk of this.readChunks(path, offset)) {
+    for await (const chunk of this.readChunks(path, offset, n)) {
       const length = n === undefined ? chunk.byteLength : Math.min(chunk.byteLength, n - total);
       if (length === 0) break;
       chunks.push(chunk.subarray(0, length));
@@ -200,13 +202,15 @@ export class RemoteFileSystem implements IHostFileSystem {
     yield* readUtf8Lines(this.readChunks(path), errors);
   }
 
-  private async *readChunks(path: string, offset = 0): AsyncGenerator<Uint8Array> {
-    for (;;) {
-      const result = await this.readRange(path, offset, FS_READ_FILE_MAX_BYTES);
+  private async *readChunks(path: string, offset = 0, maxBytes?: number): AsyncGenerator<Uint8Array> {
+    while (maxBytes === undefined || maxBytes > 0) {
+      const limit = maxBytes === undefined ? FS_READ_FILE_MAX_BYTES : Math.min(maxBytes, FS_READ_FILE_MAX_BYTES);
+      const result = await this.readRange(path, offset, limit);
       if (result.dataBase64.length === 0) return;
       const chunk = decodeBase64(result.dataBase64);
       yield chunk;
       offset += chunk.byteLength;
+      if (maxBytes !== undefined) maxBytes -= chunk.byteLength;
       if (result.eof) return;
     }
   }

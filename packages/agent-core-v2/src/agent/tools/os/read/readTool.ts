@@ -596,7 +596,7 @@ export class ReadTool implements IReadTool {
         notices.push('Mixed or lone carriage-return line endings are shown as \\r. Use exact \\r\\n or \\r escapes in Edit.old_string for those lines.');
       }
       if (detectedEncoding !== undefined) {
-        notices.push(`Detected file encoding: ${encodingDisplayName(detectedEncoding)}; content transcoded to UTF-8 for display. Edit and Write expect UTF-8 — convert the file's encoding first (e.g. \`iconv\` via Bash).`);
+        notices.push(`Detected file encoding: ${encodingDisplayName(detectedEncoding)}; content transcoded to UTF-8 for display. Edit requires UTF-8 — convert first (e.g. \`iconv\` via Bash). Write preserves valid BOM-marked UTF-16; ACP, BOM-less, or malformed becomes UTF-8.`);
       }
       if (lossyDecoding) {
         notices.push('Lossy UTF-16 decoding: malformed sequences were replaced with U+FFFD. The decoded text may differ from the original file.');
