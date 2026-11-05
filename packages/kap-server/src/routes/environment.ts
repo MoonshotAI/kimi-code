@@ -66,6 +66,26 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
   );
   app.get(getRoute.path, getRoute.options, getRoute.handler as Parameters<EnvironmentRouteHost['get']>[2]);
 
+  const listAllRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/environments',
+      success: { data: sessionEnvironmentsResponseSchema },
+      description: 'List configured execution environments and their current status',
+      tags: ['environments'],
+    },
+    async (req, reply) => {
+      const declarations = await resolveDeclarations(core);
+      const payload: SessionEnvironmentsResponse = {
+        environments: core.accessor.get(IEnvironmentService).snapshot().environments.map((environment) =>
+          toEntry(environment, declarations.get(environment.environmentId)),
+        ),
+      };
+      reply.send(okEnvelope(payload, req.id));
+    },
+  );
+  app.get(listAllRoute.path, listAllRoute.options, listAllRoute.handler as Parameters<EnvironmentRouteHost['get']>[2]);
+
   const listRoute = defineRoute(
     {
       method: 'GET',

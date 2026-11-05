@@ -7,6 +7,7 @@ import { FsErrors } from '#/workspace/workspaceFs/internal/errors';
 
 export const fsBrowseQuerySchema = z.object({
   path: z.string().min(1).optional(),
+  environment_id: z.string().min(1).optional(),
 });
 export type FsBrowseQuery = z.infer<typeof fsBrowseQuerySchema>;
 
@@ -62,7 +63,7 @@ export class HostFolderPermissionError extends Error2 {
 export interface IHostFolderBrowser {
   readonly _serviceBrand: undefined;
 
-  browse(absPath?: string): Promise<FsBrowseResponse>;
+  browse(absPath?: string, environmentId?: string): Promise<FsBrowseResponse>;
   home(): Promise<FsHomeResponse>;
 }
 

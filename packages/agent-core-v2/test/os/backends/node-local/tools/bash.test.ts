@@ -20,20 +20,12 @@ import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
-import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { stubAgentEnvironment } from '../../../../environment/stubs';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
-import { AgentWorkspaceContextService } from '#/session/workspaceContext/agentWorkspaceContextService';
-import { SessionStateService } from '#/session/state/sessionStateService';
-import {
-  workspaceContextAdditionalDirsKey,
-  workspaceContextWorkDirKey,
-} from '#/session/workspaceContext/workspaceContextService';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
 const posixEnv: IHostEnvironment = {
@@ -751,7 +743,7 @@ function bashTool(
     },
   );
   const environment = stubAgentEnvironment(backend, { workDir: ctx.cwd });
-  return new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
+  return new BashTool(environment, ctx, background, toolPolicy, config);
 }
 
 describe('BashTool', () => {
@@ -911,7 +903,7 @@ describe('BashTool', () => {
     expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/var/app' && pwd"]);
   });
 
-  it('resolves an omitted cwd from the bound environment workspace, not the host session cwd', async () => {
+  it('keeps the resolve-time environment cwd through execution', async () => {
     const { runner, exec } = createTestRunner(processWithOutput({ stdout: '' }));
     const ctx = createTestCtx('/host/session/cwd');
     const processService: IHostProcessService = {
@@ -925,25 +917,23 @@ describe('BashTool', () => {
       ),
       { host: createTestEnv(), process: processService },
     );
-    const environment = stubAgentEnvironment(backend, { workDir: '/remote-work' });
-    const sessionState = new SessionStateService();
-    sessionState.contributeState(workspaceContextWorkDirKey);
-    sessionState.contributeState(workspaceContextAdditionalDirsKey);
-    sessionState.set(workspaceContextWorkDirKey, ctx.cwd);
-    const shadow = new AgentWorkspaceContextService(sessionState, {
-      current: environment,
-      onDidChange: () => ({ dispose: () => {} }),
-    });
+    let workDir = '/remote-work';
+    const environment = stubAgentEnvironment(backend, { workDir });
+    environment.workspaceRoots = () => ({ workDir, additionalDirs: [] });
     const tool = new BashTool(
       environment,
       ctx,
-      shadow,
       createFakeTaskService().service,
       stubToolPolicy(),
       stubConfig(),
     );
 
-    await executeTool(tool, context({ command: 'pwd', timeout: 60 }));
+    const { args, ...executionContext } = context({ command: 'pwd', timeout: 60 });
+    const execution = await tool.resolveExecution(args);
+    if (execution.isError === true) throw new Error('expected executable Bash tool');
+    expect(execution.display).toMatchObject({ cwd: '/remote-work' });
+    workDir = '/changed-after-resolution';
+    await execution.execute(executionContext);
 
     expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/remote-work' && pwd"]);
   });
@@ -1430,15 +1420,10 @@ describe('BashTool', () => {
 });
 
 describe('BashTool display cwd', () => {
-  function environmentService(environment: FakeEnvironment): IAgentEnvironmentService {
-    return stubAgentEnvironment(environment, { workDir: '' });
-  }
-
-  function displayCwdTool(environment: IAgentEnvironmentService, ctx: ISessionContext, workDir: string): BashTool {
+  function displayCwdTool(environment: FakeEnvironment, ctx: ISessionContext, workDir: string): BashTool {
     return new BashTool(
-      environment,
+      stubAgentEnvironment(environment, { workDir }),
       ctx,
-      stubWorkspaceContext(workDir),
       {} as unknown as IAgentTaskService,
       {} as unknown as IAgentToolPolicyService,
       {} as unknown as IConfigService,
@@ -1454,7 +1439,7 @@ describe('BashTool display cwd', () => {
 
   it('resolves a relative cwd argument against the binding cwd on the bound environment', async () => {
     const environment = new FakeEnvironment({ environmentId: 'dev-box', generation: 'g' });
-    const tool = displayCwdTool(environmentService(environment), createTestCtx('/Users/mac/project'), '/home/deploy/app');
+    const tool = displayCwdTool(environment, createTestCtx('/Users/mac/project'), '/home/deploy/app');
 
     await expect(displayCwd(tool, { command: 'ls', cwd: 'src/lib' })).resolves.toBe(
       '/home/deploy/app/src/lib',
@@ -1479,9 +1464,8 @@ describe('BashTool spawn cwd', () => {
 
   function spawnCwdTool(backend: FakeEnvironment, workDir: string): BashTool {
     return new BashTool(
-      stubAgentEnvironment(backend),
+      stubAgentEnvironment(backend, { workDir }),
       createTestCtx('/Users/mac/project'),
-      stubWorkspaceContext(workDir),
       createFakeTaskService().service,
       stubToolPolicy(),
       stubConfig(),

@@ -1,6 +1,7 @@
 import { escapeXml } from '#/_base/utils/xml-escape';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
-import type { SkillSource } from '#/features/skill/catalog/types';
+import { LOCAL_ENVIRONMENT_ID, type EnvironmentTarget } from '#/environment/environment';
+import type { SkillDefinition, SkillSource } from '#/features/skill/catalog/types';
 
 import type { SkillActivationInput } from './skill';
 
@@ -19,7 +20,18 @@ export interface RenderSkillPromptInput {
   readonly skillArgs: string;
   readonly skillContent: string;
   readonly skillSource?: SkillSource | undefined;
+  readonly skillEnvironment?: string;
   readonly skillDir?: string | undefined;
+}
+
+export function routedSkillEnvironment(
+  skill: SkillDefinition,
+  targets: readonly EnvironmentTarget[],
+): string | undefined {
+  const primary = targets.find((target) => target.primary)?.environmentId;
+  if (targets.length < 2 || primary === undefined || skill.source === 'builtin') return undefined;
+  const owner = skill.environmentId ?? (skill.source === 'project' ? primary : LOCAL_ENVIRONMENT_ID);
+  return owner === primary ? undefined : owner;
 }
 
 interface RenderSkillLoadedBlockInput extends RenderSkillPromptInput {
@@ -59,6 +71,7 @@ function renderSkillAttributes(input: RenderSkillLoadedBlockInput): string {
     ['name', input.skillName],
     ['trigger', input.trigger],
     ['source', input.skillSource],
+    ['environment', input.skillEnvironment],
     ['dir', input.skillDir],
     ['args', input.skillArgs],
   ];

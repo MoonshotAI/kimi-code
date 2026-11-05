@@ -159,6 +159,7 @@ describe('AgentToolActivationService', () => {
   };
   const environmentStub = {
     onDidChange: environmentChangeEmitter.event,
+    targets: () => [{ environmentId: 'local', primary: true }],
     isAvailable: (required: readonly EnvironmentCapability[] = []) =>
       environmentData.available && required.every((capability) => environmentData.capabilities.has(capability)),
     inspect: () => {

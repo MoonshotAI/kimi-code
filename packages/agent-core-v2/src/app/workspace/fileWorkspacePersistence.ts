@@ -23,6 +23,7 @@ import {
   IWorkspacePersistence,
   type PersistedProjectsFile,
   type PersistedWorkspaceEntry,
+  type PersistedWorkspaceEnvironmentDir,
   type PersistedWorkspaceFile,
   type WorkspaceCatalog,
   type WorkspaceCatalogMutator,
@@ -94,7 +95,17 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
         } else {
           delete merged['additional_dirs'];
         }
+        if (ws.environmentDirs !== undefined && ws.environmentDirs.length > 0) {
+          merged['environment_dirs'] = ws.environmentDirs.map((dir) => ({ environment_id: dir.environmentId, path: dir.path }));
+        } else {
+          delete merged['environment_dirs'];
+        }
         merged['root'] = ws.root;
+        if (ws.primaryEnvironmentId !== undefined && ws.primaryEnvironmentId !== 'local') {
+          merged['primary_environment_id'] = ws.primaryEnvironmentId;
+        } else {
+          delete merged['primary_environment_id'];
+        }
         merged['name'] = ws.name;
         merged['kind'] = ws.kind;
         merged['created_at'] = new Date(ws.createdAt).toISOString();
@@ -235,9 +246,11 @@ function parseProjectsDocument(value: unknown): {
     workspaces.push({
       id,
       root: entry.root,
+      primaryEnvironmentId: entry.primary_environment_id,
       name: entry.name,
       kind: entry.kind === 'managed' ? 'managed' : 'implicit',
       additionalDirs: entry.additional_dirs ?? [],
+      environmentDirs: entry.environment_dirs?.map((dir) => ({ environmentId: dir.environment_id, path: dir.path })),
       createdAt: parseTime(entry.created_at, now),
       lastOpenedAt: parseTime(entry.last_opened_at, now),
     });
@@ -345,11 +358,19 @@ function sanitizeEntry(value: unknown, strict = false): PersistedWorkspaceEntry 
   const additionalDirs = Array.isArray(rawDirs)
     ? rawDirs.filter((dir): dir is string => typeof dir === 'string')
     : undefined;
+  const environmentDirs = Array.isArray(v.environment_dirs)
+    ? v.environment_dirs.filter(
+        (dir): dir is PersistedWorkspaceEnvironmentDir =>
+          typeof dir === 'object' && dir !== null && typeof dir.environment_id === 'string' && typeof dir.path === 'string',
+      )
+    : undefined;
   return {
     root: v.root,
+    primary_environment_id: typeof v.primary_environment_id === 'string' ? v.primary_environment_id : undefined,
     name: v.name,
     kind: typeof v.kind === 'string' ? v.kind : undefined,
     additional_dirs: additionalDirs,
+    environment_dirs: environmentDirs,
     created_at: v.created_at,
     last_opened_at: v.last_opened_at,
   };

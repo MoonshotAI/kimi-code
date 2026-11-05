@@ -83,6 +83,8 @@ describe('AgentSkillService', () => {
         onDidChange: () => ({ dispose: () => {} }),
         load: async () => {},
         reload: async () => {},
+        set: () => {},
+        remove: () => {},
         list: async () => skills.listSkills().map(summarizeSkill),
       }),
     );

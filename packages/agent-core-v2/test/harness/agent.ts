@@ -789,6 +789,8 @@ function createSessionSkillCatalog(catalog: SkillCatalog): ISessionSkillCatalog 
     onDidChange: Event.None as Event<string>,
     load: async () => { },
     reload: async () => { },
+    set: () => {},
+    remove: () => {},
     list: async () => catalog.listSkills().map(summarizeSkill),
   };
 }
@@ -1311,6 +1313,8 @@ export class AgentTestContext {
               environmentId: 'local',
               cwd: this.cwd,
               fs: undefined as never,
+              acquireEnvironmentWorkdir: () => Promise.reject(new Error('environment workdirs are not available in the agent harness')),
+              environmentDirs: { dirs: [], onDidChange: Event.None as Event<void> },
             });
             reg.defineInstance(
               IWorkspaceStateService,
@@ -1373,6 +1377,8 @@ export class AgentTestContext {
             reg.defineInstance<IAgentEnvironmentService>(IAgentEnvironmentService, {
               _serviceBrand: undefined,
               onDidChange: () => ({ dispose: () => {} }),
+              targets: () => [{ environmentId: environment.identity.environmentId, primary: true }],
+              handle(target) { return { ...this, target }; },
               isAvailable: (required = []) => required.every((capability) => environment.capabilities.has(capability)),
               inspect: () => environment,
               acquire: (required = []): EnvironmentLease => {
@@ -2394,9 +2400,7 @@ function createPermissionRulesStub(
     get rules() {
       return rules;
     },
-    get sessionApprovalRulePatterns() {
-      return [];
-    },
+    sessionApprovalRulePatterns: () => [],
     addRules: (nextRules) => {
       rules = [...rules, ...nextRules];
     },

@@ -956,6 +956,8 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
         onDidChange: Event.None as Event<string>,
         load: async () => {},
         reload: async () => {},
+        set: () => {},
+        remove: () => {},
         list: async () => [],
       }),
     );
@@ -982,6 +984,8 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
         onDidChange: Event.None as Event<string>,
         load: async () => {},
         reload: async () => {},
+        set: () => {},
+        remove: () => {},
         list: async () => [],
       }),
     );
@@ -1003,6 +1007,8 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
         onDidChange: Event.None as Event<string>,
         load: async () => {},
         reload: async () => {},
+        set: () => {},
+        remove: () => {},
         list: async () => [],
       }),
     );

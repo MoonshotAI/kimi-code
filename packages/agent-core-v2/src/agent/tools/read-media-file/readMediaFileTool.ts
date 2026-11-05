@@ -11,6 +11,7 @@ import {
   type AgentTool,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
 } from '#/tool/toolContract';
 import { resolvePathAccessPath, type WorkspaceConfig } from '#/tool/path-access';
 import {
@@ -164,20 +165,24 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
     this.telemetry = telemetry;
   }
 
-  async resolveExecution(args: ReadMediaFileInput): Promise<ToolExecution> {
+  async resolveExecution(args: ReadMediaFileInput, context?: ToolResolutionContext): Promise<ToolExecution> {
+    const environment = context?.environment ?? this.environment;
+    const primary = context?.environment?.target.primary !== false;
     if (!args.path) {
       return { isError: true, output: 'File path cannot be empty.' };
     }
     if (isDaemonFileUrl(args.path)) {
+      if (!primary) return { isError: true, output: '`kimi-file://` attachments are read from session storage, not from an environment. Omit the `environment` argument.' };
       return this.attachmentExecution(args);
     }
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    const resolutionLease = await acquireOrWhenReady(environment, ['fs']);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
+      const roots = environment.workspaceRoots();
       const view = new EnvironmentWorkspaceView(inspected, {
-        workDir: this.workspace.workspaceDir,
-        additionalDirs: this.workspace.additionalDirs,
+        workDir: roots.workDir,
+        additionalDirs: primary ? this.workspace.additionalDirs : roots.additionalDirs,
       });
       const env = view.host;
       const workspace = { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
@@ -194,12 +199,12 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         approvalRule: literalRulePattern(this.name, path),
         matchesRule: (ruleArgs) =>
           matchesPathRuleSubject(ruleArgs, path, {
-            cwd: this.workspace.workspaceDir,
+            cwd: workspace.workspaceDir,
             pathClass: env.pathClass,
             homeDir: env.homeDir,
           }),
         execute: async ({ signal }) => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs']);
+          const lease = await acquireOrWhenReady(environment, ['fs']);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };

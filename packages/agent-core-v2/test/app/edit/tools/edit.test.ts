@@ -79,8 +79,8 @@ function buildTool(
     onDidChangeStatus: () => ({ dispose: () => {} }),
     dispose: () => {},
   } as unknown as Environment;
-  const environment = stubAgentEnvironment(environmentValue);
-  return new EditTool(ix.get(IFileEditService), environment, workspace);
+  const environment = stubAgentEnvironment(environmentValue, { workDir: workspace.workDir, additionalDirs: workspace.additionalDirs });
+  return new EditTool(ix.get(IFileEditService), environment);
 }
 
 function isPromiseLike(

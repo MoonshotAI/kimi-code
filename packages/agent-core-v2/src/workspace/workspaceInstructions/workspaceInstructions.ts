@@ -7,6 +7,7 @@ export interface WorkspaceInstructionsSnapshot {
   readonly agentsMd: string | undefined;
   readonly agentsMdWarning: string | undefined;
   readonly agentsMdPaths: readonly string[] | undefined;
+  readonly agentsMdProjectPaths: readonly string[] | undefined;
 }
 
 export interface IWorkspaceInstructionsService {

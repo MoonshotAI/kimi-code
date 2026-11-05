@@ -18,7 +18,6 @@ import { attachmentFileSource, environmentFileSource, withAttachmentLocation, ty
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import { countTokenChars, tokensForCharCounts, type TokenCharCounts } from '#/llm-adapter/contract/tokens';
@@ -26,6 +25,7 @@ import {
   ToolAccesses,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
@@ -67,6 +67,7 @@ interface ReadTailEntry extends ReadLineEntry {
 
 interface ReadRequest {
   readonly args: ReadInput;
+  readonly environmentId?: string;
   readonly maxChars: number;
   readonly tokenLimit: number;
   readonly maxCharsLimit: number;
@@ -223,7 +224,6 @@ export class ReadTool implements IReadTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentToolResultTruncationService private readonly resultTruncation: IAgentToolResultTruncationService,
     @IConfigService private readonly config: IConfigService,
@@ -251,22 +251,30 @@ export class ReadTool implements IReadTool {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  async resolveExecution(args: ReadInput): Promise<ToolExecution> {
+  async resolveExecution(args: ReadInput, context?: ToolResolutionContext): Promise<ToolExecution> {
+    const environment = context?.environment ?? this.environment;
+    const primary = context?.environment?.target.primary !== false;
     if (args.column_offset !== undefined && (args.line_offset ?? 1) < 0) {
       return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
     }
-    if (isDaemonFileUrl(args.path)) return this.attachmentExecution(args);
-    const planTarget = await this.planService?.resolveFile(args.path, 'read');
-    if (planTarget !== undefined) return this.localArtifactExecution(args, planTarget, true);
-    const artifactTarget = this.localOutputTarget(args.path);
-    if (artifactTarget !== undefined) return this.localArtifactExecution(args, artifactTarget, false);
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    if (isDaemonFileUrl(args.path)) {
+      if (!primary) return { isError: true, output: '`kimi-file://` attachments are read from session storage, not from an environment. Omit the `environment` argument.' };
+      return this.attachmentExecution(args);
+    }
+    if (primary) {
+      const planTarget = await this.planService?.resolveFile(args.path, 'read');
+      if (planTarget !== undefined) return this.localArtifactExecution(args, planTarget, true);
+      const artifactTarget = this.localOutputTarget(args.path);
+      if (artifactTarget !== undefined) return this.localArtifactExecution(args, artifactTarget, false);
+    }
+    const resolutionLease = await acquireOrWhenReady(environment, ['fs']);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
+      const roots = environment.workspaceRoots();
       const view = new EnvironmentWorkspaceView(inspected, {
-        workDir: this.workspaceCtx.workDir,
-        additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
+        workDir: roots.workDir,
+        additionalDirs: [...(roots.additionalDirs ?? []), ...(primary ? this.skillCatalog.catalog.getSkillRoots() : [])],
       });
       const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
       const workspace = this.workspaceConfig(view);
@@ -288,13 +296,18 @@ export class ReadTool implements IReadTool {
             homeDir: env.homeDir,
           }),
         execute: async () => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs']);
+          const lease = await acquireOrWhenReady(environment, ['fs']);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
             }
             const eventLog = this.resultTruncation.isWireJournalPath(path);
-            const result = await this.execution(environmentFileSource(lease.environment.fs!, path), args, eventLog);
+            const result = await this.execution(
+              environmentFileSource(lease.environment.fs!, path),
+              args,
+              eventLog,
+              primary ? undefined : context?.environment?.target.environmentId,
+            );
             return { ...result, spillExempt: true };
           } finally {
             lease.dispose();
@@ -357,6 +370,7 @@ export class ReadTool implements IReadTool {
     source: FileReadSource,
     args: ReadInput,
     eventLog: boolean,
+    environmentId?: string,
   ): Promise<ExecutableToolResult> {
     try {
       let head: HostFileHead;
@@ -434,6 +448,7 @@ export class ReadTool implements IReadTool {
       const limits = this.limits();
       const request: ReadRequest = {
         args,
+        environmentId,
         maxChars: Math.min(args.max_chars ?? limits.defaultMaxChars, limits.maxChars),
         tokenLimit: Math.ceil(limits.maxChars / 4),
         maxCharsLimit: limits.maxChars,
@@ -537,7 +552,7 @@ export class ReadTool implements IReadTool {
   }
 
   private finishPage(page: ReadPage): ExecutableToolResult {
-    const { args, maxChars, tokenLimit, maxCharsLimit, eventLog, detectedEncoding, lossyDecoding } = page.request;
+    const { args, environmentId, maxChars, tokenLimit, maxCharsLimit, eventLog, detectedEncoding, lossyDecoding } = page.request;
     let first = 0;
     let end = page.renderedLines.length;
     let contentChars = page.renderedLines.reduce((sum, line) => sum + line.length + 1, -1);
@@ -579,6 +594,7 @@ export class ReadTool implements IReadTool {
         const nextEnd = page.fromTail && count > 0 ? startLine - 1 : page.rangeEnd;
         const next = {
           path: args.path,
+          environment: environmentId,
           line_offset: nextStart,
           column_offset: fragmentEnd !== undefined ? firstColumn + fragmentEnd : undefined,
           n_lines: page.fromTail || args.n_lines !== undefined ? nextEnd - nextStart + 1 : undefined,
@@ -744,4 +760,5 @@ export class ReadTool implements IReadTool {
 registerAgentToolService(IReadTool, ReadTool, {
   name: 'Read',
   domain: 'os/backends',
+  environmentScoped: true,
 });

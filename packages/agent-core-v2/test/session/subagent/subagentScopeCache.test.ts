@@ -380,6 +380,7 @@ describe('SessionSubagentScopeCacheService', () => {
       _serviceBrand: undefined,
       environmentId: 'local',
       fs: undefined,
+      environmentDirs: { dirs: [], onDidChange: Event.None },
     } as unknown as ISessionWorkdir);
     ix.stub(IWorkspaceInstanceManager, {
       _serviceBrand: undefined,

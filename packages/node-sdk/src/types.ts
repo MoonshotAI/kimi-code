@@ -411,12 +411,21 @@ export interface AddAdditionalDirInput {
   readonly id: string;
   readonly path: string;
   readonly persist: boolean;
+  readonly environmentId?: string;
 }
 
 export interface AddAdditionalDirOptions {
   /** When true, remember the directory in the workspace registry. When false,
    * keep it scoped to this session while still restoring it on session resume. */
   readonly persist: boolean;
+  /** Mount the directory on this execution environment instead of the
+   * session's own. An environment holds one mounted directory per workspace. */
+  readonly environmentId?: string;
+}
+
+export interface SessionEnvironmentDir {
+  readonly environmentId: string;
+  readonly path: string;
 }
 
 export interface ForkSessionInput {
@@ -560,12 +569,15 @@ export interface SessionSummary {
   readonly archived?: boolean | undefined;
   readonly metadata?: JsonObject | undefined;
   readonly additionalDirs?: readonly string[];
+  /** Directories mounted on other execution environments for this workspace. */
+  readonly environmentDirs?: readonly SessionEnvironmentDir[];
   /** Terminal outcome of the session's latest main turn, when one ended. */
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
 export interface AddAdditionalDirResult {
   readonly additionalDirs: readonly string[];
+  readonly environmentDirs: readonly SessionEnvironmentDir[];
   readonly persisted: boolean;
 }
 

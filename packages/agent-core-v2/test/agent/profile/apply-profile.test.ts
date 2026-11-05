@@ -539,6 +539,8 @@ function skillCatalogWithChange(
     onDidChange: change.event,
     load: async () => {},
     reload: async () => {},
+    set: () => {},
+    remove: () => {},
     list: async () => [],
   });
 }

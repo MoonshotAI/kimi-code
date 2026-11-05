@@ -10,9 +10,18 @@ export const workspaceIdSchema = z
 
 export type WorkspaceId = z.infer<typeof workspaceIdSchema>;
 
+export const workspaceDirectorySchema = z.object({
+  environment_id: z.string().min(1),
+  path: z.string().min(1),
+});
+
+export type WorkspaceDirectory = z.infer<typeof workspaceDirectorySchema>;
+
 export const workspaceSchema = z.object({
   id: workspaceIdSchema,
   root: z.string().min(1),
+  primary_environment_id: z.string().min(1),
+  directories: z.array(workspaceDirectorySchema).min(1),
   name: z.string().min(1).max(100),
   kind: z.enum(['managed', 'implicit']),
   additional_dirs: z.array(z.string()),
@@ -24,10 +33,13 @@ export const workspaceSchema = z.object({
 export type Workspace = z.infer<typeof workspaceSchema>;
 
 export const workspaceCreateSchema = z.object({
-  root: z.string().min(1),
+  root: z.string().min(1).optional(),
+  directories: z.array(workspaceDirectorySchema).min(1).max(65).optional(),
   name: z.string().min(1).max(100).optional(),
   additional_dirs: z.array(z.string().min(1)).max(64).optional(),
   idempotency_key: z.string().min(1).max(200).optional(),
+}).refine((value) => value.root !== undefined || value.directories !== undefined, {
+  message: 'root or directories is required',
 });
 
 export type WorkspaceCreate = z.infer<typeof workspaceCreateSchema>;
@@ -35,10 +47,11 @@ export type WorkspaceCreate = z.infer<typeof workspaceCreateSchema>;
 export const workspaceUpdateSchema = z
   .object({
     name: z.string().min(1).max(100).optional(),
+    directories: z.array(workspaceDirectorySchema).min(1).max(65).optional(),
     additional_dirs: z.array(z.string().min(1)).max(64).optional(),
   })
-  .refine((value) => value.name !== undefined || value.additional_dirs !== undefined, {
-    message: 'at least one of name or additional_dirs is required',
+  .refine((value) => value.name !== undefined || value.directories !== undefined || value.additional_dirs !== undefined, {
+    message: 'at least one of name, directories or additional_dirs is required',
   });
 
 export type WorkspaceUpdate = z.infer<typeof workspaceUpdateSchema>;

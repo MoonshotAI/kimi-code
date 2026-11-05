@@ -503,6 +503,7 @@ interface PermissionRecordApprovalResultPayload {
   toolName: string;
   action: string;
   sessionApprovalRule?: string;
+  environmentId?: string;
   result: PermissionApprovalResultRecord['result'];
 }
 

@@ -7,8 +7,9 @@ import { IModelCatalog, IWorkspaceInstanceManager, IWorkspaceService } from '@mo
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
-import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ErrorCode } from '../src/protocol/error-codes';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
@@ -471,12 +472,13 @@ function mappingHostFs(remoteRoot: string): IHostFileSystem {
   };
 }
 
-describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => {
+describe('server-v2 /api/v1 fs:browse, fs:content and fs:mkdir with environment_id', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let localRoot: string | undefined;
   let remoteRoot: string | undefined;
   let provider: { dispose(): void | Promise<void> } | undefined;
+  let remoteEnvironment: FakeEnvironment | undefined;
   let base: string;
   const remoteRoots = new Map<string, string>();
 
@@ -507,6 +509,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
           ),
           { fs: mappingHostFs(remoteRoot as string) },
         );
+        remoteEnvironment = environment;
         const registration = host.registerEnvironment(environment);
         return { dispose: () => registration.remove() };
       },
@@ -543,6 +546,13 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     return `${base}/api/v1/fs:content?${query.toString()}`;
   }
 
+  async function browse(query: Record<string, string>): Promise<Envelope<BrowseWire | null>> {
+    const res = await fetch(`${base}/api/v1/fs:browse?${new URLSearchParams(query).toString()}`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    return (await res.json()) as Envelope<BrowseWire | null>;
+  }
+
   async function postMkdir(body: unknown): Promise<Envelope<{ path: string } | null>> {
     const res = await fetch(`${base}/api/v1/fs:mkdir`, {
       method: 'POST',
@@ -551,6 +561,28 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     } as never);
     return (await res.json()) as Envelope<{ path: string } | null>;
   }
+
+  it('browses only the directories of the environment fs', async () => {
+    await mkdir(join(remoteRoot as string, 'srv', 'app', 'beta'), { recursive: true });
+    await mkdir(join(remoteRoot as string, 'srv', 'app', 'alpha'));
+    await writeFile(join(remoteRoot as string, 'srv', 'app', 'README.md'), 'hi');
+
+    const body = await browse({ path: '/srv/app', environment_id: 'remote-test' });
+    expect(body.code).toBe(0);
+    expect(body.data).toEqual({
+      path: '/srv/app',
+      parent: '/srv',
+      entries: [
+        { name: 'alpha', path: '/srv/app/alpha', is_dir: true },
+        { name: 'beta', path: '/srv/app/beta', is_dir: true },
+      ],
+    });
+  });
+
+  it('maps a missing environment directory and an unknown environment to their error codes', async () => {
+    expect((await browse({ path: '/missing', environment_id: 'remote-test' })).code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
+    expect((await browse({ path: '/srv', environment_id: 'nope' })).code).toBe(ErrorCode.ENVIRONMENT_NOT_FOUND);
+  });
 
   it('reads stat, sample, and body from the environment fs when the path exists on both filesystems', async () => {
     const requestPath = join(localRoot as string, 'shared.txt');
@@ -565,6 +597,24 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     expect(res.status).toBe(200);
     expect(res.headers.get('content-length')).toBe('12');
     expect(await res.text()).toBe('remote-bytes');
+  });
+
+  it('reconnects a disconnected environment before serving fs:content', async () => {
+    const requestPath = join(localRoot as string, 'after-drop.txt');
+    const remoteFile = join(remoteRoot as string, requestPath);
+    await mkdir(dirname(remoteFile), { recursive: true });
+    await writeFile(remoteFile, 'reconnected');
+    const environment = remoteEnvironment!;
+    environment.setStatus('disconnected');
+    const connect = vi.fn(async () => environment.setStatus('ready'));
+    Object.assign(environment, { connect });
+
+    const res = await fetch(contentUrl(requestPath, 'remote-test'), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
+    } as never);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('reconnected');
+    expect(connect).toHaveBeenCalledOnce();
   });
 
   it('creates directories on the environment fs, never on the server-local disk', async () => {

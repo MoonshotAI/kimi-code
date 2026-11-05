@@ -41,6 +41,7 @@ export type WorkspaceTrustResponse = z.infer<typeof workspaceTrustResponseSchema
 
 export const setPrimaryRequestSchema = z.object({
   path: z.string().min(1),
+  environment_id: z.string().min(1).optional(),
 });
 export type SetPrimaryRequest = z.infer<typeof setPrimaryRequestSchema>;
 

@@ -633,6 +633,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `PATCH /api/v1/sessions/{session_id}/goal` | 就地修改当前目标的 objective |
 | `GET /api/v1/sessions/{session_id}/warnings` | 会话级告警 |
 | `GET /api/v1/sessions/{session_id}/environment` | 读取 main agent 的环境绑定 |
+| `GET /api/v1/environments` | 列出已配置的执行环境及其连接状态 |
 | `GET /api/v1/sessions/{session_id}/environments` | 列出会话工作区已注册的环境 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流，不走信封） |
 | `GET /api/v1/sessions/{session_id}/snapshot` | 客户端重建用全量快照（含 `as_of_seq` 与 `epoch`） |
@@ -935,6 +936,12 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 - `40401`：会话不存在
 
+#### `GET /api/v1/environments`
+
+列出已配置的执行环境及其当前连接状态。客户端选择项目的远程目录时可以使用这个端点。
+
+成功时，`data` 为 `{ environments }`。每项为 `{ environment_id, type, status, connect_error? }`，其中 `type` 取 `local` / `ssh` / `docker` / `command` 之一，`status` 取 `pending` / `connecting` / `ready` / `disconnected` / `disposed` 之一；`pending` 表示没有可用连接且未观察到失败（尚未连接过），`connect_error` 记录 `disconnected` 条目的失败原因。
+
 #### `GET /api/v1/sessions/{session_id}/environments`
 
 列出会话可用的环境。
@@ -943,7 +950,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 
-成功时，`data` 为 `{ environments }`。`environments` 每项为 `{ environment_id, type, status, connect_error? }`，其中 `type` 取 `local` / `ssh` / `docker` / `command` 之一，`status` 取 `pending` / `connecting` / `ready` / `disconnected` / `disposed` 之一；`pending` 表示没有可用连接且未观察到失败（尚未连接过），`connect_error` 记录 `disconnected` 条目的失败原因。
+成功时，`data` 的结构与 `GET /api/v1/environments` 相同。
 
 - `40401`：会话不存在
 
@@ -1540,10 +1547,12 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `id` | string | 工作区 id：隐式渠道（CLI/VS Code 按目录进入）为 `wd_<slug>_<hash12>`，经 `POST /api/v1/workspaces` 显式创建为 `wm_<uuid>` |
-| `root` | string | 主目录的绝对路径 |
+| `root` | string | 主目录在其环境中的绝对路径 |
+| `primary_environment_id` | string | 主目录所属的环境；旧项目未显式绑定时为 `local` |
+| `directories` | `{ environment_id, path }[]` | 完整的有序项目目录列表，1–65 项。第一项为主目录。每项通过环境与路径标识目录，同一路径可出现在不同环境下 |
 | `name` | string | 显示名，1–100 个字符；默认取主目录的基名 |
 | `kind` | string | 工作区类别：`managed`（经显式创建，`wm_` id；会话不合并项目 `local.toml`）或 `implicit`（按目录隐式注册，`wd_` id；会话合并项目 `local.toml` 以兼容旧配置） |
-| `additional_dirs` | string[] | 注册表管理的额外源文件夹绝对路径（不含项目 `local.toml` 与临时来源） |
+| `additional_dirs` | string[] | 本机附加源文件夹，为兼容旧客户端保留。它是 `directories` 中本机目录的投影，不含项目 `local.toml` 与临时来源 |
 | `created_at` | string | 注册时间，ISO 8601 |
 | `last_opened_at` | string | 最近一次打开或重新注册工作区的时间，ISO 8601 |
 | `session_count` | integer | 工作区内的会话数 |
@@ -1558,39 +1567,43 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 注册一个新工作区并返回它。每次调用都创建新条目（`wm_<uuid>` id）——即使同一路径已是其他工作区的主目录也不会折叠或提示。客户端重复提交（网络重试、重复点击）应携带同一个 `idempotency_key`，服务端按键去重并返回首次创建的条目。
 
+本机工作区可以使用 `root + additional_dirs`；包含环境信息的项目使用 `directories`。两种形式同时出现时，以 `directories` 为准。
+
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `root` | body | string | **必填。** 已存在目录的绝对路径，作为主目录 |
+| `root` | body | string | 已存在本机目录的绝对路径，作为主目录。未提供 `directories` 时必填 |
+| `directories` | body | `{ environment_id, path }[]` | 完整的有序目录列表，1–65 项。第一项为主目录，可以是远程目录。每个路径必须是所属环境中已存在的绝对路径。拒绝重复的 `(environment_id, path)` 组合；同一环境可以提供多个目录 |
 | `name` | body | string | 显示名，1–100 个字符。默认主目录的基名 |
 | `additional_dirs` | body | string[] | 额外源文件夹。每项按 `add-dir` 相同规则解析（绝对路径、相对主目录或 `~` 展开），须已存在且为目录，不得与主目录或彼此重复，最多 64 项 |
 | `idempotency_key` | body | string | 客户端生成的幂等键，1–200 个字符。相同键的重试返回首次创建的工作区 |
 
 成功时 `data` 为 [workspace 对象](#workspace-对象)。
 
-- `40001`：`root` 缺失或不是绝对路径，或其他请求校验失败（`details` 会列出该字段）
-- `40006`：`additional_dirs` 含重复项或与主目录相同。`msg` 为 `Duplicate source folder: <实际路径>`；`details` 为 `[{ "path": "additional_dirs.N", "directory": "<解析后的绝对路径>" }]`，其中 `path` 是请求字段位置，`directory` 是重复目录
-- `40409`：`root` 或 `additional_dirs` 中的路径不存在或不是目录
+- `40001`：`root` 与 `directories` 都缺失、`root` 不是绝对路径，或其他请求校验失败（`details` 会列出该字段）
+- `40006`：目录项重复。`msg` 为 `Duplicate source folder: <实际路径>`；`details` 为 `[{ "path": "additional_dirs.N", "directory": "<解析后的绝对路径>" }]`，其中 `path` 是请求字段位置，`directory` 是重复目录
+- `40409`：目录在所选环境中不存在或不是目录，或其环境不可用
 
 #### `PATCH /api/v1/workspaces/{workspace_id}`
 
-更新工作区的显示名与/或源文件夹。`additional_dirs` 为整体替换语义——提交编辑后的完整列表，省略该字段则保持不变；主目录不可修改。`name` 与 `additional_dirs` 至少提供其一。
+更新工作区的显示名与/或源文件夹。`directories` 与 `additional_dirs` 都是整体替换语义，省略字段则保留对应的当前值。使用 `directories` 时，提交完整的有序列表，主目录放在第一位。这可以替换主目录，包括换成远程目录；工作区 id 与会话桶保持不变。旧的 `additional_dirs` 形式只修改本机附加目录。`name`、`directories` 与 `additional_dirs` 至少提供其一。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **必填。** 工作区 id |
 | `name` | body | string | 新的显示名，1–100 个字符 |
-| `additional_dirs` | body | string[] | 替换后的完整额外源文件夹列表，解析与校验规则同 `POST /api/v1/workspaces` |
+| `directories` | body | `{ environment_id, path }[]` | 替换后的完整有序目录列表，校验规则同 `POST /api/v1/workspaces` |
+| `additional_dirs` | body | string[] | 替换后的完整本机附加源文件夹列表，解析与校验规则同 `POST /api/v1/workspaces` |
 
 成功时 `data` 为 [workspace 对象](#workspace-对象)。
 
-- `40001`：两个字段都缺失，或其他请求校验失败（`details` 逐字段说明）
-- `40006`：目录项重复或与主目录相同，`msg`、`details.path` 和 `details.directory` 的含义同 `POST /api/v1/workspaces`
-- `40409`：`additional_dirs` 中的路径不存在或不是目录
+- `40001`：所有字段都缺失，或其他请求校验失败（`details` 逐字段说明）
+- `40006`：目录项重复，`msg`、`details.path` 和 `details.directory` 的含义同 `POST /api/v1/workspaces`
+- `40409`：目录在所选环境中不存在或不是目录，或其环境不可用
 - `40410`：工作区不存在
 
 #### `POST /api/v1/workspaces/{workspace_id}/primary`
 
-将目录集内的某个源文件夹提升为主目录。服务端做原子交换：该路径成为新的 `root`，原主目录进入 `additional_dirs`；工作区 id 与会话桶不变，全部会话保留。交换后原主目录 `local.toml` 中的附加目录将不再并入（`local.toml` 跟随主目录生效）。
+将目录集内的某个本机源文件夹提升为主目录。服务端做原子交换：该路径成为新的 `root`，原主目录进入 `additional_dirs`；工作区 id 与会话桶不变，全部会话保留。交换后原主目录 `local.toml` 中的附加目录将不再并入（`local.toml` 跟随主目录生效）。要提升远程目录或替换完整的有序目录列表，使用带 `directories` 的 `PATCH`。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1668,7 +1681,11 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 文件系统
 
-会话内文件操作走 `POST /api/v1/sessions/{session_id}/fs:{action}`，请求体为 JSON；动作包括 `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `git_status:batch` / `pull_request` / `pull_request:batch` / `diff` / `open` / `open-in` / `reveal`。动作在会话创建时所在的环境上执行；`open`、`open-in` 与 `reveal` 仅对 `local` 环境上的会话可用。另有：
+会话内文件操作走 `POST /api/v1/sessions/{session_id}/fs:{action}`，请求体为 JSON；动作包括 `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `git_status:batch` / `pull_request` / `pull_request:batch` / `diff` / `open` / `open-in` / `reveal`。动作默认在会话的主环境上执行。目录列举、读取、搜索、Git 与 PR 状态以及代码对比，接受可选字段 `environment_id` 与 `environment_cwd` 来选择环境及其一个已挂载的项目目录。两个字段必须一起提供，目录必须已挂载到项目。`open`、`open-in` 与 `reveal` 仅对 `local` 环境可用。
+
+无会话的 `POST /api/v1/workspace/fs:list`、`fs:search` 与 `fs:suggest` 端点在 JSON 请求体中接受相同的目标字段。文件下载端点在查询参数中接受这两个字段。其他本机文件选择端点仍操作本机文件系统。
+
+另有：
 
 | 方法与路径 | 说明 |
 | --- | --- |

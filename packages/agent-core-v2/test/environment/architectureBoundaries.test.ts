@@ -62,7 +62,7 @@ describe('environment architecture boundaries', () => {
     ]) {
       const contents = source(path);
       expect(contents).toContain('new EnvironmentWorkspaceView(');
-      expect(contents).toMatch(/acquireOrWhenReady\(this\.environment|\.environment\.(acquire|acquireWhenReady|inspect)\(/);
+      expect(contents).toMatch(/acquireOrWhenReady\((?:this\.)?environment,|\.environment\.(acquire|acquireWhenReady|inspect)\(/);
       if (path !== 'agent/tools/os/read/readTool.ts') {
         expect(contents).not.toMatch(/@IHost(?:Environment|FileSystem|FsWatchService|ProcessService|TerminalService)/);
       }
@@ -82,7 +82,7 @@ describe('environment architecture boundaries', () => {
     expect(mcp).toContain('environmentResolver: this.environmentResolver');
     expect(mcp).not.toMatch(/@IHost(?:FileSystem|FsWatchService|ProcessService|TerminalService)/);
     expect(externalFs).toContain('session.accessor.get(ISessionWorkdir)');
-    expect(externalFs).toContain('.get(IEnvironmentService).acquire(');
+    expect(externalFs).toMatch(/\.get\(IEnvironmentService\)\.(?:acquire|acquireWhenReady)\(/);
     expect(externalFs).not.toContain('environmentWorkspaceId');
   });
 });

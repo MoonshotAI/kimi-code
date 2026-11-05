@@ -22,6 +22,7 @@ export interface SkillDefinition {
   readonly content: string;
   readonly metadata: SkillMetadata;
   readonly source: SkillSource;
+  readonly environmentId?: string;
   readonly plugin?: SkillPluginContext;
   readonly mermaid?: string | undefined;
   readonly d2?: string;

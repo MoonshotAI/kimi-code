@@ -1,10 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
+import { IEnvironmentService, IModelCatalog, ISessionManager, IWorkspaceInstanceManager, IWorkspaceService } from '@moonshot-ai/agent-core-v2';
 import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 
-import { IModelCatalog, ISessionManager, IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
@@ -168,17 +167,16 @@ describe('server-v2 /api/v1 fs routes', () => {
     await writeFile(join(work!, 'selected.txt'), 'local');
     const remote = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-')));
     await writeFile(join(remote, 'selected.txt'), 'remote');
+    const fake = new FakeEnvironment(
+      { environmentId: 'remote-session', generation: 'remote-generation' },
+      { capabilities: ['fs', 'process'] },
+    );
     const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
       id: 'remote-session-provider',
       attach: async (host) => {
-        const environment = Object.assign(
-          new FakeEnvironment(
-            { environmentId: 'remote-session', generation: 'remote-generation' },
-            { capabilities: ['fs', 'process'] },
-          ),
-          { fs: new HostFileSystem(), process: new HostProcessService() },
+        const registration = host.registerEnvironment(
+          Object.assign(fake, { fs: new HostFileSystem(), process: new HostProcessService() }),
         );
-        const registration = host.registerEnvironment(environment);
         return { dispose: () => registration.remove() };
       },
     });
@@ -199,9 +197,112 @@ describe('server-v2 /api/v1 fs routes', () => {
       expect(await download.text()).toBe('remote');
       const opened = await postFs<null>(session.data.id, 'reveal', { path: 'selected.txt' });
       expect(opened.code).not.toBe(0);
+
+      fake.setStatus('disconnected');
+      const connect = vi.fn(async () => fake.setStatus('ready'));
+      Object.assign(fake, { connect });
+      const reconnected = await postFs<{ content: string }>(session.data.id, 'read', { path: 'selected.txt' });
+      expect(reconnected.code).toBe(0);
+      expect(reconnected.data.content).toBe('remote');
+      expect(connect).toHaveBeenCalledOnce();
     } finally {
       await provider.dispose();
       await rm(remote, { recursive: true, force: true });
+    }
+  });
+
+  it('routes every project directory by environment and keeps session primaries stable', async () => {
+    const remoteA = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-a-')));
+    const remoteB = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-b-')));
+    await writeFile(join(remoteA, 'selected.txt'), 'remote-a');
+    await writeFile(join(remoteB, 'selected.txt'), 'remote-b');
+    await writeFile(join(work!, 'selected.txt'), 'local');
+    git(remoteB, 'init');
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
+      id: 'multi-root-provider',
+      attach: async (host) => {
+        const environment = Object.assign(
+          new FakeEnvironment(
+            { environmentId: 'devbox', generation: 'devbox-generation' },
+            { capabilities: ['fs', 'process'] },
+          ),
+          { fs: new HostFileSystem(), process: new HostProcessService() },
+        );
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
+    try {
+      const created = await fetch(`${base}/api/v1/workspaces`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({
+          name: 'multi-env',
+          directories: [
+            { environment_id: 'devbox', path: remoteA },
+            { environment_id: 'devbox', path: remoteB },
+            { environment_id: 'local', path: work },
+          ],
+        }),
+      } as never);
+      const workspace = (await created.json()) as Envelope<{ id: string; primary_environment_id: string; directories: { environment_id: string; path: string }[] }>;
+      expect(workspace.code).toBe(0);
+      expect(workspace.data.primary_environment_id).toBe('devbox');
+      expect(workspace.data.directories).toHaveLength(3);
+      const sessionResponse = await fetch(`${base}/api/v1/sessions`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ workspace_id: workspace.data.id }),
+      } as never);
+      const session = (await sessionResponse.json()) as Envelope<{ id: string }>;
+      expect(session.code).toBe(0);
+
+      const primaryRead = await postFs<{ content: string }>(session.data.id, 'read', { path: 'selected.txt' });
+      expect(primaryRead.data.content).toBe('remote-a');
+      const secondaryTarget = { environment_id: 'devbox', environment_cwd: remoteB };
+      const secondaryRead = await postFs<{ content: string }>(session.data.id, 'read', { path: 'selected.txt', ...secondaryTarget });
+      expect(secondaryRead.data.content).toBe('remote-b');
+      const localRead = await postFs<{ content: string }>(session.data.id, 'read', {
+        path: 'selected.txt',
+        environment_id: 'local',
+        environment_cwd: work,
+      });
+      expect(localRead.data.content).toBe('local');
+      const status = await postFs<{ branch: string }>(session.data.id, 'git_status', secondaryTarget);
+      expect(status.code).toBe(0);
+      const download = await fetch(`${base}/api/v1/sessions/${session.data.id}/fs/selected.txt:download?environment_id=devbox&environment_cwd=${encodeURIComponent(remoteB)}`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      expect(await download.text()).toBe('remote-b');
+      const rejected = await postFs<null>(session.data.id, 'read', {
+        path: 'selected.txt',
+        environment_id: 'devbox',
+        environment_cwd: `${remoteB}/unmounted`,
+      });
+      expect(rejected.code).toBe(ErrorCode.VALIDATION_FAILED);
+
+      const promoted = await fetch(`${base}/api/v1/workspaces/${workspace.data.id}`, {
+        method: 'PATCH',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({
+          directories: [
+            { environment_id: 'devbox', path: remoteB },
+            { environment_id: 'devbox', path: remoteA },
+            { environment_id: 'local', path: work },
+          ],
+        }),
+      } as never);
+      const promotedBody = (await promoted.json()) as Envelope<{ id: string }>;
+      expect(promotedBody.code).toBe(0);
+      const environment = await fetch(`${base}/api/v1/sessions/${session.data.id}/environment`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      const binding = (await environment.json()) as Envelope<{ environment_id: string; cwd: string }>;
+      expect(binding.data.environment_id).toBe('devbox');
+      expect(binding.data.cwd).toBe(remoteA);
+    } finally {
+      await provider.dispose();
+      await Promise.all([remoteA, remoteB].map((path) => rm(path, { recursive: true, force: true })));
     }
   });
 
@@ -1074,6 +1175,42 @@ describe('server-v2 /api/v1 fs routes', () => {
     });
     expect(body.code).toBe(0);
     expect(body.data.items.map((i) => i.path)).toContain('zeta.ts');
+  });
+
+  it('workspace fs:suggest searches a remote directory without registering it', async () => {
+    const remote = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-picker-')));
+    await mkdir(join(remote, 'apps', 'frontend'), { recursive: true });
+    await writeFile(join(remote, 'apps', 'frontend', 'package.json'), '{}');
+    const fake = new FakeEnvironment(
+      { environmentId: 'picker-remote', generation: 'picker-generation' },
+      { capabilities: ['fs', 'process'] },
+    );
+    const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
+      id: 'picker-remote-provider',
+      attach: async (host) => {
+        const registration = host.registerEnvironment(
+          Object.assign(fake, { fs: new HostFileSystem(), process: new HostProcessService() }),
+        );
+        return { dispose: () => registration.remove() };
+      },
+    });
+    try {
+      const body = await postWorkspaceSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+        workspace: remote,
+        query: 'front',
+        environment_id: 'picker-remote',
+        environment_cwd: remote,
+        show_hidden: true,
+        limit: 150,
+      });
+      expect(body.code).toBe(0);
+      expect(body.data.items.some((item) => item.kind === 'directory' && item.path === 'apps/frontend')).toBe(true);
+      const workspaces = await server!.core.accessor.get(IWorkspaceService).list();
+      expect(workspaces.some((workspace) => workspace.root === remote)).toBe(false);
+    } finally {
+      await provider.dispose();
+      await rm(remote, { recursive: true, force: true });
+    }
   });
 
   it('workspace fs:suggest lists top-level entries for an empty query', async () => {

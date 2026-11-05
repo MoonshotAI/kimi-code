@@ -3374,3 +3374,46 @@ describe('ToolCallComponent hasHiddenContent while arguments stream', () => {
     bash.dispose();
   });
 });
+
+describe('ToolCallComponent routed environment', () => {
+  it('names the environment of a call routed away from the primary', () => {
+    const routed = new ToolCallComponent(
+      {
+        id: 'call_read_gpu',
+        name: 'Read',
+        args: { path: 'notes.txt' },
+        display: { kind: 'file_io', operation: 'read', path: '/srv/app/notes.txt', environment: 'gpu' },
+      },
+      undefined,
+      stubTui(30),
+    );
+    const bash = new ToolCallComponent(
+      {
+        id: 'call_bash_gpu',
+        name: 'Bash',
+        args: { command: 'pwd' },
+        display: { kind: 'command', command: 'pwd', environment: 'gpu' },
+      },
+      undefined,
+      stubTui(30),
+    );
+    const primary = new ToolCallComponent(
+      {
+        id: 'call_read_primary',
+        name: 'Read',
+        args: { path: 'notes.txt' },
+        display: { kind: 'file_io', operation: 'read', path: '/workspace/notes.txt' },
+      },
+      undefined,
+      stubTui(30),
+    );
+
+    expect(strip(routed.render(100).join('\n'))).toContain('environment: gpu');
+    expect(strip(bash.render(100).join('\n'))).toContain('environment: gpu');
+    expect(strip(primary.render(100).join('\n'))).not.toContain('environment:');
+
+    routed.dispose();
+    bash.dispose();
+    primary.dispose();
+  });
+});

@@ -22,6 +22,7 @@ export function registerMediaTools(
 ): IDisposable {
   return toolRegistry.register(
     new ReadMediaFileTool(deps.environment, deps.workspace, deps.attachmentStore, deps.telemetry),
+    { environmentScoped: true },
   );
 }
 

@@ -6,11 +6,11 @@ import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '
 import { IAgentPlanService } from '#/features/plan/plan';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   ToolAccesses,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
@@ -30,7 +30,6 @@ export class WriteTool implements IWriteTool {
 
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
     @IAgentPlanService private readonly planService?: IAgentPlanService,
   ) {}
@@ -39,8 +38,11 @@ export class WriteTool implements IWriteTool {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  async resolveExecution(args: WriteInput): Promise<ToolExecution> {
-    const planTarget = await this.planService?.resolveFile(args.path);
+  async resolveExecution(args: WriteInput, context?: ToolResolutionContext): Promise<ToolExecution> {
+    const environment = context?.environment ?? this.environment;
+    const routed = context?.environment?.target;
+    const primary = routed?.primary !== false;
+    const planTarget = primary ? await this.planService?.resolveFile(args.path) : undefined;
     if (planTarget !== undefined) {
       const path = planTarget.path;
       return {
@@ -58,15 +60,25 @@ export class WriteTool implements IWriteTool {
         },
       };
     }
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    const resolutionLease = await acquireOrWhenReady(environment, ['fs']);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
+      const roots = environment.workspaceRoots();
+      if (routed !== undefined && !routed.primary) {
+        const workDir = await inspected.fs!.stat(roots.workDir).catch(() => undefined);
+        if (workDir?.isDirectory !== true) {
+          return {
+            isError: true,
+            output: `Working directory ${roots.workDir} does not exist on environment ${routed.environmentId}. Check its defaultCwd before writing there.`,
+          };
+        }
+      }
       const view = new EnvironmentWorkspaceView(inspected, {
-        workDir: this.workspaceCtx.workDir,
+        workDir: roots.workDir,
         additionalDirs: [
-          ...this.workspaceCtx.additionalDirs,
-          ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+          ...(roots.additionalDirs ?? []),
+          ...(primary ? this.skillCatalog?.catalog.getSkillRoots() ?? [] : []),
         ],
       });
       const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
@@ -89,7 +101,7 @@ export class WriteTool implements IWriteTool {
             homeDir: env.homeDir,
           }),
         execute: async () => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs']);
+          const lease = await acquireOrWhenReady(environment, ['fs']);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
@@ -164,4 +176,5 @@ registerAgentToolService(IWriteTool, WriteTool, {
   name: 'Write',
   domain: 'os/backends',
   requiredEnvironmentCapabilities: ['fs'],
+  environmentScoped: true,
 });

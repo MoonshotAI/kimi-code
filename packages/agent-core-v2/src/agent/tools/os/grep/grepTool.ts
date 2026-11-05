@@ -5,6 +5,7 @@ import {
   ToolAccesses,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
 } from '#/tool/toolContract';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IOAuthService } from '#/app/auth/auth';
@@ -17,7 +18,6 @@ import { acquireOrWhenReady, IAgentEnvironmentService, pinnedGeneration } from '
 import type { Environment } from '#/environment/environment';
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   resolvePathAccessPath,
   type PathClass,
@@ -71,7 +71,6 @@ export class GrepTool implements IGrepTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(GrepInputSchema);
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
-    @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
     @IOAuthService private readonly auth?: IOAuthService,
@@ -81,16 +80,19 @@ export class GrepTool implements IGrepTool {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  async resolveExecution(args: GrepInput): Promise<ToolExecution> {
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+  async resolveExecution(args: GrepInput, context?: ToolResolutionContext): Promise<ToolExecution> {
+    const environment = context?.environment ?? this.environment;
+    const primary = context?.environment?.target.primary !== false;
+    const resolutionLease = await acquireOrWhenReady(environment, ['fs']);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
+      const roots = environment.workspaceRoots();
       const view = new EnvironmentWorkspaceView(inspected, {
-        workDir: this.workspaceCtx.workDir,
+        workDir: roots.workDir,
         additionalDirs: [
-          ...this.workspaceCtx.additionalDirs,
-          ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
+          ...(roots.additionalDirs ?? []),
+          ...(primary ? this.skillCatalog?.catalog.getSkillRoots() ?? [] : []),
         ],
       });
       const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
@@ -114,7 +116,7 @@ export class GrepTool implements IGrepTool {
         approvalRule: literalRulePattern(this.name, args.pattern),
         matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
         execute: async ({ signal }) => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs', 'process']);
+          const lease = await acquireOrWhenReady(environment, ['fs', 'process']);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
@@ -362,6 +364,7 @@ registerAgentToolService(IGrepTool, GrepTool, {
   name: 'Grep',
   domain: 'os/backends',
   requiredEnvironmentCapabilities: ['fs', 'process'],
+  environmentScoped: true,
 });
 
 function formatSpawnError(error: unknown, environment: Environment): string {

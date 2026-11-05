@@ -5,6 +5,7 @@ export type ToolInputDisplay =
       cwd?: string | undefined;
       description?: string | undefined;
       language?: 'bash' | undefined;
+      environment?: string | undefined;
     }
   | {
       kind: 'file_io';
@@ -14,6 +15,7 @@ export type ToolInputDisplay =
       content?: string | undefined;
       before?: string | undefined;
       after?: string | undefined;
+      environment?: string | undefined;
     }
   | {
       kind: 'diff';

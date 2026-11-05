@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { handleAddDirCommand } from '#/tui/commands/add-dir';
 import { dispatchInput, type SlashCommandHost } from '#/tui/commands/dispatch';
+import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 
 type MountedPanel = {
   handleInput: (data: string) => void;
@@ -14,7 +15,11 @@ function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '');
 }
 
-function makeHost(additionalDirs: readonly string[] = []) {
+function makeHost(
+  additionalDirs: readonly string[] = [],
+  environments: readonly string[] = ['local'],
+  environmentDirs: readonly { environmentId: string; path: string }[] = [],
+) {
   const state = {
     appState: {
       additionalDirs,
@@ -27,10 +32,16 @@ function makeHost(additionalDirs: readonly string[] = []) {
     id: 'session-1',
     summary: {
       additionalDirs,
+      environmentDirs,
     },
-    addAdditionalDir: vi.fn(async (path: string, options: { persist: boolean }) => ({
+    addAdditionalDir: vi.fn(async (path: string, options: { persist: boolean; environmentId?: string }) => ({
       additionalDirs: [...additionalDirs, path],
+      environmentDirs,
       persisted: options.persist,
+    })),
+    getEnvironment: vi.fn(async () => ({ environmentId: 'local' })),
+    listEnvironments: vi.fn(async () => ({
+      environments: environments.map((environmentId) => ({ environmentId, type: 'ssh', status: 'pending' })),
     })),
   };
   const host = {
@@ -70,6 +81,10 @@ function makeHost(additionalDirs: readonly string[] = []) {
 }
 
 describe('handleAddDirCommand', () => {
+  afterEach(() => {
+    setExperimentalFeatures([]);
+  });
+
   it('shows the empty message when no additional dirs are configured', async () => {
     const { host } = makeHost();
 
@@ -205,5 +220,55 @@ describe('handleAddDirCommand', () => {
     );
     expect(getMountedPanel()).toBeNull();
     expect(session.addAdditionalDir).not.toHaveBeenCalled();
+  });
+
+  it('mounts a directory on another environment once multi-environment is enabled', async () => {
+    setExperimentalFeatures([{ id: 'multi_environment', enabled: true }]);
+    const { host, session, getMountedPanel } = makeHost([], ['local', 'devbox']);
+
+    await handleAddDirCommand(host, '/srv/api');
+    const environments = getMountedPanel()?.render(120).map(strip).join('\n') ?? '';
+    expect(environments).toContain('Add directory: /srv/api');
+    expect(environments).toContain("local (this session's environment)");
+    expect(environments).toContain('devbox');
+    getMountedPanel()?.handleInput('\u001B[B');
+    getMountedPanel()?.handleInput(' ');
+    expect(getMountedPanel()?.render(120).map(strip).join('\n')).toContain('Mount directory on devbox: /srv/api');
+    getMountedPanel()?.handleInput('\u001B[B');
+    getMountedPanel()?.handleInput(' ');
+
+    await vi.waitFor(() => {
+      expect(session.addAdditionalDir).toHaveBeenCalledWith('/srv/api', { persist: true, environmentId: 'devbox' });
+    });
+    await vi.waitFor(() => {
+      expect(host.showStatus).toHaveBeenCalledWith(
+        'Mounted directory on devbox:\n  /srv/api\n  Remembered in the workspace registry',
+        'success',
+      );
+    });
+    expect(host.setAppState).not.toHaveBeenCalled();
+  });
+
+  it('keeps the plain add-dir flow when the session has no other environment', async () => {
+    setExperimentalFeatures([{ id: 'multi_environment', enabled: true }]);
+    const { host, session, getMountedPanel } = makeHost();
+
+    await handleAddDirCommand(host, '../shared');
+    expect(getMountedPanel()?.render(120).map(strip).join('\n')).toContain('Add directory to workspace: ../shared');
+    getMountedPanel()?.handleInput(' ');
+
+    await vi.waitFor(() => {
+      expect(session.addAdditionalDir).toHaveBeenCalledWith('../shared', { persist: false });
+    });
+  });
+
+  it('lists environment directories beside additional dirs', async () => {
+    const { host } = makeHost(['/repo/shared'], ['local'], [{ environmentId: 'devbox', path: '/srv/api' }]);
+
+    await handleAddDirCommand(host, 'list');
+
+    expect(host.showStatus).toHaveBeenCalledWith(
+      'Additional directories:\n  /repo/shared\nEnvironment directories:\n  devbox: /srv/api',
+    );
   });
 });

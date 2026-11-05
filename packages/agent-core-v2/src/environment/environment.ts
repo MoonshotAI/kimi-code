@@ -14,6 +14,11 @@ export interface EnvironmentBinding {
   readonly cwd?: string;
 }
 
+export interface EnvironmentTarget extends EnvironmentBinding {
+  readonly primary: boolean;
+  readonly additionalDirs?: readonly string[];
+}
+
 export function environmentBindingId(environmentId: string, cwd?: string): string {
   return cwd === undefined ? environmentId : `${environmentId}\0${cwd}`;
 }
@@ -63,6 +68,18 @@ export interface EnvironmentLease {
   readonly environment: Environment;
   track<T extends { dispose(): void | Promise<void> }>(resource: T, sessionId?: string): T;
   dispose(): void;
+}
+
+export interface EnvironmentAccess {
+  inspect(): Environment;
+  isAvailable(required?: readonly EnvironmentCapability[]): boolean;
+  acquire(required?: readonly EnvironmentCapability[]): EnvironmentLease;
+  acquireWhenReady(required?: readonly EnvironmentCapability[]): Promise<EnvironmentLease>;
+  workspaceRoots(): EnvironmentWorkspaceRoots;
+}
+
+export interface EnvironmentHandle extends EnvironmentAccess {
+  readonly target: EnvironmentTarget;
 }
 
 export async function realpathExistingPrefix(

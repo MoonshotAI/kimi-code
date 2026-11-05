@@ -52,6 +52,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { closeTrailingOpenToolExchange } from '#/agent/contextMemory/openToolExchange';
 import { IAgentEnvironmentBindingSeed, IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import '#/agent/environmentBinding/environmentBindingService';
+import '#/agent/environmentBinding/environmentRoster';
 import { EnvironmentSetBinding } from '#/agent/environmentBinding/environmentBindingOps';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';

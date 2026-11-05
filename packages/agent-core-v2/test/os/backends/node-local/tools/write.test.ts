@@ -68,8 +68,8 @@ function makeToolWithFs(fs: IHostFileSystem, workspace = PERMISSIVE_WORKSPACE) {
     ),
     { fs, host: createTestEnv() },
   );
-  const environment = stubAgentEnvironment(backend);
-  return new WriteTool(environment, workspace);
+  const environment = stubAgentEnvironment(backend, { workDir: workspace.workDir, additionalDirs: workspace.additionalDirs });
+  return new WriteTool(environment);
 }
 
 function makeTool(options: WriteFsOptions = {}, workspace = PERMISSIVE_WORKSPACE) {
@@ -180,8 +180,8 @@ describe('WriteTool', () => {
       ),
       { fs: fakes.fs, host: environment },
     );
-    const environmentService = stubAgentEnvironment(backend);
-    const tool = new WriteTool(environmentService, PERMISSIVE_WORKSPACE);
+    const environmentService = stubAgentEnvironment(backend, { workDir: PERMISSIVE_WORKSPACE.workDir });
+    const tool = new WriteTool(environmentService);
 
     const result = await execute(tool, { path: '~/notes/today.txt', content: 'hello' });
 

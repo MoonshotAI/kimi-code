@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
-import { renderModelToolSkillPrompt } from '#/features/skill/prompt';
+import type { EnvironmentTarget } from '#/environment/environment';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { renderModelToolSkillPrompt, routedSkillEnvironment } from '#/features/skill/prompt';
 import { IAgentSkillService } from '#/features/skill/skillService';
 import type { ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/tool/toolContract';
 import { isInlineSkillType } from '#/features/skill/catalog/types';
@@ -34,6 +36,7 @@ export class SkillTool implements ISkillTool {
     @ISessionSkillCatalog private readonly catalog: ISessionSkillCatalog,
     @IAgentSkillService private readonly skill: IAgentSkillService,
     @ISessionContext private readonly sessionContext: ISessionContext,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
   ) {}
 
   resolveExecution(args: SkillToolInput): ToolExecution {
@@ -47,7 +50,7 @@ export class SkillTool implements ISkillTool {
   }
 
   withInitialQueryDepth(initialQueryDepth: number): SkillTool {
-    const clone = new SkillTool(this.catalog, this.skill, this.sessionContext);
+    const clone = new SkillTool(this.catalog, this.skill, this.sessionContext, this.environment);
     clone.queryDepth = initialQueryDepth;
     return clone;
   }
@@ -59,6 +62,7 @@ export class SkillTool implements ISkillTool {
       args,
       this.queryDepth,
       this.sessionContext.sessionId,
+      this.environment.targets(),
     );
   }
 }
@@ -69,6 +73,7 @@ export async function executeModelSkill(
   args: SkillToolInput,
   queryDepth: number,
   sessionId: string,
+  targets: readonly EnvironmentTarget[],
 ): Promise<ExecutableToolResult> {
   const currentDepth = queryDepth;
   if (currentDepth >= MAX_SKILL_QUERY_DEPTH) {
@@ -114,6 +119,7 @@ export async function executeModelSkill(
           skillArgs,
           skillContent,
           skillSource: skill.source,
+          skillEnvironment: routedSkillEnvironment(skill, targets),
           skillDir: skill.dir,
           trigger,
         }),

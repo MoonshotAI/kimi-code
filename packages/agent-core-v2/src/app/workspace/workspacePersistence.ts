@@ -3,11 +3,18 @@ import type { Event } from '#/_base/event';
 
 import type { Workspace } from './workspace';
 
+export interface PersistedWorkspaceEnvironmentDir {
+  readonly environment_id: string;
+  readonly path: string;
+}
+
 export interface PersistedWorkspaceEntry {
   readonly root: string;
+  readonly primary_environment_id?: string;
   readonly name: string;
   readonly kind?: string;
   readonly additional_dirs?: readonly string[];
+  readonly environment_dirs?: readonly PersistedWorkspaceEnvironmentDir[];
   readonly created_at: string;
   readonly last_opened_at: string;
 }

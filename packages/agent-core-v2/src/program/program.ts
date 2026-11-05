@@ -6,6 +6,8 @@ import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessi
 import type { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
+import type { IWorkspaceEnvironmentDirs } from '#/workspace/workspaceEnvironmentDirs/workspaceEnvironmentDirs';
+import { WorkspaceEnvironmentDirsService } from '#/workspace/workspaceEnvironmentDirs/workspaceEnvironmentDirsService';
 import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import type { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
@@ -80,6 +82,7 @@ export interface ProgramSnapshot {
 interface ProgramGeneration extends ProgramHarness {
   readonly id: string;
   readonly workdirs: ProgramWorkdirs;
+  readonly environmentDirs: IWorkspaceEnvironmentDirs;
   readonly mcpConfig: IWorkspaceMcpConfigService;
   readonly mcp: IWorkspaceMcpService;
   readonly trust: IWorkspaceTrust;
@@ -120,6 +123,7 @@ export class Program {
   get status(): ProgramStatus { return this.currentStatus; }
   get state(): IWorkspaceStateService { return this.requireGeneration().workdirs.root.state; }
   get dirs(): IWorkspaceDirs { return this.requireGeneration().workdirs.root.dirs; }
+  get environmentDirs(): IWorkspaceEnvironmentDirs { return this.requireGeneration().environmentDirs; }
   get fs(): IWorkspaceFsService { return this.requireGeneration().workdirs.root.fs; }
   get git(): IWorkspaceGitService { return this.requireGeneration().workdirs.root.git; }
   get instructions(): IWorkspaceInstructionsService { return this.requireGeneration().workdirs.root.instructions; }
@@ -153,6 +157,7 @@ export class Program {
         userAgentProfiles: generation.userAgentProfiles,
         pluginAgentProfiles: generation.pluginAgentProfiles,
         mcp: generation.mcp,
+        environmentDirs: generation.environmentDirs,
         acquireWorkdir: (environmentId, cwd) => generation.workdirs.acquire(environmentId, cwd),
         onDispose: release,
       });
@@ -299,6 +304,7 @@ export class Program {
       const harness: ProgramHarness = { userAgentProfiles, explicitSkills, extraSkills, pluginSkills };
       const workdirs = new ProgramWorkdirs(this.environments, this.context, this.dependencies, harness, own);
       const root = workdirs.root;
+      const environmentDirs = own(new WorkspaceEnvironmentDirsService(this.context, this.dependencies.workspaces, this.dependencies.workspaceStore, this.environments, this.dependencies.log));
       const trust = own(new WorkspaceTrustService(this.context, this.dependencies.trustStore, root.state, this.dependencies.config));
       const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, hostFs, trust, this.dependencies.configStore, this.dependencies.oauth));
       const mcp = new WorkspaceMcpService(this.context, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager);
@@ -308,6 +314,7 @@ export class Program {
       return {
         id: environment.identity.generation,
         workdirs,
+        environmentDirs,
         mcpConfig,
         mcp,
         trust,
@@ -333,6 +340,7 @@ export class Program {
   private observeReadiness(generation: ProgramGeneration): void {
     void Promise.all([
       readiness(generation.workdirs.root.dirs),
+      readiness(generation.environmentDirs),
       readiness(generation.workdirs.root.instructions),
       readiness(generation.mcpConfig),
       readiness(generation.mcp),

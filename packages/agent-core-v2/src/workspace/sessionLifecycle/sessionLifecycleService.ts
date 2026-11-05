@@ -4,7 +4,8 @@ import { join } from 'pathe';
 
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
-import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding, type EnvironmentLease } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID, type EnvironmentBinding } from '#/environment/environment';
+import { requireEnvironmentDirectory } from '#/environment/environmentDefaults';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import type { IEnvironmentService } from '#/app/environment/environment';
 import type { ProgramWorkdir } from '#/program/program';
@@ -69,6 +70,7 @@ import { ISessionInstructionsProvider } from '#/session/sessionInstructions/inst
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
+import type { WorkspaceEnvironmentDirsView } from '#/workspace/workspaceEnvironmentDirs/workspaceEnvironmentDirs';
 import {
   drainSessionMetadataWrites,
   encodeSessionMeta,
@@ -206,6 +208,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IProviderService private readonly providers: IProviderService,
     private readonly environments: IEnvironmentService,
     private readonly acquireWorkdir: (environmentId: string, cwd: string) => Promise<ProgramWorkdir>,
+    private readonly environmentDirs: WorkspaceEnvironmentDirsView,
     onDispose?: () => void,
   ) {
     super();
@@ -328,6 +331,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
               environmentId: environment?.environmentId ?? LOCAL_ENVIRONMENT_ID,
               cwd: environment?.cwd,
               fs: workdir.fs,
+              acquireEnvironmentWorkdir: (environmentId: string, cwd: string) => this.acquireWorkdir(environmentId, cwd),
+              environmentDirs: this.environmentDirs,
             }],
             ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
           ],
@@ -382,30 +387,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async openWorkdir(environment: (EnvironmentBinding & { readonly cwd: string }) | undefined): Promise<ProgramWorkdir> {
     if (environment === undefined) return this.acquireWorkdir(LOCAL_ENVIRONMENT_ID, this.workspaceContext.cwd);
     const { environmentId, cwd } = environment;
-    let lease: EnvironmentLease;
-    try {
-      lease = await this.environments.acquireWhenReady({ environmentId }, ['fs']);
-    } catch (error) {
-      if (error instanceof EnvironmentError) throw error;
-      throw new EnvironmentError(
-        'environment.unavailable',
-        `failed to connect environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
-      );
-    }
-    try {
-      const stat = await lease.environment.fs!.stat(cwd).catch((error: unknown) => {
-        throw new EnvironmentError(
-          'environment.invalid_cwd',
-          `cwd ${cwd} is not readable on environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
-      if (!stat.isDirectory) {
-        throw new EnvironmentError('environment.invalid_cwd', `cwd ${cwd} is not a directory on environment ${environmentId}`);
-      }
-    } finally {
-      lease.dispose();
-    }
+    await requireEnvironmentDirectory(this.environments, environmentId, cwd);
     return this.acquireWorkdir(environmentId, cwd);
   }
 

@@ -19,12 +19,18 @@ export function createApprovalRequestHandler(
     try {
       const data = adaptApprovalRequest(event);
       // A badge lookup failure must never cancel the approval itself — it
-      // degrades to no badge.
-      let environment: string | undefined;
-      try {
-        environment = resolveEnvironment?.();
-      } catch {
-        environment = undefined;
+      // degrades to no badge. A routed call's own environment takes precedence
+      // over the session's primary environment.
+      let environment =
+        event.display.kind === 'command' || event.display.kind === 'file_io'
+          ? event.display.environment
+          : undefined;
+      if (environment === undefined) {
+        try {
+          environment = resolveEnvironment?.();
+        } catch {
+          environment = undefined;
+        }
       }
       const response = await controller.show(
         environment === undefined ? data : { ...data, environment },

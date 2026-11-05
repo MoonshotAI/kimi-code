@@ -1,9 +1,8 @@
-import type { EnvironmentCapability, EnvironmentLease } from '#/environment/environment';
+import type { EnvironmentAccess, EnvironmentCapability, EnvironmentLease } from '#/environment/environment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 
 export function acquireEnvironmentLease(
-  environment: IAgentEnvironmentService,
+  environment: EnvironmentAccess,
   required: readonly EnvironmentCapability[] = [],
 ): EnvironmentLease | undefined {
   try {

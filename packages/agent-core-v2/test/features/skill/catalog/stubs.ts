@@ -13,6 +13,7 @@ export function stubSkill(
     content: overrides.content ?? `body of ${name}`,
     metadata: overrides.metadata ?? {},
     source: overrides.source ?? 'user',
+    environmentId: overrides.environmentId,
     plugin: overrides.plugin,
     mermaid: overrides.mermaid,
     d2: overrides.d2,

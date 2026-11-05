@@ -9,11 +9,13 @@ export const fileHistoryContentQuerySchema = z.object({
   turn_id: z.coerce.number().int().nonnegative(),
   path: z.string().min(1),
   phase: z.enum(['start', 'end']).optional(),
+  environment_id: z.string().min(1).optional(),
 });
 export type FileHistoryContentQuery = z.infer<typeof fileHistoryContentQuerySchema>;
 
 export const fileHistoryChangeSchema = z.object({
   path: z.string(),
+  environment_id: z.string().optional(),
   status: z.enum(['added', 'modified', 'deleted']),
   additions: z.number(),
   deletions: z.number(),

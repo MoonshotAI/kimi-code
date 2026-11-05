@@ -173,6 +173,7 @@ describe('AgentShellCommandService', () => {
       list: () => [],
       listReferences: () => [],
       resolve: () => undefined,
+      routeEnvironment: (_name, args) => ({ args }),
     };
     ctx = createTestAgent(agentService(IAgentToolRegistryService, emptyRegistry));
     context = ctx.get(IAgentContextMemoryService);

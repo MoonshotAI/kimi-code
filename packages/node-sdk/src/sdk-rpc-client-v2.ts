@@ -1314,6 +1314,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       archived: meta.archived,
       metadata: meta.custom as JsonObject | undefined,
       additionalDirs: workspace.additionalDirs,
+      environmentDirs: handle.accessor.get(ISessionWorkdir).environmentDirs.dirs,
       lastTurnReason: liveOutcome,
     };
   }
@@ -1989,16 +1990,31 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * (a v1 `persist: false` dir was session-scoped and written into session
    * metadata to survive a resume; the v2 `Program` keeps it until the last
    * workspace reference is released). Returns the same
-   * `{additionalDirs, projectRoot, configPath, persisted}` shape as v1.
+   * `{additionalDirs, projectRoot, configPath, persisted}` shape as v1, plus
+   * the workspace's environment mounts: an `environmentId` other than the
+   * session's own mounts the path on that environment (`program.environmentDirs`)
+   * with the same session/remember split.
    */
   override async addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult> {
     const handle = this.requireLiveSession(input.id);
     const workspaceId = handle.accessor.get(ISessionContext).workspaceId;
+    const workdir = handle.accessor.get(ISessionWorkdir);
     const lease = await this.engineAccessor
       .get(IWorkspaceInstanceManager)
       .acquire({ workspaceId });
     try {
-      return await lease.instance.program.dirs.addDir({ path: input.path, persist: input.persist });
+      const program = lease.instance.program;
+      if (input.environmentId === undefined || input.environmentId === workdir.environmentId) {
+        const result = await program.dirs.addDir({ path: input.path, persist: input.persist });
+        return { ...result, environmentDirs: [...workdir.environmentDirs.dirs] };
+      }
+      await program.environmentDirs.ready;
+      await program.environmentDirs.add({ environmentId: input.environmentId, path: input.path, persist: input.persist });
+      return {
+        additionalDirs: [...handle.accessor.get(ISessionWorkspaceContext).additionalDirs],
+        environmentDirs: [...workdir.environmentDirs.dirs],
+        persisted: input.persist,
+      };
     } finally {
       lease.dispose();
     }

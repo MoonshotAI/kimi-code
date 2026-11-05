@@ -25,6 +25,10 @@ export function stubAgentEnvironment(
   return {
     _serviceBrand: undefined,
     onDidChange: options.onDidChange ?? (() => ({ dispose: () => {} })),
+    targets: () => [{ environmentId: resolve().identity.environmentId, primary: true, cwd: options.workDir }],
+    handle(target) {
+      return { ...this, target };
+    },
     isAvailable: options.isAvailable ?? (() => true),
     inspect: resolve,
     acquire: lease,

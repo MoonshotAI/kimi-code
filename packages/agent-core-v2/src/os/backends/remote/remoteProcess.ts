@@ -187,8 +187,11 @@ export class RemoteProcess implements IHostProcess {
     }
   }
 
-  onConnectionClose(): void {
+  onConnectionClose(reason: string): void {
     if (this.currentExitCode === null) {
+      (this.stderr as PushReadable).pushChunk(Buffer.from(
+        `\nThe connection to the remote environment was lost (${reason}), so the process was terminated. The environment reconnects on its next use.\n`,
+      ));
       this.currentExitCode = -1;
       this.resolveExit(-1);
     }
@@ -256,9 +259,9 @@ export class RemoteProcessService implements IHostProcessService {
       proc.onClosed();
       this.processes.delete(notification.processId);
     });
-    connection.onDidClose(() => {
+    connection.onDidClose((info) => {
       for (const proc of this.processes.values()) {
-        proc.onConnectionClose();
+        proc.onConnectionClose(info.reason);
       }
     });
   }
@@ -295,7 +298,7 @@ export class RemoteProcessService implements IHostProcessService {
         void this.connection.call(PROCESS_SIGNAL_METHOD, { processId, signal: 'terminate' }).catch(() => {});
       }
       if (error instanceof ConnectionClosedError) {
-        proc.onConnectionClose();
+        proc.onConnectionClose(error.message);
       }
       throw toRemoteProcessError(error);
     }

@@ -17,6 +17,8 @@ import {
   type Workspace,
   type WorkspaceCreate,
   type WorkspaceUpdate,
+  workspaceDirectories,
+  workspaceDirectoryParts,
 } from './workspace';
 import {
   WorkspaceCreated,
@@ -132,7 +134,7 @@ export class WorkspaceService implements IWorkspaceService {
 
   create(input: WorkspaceCreate): Promise<Workspace> {
     return this.runExclusive(async () => {
-      await this.requireDirectory(input.root);
+      if ((input.primaryEnvironmentId ?? 'local') === 'local') await this.requireDirectory(input.root);
       const additionalDirs = await this.normalizeAdditionalDirs(
         input.root,
         input.additionalDirs ?? [],
@@ -157,9 +159,11 @@ export class WorkspaceService implements IWorkspaceService {
         ws = {
           id: `wm_${randomUUID()}`,
           root: input.root,
+          primaryEnvironmentId: input.primaryEnvironmentId,
           name: input.name ?? basename(input.root),
           kind: 'managed',
           additionalDirs,
+          environmentDirs: input.environmentDirs,
           createdAt: now,
           lastOpenedAt: now,
         };
@@ -198,7 +202,7 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
-        await this.requireDirectory(existing.root);
+        if ((existing.primaryEnvironmentId ?? 'local') === 'local') await this.requireDirectory(existing.root);
         touched = { ...existing, lastOpenedAt: Date.now() };
         return {
           workspaces: catalog.workspaces.map((ws) => (ws.id === id ? touched! : ws)),
@@ -220,14 +224,18 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
-        const additionalDirs =
-          patch.additionalDirs === undefined
+        const parts = patch.directories === undefined ? undefined : workspaceDirectoryParts(patch.directories);
+        const additionalDirs = parts !== undefined
+          ? parts.additionalDirs
+          : patch.additionalDirs === undefined
             ? existing.additionalDirs
             : await this.normalizeAdditionalDirs(existing.root, patch.additionalDirs);
         updated = {
           ...existing,
+          ...parts,
           ...(patch.name !== undefined ? { name: patch.name } : {}),
           additionalDirs,
+          environmentDirs: parts?.environmentDirs ?? patch.environmentDirs ?? existing.environmentDirs,
         };
         return {
           workspaces: catalog.workspaces.map((ws) => (ws.id === id ? updated! : ws)),
@@ -246,7 +254,6 @@ export class WorkspaceService implements IWorkspaceService {
     return this.runExclusive(async () => {
       await this.ensureMerged();
       let updated: Workspace | undefined;
-      let changed = false;
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
@@ -254,37 +261,22 @@ export class WorkspaceService implements IWorkspaceService {
         if (resolved === undefined) {
           throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `primary ${path} does not exist`);
         }
-        const rootKey = workspaceRootKey(existing.root);
-        const resolvedKey = workspaceRootKey(resolved);
-        if (resolvedKey === rootKey) {
-          updated = existing;
-          return catalog;
-        }
-        if (!existing.additionalDirs.some((dir) => workspaceRootKey(dir) === resolvedKey)) {
-          throw new Error2(
-            ErrorCodes.CONFIG_INVALID,
-            `primary ${resolved} is not in the workspace dir set`,
-          );
-        }
+        const directories = workspaceDirectories(existing);
+        const index = directories.findIndex((dir) => dir.environmentId === 'local' && workspaceRootKey(dir.path) === workspaceRootKey(resolved));
+        if (index < 0) throw new Error2(ErrorCodes.CONFIG_INVALID, `primary ${resolved} is not in the workspace dir set`);
+        const selected = directories[index]!;
         updated = {
           ...existing,
-          root: resolved,
-          additionalDirs: [
-            existing.root,
-            ...existing.additionalDirs.filter((dir) => workspaceRootKey(dir) !== resolvedKey),
-          ],
+          ...workspaceDirectoryParts([selected, ...directories.filter((_, i) => i !== index)]),
           lastOpenedAt: Date.now(),
         };
-        changed = true;
         return {
           workspaces: catalog.workspaces.map((ws) => (ws.id === id ? updated! : ws)),
           deletedIds: catalog.deletedIds,
           idempotencyKeys: catalog.idempotencyKeys,
         };
       });
-      if (changed && updated !== undefined) {
-        this.event.publish(new WorkspaceUpdated({ payload: { workspace: updated } }));
-      }
+      if (updated !== undefined) this.event.publish(new WorkspaceUpdated({ payload: { workspace: updated } }));
       return updated;
     });
   }

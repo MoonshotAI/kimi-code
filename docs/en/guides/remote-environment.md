@@ -23,7 +23,7 @@ POSIX and Windows targets are supported. Windows targets require Git for Windows
 
 ## Declaring environments
 
-Environments are declared in the `[environments]` section of `config.toml`. Three kinds of entries are available: SSH hosts, Docker-compatible containers, and custom launcher commands for anything else (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes, and so on).
+Environments are declared in the `[environments]` section of `config.toml`. Three kinds of entries are available: SSH hosts, Docker-compatible containers, and custom launcher commands for anything else (WSL distributions, OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes, and so on).
 
 ```toml
 [environments]
@@ -79,6 +79,19 @@ defaultCwd = 'C:\work\project'
 
 Custom command launchers also need the Windows executor and Git Bash on the target. If the supplied `args` already invoke `exec-server`, the launcher is responsible for its own Windows command quoting.
 
+### WSL targets
+
+When Kimi Code runs on Windows, a custom command launcher can run tools inside a WSL distribution. A WSL target is a Linux target and does not need Git for Windows: install the Linux `kimi` binary at `~/.kimi-code/bin/kimi` inside the distribution.
+
+```toml
+[environments.wsl]
+command = "wsl.exe"
+args = ["-d", "Ubuntu", "--"]   # Kimi Code appends ~/.kimi-code/bin/kimi exec-server
+defaultCwd = "/home/me/project"
+```
+
+The command after `--` runs through the distribution's default shell, so `~` expands and the default `remoteBin` works. Use a Linux path inside the distribution for `defaultCwd`, not a Windows-side path such as `\\wsl$\...`. With [multiple environments](#multiple-environments-in-one-session) enabled, a local Windows session can also mount a WSL directory with `/add-dir`.
+
 ## Creating and resuming sessions
 
 The environment binding is per session: it records which environment the session's tools execute on, plus the working directory on that environment. Different sessions in the same workspace may bind different environments, and subagents inherit their parent agent's binding. Creating a remote session records a persisted reminder with the environment id, OS and architecture, shell, and working directory so the model knows where its tools run. Creating a session on `local` records nothing.
@@ -96,6 +109,29 @@ Both flags are creation-only: they cannot be combined with `--session` or `--con
 Resuming reads the persisted environment id and working directory and reconnects to the target. If the environment is not registered or cannot be reached, resuming fails instead of opening the session on `local`.
 
 The footer shows the active environment's identity before the working directory; `local` renders nothing. A disconnected environment is shown with its failure reason, and the local git status slot is hidden for remote sessions. Approval prompts display the target environment next to the command or path, and `@` file completion queries the target filesystem.
+
+## Multiple environments in one session
+
+The experimental multi-environment feature lets `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, and `ReadMediaFile` choose an environment mounted on the workspace for each call. It is disabled by default. Enable it in `config.toml` alongside your [environment declarations](#declaring-environments):
+
+```toml
+[experimental]
+multi_environment = true
+```
+
+You can instead set `KIMI_CODE_EXPERIMENTAL_MULTI_ENVIRONMENT=true` for one process.
+
+Declaring an environment does not make it available to a workspace. To use another environment, mount one of its directories on the workspace first: in the TUI, run `/add-dir <path>`. When the feature is enabled and other environments are configured, you first choose which environment the path belongs to. Choosing the session's own environment adds an ordinary additional directory; choosing another environment mounts the path as that environment's working directory for this workspace. As with additional directories, the mount can apply to this session only or be remembered in the workspace registry, so every later session in the workspace — including print-mode runs — uses it.
+
+A project identifies each directory by its environment id and absolute path, with the first directory serving as the primary directory. A project can combine local and remote directories, include several directories from one environment, or use a remote primary directory. In the desktop and web project editor, choose a configured environment and enter or browse to a directory to add it; the directory list shows its environment and connection status. You can reorder directories to choose the primary directory or remove a remembered mount. Saving edits reconnects sessions to the selected primary directory when they next start, while retaining the project's session history. Remote project editing requires the `multi_environment` flag.
+
+The path must be absolute on the target environment. Mounting connects to the environment once to confirm the directory exists. Repeating `/add-dir` for an environment that already has a directory adds another directory for that environment. `/add-dir list` shows mounted environment directories alongside additional directories. To remove a remembered mount, use the desktop or web project editor or delete it from the workspace's `environment_dirs` in `~/.kimi-code/projects.json`.
+
+When at least one other environment is mounted, these tools gain an optional `environment` argument. Omitting it uses the session's primary environment; an unknown id fails the call rather than running it elsewhere. The model chooses the environment through this argument. When the primary environment is remote, the local host must be mounted too before tools can target it. A mount whose environment is no longer declared in `[environments]` is ignored. Apart from the check at mount time, an environment still connects lazily on its first use. The primary keeps its existing working directory and additional directories. For example, after `/add-dir /srv/app` mounts that path on `dev-box`, a local session can inspect the checkout with `Read` using `environment = "dev-box"`, then run its tests with `Bash` in the same environment.
+
+Approval prompts show the environment for each call, and "allow for this session" approvals are remembered separately per environment. Tools outside the list above keep using the primary environment or the local host as described elsewhere on this page. The desktop and web file trees, file previews, `@` completion, Git and pull-request status, diffs, and file history select the same environment and directory as the current project root. `GET /api/v1/environments` reports each configured environment's connection status for the project editor; the file API accepts an environment id and mounted directory to select the target.
+
+The system prompt still describes only the primary environment. Once another environment connects, the session reads its project context: the `AGENTS.md` files found from each mounted working directory are listed for the model, which is asked to read them before modifying files there, and its project skills join the session's skill list as `<skill>@<environment>` (for example `deploy@dev-box`). These directories also load project context when the primary environment is remote. Changing an environment's directory set reloads that context. Environments that have not connected yet contribute nothing until their first use. When the primary environment is remote, user-level skills from the local host are marked as belonging to `local`, so the model reads their supporting files there.
 
 ## Disconnects and reconnecting
 
@@ -161,7 +197,7 @@ Several behaviors are deliberately scoped. Each of the following is a known limi
 - **Tower mode unsupported**: tower multi-agent orchestration does not work on remote workspaces.
 - **Git status slot hidden**: the CLI footer's git indicators (branch, status, PR) are local-only and hidden for remote sessions.
 - **`/feedback` scanner unsupported**: the codebase scanner attached to `/feedback` scans the local disk and is unavailable for remote workspaces; a notice is shown instead.
-- **Same path on two hosts shares one workspace entry**: workspaces are keyed by root path alone, so `/home/me/app` on two different hosts maps to a single workspace. A cosmetic side effect: the TUI's `~` abbreviation may render remote paths against your local home directory.
+- **Implicit workspace identity remains path-only**: managed projects identify directories by environment id and path, including remote primary directories. Implicit CLI workspaces retain their root-path key for session compatibility, so the TUI's `~` abbreviation may render remote paths against your local home directory.
 - **Local file paths in prompts are unreadable remotely**: a path like `/tmp/x.png` typed into a prompt resolves on the target's filesystem, so the agent cannot read your local files by path. Pasted images are unaffected — they travel as binary attachments, not paths.
 - **Directory listing limit**: listing a remote directory with more than 50,000 entries fails explicitly instead of returning a partial list. Use a smaller subdirectory or split the directory. Skill discovery logs directories it cannot scan.
 - **Small-file latency adds up**: session startup reads many small files, and each read is a remote round trip; remote sessions start slower than local ones.

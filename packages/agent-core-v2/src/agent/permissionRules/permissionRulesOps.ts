@@ -9,6 +9,7 @@ import type { PermissionApprovalResultRecord, PermissionRule } from './permissio
 export interface PermissionRulesModelState {
   readonly rules: readonly PermissionRule[];
   readonly sessionApprovalRulePatterns: readonly string[];
+  readonly environmentSessionApprovalRulePatterns?: Readonly<Record<string, readonly string[]>>;
 }
 
 const permissionRulesAddSchema = z.object({
@@ -31,6 +32,7 @@ const permissionRecordApprovalResultSchema = z.object({
   toolName: z.string(),
   action: z.string(),
   sessionApprovalRule: z.string().optional(),
+  environmentId: z.string().optional(),
   result: z.custom<PermissionApprovalResultRecord['result']>(),
 });
 
@@ -58,13 +60,14 @@ export const permissionRulesKey = defineState(
   })
   .on(PermissionRecordApprovalResult, (s, e) => {
     const pattern = e.sessionApprovalRule;
-    if (
-      e.result.decision !== 'approved' ||
-      e.result.scope !== 'session' ||
-      pattern === undefined ||
-      s.sessionApprovalRulePatterns.includes(pattern)
-    ) {
+    if (e.result.decision !== 'approved' || e.result.scope !== 'session' || pattern === undefined) return;
+    if (e.environmentId === undefined) {
+      if (s.sessionApprovalRulePatterns.includes(pattern)) return;
+      s.sessionApprovalRulePatterns = [...s.sessionApprovalRulePatterns, pattern];
       return;
     }
-    s.sessionApprovalRulePatterns = [...s.sessionApprovalRulePatterns, pattern];
+    const byEnvironment = s.environmentSessionApprovalRulePatterns ?? {};
+    const patterns = Object.hasOwn(byEnvironment, e.environmentId) ? byEnvironment[e.environmentId]! : [];
+    if (patterns.includes(pattern)) return;
+    s.environmentSessionApprovalRulePatterns = { ...byEnvironment, [e.environmentId]: [...patterns, pattern] };
   });
