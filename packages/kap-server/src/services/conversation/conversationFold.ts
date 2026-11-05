@@ -103,6 +103,7 @@ export interface ConversationState {
   anchors: UndoAnchor[];
   implicitlyEnded: Record<string, true>;
   provisionalEnds: Record<string, TurnEnd>;
+  recordsTurnEnds: boolean;
   stepParts: Record<string, number>;
   compaction?: CompactionDetails;
 }
@@ -122,6 +123,7 @@ export function createConversationState(agentId: string, fork?: ConversationFork
     anchors: [],
     implicitlyEnded: {},
     provisionalEnds: {},
+    recordsTurnEnds: false,
     stepParts: {},
   };
 }
@@ -234,7 +236,7 @@ export function settleOrphanTurns(state: ConversationState, running: RunningWork
       if (track !== undefined) next.tools[item.item_id] = structuredClone(track);
     }
     next.turns[index] = settled;
-    endTurn(next, settled, { outcome: 'interrupted', reason: 'aborted' }, state.clock);
+    endTurn(next, settled, state.recordsTurnEnds ? { outcome: 'interrupted', reason: 'aborted' } : COMPLETED, state.clock);
   });
   return next;
 }
@@ -493,6 +495,7 @@ function applyStepRetrying(state: ConversationState, record: WireRecord): void {
 }
 
 function applyTurnEnded(state: ConversationState, record: WireRecord, time: number): void {
+  state.recordsTurnEnds = true;
   const turnNumber = numberField(record['turnId']);
   if (turnNumber !== undefined && state.pendingPrompt?.turnNumber === turnNumber) state.pendingPrompt = undefined;
   const turn = findTurnByNumber(state, turnNumber) ?? unnumberedOpenTurn(state);
@@ -543,8 +546,7 @@ function applyInteractionRequest(state: ConversationState, record: WireRecord, t
   if (kind !== 'approval' && kind !== 'question' && kind !== 'user_tool') return;
   state.interactions[id] = toolCallId;
   const request = record['request'];
-  const track = toolTrack(state, toolCallId);
-  if (findToolCall(state, toolCallId)?.item.status === 'ended') delete track.turnId;
+  const track = callTrack(state, toolCallId);
   if (kind === 'approval' && findToolCall(state, toolCallId) === undefined) {
     openToolCallAwaitingApproval(state, toolCallId, request, time);
   }
@@ -710,7 +712,9 @@ function endTurn(state: ConversationState, turn: ConversationTurn, end: TurnEnd,
   turn.duration_ms = Math.max(0, time - Date.parse(turn.started_at));
   for (const item of turn.items) endItem(state, item, end.outcome, time);
   delete state.provisionalEnds[turn.turn_id];
-  if (state.openTurnId === turn.turn_id) state.openTurnId = undefined;
+  if (state.openTurnId === turn.turn_id) {
+    state.openTurnId = state.turns.findLast((candidate) => candidate.status === 'running')?.turn_id;
+  }
 }
 
 function endItem(state: ConversationState, item: ConversationItem, outcome: ConversationOutcome, time: number): void {
@@ -796,8 +800,13 @@ function toolTrack(state: ConversationState, toolCallId: string): ToolTrack {
   return (state.tools[toolCallId] ??= {});
 }
 
+function callTrack(state: ConversationState, toolCallId: string): ToolTrack {
+  if (findToolCall(state, toolCallId)?.item.status === 'ended') state.tools[toolCallId] = {};
+  return toolTrack(state, toolCallId);
+}
+
 function upsertToolCall(state: ConversationState, turn: ConversationTurn, fresh: ToolCallItem): void {
-  const track = toolTrack(state, fresh.item_id);
+  const track = callTrack(state, fresh.item_id);
   const existing = turn.items.find((candidate) => candidate.item_id === fresh.item_id);
   const previous = existing?.type === 'tool_call' ? existing : undefined;
   if (isPlanTool(fresh.name)) track.planDisplay = fresh.display ?? track.planDisplay;
