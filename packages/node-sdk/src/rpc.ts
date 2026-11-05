@@ -76,6 +76,9 @@ import type {
   SessionEnvironmentState,
   SkillSummary,
   PluginCommandDef,
+  GitPullRequest,
+  GitQueryInput,
+  GitStatusSummary,
   SuggestFilesInput,
   SuggestFilesResult,
   Unsubscribe,
@@ -419,6 +422,10 @@ export abstract class SDKRpcClientBase {
     workDir: string,
     input: SuggestFilesInput,
   ): Promise<SuggestFilesResult | undefined>;
+
+  abstract getGitStatus(workDir: string, input: GitQueryInput): Promise<GitStatusSummary | null>;
+
+  abstract getGitPullRequest(workDir: string, input: GitQueryInput): Promise<GitPullRequest | null>;
 
   abstract listBackgroundTasks(
     input: SessionIdRpcInput & { activeOnly?: boolean; limit?: number },
