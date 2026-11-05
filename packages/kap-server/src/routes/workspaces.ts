@@ -17,6 +17,7 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
+import { loadWorkspaceVisibility } from '../services/workspaceVisibility';
 import {
   createWorkspaceRequestSchema,
   createWorkspaceResponseSchema,
@@ -81,8 +82,10 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
       tags: ['workspaces'],
     },
     async (req, reply) => {
-      const items = await core.accessor.get(IWorkspaceService).list();
-      const projected = await Promise.all(items.map((ws) => toWireWorkspace(core, ws)));
+      const { workspaces, sessionCounts } = await loadWorkspaceVisibility(core);
+      const projected = await Promise.all(
+        workspaces.map((ws) => toWireWorkspace(core, ws, sessionCounts.get(ws.id))),
+      );
       reply.send(okEnvelope({ items: projected }, req.id));
     },
   );
@@ -477,8 +480,12 @@ async function resolveTrust(
   return core.accessor.get(IWorkspaceTrustStore).forRoot(ws.root);
 }
 
-export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
-  const sessionCount = await core.accessor.get(IWorkspaceSessions).count(ws.id);
+export async function toWireWorkspace(
+  core: Scope,
+  ws: Workspace,
+  sessionCount?: number,
+): Promise<WorkspaceWire> {
+  const count = sessionCount ?? (await core.accessor.get(IWorkspaceSessions).count(ws.id));
   return {
     id: ws.id,
     root: ws.root,
@@ -487,7 +494,7 @@ export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<Works
     additional_dirs: [...ws.additionalDirs],
     created_at: new Date(ws.createdAt).toISOString(),
     last_opened_at: new Date(ws.lastOpenedAt).toISOString(),
-    session_count: sessionCount,
+    session_count: count,
   };
 }
 
