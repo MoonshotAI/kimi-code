@@ -6,6 +6,19 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.5.1 (2026-11-05)
+
+### Bug Fixes
+
+- Fix repeated HTTP 400 errors in sessions caused by empty system messages for dynamic tool schemas.
+- Fix missing image and video previews in live and reloaded tool results.
+- web: Fix session titles not being generated automatically after the first turn of a new session.
+- Hide sessions belonging to deleted workspaces from session lists.
+- web: Fix local images not displaying when their paths contain spaces.
+- web: Fix the session info panel automatically floating over and covering chat messages in narrow layouts.
+- web: Hide stale empty implicit workspaces from the workspace list.
+- web: Fix tool call summaries repeatedly expanding and collapsing while a response is in progress.
+
 ## 2.5.0 (2026-11-04)
 
 ### Features
