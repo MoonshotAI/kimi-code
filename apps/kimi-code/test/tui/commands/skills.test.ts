@@ -1,4 +1,4 @@
-import { buildSkillSlashCommands, isUserActivatableSkill } from '#/tui/commands/index';
+import { buildSkillSlashCommands, isUserActivatableSkill, skillSourceLabel } from '#/tui/commands/index';
 import type { SkillSummary } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it } from 'vitest';
 
@@ -125,6 +125,22 @@ describe('skill slash commands', () => {
     expect(built.commands.map((command) => command.workspaceDir)).toEqual(['/work/A', '/work/B']);
     expect(built.commandMap.get('skill:review')).toBe('review');
     expect([...built.commandMap.keys()].filter((name) => name === 'skill:review')).toHaveLength(1);
+  });
+
+  it('labels global and built-in sources without changing project metadata', () => {
+    expect(skillSourceLabel('user')).toBe('Global');
+    expect(skillSourceLabel('extra')).toBe('Global');
+    expect(skillSourceLabel('plugin')).toBe('Global');
+    expect(skillSourceLabel('builtin')).toBe('Built-in');
+    expect(skillSourceLabel('project')).toBeUndefined();
+    expect(skillSourceLabel(undefined)).toBeUndefined();
+
+    const built = buildSkillSlashCommands([
+      skill('global', 'prompt', { source: 'user' }),
+      skill('builtin', 'prompt', { source: 'builtin' }),
+      skill('project', 'prompt', { source: 'project' }),
+    ]);
+    expect(built.commands.map((command) => command.skillSource)).toEqual(['builtin', 'user', 'project']);
   });
 
   it('filters skills restricted to other scopes', () => {

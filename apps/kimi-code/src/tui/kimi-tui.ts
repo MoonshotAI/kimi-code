@@ -589,6 +589,7 @@ export class KimiTUI {
         aliases: cmd.aliases,
         description: cmd.description,
         skillPath: cmd.skillPath,
+        skillSource: cmd.skillSource,
         workspaceDir: cmd.workspaceDir,
         ...(cmd.argumentHint !== undefined ? { argumentHint: cmd.argumentHint } : {}),
         ...(completer !== undefined

@@ -128,6 +128,20 @@ describe('FileMentionProvider', () => {
     expect(selections).toEqual([{ commandName: 'skill:review', path: '/work/B/review/SKILL.md' }]);
   });
 
+  it('exposes global and built-in source labels when no workspace directory exists', async () => {
+    const provider = new FileMentionProvider([
+      { name: 'skill:global', description: 'Global', skillSource: 'user' },
+      { name: 'skill:builtin', description: 'Builtin', skillSource: 'builtin' },
+    ], workDir, NO_FD);
+
+    const suggestions = await provider.getSuggestions(['/skill:'], 0, 7, { signal: ctrl() });
+
+    expect(Object.fromEntries(suggestions?.items.map((item) => [item.value, item.data?.['workspaceLabel']]) ?? [])).toEqual({
+      'skill:global': 'Global',
+      'skill:builtin': 'Built-in',
+    });
+  });
+
   it('does not complete slash arguments before existing free text', async () => {
     const provider = new FileMentionProvider([GOAL_COMMAND], workDir, NO_FD);
     const line = '/goal Fix the checkout docs';

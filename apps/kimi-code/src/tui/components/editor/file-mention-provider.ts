@@ -12,6 +12,7 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { findInlineSkillTokens } from '../../utils/inline-skill-tokens';
+import { skillSourceLabel } from '../../commands/skills';
 
 const PATH_DELIMITERS = new Set([' ', '\t', '"', "'", '=']);
 const MAX_FALLBACK_SCAN = 2000;
@@ -20,6 +21,7 @@ const MAX_FALLBACK_SUGGESTIONS = 50;
 export interface SlashAutocompleteCommand extends SlashCommand {
   readonly aliases?: readonly string[];
   readonly skillPath?: string;
+  readonly skillSource?: string;
   readonly workspaceDir?: string;
 }
 
@@ -215,7 +217,7 @@ export class FileMentionProvider implements AutocompleteProvider {
             data: {
               skillPath: m.cmd.skillPath,
               workspaceLabel: m.cmd.workspaceDir === undefined
-                ? undefined
+                ? skillSourceLabel(m.cmd.skillSource)
                 : basename(m.cmd.workspaceDir) || m.cmd.workspaceDir,
             },
           })),
@@ -292,7 +294,7 @@ export class FileMentionProvider implements AutocompleteProvider {
           inlineSkill: true,
           skillPath: m.cmd.skillPath,
           workspaceLabel: m.cmd.workspaceDir === undefined
-            ? undefined
+            ? skillSourceLabel(m.cmd.skillSource)
             : basename(m.cmd.workspaceDir) || m.cmd.workspaceDir,
         },
       })),

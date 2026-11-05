@@ -33,6 +33,12 @@ function getSkillSlashCommandGroup(source: SkillSummary['source']): number {
   return source === 'builtin' ? 0 : 1;
 }
 
+export function skillSourceLabel(source: SkillSummary['source']): string | undefined {
+  if (source === 'builtin') return 'Built-in';
+  if (source === 'user' || source === 'extra' || source === 'plugin') return 'Global';
+  return undefined;
+}
+
 export function buildSkillSlashCommands(skills: readonly SkillSummary[]): SkillSlashCommands {
   const commandMap = new Map<string, string>();
   const sortedSkills = [...skills].toSorted(compareSkillSlashCommands);
@@ -47,6 +53,7 @@ export function buildSkillSlashCommands(skills: readonly SkillSummary[]): SkillS
       aliases: [],
       description: skill.description ?? '',
       skillPath: skill.path,
+      skillSource: skill.source,
       workspaceDir: skill.workspaceDir,
     };
   });

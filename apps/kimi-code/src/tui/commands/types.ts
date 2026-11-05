@@ -1,4 +1,5 @@
 import type { AutocompleteItem, SlashCommand } from '@moonshot-ai/pi-tui';
+import type { SkillSummary } from '@moonshot-ai/kimi-code-sdk';
 
 export type SlashCommandAvailability = 'always' | 'idle-only';
 
@@ -7,6 +8,7 @@ export interface KimiSlashCommand<Name extends string = string> extends SlashCom
   readonly aliases: readonly string[];
   readonly description: string;
   readonly skillPath?: string;
+  readonly skillSource?: SkillSummary['source'];
   readonly workspaceDir?: string;
   readonly priority?: number;
   readonly availability?: SlashCommandAvailability | ((args: string) => SlashCommandAvailability);
