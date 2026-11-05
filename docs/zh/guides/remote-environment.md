@@ -136,7 +136,7 @@ ssh -o BatchMode=yes dev-box true
 - **Hooks 和 MCP server 默认在本机运行**：它们看不到目标环境的文件；stdio MCP server 可通过 `environment_id` 改到目标环境运行，见 [MCP](../customization/mcp.md)。
 - **联网工具在本机发起**：`WebSearch` 和 `FetchURL` 访问的是你电脑所在的网络。
 - **提示词里的文件路径按目标环境解析**：写 `/tmp/x.png` 读的是目标环境上的文件；本机图片请直接粘贴。
-- **不支持 Tower 模式**，底部状态栏也不显示 git 状态。
+- **不支持 Tower 模式**。
 
 ## 下一步
 
