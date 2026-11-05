@@ -2411,7 +2411,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(running.body.data.items.some((s) => s.id === childId)).toBe(false);
   });
 
-  it('keeps a session listable and gettable with cwd after its workspace is unregistered (gap G3)', async () => {
+  it('hides a session from lists after its workspace is unregistered while keeping it gettable (gap G3)', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       title: 'g3',
@@ -2426,9 +2426,11 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const listed = await getJson<PageWire>('/api/v1/sessions');
     expect(listed.body.code).toBe(0);
-    const found = listed.body.data.items.find((s) => s.id === id);
-    expect(found).toBeDefined();
-    expect(found?.metadata.cwd).toBe(cwd);
+    expect(listed.body.data.items.some((session) => session.id === id)).toBe(false);
+
+    const paged = await getJson<PageWire>('/api/v1/sessions?page_size=100');
+    expect(paged.body.code).toBe(0);
+    expect(paged.body.data.items.some((session) => session.id === id)).toBe(false);
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body.code).toBe(0);
@@ -2437,6 +2439,40 @@ describe('server-v2 /api/v1/sessions', () => {
     const profile = await getJson<SessionWire>(`/api/v1/sessions/${id}/profile`);
     expect(profile.body.code).toBe(0);
     expect(profile.body.data.metadata.cwd).toBe(cwd);
+  });
+
+  it('does not page a deleted managed workspace session into a same-root active project', async () => {
+    await restartWithFreshHome();
+    const cwd = home as string;
+    const activeWorkspace = await postJson<{ id: string }>('/api/v1/workspaces', {
+      root: cwd,
+      name: 'active',
+    });
+    const active = await postJson<SessionWire>('/api/v1/sessions', {
+      workspace_id: activeWorkspace.body.data.id,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const removedWorkspace = await postJson<{ id: string }>('/api/v1/workspaces', {
+      root: cwd,
+      name: 'removed',
+    });
+    const removed = await postJson<SessionWire>('/api/v1/sessions', {
+      workspace_id: removedWorkspace.body.data.id,
+    });
+
+    const del = await deleteJson<{ deleted: boolean }>(
+      `/api/v1/workspaces/${removedWorkspace.body.data.id}`,
+    );
+    expect(del.body.code).toBe(0);
+
+    const page = await getJson<PageWire>('/api/v1/sessions?page_size=1');
+    expect(page.body.code).toBe(0);
+    expect(page.body.data.items.map((session) => session.id)).toEqual([active.body.data.id]);
+    expect(page.body.data.has_more).toBe(false);
+
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${removed.body.data.id}`);
+    expect(got.body.code).toBe(0);
+    expect(got.body.data.metadata.cwd).toBe(cwd);
   });
 
   it('merges metadata via profile and keeps cwd authoritative', async () => {
