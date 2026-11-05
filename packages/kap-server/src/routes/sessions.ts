@@ -1151,7 +1151,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
   if (live !== undefined) {
     await closeSessionById(core.accessor, id);
   }
-  const handle = await resumeSessionById(core.accessor, id);
+  const handle = await resumeSessionById(core.accessor, id, { forceRetry: true });
   if (handle === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }

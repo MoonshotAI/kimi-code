@@ -1780,6 +1780,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       const mainWireFold = this.startMainWireFold(input.id, input.replayTurnLimit);
       const handle = await resumeSessionById(this.engineAccessor, input.id, {
         additionalDirs: input.additionalDirs,
+        forceRetry: true,
       });
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(input.id);
       this.wireSession(handle);
