@@ -35,15 +35,19 @@ import { TurnCancel, TurnEnded, TurnPrompt, TurnSteer } from '@moonshot-ai/agent
 import { AgentErrorEvent } from '@moonshot-ai/agent-core-v2/agent/mcp/mcpEvents';
 import { WarningIssued } from '@moonshot-ai/agent-core-v2/agent/profile/profileOps';
 import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import { isMediaPart, type MediaPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import { isMediaPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 
 import type {
+  AssistantMessageItem,
   ConversationItem,
   ConversationMessage,
   ConversationTurn,
   ConversationTurnHeader,
   ConversationTurnsPage,
+  Media,
   Notice,
+  ReasoningItem,
+  ToolCallItem,
   TurnsFailedMessage,
   TurnsMessage,
 } from '../../protocol/conversation';
@@ -54,27 +58,9 @@ import {
   undoConversationTurns,
   type ConversationFork,
   type ConversationState,
-  type FoldItem,
-  type FoldReasoning,
-  type FoldText,
-  type FoldToolCall,
-  type FoldTurn,
-  type LiveToolFields,
-  type LiveToolProgress,
   type RunningWork,
 } from './conversationFold';
-import {
-  COMPACTION_CANCELLED_NOTICE,
-  errorNotice,
-  keepMediaUrl,
-  mediaPartsOf,
-  mediaUrl,
-  presentHeader,
-  presentItem,
-  presentTurn,
-  warningNotice,
-  type MediaResolver,
-} from './conversationProjection';
+import { isoTime, mediaPartOf, mediaTypeOf, mediaUrlOf } from './conversationItems';
 
 type Unframed<T> = T extends unknown ? Omit<T, 'session_id' | 'agent_id' | 'event_created_at'> : never;
 
@@ -87,8 +73,11 @@ export type ConversationListener = (event: ConversationEvent) => void;
 interface LiveItem {
   readonly turnId: string;
   readonly stepId: string;
-  item: FoldText | FoldReasoning | FoldToolCall;
+  readonly startedAt: number;
+  item: AssistantMessageItem | ReasoningItem | ToolCallItem;
 }
+
+type LiveToolFields = Pick<ToolCallItem, 'output' | 'progress'>;
 
 interface LiveTool {
   readonly turnId: string;
@@ -119,9 +108,15 @@ const BLOBREF_PREFIX = 'blobref:';
 const PAGE_BYTES = 1024 * 1024;
 const PAGE_ENVELOPE_BYTES = 4 * 1024;
 
+const COMPACTION_CANCELLED_NOTICE: Notice = {
+  level: 'warning',
+  title: 'Context compaction did not finish',
+  code: 'compaction.cancelled',
+};
+
 export class ConversationFeed implements IDisposable {
   private state: ConversationState;
-  private sent: readonly FoldTurn[] = [];
+  private sent: readonly ConversationTurn[] = [];
   private started = false;
   private replay: ReplayGate | undefined;
   private beforeReplay: ConversationState | undefined;
@@ -148,7 +143,7 @@ export class ConversationFeed implements IDisposable {
     );
   }
 
-  turns(): readonly FoldTurn[] {
+  turns(): readonly ConversationTurn[] {
     return this.state.turns;
   }
 
@@ -163,17 +158,17 @@ export class ConversationFeed implements IDisposable {
     const end = before === undefined ? turns.length : turns.findIndex((turn) => turn.ordinal >= before);
     const stop = end === -1 ? turns.length : end;
     const start = Math.max(0, stop - limit);
-    const selected = turns.slice(start, stop).map((turn) => ({ turn, items: this.itemsOf(turn) }));
+    const selected = turns.slice(start, stop).map((turn) => this.withLive(turn));
     const page: ConversationTurn[] = [];
     let bytes = 0;
-    for (const { turn, items } of selected.toReversed()) {
+    for (const turn of selected.toReversed()) {
       const remaining = PAGE_BYTES - PAGE_ENVELOPE_BYTES - bytes;
-      if (page.length > 0 && turnBytes(presentTurn(turn, items)) > remaining) break;
-      const presented = presentTurn(turn, items, await this.loadMedia(items));
-      const size = turnBytes(presented);
+      if (page.length > 0 && turnBytes(turn) > remaining) break;
+      const loaded = await this.withLoadedMedia(turn);
+      const size = turnBytes(loaded);
       if (page.length > 0 && size > remaining) break;
       bytes += size;
-      page.unshift(presented);
+      page.unshift(loaded);
     }
     return { turns: page, has_more: start > 0 || page.length < selected.length };
   }
@@ -208,7 +203,7 @@ export class ConversationFeed implements IDisposable {
         this.dropLive((entry) => entry.stepId === event.stepId);
       }),
       bus.subscribe(WarningIssued, (event) => {
-        this.notify(warningNotice(event.message, event.code));
+        this.notify({ level: 'warning', title: event.message, code: event.code });
       }),
       bus.subscribe(AgentErrorEvent, (event) => {
         this.notify(errorNotice(event));
@@ -306,10 +301,10 @@ export class ConversationFeed implements IDisposable {
     const next = this.state.turns;
     if (previous === next) return;
     this.sent = next;
-    const nextById = new Map(next.map((turn) => [turn.id, turn]));
-    const removed = new Set(previous.filter((turn) => !nextById.has(turn.id)).map((turn) => turn.id));
+    const nextById = new Map(next.map((turn) => [turn.turn_id, turn]));
+    const removed = new Set(previous.filter((turn) => !nextById.has(turn.turn_id)).map((turn) => turn.turn_id));
     const shrunk = previous.some((turn) => {
-      const after = nextById.get(turn.id);
+      const after = nextById.get(turn.turn_id);
       return after !== undefined && (after.items.length < turn.items.length || after.steps.length < turn.steps.length);
     });
     if (removed.size > 0 || shrunk) {
@@ -320,21 +315,21 @@ export class ConversationFeed implements IDisposable {
       this.emit({ type: 'reset' });
       return;
     }
-    const previousById = new Map(previous.map((turn) => [turn.id, turn]));
+    const previousById = new Map(previous.map((turn) => [turn.turn_id, turn]));
     for (const turn of next) {
-      const before = previousById.get(turn.id);
+      const before = previousById.get(turn.turn_id);
       if (before !== turn) this.emitTurnChanges(before, turn);
     }
   }
 
-  private emitTurnChanges(before: FoldTurn | undefined, turn: FoldTurn): void {
-    const header = presentHeader(turn);
-    const previous = before === undefined ? undefined : presentHeader(before);
+  private emitTurnChanges(before: ConversationTurn | undefined, turn: ConversationTurn): void {
+    const header = headerOf(turn);
+    const previous = before === undefined ? undefined : headerOf(before);
     if (previous === undefined || (previous.status === 'ended' && header.status === 'running')) {
       this.emit({ type: 'turn.started', turn: header });
     }
     this.emitItemChanges(before, turn);
-    this.dropLive((entry) => entry.turnId === turn.id && !liveStepOpen(turn, entry.stepId));
+    this.dropLive((entry) => entry.turnId === turn.turn_id && !this.liveStepOpen(turn, entry.stepId));
     if (previous !== undefined) this.emitTurnUpdates(previous, header);
     if (header.status === 'ended' && (previous?.status !== 'ended' || !sameJson(previous, header))) {
       this.emit({ type: 'turn.ended', turn: header });
@@ -350,16 +345,16 @@ export class ConversationFeed implements IDisposable {
     }
   }
 
-  private emitItemChanges(before: FoldTurn | undefined, turn: FoldTurn): void {
-    const previous = new Map(before?.items.map((item) => [item.id, item]));
+  private emitItemChanges(before: ConversationTurn | undefined, turn: ConversationTurn): void {
+    const previous = new Map(before?.items.map((item) => [item.item_id, item]));
     for (const item of turn.items) {
-      const old = previous.get(item.id);
+      const old = previous.get(item.item_id);
       if (old === item) continue;
-      const live = this.live.get(item.id);
-      this.live.delete(item.id);
+      const live = this.live.get(item.item_id);
+      this.live.delete(item.item_id);
       const earlier = live?.item ?? (old === undefined ? undefined : this.withLiveFields(old));
-      this.emitItemChange(turn.id, earlier === undefined ? undefined : presentItem(earlier), presentItem(this.withLiveFields(item)));
-      if (item.type === 'tool_call' && item.status === 'ended') this.tools.delete(item.id);
+      this.emitItemChange(turn.turn_id, earlier, this.withLiveFields(item));
+      if (item.type === 'tool_call' && item.status === 'ended') this.tools.delete(item.item_id);
     }
   }
 
@@ -392,16 +387,18 @@ export class ConversationFeed implements IDisposable {
     if (entry !== undefined) {
       if (entry.item.type === 'tool_call' || entry.item.type !== type) return;
       entry.item = { ...entry.item, text: entry.item.text + delta };
-      this.emit({ type: 'item.delta', turn_id: target.turn.id, item_id: itemId, field: 'text', delta });
+      this.emit({ type: 'item.delta', turn_id: target.turn.turn_id, item_id: itemId, field: 'text', delta });
       return;
     }
-    if (target.turn.items.some((item) => item.id === itemId)) return;
+    if (target.turn.items.some((item) => item.item_id === itemId)) return;
     this.endLiveBlocks(target.stepId);
     const now = Date.now();
-    const base = { id: itemId, stepIndex: target.stepIndex, createdAt: now, status: 'running', text: delta } as const;
-    const item: FoldText | FoldReasoning = type === 'reasoning' ? { ...base, type, startedAt: now } : { ...base, type };
-    this.live.set(itemId, { turnId: target.turn.id, stepId: target.stepId, item });
-    this.emit({ type: 'item.started', turn_id: target.turn.id, item: presentItem(item) });
+    const base = { item_id: itemId, step_index: target.stepIndex, status: 'running', created_at: isoTime(now), text: delta } as const;
+    const item: AssistantMessageItem | ReasoningItem = type === 'reasoning'
+      ? { type, ...base, started_at: isoTime(now) }
+      : { type, ...base };
+    this.live.set(itemId, { turnId: target.turn.turn_id, stepId: target.stepId, startedAt: now, item });
+    this.emit({ type: 'item.started', turn_id: target.turn.turn_id, item });
   }
 
   private onToolCallDelta(
@@ -415,28 +412,28 @@ export class ConversationFeed implements IDisposable {
     const entry = this.live.get(toolCallId);
     if (entry?.item.type === 'tool_call') {
       if (argumentsPart === undefined || argumentsPart.length === 0) return;
-      entry.item = { ...entry.item, live: { inputText: (entry.item.live?.inputText ?? '') + argumentsPart } };
+      entry.item = { ...entry.item, input_text: (entry.item.input_text ?? '') + argumentsPart };
       this.emit({ type: 'item.delta', turn_id: entry.turnId, item_id: toolCallId, field: 'input_text', delta: argumentsPart });
       return;
     }
     if (name === undefined || entry !== undefined) return;
     const target = this.liveTarget(turnNumber);
-    if (target === undefined || target.turn.items.some((item) => item.id === toolCallId)) return;
+    if (target === undefined || target.turn.items.some((item) => item.item_id === toolCallId)) return;
     this.endLiveBlocks(target.stepId);
     const now = Date.now();
-    const item: FoldToolCall = {
+    const item: ToolCallItem = {
       type: 'tool_call',
-      id: toolCallId,
-      stepIndex: target.stepIndex,
-      createdAt: now,
-      startedAt: now,
-      name,
+      item_id: toolCallId,
+      step_index: target.stepIndex,
       status: 'running',
-      streaming: true,
-      live: { inputText: argumentsPart ?? '' },
+      created_at: isoTime(now),
+      name,
+      stage: 'input',
+      input_text: argumentsPart ?? '',
+      started_at: isoTime(now),
     };
-    this.live.set(toolCallId, { turnId: target.turn.id, stepId: target.stepId, item });
-    this.emit({ type: 'item.started', turn_id: target.turn.id, item: presentItem(item) });
+    this.live.set(toolCallId, { turnId: target.turn.turn_id, stepId: target.stepId, startedAt: now, item });
+    this.emit({ type: 'item.started', turn_id: target.turn.turn_id, item });
   }
 
   private onToolProgress(toolCallId: string, update: ToolUpdate): void {
@@ -448,16 +445,16 @@ export class ConversationFeed implements IDisposable {
     if ((update.kind === 'stdout' || update.kind === 'stderr') && update.replace !== true) {
       const text = update.text ?? '';
       if (text.length === 0) return;
-      this.tools.set(toolCallId, { turnId: target.turn.id, fields: { ...fields, output: (fields.output ?? '') + text } });
-      this.emit({ type: 'item.delta', turn_id: target.turn.id, item_id: toolCallId, field: 'output', delta: text });
+      this.tools.set(toolCallId, { turnId: target.turn.turn_id, fields: { ...fields, output: (fields.output ?? '') + text } });
+      this.emit({ type: 'item.delta', turn_id: target.turn.turn_id, item_id: toolCallId, field: 'output', delta: text });
       return;
     }
     const next: LiveToolFields = update.kind === 'stdout' || update.kind === 'stderr'
       ? { ...fields, output: update.text ?? '' }
       : { ...fields, progress: nextProgress(fields.progress, update) };
-    const before = presentItem(this.withLiveFields(target.item));
-    this.tools.set(toolCallId, { turnId: target.turn.id, fields: next });
-    this.emitItemChange(target.turn.id, before, presentItem(this.withLiveFields(target.item)));
+    const before = this.withLiveFields(target.item);
+    this.tools.set(toolCallId, { turnId: target.turn.turn_id, fields: next });
+    this.emitItemChange(target.turn.turn_id, before, this.withLiveFields(target.item));
   }
 
   private notify(notice: Notice): void {
@@ -471,36 +468,42 @@ export class ConversationFeed implements IDisposable {
       const item = entry.item;
       if (entry.stepId !== stepId || item.status !== 'running' || item.type === 'tool_call') continue;
       entry.item = item.type === 'reasoning'
-        ? { ...item, status: 'ended', durationMs: now - item.startedAt }
-        : { ...item, status: 'ended' };
-      this.emit({ type: 'item.ended', turn_id: entry.turnId, item: presentItem(entry.item) });
+        ? { ...item, status: 'ended', outcome: 'completed', duration_ms: now - entry.startedAt }
+        : { ...item, status: 'ended', outcome: 'completed' };
+      this.emit({ type: 'item.ended', turn_id: entry.turnId, item: entry.item });
     }
   }
 
-  private liveTarget(turnNumber: number): { turn: FoldTurn; stepId: string; stepIndex: number } | undefined {
-    const turn = this.state.turns.findLast((candidate) => candidate.turnNumber === turnNumber && candidate.status === 'running');
-    const step = turn?.steps.at(-1);
-    if (turn === undefined || step === undefined || step.endedAt !== undefined) return undefined;
+  private liveTarget(turnNumber: number): { turn: ConversationTurn; stepId: string; stepIndex: number } | undefined {
+    const turn = this.state.turns.findLast((candidate) => candidate.turn_number === turnNumber && candidate.status === 'running');
+    const step = turn === undefined ? undefined : this.state.steps[turn.turn_id]?.at(-1);
+    if (turn === undefined || step === undefined || step.ended) return undefined;
     return { turn, stepId: step.id, stepIndex: step.index };
   }
 
-  private runningTool(toolCallId: string): { turn: FoldTurn; item: FoldToolCall } | undefined {
-    const turnId = this.state.toolTurns[toolCallId];
-    const turn = turnId === undefined ? undefined : this.state.turns.findLast((candidate) => candidate.id === turnId);
-    const item = turn?.items.find((candidate) => candidate.id === toolCallId);
+  private liveStepOpen(turn: ConversationTurn, stepId: string): boolean {
+    if (turn.status !== 'running') return false;
+    const step = this.state.steps[turn.turn_id]?.findLast((candidate) => candidate.id === stepId);
+    return step !== undefined && !step.ended;
+  }
+
+  private runningTool(toolCallId: string): { turn: ConversationTurn; item: ToolCallItem } | undefined {
+    const turnId = this.state.tools[toolCallId]?.turnId;
+    const turn = turnId === undefined ? undefined : this.state.turns.findLast((candidate) => candidate.turn_id === turnId);
+    const item = turn?.items.find((candidate) => candidate.item_id === toolCallId);
     if (turn === undefined || item?.type !== 'tool_call' || item.status !== 'running') return undefined;
     return { turn, item };
   }
 
-  private withLiveFields(item: FoldItem): FoldItem {
+  private withLiveFields(item: ConversationItem): ConversationItem {
     if (item.type !== 'tool_call' || item.status !== 'running') return item;
-    const tool = this.tools.get(item.id);
-    return tool === undefined ? item : { ...item, live: tool.fields };
+    const tool = this.tools.get(item.item_id);
+    return tool === undefined ? item : { ...item, ...tool.fields };
   }
 
-  private itemsOf(turn: FoldTurn): FoldItem[] {
-    const live = [...this.live.values()].filter((entry) => entry.turnId === turn.id).map((entry) => entry.item);
-    return [...turn.items.map((item) => this.withLiveFields(item)), ...live];
+  private withLive(turn: ConversationTurn): ConversationTurn {
+    const live = [...this.live.values()].filter((entry) => entry.turnId === turn.turn_id).map((entry) => entry.item);
+    return { ...turn, items: [...turn.items.map((item) => this.withLiveFields(item)), ...live] };
   }
 
   private dropLive(match: (entry: LiveItem) => boolean, announce = true): void {
@@ -511,25 +514,24 @@ export class ConversationFeed implements IDisposable {
     }
   }
 
-  private async loadMedia(items: readonly FoldItem[]): Promise<MediaResolver> {
-    const refs = new Map<string, MediaPart>();
-    for (const part of items.flatMap((item) => mediaPartsOf(item))) {
-      const url = mediaUrl(part);
-      if (url?.startsWith(BLOBREF_PREFIX) === true) refs.set(url, part);
+  private async withLoadedMedia(turn: ConversationTurn): Promise<ConversationTurn> {
+    const refs = new Map<string, Media['kind']>();
+    for (const media of turn.items.flatMap(mediaOf)) {
+      if (media.kind !== 'file' && media.url?.startsWith(BLOBREF_PREFIX) === true) refs.set(media.url, media.kind);
     }
-    if (refs.size === 0) return keepMediaUrl;
+    if (refs.size === 0) return turn;
     const loaded = new Map<string, string>();
-    await Promise.all([...refs].map(async ([ref, part]) => {
-      const url = await this.loadBlob(part);
+    await Promise.all([...refs].map(async ([ref, kind]) => {
+      const url = await this.loadBlob(ref, kind);
       if (url !== undefined) loaded.set(ref, url);
     }));
-    return (url) => loaded.get(url) ?? url;
+    return loaded.size === 0 ? turn : { ...turn, items: turn.items.map((item) => withLoadedUrls(item, loaded)) };
   }
 
-  private async loadBlob(part: MediaPart): Promise<string | undefined> {
+  private async loadBlob(url: string, kind: Media['kind']): Promise<string | undefined> {
     try {
-      const [loaded] = await this.handle.accessor.get(IAgentBlobService).loadParts([part]);
-      return loaded === undefined || !isMediaPart(loaded) ? undefined : mediaUrl(loaded);
+      const [loaded] = await this.handle.accessor.get(IAgentBlobService).loadParts([mediaPartOf({ kind, url })]);
+      return loaded === undefined || !isMediaPart(loaded) ? undefined : mediaUrlOf(loaded);
     } catch (error) {
       this.handle.accessor.get(ILogService).warn('conversation media failed to load; serving its reference', {
         agentId: this.handle.id,
@@ -562,24 +564,55 @@ function replayGate(): ReplayGate {
   return { done, finish };
 }
 
+function headerOf(turn: ConversationTurn): ConversationTurnHeader {
+  const { items: _items, ...header } = turn;
+  return header;
+}
+
+function errorNotice(error: {
+  readonly code: string;
+  readonly message: string;
+  readonly name?: string;
+  readonly retryable?: boolean;
+  readonly details?: unknown;
+  readonly cause?: unknown;
+}): Notice {
+  const { name, retryable, details, cause } = error;
+  const rest = Object.fromEntries(Object.entries({ name, retryable, details, cause }).filter(([, value]) => value !== undefined));
+  return {
+    level: 'error',
+    title: error.message,
+    code: error.code,
+    detail: Object.keys(rest).length === 0 ? undefined : JSON.stringify(rest, null, 2),
+  };
+}
+
+function mediaOf(item: ConversationItem): readonly { readonly kind: Media['kind'] | 'file'; readonly url?: string }[] {
+  if (item.type === 'user_message') return item.attachments;
+  return item.type === 'tool_call' ? item.media ?? [] : [];
+}
+
+function withLoadedUrls(item: ConversationItem, loaded: ReadonlyMap<string, string>): ConversationItem {
+  const swap = <M extends { readonly url?: string; readonly media_type?: string }>(media: M): M => {
+    const url = media.url === undefined ? undefined : loaded.get(media.url);
+    return url === undefined ? media : { ...media, url, media_type: mediaTypeOf(url) };
+  };
+  if (item.type === 'user_message') return { ...item, attachments: item.attachments.map(swap) };
+  return item.type === 'tool_call' && item.media !== undefined ? { ...item, media: item.media.map(swap) } : item;
+}
+
 function turnBytes(turn: ConversationTurn): number {
   return Buffer.byteLength(JSON.stringify(turn)) + 1;
 }
 
-function liveStepOpen(turn: FoldTurn, stepId: string): boolean {
-  if (turn.status !== 'running') return false;
-  const step = turn.steps.findLast((candidate) => candidate.id === stepId);
-  return step !== undefined && step.endedAt === undefined;
-}
-
-function nextProgress(progress: LiveToolProgress | undefined, update: ToolUpdate): LiveToolProgress {
+function nextProgress(progress: ToolCallItem['progress'], update: ToolUpdate): NonNullable<ToolCallItem['progress']> {
   switch (update.kind) {
     case 'progress':
       return { ...progress, percent: update.percent ?? progress?.percent, status: update.text ?? progress?.status };
     case 'status':
       return { ...progress, status: update.text ?? progress?.status };
     default:
-      return { ...progress, customKind: update.customKind, customData: update.customData };
+      return { ...progress, custom_kind: update.customKind, custom_data: update.customData };
   }
 }
 
@@ -592,5 +625,13 @@ function changedFields<T extends object>(before: T, after: T): Partial<T> {
 }
 
 function sameJson(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return canonicalJson(a) === canonicalJson(b);
+}
+
+function canonicalJson(value: unknown): string | undefined {
+  return JSON.stringify(value, (_key, field: unknown) =>
+    field !== null && typeof field === 'object' && !Array.isArray(field)
+      ? Object.fromEntries(Object.entries(field).toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : field,
+  );
 }

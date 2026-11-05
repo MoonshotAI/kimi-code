@@ -32,7 +32,6 @@ import {
   type ConversationState,
 } from '../../src/services/conversation/conversationFold';
 import { ConversationFeed, type ConversationEvent } from '../../src/services/conversation/conversationFeed';
-import { presentTurn } from '../../src/services/conversation/conversationProjection';
 import { parseWireRecords } from '../../src/services/conversation/conversationService';
 
 let clock = 1_000;
@@ -91,10 +90,6 @@ function fold(records: readonly WireRecord[], fork?: ConversationFork): Conversa
   return state;
 }
 
-function turnsOf(state: ConversationState): ConversationTurn[] {
-  return state.turns.map((turn) => presentTurn(turn, turn.items));
-}
-
 function shape(turn: ConversationTurn | undefined): string[] {
   return (turn?.items ?? []).map((item) => {
     switch (item.type) {
@@ -138,7 +133,7 @@ describe('conversation fold', () => {
       turnEnded(0, 'completed', { durationMs: 120 }),
     ]);
 
-    const [turn] = turnsOf(state);
+    const [turn] = state.turns;
     expect(turn?.turn_id).toMatch(/^t_[0-9a-f]{12}$/);
     expect(turn).toMatchObject({
       ordinal: 0,
@@ -204,7 +199,7 @@ describe('conversation fold', () => {
       }),
     ]);
 
-    const opener = turnsOf(state)[0]?.items[0];
+    const opener = state.turns[0]?.items[0];
     expect(opener).toMatchObject({
       type: 'user_message',
       origin: { kind: 'user' },
@@ -254,7 +249,7 @@ describe('conversation fold', () => {
       userMessage('hook-1', 'hook output', { kind: 'hook_result', event: 'SessionStart' }),
     ]);
 
-    const openers = turnsOf(state).map((turn) => turn.items[0]);
+    const openers = state.turns.map((turn) => turn.items[0]);
     expect(openers.map((item) => (item?.type === 'user_message' ? [item.origin, item.prompt_ids, item.text] : []))).toEqual([
       [{ kind: 'skill', name: 'commit', args: '-m wip' }, ['k1'], 'User activated the skill'],
       [{ kind: 'plugin_command', plugin_id: 'example-plugin', command: 'deploy', args: 'staging' }, ['c1'], 'Plugin command'],
@@ -275,7 +270,7 @@ describe('conversation fold', () => {
       userMessage(undefined, '<system-reminder>', { kind: 'injection', variant: 'example' }),
     ]);
 
-    expect(turnsOf(state).map((turn) => [turn.status, turn.items.map((item) => (item.type === 'user_message' ? [item.origin, item.text] : item.type))])).toEqual([
+    expect(state.turns.map((turn) => [turn.status, turn.items.map((item) => (item.type === 'user_message' ? [item.origin, item.text] : item.type))])).toEqual([
       ['ended', [[{ kind: 'system' }, '<bash-input>\nls\n</bash-input>']]],
       ['ended', [[{ kind: 'system' }, '<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>']]],
     ]);
@@ -295,7 +290,7 @@ describe('conversation fold', () => {
       userMessage('p7', 'blocked input'), record('prompt.completed', { promptId: 'p7', reason: 'blocked' }),
     ]);
 
-    expect(turnsOf(state).map((turn) => `${turn.outcome}/${turn.end_reason ?? ''}/${turn.error?.code ?? ''}`)).toEqual([
+    expect(state.turns.map((turn) => `${turn.outcome}/${turn.end_reason ?? ''}/${turn.error?.code ?? ''}`)).toEqual([
       'completed//',
       'interrupted/user_cancelled/',
       'interrupted/aborted/',
@@ -309,16 +304,16 @@ describe('conversation fold', () => {
 
   it('gives turns ids that stay stable across a replay and differ after an undo reuses their ordinal', () => {
     const first = [turnPrompt(0, 'p1'), userMessage('p1', 'first'), turnEnded(0, 'completed')];
-    const original = turnsOf(fold(first))[0]!;
-    expect(turnsOf(fold(first))[0]?.turn_id).toBe(original.turn_id);
+    const original = fold(first).turns[0]!;
+    expect(fold(first).turns[0]?.turn_id).toBe(original.turn_id);
 
-    const afterUndo = turnsOf(fold([turnPrompt(0, 'p2'), userMessage('p2', 'second'), turnEnded(0, 'completed')]))[0]!;
+    const afterUndo = fold([turnPrompt(0, 'p2'), userMessage('p2', 'second'), turnEnded(0, 'completed')]).turns[0]!;
     expect(afterUndo.ordinal).toBe(original.ordinal);
     expect(afterUndo.turn_id).not.toBe(original.turn_id);
 
     const other = createConversationState('agent-other');
     for (const entry of first) applyConversationRecord(other, entry);
-    expect(turnsOf(other)[0]?.turn_id).not.toBe(original.turn_id);
+    expect(other.turns[0]?.turn_id).not.toBe(original.turn_id);
   });
 
   it('times reasoning by its streamed block and falls back to the step span for untimed records', () => {
@@ -330,8 +325,8 @@ describe('conversation fold', () => {
       contentPart(0, 1, 's1', { type: 'think', think: 'untimed' }, 1),
     ]);
 
-    const stepStart = iso(state.turns[0]!.steps[0]!.startedAt);
-    const turn = turnsOf(state)[0];
+    const turn = state.turns[0];
+    const stepStart = iso(state.steps[turn!.turn_id]![0]!.startedAt);
     expect(turn?.items[1]).toMatchObject({ type: 'reasoning', created_at: iso(5_000), started_at: iso(5_000), duration_ms: 1_200 });
     expect(turn?.items[2]).toMatchObject({ type: 'reasoning', started_at: stepStart, duration_ms: 2 });
   });
@@ -350,8 +345,8 @@ describe('conversation fold', () => {
     ]);
 
     expect(state.turns).toHaveLength(1);
-    expect(shape(turnsOf(state)[0])).toEqual(['opener:first', 'steer:steer now', 'steer:legacy steer']);
-    expect(turnsOf(state)[0]?.items[1]).toMatchObject({ prompt_ids: ['p2', 'p3'] });
+    expect(shape(state.turns[0])).toEqual(['opener:first', 'steer:steer now', 'steer:legacy steer']);
+    expect(state.turns[0]?.items[1]).toMatchObject({ prompt_ids: ['p2', 'p3'] });
   });
 
   it('keeps task notifications in the running turn and opens a turn for task prompts', () => {
@@ -368,14 +363,14 @@ describe('conversation fold', () => {
       userMessage('n-c', `${notificationXml('c')}\n\n${notificationXml('d')}`, { kind: 'task', taskId: 'c' }),
     ]);
 
-    expect(turnsOf(state).map(shape)).toEqual([
+    expect(state.turns.map(shape)).toEqual([
       ['opener:work', 'notification:task:a:completed'],
       ['notification:task:b:completed'],
       ['notification:task:c:completed', 'notification:task:d:completed'],
     ]);
-    expect(turnsOf(state)[1]).toMatchObject({ turn_number: 1, status: 'ended' });
-    expect(turnsOf(state)[2]).toMatchObject({ status: 'ended', outcome: 'completed' });
-    expect(turnsOf(state)[2]?.items.map((item) => item.item_id)).toEqual(['n-c', 'n-c:1']);
+    expect(state.turns[1]).toMatchObject({ turn_number: 1, status: 'ended' });
+    expect(state.turns[2]).toMatchObject({ status: 'ended', outcome: 'completed' });
+    expect(state.turns[2]?.items.map((item) => item.item_id)).toEqual(['n-c', 'n-c:1']);
   });
 
   it('attaches interactions recorded before the tool call and subagent links to tool items', () => {
@@ -396,7 +391,7 @@ describe('conversation fold', () => {
       record('subagent.spawned', { subagentId: 'agent-1', subagentName: 'explore', parentToolCallId: 'call-2', runInBackground: true }),
     ]);
 
-    const items = turnsOf(state)[0]?.items ?? [];
+    const items = state.turns[0]?.items ?? [];
     expect(items[1]).toMatchObject({
       type: 'tool_call',
       interaction_id: 'i1',
@@ -416,7 +411,6 @@ describe('conversation fold', () => {
         { agent_id: 'agent-1', role: 'child' },
       ],
     });
-    expect(state.pendingTools).toEqual({});
   });
 
   it('reviews a plan as pending while it waits and as rejected with the feedback once answered', () => {
@@ -428,10 +422,10 @@ describe('conversation fold', () => {
       record('interaction.request', { id: 'i1', kind: 'approval', toolCallId: 'call-1', request: { display: { kind: 'plan_review', plan: '# Plan' } } }),
     ];
     const pending = fold(records);
-    expect(turnsOf(pending)[0]?.items[1]).toMatchObject({ stage: 'awaiting_approval', display: { review: { state: 'pending' } } });
+    expect(pending.turns[0]?.items[1]).toMatchObject({ stage: 'awaiting_approval', display: { review: { state: 'pending' } } });
 
     applyConversationRecord(pending, record('interaction.resolved', { id: 'i1', response: { decision: 'rejected', feedback: 'Cover the error path too.' } }));
-    expect(turnsOf(pending)[0]?.items[1]).toMatchObject({
+    expect(pending.turns[0]?.items[1]).toMatchObject({
       stage: 'executing',
       display: { kind: 'plan_review', plan: '# Plan', options: [], review: { state: 'rejected', feedback: 'Cover the error path too.' } },
     });
@@ -443,7 +437,7 @@ describe('conversation fold', () => {
       toolCall(0, 1, 's1', 'call-1', 'ExitPlanMode'),
       toolResult('call-1', 'Plan saved to: /plans/b.md\n## Approved Plan:\n# Old plan'),
     ]);
-    expect(turnsOf(legacy)[0]?.items[1]).toMatchObject({
+    expect(legacy.turns[0]?.items[1]).toMatchObject({
       display: { kind: 'plan_review', plan: '# Old plan', path: '/plans/b.md', review: { state: 'approved' } },
     });
   });
@@ -465,7 +459,7 @@ describe('conversation fold', () => {
       record('context.apply_compaction', { summary: 'legacy', compactedCount: 2 }),
     ]);
 
-    const turns = turnsOf(state);
+    const turns = state.turns;
     expect(turns.map((turn) => `${turn.kind}:${turn.status}:${turn.outcome}`)).toEqual([
       'system:ended:completed',
       'agent:ended:completed',
@@ -500,7 +494,7 @@ describe('conversation fold', () => {
       turnEnded(0, 'completed'),
     ], { source: 'btw', forkedFrom: 'main' });
 
-    const turns = turnsOf(state);
+    const turns = state.turns;
     expect(turns.map((turn) => `${turn.kind}:${turn.ordinal}`)).toEqual(['system:0', 'agent:1']);
     expect(turns[0]?.items).toEqual([expect.objectContaining({ type: 'system', kind: 'fork_boundary', source: 'btw', forked_from: { agent_id: 'main' } })]);
     expect(shape(turns[1])).toEqual(['opener:what does this do?']);
@@ -520,7 +514,7 @@ describe('conversation fold', () => {
       ]),
     ], { source: 'fork', forkedFrom: 'main' });
 
-    const turns = turnsOf(state);
+    const turns = state.turns;
     const own = turns.filter((turn) => turn.kind === 'agent');
     expect(own.map((turn) => shape(turn))).toEqual(
       ownIds.map((id) => [`opener:prompt ${id}`, `assistant_message:answer ${id}`]),
@@ -541,18 +535,18 @@ describe('conversation fold', () => {
       userMessage(undefined, 'another note'),
     ]);
     expect(state.turns.map((turn) => turn.status)).toEqual(['running', 'ended', 'ended']);
-    expect(state.openTurnId).toBe(state.turns[0]?.id);
+    expect(state.openTurnId).toBe(state.turns[0]?.turn_id);
 
     for (const entry of [contentPart(0, 1, 's1', { type: 'text', text: 'done' }, 0), stepEnd(0, 1, 's1'), turnEnded(0, 'completed')]) {
       applyConversationRecord(state, entry);
     }
 
-    expect(turnsOf(state).map((turn) => `${turn.turn_number}:${turn.outcome}`)).toEqual([
+    expect(state.turns.map((turn) => `${turn.turn_number}:${turn.outcome}`)).toEqual([
       '0:completed',
       'undefined:completed',
       'undefined:completed',
     ]);
-    expect(shape(turnsOf(state)[0])).toEqual(['opener:work', 'assistant_message:done']);
+    expect(shape(state.turns[0])).toEqual(['opener:work', 'assistant_message:done']);
   });
 
   it('applies legacy undo records at message granularity', () => {
@@ -572,7 +566,7 @@ describe('conversation fold', () => {
       userMessage('d', 'third'),
     ]);
 
-    expect(turnsOf(state).map(shape)).toEqual([
+    expect(state.turns.map(shape)).toEqual([
       ['opener:first', 'assistant_message:one'],
       ['opener:third'],
     ]);
@@ -594,8 +588,8 @@ describe('conversation fold', () => {
       }),
     ]);
 
-    expect(shape(turnsOf(state)[0])).toEqual(['opener:read it', 'reasoning:hmm', 'assistant_message:reading', 'tool:Read_0:ended']);
-    expect(turnsOf(state)[0]?.items[3]).toMatchObject({ input: { path: 'a.ts' }, outcome: 'failed', error: 'file body' });
+    expect(shape(state.turns[0])).toEqual(['opener:read it', 'reasoning:hmm', 'assistant_message:reading', 'tool:Read_0:ended']);
+    expect(state.turns[0]?.items[3]).toMatchObject({ input: { path: 'a.ts' }, outcome: 'failed', error: 'file body' });
   });
 });
 
@@ -615,8 +609,8 @@ describe('orphan turns', () => {
     const settled = settleOrphanTurns(state);
 
     expect(state).toEqual(before);
-    expect(turnsOf(settled)[0]).toMatchObject({ status: 'ended', outcome: 'interrupted', end_reason: 'aborted', ended_at: iso(state.clock) });
-    expect(turnsOf(settled)[0]?.items[1]).toMatchObject({ status: 'ended', outcome: 'interrupted', interaction_id: 'i1' });
+    expect(settled.turns[0]).toMatchObject({ status: 'ended', outcome: 'interrupted', end_reason: 'aborted', ended_at: iso(state.clock) });
+    expect(settled.turns[0]?.items[1]).toMatchObject({ status: 'ended', outcome: 'interrupted', interaction_id: 'i1' });
     expect(settled.openTurnId).toBeUndefined();
   });
 });

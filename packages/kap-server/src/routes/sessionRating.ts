@@ -51,7 +51,7 @@ export function registerSessionRatingRoutes(
       if (request.op === 'evaluate') {
         const turns = await conversations.mainTurnsWithoutLoading(session_id);
         const latest = turns?.findLast((turn) => turn.kind === 'agent');
-        const completed = latest?.id === request.turn_id && latest.status === 'ended';
+        const completed = latest?.turn_id === request.turn_id && latest.status === 'ended';
         if (completed && getLiveSessionById(core.accessor, session_id) === undefined) {
           await resumeSessionById(core.accessor, session_id);
           await sessionRating.whenReady(session_id);

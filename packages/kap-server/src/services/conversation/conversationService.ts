@@ -31,6 +31,7 @@ import {
   type WireRecord,
 } from '@moonshot-ai/agent-core-v2/wire/record';
 
+import type { ConversationTurn } from '../../protocol/conversation';
 import { ensureMainAgent } from '../../transport/mainAgent';
 import { ConversationFeed } from './conversationFeed';
 import {
@@ -38,7 +39,6 @@ import {
   createConversationState,
   settleOrphanTurns,
   type ConversationFork,
-  type FoldTurn,
 } from './conversationFold';
 
 export interface ConversationFeedCreated {
@@ -86,7 +86,7 @@ export class ConversationService implements IDisposable {
     return this.attach(sessionId, this.watch(sessionId, session), handle).ready;
   }
 
-  async mainTurnsWithoutLoading(sessionId: string): Promise<readonly FoldTurn[] | undefined> {
+  async mainTurnsWithoutLoading(sessionId: string): Promise<readonly ConversationTurn[] | undefined> {
     const session = getLiveSessionById(this.core.accessor, sessionId);
     const handle = session?.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
     if (session !== undefined && handle !== undefined) {
