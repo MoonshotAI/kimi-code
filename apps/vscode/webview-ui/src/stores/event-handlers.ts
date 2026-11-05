@@ -289,6 +289,13 @@ function handleRuntimeError(draft: ChatState, code: string, message: string, det
 }
 
 const eventHandlers: Record<string, EventHandler> = {
+  // Synthetic marker appended to a history replay when the session has an
+  // in-flight turn: the composer must treat the session as streaming (queue
+  // new input) even though this store never saw the turn start.
+  turn_active: (draft) => {
+    draft.isStreaming = true;
+  },
+
   // UI 事件 (Bridge 层)
   session_start: (draft, payload: { sessionId: string; model?: string }) => {
     if (payload.sessionId) {
