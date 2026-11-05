@@ -32,6 +32,7 @@ export async function discoverFileSkills(
 ): Promise<SkillDiscoveryResult> {
   const byDiscoveryKey = new Map<string, SkillDefinition>();
   const bySkillPath = new Map<string, SkillDefinition>();
+  const seenVariantKeys = new Set<string>();
   const skipped: SkippedSkill[] = [];
   const scannedDirectories: string[] = [];
 
@@ -48,7 +49,7 @@ export async function discoverFileSkills(
       const rootSkillMd = path.join(dirPath, 'SKILL.md');
       if (await isFile(rootSkillMd)) {
         await parseAndRegister({
-          byDiscoveryKey, bySkillPath,
+          byDiscoveryKey, bySkillPath, seenVariantKeys,
           skipped,
           warn,
           skillMdPath: rootSkillMd,
@@ -81,7 +82,7 @@ export async function discoverFileSkills(
     const allowedSubSkillBundles = new Map<string, string>();
     for (const entry of directorySkills) {
       const skill = await parseAndRegister({
-        byDiscoveryKey, bySkillPath,
+        byDiscoveryKey, bySkillPath, seenVariantKeys,
         skipped,
         warn,
         skillMdPath: path.join(dirPath, entry, 'SKILL.md'),
@@ -99,7 +100,7 @@ export async function discoverFileSkills(
         const rootSkillMd = path.join(dirPath, 'SKILL.md');
         if (await isFile(rootSkillMd)) {
           await parseAndRegister({
-            byDiscoveryKey, bySkillPath,
+            byDiscoveryKey, bySkillPath, seenVariantKeys,
             skipped,
             warn,
             skillMdPath: rootSkillMd,
@@ -117,7 +118,7 @@ export async function discoverFileSkills(
         const skillMdPath = path.join(dirPath, entry);
         if (!(await isFile(skillMdPath))) continue;
         await parseAndRegister({
-          byDiscoveryKey, bySkillPath,
+          byDiscoveryKey, bySkillPath, seenVariantKeys,
           skipped,
           warn,
           skillMdPath,
@@ -156,6 +157,7 @@ export async function discoverFileSkills(
 async function parseAndRegister(input: {
   readonly byDiscoveryKey: Map<string, SkillDefinition>;
   readonly bySkillPath: Map<string, SkillDefinition>;
+  readonly seenVariantKeys: Set<string>;
   readonly skipped: SkippedSkill[];
   readonly warn?: (message: string, payload?: LogPayload) => void;
   readonly skillMdPath: string;
@@ -192,7 +194,9 @@ async function parseAndRegister(input: {
     if (!input.byDiscoveryKey.has(key)) {
       input.byDiscoveryKey.set(key, discovered);
     }
-    if (!input.bySkillPath.has(discovered.path)) {
+    const variantKey = `${key}\0${input.root.workspaceDir ?? ''}`;
+    if (!input.seenVariantKeys.has(variantKey) && !input.bySkillPath.has(discovered.path)) {
+      input.seenVariantKeys.add(variantKey);
       input.bySkillPath.set(discovered.path, discovered);
     }
     return discovered;

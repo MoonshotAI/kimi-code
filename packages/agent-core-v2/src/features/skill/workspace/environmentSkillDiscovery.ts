@@ -38,6 +38,7 @@ async function discoverEnvironmentSkills(
 ): Promise<SkillDiscoveryResult> {
   const byDiscoveryKey = new Map<string, SkillDefinition>();
   const bySkillPath = new Map<string, SkillDefinition>();
+  const seenVariantKeys = new Set<string>();
   const skipped: SkippedSkill[] = [];
   const scannedDirectories: string[] = [];
 
@@ -69,7 +70,11 @@ async function discoverEnvironmentSkills(
         ? normalizeSkillName(discovered.name)
         : `${input.root.plugin.id}\0${normalizeSkillName(discovered.name)}`;
       if (!byDiscoveryKey.has(key)) byDiscoveryKey.set(key, discovered);
-      if (!bySkillPath.has(discovered.path)) bySkillPath.set(discovered.path, discovered);
+      const variantKey = `${key}\0${input.root.workspaceDir ?? ''}`;
+      if (!seenVariantKeys.has(variantKey) && !bySkillPath.has(discovered.path)) {
+        seenVariantKeys.add(variantKey);
+        bySkillPath.set(discovered.path, discovered);
+      }
       return discovered;
     } catch (error) {
       if (error instanceof UnsupportedSkillTypeError) {

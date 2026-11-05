@@ -6,6 +6,8 @@ import {
   type SelectItem,
   type SelectListLayoutOptions,
   type SelectListTheme,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@moonshot-ai/pi-tui';
 
 // Mirror pi-tui's private select-list layout constants
@@ -77,6 +79,35 @@ export class WrappingSelectList extends SelectList {
       lines.push(theme.scrollInfo(truncatePlainToWidth(scrollText, width - 2)));
     }
     return lines;
+  }
+
+  override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    const { filteredItems, selectedIndex, maxVisible } = this.internals();
+    if (filteredItems.length === 0 || event.type === 'wheel') return super.handleMouse(event);
+    if (event.button !== 'left' || (event.type !== 'press' && event.type !== 'click')) {
+      return super.handleMouse(event);
+    }
+    const startIndex = Math.max(
+      0,
+      Math.min(selectedIndex - Math.floor(maxVisible / 2), filteredItems.length - maxVisible),
+    );
+    const endIndex = Math.min(startIndex + maxVisible, filteredItems.length);
+    const primaryColumnWidth = this.primaryColumnWidth();
+    let row = 0;
+    for (let i = startIndex; i < endIndex; i++) {
+      const item = filteredItems[i];
+      if (!item) continue;
+      if (item.data?.['group'] === 'skill' && filteredItems[i - 1]?.data?.['group'] !== 'skill') {
+        if (event.y === row) return undefined;
+        row += 1;
+      }
+      const lineCount = this.renderItemLines(item, i === selectedIndex, event.width, primaryColumnWidth).length;
+      if (event.y >= row && event.y < row + lineCount) {
+        return super.handleMouse({ ...event, y: i - startIndex });
+      }
+      row += lineCount;
+    }
+    return undefined;
   }
 
   private renderItemLines(

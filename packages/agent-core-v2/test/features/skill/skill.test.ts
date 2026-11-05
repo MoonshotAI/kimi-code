@@ -329,4 +329,36 @@ describe('AgentSkillService busy delivery (harness)', () => {
     const steer = persistence.records.find((record) => record.type === 'turn.steer');
     expect(steer).toMatchObject({ origin: { kind: 'skill_activation', skillArgs: 'mission-1' } });
   });
+
+  it('resets nesting depth for each user activation in the same running turn', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(stubSkill('tower'));
+    const gate = createControlledPromise<void>();
+    let generateCalls = 0;
+    const generate: GenerateFn = {
+      generate: async (_config, _content, control) => {
+        generateCalls += 1;
+        control.onEvent?.({ type: 'llm.sent' });
+        await gate;
+        control.signal.throwIfAborted();
+        control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'done' } });
+        control.onEvent?.({ type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
+        control.onEvent?.({ type: 'llm.streaming.message_id', messageId: 'mock-depth-reset' });
+        control.onEvent?.({ type: 'llm.done' });
+      },
+    };
+    ctx = createTestAgent(skillServices(catalog), { generate });
+    const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
+    await vi.waitFor(() => { expect(generateCalls).toBe(1); });
+    const service = ctx.get(IAgentSkillService);
+
+    await service.activate({ name: 'tower', args: 'one' });
+    await service.activate({ name: 'tower', args: 'two' });
+    await service.activate({ name: 'tower', args: 'three' });
+
+    expect(service.modelToolContext()).toEqual({ queryDepth: 1, workspaceDir: undefined });
+    gate.resolve();
+    await promptPromise;
+    await ctx.untilTurnEnd();
+  });
 });

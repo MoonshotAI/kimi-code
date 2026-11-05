@@ -191,6 +191,8 @@ interface MessageDriver {
   completedCompactionSerial: number;
   recallLastQueued(): QueuedMessage | undefined;
   recallStashedMedia(extraction: ExtractionResult | undefined): void;
+  retainSkillVariantSelection(text: string): void;
+  skillVariantPathForCommand(commandName: string): string | undefined;
   clearQueuedMessages(): void;
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
@@ -805,6 +807,37 @@ describe('KimiTUI message flow', () => {
     });
     expect(session.prompt).not.toHaveBeenCalled();
     expect(session.activateSkill).not.toHaveBeenCalled();
+  });
+
+  it('restores selected variant bindings when recalling a queued skill', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    const variants = driver as unknown as { skillVariantPaths: Map<string, string> };
+    const path = '/work/B/review/SKILL.md';
+    variants.skillVariantPaths.set('skill:review', path);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('/skill:review');
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+
+    driver.retainSkillVariantSelection('');
+    expect(variants.skillVariantPaths.size).toBe(0);
+    const recalled = driver.recallLastQueued();
+    expect(recalled).toBeDefined();
+    expect(driver.skillVariantPathForCommand('skill:review')).toBe(path);
+
+    driver.handleUserInput(recalled!.text);
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+    expect(driver.state.queuedMessages[0]).toMatchObject({
+      text: '/skill:review',
+      inlineSkillActivations: [{ skillName: 'review', path }],
+    });
   });
 
   it('combines a leading skill command with later inline skills into one submission (v2 engine)', async () => {

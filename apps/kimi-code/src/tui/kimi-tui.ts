@@ -2047,6 +2047,19 @@ export class KimiTUI {
         ? [...(last.imageAttachmentIds ?? []), ...(last.videoAttachmentIds ?? [])]
         : [],
     );
+    if (isPromptQueuedMessage(last)) {
+      const tokens = findInlineSkillTokens(last.text, {
+        isKnownSkill: (commandName) => this.skillCommandMap.has(commandName) || this.skillCommandMap.has(`skill:${commandName}`),
+        includeLeading: true,
+      });
+      for (const activation of last.inlineSkillActivations ?? []) {
+        if (activation.path === undefined) continue;
+        const token = tokens.find((candidate) =>
+          (this.skillCommandMap.get(candidate.commandName) ?? this.skillCommandMap.get(`skill:${candidate.commandName}`)) === activation.skillName,
+        );
+        if (token !== undefined) this.skillVariantPaths.set(token.commandName, activation.path);
+      }
+    }
     return last;
   }
 
