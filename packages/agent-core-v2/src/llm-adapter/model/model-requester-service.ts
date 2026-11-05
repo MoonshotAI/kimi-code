@@ -39,9 +39,10 @@ export class ModelRequester implements IModelRequester {
       maxOutputSize: model.maxOutputSize,
       maxCompletionTokensCap: overrides?.maxCompletionTokens,
     });
-    const params: ModelRequestParams = request.params ?? {
-      cacheKey: request.cacheKey,
-      thinkingEffort: this.thinkingEffort(model),
+    const params: ModelRequestParams = {
+      ...request.params,
+      cacheKey: request.cacheKey ?? request.params?.cacheKey,
+      thinkingEffort: request.params?.thinkingEffort ?? this.thinkingEffort(model),
       ...completionBudgetParams({ budget, capability: model.capabilities }),
     };
     return runWithCredentialRecovery(

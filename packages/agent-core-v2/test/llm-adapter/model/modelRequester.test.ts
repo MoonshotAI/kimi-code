@@ -637,6 +637,18 @@ describe('ModelRequester', () => {
     expect(requester.calls[0]?.config.responseFormat).toEqual({ type: 'json_object' });
   });
 
+  it('keeps the independent cache key when inheriting main model params', async () => {
+    const requester = new FakeLlmRequester();
+    requester.handler = (_index, emit) => textStream(emit);
+
+    await modelRequester(modelWith(createStaticCredentialProvider('sk')), requester).request(
+      { ...REQUEST, cacheKey: 'session-1:auto_review', params: { cacheKey: 'session-1' } },
+      new AbortController().signal,
+    );
+
+    expect(requester.calls[0]?.config.cacheKey).toBe('session-1:auto_review');
+  });
+
   it('inherits the main model request params without adding sampling overrides', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_index, emit) => textStream(emit);
