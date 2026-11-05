@@ -1,5 +1,5 @@
-import { Fragment, useRef, useMemo, useState, useEffect } from "react";
-import { IconSend, IconPlayerStop, IconChevronDown, IconPlus } from "@tabler/icons-react";
+import { Fragment, useRef, useMemo, useState, useEffect, useCallback } from "react";
+import { IconSend, IconPlayerStop, IconChevronDown, IconPlus, IconHistory } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -12,6 +12,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ActionMenu } from "../ActionMenu";
 import { SlashCommandMenu } from "../SlashCommandMenu";
+import { QuestionsHistoryMenu } from "../QuestionsHistoryMenu";
 import { FilePickerMenu } from "../FilePickerMenu";
 import { MediaThumbnail } from "../MediaThumbnail";
 import { MediaPreviewModal } from "../MediaPreviewModal";
@@ -35,6 +36,7 @@ import { useSlashMenu, findActiveToken } from "./hooks/useSlashMenu";
 import { useFilePicker } from "./hooks/useFilePicker";
 import { useMediaUpload } from "./hooks/useMediaUpload";
 import { useClickOutside } from "./hooks/useClickOutside";
+import { useQuestionsHistory, collectQuestionItems, type QuestionItem } from "./hooks/useQuestionsHistory";
 import { useInputHistory } from "./hooks/useInputHistory";
 import { computeMentionInsert } from "./utils";
 
@@ -54,9 +56,12 @@ function adjustHeight(textarea: HTMLTextAreaElement | null) {
 export function InputArea({ onAuthAction }: InputAreaProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const questionsBtnRef = useRef<HTMLDivElement>(null);
+  const questionsMenuRef = useRef<HTMLDivElement>(null);
   const [text, setText] = useState("");
   const [cursorPos, setCursorPos] = useState(0);
   const [previewMedia, setPreviewMedia] = useState<string | null>(null);
+  const [showQuestionsMenu, setShowQuestionsMenu] = useState(false);
 
   const { isStreaming, sendMessage, abort, draftMedia, removeDraftMedia, hasProcessingMedia, getMediaInConversation, pendingInput, planMode, messages } = useChatStore();
   const { currentModel, thinkingEffort, updateModel, toggleThinking, selectThinkingEffort, models, extensionConfig, getCurrentThinkingMode } = useSettingsStore();
@@ -239,6 +244,34 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
 
   useClickOutside([textareaRef, menuRef], showSlashMenu || showFileMenu, closeMenus);
 
+  const questionItems = useMemo(() => collectQuestionItems(messages), [messages]);
+
+  const {
+    query: questionsQuery,
+    setQuery: setQuestionsQuery,
+    activeIndex: questionsActiveIndex,
+    setActiveIndex: setQuestionsActiveIndex,
+    visibleItems: visibleQuestions,
+    moveActive: moveQuestionsActive,
+    hide: hideQuestion,
+    resetForOpen: resetQuestionsForOpen,
+  } = useQuestionsHistory(questionItems);
+
+  const closeQuestionsMenu = useCallback(() => setShowQuestionsMenu(false), []);
+
+  useClickOutside([questionsBtnRef, questionsMenuRef], showQuestionsMenu, closeQuestionsMenu);
+
+  function handleSelectQuestion(item: QuestionItem) {
+    setShowQuestionsMenu(false);
+    const el = document.querySelector(`[data-message-id="${item.id}"]`);
+    if (!(el instanceof HTMLElement)) {
+      return;
+    }
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    el.classList.add("message-flash");
+    setTimeout(() => el.classList.remove("message-flash"), 1500);
+  }
+
   useEffect(() => {
     resetSlashMenu();
   }, [showSlashMenu, resetSlashMenu]);
@@ -321,6 +354,26 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
     <div className="p-2 pt-0! flex flex-col min-h-0">
       <BottomToolbar />
       <div className="relative shrink-0">
+        {showQuestionsMenu && (
+          <div ref={questionsMenuRef} className="absolute bottom-full left-0 right-0 mb-2 z-10">
+            <QuestionsHistoryMenu
+              items={visibleQuestions}
+              totalCount={questionItems.length}
+              query={questionsQuery}
+              activeIndex={questionsActiveIndex}
+              onQueryChange={setQuestionsQuery}
+              onSelect={handleSelectQuestion}
+              onHide={hideQuestion}
+              onHover={setQuestionsActiveIndex}
+              onMoveActive={moveQuestionsActive}
+              onClose={() => {
+                setShowQuestionsMenu(false);
+                textareaRef.current?.focus();
+              }}
+            />
+          </div>
+        )}
+
         {showSlashMenu && filteredCommands.length > 0 && (
           <div ref={menuRef} className="absolute bottom-full left-0 right-0 mb-2 z-10">
             <SlashCommandMenu
@@ -453,6 +506,29 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              <div ref={questionsBtnRef}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => {
+                        if (showQuestionsMenu) {
+                          setShowQuestionsMenu(false);
+                        } else {
+                          resetQuestionsForOpen();
+                          setShowQuestionsMenu(true);
+                        }
+                      }}
+                      className="text-muted-foreground"
+                    >
+                      <IconHistory className="size-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Questions in this session</TooltipContent>
+                </Tooltip>
+              </div>
+
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="ghost" size="icon-xs" onClick={handleAddButtonClick} className="text-muted-foreground">
