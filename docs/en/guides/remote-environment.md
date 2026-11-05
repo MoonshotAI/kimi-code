@@ -114,6 +114,8 @@ Pass `--environment` at startup to choose the new session's environment, and `--
 kimi --environment dev-box --environment-cwd /home/me/projects -p "Run the test suite"
 ```
 
+Only Kimi Code CLI can pick an environment for one launch. Sessions created from other clients such as the Web UI use the [default environment](#setting-a-default-environment), and run on your machine when no default is set.
+
 ## SSH authentication
 
 Kimi Code connects to SSH hosts non-interactively. If the following command succeeds in your terminal, Kimi Code can connect:

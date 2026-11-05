@@ -114,6 +114,8 @@ defaultCwd = 'C:\work\project'
 kimi --environment dev-box --environment-cwd /home/me/projects -p "Run the test suite"
 ```
 
+目前只有 Kimi Code CLI 支持临时指定环境。Web UI 等其他客户端新建的会话使用[默认环境](#设为默认环境)，未设置默认环境时在本机运行。
+
 ## SSH 认证
 
 Kimi Code 以非交互方式连接 SSH 主机。在终端里执行下面的命令，不报错就说明 Kimi Code 能连上：
