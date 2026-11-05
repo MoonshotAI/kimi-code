@@ -66,7 +66,15 @@ describe('extractInlineSkillActivations', () => {
         { includeLeading: true },
       ),
     ).toEqual([
-      { skillName: 'review', path: undefined, start: 0 },
+      {
+        skillName: 'review',
+        path: undefined,
+        start: 0,
+        occurrences: [
+          { commandName: 'skill:review', start: 0 },
+          { commandName: 'skill:review', start: 19 },
+        ],
+      },
       { skillName: 'security', path: undefined, start: 39 },
     ]);
   });

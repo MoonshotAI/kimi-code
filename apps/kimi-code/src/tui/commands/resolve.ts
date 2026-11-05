@@ -201,15 +201,19 @@ export function skillVariantPathsForInput(
   const selected: Array<{ commandName: string; path: string; start: number }> = [];
   for (const activation of activations) {
     if (activation.path === undefined) continue;
-    const token = tokens.find((candidate) =>
-      !claimed.has(candidate.start) &&
-      resolveSkillCommand(skillCommandMap, candidate.commandName) === activation.skillName &&
-      (activation.start === undefined || candidate.start === activation.start)
-    );
-    if (token !== undefined) {
-      claimed.add(token.start);
-      const commandName = token.commandName.startsWith('skill:') ? token.commandName : `skill:${token.commandName}`;
-      selected.push({ commandName, path: activation.path, start: token.start });
+    const occurrences = activation.occurrences ?? [{ commandName: undefined, start: activation.start }];
+    for (const occurrence of occurrences) {
+      const token = tokens.find((candidate) =>
+        !claimed.has(candidate.start) &&
+        resolveSkillCommand(skillCommandMap, candidate.commandName) === activation.skillName &&
+        (occurrence.commandName === undefined || candidate.commandName === occurrence.commandName) &&
+        (occurrence.start === undefined || candidate.start === occurrence.start)
+      );
+      if (token !== undefined) {
+        claimed.add(token.start);
+        const commandName = token.commandName.startsWith('skill:') ? token.commandName : `skill:${token.commandName}`;
+        selected.push({ commandName, path: activation.path, start: token.start });
+      }
     }
   }
   return selected;

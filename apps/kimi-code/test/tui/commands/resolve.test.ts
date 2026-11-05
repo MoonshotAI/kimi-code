@@ -59,7 +59,7 @@ describe('resolveUserInput', () => {
     { input: '/example:deploy /skill:review', skills: [] },
     { input: 'check src/app.ts https://example.com/review and 1/2', skills: [] },
   ])('resolves $input without changing argument or command precedence', ({ input, skills }) => {
-    expect(resolveUserInput({ ...options, input }).activations.map(({ start: _start, ...activation }) => activation)).toEqual(skills);
+    expect(resolveUserInput({ ...options, input }).activations.map(({ start: _start, occurrences: _occurrences, ...activation }) => activation)).toEqual(skills);
   });
 
   it('attaches selected variant paths to every matching activation', () => {
@@ -100,12 +100,40 @@ describe('resolveUserInput', () => {
       { commandName: 'skill:review', path: '/work/A/review/SKILL.md', start: 0 },
       { commandName: 'skill:review', path: '/work/B/review/SKILL.md', start: 14 },
     ]);
-    expect(resolveUserInput({
+    const deduplicated = resolveUserInput({
       ...options,
       input: text,
       skillVariantPathForCommand: () => '/work/A/review/SKILL.md',
-    }).activations).toEqual([
-      { skillName: 'review', path: '/work/A/review/SKILL.md', start: 0 },
+    }).activations;
+    expect(deduplicated).toEqual([
+      {
+        skillName: 'review',
+        path: '/work/A/review/SKILL.md',
+        start: 0,
+        occurrences: [
+          { commandName: 'skill:review', start: 0 },
+          { commandName: 'skill:review', start: 14 },
+        ],
+      },
+    ]);
+    expect(skillVariantPathsForInput(text, deduplicated, options.skillCommandMap)).toEqual([
+      { commandName: 'skill:review', path: '/work/A/review/SKILL.md', start: 0 },
+      { commandName: 'skill:review', path: '/work/A/review/SKILL.md', start: 14 },
+    ]);
+  });
+
+  it('restores command aliases for every deduplicated occurrence', () => {
+    const text = '/quick /skill:review';
+    const path = '/work/B/review/SKILL.md';
+    const activations = resolveUserInput({
+      ...options,
+      input: text,
+      skillVariantPathForCommand: () => path,
+    }).activations;
+
+    expect(skillVariantPathsForInput(text, activations, options.skillCommandMap)).toEqual([
+      { commandName: 'skill:quick', path, start: 0 },
+      { commandName: 'skill:review', path, start: 7 },
     ]);
   });
 

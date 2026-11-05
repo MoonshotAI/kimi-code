@@ -87,7 +87,7 @@ import {
   runModelSelector,
   type FeedbackPromptResult,
 } from '#/tui/commands/prompts';
-import { isPromptQueuedMessage, type QueuedMessage, type TranscriptEntry } from '#/tui/types';
+import { isPromptQueuedMessage, type InlineSkillActivation, type QueuedMessage, type TranscriptEntry } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import {
   extractMediaAttachments,
@@ -182,7 +182,7 @@ interface MessageDriver {
   };
   init(): Promise<boolean>;
   handleUserInput(text: string): void;
-  restoreInputText(text: string, inlineSkillActivations?: readonly { skillName: string; path?: string; args?: string; start?: number }[]): void;
+  restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void;
   toggleToolOutputExpansion(): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   persistInputHistory(text: string): Promise<void>;
@@ -863,6 +863,91 @@ describe('KimiTUI message flow', () => {
       text: '/skill:review',
       inlineSkillActivations: [{ skillName: 'review', path }],
     });
+  });
+
+  it('restores skill variants from input history without losing duplicate bindings', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    driver.persistInputHistory = Object.getPrototypeOf(driver).persistInputHistory;
+    const history = await import('#/utils/history/input-history');
+    const { getInputHistoryFile } = await import('#/utils/paths');
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('pathe');
+    const home = await mkdtemp(join(tmpdir(), 'kimi-skill-input-history-'));
+    const previousHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = home;
+    const file = getInputHistoryFile(driver.state.appState.workDir);
+    const pathA = '/work/A/review/SKILL.md';
+    const pathB = '/work/B/review/SKILL.md';
+    const text = ' /skill:review /skill:review';
+    const trimmed = text.trim();
+    const variant = (path: string, start: number): InlineSkillActivation => ({
+      skillName: 'review', path, start, occurrences: [{ commandName: 'skill:review', start }],
+    });
+    try {
+      driver.restoreInputText(text, [variant(pathB, 1), variant(pathB, 15)]);
+      await driver.persistInputHistory(text);
+      expect(await history.loadInputHistory(file)).toEqual([{
+        content: trimmed,
+        inlineSkillActivations: [{
+          skillName: 'review',
+          path: pathB,
+          start: 0,
+          occurrences: [
+            { commandName: 'skill:review', start: 0 },
+            { commandName: 'skill:review', start: 14 },
+          ],
+        }],
+      }]);
+      await driver.persistInputHistory('another prompt');
+      driver.restoreInputText(text, [variant(pathA, 1), variant(pathA, 15)]);
+      await driver.persistInputHistory(text);
+      const entries = await history.loadInputHistory(file);
+      expect(entries).toHaveLength(3);
+      expect(entries[0]?.inlineSkillActivations?.[0]?.path).toBe(pathB);
+      expect(entries[1]?.content).toBe('another prompt');
+      expect(entries[2]?.inlineSkillActivations?.[0]?.path).toBe(pathA);
+
+      driver.state.editor.onHistoryDraftSave?.();
+      driver.state.editor.onRecall?.(trimmed, -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathA);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathA);
+      driver.state.editor.onRecall?.('another prompt', -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBeUndefined();
+      driver.state.editor.onRecall?.(trimmed, -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathB);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathB);
+      driver.state.editor.onHistoryDraftRestore?.('prompt');
+      expect(driver.skillVariantPathForCommand('skill:review', 1)).toBe(pathA);
+      expect(driver.skillVariantPathForCommand('skill:review', 15)).toBe(pathA);
+
+      (driver as unknown as { inputHistoryEntries: unknown[] }).inputHistoryEntries = [];
+      driver.retainSkillVariantSelection('');
+      await (driver as unknown as { loadPersistedInputHistory(): Promise<void> }).loadPersistedInputHistory();
+      driver.state.editor.onHistoryDraftSave?.();
+      driver.state.editor.onRecall?.(trimmed, -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathA);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathA);
+      driver.state.editor.onRecall?.('another prompt', -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBeUndefined();
+      driver.state.editor.onRecall?.(trimmed, -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathB);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathB);
+    } finally {
+      if (previousHome === undefined) delete process.env['KIMI_CODE_HOME'];
+      else process.env['KIMI_CODE_HOME'] = previousHome;
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('keeps both variants through queue recall and invalidates edited positions', async () => {

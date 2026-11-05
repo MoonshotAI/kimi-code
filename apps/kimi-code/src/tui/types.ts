@@ -312,6 +312,7 @@ export interface InlineSkillActivation {
   readonly path?: string;
   readonly args?: string;
   readonly start?: number;
+  readonly occurrences?: readonly { commandName: string; start: number }[];
 }
 
 export type ModelSwitchPersistence = 'session' | 'model' | 'model-and-effort';

@@ -644,7 +644,15 @@ describe('EditorKeyboardController Ctrl-S steering', () => {
   it.each([
     ['/skill:review src/app.ts', [{ skillName: 'review', path: undefined, start: 0, args: 'src/app.ts' }]],
     ['check /skill:review', [{ skillName: 'review', path: undefined, start: 6 }]],
-    ['/skill:review check /skill:review', [{ skillName: 'review', path: undefined, start: 0 }]],
+    ['/skill:review check /skill:review', [{
+      skillName: 'review',
+      path: undefined,
+      start: 0,
+      occurrences: [
+        { commandName: 'skill:review', start: 0 },
+        { commandName: 'skill:review', start: 20 },
+      ],
+    }]],
   ])('parses skill draft %s before asking the coordinator to steer', (text, activations) => {
     const { host, setText, steerQueuedMessagesIntoRunningTurn, onCtrlS } = createCtrlSHarness({
       editorText: text,

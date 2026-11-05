@@ -191,8 +191,9 @@ export class AgentSkillService implements IAgentSkillService {
     if (turn === undefined && handle.state !== 'blocked') {
       throw new Error2(ErrorCodes.INTERNAL, 'promptWithSkills failed to launch a turn');
     }
-    if (turn?.id !== undefined && prepared.length === 1) {
-      this.rememberModelToolParent(prepared[0]!.origin, turn.id);
+    if (turn?.id !== undefined) {
+      if (prepared.length === 1) this.rememberModelToolParent(prepared[0]!.origin, turn.id);
+      else if (this.modelToolParent?.turnId === turn.id) this.modelToolParent = undefined;
     }
     if (turn !== undefined) await turn.ready.catch(() => undefined);
     return {

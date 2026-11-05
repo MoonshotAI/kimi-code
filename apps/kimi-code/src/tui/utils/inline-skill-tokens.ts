@@ -76,17 +76,27 @@ export function extractInlineSkillActivations(
     includeLeading: options?.includeLeading,
   });
 
-  const seen = new Set<string>();
-  const activations: InlineSkillActivation[] = [];
+  const byKey = new Map<string, {
+    activation: InlineSkillActivation;
+    occurrences: Array<{ commandName: string; start: number }>;
+  }>();
   for (const token of tokens) {
     const skillName =
       skillCommandMap.get(token.commandName) ?? skillCommandMap.get(`skill:${token.commandName}`);
     if (skillName === undefined) continue;
     const path = options?.skillVariantPathForCommand?.(token.commandName, token.start);
     const key = `${skillName}\0${path ?? ''}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    activations.push({ skillName, path, start: token.start });
+    const existing = byKey.get(key);
+    if (existing !== undefined) {
+      existing.occurrences.push({ commandName: token.commandName, start: token.start });
+      continue;
+    }
+    byKey.set(key, {
+      activation: { skillName, path, start: token.start },
+      occurrences: [{ commandName: token.commandName, start: token.start }],
+    });
   }
-  return activations;
+  return [...byKey.values()].map(({ activation, occurrences }) =>
+    occurrences.length === 1 ? activation : { ...activation, occurrences }
+  );
 }

@@ -53,6 +53,9 @@ export interface EditorKeyboardHost {
   readonly pluginCommandMap: Map<string, string>;
   readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
   retainSkillVariantSelection?(text: string): void;
+  beginInputHistoryRecall?(): void;
+  restoreInputHistoryEntry?(direction: 1 | -1): void;
+  restoreInputHistoryDraft?(): void;
   steerQueuedMessagesIntoRunningTurn(manual?: boolean): void;
   validateMediaCapabilities(extraction: {
     hasMedia: boolean;
@@ -156,7 +159,8 @@ export class EditorKeyboardController {
     // mode; recalling a plain entry returns to prompt mode. The filter above
     // guarantees bash mode only ever lands on `!` entries, so this never
     // misfires on commands typed in bash mode.
-    editor.onRecall = (entry: string) => {
+    editor.onRecall = (entry: string, direction: 1 | -1) => {
+      host.restoreInputHistoryEntry?.(direction);
       if (entry.startsWith('!')) {
         editor.setInputMode('bash');
         return entry.slice(1);
@@ -171,10 +175,12 @@ export class EditorKeyboardController {
     // message would be submitted as a shell command. Also locks the history
     // filter (browseMode) for the duration of the browse session.
     editor.onHistoryDraftSave = () => {
+      host.beginInputHistoryRecall?.();
       browseMode = editor.inputMode;
       return editor.inputMode;
     };
     editor.onHistoryDraftRestore = (state: unknown) => {
+      host.restoreInputHistoryDraft?.();
       editor.setInputMode(state as 'prompt' | 'bash');
       browseMode = null;
     };
