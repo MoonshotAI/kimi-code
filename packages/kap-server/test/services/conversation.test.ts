@@ -321,6 +321,21 @@ describe('conversation fold', () => {
     expect(turnsOf(other)[0]?.turn_id).not.toBe(original.turn_id);
   });
 
+  it('times reasoning by its streamed block and falls back to the step span for untimed records', () => {
+    const state = fold([
+      turnPrompt(0, 'p1'),
+      userMessage('p1', 'hello'),
+      stepBegin(0, 1, 's1'),
+      contentPart(0, 1, 's1', { type: 'think', think: 'timed' }, 0, { startedAt: 5_000, durationMs: 1_200 }),
+      contentPart(0, 1, 's1', { type: 'think', think: 'untimed' }, 1),
+    ]);
+
+    const stepStart = iso(state.turns[0]!.steps[0]!.startedAt);
+    const turn = turnsOf(state)[0];
+    expect(turn?.items[1]).toMatchObject({ type: 'reasoning', created_at: iso(5_000), started_at: iso(5_000), duration_ms: 1_200 });
+    expect(turn?.items[2]).toMatchObject({ type: 'reasoning', started_at: stepStart, duration_ms: 2 });
+  });
+
   it('places in-turn steers and legacy steer records inside the running turn', () => {
     const state = fold([
       turnPrompt(0, 'p1'),
@@ -490,6 +505,31 @@ describe('conversation fold', () => {
     expect(turns[0]?.items).toEqual([expect.objectContaining({ type: 'system', kind: 'fork_boundary', source: 'btw', forked_from: { agent_id: 'main' } })]);
     expect(shape(turns[1])).toEqual(['opener:what does this do?']);
     expect(JSON.stringify(turns)).not.toContain('inherited');
+  });
+
+  it('keeps the turns of a fork unique and in order when its own turn numbers start from zero', () => {
+    const ownIds = [0, 1, 2, 3];
+    const state = fold([
+      userMessage('inherited', 'inherited prompt'),
+      message('assistant', 'inherited answer'),
+      ...ownIds.flatMap((id) => [
+        turnPrompt(id, `p${id}`),
+        userMessage(`p${id}`, `prompt ${id}`),
+        message('assistant', `answer ${id}`),
+        turnEnded(id, 'completed'),
+      ]),
+    ], { source: 'fork', forkedFrom: 'main' });
+
+    const turns = turnsOf(state);
+    const own = turns.filter((turn) => turn.kind === 'agent');
+    expect(own.map((turn) => shape(turn))).toEqual(
+      ownIds.map((id) => [`opener:prompt ${id}`, `assistant_message:answer ${id}`]),
+    );
+    expect(own.map((turn) => turn.turn_number)).toEqual(ownIds);
+    expect(new Set(turns.map((turn) => turn.turn_id)).size).toBe(turns.length);
+    const ordinals = turns.map((turn) => turn.ordinal);
+    expect(ordinals).toEqual(ordinals.toSorted((a, b) => a - b));
+    expect(new Set(ordinals).size).toBe(ordinals.length);
   });
 
   it('keeps a running turn open while ownerless messages land beside it', () => {
