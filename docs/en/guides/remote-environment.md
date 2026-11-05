@@ -136,7 +136,7 @@ ssh -o BatchMode=yes dev-box true
 - **Hooks and MCP servers run on your machine by default**: they cannot see files on the target environment; stdio MCP servers can run on the target environment through `environment_id`, see [MCP](../customization/mcp.md).
 - **Web tools run on your machine**: `WebSearch` and `FetchURL` reach the network your computer is on.
 - **File paths in prompts resolve on the target environment**: `/tmp/x.png` refers to a file on the target environment; paste local images directly instead.
-- **Tower mode is not supported**, and the footer does not show git status.
+- **Tower mode is not supported**.
 
 ## Next steps
 
