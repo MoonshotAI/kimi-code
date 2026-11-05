@@ -95,6 +95,9 @@ function parseHost(raw: string | boolean | undefined): string {
 
 export function parsePort(raw: string | undefined, label: string, fallback: number): number {
   if (raw === undefined) return fallback;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`error: invalid ${label} value: ${raw}`);
+  }
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n < 0 || n > 65535) {
     throw new Error(`error: invalid ${label} value: ${raw}`);
