@@ -244,7 +244,29 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
 
     // Nothing was sent; both inputs are back in the editor, newline-joined.
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
-    expect(host.restoreInputText).toHaveBeenLastCalledWith('hello\nworld');
+    expect(host.restoreInputText).toHaveBeenLastCalledWith('hello\nworld', undefined);
+  });
+
+  it('returns a stashed skill draft with its selected variant activations', async () => {
+    getMock.mockResolvedValue(CONFIG);
+    const { host } = makeHost();
+    const controller = new CacheHintController(host);
+    controller.recordActivity();
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1200_000);
+    const activations = [{ skillName: 'review', path: '/work/B/review/SKILL.md' }];
+
+    expect(controller.maybeInterceptOnSubmit('/skill:review', undefined, activations)).toBe(true);
+    await vi.waitFor(() => {
+      expect(host.mountEditorReplacement).toHaveBeenCalled();
+    });
+    vi.restoreAllMocks();
+    const dialog = (host.mountEditorReplacement as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      handleInput: (data: string) => void;
+    };
+    dialog.handleInput('\u001B');
+    await flush();
+
+    expect(host.restoreInputText).toHaveBeenLastCalledWith('/skill:review', activations);
   });
 
   it('releases stashed media with recall semantics when the dialog is dismissed', async () => {
@@ -271,7 +293,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     // retains go through recall — without this the retain count never
     // returns to zero and the upload can never be lease-deleted.
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
-    expect(host.restoreInputText).toHaveBeenCalledWith('describe [image #1 (1×1)]');
+    expect(host.restoreInputText).toHaveBeenCalledWith('describe [image #1 (1×1)]', undefined);
     expect(host.recallStashedMedia).toHaveBeenCalledWith(extraction);
   });
 
@@ -285,7 +307,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     await flush();
     vi.restoreAllMocks();
 
-    expect(host.restoreInputText).toHaveBeenCalledWith('hello');
+    expect(host.restoreInputText).toHaveBeenCalledWith('hello', undefined);
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -382,7 +404,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     };
     dialog.handleInput('\u001B');
     await flush();
-    expect(host.restoreInputText).toHaveBeenCalledWith('hello');
+    expect(host.restoreInputText).toHaveBeenCalledWith('hello', undefined);
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 
@@ -485,7 +507,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     if (fails) {
       expect(host.sendNormalUserInput).not.toHaveBeenCalled();
       expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('disk full'));
-      expect(host.restoreInputText).toHaveBeenCalledWith('describe image');
+      expect(host.restoreInputText).toHaveBeenCalledWith('describe image', undefined);
     } else {
       expect(vi.mocked(host.sendNormalUserInput).mock.calls[0]?.[1]?.parts).toContainEqual({
         type: 'text', text: expect.stringContaining('kimi-file://f_original'),
@@ -545,7 +567,7 @@ describe('CacheHintController scenario 2 (idle submit)', () => {
     dialog.handleInput('\r');
     await flush();
     expect(state.appState.sessionId).toBe('s1');
-    expect(host.restoreInputText).toHaveBeenCalledWith('hello');
+    expect(host.restoreInputText).toHaveBeenCalledWith('hello', undefined);
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
   });
 });

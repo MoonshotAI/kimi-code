@@ -182,6 +182,7 @@ interface MessageDriver {
   };
   init(): Promise<boolean>;
   handleUserInput(text: string): void;
+  restoreInputText(text: string, inlineSkillActivations?: readonly { skillName: string; path?: string; args?: string }[]): void;
   toggleToolOutputExpansion(): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   persistInputHistory(text: string): Promise<void>;
@@ -833,6 +834,30 @@ describe('KimiTUI message flow', () => {
     expect(driver.skillVariantPathForCommand('skill:review')).toBe(path);
 
     driver.handleUserInput(recalled!.text);
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+    expect(driver.state.queuedMessages[0]).toMatchObject({
+      text: '/skill:review',
+      inlineSkillActivations: [{ skillName: 'review', path }],
+    });
+  });
+
+  it('restores variant bindings for returned skill drafts', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    const path = '/work/B/review/SKILL.md';
+
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path }]);
+    expect(driver.skillVariantPathForCommand('skill:review')).toBe(path);
+
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('/skill:review');
     await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
     expect(driver.state.queuedMessages[0]).toMatchObject({
       text: '/skill:review',

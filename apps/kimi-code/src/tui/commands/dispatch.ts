@@ -137,7 +137,7 @@ export interface SlashCommandHost {
     owner?: ReverseRpcModalOwner,
   ): void;
   restoreEditor(): void;
-  restoreInputText(text: string): void;
+  restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void;
   refreshSlashCommandAutocomplete(): void;
   /**
    * Rebuild the plugin slash-command list. With no session (v2 session-less

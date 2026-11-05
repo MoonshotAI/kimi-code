@@ -44,7 +44,7 @@ export interface CacheHintHost {
   setAppState(patch: Partial<AppState>): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
-  restoreInputText(text: string): void;
+  restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void;
   /**
    * A stashed submission going back to the editor releases its extraction's
    * staged media with queue-recall semantics (consume retains, retire staged
@@ -334,7 +334,7 @@ export class CacheHintController {
   private restoreStashedInput(stash: StashedSubmit | undefined): void {
     if (stash === undefined) return;
     this.restoredTexts.push(stash.text);
-    this.host.restoreInputText(this.restoredTexts.join('\n'));
+    this.host.restoreInputText(this.restoredTexts.join('\n'), stash.inlineSkillActivations);
     this.host.recallStashedMedia(stash.extraction);
   }
 

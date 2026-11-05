@@ -6,7 +6,7 @@ import {
 } from '#/tui/commands/index';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { resolveUserInput } from '#/tui/commands/resolve';
+import { resolveUserInput, skillVariantPathsForInput } from '#/tui/commands/resolve';
 
 function resolve(
   input: string,
@@ -80,6 +80,20 @@ describe('resolveUserInput', () => {
     ).toEqual([
       { skillName: 'security', path: paths['skill:security'] },
       { skillName: 'review', path: paths['skill:review'] },
+    ]);
+  });
+
+  it('maps returned activations back to their command names', () => {
+    const path = '/work/B/review/SKILL.md';
+    expect(skillVariantPathsForInput('/review', [{ skillName: 'review', path }], options.skillCommandMap)).toEqual([
+      { commandName: 'review', path },
+    ]);
+    expect(skillVariantPathsForInput('/skill:security /skill:review', [
+      { skillName: 'security', path: '/work/B/security/SKILL.md' },
+      { skillName: 'review', path },
+    ], options.skillCommandMap)).toEqual([
+      { commandName: 'skill:security', path: '/work/B/security/SKILL.md' },
+      { commandName: 'skill:review', path },
     ]);
   });
 });

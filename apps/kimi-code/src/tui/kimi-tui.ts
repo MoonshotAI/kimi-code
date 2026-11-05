@@ -68,6 +68,7 @@ import {
   type SkillListSession,
 } from './commands';
 import * as slashCommands from './commands/dispatch';
+import { skillVariantPathsForInput } from './commands/resolve';
 import { applyTranscriptPresentation, runQueuedModelSwitch } from './commands/config';
 import { promptSshPassword } from './commands/prompts';
 import { CacheHintController } from './controllers/cache-hint-controller';
@@ -1951,7 +1952,7 @@ export class KimiTUI {
             ...extraction.imageAttachmentIds,
             ...extraction.videoAttachmentIds,
           ]);
-          this.restoreInputText(text);
+          this.restoreInputText(text, activations);
         },
       });
       if (recovered) {
@@ -2048,16 +2049,8 @@ export class KimiTUI {
         : [],
     );
     if (isPromptQueuedMessage(last)) {
-      const tokens = findInlineSkillTokens(last.text, {
-        isKnownSkill: (commandName) => this.skillCommandMap.has(commandName) || this.skillCommandMap.has(`skill:${commandName}`),
-        includeLeading: true,
-      });
-      for (const activation of last.inlineSkillActivations ?? []) {
-        if (activation.path === undefined) continue;
-        const token = tokens.find((candidate) =>
-          (this.skillCommandMap.get(candidate.commandName) ?? this.skillCommandMap.get(`skill:${candidate.commandName}`)) === activation.skillName,
-        );
-        if (token !== undefined) this.skillVariantPaths.set(token.commandName, activation.path);
+      for (const { commandName, path } of skillVariantPathsForInput(last.text, last.inlineSkillActivations ?? [], this.skillCommandMap)) {
+        this.skillVariantPaths.set(commandName, path);
       }
     }
     return last;
@@ -5012,8 +5005,11 @@ export class KimiTUI {
     if (panel !== undefined && hasDispose(panel)) panel.dispose();
   }
 
-  restoreInputText(text: string): void {
+  restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void {
     this.restoreEditor();
+    for (const { commandName, path } of skillVariantPathsForInput(text, inlineSkillActivations ?? [], this.skillCommandMap)) {
+      this.skillVariantPaths.set(commandName, path);
+    }
     this.state.editor.setText(text);
     this.updateEditorBorderHighlight(text);
     this.state.ui.requestRender();

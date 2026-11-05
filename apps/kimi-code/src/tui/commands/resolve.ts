@@ -193,6 +193,24 @@ export function resolveSkillCommand(
   return skillCommandMap.get(commandName) ?? skillCommandMap.get(`skill:${commandName}`);
 }
 
+export function skillVariantPathsForInput(
+  text: string,
+  activations: readonly InlineSkillActivation[],
+  skillCommandMap: ReadonlyMap<string, string>,
+): Array<{ commandName: string; path: string }> {
+  const tokens = findInlineSkillTokens(text, {
+    isKnownSkill: (commandName) => resolveSkillCommand(skillCommandMap, commandName) !== undefined,
+    includeLeading: true,
+  });
+  const selected: Array<{ commandName: string; path: string }> = [];
+  for (const activation of activations) {
+    if (activation.path === undefined) continue;
+    const token = tokens.find((candidate) => resolveSkillCommand(skillCommandMap, candidate.commandName) === activation.skillName);
+    if (token !== undefined) selected.push({ commandName: token.commandName, path: activation.path });
+  }
+  return selected;
+}
+
 function skillCommandIntent(parsed: ParsedSlashInput, skillName: string): SlashCommandIntent {
   return {
     kind: 'skill',
