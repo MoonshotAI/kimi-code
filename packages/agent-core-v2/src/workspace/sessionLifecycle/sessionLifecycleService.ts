@@ -397,9 +397,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
     try {
       const stat = await lease.environment.fs!.stat(cwd).catch((error: unknown) => {
+        const code = (unwrapErrorCause(error) as NodeJS.ErrnoException | undefined)?.code;
         throw new EnvironmentError(
-          'environment.invalid_cwd',
+          code === 'ENOENT' || code === 'ENOTDIR' ? 'environment.invalid_cwd' : 'environment.unavailable',
           `cwd ${cwd} is not readable on environment ${environmentId}: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error },
         );
       });
       if (!stat.isDirectory) {
