@@ -28,7 +28,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { stubLog } from '../../_base/log/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import type { ExecutableTool } from '#/tool/toolContract';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { emptyUsage } from '#human/llm-requester/usage';
 import { IHostEnvironment, type IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
@@ -538,6 +538,7 @@ describe('AutoReviewService', () => {
   let response: ModelResponse;
   let history: ContextMessage[];
   let agentsMd: string;
+  let mainProvider: string;
   let telemetry: TelemetryRecord[];
   let usage: Parameters<ISessionUsageService['record']>[];
 
@@ -554,6 +555,7 @@ describe('AutoReviewService', () => {
       { role: 'tool', toolCallId: 'mkdir', content: [{ type: 'text', text: 'untrusted tool output' }] },
     ];
     agentsMd = 'Do not delete user-data.';
+    mainProvider = 'managed:kimi-code';
     telemetry = [];
     usage = [];
   });
@@ -572,7 +574,7 @@ describe('AutoReviewService', () => {
         });
         reg.definePartialInstance(IModelCatalog, {
           findByName: () => ['kimi-code/kimi-k2.8'],
-          get: () => ({ providerName: 'managed:kimi-code' }) as Model,
+          get: (alias) => ({ providerName: alias === 'main-model' ? mainProvider : 'managed:kimi-code' }) as Model,
         });
         reg.definePartialInstance(IModelRequester, {
           request: (next, signal) => {
@@ -584,14 +586,6 @@ describe('AutoReviewService', () => {
           resolveModelContext: () => ({ modelAlias: 'main-model' }) as ReturnType<IAgentProfileService['resolveModelContext']>,
         });
         reg.definePartialInstance(IAgentContextMemoryService, { get: () => history });
-        reg.definePartialInstance(IAgentToolRegistryService, {
-          resolve: () => ({
-            name: 'Bash',
-            description: 'Execute a shell command.',
-            parameters: { type: 'object' },
-            resolveExecution: () => ({ output: '', isError: true }),
-          }),
-        });
         reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
         reg.definePartialInstance(ISessionContext, { sessionId: 'session-1' });
         reg.definePartialInstance(ISessionInstructionsProvider, {
@@ -613,8 +607,15 @@ describe('AutoReviewService', () => {
     return ix.createInstance(AutoReviewService);
   }
 
+  const bashTool: ExecutableTool = {
+    name: 'Bash',
+    description: 'Execute a shell command.',
+    parameters: { type: 'object' },
+    resolveExecution: () => ({ output: '', isError: true }),
+  };
+
   function review(reviewer = service(), command = 'rm generated/file'): Promise<AutoReviewResult> {
-    return reviewer.review(policyContext({ toolName: 'Bash', args: { command } }), 'fallback-ask');
+    return reviewer.review(policyContext({ toolName: 'Bash', args: { command }, tool: bashTool }), 'fallback-ask');
   }
 
   function sentContent(index = -1): string {
@@ -637,6 +638,21 @@ describe('AutoReviewService', () => {
     expect(sentContent()).toContain('Do not delete user-data.');
     expect(sentContent()).not.toContain('untrusted tool output');
     expect(sentContent()).toContain('rm generated/file');
+  });
+
+  it('labels the executing tool metadata as untrusted', async () => {
+    await review();
+
+    expect(sentContent()).toContain('untrusted-metadata');
+    expect(sentContent()).toContain('Execute a shell command.');
+  });
+
+  it('keeps review on the main model when it is not on the managed provider', async () => {
+    mainProvider = 'self-hosted';
+
+    await review();
+
+    expect(requests[0]?.modelAlias).toBe('main-model');
   });
 
   it('records reviewer usage and the asking policy', async () => {
@@ -1031,6 +1047,7 @@ interface PolicyContextInput {
   readonly args: Record<string, unknown>;
   readonly accesses?: ToolAccessList;
   readonly signal?: AbortSignal;
+  readonly tool?: ExecutableTool;
 }
 
 function policyContext(input: PolicyContextInput): ResolvedToolExecutionHookContext {
@@ -1039,6 +1056,7 @@ function policyContext(input: PolicyContextInput): ResolvedToolExecutionHookCont
   return {
     turnId: 0,
     signal: input.signal ?? signal,
+    tool: input.tool,
     toolCall,
     toolCalls: [toolCall],
     args: input.args,

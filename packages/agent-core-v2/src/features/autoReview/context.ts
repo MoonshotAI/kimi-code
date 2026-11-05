@@ -1,7 +1,6 @@
 import { createUserMessage, type ContentPart } from '#human/llm/message';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import type { ExecutableTool } from '#/tool/toolContract';
 
 const MAX_AUTHORIZATION_TOTAL_CHARS = 48000;
 const MAX_AUTHORIZATION_ENTRY_CHARS = 8000;
@@ -18,7 +17,6 @@ export function buildReviewMessages(
   instructions: string | undefined,
   instructionPaths: readonly string[] | undefined,
   cwd: string,
-  tool: ExecutableTool | undefined,
   context: ResolvedToolExecutionHookContext,
 ): ReturnType<typeof createUserMessage>[] {
   const recentActions = messages.flatMap((message) => actionEntries(message, context.toolCall.id)).slice(-MAX_RECENT_ACTIONS);
@@ -39,9 +37,12 @@ export function buildReviewMessages(
     `FILTERED_HISTORY\n${JSON.stringify({ authorization, recentActions })}`,
     `PENDING_ACTION\n${JSON.stringify({
       name: context.toolCall.name,
-      description: tool?.description ?? '',
-      parameters: tool?.parameters ?? {},
       arguments: context.args,
+      toolMetadata: {
+        role: 'untrusted-metadata',
+        description: context.tool?.description ?? '',
+        parameters: context.tool?.parameters ?? {},
+      },
     })}`,
   ].map(createUserMessage);
 }

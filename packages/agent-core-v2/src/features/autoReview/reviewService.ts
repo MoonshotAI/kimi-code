@@ -10,7 +10,6 @@ import { IModelRequester } from '#/llm-adapter/model/model-requester';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -73,7 +72,6 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @IModelRequester private readonly requester: IModelRequester,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentToolRegistryService private readonly tools: IAgentToolRegistryService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
@@ -155,7 +153,6 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         projectInstructions.agentsMd,
         projectInstructions.agentsMdPaths,
         cwd,
-        this.tools.resolve(context.toolCall.name),
         context,
       ),
       responseFormat: RESPONSE_FORMAT,
@@ -185,14 +182,19 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   }
 
   private defaultModel(): string {
-    const managed = this.models.findByName(AUTO_REVIEW_MODEL_NAME).find((alias) => {
-      try {
-        return this.models.get(alias).providerName === AUTO_REVIEW_PROVIDER;
-      } catch {
-        return false;
-      }
-    });
-    return managed ?? this.profile.resolveModelContext().modelAlias;
+    const mainModel = this.profile.resolveModelContext().modelAlias;
+    if (this.providerOf(mainModel) !== AUTO_REVIEW_PROVIDER) return mainModel;
+    const managed = this.models.findByName(AUTO_REVIEW_MODEL_NAME)
+      .find((alias) => this.providerOf(alias) === AUTO_REVIEW_PROVIDER);
+    return managed ?? mainModel;
+  }
+
+  private providerOf(alias: string): string | undefined {
+    try {
+      return this.models.get(alias).providerName;
+    } catch {
+      return undefined;
+    }
   }
 }
 
