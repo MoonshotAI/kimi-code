@@ -47,7 +47,7 @@ export function acceptsInlineMime(spec: MediaKindSupport, mimeType: string): boo
 export function acceptsSource(spec: MediaKindSupport, part: MediaPart): boolean {
   const inline = inlineMediaOf(part);
   if (inline !== undefined) {
-    return spec.sources.includes('inline') && acceptsInlineMime(spec, inline.mimeType);
+    return spec.sources.includes('inline') && acceptsMime(spec, inline.mimeType);
   }
   const fileId = mediaFileIdOf(part);
   const url = mediaUrlOf(part);
