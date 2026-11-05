@@ -1,4 +1,6 @@
 import { Disposable } from '#/_base/di/lifecycle';
+import { ref, type LiveRef } from '#/_base/di/instantiation';
+import { IWorkspaceService } from '#/app/workspace/workspace';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
@@ -100,6 +102,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
+    @ref(IWorkspaceService) private readonly workspaces: LiveRef<IWorkspaceService>,
   ) {
     super();
     this.projector = new SessionIndexProjector({
@@ -108,6 +111,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       queryStore,
       log,
       sessionsScope: bootstrap.scope('sessions'),
+      primaryByWorkspace: () => this.primaryByWorkspace(),
     });
   }
 
@@ -667,15 +671,34 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
     };
   }
 
+  private async primaryByWorkspace(): Promise<Readonly<Record<string, string>>> {
+    const workspaces = this.workspaces.current;
+    if (workspaces === undefined) return {};
+    return Object.fromEntries((await workspaces.list()).map((workspace) => [workspace.id, workspace.root]));
+  }
+
   private async getLegacy(id: string): Promise<SessionSummary | undefined> {
+    const primaryByWorkspace = await this.primaryByWorkspace();
     const hinted = await this.workspaceHintFor(id);
     if (hinted !== undefined) {
-      const summary = await readSessionSummary(this.docs, this.sessionsScope, hinted, id);
+      const summary = await readSessionSummary(
+        this.docs,
+        this.sessionsScope,
+        hinted,
+        id,
+        primaryByWorkspace[hinted],
+      );
       if (summary !== undefined) return summary;
     }
     for (const workspaceId of await listWorkspaceIds(this.storage, this.sessionsScope)) {
       if (workspaceId === hinted) continue;
-      const summary = await readSessionSummary(this.docs, this.sessionsScope, workspaceId, id);
+      const summary = await readSessionSummary(
+        this.docs,
+        this.sessionsScope,
+        workspaceId,
+        id,
+        primaryByWorkspace[workspaceId],
+      );
       if (summary !== undefined) return summary;
     }
     return undefined;
@@ -733,6 +756,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   private async collectAuthoritative(
     workspaceIds: readonly string[] | undefined,
   ): Promise<SessionSummary[]> {
+    const primaryByWorkspace = await this.primaryByWorkspace();
     let collected: SessionSummary[];
     if (
       this.readModelEnabled() &&
@@ -748,7 +772,13 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       collected = [];
       for (const workspaceId of ids) {
         for (const sessionId of await listSessionIds(this.storage, this.sessionsScope, workspaceId)) {
-          const summary = await readSessionSummary(this.docs, this.sessionsScope, workspaceId, sessionId);
+          const summary = await readSessionSummary(
+            this.docs,
+            this.sessionsScope,
+            workspaceId,
+            sessionId,
+            primaryByWorkspace[workspaceId],
+          );
           if (summary !== undefined) collected.push(summary);
         }
       }

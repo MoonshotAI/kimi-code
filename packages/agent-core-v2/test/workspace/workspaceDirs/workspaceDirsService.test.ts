@@ -101,7 +101,7 @@ describe('WorkspaceDirsService (registry source)', () => {
     );
   }
 
-  it('injects the registry dir set minus cwd for both primary and member scopes', async () => {
+  it('injects the registry dir set minus primary for both primary and member scopes', async () => {
     const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
 
     const primary = createDirs(dirA, project.id, 'managed');
@@ -111,7 +111,7 @@ describe('WorkspaceDirsService (registry source)', () => {
 
     const member = createDirs(dirB, 'wd_other_000000000000');
     await member.ready;
-    expect(member.additionalDirs).toEqual([dirA]);
+    expect(member.additionalDirs).toEqual([dirB]);
     expect(member.sessionInfo().primaryByWorkspace).toEqual({ [project.id]: dirA });
 
     const outsider = createDirs(dirC, 'wd_else_000000000000');
@@ -310,7 +310,7 @@ describe('WorkspaceDirsService (registry source)', () => {
     });
     const dirs = createDirs(dirB, 'wd_member_000000000000');
     await dirs.ready;
-    expect(dirs.additionalDirs).toEqual([dirA]);
+    expect(dirs.additionalDirs).toEqual([dirB]);
     expect(dirs.sessionInfo().primaryByWorkspace).toEqual({ [project.id]: dirA });
     let fired = 0;
     dirs.onDidChange(() => {
@@ -326,6 +326,30 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(fired).toBe(1);
     await dirs.reload();
     expect(fired).toBe(1);
+  });
+
+  it('keeps the complete directory set when the primary changes from the original cwd', async () => {
+    const project = await workspaces.create({
+      root: dirA,
+      additionalDirs: [dirB],
+      name: 'proj',
+    });
+    const dirs = createDirs(dirA, project.id, 'managed');
+    await dirs.ready;
+
+    await workspaces.setPrimary(project.id, dirB);
+    await vi.waitFor(() => {
+      expect(dirs.primary).toBe(dirB);
+    });
+
+    expect(dirs.additionalDirs).toEqual([dirA]);
+    expect(dirs.sessionInfo().primaryByWorkspace).toEqual({ [project.id]: dirB });
+
+    await workspaces.update(project.id, { additionalDirs: [dirA, dirC] });
+    await vi.waitFor(() => {
+      expect(dirs.additionalDirs).toEqual([dirA, dirC]);
+    });
+    expect(dirs.primary).toBe(dirB);
   });
 
   it('does not fire for project rename or touch', async () => {

@@ -121,6 +121,10 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     this.states.set(workspaceDirsPrimaryByWorkspaceKey, value);
   }
 
+  get primary(): string {
+    return this.primaryByWorkspace[this.workspace.workspaceId] ?? this.workspace.meta.root;
+  }
+
   get sharedAdditionalDirs(): readonly string[] {
     return [...new Set([...this.fileDirs, ...this.registryDirs])];
   }
@@ -242,10 +246,12 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
     const primary: Record<string, string> = {};
     for (const entry of entries) {
       const set = [entry.root, ...entry.additionalDirs];
-      if (!set.some((dir) => workspaceRootKey(dir) === cwdKey)) continue;
+      const current = entry.id === this.workspace.workspaceId;
+      if (!current && !set.some((dir) => workspaceRootKey(dir) === cwdKey)) continue;
       primary[entry.id] = entry.root;
+      const primaryKey = workspaceRootKey(entry.root);
       for (const dir of set) {
-        if (workspaceRootKey(dir) === cwdKey) continue;
+        if (workspaceRootKey(dir) === primaryKey) continue;
         if (dirs.some((kept) => workspaceRootKey(kept) === workspaceRootKey(dir))) continue;
         dirs.push(dir);
       }

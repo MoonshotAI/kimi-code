@@ -29,6 +29,7 @@ import {
 } from '#/app/sessionIndex/sessionIndexModel';
 import { markSessionDirty } from '#/app/sessionIndex/sessionIndexDirtyJournal';
 import { FileSessionIndex } from '#/app/sessionIndex/sessionIndexService';
+import { readSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import {
   drainSessionIndexMirror,
   SessionIndexMirror,
@@ -163,6 +164,20 @@ describe('FileSessionIndex (legacy)', () => {
     expect((await store.get('v1'))?.cwd).toBe('/repo/v1');
     expect((await store.get('old'))?.cwd).toBe('/repo/old');
     expect((await store.get('none'))?.cwd).toBeUndefined();
+  });
+
+  it('projects the current primary without changing explicit environment cwd or historical metadata', async () => {
+    await seedSession('default', { cwd: '/old' });
+    await seedSession('explicit', { cwd: '/old', environmentCwd: '/explicit' });
+    await seedSession('remote', { cwd: '/host', environmentId: 'ssh', environmentCwd: '/remote' });
+    const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
+    const sessionsScope = stubBootstrap(homeDir).scope('sessions');
+
+    expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'default', '/new'))?.cwd).toBe('/new');
+    expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'explicit', '/new'))?.cwd).toBe('/explicit');
+    expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'remote', '/new'))?.cwd).toBe('/host');
+    expect((await readSessionSummary(docs, sessionsScope, workspaceId, 'default'))?.cwd).toBe('/old');
+    expect(JSON.parse(await fsp.readFile(join(sessionsDir, workspaceId, 'default', 'session-meta', 'state.json'), 'utf8')).cwd).toBe('/old');
   });
 
   it('listRecent filters by sessionId without enumerating all sessions', async () => {
