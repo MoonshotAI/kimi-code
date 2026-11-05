@@ -26,9 +26,17 @@ export class AutoReviewGate implements IAutoReviewGate {
     context: ResolvedToolExecutionHookContext,
     evaluation: PermissionPolicyEvaluation,
   ): Promise<string | undefined> {
-    if (evaluation.modeApproval !== true || !this.flags.enabled(AUTO_REVIEW_FLAG_ID)) return undefined;
+    if (!this.flags.enabled(AUTO_REVIEW_FLAG_ID)) return undefined;
+    const mode = this.modes.mode;
+    if (mode === 'manual') return undefined;
+    if (mode === 'auto' && evaluation.policyName === 'dangerous-command-ask') return undefined;
+    if (evaluation.result.kind === 'ask') return evaluation.policyName;
+    if (evaluation.modeApproval !== true) return undefined;
     const withoutModeApproval = await this.policies.evaluateWithoutModeApproval(context);
-    return withoutModeApproval?.result.kind === 'ask' ? withoutModeApproval.policyName : undefined;
+    if (withoutModeApproval?.result.kind !== 'ask') return undefined;
+    return mode === 'auto' && withoutModeApproval.policyName === 'dangerous-command-ask'
+      ? undefined
+      : withoutModeApproval.policyName;
   }
 
   async resolve(
@@ -39,7 +47,12 @@ export class AutoReviewGate implements IAutoReviewGate {
     const review = await this.reviewService.review(context, trigger);
     const mode = this.modes.mode;
     const allowed = review.kind === 'decision' && review.decision.decision === 'allow';
-    if (allowed && mode !== 'manual') return evaluation;
+    if (allowed && mode !== 'manual') {
+      return {
+        policyName: AUTO_REVIEW_ORIGIN,
+        result: { kind: 'approve', executionMetadata: evaluation.result.kind === 'approve' ? evaluation.result.executionMetadata : undefined },
+      };
+    }
     if (mode === 'auto') {
       return { policyName: AUTO_REVIEW_ORIGIN, result: denial(context, review) };
     }

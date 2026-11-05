@@ -284,7 +284,6 @@ describe('AgentPermissionGate', () => {
     for (const evaluation of [
       { policyName: 'user-configured-allow', result: { kind: 'approve' } },
       { policyName: 'session-approval-history', result: { kind: 'approve' } },
-      { policyName: 'dangerous-command-ask', result: { kind: 'ask' } },
       { policyName: 'user-configured-deny', result: { kind: 'deny' } },
     ] satisfies PermissionPolicyEvaluation[]) {
       expect(await gate.trigger(makeContext('Bash'), evaluation)).toBeUndefined();
@@ -295,16 +294,77 @@ describe('AgentPermissionGate', () => {
     }
   });
 
-  it('asks for a static ask without reviewing it', async () => {
+  it('reviews a static ask before falling back to the user in Ask When Needed', async () => {
     autoReviewEnabled = true;
     mode = 'yolo';
-    policyResult = { policyName: 'sensitive-file-access-ask', result: { kind: 'ask' } };
+    policyResult = { policyName: 'dangerous-command-ask', result: { kind: 'ask' } };
+    autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
     make();
 
-    await executorEvents.fireBeforeExecute(makeContext('Write'));
+    await executorEvents.fireBeforeExecute(makeContext('Bash'));
 
-    expect(review).not.toHaveBeenCalled();
-    expect(requestToolApproval).toHaveBeenCalledTimes(1);
+    expect(review).toHaveBeenCalledWith(expect.anything(), 'dangerous-command-ask');
+    expect(resolvePermissionResolution).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'ask' }),
+      expect.anything(),
+      'auto-review',
+    );
+  });
+
+  it('approves a static ask after a reviewer allow in Ask When Needed', async () => {
+    autoReviewEnabled = true;
+    mode = 'yolo';
+    policyResult = { policyName: 'dangerous-command-ask', result: { kind: 'ask' } };
+    make();
+
+    await executorEvents.fireBeforeExecute(makeContext('Bash'));
+
+    expect(review).toHaveBeenCalledTimes(1);
+    expect(requestToolApproval).not.toHaveBeenCalled();
+    expect(resolvePermissionResolution).toHaveBeenCalledWith(
+      { kind: 'approve', executionMetadata: undefined },
+      expect.anything(),
+      'auto-review',
+    );
+  });
+
+  it('skips static dangerous-command asks in Never Ask', async () => {
+    autoReviewEnabled = true;
+    mode = 'auto';
+    expect(await ix.get(IAutoReviewGate).trigger(makeContext('Bash'), {
+      policyName: 'dangerous-command-ask',
+      result: { kind: 'ask' },
+    })).toBeUndefined();
+  });
+
+  it('keeps static asks on the user path when review is disabled or the mode is Always Ask', async () => {
+    for (const [enabled, nextMode] of [[false, 'yolo'], [true, 'manual']] as const) {
+      autoReviewEnabled = enabled;
+      mode = nextMode;
+      policyResult = { policyName: 'dangerous-command-ask', result: { kind: 'ask' } };
+      make();
+
+      await executorEvents.fireBeforeExecute(makeContext('Bash'));
+
+      expect(review).not.toHaveBeenCalled();
+      expect(requestToolApproval).toHaveBeenCalledTimes(1);
+      vi.clearAllMocks();
+    }
+  });
+
+  it('reviews ordinary yolo approvals before the dangerous-command fallback', async () => {
+    mode = 'yolo';
+    autoReviewEnabled = true;
+    withoutModeApproval = { policyName: 'dangerous-command-ask', result: { kind: 'ask' } };
+
+    expect(await ix.get(IAutoReviewGate).trigger(makeContext('Bash'), {
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+      modeApproval: true,
+    })).toBe('dangerous-command-ask');
+
+    mode = 'auto';
+    expect(await ix.get(IAutoReviewGate).trigger(makeContext('Bash'), modeApproval)).toBeUndefined();
   });
 
   it('passes the asking policy to the reviewer', async () => {
