@@ -299,7 +299,7 @@ export class Program {
       const harness: ProgramHarness = { userAgentProfiles, explicitSkills, extraSkills, pluginSkills };
       const workdirs = new ProgramWorkdirs(this.environments, this.context, this.dependencies, harness, own);
       const root = workdirs.root;
-      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.trustStore, root.state, this.dependencies.config));
+      const trust = own(new WorkspaceTrustService(root.dirs, this.dependencies.trustStore, root.state, this.dependencies.config));
       const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, hostFs, trust, this.dependencies.configStore, this.dependencies.oauth));
       const mcp = new WorkspaceMcpService(this.context, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager);
       disposables.push({ dispose: () => mcp.disposeAsync() });

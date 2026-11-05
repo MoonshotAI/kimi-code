@@ -15,6 +15,7 @@ import { SessionMetadata } from '#/session/sessionMetadata/sessionMetadataServic
 import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
 import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 import { ISessionStateService } from '#/session/state/sessionState';
+import { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -75,6 +76,13 @@ describe('SessionMetadata', () => {
     mirror = stubSessionIndexMirror();
     ix.stub(ILogService, stubLog());
     ix.stub(ISessionContext, makeContext());
+    ix.stub(ISessionWorkspaceInfo, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      primaryByWorkspace: {},
+      additionalDirs: [],
+      onDidChange: () => ({ dispose: () => {} }),
+    });
     ix.stub(ISessionIndexMirror, mirror);
     const locks = new InMemorySessionLockService();
     ix.stub(ISessionLockService, locks);
