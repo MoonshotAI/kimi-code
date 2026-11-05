@@ -6,6 +6,35 @@ Remote environments let Kimi Code operate another machine or container.
 
 Kimi Code CLI still runs on your computer and hands only file reads, file writes, and command execution to the target environment. The target environment also needs Kimi Code CLI installed to carry them out.
 
+## Quick start
+
+This example uses `dev-box`, a machine you can already sign in to over SSH.
+
+1. Install Kimi Code CLI on the target machine:
+
+   ```sh
+   ssh dev-box 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash'
+   ```
+
+2. Add the following to `~/.kimi-code/config.toml` on your machine:
+
+   ```toml
+   [environments.dev-box]
+   type = "ssh"
+   host = "dev-box"
+   defaultCwd = "/home/me/projects"
+   ```
+
+3. Start a session:
+
+   ```sh
+   kimi --environment dev-box
+   ```
+
+   Once the session opens, the footer shows `dev-box` before the working directory. From then on, the files the agent reads and writes and the commands it runs are on `dev-box`.
+
+To start every new session on `dev-box` by default, see [Setting a default environment](#setting-a-default-environment); for Docker containers and other connection methods, see [Declaring environments](#declaring-environments).
+
 ## Declaring environments
 
 Declare environments under `[environments]` in `config.toml`. Before connecting, [install Kimi Code CLI](./getting-started.md#install-script-recommended) on the target environment.

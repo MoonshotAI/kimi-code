@@ -6,6 +6,35 @@
 
 Kimi Code CLI 仍在你的电脑上运行，只把读写文件和执行命令交给目标环境。目标环境上也需要安装一个 Kimi Code CLI 负责执行。
 
+## 快速开始
+
+以一台 SSH 能直接登录的机器 `dev-box` 为例。
+
+1. 在目标机器上安装 Kimi Code CLI：
+
+   ```sh
+   ssh dev-box 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash'
+   ```
+
+2. 在本机的 `~/.kimi-code/config.toml` 中加入：
+
+   ```toml
+   [environments.dev-box]
+   type = "ssh"
+   host = "dev-box"
+   defaultCwd = "/home/me/projects"
+   ```
+
+3. 启动会话：
+
+   ```sh
+   kimi --environment dev-box
+   ```
+
+   会话打开后，底部状态栏的工作目录前会显示 `dev-box`。之后 Agent 读写的文件、执行的命令都在 `dev-box` 上。
+
+想让每个新会话都默认在 `dev-box` 上启动，见 [设为默认环境](#设为默认环境)；Docker 容器和其他接入方式见 [声明环境](#声明环境)。
+
 ## 声明环境
 
 在 `config.toml` 的 `[environments]` 下声明环境。连接前，目标环境需要[安装 Kimi Code CLI](./getting-started.md#脚本安装-推荐)。
