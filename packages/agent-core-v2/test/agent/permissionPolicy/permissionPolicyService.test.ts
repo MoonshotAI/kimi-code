@@ -562,11 +562,12 @@ describe('AutoReviewService', () => {
   function service(
     request: (request: ModelRequest, signal: AbortSignal) => Promise<ModelResponse> = async () => response,
     model?: string,
+    configured = true,
   ): AutoReviewService {
     const ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.definePartialInstance(IConfigService, {
-          get: ((section: string) => section === AUTO_REVIEW_SECTION ? { model, timeoutMs: 1000 } : undefined) as IConfigService['get'],
+          get: ((section: string) => section === AUTO_REVIEW_SECTION && configured ? { model, timeoutMs: 1000 } : undefined) as IConfigService['get'],
         });
         reg.definePartialInstance(IModelRequester, {
           request: (next, signal) => {
@@ -619,6 +620,15 @@ describe('AutoReviewService', () => {
   function sentContent(index = -1): string {
     return JSON.stringify(requests.at(index)?.messages);
   }
+
+  it('uses the main model and default timeout when the config section is absent', async () => {
+    await expect(review(service(undefined, undefined, false))).resolves.toEqual({
+      kind: 'decision',
+      decision: { risk: 'low', decision: 'allow' },
+    });
+
+    expect(requests[0]?.modelAlias).toBe('main-model');
+  });
 
   it('uses the main model and only overrides review semantics by default', async () => {
     expect(await review()).toEqual({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });

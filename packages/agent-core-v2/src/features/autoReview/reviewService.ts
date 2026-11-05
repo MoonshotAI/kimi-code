@@ -88,8 +88,8 @@ export class AutoReviewService extends Service implements IAutoReviewService {
   async review(context: ResolvedToolExecutionHookContext, trigger: string): Promise<AutoReviewResult> {
     const startedAt = Date.now();
     const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
-    const modelAlias = config.model ?? this.profile.resolveModelContext().modelAlias;
-    const result = await this.reviewWithDeadline(context, modelAlias, config.timeoutMs);
+    const modelAlias = config?.model ?? this.profile.resolveModelContext().modelAlias;
+    const result = await this.reviewWithDeadline(context, modelAlias, config?.timeoutMs ?? 30000);
     if (result.kind === 'failed') {
       this.log.warn('auto review failed', { model: modelAlias, tool: context.toolCall.name, reason: result.reason });
     }
