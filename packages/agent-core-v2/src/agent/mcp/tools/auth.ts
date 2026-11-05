@@ -46,10 +46,11 @@ export interface CreateMcpAuthToolOptions {
   readonly oauthService: McpOAuthService;
   readonly reconnect: (signal?: AbortSignal) => Promise<void>;
   readonly timeoutMs?: number;
+  readonly onAuthorizationUrl?: ((data: McpOAuthAuthorizationUrlUpdateData) => void) | undefined;
 }
 
 export function createMcpAuthTool(options: CreateMcpAuthToolOptions): ExecutableTool {
-  const { serverName, serverUrl, oauthService, reconnect, timeoutMs } = options;
+  const { serverName, serverUrl, oauthService, reconnect, timeoutMs, onAuthorizationUrl } = options;
   const name = qualifyMcpToolName(serverName, AUTH_TOOL_TOOL_NAME);
   const description = DESCRIPTION_TEMPLATE(serverName);
   const parameters = toInputJsonSchema(z.object({}));
@@ -92,6 +93,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
       customKind: MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
       customData,
     });
+    onAuthorizationUrl?.(customData);
     onUpdate?.({
       kind: 'status',
       text:
