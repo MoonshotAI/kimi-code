@@ -416,6 +416,30 @@ export function todoListToSessionUpdate(
   };
 }
 
+export function planDataToSessionUpdate(
+  sessionId: string,
+  plan: { readonly content: string } | null,
+): SessionNotification | null {
+  if (plan === null || plan.content.trim().length === 0) return null;
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'plan',
+      entries: [{ content: plan.content, priority: 'medium', status: 'pending' }],
+    },
+  };
+}
+
+export function planClearedToSessionUpdate(sessionId: string): SessionNotification {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: 'plan',
+      entries: [],
+    },
+  };
+}
+
 function mapTodoStatus(status: string): PlanEntryStatus {
   switch (status) {
     case 'pending':

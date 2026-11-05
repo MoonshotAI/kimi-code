@@ -68,6 +68,8 @@ import {
   availableCommandsUpdateNotification,
   configOptionUpdateNotification,
   currentModeUpdateNotification,
+  planClearedToSessionUpdate,
+  planDataToSessionUpdate,
   planFromDisplayBlock,
   sessionInfoUpdateNotification,
   thinkingDeltaToSessionUpdate,
@@ -328,6 +330,13 @@ export class AcpSession {
         this.dispatchTurnEvent(event.turnId, () => {
           this.onTurnEnded(event);
         });
+      }),
+      events.on('agent.status.updated', (event) => {
+        if (event.planMode === true) {
+          void this.emitPlanState();
+        } else if (event.planMode === false) {
+          this.emit(planClearedToSessionUpdate(this.sessionId));
+        }
       }),
       // Compaction runs as a background LLM task outside any turn, so these
       // are not turn-scoped; the subscription is already agent-grained (this
@@ -775,6 +784,9 @@ export class AcpSession {
   }
 
   private onToolCallStarted(event: AgentEventPayloads['tool.call.started']): void {
+    if (event.name === 'ExitPlanMode') {
+      void this.emitPlanState();
+    }
     if (this.driverFor(event.turnId) === undefined) return;
     // The klient payload mirrors `ToolCallStartedEvent` (`args` / `display`
     // arrive as `unknown` — cast at this seam).
@@ -978,6 +990,11 @@ export class AcpSession {
     void this.emitSessionInfoUpdate();
   }
 
+  private async emitPlanState(): Promise<void> {
+    const plan = await this.agent.getPlan();
+    this.emit(planDataToSessionUpdate(this.sessionId, plan));
+  }
+
   /** Push a `session_info_update` with the current title (best-effort). */
   private async emitSessionInfoUpdate(): Promise<void> {
     try {
@@ -992,8 +1009,7 @@ export class AcpSession {
   }
 
   /** Push a `session/update` notification (best-effort, never throws). */
-  private emit(notification: SessionNotification | null): void {
-    if (notification === null) return;
+  private emit(notification: SessionNotification | null): void {    if (notification === null) return;
     void this.conn.sessionUpdate(notification).catch((error) => {
       log.warn('acp: failed to push session/update', {
         sessionId: this.sessionId,
