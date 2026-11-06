@@ -499,13 +499,8 @@ describe('AgentPermissionPolicyService chain', () => {
       policyName: 'yolo-mode-approve',
       modeApproval: true,
       result: { kind: 'approve' },
+      underlying: { policyName: 'fallback-ask', result: { kind: 'ask' } },
     });
-    await expect(
-      service().evaluateWithoutModeApproval(policyContext({
-        toolName: 'Bash',
-        args: { command: 'reboot', timeout: 60 },
-      })),
-    ).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
   });
 
   it('does not let session approval history exempt dangerous commands', async () => {
@@ -543,20 +538,23 @@ describe('AgentPermissionPolicyService chain', () => {
       rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm build/*)' });
       const bash = (command: string): PolicyContextInput => ({ toolName: 'Bash', args: { command, timeout: 60 } });
 
+      autoReviewEnabled = true;
       await expect(evaluate(bash('curl -X POST https://example.test'))).resolves.toMatchObject({
         policyName: `${nextMode}-mode-approve`,
         modeApproval: true,
+        underlying: { policyName: 'fallback-ask', result: { kind: 'ask' } },
       });
-      await expect(
-        service().evaluateWithoutModeApproval(policyContext(bash('curl -X POST https://example.test'))),
-      ).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
-      await expect(
-        service().evaluateWithoutModeApproval(policyContext({ toolName: 'SetTodoList', args: {} })),
-      ).resolves.toMatchObject({ policyName: 'default-tool-approve', result: { kind: 'approve' } });
+      await expect(evaluate({ toolName: 'SetTodoList', args: {} })).resolves.toMatchObject({
+        policyName: `${nextMode}-mode-approve`,
+        modeApproval: true,
+        underlying: { policyName: 'default-tool-approve', result: { kind: 'approve' } },
+      });
       if (nextMode === 'auto') {
-        await expect(
-          service().evaluateWithoutModeApproval(policyContext(bash('rm build/out'))),
-        ).resolves.toMatchObject({ policyName: 'user-configured-allow', result: { kind: 'approve' } });
+        await expect(evaluate(bash('rm build/out'))).resolves.toMatchObject({
+          policyName: 'auto-mode-approve',
+          modeApproval: true,
+          underlying: { policyName: 'user-configured-allow', result: { kind: 'approve' } },
+        });
       }
     },
   );
@@ -674,7 +672,7 @@ describe('AutoReviewService', () => {
 
     expect(requests[0]).toEqual({
       modelAlias: 'main-model',
-      source: { type: 'operation', turnId: 0, requestKind: 'auto_review' },
+      source: { type: 'operation', turnId: 0, requestKind: 'auto_review', cacheBreakBaseline: false },
       systemPrompt: REVIEW_POLICY,
       messages: expect.any(Array),
       cacheKey: 'session-1:auto_review',
@@ -741,7 +739,7 @@ describe('AutoReviewService', () => {
 
     expect(requests[0]).toMatchObject({
       modelAlias: 'review-model',
-      source: { type: 'operation', turnId: 0, requestKind: 'auto_review' },
+      source: { type: 'operation', turnId: 0, requestKind: 'auto_review', cacheBreakBaseline: false },
     });
     expect(telemetry).toEqual([expect.objectContaining({
       event: 'auto_review_decision',

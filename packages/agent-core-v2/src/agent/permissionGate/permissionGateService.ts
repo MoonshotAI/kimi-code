@@ -46,7 +46,7 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
     const evaluation = await this.policyService.evaluate(event);
     if (evaluation === undefined) return;
     this.trackPolicyDecision(event, evaluation);
-    const reviewTrigger = await this.autoReview.trigger(event, evaluation);
+    const reviewTrigger = this.autoReview.trigger(event, evaluation);
     if (reviewTrigger !== undefined) {
       event.waitUntil(async () => {
         const { result, policyName } = await this.autoReview.resolve(event, evaluation, reviewTrigger);
@@ -75,7 +75,7 @@ export class AgentPermissionGate extends Service implements IAgentPermissionGate
     const evaluation = await this.policyService.evaluate(context);
     if (evaluation === undefined) return undefined;
     this.trackPolicyDecision(context, evaluation);
-    const reviewTrigger = await this.autoReview.trigger(context, evaluation);
+    const reviewTrigger = this.autoReview.trigger(context, evaluation);
     const { result, policyName } = reviewTrigger === undefined
       ? evaluation
       : await this.autoReview.resolve(context, evaluation, reviewTrigger);

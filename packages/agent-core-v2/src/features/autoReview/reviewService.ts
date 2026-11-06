@@ -181,7 +181,12 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         cwd,
         context,
       ),
-      source: { type: 'operation', turnId: context.turnId, requestKind: AUTO_REVIEW_REQUEST_KIND },
+      source: {
+        type: 'operation',
+        turnId: context.turnId,
+        requestKind: AUTO_REVIEW_REQUEST_KIND,
+        cacheBreakBaseline: false,
+      },
       responseFormat: RESPONSE_FORMAT,
       cacheKey: `${this.session.sessionId}:${AUTO_REVIEW_REQUEST_KIND}`,
       thinkingEffort: 'off',

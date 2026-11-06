@@ -27,6 +27,7 @@ export type AgentLLMRequestSource =
       readonly turnId?: number;
       readonly requestKind?: string;
       readonly logFields?: AgentLLMRequestLogFields;
+      readonly cacheBreakBaseline?: false;
     };
 
 export interface AgentLLMRequestFinish {

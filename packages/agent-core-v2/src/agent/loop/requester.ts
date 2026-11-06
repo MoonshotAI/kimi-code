@@ -568,8 +568,10 @@ export class AgentLoopRequester implements LoopRequester {
           traceId: finish.requestId,
           usage,
         };
-        this.trackCacheBreak(measured, recorded.messages);
-        this.states.set(llmRequesterLastMeasuredRequestKey, measured);
+        if (request.source?.cacheBreakBaseline !== false) {
+          this.trackCacheBreak(measured, recorded.messages);
+          this.states.set(llmRequesterLastMeasuredRequestKey, measured);
+        }
       }
       void this.usage.record(
         this.scopeContext.agentContext,

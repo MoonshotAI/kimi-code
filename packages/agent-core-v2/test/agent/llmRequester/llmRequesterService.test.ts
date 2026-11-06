@@ -467,8 +467,12 @@ async function requestCacheTurn(
   await service.request({ source: { type: 'turn', turnId, step: turnId }, systemPrompt });
 }
 
-async function requestCacheOperation(service: AgentLoopRequester, requestKind: string): Promise<void> {
-  await service.request({ source: { type: 'operation', requestKind } });
+async function requestCacheOperation(
+  service: AgentLoopRequester,
+  requestKind: string,
+  cacheBreakBaseline?: false,
+): Promise<void> {
+  await service.request({ source: { type: 'operation', requestKind, cacheBreakBaseline } });
 }
 
 describe('AgentLoopRequester cache break telemetry', () => {
@@ -554,6 +558,14 @@ describe('AgentLoopRequester cache break telemetry', () => {
       prev_trace_id: 'trace-2',
     });
     expect(operationEvents[1]?.properties?.['prev_turn_id']).toBeUndefined();
+
+    const detached = createService(
+      createCacheRequester([cacheUsage(10000), cacheUsage(1000), cacheUsage(9000)]),
+    );
+    await requestCacheTurn(detached.service, 1);
+    await requestCacheOperation(detached.service, 'auto_review', false);
+    await requestCacheTurn(detached.service, 2);
+    expect(cacheBreaks(detached.telemetryRecords)).toHaveLength(0);
   });
 
   it('applies ratio and token gates to cache reads and reusable history', async () => {

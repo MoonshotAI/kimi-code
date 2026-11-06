@@ -1,9 +1,6 @@
 import { IFlagService } from '#/app/flag/flag';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import {
-  IAgentPermissionPolicyService,
-  type PermissionPolicyEvaluation,
-} from '#/agent/permissionPolicy/permissionPolicy';
+import type { PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
 import type { PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 
@@ -18,25 +15,17 @@ export class AutoReviewGate implements IAutoReviewGate {
   constructor(
     @IFlagService private readonly flags: IFlagService,
     @IAgentPermissionModeService private readonly modes: IAgentPermissionModeService,
-    @IAgentPermissionPolicyService private readonly policies: IAgentPermissionPolicyService,
     @IAutoReviewService private readonly reviewService: IAutoReviewService,
   ) {}
 
-  async trigger(
-    context: ResolvedToolExecutionHookContext,
+  trigger(
+    _context: ResolvedToolExecutionHookContext,
     evaluation: PermissionPolicyEvaluation,
-  ): Promise<string | undefined> {
-    if (!this.flags.enabled(AUTO_REVIEW_FLAG_ID)) return undefined;
-    const mode = this.modes.mode;
-    if (mode === 'manual') return undefined;
-    if (mode === 'auto' && evaluation.policyName === 'dangerous-command-ask') return undefined;
+  ): string | undefined {
+    if (!this.flags.enabled(AUTO_REVIEW_FLAG_ID) || this.modes.mode === 'manual') return undefined;
     if (evaluation.result.kind === 'ask') return evaluation.policyName;
-    if (evaluation.modeApproval !== true) return undefined;
-    const withoutModeApproval = await this.policies.evaluateWithoutModeApproval(context);
-    if (withoutModeApproval?.result.kind !== 'ask') return undefined;
-    return mode === 'auto' && withoutModeApproval.policyName === 'dangerous-command-ask'
-      ? undefined
-      : withoutModeApproval.policyName;
+    const underlying = evaluation.underlying;
+    return underlying?.result.kind === 'ask' ? underlying.policyName : undefined;
   }
 
   async resolve(

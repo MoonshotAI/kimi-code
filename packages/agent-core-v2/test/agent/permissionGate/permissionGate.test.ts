@@ -65,7 +65,6 @@ describe('AgentPermissionGate', () => {
   let mode: PermissionMode;
   let rules: readonly PermissionRule[];
   let policyResult: PermissionPolicyEvaluation | undefined;
-  let withoutModeApproval: PermissionPolicyEvaluation | undefined;
   let autoReviewEnabled: boolean;
   let autoReviewResult: AutoReviewResult;
   let review: ReturnType<typeof vi.fn<IAutoReviewService['review']>>;
@@ -83,7 +82,6 @@ describe('AgentPermissionGate', () => {
     mode = 'auto';
     rules = [];
     policyResult = undefined;
-    withoutModeApproval = undefined;
     autoReviewEnabled = false;
     autoReviewResult = { kind: 'decision', decision: { risk: 'low', decision: 'allow' } };
     review = vi.fn(async () => autoReviewResult);
@@ -104,7 +102,7 @@ describe('AgentPermissionGate', () => {
         reg.defineInstance(IAgentPermissionRulesService, stubPermissionRulesService(() => rules));
         reg.defineInstance(
           IAgentPermissionPolicyService,
-          stubPermissionPolicyService(() => policyResult, () => withoutModeApproval),
+          stubPermissionPolicyService(() => policyResult),
         );
         reg.definePartialInstance(IFlagService, { enabled: () => autoReviewEnabled });
         reg.defineInstance(IAutoReviewService, { _serviceBrand: undefined, review });
@@ -261,36 +259,37 @@ describe('AgentPermissionGate', () => {
     expect(requestToolApproval).not.toHaveBeenCalled();
   });
 
+  const fallbackAsk: PermissionPolicyEvaluation = { policyName: 'fallback-ask', result: { kind: 'ask' } };
   const modeApproval: PermissionPolicyEvaluation = {
     policyName: 'auto-mode-approve',
     result: { kind: 'approve' },
     modeApproval: true,
+    underlying: fallbackAsk,
   };
-  const fallbackAsk: PermissionPolicyEvaluation = { policyName: 'fallback-ask', result: { kind: 'ask' } };
 
   function reviewModeApprovals(): void {
     autoReviewEnabled = true;
     policyResult = modeApproval;
-    withoutModeApproval = fallbackAsk;
   }
 
   it('reviews only mode approvals that Always Ask would ask about', async () => {
     const gate = ix.get(IAutoReviewGate);
-    withoutModeApproval = fallbackAsk;
 
-    expect(await gate.trigger(makeContext('Bash'), modeApproval)).toBeUndefined();
+    expect(gate.trigger(makeContext('Bash'), modeApproval)).toBeUndefined();
     autoReviewEnabled = true;
-    expect(await gate.trigger(makeContext('Bash'), modeApproval)).toBe('fallback-ask');
+    expect(gate.trigger(makeContext('Bash'), modeApproval)).toBe('fallback-ask');
     for (const evaluation of [
       { policyName: 'user-configured-allow', result: { kind: 'approve' } },
       { policyName: 'session-approval-history', result: { kind: 'approve' } },
       { policyName: 'user-configured-deny', result: { kind: 'deny' } },
     ] satisfies PermissionPolicyEvaluation[]) {
-      expect(await gate.trigger(makeContext('Bash'), evaluation)).toBeUndefined();
+      expect(gate.trigger(makeContext('Bash'), evaluation)).toBeUndefined();
     }
     for (const policyName of ['default-tool-approve', 'git-cwd-write-approve', 'user-configured-allow']) {
-      withoutModeApproval = { policyName, result: { kind: 'approve' } };
-      expect(await gate.trigger(makeContext('Write'), modeApproval)).toBeUndefined();
+      expect(gate.trigger(makeContext('Write'), {
+        ...modeApproval,
+        underlying: { policyName, result: { kind: 'approve' } },
+      })).toBeUndefined();
     }
   });
 
@@ -328,15 +327,6 @@ describe('AgentPermissionGate', () => {
     );
   });
 
-  it('skips static dangerous-command asks in Never Ask', async () => {
-    autoReviewEnabled = true;
-    mode = 'auto';
-    expect(await ix.get(IAutoReviewGate).trigger(makeContext('Bash'), {
-      policyName: 'dangerous-command-ask',
-      result: { kind: 'ask' },
-    })).toBeUndefined();
-  });
-
   it('keeps static asks on the user path when review is disabled or the mode is Always Ask', async () => {
     for (const [enabled, nextMode] of [[false, 'yolo'], [true, 'manual']] as const) {
       autoReviewEnabled = enabled;
@@ -355,17 +345,13 @@ describe('AgentPermissionGate', () => {
   it('reviews ordinary yolo approvals before the user fallback', async () => {
     mode = 'yolo';
     autoReviewEnabled = true;
-    withoutModeApproval = fallbackAsk;
 
-    expect(await ix.get(IAutoReviewGate).trigger(makeContext('Bash'), {
+    expect(ix.get(IAutoReviewGate).trigger(makeContext('Bash'), {
       policyName: 'yolo-mode-approve',
       result: { kind: 'approve' },
       modeApproval: true,
+      underlying: fallbackAsk,
     })).toBe('fallback-ask');
-
-    mode = 'auto';
-    withoutModeApproval = { policyName: 'dangerous-command-ask', result: { kind: 'ask' } };
-    expect(await ix.get(IAutoReviewGate).trigger(makeContext('Bash'), modeApproval)).toBeUndefined();
   });
 
   it('passes the asking policy to the reviewer', async () => {

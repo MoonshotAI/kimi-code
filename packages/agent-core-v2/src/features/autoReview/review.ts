@@ -22,7 +22,7 @@ export interface IAutoReviewGate {
   trigger(
     context: ResolvedToolExecutionHookContext,
     evaluation: PermissionPolicyEvaluation,
-  ): Promise<string | undefined>;
+  ): string | undefined;
   resolve(
     context: ResolvedToolExecutionHookContext,
     evaluation: PermissionPolicyEvaluation,
