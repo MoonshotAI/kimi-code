@@ -136,6 +136,7 @@ describe('FileMentionProvider', () => {
       { name: 'skill:review', description: 'Review A', workspaceDir: '/repos/acme/service' },
       { name: 'skill:review', description: 'Review B', workspaceDir: '/tmp/service' },
       { name: 'skill:other', description: 'Other', workspaceDir: '/work/other' },
+      { name: 'skill:extra', description: 'Extra', workspaceDir: '/work/other' },
     ];
     const provider = new FileMentionProvider(
       commands,
@@ -143,13 +144,14 @@ describe('FileMentionProvider', () => {
       NO_FD,
       [],
       () => 'prompt',
-      new Set(['skill:review', 'skill:other']),
+      new Set(['skill:review', 'skill:other', 'skill:extra']),
     );
 
     const suggestions = await provider.getSuggestions(['/'], 0, 1, { signal: ctrl() });
     expect(suggestions?.items.map((item) => item.data?.['workspaceLabel'])).toEqual([
       '/repos/acme/service',
       '/tmp/service',
+      'other',
       'other',
     ]);
 

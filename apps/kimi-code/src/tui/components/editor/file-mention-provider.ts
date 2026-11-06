@@ -462,9 +462,12 @@ function workspaceLabelsForCommands(
   commands: readonly SlashAutocompleteCommand[],
 ): ReadonlyMap<string, string> {
   const counts = new Map<string, number>();
+  const dirs = new Set<string>();
   for (const command of commands) {
-    if (command.workspaceDir === undefined) continue;
-    const label = basename(command.workspaceDir) || command.workspaceDir;
+    if (command.workspaceDir !== undefined) dirs.add(command.workspaceDir);
+  }
+  for (const dir of dirs) {
+    const label = basename(dir) || dir;
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   const labels = new Map<string, string>();
