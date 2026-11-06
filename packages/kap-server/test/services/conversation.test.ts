@@ -995,9 +995,9 @@ describe('conversation feed', () => {
     await h.dispatcher.dispatch(loopEvent({ type: 'content.part', turnId: '0', step: 1, stepUuid: 's1', block: 1, part: { type: 'text', text: 'answer' } }));
     await flushed();
 
-    const ended = h.events.filter((event) => event.type === 'item.ended');
-    expect(ended.map((event) => event.item.item_id)).toEqual(['s1:0', 's1:1']);
-    expect(ended[0]?.item).toMatchObject({ type: 'reasoning', duration_ms: 1_500 });
+    const ended = h.events.flatMap((event) => (event.type === 'item.ended' && 'item' in event ? [event.item] : []));
+    expect(ended.map((item) => item.item_id)).toEqual(['s1:0', 's1:1']);
+    expect(ended[0]).toMatchObject({ type: 'reasoning', duration_ms: 1_500 });
     h.dispatcher.dispose();
   });
 
