@@ -171,6 +171,11 @@ function renderDisplayBlock(
       }
       return lines;
     }
+    case 'review':
+      return [
+        s.errorBold(block.title),
+        ...wrapTextWithAnsi(block.detail, Math.max(1, contentWidth)),
+      ];
     case 'brief':
       return block.text
         ? block.text.split('\n').map((line) => (line.length > 0 ? s.strong(line) : ''))

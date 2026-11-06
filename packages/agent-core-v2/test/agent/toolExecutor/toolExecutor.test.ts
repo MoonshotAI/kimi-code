@@ -43,7 +43,7 @@ import type { IAgentProfileService } from '#/agent/profile/profile';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
-import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { JsonAtomicDocumentStore, TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { GlobTool } from '#/agent/tools/os/glob/globTool';
 import { ReadInputSchema, type ReadInput } from '#/agent/tools/os/read/read';
@@ -51,14 +51,13 @@ import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
 import { stubAgentEnvironment } from '../../environment/stubs';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { ILogService } from '#/_base/log/log';
 import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -67,6 +66,23 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IFlagService } from '#/app/flag/flag';
+import { IGitService } from '#/app/git/git';
+import { IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
+import { AutoReviewGate } from '#/features/autoReview/autoReviewGate';
+import { IAutoReviewGate, IAutoReviewService } from '#/features/autoReview/review';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicy';
+import { AgentPermissionPolicyService } from '#/agent/permissionPolicy/permissionPolicyService';
+import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
+import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
+import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
+import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
+import { AgentToolApprovalService } from '#/agent/toolApproval/toolApprovalService';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IEventDispatcher } from '#/state/eventDispatcher';
+import { stubPermissionModeService } from '../permissionMode/stubs';
+import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { registerLogServices, stubLog } from '../../_base/log/stubs';
@@ -131,6 +147,75 @@ beforeEach(() => {
 afterEach(() => {
   disposables.dispose();
 });
+
+describe('AgentToolExecutorService auto review', () => {
+  it('does not execute a tool denied by the reviewer', async () => {
+    installAutoReview({ kind: 'decision', decision: { risk: 'high', decision: 'deny' } });
+    const tool = new TestTool('Write');
+    registry.register(tool);
+
+    const [result] = await execute([toolCall('call_review', 'Write', { path: 'outside.txt' })]);
+
+    expect(result).toMatchObject({ isError: true, output: expect.stringContaining('not executed') });
+    expect(tool.calls).toHaveLength(0);
+  });
+
+  it('executes a tool allowed by the reviewer', async () => {
+    installAutoReview({ kind: 'decision', decision: { risk: 'low', decision: 'allow' } });
+    const tool = new TestTool('Write');
+    registry.register(tool);
+
+    const [result] = await execute([toolCall('call_review', 'Write', { path: 'src/a.ts' })]);
+
+    expect(result).not.toMatchObject({ isError: true });
+    expect(tool.calls).toHaveLength(1);
+  });
+});
+
+function installAutoReview(result: import('#/features/autoReview/review').AutoReviewResult): void {
+  const permissions = disposables.add(new TestInstantiationService(undefined, false, ix));
+  permissions.stub(IAgentPermissionModeService, stubPermissionModeService(() => 'auto'));
+  permissions.stub(IFlagService, { enabled: () => true });
+  permissions.stub(IAutoReviewService, { review: async () => result });
+  permissions.stub(IBootstrapService, stubBootstrap('/tmp', {}, { nonInteractive: true }));
+  permissions.stub(IConfigService, { get: (() => undefined) as IConfigService['get'] });
+  permissions.stub(IAgentPermissionRulesService, { rules: [], sessionApprovalRulePatterns: [] });
+  permissions.stub(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
+  permissions.stub(HostEnvironmentService, { pathClass: 'posix' });
+  permissions.stub(IAgentEnvironmentService, stubAgentEnvironment(new FakeEnvironment(
+    { environmentId: 'local', generation: 'test' },
+    { pathClass: 'posix' },
+  ), { workDir: '/workspace' }));
+  permissions.stub(IGitService, { findWorkTree: async () => null });
+  permissions.stub(IAgentToolApprovalService, new AgentToolApprovalService(
+    permissions.get(IAgentScopeContext),
+    permissions.get(IAgentPermissionModeService),
+    permissions.get(IAgentPermissionRulesService),
+    permissions.get(ISessionContext),
+    permissions.get(ITelemetryService),
+    permissions.get(IEventDispatcher),
+    permissions.get(IBootstrapService),
+  ));
+  permissions.set(IAgentPermissionPolicyService, new AgentPermissionPolicyService(
+    permissions,
+    permissions.get(IBootstrapService),
+  ));
+  permissions.set(IAutoReviewGate, new AutoReviewGate(
+    permissions.get(IFlagService),
+    permissions.get(IAgentPermissionModeService),
+    permissions.get(IAgentPermissionPolicyService),
+    permissions.get(IAutoReviewService),
+  ));
+  permissions.set(IAgentPermissionGate, new AgentPermissionGate(
+    permissions.get(IAgentPermissionModeService),
+    permissions.get(IAgentPermissionRulesService),
+    permissions.get(IAgentPermissionPolicyService),
+    permissions.get(IAutoReviewGate),
+    permissions.get(IAgentToolApprovalService),
+    permissions.get(ITelemetryService),
+    executor,
+  ));
+}
 
 describe('AgentToolExecutorService', () => {
   it('resolves by interface and routes a successful tool call through execute', async () => {

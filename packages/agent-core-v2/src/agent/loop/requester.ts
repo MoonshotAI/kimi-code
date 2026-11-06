@@ -39,7 +39,14 @@ import {
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import { IModelService } from '#/llm-adapter/model/model';
 import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
-import { resolveThinkingKeep, type ThinkingConfig } from '#/llm-adapter/model/thinking';
+import {
+  drivesThinkingThroughTraits,
+  requiresStrictThinkingValidation,
+  resolveForcedThinkingEffort,
+  resolveThinkingEffortForModel,
+  resolveThinkingKeep,
+  type ThinkingConfig,
+} from '#/llm-adapter/model/thinking';
 import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { IProtocolAdapterRegistry, type Protocol } from '#/llm-adapter/protocol/protocol';
 import type { ApiErrorEvent, CacheBreakDetectedEvent } from '#/app/telemetry/events';
@@ -121,6 +128,7 @@ interface ResolvedLLMRequest {
   readonly modelAlias: string;
   readonly thinkingEffort: ThinkingEffort;
   readonly systemPrompt: string;
+  readonly responseFormat: AgentLLMRequestOverrides['responseFormat'];
   readonly tools?: readonly Tool[];
   readonly messages: Message[];
   readonly contextRevision: number;
@@ -389,6 +397,7 @@ export class AgentLoopRequester implements LoopRequester {
           systemPrompt: request.systemPrompt,
           tools: request.tools,
           messages: request.messages,
+          responseFormat: request.responseFormat,
         },
         signal,
         {
@@ -559,8 +568,10 @@ export class AgentLoopRequester implements LoopRequester {
           traceId: finish.requestId,
           usage,
         };
-        this.trackCacheBreak(measured, recorded.messages);
-        this.states.set(llmRequesterLastMeasuredRequestKey, measured);
+        if (request.source?.cacheBreakBaseline !== false) {
+          this.trackCacheBreak(measured, recorded.messages);
+          this.states.set(llmRequesterLastMeasuredRequestKey, measured);
+        }
       }
       void this.usage.record(
         this.scopeContext.agentContext,
@@ -727,7 +738,28 @@ export class AgentLoopRequester implements LoopRequester {
     const turnConfig = this.resolveTurnConfig(overrides.source);
     const resolved = turnConfig?.resolved ?? this.profile.resolveModelContext();
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
-    const model = this.modelCatalog.get(resolved.modelAlias);
+    const modelAlias = overrides.modelAlias ?? resolved.modelAlias;
+    const model = this.modelCatalog.get(modelAlias);
+    const inheritedThinkingEffort = modelAlias === resolved.modelAlias
+      ? resolved.thinkingLevel
+      : resolveForcedThinkingEffort(
+          this.config.get<ThinkingConfig>(THINKING_SECTION)?.forcedEffort,
+          resolveThinkingEffortForModel(
+            undefined,
+            this.config.get<ThinkingConfig>(THINKING_SECTION),
+            model,
+            requiresStrictThinkingValidation(this.protocolRegistry, model.protocol, model.providerType),
+          ),
+          drivesThinkingThroughTraits(model.providerType),
+        ) ?? resolved.thinkingLevel;
+    const thinkingEffort = overrides.thinkingEffort === undefined
+      ? inheritedThinkingEffort
+      : resolveThinkingEffortForModel(
+          overrides.thinkingEffort,
+          undefined,
+          model,
+          requiresStrictThinkingValidation(this.protocolRegistry, model.protocol, model.providerType),
+        );
     const maxCompletionTokensCap =
       this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens;
     const usedContextTokens =
@@ -749,6 +781,8 @@ export class AgentLoopRequester implements LoopRequester {
       ...budgetParams,
       ...(usedContextTokens === undefined ? {} : { usedContextTokens }),
       ...(optedOut ? { maxCompletionTokens: maxCompletionTokensCap } : {}),
+      cacheKey: overrides.cacheKey ?? baseParams.cacheKey,
+      thinkingEffort,
     };
 
     const messages = overrides.messages ?? this.context.get();
@@ -756,9 +790,10 @@ export class AgentLoopRequester implements LoopRequester {
       request: this.protocolRegistry.request(model, params),
       model,
       params,
-      modelAlias: resolved.modelAlias,
-      thinkingEffort: resolved.thinkingLevel,
+      modelAlias,
+      thinkingEffort,
       systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),
+      responseFormat: overrides.responseFormat,
       tools: overrides.tools === undefined ? undefined : [...overrides.tools],
       messages: [...messages],
       contextRevision: this.context.prefixRevision(),

@@ -23,8 +23,18 @@ export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData 
     tool_call_id: event.toolCallId,
     tool_name: event.toolName,
     action: event.action,
+    approval_detail: event.approvalDetail,
     description: resolved.description,
-    display: resolved.blocks,
+    display: event.approvalDetail === undefined
+      ? resolved.blocks
+      : [
+          {
+            type: 'review',
+            title: event.approvalDetail.title,
+            detail: event.approvalDetail.detail,
+          },
+          ...resolved.blocks,
+        ],
     choices: adaptChoices(event.toolName, event.display),
   };
 }

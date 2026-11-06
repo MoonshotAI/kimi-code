@@ -24,6 +24,10 @@ export interface ApprovalRequest {
   readonly toolName: string;
   readonly action: string;
   readonly display: ToolInputDisplay;
+  readonly approvalDetail?: {
+    readonly title: string;
+    readonly detail: string;
+  };
 }
 
 export interface QuestionRequest extends CoreQuestionRequest {

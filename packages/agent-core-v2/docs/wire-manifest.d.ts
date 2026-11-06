@@ -26,7 +26,8 @@
 // cross-reducers), blobs (the folding states whose blob codec offloads inline
 // media to blob storage), owner (the source file declaring the class).
 
-// Index (69 record types)
+// Index (70 record types)
+//   auto_review.decision               (none)                                                                         src/features/autoReview/autoReviewEvents.ts
 //   changeNotifier.snapshot            changeNotifier.snapshot                                                        src/agent/changeNotifier/changeNotifierOps.ts
 //   config.update                      profile                                                                        src/agent/profile/profileOps.ts
 //   context.append_loop_event          contextMemory, turn                                                            src/agent/contextMemory/contextEvents.ts
@@ -96,6 +97,24 @@
 //   turn.step.interrupted              (none)                                                                         src/agent/loop/turnEvents.ts
 //   turn.step.retrying                 (none)                                                                         src/agent/loop/turnEvents.ts
 //   usage.record                       (none)                                                                         src/agent/usage/usageOps.ts
+
+/**
+ * states: (none)
+ * owner: src/features/autoReview/autoReviewEvents.ts
+ */
+interface AutoReviewDecisionPayload {
+  _name: 'auto_review.decision';
+  agentId: string;
+  turnId: number;
+  toolCallId: string;
+  toolName: string;
+  triggerPolicy: string;
+  model: string;
+  decision: 'allow' | 'deny' | 'failed';
+  risk?: 'low' | 'medium' | 'high';
+  reason?: string;
+  durationMs: number;
+}
 
 /**
  * states: changeNotifier.snapshot
@@ -1028,6 +1047,7 @@ interface UsageRecordPayload {
 
 /** Record type → payload sketch. */
 interface WirePayloadMap {
+  "auto_review.decision": AutoReviewDecisionPayload;
   "changeNotifier.snapshot": ChangeNotifierSnapshotPayload;
   "config.update": ConfigUpdatePayload;
   "context.append_loop_event": ContextAppendLoopEventPayload;

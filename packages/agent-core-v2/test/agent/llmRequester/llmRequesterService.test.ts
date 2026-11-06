@@ -59,6 +59,7 @@ import {
   generateModel,
   type ModelRequestEvent,
   type ModelRequestInput,
+  type ModelRequestParams,
 } from '#/llm-adapter/model/generate';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
@@ -191,6 +192,9 @@ function createService(
     readonly env?: Record<string, string>;
     readonly modelAlias?: () => string;
     readonly prefixRevision?: () => number;
+    readonly modelAliases?: string[];
+    readonly reviewModel?: Model;
+    readonly requestParams?: ModelRequestParams[];
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -208,7 +212,7 @@ function createService(
       compactionTriggerRatio: undefined,
       compactionMaxAttempts: undefined,
     }),
-    resolveRequestParams: () => ({}),
+    resolveRequestParams: () => options.requestParams?.[0] ?? {},
     getSystemPrompt: () => 'system',
     data: () => ({
       cwd: '',
@@ -272,7 +276,12 @@ function createService(
   ix.stub(ITelemetryService, telemetry);
   ix.stub(IModelCatalog, {
     _serviceBrand: undefined,
-    get: () => requester.model,
+    get: (alias) => {
+      if (options.modelAliases !== undefined && !options.modelAliases.includes(alias)) {
+        throw new Error(`Unexpected model alias: ${alias}`);
+      }
+      return options.reviewModel === undefined ? requester.model : options.reviewModel;
+    },
     findByName: () => [],
   });
   ix.stub(IModelService, {
@@ -311,6 +320,82 @@ function createService(
     measuredCalls,
   };
 }
+
+describe('AgentLoopRequester operation overrides', () => {
+  it('resolves the selected model, cache key and response format through the normal request pipeline', async () => {
+    const inputs: ModelRequestInput[] = [];
+    const requester = createRequester({ value: 0 }, null, [], inputs);
+    const reviewModel = { ...requester.model, protocol: 'anthropic' as const };
+    let params: ModelRequestParams | undefined;
+    const base = requester.request.bind(requester);
+    requester.request = (input, signal, options) => {
+      params = options;
+      return base(input, signal, options);
+    };
+    const { service } = createService(requester, {
+      modelAliases: ['main', 'reviewer'],
+      reviewModel,
+      requestParams: [{ cacheKey: 'session-1' }],
+    });
+
+    const response = await service.request({
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Review this action.' }] }],
+      systemPrompt: 'Review the action.',
+      modelAlias: 'reviewer',
+      cacheKey: 'session-1:auto_review',
+      responseFormat: { type: 'json_schema', jsonSchema: { name: 'review', strict: true, schema: { type: 'object' } } },
+      source: { type: 'operation', requestKind: 'auto_review' },
+    });
+
+    expect(response.model).toBe('reviewer');
+    expect(inputs).toEqual([expect.objectContaining({
+      systemPrompt: 'Review the action.',
+      responseFormat: { type: 'json_schema', jsonSchema: { name: 'review', strict: true, schema: { type: 'object' } } },
+    })]);
+    expect(params?.cacheKey).toBe('session-1:auto_review');
+    expect(params?.thinkingEffort).toBe('off');
+  });
+
+  it('does not inherit the main model thinking effort for an operation request', async () => {
+    const requester = createRequester({ value: 0 });
+    const base = requester.request.bind(requester);
+    let params: ModelRequestParams | undefined;
+    requester.request = (input, signal, options) => {
+      params = options;
+      return base(input, signal, options);
+    };
+    const { service } = createService(requester, { thinkingLevel: 'xhigh' });
+
+    await service.request({
+      messages: [],
+      thinkingEffort: 'off',
+      source: { type: 'operation', requestKind: 'auto_review' },
+    });
+
+    expect(params?.thinkingEffort).toBe('off');
+  });
+
+  it('keeps the independent cache key when inheriting the main model request params', async () => {
+    const requester = createRequester({ value: 0 });
+    const base = requester.request.bind(requester);
+    let params: ModelRequestParams | undefined;
+    requester.request = (input, signal, options) => {
+      params = options;
+      return base(input, signal, options);
+    };
+    const { service } = createService(requester, {
+      requestParams: [{ cacheKey: 'session-1', sampling: { temperature: 1 } }],
+    });
+
+    await service.request({
+      messages: [],
+      cacheKey: 'session-1:auto_review',
+      source: { type: 'operation', requestKind: 'auto_review' },
+    });
+
+    expect(params).toMatchObject({ cacheKey: 'session-1:auto_review', sampling: { temperature: 1 } });
+  });
+});
 
 describe('AgentLoopRequester measured anchors', () => {
   it('skips the measured anchor when the stream reports no usage', async () => {
@@ -382,8 +467,12 @@ async function requestCacheTurn(
   await service.request({ source: { type: 'turn', turnId, step: turnId }, systemPrompt });
 }
 
-async function requestCacheOperation(service: AgentLoopRequester, requestKind: string): Promise<void> {
-  await service.request({ source: { type: 'operation', requestKind } });
+async function requestCacheOperation(
+  service: AgentLoopRequester,
+  requestKind: string,
+  cacheBreakBaseline?: false,
+): Promise<void> {
+  await service.request({ source: { type: 'operation', requestKind, cacheBreakBaseline } });
 }
 
 describe('AgentLoopRequester cache break telemetry', () => {
@@ -469,6 +558,14 @@ describe('AgentLoopRequester cache break telemetry', () => {
       prev_trace_id: 'trace-2',
     });
     expect(operationEvents[1]?.properties?.['prev_turn_id']).toBeUndefined();
+
+    const detached = createService(
+      createCacheRequester([cacheUsage(10000), cacheUsage(1000), cacheUsage(9000)]),
+    );
+    await requestCacheTurn(detached.service, 1);
+    await requestCacheOperation(detached.service, 'auto_review', false);
+    await requestCacheTurn(detached.service, 2);
+    expect(cacheBreaks(detached.telemetryRecords)).toHaveLength(0);
   });
 
   it('applies ratio and token gates to cache reads and reusable history', async () => {
