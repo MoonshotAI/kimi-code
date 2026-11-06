@@ -1,5 +1,6 @@
 import type { FinishReason } from '#human/llm-requester/finish-reason';
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
+import type { ResponseFormat } from '#human/llm/request';
 import type { ThinkingEffort } from '#human/llm-requester/thinking';
 import type {
   AssistantMessage,
@@ -46,6 +47,9 @@ export interface AgentLLMRequestOverrides {
   tools?: readonly Tool[];
   systemPrompt?: string;
   source?: AgentLLMRequestSource;
+  modelAlias?: string;
+  responseFormat?: ResponseFormat;
+  cacheKey?: string;
   maxOutputSize?: number;
   usedContextTokens?: number;
   promptCacheProbe?: 'compaction';

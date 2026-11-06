@@ -5,14 +5,12 @@ import { ILogService } from '#/_base/log/log';
 import { abortable, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IModelRequester } from '#/llm-adapter/model/model-requester';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import REVIEW_POLICY from './auto-review-policy.md?raw';
@@ -64,14 +62,12 @@ export class AutoReviewService extends Service implements IAutoReviewService {
 
   constructor(
     @IConfigService private readonly configService: IConfigService,
-    @IModelRequester private readonly requester: IModelRequester,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
-    @ISessionUsageService private readonly usage: ISessionUsageService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ILogService private readonly log: ILogService,
   ) {
@@ -140,12 +136,8 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const history = this.context.get();
     const authorization = authorizationEntries(history);
     const cwd = this.workspace.workDir;
-    const params = modelAlias === this.profile.resolveModelContext().modelAlias
-      ? this.profile.resolveRequestParams()
-      : undefined;
-    const response = await abortable(this.requester.request({
+    const response = await abortable(this.loop.requester.request({
       modelAlias,
-      params,
       systemPrompt: REVIEW_POLICY,
       messages: buildReviewMessages(
         history,
@@ -154,14 +146,10 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         cwd,
         context,
       ),
+      source: { type: 'operation', turnId: context.turnId, requestKind: AUTO_REVIEW_REQUEST_KIND },
       responseFormat: RESPONSE_FORMAT,
       cacheKey: `${this.session.sessionId}:${AUTO_REVIEW_REQUEST_KIND}`,
-    }, deadline.signal), deadline.signal);
-    void this.usage.record(this.scopeContext.agentContext, modelAlias, response.usage, {
-      type: 'operation',
-      turnId: context.turnId,
-      requestKind: AUTO_REVIEW_REQUEST_KIND,
-    });
+    }, undefined, deadline.signal), deadline.signal);
     const current = authorizationEntries(this.context.get());
     if (this.workspace.workDir !== cwd) return authorizationChanged();
     if (!sameEntries(authorization, current)) {

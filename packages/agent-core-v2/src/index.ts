@@ -208,8 +208,6 @@ export * from '#/llm-adapter/model/thinking';
 export * from '#/llm-adapter/model/catalog';
 export * from '#/llm-adapter/model/catalog-service';
 export * from '#/llm-adapter/model/generate';
-export * from '#/llm-adapter/model/model-requester';
-import '#/llm-adapter/model/model-requester-service';
 import '#/llm-adapter/model/errors';
 export {
   MODEL_CATALOG_SECTION,

@@ -19,11 +19,11 @@ import { AutoReviewService } from '#/features/autoReview/reviewService';
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
 import type { AutoReviewResult } from '#/features/autoReview/review';
 import REVIEW_POLICY from '../../../src/features/autoReview/auto-review-policy.md?raw';
-import { IModelRequester, type ModelRequest, type ModelResponse } from '#/llm-adapter/model/model-requester';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import type { AgentLLMRequestFinish, AgentLLMRequestOverrides } from '#/agent/loop/requesterContract';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { ILogService } from '#/_base/log/log';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { stubLog } from '../../_base/log/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
@@ -531,12 +531,11 @@ describe('AgentPermissionPolicyService chain', () => {
 
 describe('AutoReviewService', () => {
   let disposables: DisposableStore;
-  let requests: ModelRequest[];
-  let response: ModelResponse;
+  let requests: AgentLLMRequestOverrides[];
+  let response: AgentLLMRequestFinish;
   let history: ContextMessage[];
   let agentsMd: string;
   let telemetry: TelemetryRecord[];
-  let usage: Parameters<ISessionUsageService['record']>[];
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -552,7 +551,6 @@ describe('AutoReviewService', () => {
     ];
     agentsMd = 'Do not delete user-data.';
     telemetry = [];
-    usage = [];
   });
 
   afterEach(() => {
@@ -560,7 +558,7 @@ describe('AutoReviewService', () => {
   });
 
   function service(
-    request: (request: ModelRequest, signal: AbortSignal) => Promise<ModelResponse> = async () => response,
+    request: (request: AgentLLMRequestOverrides, signal: AbortSignal | undefined) => Promise<AgentLLMRequestFinish> = async () => response,
     model?: string,
     configured = true,
   ): AutoReviewService {
@@ -569,23 +567,18 @@ describe('AutoReviewService', () => {
         reg.definePartialInstance(IConfigService, {
           get: ((section: string) => section === AUTO_REVIEW_SECTION && configured ? { model, timeoutMs: 1000 } : undefined) as IConfigService['get'],
         });
-        reg.definePartialInstance(IModelRequester, {
-          request: (next, signal) => {
-            requests.push(next);
-            return request(next, signal);
-          },
+        reg.definePartialInstance(IAgentLoopService, {
+          requester: {
+            request: (next, _onPart, signal) => {
+              requests.push(next ?? {});
+              return request(next ?? {}, signal);
+            },
+          } as IAgentLoopService['requester'],
         });
         reg.definePartialInstance(IAgentProfileService, {
           resolveModelContext: () => ({ modelAlias: 'main-model' }) as ReturnType<IAgentProfileService['resolveModelContext']>,
-          resolveRequestParams: () => ({
-            cacheKey: 'session-1',
-            sampling: { temperature: 1, topP: 0.9 },
-            thinkingEffort: 'high',
-            thinkingKeep: 'all',
-          }),
         });
         reg.definePartialInstance(IAgentContextMemoryService, { get: () => history });
-        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
         reg.definePartialInstance(ISessionContext, { sessionId: 'session-1' });
         reg.definePartialInstance(ISessionInstructionsProvider, {
           ready: Promise.resolve(),
@@ -593,11 +586,6 @@ describe('AutoReviewService', () => {
           agentsMdPaths: ['/workspace/AGENTS.md'],
         });
         reg.defineInstance(ISessionWorkspaceContext, workspaceStub('/workspace').stub);
-        reg.definePartialInstance(ISessionUsageService, {
-          record: async (...args) => {
-            usage.push(args);
-          },
-        });
         reg.defineInstance(ITelemetryService, recordingTelemetry(telemetry));
         reg.defineInstance(ILogService, stubLog());
       },
@@ -635,12 +623,7 @@ describe('AutoReviewService', () => {
 
     expect(requests[0]).toEqual({
       modelAlias: 'main-model',
-      params: {
-        cacheKey: 'session-1',
-        sampling: { temperature: 1, topP: 0.9 },
-        thinkingEffort: 'high',
-        thinkingKeep: 'all',
-      },
+      source: { type: 'operation', turnId: 0, requestKind: 'auto_review' },
       systemPrompt: REVIEW_POLICY,
       messages: expect.any(Array),
       cacheKey: 'session-1:auto_review',
@@ -680,7 +663,7 @@ describe('AutoReviewService', () => {
 
     await review();
 
-    const text = requests.at(-1)?.messages.flatMap((message) => message.content)
+    const text = requests.at(-1)?.messages?.flatMap((message) => message.content)
       .map((part) => (part.type === 'text' ? part.text : '')).join('') ?? '';
     expect(text.match(/<\/history>/g)).toHaveLength(1);
     expect(text.match(/<pending_action>/g)).toHaveLength(1);
@@ -690,12 +673,10 @@ describe('AutoReviewService', () => {
   it('records reviewer usage and the asking policy for an explicitly selected model', async () => {
     await review(service(undefined, 'review-model'));
 
-    expect(usage).toEqual([[
-      expect.objectContaining({ agentId: 'main' }),
-      'review-model',
-      response.usage,
-      { type: 'operation', turnId: 0, requestKind: 'auto_review' },
-    ]]);
+    expect(requests[0]).toMatchObject({
+      modelAlias: 'review-model',
+      source: { type: 'operation', turnId: 0, requestKind: 'auto_review' },
+    });
     expect(telemetry).toEqual([expect.objectContaining({
       event: 'auto_review_decision',
       properties: expect.objectContaining({ trigger_policy: 'fallback-ask', model: 'review-model', decision: 'allow' }),
@@ -802,8 +783,8 @@ describe('AutoReviewService', () => {
   });
 
   it('fails instead of allowing when review times out', async () => {
-    const result = await review(service((_request, signal) => new Promise<ModelResponse>((_resolve, reject) => {
-      signal.addEventListener('abort', () => {
+    const result = await review(service((_request, signal) => new Promise<AgentLLMRequestFinish>((_resolve, reject) => {
+      signal?.addEventListener('abort', () => {
         reject(signal.reason);
       });
     })));
@@ -813,8 +794,8 @@ describe('AutoReviewService', () => {
   it('propagates user cancellation', async () => {
     const controller = new AbortController();
     const context = policyContext({ toolName: 'Bash', args: { command: 'rm generated/file' }, signal: controller.signal });
-    const result = service((_request, signal) => new Promise<ModelResponse>((_resolve, reject) => {
-      signal.addEventListener('abort', () => {
+    const result = service((_request, signal) => new Promise<AgentLLMRequestFinish>((_resolve, reject) => {
+      signal?.addEventListener('abort', () => {
         reject(signal.reason);
       });
     })).review(context, 'fallback-ask');

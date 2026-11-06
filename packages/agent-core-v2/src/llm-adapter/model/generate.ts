@@ -3,7 +3,6 @@ import type { LlmRequest, LlmRequestModel, LlmProtocolBinding, LlmEndpoint, LlmS
 import { contentsOf, type LlmRequester } from '#human/llm/requester';
 import type { LlmOutcome, LlmRunEvent } from '#human/llm/response';
 import type { LlmRecovery, LlmRecoveryLedger } from '#human/llm/policy/recovery';
-import type { LlmRetryOptions } from '#human/llm/policy/retry';
 import type { LlmResolver } from '#human/llm/policy/resolver';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
 import type { ResponseFormat } from '#human/llm-requester/response-format';
@@ -74,7 +73,6 @@ export interface ModelRequestParams {
 
 export interface ModelRequestPolicy {
   readonly recoveries: readonly LlmRecovery[];
-  readonly retry?: LlmRetryOptions;
   readonly resolvers?: readonly LlmResolver[];
   readonly recoveryLedger?: LlmRecoveryLedger;
   readonly onAttempt?: (input: ModelRequestInput, request: LlmRequest) => void;
@@ -131,7 +129,7 @@ async function runModel(
       },
       content: { messages: input.messages, usedTokens: params?.usedContextTokens },
       policy: {
-        retry: policy?.retry ?? { maxAttemptsPerStep: 1 },
+        retry: { maxAttemptsPerStep: 1 },
         recoveries: policy?.recoveries ?? [],
         resolvers: policy?.resolvers ?? [],
       },
