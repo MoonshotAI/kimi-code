@@ -1252,6 +1252,32 @@ export const WIRE_RENDERERS: RendererMap = {
     }),
   },
 
+  'tool_select.pending_updates_changed': {
+    tone: 'tools',
+    label: 'tools·pending',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.updates.length} update{r.updates.length === 1 ? '' : 's'}</Mono>
+          <Dim>not applied in this session</Dim>
+        </span>
+      ),
+    }),
+  },
+
+  'tool_select.update_notified': {
+    tone: 'tools',
+    label: 'tools·remind',
+    headline: (r) => ({
+      main: (
+        <span className="flex items-center gap-2 min-w-0">
+          <Mono>{r.signature.slice(0, 12)}</Mono>
+          <Dim>update reminder recorded</Dim>
+        </span>
+      ),
+    }),
+  },
+
   'turn.ended': {
     tone: 'turn',
     label: 'turn✓',

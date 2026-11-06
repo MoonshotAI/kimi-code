@@ -71,7 +71,9 @@ import type {
   TokenCountingTruncated,
   TokenCountingTurnRecorded,
   ToolSelectInitialized,
+  ToolSelectPendingUpdatesChanged,
   ToolSelectToolsChanged,
+  ToolSelectUpdateNotified,
   ToolsRegisterUserTool,
   ToolsUnregisterUserTool,
 } from '@moonshot-ai/agent-core-v2';
@@ -199,6 +201,8 @@ export type AgentRecord =
   | WireRecordOf<'mcp.tools_discovered', McpToolsDiscovered>
   | WireRecordOf<'tool_select.initialized', ToolSelectInitialized>
   | WireRecordOf<'tool_select.tools_changed', ToolSelectToolsChanged>
+  | WireRecordOf<'tool_select.pending_updates_changed', ToolSelectPendingUpdatesChanged>
+  | WireRecordOf<'tool_select.update_notified', ToolSelectUpdateNotified>
   | WireRecordOf<'permission.record_approval_result', PermissionRecordApprovalResult>
   | WireRecordOf<'permission.set_mode', PermissionSetMode>
   | WireRecordOf<'plan_mode.cancel', PlanModeCancel>
