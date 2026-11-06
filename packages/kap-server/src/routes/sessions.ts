@@ -9,6 +9,7 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPluginService,
+  IAgentToolSelectService,
   IAuthSummaryService,
   IConfigService,
   IPluginService,
@@ -1158,6 +1159,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
   const main = handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+  await main?.accessor.get(IAgentToolSelectService).applyPendingUpdates?.();
   await main?.accessor.get(IAgentPluginService).refreshSessionStart();
   if (main !== undefined) {
     const notifier = main.accessor.get(IAgentChangeNotifierService);

@@ -112,6 +112,27 @@ export interface ToolInfo extends ToolDefinition {
   readonly source: ToolSource;
 }
 
+function canonicalToolValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalToolValue);
+  if (typeof value !== 'object' || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .toSorted(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalToolValue(item)]),
+  );
+}
+
+export function toolDefinitionSchemaSignature(
+  tool: Pick<ToolDefinition, 'name' | 'description' | 'parameters'>,
+): string {
+  const parameters = tool.parameters ?? { type: 'object', properties: {} };
+  return JSON.stringify([tool.name, tool.description, canonicalToolValue(parameters)]);
+}
+
+export function toolDefinitionVersionSignature(tool: ToolInfo): string {
+  return JSON.stringify([toolDefinitionSchemaSignature(tool), tool.source, tool.disclosure]);
+}
+
 export interface AgentTool<Input = unknown> extends ExecutableTool<Input> {
   readonly _serviceBrand: undefined;
 }

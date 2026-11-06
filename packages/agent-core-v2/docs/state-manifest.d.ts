@@ -1966,7 +1966,7 @@ export interface AgentStateSnapshot {
   'toolExecutor.dupTypeTurnId': number | undefined;
   'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
   // src/agent/toolSelect/toolSelectOps.ts
-  // replayable · durable — folds: ToolSelectInitialized, ToolSelectToolsChanged
+  // replayable · durable — folds: ToolSelectInitialized, ToolSelectToolsChanged, ToolSelectPendingUpdatesChanged, ToolSelectUpdateNotified
   'toolSelect': /* ToolSelectModelState — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
     readonly initial: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
       readonly name: string;
@@ -2002,6 +2002,15 @@ export interface AgentStateSnapshot {
         readonly origin: 'initial' | 'runtime';
       }[];
     }[];
+    readonly pendingUpdates: readonly /* ToolSelectTool — packages/agent-core-v2/src/agent/toolSelect/toolSelectOps.ts */ {
+      readonly name: string;
+      readonly description: string;
+      readonly parameters: Record<string, unknown>;
+      readonly source: /* ToolSource — packages/agent-core-v2/src/tool/toolContract.ts */ 'user' | 'builtin' | 'mcp';
+      readonly disclosure?: 'deferred' | 'inline';
+      readonly origin: 'initial' | 'runtime';
+    }[];
+    readonly notifiedUpdates: readonly string[];
   };
   // src/agent/userTool/userToolOps.ts
   // replayable · durable — folds: ToolsRegisterUserTool, ToolsUnregisterUserTool

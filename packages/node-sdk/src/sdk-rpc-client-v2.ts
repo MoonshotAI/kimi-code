@@ -171,6 +171,7 @@ import {
   IAgentGoalService,
   IAgentPluginService,
   IAgentLifecycleService,
+  IAgentToolSelectService,
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
   IAgentLoopService,
@@ -1925,6 +1926,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       const handle = await resumeSessionById(this.engineAccessor, sessionId);
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
       const main = handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+      await main?.accessor.get(IAgentToolSelectService).applyPendingUpdates?.();
       await main?.accessor.get(IAgentPluginService).refreshSessionStart();
       if (main !== undefined) {
         const notifier = main.accessor.get(IAgentChangeNotifierService);
