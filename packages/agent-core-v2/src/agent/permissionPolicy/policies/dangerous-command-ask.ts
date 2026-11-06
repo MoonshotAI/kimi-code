@@ -4,8 +4,10 @@ import {
   type BashSyntaxNode,
 } from '#/app/bashParser/bashParser';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { isDangerousCommandGuardEnabled } from '#/agent/permissionRules/configSection';
+import { AUTO_REVIEW_FLAG_ID } from '#/features/autoReview/flag';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type {
   PermissionPolicy,
@@ -124,11 +126,13 @@ export class DangerousCommandAskPermissionPolicyService implements PermissionPol
     @IBashParserService private readonly bashParser: IBashParserService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
   ) {}
 
   evaluate(context: ResolvedToolExecutionHookContext): PermissionPolicyResult | undefined {
     if (!isDangerousCommandGuardEnabled(this.config)) return undefined;
     if (this.modeService.mode === 'auto') return undefined;
+    if (this.modeService.mode === 'yolo' && this.flags.enabled(AUTO_REVIEW_FLAG_ID)) return undefined;
     if (context.toolCall.name !== 'Bash') return undefined;
     const command = bashCommandText(context.args);
     const verdict =

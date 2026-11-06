@@ -44,6 +44,8 @@ import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { EnvironmentError } from '#/environment/environmentRegistry';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { stubFlag } from '../../app/flag/stubs';
 import { PERMISSION_SECTION } from '#/agent/permissionRules/configSection';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
@@ -71,6 +73,7 @@ describe('AgentPermissionPolicyService chain', () => {
   let workspace: ReturnType<typeof workspaceStub>;
   let hostArgs: HostArgs;
   let dangerousCommandGuardEnabled: boolean;
+  let autoReviewEnabled: boolean;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -80,6 +83,7 @@ describe('AgentPermissionPolicyService chain', () => {
     workspace = workspaceStub('/workspace');
     hostArgs = { requestHeaders: {}, nonInteractive: false };
     dangerousCommandGuardEnabled = true;
+    autoReviewEnabled = false;
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
@@ -139,6 +143,7 @@ describe('AgentPermissionPolicyService chain', () => {
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, { findWorkTree: async () => null });
         reg.define(IBashParserService, BashParserService);
+        reg.defineInstance(IFlagService, stubFlag(() => autoReviewEnabled));
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,
@@ -465,6 +470,42 @@ describe('AgentPermissionPolicyService chain', () => {
       policyName: 'yolo-mode-approve',
       result: { kind: 'approve' },
     });
+  });
+
+  it('skips dangerous command detection in yolo when auto review is enabled', async () => {
+    mode = 'yolo';
+    autoReviewEnabled = true;
+    rules.push({ decision: 'allow', scope: 'user', pattern: 'Bash(rm *)' });
+    sessionApprovalRulePatterns.push('Bash(shutdown -h now)');
+
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'rm -rf build', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'user-configured-allow',
+      result: { kind: 'approve' },
+    });
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'shutdown -h now', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'session-approval-history',
+      result: { kind: 'approve' },
+    });
+    await expect(evaluate({
+      toolName: 'Bash',
+      args: { command: 'reboot', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      modeApproval: true,
+      result: { kind: 'approve' },
+    });
+    await expect(
+      service().evaluateWithoutModeApproval(policyContext({
+        toolName: 'Bash',
+        args: { command: 'reboot', timeout: 60 },
+      })),
+    ).resolves.toMatchObject({ policyName: 'fallback-ask', result: { kind: 'ask' } });
   });
 
   it('does not let session approval history exempt dangerous commands', async () => {
@@ -929,6 +970,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
           findWorkTree: (cwd: string) => findGitWorkTree(hostFs, cwd),
         });
         reg.define(IBashParserService, BashParserService);
+        reg.defineInstance(IFlagService, stubFlag(false));
         reg.define(IAgentPermissionPolicyService, AgentPermissionPolicyService);
       },
       strict: true,

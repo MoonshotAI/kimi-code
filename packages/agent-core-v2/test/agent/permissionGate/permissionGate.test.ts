@@ -297,13 +297,13 @@ describe('AgentPermissionGate', () => {
   it('reviews a static ask before falling back to the user in Ask When Needed', async () => {
     autoReviewEnabled = true;
     mode = 'yolo';
-    policyResult = { policyName: 'dangerous-command-ask', result: { kind: 'ask' } };
+    policyResult = { policyName: 'sensitive-file-access-ask', result: { kind: 'ask' } };
     autoReviewResult = { kind: 'decision', decision: { risk: 'high', decision: 'deny' } };
     make();
 
     await executorEvents.fireBeforeExecute(makeContext('Bash'));
 
-    expect(review).toHaveBeenCalledWith(expect.anything(), 'dangerous-command-ask');
+    expect(review).toHaveBeenCalledWith(expect.anything(), 'sensitive-file-access-ask');
     expect(resolvePermissionResolution).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'ask' }),
       expect.anything(),
@@ -314,7 +314,7 @@ describe('AgentPermissionGate', () => {
   it('approves a static ask after a reviewer allow in Ask When Needed', async () => {
     autoReviewEnabled = true;
     mode = 'yolo';
-    policyResult = { policyName: 'dangerous-command-ask', result: { kind: 'ask' } };
+    policyResult = { policyName: 'sensitive-file-access-ask', result: { kind: 'ask' } };
     make();
 
     await executorEvents.fireBeforeExecute(makeContext('Bash'));
@@ -341,7 +341,7 @@ describe('AgentPermissionGate', () => {
     for (const [enabled, nextMode] of [[false, 'yolo'], [true, 'manual']] as const) {
       autoReviewEnabled = enabled;
       mode = nextMode;
-      policyResult = { policyName: 'dangerous-command-ask', result: { kind: 'ask' } };
+      policyResult = { policyName: 'sensitive-file-access-ask', result: { kind: 'ask' } };
       make();
 
       await executorEvents.fireBeforeExecute(makeContext('Bash'));
@@ -352,18 +352,19 @@ describe('AgentPermissionGate', () => {
     }
   });
 
-  it('reviews ordinary yolo approvals before the dangerous-command fallback', async () => {
+  it('reviews ordinary yolo approvals before the user fallback', async () => {
     mode = 'yolo';
     autoReviewEnabled = true;
-    withoutModeApproval = { policyName: 'dangerous-command-ask', result: { kind: 'ask' } };
+    withoutModeApproval = fallbackAsk;
 
     expect(await ix.get(IAutoReviewGate).trigger(makeContext('Bash'), {
       policyName: 'yolo-mode-approve',
       result: { kind: 'approve' },
       modeApproval: true,
-    })).toBe('dangerous-command-ask');
+    })).toBe('fallback-ask');
 
     mode = 'auto';
+    withoutModeApproval = { policyName: 'dangerous-command-ask', result: { kind: 'ask' } };
     expect(await ix.get(IAutoReviewGate).trigger(makeContext('Bash'), modeApproval)).toBeUndefined();
   });
 
