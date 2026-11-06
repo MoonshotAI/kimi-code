@@ -48,7 +48,9 @@ import {
   promptSteerResultSchema,
   promptSubmissionSchema,
   promptSubmitResultSchema,
+  queueMoveRequestSchema,
   type PromptSkillActivation,
+  type QueueMoveRequest,
 } from '../protocol/rest-prompt';
 import { z } from 'zod';
 
@@ -353,6 +355,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 clientMetadata,
                 skills: req.body.skills,
                 attachments: promptAttachments,
+                steerIfActive: req.body.delivery === 'steer',
               });
             } catch (error) {
               settlement.dispose();
@@ -368,6 +371,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               content: projectPromptContentParts(parts),
               created_at: result.created_at,
               metadata: clientMetadata?.[0],
+              accepted_as: result.steered === true ? 'steer' : result.state === 'queued' ? 'queue' : 'turn',
             };
           }
           await applyPromptMetadataUpdate({
@@ -375,27 +379,27 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             eventService: core.accessor.get(IEventService),
             sessionId: session_id,
           }, promptMetadataTextFromContentParts(parts, clientMetadata));
-          const status = resolved.prompt.snapshot();
-          const { id } = resolved.prompt.submit({
-            message: { role: 'user', content: parts },
-            meta: {
-              promptId: attempt.id,
-              origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
-              tracked: true,
+          const { id, acceptedAs } = resolved.prompt.submit(
+            {
+              message: { role: 'user', content: parts },
+              meta: {
+                promptId: attempt.id,
+                origin: { kind: 'user', attachments: promptAttachments, clientMetadata } as PromptOrigin,
+                tracked: true,
+              },
             },
-          });
+            { steerIfActive: req.body.delivery === 'steer' },
+          );
           attempt.enqueued();
           enqueued = true;
           const handle = resolved.prompt.promptHandle(id)!;
-          if (status.state === 'idle' && !status.paused && status.queue.length === 0) {
-            await Promise.race([handle.launched, handle.completion]);
-          }
+          if (acceptedAs === 'turn') await Promise.race([handle.launched, handle.completion]);
           const staging = preparedMedia;
           void Promise.race([handle.launched, handle.completion]).then(
             () => staging?.discard(),
             () => staging?.discard(),
           );
-          return projectPromptHandle(handle);
+          return { ...projectPromptHandle(handle), accepted_as: acceptedAs };
         } catch (error) {
           if (!enqueued) await preparedMedia?.discardStaged();
           throw error;
@@ -483,6 +487,42 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     },
   );
   app.post(actionRoute.path, actionRoute.options, actionRoute.handler as Parameters<PromptRouteHost['post']>[2]);
+
+  const queueActionRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/agents/{agent_id}/queue/{tail}',
+      success: { data: z.object({}) },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.PROMPT_NOT_FOUND]: {},
+      },
+      description: 'Move a queued prompt before another queued prompt or to the end of the queue',
+      tags: ['prompts'],
+      operationId: 'queueAction',
+    },
+    async (req, reply) => {
+      const { session_id, agent_id, tail } = req.params as { session_id: string; agent_id: string; tail: string };
+      try {
+        const target = resolveActionTarget({ tail, actions: queueActions, resourceLabel: 'queued prompt' });
+        if ('message' in target) {
+          reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, target.message, req.id));
+          return;
+        }
+        await runAction({
+          action: target.action,
+          id: target.id,
+          actions: queueActions,
+          extra: { resolved: await resolvePrompt(core, session_id, agent_id), session_id, req, reply },
+          body: req.body ?? {},
+        });
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.post(queueActionRoute.path, queueActionRoute.options, queueActionRoute.handler as Parameters<PromptRouteHost['post']>[2]);
 }
 
 type PromptActionExtra = {
@@ -498,6 +538,16 @@ const promptActions: ActionTable<'abort' | 'steer', PromptActionExtra> = {
   abort: { handle: abortPromptAction },
   steer: { handle: steerPromptAction },
 };
+
+const queueActions: ActionTable<'move', PromptActionExtra> = {
+  move: { body: queueMoveRequestSchema, handle: moveQueuedAction },
+};
+
+function moveQueuedAction(ctx: PromptActionCtx): void {
+  const { resolved, req, reply, id } = ctx;
+  resolved.prompt.moveQueued(id, (ctx.body as QueueMoveRequest).before_prompt_id);
+  reply.send(okEnvelope({}, req.id));
+}
 
 async function abortPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, session_id, req, reply, id } = ctx;

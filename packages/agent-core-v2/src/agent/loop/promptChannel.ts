@@ -41,21 +41,18 @@ export class AgentPromptChannel implements IAgentPromptChannel {
 
   async submit(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
     await this.updateMetadata(promptMetadataTextFromContentParts(payload.input));
-    const status = this.loop.snapshot();
-    const { id } = this.loop.submit({
+    const { id, acceptedAs } = this.loop.submit({
       message: { role: 'user', content: [...payload.input] },
       meta: { promptId: payload.promptId, origin: { kind: 'user' }, tracked: true },
     });
-    if (status.state === 'running' || status.paused || status.queue.length > 0) return undefined;
+    if (acceptedAs !== 'turn') return undefined;
     return launchResult(this.loop, id);
   }
 
   async submitSteer(payload: SteerPayload): Promise<SteerResult> {
     this.telemetry.track2('input_steer', { parts: payload.input.length });
     await this.updateMetadata(promptMetadataTextFromContentParts(payload.input));
-    const status = this.loop.snapshot();
-    const steerable = status.state === 'running' && status.activePromptId !== undefined;
-    const { id } = this.loop.submit(
+    const { id, acceptedAs } = this.loop.submit(
       {
         message: { role: 'user', content: [...payload.input] },
         meta: { origin: { kind: 'user' }, tracked: true },
@@ -63,7 +60,7 @@ export class AgentPromptChannel implements IAgentPromptChannel {
       { steerIfActive: true },
     );
     const handle = this.loop.promptHandle(id)!;
-    if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
+    if (acceptedAs === 'queue') {
       return { prompt_id: id, created_at: handle.createdAt, state: 'queued', steered: false };
     }
     await Promise.race([handle.launched, handle.completion]);
@@ -80,7 +77,7 @@ export class AgentPromptChannel implements IAgentPromptChannel {
       prompt_id: id,
       created_at: handle.createdAt,
       state: 'running',
-      steered: steerable && turn.id === status.activeTurnId,
+      steered: acceptedAs === 'steer',
     };
   }
 

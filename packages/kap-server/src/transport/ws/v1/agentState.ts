@@ -1,5 +1,6 @@
 import {
   IAgentFullCompactionService,
+  IAgentLoopService,
   IAgentGoalService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -9,16 +10,19 @@ import {
   IAgentTowerService,
   planKey,
   type IAgentScopeHandle,
+  type PromptOrigin,
   type ServiceIdentifier,
 } from '@moonshot-ai/agent-core-v2';
 
 import type {
   AgentState,
   GoalState,
+  QueuedInput,
   TodoItemState,
   UsageState,
 } from '../../../protocol/ws-agent';
 import { readLegacyStatus } from '../../../services/legacyStatus/legacyStatus';
+import { projectUserContent } from '../../../services/messages/messageProjection';
 
 export function readAgentState(handle: IAgentScopeHandle, running: boolean): AgentState {
   const profile = optionalService(handle, IAgentProfileService);
@@ -61,6 +65,30 @@ export function readGoalState(handle: IAgentScopeHandle): GoalState | undefined 
 export function readTodoItems(handle: IAgentScopeHandle): TodoItemState[] {
   const todos = optionalService(handle, IAgentTodoService)?.get() ?? [];
   return todos.map((todo) => ({ title: todo.title, status: todo.status }));
+}
+
+export function readQueuedInputs(handle: IAgentScopeHandle): QueuedInput[] {
+  const snapshot = optionalService(handle, IAgentLoopService)?.snapshot();
+  if (snapshot === undefined) return [];
+  return snapshot.queue.flatMap((entry): QueuedInput[] => {
+    const meta = entry.meta;
+    if (meta?.tracked !== true || meta.promptId === undefined || meta.promptId === snapshot.startingPromptId) return [];
+    const origin = meta.origin as PromptOrigin | undefined;
+    const user = origin?.kind === 'user' ? origin : undefined;
+    const skills = user?.skillActivations?.map(({ skillName, skillArgs }) => ({ name: skillName, args: skillArgs }));
+    return [
+      {
+        prompt_id: meta.promptId,
+        user_message_id: meta.userMessageId ?? meta.promptId,
+        kind: 'input',
+        delivery: 'queue',
+        content: projectUserContent({ ...entry.message, origin }),
+        skills: skills !== undefined && skills.length > 0 ? skills : undefined,
+        client_metadata: user?.clientMetadata?.[0],
+        created_at: meta.createdAt ?? '',
+      },
+    ];
+  });
 }
 
 function planActive(handle: IAgentScopeHandle): boolean {

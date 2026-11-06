@@ -112,6 +112,7 @@ function stubAttachEngine(): MachineEngine {
     abort: () => {},
     pause: () => {},
     resume: () => {},
+    move: () => {},
     resetHistory: () => Promise.resolve(),
     resetJournal: () => Promise.resolve(),
     stop: () => {},
@@ -160,9 +161,11 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
         launched: Promise.resolve(turn),
         completion: new Promise(() => {}),
       });
-      return { id };
+      return { id, acceptedAs: 'turn' };
     },
     steer: async () => {},
+    moveQueued: () => {},
+    onDidChangeQueue: Event.None as IAgentLoopService['onDidChangeQueue'],
     remind(note: LoopNotify = {}): LoopNotifyHandle {
       return this.notify(note);
     },

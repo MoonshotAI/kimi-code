@@ -195,6 +195,7 @@ function stubAttachEngine(): MachineEngine {
     abort: () => {},
     pause: () => {},
     resume: () => {},
+    move: () => {},
     resetHistory: () => Promise.resolve(),
     resetJournal: () => Promise.resolve(),
     stop: () => {},

@@ -54,6 +54,7 @@ export type MachineEngineDelta =
 export type MachineTurnOutcome = 'done' | 'failed' | 'aborted';
 
 export type MachineEngineEvent =
+  | { readonly type: 'queueChanged' }
   | { readonly type: 'turnStarted'; readonly machineTurnId: number; readonly queueItemId?: string; readonly entry?: UserEntry }
   | {
       readonly type: 'turnSettled';
@@ -169,6 +170,7 @@ export interface MachineEngineSnapshot {
   readonly queue: readonly UserEntry[];
   readonly queueLength: number;
   readonly queueIds: readonly (string | undefined)[];
+  readonly starting?: string;
   readonly notificationCount: number;
   readonly reminderCount: number;
   readonly backgroundCount: number;
@@ -184,6 +186,7 @@ export interface MachineEngine {
   abort(reason?: unknown): void;
   pause(): void;
   resume(): void;
+  move(id: string, beforeId?: string): void;
   resetHistory(history: readonly HistoryMessage[]): Promise<void>;
   resetJournal(journal: SyncStoreJournal): Promise<void>;
   stop(): void;
@@ -216,6 +219,17 @@ interface MachineSnapshotLike {
     readonly background: Record<string, unknown>;
     readonly paused: boolean;
   };
+}
+
+function startingIdOf(snapshot: MachineSnapshotLike): string | undefined {
+  const value = snapshot.value;
+  const gating =
+    typeof value === 'object' && value !== null && 'idle' in value && (value as { idle?: unknown }).idle === 'gating';
+  return gating ? snapshot.context.queue[0]?.meta?.promptId : undefined;
+}
+
+function queueKeyOf(snapshot: MachineSnapshotLike): string {
+  return JSON.stringify([snapshot.context.queue.map((entry) => entry.meta?.promptId), startingIdOf(snapshot)]);
 }
 
 function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelta | undefined {
@@ -264,7 +278,7 @@ function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelt
 
 export type MachineEngineAttachRef = Pick<
   Actor<ReturnType<typeof createAgentMachine>>,
-  'on' | 'send' | 'getSnapshot'
+  'on' | 'send' | 'getSnapshot' | 'subscribe'
 >;
 
 export const MACHINE_LOOP_MODEL: LlmModel = {
@@ -509,6 +523,15 @@ export function attachMachineEngine(
       publish({ type: 'turnSettled', outcome: 'aborted', produced: event.messages });
     }),
   ];
+  let queueKey = queueKeyOf(ref.getSnapshot() as unknown as MachineSnapshotLike);
+  subscriptions.push(
+    ref.subscribe((next) => {
+      const key = queueKeyOf(next as unknown as MachineSnapshotLike);
+      if (key === queueKey) return;
+      queueKey = key;
+      publish({ type: 'queueChanged' });
+    }),
+  );
 
   return {
     submit: (entry) => {
@@ -538,6 +561,9 @@ export function attachMachineEngine(
     },
     resume: () => {
       ref.send({ type: 'input.continue' });
+    },
+    move: (id, beforeId) => {
+      ref.send({ type: 'input.move', id, beforeId });
     },
     resetHistory: (history) => {
       const events: ExternalEvent[] = history.map((message) => messageAppended({ message }));
@@ -600,6 +626,7 @@ export function attachMachineEngine(
         queue: snapshot.context.queue,
         queueLength: snapshot.context.queue.length,
         queueIds: snapshot.context.queue.map((entry) => entry.meta?.promptId),
+        starting: startingIdOf(snapshot),
         notificationCount: snapshot.context.notifications.length,
         reminderCount: snapshot.context.reminders.length,
         backgroundCount: Object.keys(snapshot.context.background).length,

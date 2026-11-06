@@ -31,6 +31,7 @@ export const promptSubmissionSchema = z.object({
   disabled_tools: z.array(z.string()).optional(),
   prompt_id: z.string().min(1).optional(),
   skills: z.array(promptSkillActivationSchema).min(1).optional(),
+  delivery: z.enum(['queue', 'steer']).optional(),
 });
 export type PromptSubmission = z.infer<typeof promptSubmissionSchema>;
 
@@ -53,7 +54,12 @@ export const promptListResponseSchema = z.object({
 });
 export type PromptListResponse = z.infer<typeof promptListResponseSchema>;
 
-export const promptSubmitResultSchema = promptItemSchema;
+export const promptAcceptanceSchema = z.enum(['turn', 'steer', 'queue']);
+export type PromptAcceptance = z.infer<typeof promptAcceptanceSchema>;
+
+export const promptSubmitResultSchema = promptItemSchema.extend({
+  accepted_as: promptAcceptanceSchema,
+});
 export type PromptSubmitResult = z.infer<typeof promptSubmitResultSchema>;
 
 export const promptSteerRequestSchema = z.object({
@@ -71,3 +77,8 @@ export const promptAbortResponseSchema = z.object({
   aborted: z.boolean(),
 });
 export type PromptAbortResponse = z.infer<typeof promptAbortResponseSchema>;
+
+export const queueMoveRequestSchema = z.object({
+  before_prompt_id: z.string().min(1).optional(),
+});
+export type QueueMoveRequest = z.infer<typeof queueMoveRequestSchema>;

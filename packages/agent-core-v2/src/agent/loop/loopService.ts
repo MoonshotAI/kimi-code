@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { createControlledPromise } from '@antfu/utils';
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { Emitter } from '#/_base/event';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
@@ -80,6 +81,7 @@ import {
   type LoopSnapshot,
   type LoopSubmitOptions,
   type LoopSubmitResult,
+  type PromptAcceptance,
   type PromptCompletion,
   type PromptHandle,
   type PromptState,
@@ -140,6 +142,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
 
   readonly requester: LoopRequester;
+
+  private readonly queueChange = this._register(new Emitter<void>());
+  readonly onDidChangeQueue = this.queueChange.event;
 
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot(),
@@ -349,11 +354,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       id,
       origin: meta?.origin as PromptOrigin | undefined,
     };
+    const queued =
+      this.active !== undefined ||
+      this.machinePaused() ||
+      (this.engine !== undefined && this.engine.snapshot().queue.length > 0);
+    let acceptedAs: PromptAcceptance = queued ? 'queue' : 'turn';
     if (tracked) {
-      const queued =
-        this.active !== undefined ||
-        this.machinePaused() ||
-        (this.engine !== undefined && this.engine.snapshot().queue.length > 0);
       this.publishPromptSubmitted(
         { promptId: id, origin, userMessageId, createdAt, message },
         queued ? 'queued' : 'running',
@@ -377,7 +383,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         this.publishPromptCompleted(id, 'failed');
         this.terminalStates.set(id, 'failed');
         waiter.failedEntry = entry;
-        return { id };
+        return { id, acceptedAs };
       }
     } else {
       this.pendingSubmissions.push(entry);
@@ -389,8 +395,20 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.engine !== undefined
     ) {
       this.machineEngine().steer(id);
+      if (!this.machineEngine().snapshot().queueIds.includes(id)) acceptedAs = 'steer';
     }
-    return { id };
+    return { id, acceptedAs };
+  }
+
+  moveQueued(promptId: string, beforePromptId?: string): void {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    const snapshot = this.engine?.snapshot();
+    const movable = (id: string): boolean =>
+      snapshot !== undefined && id !== snapshot.starting && snapshot.queueIds.includes(id);
+    if (!movable(promptId) || (beforePromptId !== undefined && !movable(beforePromptId))) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'prompt is not queued');
+    }
+    this.machineEngine().move(promptId, beforePromptId);
   }
 
   async steer(promptIds: readonly string[]): Promise<void> {
@@ -552,6 +570,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       activePromptId:
         this.active !== undefined && this.active.prompt.tracked ? this.active.prompt.id : undefined,
       queue,
+      startingPromptId: engineSnapshot?.starting,
       notificationCount: engineSnapshot?.notificationCount ?? 0,
       paused: engineSnapshot?.paused ?? false,
       hasPendingRequests: this.hasPendingRequests(),
@@ -1129,10 +1148,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       if (pending.queueItemId !== undefined && pending.entry !== undefined) {
         const waiter = this.promptWaiters.get(pending.queueItemId);
         if (waiter !== undefined) {
-          this.machineEngine().submit({
+          const engine = this.machineEngine();
+          const head = engine.snapshot().queueIds[0];
+          engine.submit({
             message: this.gatedEntryMessage(pending.entry),
             meta: pending.entry.meta,
           });
+          if (head !== undefined) engine.move(pending.queueItemId, head);
         }
       }
       return true;
@@ -1420,6 +1442,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private projectMachineEvent(event: MachineEngineEvent): void {
     switch (event.type) {
+      case 'queueChanged': {
+        this.queueChange.fire();
+        return;
+      }
       case 'turnStarted': {
         this.pendingMachineTurn = {
           id: event.machineTurnId,

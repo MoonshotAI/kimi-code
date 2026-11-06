@@ -1952,6 +1952,24 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(body.code).toBe(40402);
   });
 
+  it('reports a prompt that starts a turn and refuses to move prompts outside the queue', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire & { accepted_as: string }>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      prompt_id: 'q-1',
+    });
+    expect(submitted.body.data).toMatchObject({ prompt_id: 'q-1', accepted_as: 'turn' });
+
+    const notQueued = await call<null>('POST', `/api/v1/sessions/${id}/agents/main/queue/q-1:move`);
+    expect(notQueued.body.code).toBe(40402);
+    const unknownAction = await call<null>('POST', `/api/v1/sessions/${id}/agents/main/queue/q-1:jump`);
+    expect(unknownAction.body.code).toBe(40001);
+    const unknownAgent = await call<null>('POST', `/api/v1/sessions/${id}/agents/missing/queue/q-1:move`);
+    expect(unknownAgent.body.code).toBe(40401);
+  });
+
   it('returns 40401 for an unknown session', async () => {
     const { body } = await call<null>('POST', '/api/v1/sessions/nope/prompts', {
       content: [{ type: 'text', text: 'hello' }],

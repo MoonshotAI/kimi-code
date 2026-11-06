@@ -90,6 +90,7 @@ export type AgentEvent =
   | { type: 'input.abort'; reason?: unknown }
   | { type: 'input.pause' }
   | { type: 'input.continue' }
+  | { type: 'input.move'; id: string; beforeId?: string }
   | { type: 'input.close' }
   | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
@@ -245,6 +246,15 @@ function historyEndsMidToolChain(messages: readonly HistoryMessage[]): boolean {
 
 function hasBackgroundWork(context: AgentMachineContext): boolean {
   return Object.keys(context.background).length > 0;
+}
+
+function movedQueue(queue: readonly UserEntry[], id: string, beforeId: string | undefined): UserEntry[] | undefined {
+  const moved = queue.find((item) => item.meta?.promptId === id);
+  if (moved === undefined) return undefined;
+  const rest = queue.filter((item) => item !== moved);
+  const index = beforeId === undefined ? rest.length : rest.findIndex((item) => item.meta?.promptId === beforeId);
+  if (index === -1) return undefined;
+  return [...rest.slice(0, index), moved, ...rest.slice(index)];
 }
 
 function drainPendingPatch(
@@ -536,6 +546,13 @@ export function createAgentMachine({
       },
       'input.continue': {
         actions: assign({ paused: false }),
+      },
+      'input.move': {
+        actions: assign(({ context, event }) => {
+          if (event.type !== 'input.move') return {};
+          const queue = movedQueue(context.queue, event.id, event.beforeId);
+          return queue === undefined ? {} : { queue };
+        }),
       },
       'store.error': {
         actions: 'forwardToParent',
