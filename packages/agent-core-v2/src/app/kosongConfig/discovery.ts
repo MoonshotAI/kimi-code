@@ -16,6 +16,9 @@ export type ProviderRefreshChange = z.infer<typeof providerRefreshChangeSchema>;
 export const providerRefreshFailureSchema = z.object({
   provider: z.string().min(1),
   reason: z.string().min(1),
+  kind: z.literal('network').optional(),
+  registry_group: z.string().min(1).optional(),
+  registry_url: z.string().min(1).optional(),
 });
 export type ProviderRefreshFailure = z.infer<typeof providerRefreshFailureSchema>;
 
