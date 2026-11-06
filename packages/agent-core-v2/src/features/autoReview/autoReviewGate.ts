@@ -100,7 +100,7 @@ function fallbackAsk(
       ? undefined
       : {
           kind: 'deny',
-          message: `Tool "${context.toolCall.name}" was not run after Auto Review denial.${reasonSuffix(review)}`,
+          message: `Tool "${context.toolCall.name}" was not run after Auto Review denial.${reasonSuffix(review)}${feedbackSuffix(response.feedback)}`,
         },
   };
 }
@@ -109,4 +109,8 @@ function reasonSuffix(review: Extract<AutoReviewResult, { kind: 'decision' }>): 
   return review.decision.decision === 'deny' && review.decision.reason !== undefined
     ? ` ${review.decision.reason}`
     : '';
+}
+
+function feedbackSuffix(feedback: string | undefined): string {
+  return feedback !== undefined && feedback.length > 0 ? ` Reason: ${feedback}` : '';
 }

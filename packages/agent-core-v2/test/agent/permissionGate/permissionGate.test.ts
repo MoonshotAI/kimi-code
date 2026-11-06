@@ -485,6 +485,13 @@ describe('AgentPermissionGate', () => {
       kind: 'deny',
       message: expect.stringContaining('Too broad.'),
     });
+    expect(result.resolveApproval?.({
+      decision: 'rejected',
+      feedback: 'Only delete generated/.',
+    })).toMatchObject({
+      kind: 'deny',
+      message: expect.stringContaining('Reason: Only delete generated/.'),
+    });
     expect(result.resolveNonInteractive?.()).toMatchObject({
       kind: 'deny',
       message: expect.stringContaining('Too broad.'),
