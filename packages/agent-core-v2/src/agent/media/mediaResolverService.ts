@@ -33,9 +33,11 @@ import { detectFileType, MEDIA_SNIFF_BYTES } from './file-type';
 import { isDataUrl, isModelAcceptedImageMime, normalizeImageMime } from './image-format-policy';
 import {
   buildDaemonFileUrl,
+  buildMediaLabel,
   buildMediaPathTag,
   type DaemonFileRef,
   daemonFileRefFromPart,
+  matchMediaPathTags,
   matchSingleMediaPathTag,
   parseDaemonFileUrl,
 } from './mediaRef';
@@ -83,6 +85,14 @@ interface MediaBudgetEntry {
   readonly bytes: number;
 }
 
+interface MediaLabelEntry {
+  readonly messageIndex: number;
+  readonly partIndex: number;
+  readonly kind: 'image' | 'video';
+  readonly name?: string;
+  readonly path?: string;
+}
+
 export class AgentMediaResolverService implements IAgentMediaResolverService {
   declare readonly _serviceBrand: undefined;
 
@@ -123,6 +133,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     let changed = false;
     const out: Message[] = [];
     const budgetEntries: MediaBudgetEntry[] = [];
+    const labels: MediaLabelEntry[] = [];
     for (const message of messages) {
       const content: ContentPart[] = [];
       let messageChanged = false;
@@ -133,6 +144,15 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         if (daemonPart === undefined) {
           const entry = inlineMediaBudgetEntry(part, out.length, content.length);
           if (entry !== undefined) budgetEntries.push(entry);
+          const name = mediaNameOf(part);
+          if (message.role === 'user' && name !== undefined) {
+            labels.push({
+              messageIndex: out.length,
+              partIndex: content.length,
+              kind: part.type === 'video_url' ? 'video' : 'image',
+              name,
+            });
+          }
           content.push(part);
           continue;
         }
@@ -150,6 +170,15 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
           kind: daemonPart.kind,
           bytes: inlinePartBytes(resolved),
         });
+        if (message.role === 'user') {
+          labels.push({
+            messageIndex: out.length,
+            partIndex: content.length,
+            kind: daemonPart.kind,
+            name: mediaNameOf(part),
+            path: await this.displayPath(daemonPart.ref),
+          });
+        }
         content.push(resolved);
       }
       out.push(
@@ -166,6 +195,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
       changed ||= messageChanged;
     }
     changed = (await this.applyMediaBudget(out, budgetEntries)) || changed;
+    changed = applyMediaLabels(out, labels) || changed;
     return changed ? out : messages;
   }
 
@@ -645,6 +675,65 @@ function stableJwtSubject(token: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function mediaNameOf(part: ContentPart): string | undefined {
+  if (part.type === 'image_url') return part.imageUrl.name;
+  if (part.type === 'video_url') return part.videoUrl.name;
+  return undefined;
+}
+
+function applyMediaLabels(out: Message[], labels: readonly MediaLabelEntry[]): boolean {
+  const byMessage = new Map<number, Map<number, MediaLabelEntry>>();
+  for (const label of labels) {
+    const entries = byMessage.get(label.messageIndex) ?? new Map<number, MediaLabelEntry>();
+    entries.set(label.partIndex, label);
+    byMessage.set(label.messageIndex, entries);
+  }
+  let changed = false;
+  for (const [messageIndex, entries] of byMessage) {
+    const message = out[messageIndex]!;
+    const content: ContentPart[] = [];
+    let messageChanged = false;
+    for (const [partIndex, part] of message.content.entries()) {
+      const label = entries.get(partIndex);
+      const previous = entries.has(partIndex - 1) ? undefined : content.at(-1);
+      const labelled = label === undefined ? [part] : labelMediaPart(part, label, previous);
+      messageChanged ||= labelled.length !== 1 || labelled[0] !== part;
+      content.push(...labelled);
+    }
+    if (!messageChanged) continue;
+    out[messageIndex] = { ...message, content };
+    changed = true;
+  }
+  return changed;
+}
+
+function labelMediaPart(
+  part: ContentPart,
+  label: MediaLabelEntry,
+  previous: ContentPart | undefined,
+): ContentPart[] {
+  const open = buildMediaLabel(label.kind, label.name, label.path);
+  if (open === undefined) return [part];
+  if (part.type === 'image_url' || part.type === 'video_url') {
+    if (previous?.type === 'text' && matchSingleMediaPathTag(previous.text)?.kind === label.kind) {
+      return [part];
+    }
+    return [{ type: 'text', text: open }, part];
+  }
+  if (part.type !== 'text' || label.name === undefined) return [part];
+  const tag = matchMediaPathTags(part.text).find((entry) => entry.kind === label.kind);
+  if (tag === undefined) {
+    return [{ type: 'text', text: `${part.text}\n${open}</${label.kind}>` }];
+  }
+  const named = buildMediaPathTag(tag.kind, tag.path, label.name);
+  return [
+    {
+      type: 'text',
+      text: part.text.slice(0, tag.index) + named + part.text.slice(tag.index + tag.text.length),
+    },
+  ];
 }
 
 function inlineMediaBudgetEntry(
