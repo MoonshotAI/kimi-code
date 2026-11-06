@@ -26,6 +26,10 @@ import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
+import type { ISandboxService } from '#/os/sandbox/sandboxService';
+import type { INetworkEgressPolicy } from '#/agent/networkEgress/networkEgress';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import { recordingTelemetry } from '../../../../app/telemetry/stubs';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
 import { AgentWorkspaceContextService } from '#/session/workspaceContext/agentWorkspaceContextService';
@@ -727,6 +731,24 @@ function stubConfig(values: Record<string, unknown> = {}): IConfigService {
   } as unknown as IConfigService;
 }
 
+function stubSandbox(): ISandboxService {
+  return {
+    _serviceBrand: undefined,
+    backendName: 'unsupported',
+    supported: false,
+    wrap: (command: string, args: readonly string[]) => ({ command, args, env: {} }),
+    isLikelyDenial: () => false,
+  } as unknown as ISandboxService;
+}
+
+function stubNetworkEgress(): INetworkEgressPolicy {
+  return {
+    _serviceBrand: undefined,
+    decide: async () => 'deny',
+    acquireProxyEnvironment: async () => undefined,
+  };
+}
+
 function bashTool(
   runner: IHostProcessService,
   env: IHostEnvironment = createTestEnv(),
@@ -734,6 +756,9 @@ function bashTool(
   background: IAgentTaskService = createFakeTaskService().service,
   toolPolicy: IAgentToolPolicyService = stubToolPolicy(),
   config: IConfigService = stubConfig(),
+  sandbox: ISandboxService = stubSandbox(),
+  telemetry: ITelemetryService = recordingTelemetry([]),
+  networkEgress: INetworkEgressPolicy = stubNetworkEgress(),
 ): BashTool {
   const processService: IHostProcessService = {
     _serviceBrand: undefined,
@@ -751,7 +776,17 @@ function bashTool(
     },
   );
   const environment = stubAgentEnvironment(backend, { workDir: ctx.cwd });
-  return new BashTool(environment, ctx, stubWorkspaceContext(ctx.cwd), background, toolPolicy, config);
+  return new BashTool(
+    environment,
+    ctx,
+    stubWorkspaceContext(ctx.cwd),
+    background,
+    toolPolicy,
+    config,
+    sandbox,
+    telemetry,
+    networkEgress,
+  );
 }
 
 describe('BashTool', () => {
@@ -941,6 +976,9 @@ describe('BashTool', () => {
       createFakeTaskService().service,
       stubToolPolicy(),
       stubConfig(),
+      stubSandbox(),
+      recordingTelemetry([]),
+      stubNetworkEgress(),
     );
 
     await executeTool(tool, context({ command: 'pwd', timeout: 60 }));
@@ -1442,6 +1480,9 @@ describe('BashTool display cwd', () => {
       {} as unknown as IAgentTaskService,
       {} as unknown as IAgentToolPolicyService,
       {} as unknown as IConfigService,
+      stubSandbox(),
+      recordingTelemetry([]),
+      stubNetworkEgress(),
     );
   }
 
@@ -1485,6 +1526,9 @@ describe('BashTool spawn cwd', () => {
       createFakeTaskService().service,
       stubToolPolicy(),
       stubConfig(),
+      stubSandbox(),
+      recordingTelemetry([]),
+      stubNetworkEgress(),
     );
   }
 

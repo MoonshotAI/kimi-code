@@ -32,6 +32,9 @@ import { stubConfigService } from '../../../app/config/stubs';
 import { stubToolResultTruncationService } from '../../toolResultTruncation/stubs';
 import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
+import type { ISandboxService } from '#/os/sandbox/sandboxService';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { INetworkEgressPolicy } from '#/agent/networkEgress/networkEgress';
 
 vi.mock('#/os/backends/node-local/tools/rgLocator', async (importOriginal) => {
   const original = await importOriginal<typeof import('#/os/backends/node-local/tools/rgLocator')>();
@@ -388,6 +391,9 @@ describe('Bash environment generation guard', () => {
       {} as never,
       toolPolicy,
       stubConfigService(),
+      { isLikelyDenial: () => false } as unknown as ISandboxService,
+      { track2: () => {} } as unknown as ITelemetryService,
+      { acquireProxyEnvironment: async () => undefined } as unknown as INetworkEgressPolicy,
     );
   }
 
