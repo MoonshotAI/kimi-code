@@ -366,7 +366,9 @@ export class DaemonClient {
         // ignore
       }
     }
+    const connecting = this._connecting;
     this._connecting = null;
+    await connecting?.catch(() => undefined);
     if (this._ws) {
       await this._ws.close();
       this._ws = null;

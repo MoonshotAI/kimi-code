@@ -252,6 +252,23 @@ describe('server-e2e report', () => {
     await client.close();
   });
 
+  it('closes a DaemonClient socket that was still opening when close was called', async () => {
+    DeferredOpenWebSocket.instances = [];
+    const client = new DaemonClient({
+      baseUrl: 'http://server.example.test',
+      wsImpl: DeferredOpenWebSocket as unknown as typeof WsWebSocket,
+      logger: () => {},
+      reportDir: tmpReportDir(),
+    });
+
+    const connecting = client.connect();
+    const closing = client.close();
+    DeferredOpenWebSocket.instances[0]!.emit('open');
+    await connecting;
+    await closing;
+    expect(DeferredOpenWebSocket.instances[0]!.closed).toBe(true);
+  });
+
   it('records WsClient inbound and outbound frames', async () => {
     const reportDir = tmpReportDir();
     resetReportDir(reportDir);
@@ -468,6 +485,8 @@ async function recordLater(reportDir: string, caseName: string, delayMs: number)
 class DeferredOpenWebSocket extends EventEmitter {
   static instances: DeferredOpenWebSocket[] = [];
 
+  closed = false;
+
   constructor(readonly url: string) {
     super();
     DeferredOpenWebSocket.instances.push(this);
@@ -476,6 +495,7 @@ class DeferredOpenWebSocket extends EventEmitter {
   send(): void {}
 
   close(): void {
+    this.closed = true;
     this.emit('close', 1000, '');
   }
 }
