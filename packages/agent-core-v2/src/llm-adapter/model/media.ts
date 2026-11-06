@@ -2,6 +2,7 @@ import { resolveEndpoint } from '#human/llm/endpoint';
 import type { ContentPart, ImageURLPart, MediaKind, VideoURLPart } from '#human/llm/message';
 import type { ImageUploadInput, VideoUploadInput } from '#human/media/upload';
 import {
+  acceptsInlineMime,
   acceptsMime,
   acceptsSource,
   mediaSupportAt,
@@ -98,6 +99,10 @@ export function mediaSupportForRequest(
 
 export function mediaAcceptsMime(support: MediaKindSupport, mimeType: string): boolean {
   return acceptsMime(support, mimeType);
+}
+
+export function mediaAcceptsInlineMime(support: MediaKindSupport, mimeType: string): boolean {
+  return acceptsInlineMime(support, mimeType);
 }
 
 export function mediaAcceptsSource(

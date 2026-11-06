@@ -274,5 +274,29 @@ describe('media stack wiring', () => {
       { type: 'video_url', video_url: { url: 'media://ref-1' } },
       { type: 'video_url', video_url: { url: codecsUrl } },
     ]);
+
+    await wireRequester.generate(
+      { model },
+      {
+        messages: [
+          {
+            role: 'tool',
+            toolCallId: 'call-video',
+            content: [toCorePart({ type: 'video_url', videoUrl: { url: codecsUrl } })],
+          },
+        ],
+      },
+      { signal: new AbortController().signal },
+    );
+    const toolResultMessages = captured.at(-1)?.['messages'] as Record<string, unknown>[];
+    const toolResult = toolResultMessages.find((message) => message['role'] === 'tool');
+    expect(String(toolResult?.['content'])).not.toContain('video omitted');
+    const relocatedUser = toolResultMessages.find(
+      (message) => message['role'] === 'user' && Array.isArray(message['content']),
+    );
+    expect(relocatedUser?.['content']).toContainEqual({
+      type: 'video_url',
+      video_url: { url: codecsUrl },
+    });
   });
 });

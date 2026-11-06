@@ -3,6 +3,7 @@ import { shake } from 'radashi';
 
 import { extractText, type ContentPart, type Message, type ToolDescription } from '#/llm/message';
 import type { LlmModelSpec, LlmSampling, ResponseFormat, ThinkingRequestOptions } from '#/llm/request';
+import { capabilityAccepts } from '#/llm/request';
 import { ThinkingConfigError } from '#/llm/protocol/errors';
 import { mediaFileIdOf, mediaUrlOf } from '#/llm/protocol/kit/media';
 import { withExtras } from '#/llm/protocol/kit/params';
@@ -384,7 +385,11 @@ export const openAIPipeline: PipelineSpec<
 > = {
   media: openAIChatMedia,
   toolCallId: { normalize: (id) => sanitizeToolCallId(id, 64), maxLength: 64 },
-  patterns: (module) => openAIMediaConversionPatterns(module.options?.toolMessageConversion),
+  patterns: (module) =>
+    openAIMediaConversionPatterns(
+      module.options?.toolMessageConversion,
+      capabilityAccepts(module.model.spec.capability, 'video'),
+    ),
   thinkingHistory: (module) =>
     openAIThinkingHistoryPatterns(
       module.content.messages,

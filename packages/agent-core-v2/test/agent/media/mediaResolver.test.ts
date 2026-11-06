@@ -185,6 +185,7 @@ interface TestMediaResolution {
 }
 
 function requester(opts: {
+  modelId?: string;
   videoIn?: boolean;
   imageIn?: boolean;
   protocol?: Protocol;
@@ -196,7 +197,7 @@ function requester(opts: {
   credentialProvider?: LlmCredentialProvider;
 }): TestMediaResolution {
   const model: TestMediaResolution['model'] = {
-    id: 'm',
+    id: opts.modelId ?? 'm',
     name: 'stub',
     aliases: [],
     protocol: opts.protocol ?? 'openai',
@@ -384,6 +385,7 @@ describe('AgentMediaResolverService video strategy', () => {
     files: Map<string, { name: string; bytes: Buffer }>;
     fileId: string;
     modelUnsupported?: boolean;
+    unsupportedInline?: boolean;
     req: (upload: VideoUploader | undefined) => TestMediaResolution;
   };
 
@@ -396,15 +398,10 @@ describe('AgentMediaResolverService video strategy', () => {
       req: (upload) => requester({ videoIn: false, uploadVideo: upload }),
     },
     {
-      name: 'a no-upload provider whose wire drops inline video (openai family)',
-      files: new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]),
-      fileId: FILE_ID,
-      req: () => requester({ protocol: 'openai', uploadVideo: undefined }),
-    },
-    {
-      name: 'the bytes do not sniff as a video',
+      name: 'the bytes are invalid or the MIME cannot be inlined',
       files: new Map([[FILE_ID, { name: 'clip.mp4', bytes: PNG_BYTES }]]),
       fileId: FILE_ID,
+      unsupportedInline: true,
       req: (upload) => requester({ uploadVideo: upload }),
     },
     {
@@ -413,7 +410,7 @@ describe('AgentMediaResolverService video strategy', () => {
       fileId: 'missing',
       req: (upload) => requester({ uploadVideo: upload }),
     },
-  ])('degrades when $name', async ({ files, fileId, modelUnsupported, req }) => {
+  ])('degrades when $name', async ({ files, fileId, modelUnsupported, unsupportedInline, req }) => {
     const upload = vi.fn();
     const canonical =
       fileId === FILE_ID ? await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES) : undefined;
@@ -432,6 +429,38 @@ describe('AgentMediaResolverService video strategy', () => {
             : `<video path="${canonical}"></video>`,
     });
     expect(upload).not.toHaveBeenCalled();
+
+    if (unsupportedInline === true) {
+      const wmvFileId = 'wmv-file';
+      const wmvPath = await plantCanonical(wmvFileId, '.wmv', VIDEO_BYTES);
+      const wmvUpload = vi.fn(async () => {
+        throw new Error('files endpoint unavailable');
+      });
+      const wmvRes = resolver(
+        new Map([[wmvFileId, { name: 'clip.wmv', bytes: Buffer.from([1, 2, 3]) }]]),
+        sessionDir,
+      );
+      const openAiOut = await resolveMedia(
+        wmvRes,
+        [videoMessage(buildKimiFileUrl(wmvFileId))],
+        requester({ protocol: 'openai', providerType: 'shared', uploadVideo: undefined }),
+      );
+      expect(firstPart(openAiOut)).toEqual({
+        type: 'video_url',
+        videoUrl: { url: `data:video/x-ms-wmv;base64,${Buffer.from([1, 2, 3]).toString('base64')}` },
+      });
+
+      const wmvOut = await resolveMedia(
+        wmvRes,
+        [videoMessage(buildKimiFileUrl(wmvFileId))],
+        requester({ protocol: 'anthropic', providerType: 'shared', uploadVideo: wmvUpload }),
+      );
+      expect(firstPart(wmvOut)).toEqual({
+        type: 'text',
+        text: `<video path="${wmvPath}"></video>`,
+      });
+      expect(wmvUpload).toHaveBeenCalledTimes(1);
+    }
   });
 
   it('rethrows an auth failure so it can drive credential refresh', async () => {
@@ -487,27 +516,78 @@ describe('AgentMediaResolverService video strategy', () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  it('retries the upload on a later step after a transient failure instead of freezing the tag', async () => {
+  it('probes upload once per model and recovers after a model switch', async () => {
     let uploadCalls = 0;
     const upload = vi.fn(async (): Promise<VideoURLPart> => {
       uploadCalls += 1;
       if (uploadCalls === 1) throw new Error('files endpoint unavailable');
       return msPart('prov-1');
     });
-    const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
-    const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]), sessionDir);
+    const bigFileId = 'big-file';
+    const bigBytes = Buffer.concat([VIDEO_BYTES, Buffer.alloc(20 * 1024 * 1024)]);
+    const counting = countingFileService(
+      new Map([
+        [FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }],
+        [bigFileId, { name: 'big.mp4', bytes: bigBytes }],
+      ]),
+    );
+    const res = new AgentMediaResolverService(
+      counting.service,
+      blobStore(),
+      telemetry,
+      new AgentStateService(),
+      stubMediaStore(sessionDir),
+      stubDispatcher,
+      stubScopeContext,
+    );
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
     const req = requester({ uploadVideo: upload });
 
     const failed = await resolveMedia(res, [message], req);
     expect(firstPart(failed)).toEqual({
-      type: 'text',
-      text: `<video path="${canonical}"></video>`,
+      type: 'video_url',
+      videoUrl: { url: `data:video/mp4;base64,${VIDEO_BYTES.toString('base64')}` },
     });
 
-    const retried = await resolveMedia(res, [message], req);
-    expect(firstPart(retried)).toEqual(msPart('prov-1'));
+    const sameModel = await resolveMedia(res, [message], req);
+    expect(firstPart(sameModel)).toEqual({
+      type: 'video_url',
+      videoUrl: { url: `data:video/mp4;base64,${VIDEO_BYTES.toString('base64')}` },
+    });
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(counting.gets).toBe(2);
+
+    const switchedReq = requester({ modelId: 'switched', uploadVideo: upload });
+    const switched = await resolveMedia(res, [message], switchedReq);
+    expect(firstPart(switched)).toEqual(msPart('prov-1'));
     expect(upload).toHaveBeenCalledTimes(2);
+
+    let bigUploadCalls = 0;
+    const bigUpload = vi.fn(async (): Promise<VideoURLPart> => {
+      bigUploadCalls += 1;
+      if (bigUploadCalls === 1) throw new Error('files endpoint unavailable');
+      return msPart('big-prov');
+    });
+    const bigPath = await plantCanonical(bigFileId, '.mp4', VIDEO_BYTES);
+    const bigMessage = videoMessage(buildKimiFileUrl(bigFileId));
+    const bigReq = requester({ modelId: 'big', uploadVideo: bigUpload });
+    const bigFailed = await resolveMedia(res, [bigMessage], bigReq);
+    expect(firstPart(bigFailed)).toEqual({
+      type: 'text',
+      text: `<video path="${bigPath}"></video>`,
+    });
+
+    const bigSameModel = await resolveMedia(res, [bigMessage], bigReq);
+    expect(firstPart(bigSameModel)).toEqual({
+      type: 'text',
+      text: `<video path="${bigPath}"></video>`,
+    });
+    expect(bigUpload).toHaveBeenCalledTimes(1);
+
+    const bigSwitchedReq = requester({ modelId: 'switched-big', uploadVideo: bigUpload });
+    const bigSwitched = await resolveMedia(res, [bigMessage], bigSwitchedReq);
+    expect(firstPart(bigSwitched)).toEqual(msPart('big-prov'));
+    expect(bigUpload).toHaveBeenCalledTimes(2);
   });
 
   it('emits an unavailable placeholder when a stale reference has no canonical copy', async () => {
