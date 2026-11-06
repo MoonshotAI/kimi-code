@@ -105,7 +105,7 @@ describe('InMemorySkillCatalog skill listing', () => {
 });
 
 describe('InMemorySkillCatalog model skill listing', () => {
-  it('lists only model-invocable inline skills', () => {
+  it('lists only model-invocable inline skills without file-loading paths', () => {
     const registry = makeRegistry([
       makeSkill('review', 'user', 'Review code', undefined, {
         type: 'prompt',
@@ -123,7 +123,8 @@ describe('InMemorySkillCatalog model skill listing', () => {
     expect(rendered).toContain('DISREGARD any earlier skill listings');
     expect(rendered).toContain('- review: Review code');
     expect(rendered).toContain('  When to use: When reviewing changes.');
-    expect(rendered).toContain('  Path: /tmp/user/review/SKILL.md');
+    expect(rendered).not.toContain('Path:');
+    expect(rendered).not.toContain('/tmp/user/review/SKILL.md');
     expect(rendered).not.toContain('private');
     expect(rendered).not.toContain('flow-only');
     expect(rendered).not.toContain('sub-step');
