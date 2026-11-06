@@ -5078,6 +5078,7 @@ export class KimiTUI {
   }
 
   restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void {
+    this.skillVariantPaths.clear();
     this.restoreEditor();
     for (const { commandName, path, start } of skillVariantPathsForInput(text, inlineSkillActivations ?? [], this.skillCommandMap)) {
       this.skillVariantPaths.set(start, { commandName, path });

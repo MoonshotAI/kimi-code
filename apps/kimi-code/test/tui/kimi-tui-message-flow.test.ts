@@ -865,6 +865,29 @@ describe('KimiTUI message flow', () => {
     });
   });
 
+  it('clears stale variant bindings when restoring replacement text', async () => {
+    const selectedPath = '/work/B/review/SKILL.md';
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: selectedPath, source: 'project', workspaceDir: '/work/B' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path: selectedPath }]);
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(selectedPath);
+
+    driver.restoreInputText('/skill:review');
+
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path: selectedPath }]);
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(selectedPath);
+  });
+
   it('restores skill variants from input history without losing duplicate bindings', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const { driver } = await makeDriver(session, {
