@@ -47,7 +47,11 @@ import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSel
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { AgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncementsService';
 import { AgentToolSelectService } from '#/agent/toolSelect/toolSelectService';
-import { toolSelectKey } from '#/agent/toolSelect/toolSelectOps';
+import {
+  ToolSelectInitialized,
+  ToolSelectToolsChanged,
+  toolSelectKey,
+} from '#/agent/toolSelect/toolSelectOps';
 import { SelectToolsTool } from '#/agent/tools/select-tools/selectToolsTool';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IWireService } from '#/wire/wire';
@@ -136,7 +140,7 @@ function schemaMessage(...names: string[]): ContextMessage {
 }
 
 class StubMcpTool implements ExecutableTool<Record<string, unknown>> {
-  private descriptionValue: string;
+  description: string;
   calls = 0;
   readonly parameters: Record<string, unknown>;
 
@@ -145,19 +149,11 @@ class StubMcpTool implements ExecutableTool<Record<string, unknown>> {
     private readonly output: string = 'mcp ok',
     parameters?: Record<string, unknown>,
   ) {
-    this.descriptionValue = `${name} desc`;
+    this.description = `${name} desc`;
     this.parameters = parameters ?? {
       type: 'object',
       additionalProperties: true,
     };
-  }
-
-  get description(): string {
-    return this.descriptionValue;
-  }
-
-  set description(value: string) {
-    this.descriptionValue = value;
   }
 
   resolveExecution(): ToolExecution {
@@ -400,7 +396,7 @@ function registerSharedServices(
     hooks: { onDidRestore: new OrderedHookSlot() },
     dispatch: async (event: Event2) => {
       eventBus.publish(event);
-      if (!event.type.startsWith('tool_select.')) return;
+      if (!(event instanceof ToolSelectInitialized) && !(event instanceof ToolSelectToolsChanged)) return;
       const fold = toolSelectKey.replayable.folds.get(event.constructor as Event2Class);
       if (fold === undefined) throw new Error(`Missing tool-select fold for ${event.type}`);
       const next = produce(states.agent.get(toolSelectKey), (draft) => {
@@ -884,7 +880,7 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     ]);
   });
 
-  it('shapeHistory keeps a deferred schema while an inline update is pending', async () => {
+  it('shapeHistory keeps a deferred schema after a same-name inline update', async () => {
     const h = createHarness();
     registerUser(h, new EchoTool(USER_DEFERRED), 'deferred');
     h.contextMemory.history.push(schemaMessage(USER_DEFERRED));
@@ -922,7 +918,7 @@ describe('AgentToolSelectService.load', () => {
     flagEnabled = true;
   });
 
-  it('settles per name and holds same-name updates pending with one reminder per version', async () => {
+  it('settles per name and keeps same-name updates active with one reminder', async () => {
     const h = createHarness();
     const alpha = new StubMcpTool(MCP_ALPHA);
     registerMcp(h, alpha, 'inline');
@@ -948,23 +944,22 @@ describe('AgentToolSelectService.load', () => {
     expect(h.sut.defaultTools().find((tool) => tool.name === MCP_ALPHA)?.description)
       .toBe(`${MCP_ALPHA} desc`);
 
-    const pendingReminders = () => h.contextMemory.appended.filter(
+    const updateReminders = () => h.contextMemory.appended.filter(
       (message) => message.origin?.kind === 'injection' && message.origin.variant === 'tool_update_pending',
     );
-    expect(pendingReminders()).toHaveLength(1);
-    expect(announcementText(pendingReminders()[0]!)).toContain('not applied in this session');
+    expect(updateReminders()).toHaveLength(1);
+    expect(announcementText(updateReminders()[0]!)).toContain('not applied in this session');
     await h.sut.prepareForRequest();
-    expect(pendingReminders()).toHaveLength(1);
+    expect(updateReminders()).toHaveLength(1);
 
-    h.registry.register(new StubMcpTool(MCP_ALPHA, 'mcp ok', REQUIRED_PAYLOAD_PARAMETERS), {
-      source: 'mcp',
-      disclosure: 'inline',
-    });
+    const replacement = new StubMcpTool(MCP_ALPHA);
+    replacement.description = `${MCP_ALPHA} updated desc`;
+    h.registry.register(replacement, { source: 'mcp', disclosure: 'inline' });
     await h.sut.prepareForRequest();
     expect(h.registry.resolve(MCP_ALPHA)).toBe(alpha);
     expect(h.registry.list().find((tool) => tool.name === MCP_ALPHA)?.description)
       .toBe(`${MCP_ALPHA} desc`);
-    expect(pendingReminders()).toHaveLength(2);
+    expect(updateReminders()).toHaveLength(1);
   });
 
   it('loads the schema of an opted-in user tool', () => {

@@ -37,9 +37,7 @@ import {
 } from './toolSelect';
 import {
   ToolSelectInitialized,
-  ToolSelectPendingUpdatesChanged,
   ToolSelectToolsChanged,
-  ToolSelectUpdateNotified,
   toolSelectKey,
   toolSelectSchemaSignature,
   toolSelectVersionSignature,
@@ -57,6 +55,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   declare readonly _serviceBrand: undefined;
 
   private reconcileTail: Promise<void> = Promise.resolve();
+  private readonly notifiedUpdates = new Set<string>();
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
@@ -96,23 +95,6 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   async prepareForRequest(signal?: AbortSignal): Promise<void> {
     await (signal === undefined ? this.mcpHandle.ready : abortable(this.mcpHandle.ready, signal));
     const work = this.reconcileTail.then(() => this.reconcile(signal));
-    this.reconcileTail = work.catch(() => {});
-    await (signal === undefined ? work : abortable(work, signal));
-  }
-
-  async applyPendingUpdates(signal?: AbortSignal): Promise<void> {
-    await (signal === undefined ? this.mcpHandle.ready : abortable(this.mcpHandle.ready, signal));
-    const work = this.reconcileTail.then(async () => {
-      if (this.modelState().initial === undefined) return;
-      signal?.throwIfAborted();
-      await this.dispatcher.dispatch(
-        new ToolSelectInitialized({
-          agentId: this.scopeContext.agentId,
-          tools: this.liveTools('initial'),
-          reset: true,
-        }),
-      );
-    });
     this.reconcileTail = work.catch(() => {});
     await (signal === undefined ? work : abortable(work, signal));
   }
@@ -316,76 +298,44 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
       await this.dispatcher.dispatch(
         new ToolSelectInitialized({ agentId: this.scopeContext.agentId, tools: this.activeTools('initial') }),
       );
-      await this.reconcilePendingUpdates(live, signal);
+      this.notifyUpdatedTools(live, signal);
       return;
     }
-    const initialByName = new Map(state.initial.map((tool) => [tool.name, tool]));
-    const removed = state.current.filter((tool) => {
-      const initial = initialByName.get(tool.name);
-      return initial !== undefined &&
-        tool.origin === 'runtime' &&
-        toolSelectVersionSignature(initial) !== toolSelectVersionSignature(tool);
-    });
-    if (removed.length > 0) {
-      const removedNames = new Set(removed.map((tool) => tool.name));
-      const added = state.initial.filter((tool) => removedNames.has(tool.name));
-      await this.dispatcher.dispatch(
-        new ToolSelectToolsChanged({ agentId: this.scopeContext.agentId, added, removed }),
-      );
-    }
-    const current = this.modelState().current;
+    const current = state.current;
     const currentNames = new Set(current.map((tool) => tool.name));
     const active = this.activeTools('initial');
     const activeNames = new Set(active.map((tool) => tool.name));
-    const activeRemoved = current.filter((tool) => !activeNames.has(tool.name));
-    const activeAdded = active.flatMap((tool) =>
+    const removed = current.filter((tool) => !activeNames.has(tool.name));
+    const added = active.flatMap((tool) =>
       currentNames.has(tool.name) ? [] : [{ ...tool, origin: 'runtime' as const }]);
-    if (activeAdded.length > 0 || activeRemoved.length > 0) {
+    if (added.length > 0 || removed.length > 0) {
       signal?.throwIfAborted();
       await this.dispatcher.dispatch(
         new ToolSelectToolsChanged({
           agentId: this.scopeContext.agentId,
-          added: activeAdded,
-          removed: activeRemoved,
+          added,
+          removed,
         }),
       );
     }
-    await this.reconcilePendingUpdates(live, signal);
+    this.notifyUpdatedTools(live, signal);
   }
 
-  private async reconcilePendingUpdates(
-    live: readonly ToolSelectTool[],
-    signal?: AbortSignal,
-  ): Promise<void> {
+  private notifyUpdatedTools(live: readonly ToolSelectTool[], signal?: AbortSignal): void {
     const liveByName = new Map(live.map((tool) => [tool.name, tool]));
-    const pending = this.modelState().current.flatMap((active) => {
+    for (const active of this.modelState().current) {
       const next = liveByName.get(active.name);
       if (next === undefined || toolSelectVersionSignature(next) === toolSelectVersionSignature(active)) {
-        return [];
+        continue;
       }
-      return [{ ...next, origin: 'runtime' as const }];
-    });
-    const previous = this.modelState().pendingUpdates;
-    const changed = pending.length !== previous.length || pending.some((tool, index) =>
-      toolSelectVersionSignature(tool) !== toolSelectVersionSignature(previous[index]!));
-    if (changed) {
+      const signature = toolSelectVersionSignature(next);
+      if (this.notifiedUpdates.has(signature)) continue;
       signal?.throwIfAborted();
-      await this.dispatcher.dispatch(
-        new ToolSelectPendingUpdatesChanged({ agentId: this.scopeContext.agentId, updates: pending }),
-      );
-    }
-    const notified = new Set(this.modelState().notifiedUpdates);
-    for (const tool of pending) {
-      const signature = toolSelectVersionSignature(tool);
-      if (notified.has(signature)) continue;
-      signal?.throwIfAborted();
+      this.notifiedUpdates.add(signature);
       this.reminder.notify(
-        `Tool "${tool.name}" has an update, but the update is not applied in this session. ` +
-          'Continue using the currently registered version. Apply it with /new or /reload.',
+        `Tool "${active.name}" has an update, but the update is not applied in this session. ` +
+          'Continue using the currently registered version.',
         { variant: 'tool_update_pending' },
-      );
-      await this.dispatcher.dispatch(
-        new ToolSelectUpdateNotified({ agentId: this.scopeContext.agentId, signature }),
       );
     }
   }

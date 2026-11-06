@@ -176,7 +176,7 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(ctx.llmCalls).toHaveLength(0);
   });
 
-  it('announces, loads, pins same-name updates, and keeps the top-level table byte-stable across restores and model switches', async () => {
+  it('announces, loads, pins same-name updates, and keeps the top-level table byte-stable across model switches', async () => {
     const inlineName = 'mcp__srv__inline';
     const inlineTool = new StubMcpTool(inlineName);
     ctx.get(IAgentToolRegistryService).register(inlineTool, { source: 'mcp', disclosure: 'inline' });
@@ -194,7 +194,6 @@ describe('progressive tool disclosure end-to-end', () => {
     const initialTools = ctx.get(IAgentStateService).get(toolSelectKey).initial;
 
     inlineTool.description = `${inlineName} updated desc`;
-    await ctx.restorePersisted();
     ctx.mockNextResponse(selectToolsCall('call_select_inline', [inlineName]));
     ctx.mockNextResponse({ type: 'text', text: 'after pending update' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'try the updated inline tool' }] });
@@ -280,11 +279,6 @@ describe('progressive tool disclosure end-to-end', () => {
       message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT)).toBe(true);
 
     expect(alpha.calls).toBe(1);
-
-    await ctx.get(IAgentToolSelectService).applyPendingUpdates?.();
-    expect(ctx.get(IAgentToolSelectService).defaultTools().find((tool) => tool.name === inlineName)
-      ?.description).toBe(`${inlineName} updated desc`);
-    expect(ctx.get(IAgentStateService).get(toolSelectKey).pendingUpdates).toEqual([]);
   });
 
   it('loads and dispatches a user tool registered through the domain service', async () => {

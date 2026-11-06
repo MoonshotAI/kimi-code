@@ -106,7 +106,12 @@ export class AgentToolRegistryService implements IAgentToolRegistryService {
       }
       if (this.tools.get(entry.tool.name) === entry) this.unregisterTool(entry.tool.name);
     });
-    return { status, dispose: () => disposable.dispose() };
+    return {
+      status,
+      dispose: () => {
+        disposable.dispose();
+      },
+    };
   }
 
   private unregisterTool(name: string): ToolEntry | undefined {

@@ -28,8 +28,6 @@ export interface ToolSelectModelState {
   readonly initial: readonly ToolSelectTool[] | undefined;
   readonly current: readonly ToolSelectTool[];
   readonly changes: readonly ToolSelectChange[];
-  readonly pendingUpdates: readonly ToolSelectTool[];
-  readonly notifiedUpdates: readonly string[];
 }
 
 export function toolSelectSchemaSignature(
@@ -47,7 +45,6 @@ const toolSchema = z.custom<ToolSelectTool>();
 const toolSelectInitializedSchema = z.object({
   agentId: z.string(),
   tools: z.array(toolSchema).readonly(),
-  reset: z.boolean().optional(),
 });
 
 export class ToolSelectInitialized extends AgentEvent2<z.infer<typeof toolSelectInitializedSchema>> {
@@ -58,7 +55,6 @@ export class ToolSelectInitialized extends AgentEvent2<z.infer<typeof toolSelect
 export interface ToolSelectInitialized {
   readonly agentId: string;
   readonly tools: readonly ToolSelectTool[];
-  readonly reset?: boolean;
 }
 
 const toolSelectToolsChangedSchema = z.object({
@@ -78,36 +74,6 @@ export interface ToolSelectToolsChanged {
   readonly removed: readonly ToolSelectTool[];
 }
 
-const toolSelectPendingUpdatesChangedSchema = z.object({
-  agentId: z.string(),
-  updates: z.array(toolSchema).readonly(),
-});
-
-export class ToolSelectPendingUpdatesChanged extends AgentEvent2<z.infer<typeof toolSelectPendingUpdatesChangedSchema>> {
-  static override readonly type = 'tool_select.pending_updates_changed';
-  static override readonly durable = true;
-  static override readonly schema = toolSelectPendingUpdatesChangedSchema;
-}
-export interface ToolSelectPendingUpdatesChanged {
-  readonly agentId: string;
-  readonly updates: readonly ToolSelectTool[];
-}
-
-const toolSelectUpdateNotifiedSchema = z.object({
-  agentId: z.string(),
-  signature: z.string(),
-});
-
-export class ToolSelectUpdateNotified extends AgentEvent2<z.infer<typeof toolSelectUpdateNotifiedSchema>> {
-  static override readonly type = 'tool_select.update_notified';
-  static override readonly durable = true;
-  static override readonly schema = toolSelectUpdateNotifiedSchema;
-}
-export interface ToolSelectUpdateNotified {
-  readonly agentId: string;
-  readonly signature: string;
-}
-
 function byName(left: ToolSelectTool, right: ToolSelectTool): number {
   return left.name.localeCompare(right.name);
 }
@@ -116,15 +82,9 @@ export const toolSelectKey = defineState('toolSelect', (): ToolSelectModelState 
   initial: undefined,
   current: [],
   changes: [],
-  pendingUpdates: [],
-  notifiedUpdates: [],
 })).replayable({ schema: z.custom<ToolSelectModelState>() })
   .on(ToolSelectInitialized, (s, e) => {
-    if (s.initial !== undefined && e.reset !== true) return;
-    if (e.reset === true) {
-      s.changes = [];
-      s.pendingUpdates = [];
-    }
+    if (s.initial !== undefined) return;
     s.initial = e.tools.map((tool) => ({ ...tool }));
     s.current = e.tools.map((tool) => ({ ...tool }));
   })
@@ -138,10 +98,4 @@ export const toolSelectKey = defineState('toolSelect', (): ToolSelectModelState 
       added: e.added.map((tool) => ({ ...tool })),
       removed: e.removed.map((tool) => ({ ...tool })),
     });
-  })
-  .on(ToolSelectPendingUpdatesChanged, (s, e) => {
-    s.pendingUpdates = e.updates.map((tool) => ({ ...tool }));
-  })
-  .on(ToolSelectUpdateNotified, (s, e) => {
-    if (!s.notifiedUpdates.includes(e.signature)) s.notifiedUpdates.push(e.signature);
   });

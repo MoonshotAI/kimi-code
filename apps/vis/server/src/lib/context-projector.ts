@@ -588,8 +588,6 @@ export function projectContext(
       case 'mcp.tools_discovered':
       case 'tool_select.initialized':
       case 'tool_select.tools_changed':
-      case 'tool_select.pending_updates_changed':
-      case 'tool_select.update_notified':
       case 'mcp.server_failed':
       case 'mcp.server_failure_resolved':
       case 'file_history.checkpoint':

@@ -58,8 +58,6 @@ export interface IAgentToolSelectService {
 
   prepareForRequest(signal?: AbortSignal): Promise<void>;
 
-  applyPendingUpdates?(signal?: AbortSignal): Promise<void>;
-
   defaultTools(disclosure?: boolean): readonly Tool[];
 
   shapeTools(entries: readonly ToolInfo[], disclosure?: boolean): readonly ShapedToolEntry[];
