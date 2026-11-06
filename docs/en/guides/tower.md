@@ -122,9 +122,7 @@ You can explicitly choose the model for an individual new spawn in a normal mess
 - "Spawn the worker agent-docs with smart/slow."
 - "Use smart/slow for the reviewer of feat/build-gemm."
 
-The only allowed choices are the pool aliases (`[secondary_model.models]` keys, or a lone `default_model`); aliases that exist only in `[models]` are not accepted. The `model` parameter is available only when the pool has two or more entries. The choice applies only to that new agent (or to the stopped agent named in an `Agent` resume call): it does not change running agents and is not saved for future spawns.
-
-To continue a stopped worker on a different model, use `Agent(resume="<agent-id>", model="<pool-alias>", run_in_background=true, prompt="...")`. This preserves the agent ID, conversation, mission, branch, worktree, and uncommitted work. Omitting `model` keeps the previous model.
+The only allowed choices are the pool aliases (`[secondary_model.models]` keys, or a lone `default_model`); aliases that exist only in `[models]` are not accepted. The `model` parameter is available only when the pool has two or more entries. The choice applies only to that new agent: it does not change running or resumed agents and is not saved for future spawns.
 
 To control token costs, set the pool default to a cheaper model; workers and reviewers use it by default, and an explicit pool alias can override it for one spawn.
 

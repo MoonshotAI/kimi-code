@@ -78,13 +78,10 @@ import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
-  resolveSubagentBinding,
   resolveSubagentModelPool,
-  resolveResumedSubagentThinking,
   resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
   stripSubagentModelParameter,
-  wrapSubagentModelError,
   type SubagentModelSource,
 } from '#/session/subagent/configSection';
 import {
@@ -126,8 +123,6 @@ export class SubagentTool implements ISubagentTool {
       ? parameters
       : stripSubagentForkParameter(parameters);
   }
-
-  private static readonly resumeChains = new Map<string, Promise<void>>();
 
   private readonly callerAgentId: string;
   private readonly canRunInBackground: () => boolean;
@@ -336,30 +331,7 @@ export class SubagentTool implements ISubagentTool {
     if (isResume) {
       const target = await this.resolveResumeTarget(resumeAgentId, controller.signal);
       agentId = target.id;
-      const targetProfile = target.accessor.get(IAgentProfileService);
-      if (args.model !== undefined) {
-        const own = requester.accessor.get(IAgentProfileService).data();
-        if (own.modelAlias === undefined) {
-          throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Caller agent has no model bound', {
-            details: { agentId: this.callerAgentId },
-          });
-        }
-        const binding = resolveSubagentBinding(
-          this.config,
-          { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-          args.model,
-        );
-        try {
-          await targetProfile.setModel(binding.model);
-          const model = this.modelCatalog.get(binding.model);
-          const thinking = resolveResumedSubagentThinking(this.config, model, binding.thinking);
-          if (thinking !== undefined) targetProfile.setThinking(thinking);
-        } catch (error) {
-          throw wrapSubagentModelError(error, binding.model, own.modelAlias);
-        }
-        displayModelSource = binding.modelSource;
-      }
-      const resumed = targetProfile.data();
+      const resumed = target.accessor.get(IAgentProfileService).data();
       profileName = resumed.profileName ?? RESUMED_LABEL;
       displayModel = resumed.modelAlias;
     } else {
@@ -474,20 +446,6 @@ export class SubagentTool implements ISubagentTool {
     return rebuilt;
   }
 
-  private serializeResume<T>(agentId: string, work: () => Promise<T>): Promise<T> {
-    const previous = SubagentTool.resumeChains.get(agentId) ?? Promise.resolve();
-    const run = previous.then(work, work);
-    const next = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    SubagentTool.resumeChains.set(agentId, next);
-    void next.finally(() => {
-      if (SubagentTool.resumeChains.get(agentId) === next) SubagentTool.resumeChains.delete(agentId);
-    });
-    return run;
-  }
-
   private async execution(
     args: SubagentToolInput,
     { toolCallId, signal }: ExecutableToolContext,
@@ -529,9 +487,7 @@ export class SubagentTool implements ISubagentTool {
 
       let handle: SubagentHandle;
       try {
-        handle = isResume
-          ? await this.serializeResume(resumeAgentId, () => this.launch(args, toolCallId, controller))
-          : await this.launch(args, toolCallId, controller);
+        handle = await this.launch(args, toolCallId, controller);
       } catch (error) {
         signal.removeEventListener('abort', abortBeforeRegister);
         this.log.warn('subagent launch failed', {

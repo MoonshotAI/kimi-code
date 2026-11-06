@@ -122,9 +122,7 @@ worker 和 reviewer 与 Agent、AgentSwarm 使用相同的模型选择规则。�
 - "让 worker agent-docs 使用 smart/slow。"
 - "让审查 feat/build-gemm 的 reviewer 使用 smart/slow。"
 
-可选值仅限池中别名（`[secondary_model.models]` 的 key，或单独一行的 `default_model`）；只存在于 `[models]` 而不在池内的别名不能被接受。模型池有两个及以上条目时才提供 `model` 参数。选择只作用于本次新派生的 Agent（或 `Agent` resume 调用中指定的已停止 Agent）：不会修改正在运行的 Agent，也不会保存给后续派生。
-
-如果 worker 已停止，需要换模型接着做，可以使用 `Agent(resume="<agent-id>", model="<池内别名>", run_in_background=true, prompt="...")`。agent id、对话历史、mission、branch、worktree 和未提交修改都会保留；省略 `model` 时仍用原模型。
+可选值仅限池中别名（`[secondary_model.models]` 的 key，或单独一行的 `default_model`）；只存在于 `[models]` 而不在池内的别名不能被接受。模型池有两个及以上条目时才提供 `model` 参数。选择只作用于本次新派生的 Agent：不会修改正在运行或已恢复的 Agent，也不会保存给后续派生。
 
 如果希望控制 token 开支，可以将池默认值设为成本较低的模型；worker 和 reviewer 默认使用它，单次派生也可以通过显式指定池中别名覆盖。
 

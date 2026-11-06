@@ -286,15 +286,6 @@ export function resolveSubagentThinking(
   return declaredDefaultEffortForModel(model);
 }
 
-export function resolveResumedSubagentThinking(
-  config: IConfigService,
-  model: Model | undefined,
-  explicit: string | undefined,
-): string | undefined {
-  if (config.get<ThinkingConfig>(THINKING_SECTION)?.enabled === false) return 'off';
-  return resolveSubagentThinking(config, model, explicit);
-}
-
 export function buildSubagentModelDescriptions(config: IConfigService): string | undefined {
   if (!exposesSubagentModelChoice(config)) return undefined;
   return poolDescriptionLines(resolveSubagentModelPool(config)!).join('\n');

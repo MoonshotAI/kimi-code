@@ -57,7 +57,7 @@ export const SubagentToolInputSchema = z.preprocess(
       .string()
       .optional()
       .describe(
-        'Which model to run the subagent on: one of the aliases listed under "Available models" in this tool description. When omitted for a new subagent, the configured default model is used. When resuming, omit model to keep the resumed agent\'s current model, or pass model to rebind a stopped resumed agent before it runs.',
+        'Which model to run the subagent on: one of the aliases listed under "Available models" in this tool description. When omitted, the configured default model is used. Ignored when resuming — resumed subagents keep their own model.',
       ),
   }),
 );
