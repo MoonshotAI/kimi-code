@@ -18,6 +18,7 @@ import { createReminderStub } from '../reminder/stubs';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptSubmitted } from '#/agent/prompt/promptEvents';
@@ -33,6 +34,7 @@ import type {
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
 import { STATE_FILE, TowerStore, type TowerState } from '#/features/tower/protocol/index';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { TowerSendTool } from '#/features/tower/tools/send/sendTool';
 import { TowerReviewTool } from '#/features/tower/tools/review/reviewTool';
 import { TowerCompleteTool } from '#/features/tower/tools/complete/completeTool';
@@ -2961,6 +2963,14 @@ describe('AgentTowerService', () => {
                 }
               : undefined,
         } as unknown as IAgentLifecycleService,
+        {
+          _serviceBrand: undefined,
+          mode: 'manual',
+        } as unknown as IAgentPermissionModeService,
+        {
+          _serviceBrand: undefined,
+          args: { requestHeaders: {}, nonInteractive: false },
+        } as unknown as IBootstrapService,
       );
 
       const result = await executeTool(tool, {

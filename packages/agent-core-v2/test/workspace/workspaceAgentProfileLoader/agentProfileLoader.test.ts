@@ -601,6 +601,31 @@ describe('agent profile loaders + session catalog', () => {
     });
   });
 
+  it('preserves a builtin pinned permission mode when a file profile overrides it', async () => {
+    registerAgentProfile(
+      normalizeAgentProfile({
+        name: 'tower-worker',
+        description: 'builtin pinned worker',
+        pinnedPermissionMode: true,
+        systemPrompt: () => 'BUILTIN PINNED PROMPT',
+      }),
+    );
+    await withFixture(async (fixture) => {
+      await writeAgent(
+        join(fixture.workDir, '.kimi-code', 'agents'),
+        'tower-worker.md',
+        agentMd('tower-worker', 'workspace worker override', true),
+      );
+      await withStack(fixture, undefined, async (stack) => {
+        await stack.ready();
+
+        const profile = stack.catalog.get('tower-worker');
+        expect(profile?.description).toBe('workspace worker override');
+        expect(profile?.pinnedPermissionMode).toBe(true);
+      });
+    });
+  });
+
   it('falls back to a valid lower-priority override when the higher candidate does not opt in', async () => {
     await withFixture(async (fixture) => {
       await writeAgent(

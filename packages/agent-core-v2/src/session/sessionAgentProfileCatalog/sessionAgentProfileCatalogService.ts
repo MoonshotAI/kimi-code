@@ -156,10 +156,12 @@ export class SessionAgentProfileCatalogService
           continue;
         }
         const replaced = merged.get(candidate.profile.name);
-        const effective =
-          candidate.profile.subagents === undefined && replaced?.subagents !== undefined
-            ? { ...candidate.profile, subagents: replaced.subagents }
-            : candidate.profile;
+        const effective: AgentProfile = {
+          ...candidate.profile,
+          subagents: candidate.profile.subagents ?? replaced?.subagents,
+          pinnedPermissionMode:
+            candidate.profile.pinnedPermissionMode ?? replaced?.pinnedPermissionMode,
+        };
         merged.set(candidate.profile.name, effective);
         inspections.set(candidate.profile.name, {
           name: candidate.profile.name,

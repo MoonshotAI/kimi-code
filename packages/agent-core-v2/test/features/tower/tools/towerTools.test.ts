@@ -14,6 +14,9 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { AnyAgentTool } from '#/agent/toolRegistry/toolContribution';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
@@ -91,6 +94,8 @@ let currentSessionId: string;
 let liveSessionIds: string[];
 let liveAgentTaskIds: string[];
 let towerBudget: number;
+let currentPermissionMode: PermissionMode;
+let nonInteractive: boolean;
 const agentContexts = new Map<string, AgentContext>();
 const agentLoops = new Map<string, { state: 'idle' | 'running'; submitted: string[] }>();
 
@@ -106,6 +111,8 @@ beforeEach(async () => {
   liveSessionIds = [];
   liveAgentTaskIds = [];
   towerBudget = 2;
+  currentPermissionMode = 'manual';
+  nonInteractive = false;
   currentSessionId = 'session-test';
   agentContexts.clear();
   agentLoops.clear();
@@ -139,6 +146,19 @@ beforeEach(async () => {
           return context;
         },
         scope: (subKey?: string) => subKey ?? '',
+      });
+      reg.definePartialInstance(IAgentPermissionModeService, {
+        get mode() {
+          return currentPermissionMode;
+        },
+      });
+      reg.definePartialInstance(IBootstrapService, {
+        args: {
+          requestHeaders: {},
+          get nonInteractive() {
+            return nonInteractive;
+          },
+        },
       });
       reg.defineInstance(IAgentTowerService, {
         _serviceBrand: undefined,
@@ -1575,6 +1595,26 @@ describe('TowerReviewTool', () => {
     return store;
   }
 
+  async function setupArtifactMission(): Promise<TowerStore> {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Artifact engine', scope: ['src/engine/**'], kind: 'artifact' }],
+    });
+    await git(repo, 'checkout', '-b', 'feat/artifact-engine');
+    await commitFile(repo, 'src/engine/report.html', '<h1>Engine report</h1>\n', 'render report');
+    await git(repo, 'checkout', 'main');
+    const store = new TowerStore(repo);
+    await store.registerAgent({
+      name: 'w1',
+      kind: 'worker',
+      agentId: 'agent-w1',
+      missionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    await store.complete('w1', 'Key artifact: src/engine/report.html', ['src/engine/report.html']);
+    return store;
+  }
+
   it('routes a non-clean verdict at the owning worker with the review file', async () => {
     const store = await setupReviewableBranch();
 
@@ -1616,29 +1656,7 @@ describe('TowerReviewTool', () => {
   });
 
   it('distinguishes advisory artifact review from tower-recorded human acceptance', async () => {
-    await initViaTool();
-    await run(ix.get(ITowerPlanTool), {
-      missions: [{ title: 'Artifact engine', scope: ['src/engine/**'], kind: 'artifact' }],
-    });
-    await git(repo, 'checkout', '-b', 'feat/artifact-engine');
-    await commitFile(
-      repo,
-      'src/engine/report.html',
-      '<h1>Engine report</h1>\n',
-      'render report',
-    );
-    await git(repo, 'checkout', 'main');
-    const store = new TowerStore(repo);
-    await store.registerAgent({
-      name: 'w1',
-      kind: 'worker',
-      agentId: 'agent-w1',
-      missionId: 'M1',
-      spawnedAt: new Date().toISOString(),
-    });
-    await store.complete('w1', 'Key artifact: src/engine/report.html', [
-      'src/engine/report.html',
-    ]);
+    const store = await setupArtifactMission();
     await store.registerAgent({
       name: 'r1',
       kind: 'reviewer',
@@ -1671,6 +1689,63 @@ describe('TowerReviewTool', () => {
     expect(accepted.isError).toBeFalsy();
     expect(accepted.output).toContain('explicit human acceptance for feat/artifact-engine');
     expect(accepted.output).toContain('recorded on the exact tip');
+  });
+
+  it('refuses artifact acceptance in auto permission mode', async () => {
+    const store = await setupArtifactMission();
+    currentAgentId = 'main';
+    currentPermissionMode = 'auto';
+    const tip = await git(repo, 'rev-parse', 'feat/artifact-engine');
+
+    const result = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/artifact-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'accept without the human',
+      acceptance_tip: tip,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('cannot be recorded in an automatic or noninteractive run');
+    expect(await store.latestReview('feat/artifact-engine')).toBeUndefined();
+  });
+
+  it('refuses artifact acceptance in a noninteractive run', async () => {
+    const store = await setupArtifactMission();
+    currentAgentId = 'main';
+    nonInteractive = true;
+    const tip = await git(repo, 'rev-parse', 'feat/artifact-engine');
+
+    const result = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/artifact-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'accept without the human',
+      acceptance_tip: tip,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('cannot be recorded in an automatic or noninteractive run');
+    expect(await store.latestReview('feat/artifact-engine')).toBeUndefined();
+  });
+
+  it('still records rework feedback in auto permission mode', async () => {
+    const store = await setupArtifactMission();
+    currentAgentId = 'main';
+    currentPermissionMode = 'auto';
+
+    const result = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/artifact-engine',
+      status: 'p1-1items',
+      merge: 'hold',
+      findings: 'missing data source',
+      decision: 'needs rework',
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(await store.latestReview('feat/artifact-engine')).toBeDefined();
   });
 
   it('preserves the review and recovers without a new round or duplicate after review.write log failure', async () => {

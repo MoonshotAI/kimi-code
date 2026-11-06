@@ -1332,6 +1332,7 @@ export class TowerStore {
     if (mission === undefined) {
       throw new TowerProtocolError(`unknown mission "${id}"`);
     }
+    const previousStatus = mission.status;
     if (callerName !== TOWER_NAME) {
       const caller = this.findAgent(state, callerName);
       if (caller?.kind !== 'worker' || caller.missionId !== id) {
@@ -1460,11 +1461,15 @@ export class TowerStore {
     if (
       mission.kind === 'artifact' &&
       patch.status === 'completed' &&
-      patch.blocker === undefined &&
-      options.completionTip !== undefined
+      patch.blocker === undefined
     ) {
-      mission.completionTip = options.completionTip;
-      mission.keyArtifacts = [...(options.completionKeyArtifacts ?? [])];
+      if (options.completionTip !== undefined) {
+        mission.completionTip = options.completionTip;
+        mission.keyArtifacts = [...(options.completionKeyArtifacts ?? [])];
+      } else if (previousStatus !== 'completed') {
+        mission.completionTip = undefined;
+        mission.keyArtifacts = undefined;
+      }
     }
 
     await this.save(state);
@@ -1726,38 +1731,49 @@ export class TowerStore {
     let completionTip: string | undefined;
     let completionBase: string | undefined;
     let completionChanged: readonly string[] = [];
-    if (
-      beforeMission.kind === 'artifact' &&
-      (await branchExists(this.repoRoot, beforeMission.branch))
-    ) {
-      completionTip = await branchTip(this.repoRoot, beforeMission.branch);
-      completionBase = await this.diffBase(state, beforeMission);
-      completionChanged = await diffNameOnly(this.repoRoot, completionBase, completionTip);
-      if (completionChanged.length > 0) {
-        const changed = new Set(completionChanged);
-        const uncommitted = keyArtifacts.filter((path) => !changed.has(path));
-        if (uncommitted.length > 0) {
+    if (beforeMission.kind === 'artifact') {
+      if (!(await branchExists(this.repoRoot, beforeMission.branch))) {
+        if (options.completionPrepared === true) {
           throw new TowerProtocolError(
-            `TowerComplete key_artifacts for artifact mission ${beforeMission.id} must name paths from the committed branch diff; not found: ${uncommitted.join(', ')}`,
+            `artifact mission ${beforeMission.id} cannot complete — its branch "${beforeMission.branch}" does not exist, so there are no committed deliverables to accept`,
           );
         }
-        const outOfScope = keyArtifacts.filter(
-          (path) => !beforeMission.scope.some((glob) => picomatch.isMatch(path, glob)),
-        );
-        if (outOfScope.length > 0) {
-          throw new TowerProtocolError(
-            `TowerComplete key_artifacts for artifact mission ${beforeMission.id} must stay inside its scope (${beforeMission.scope.join(', ')}): ${outOfScope.join(', ')}`,
+      } else {
+        completionTip = await branchTip(this.repoRoot, beforeMission.branch);
+        completionBase = await this.diffBase(state, beforeMission);
+        completionChanged = await diffNameOnly(this.repoRoot, completionBase, completionTip);
+        if (completionChanged.length === 0) {
+          if (options.completionPrepared === true) {
+            throw new TowerProtocolError(
+              `artifact mission ${beforeMission.id} cannot complete — branch "${beforeMission.branch}" has no changes vs "${completionBase}"; commit the deliverables there first`,
+            );
+          }
+        } else {
+          const changed = new Set(completionChanged);
+          const uncommitted = keyArtifacts.filter((path) => !changed.has(path));
+          if (uncommitted.length > 0) {
+            throw new TowerProtocolError(
+              `TowerComplete key_artifacts for artifact mission ${beforeMission.id} must name paths from the committed branch diff; not found: ${uncommitted.join(', ')}`,
+            );
+          }
+          const outOfScope = keyArtifacts.filter(
+            (path) => !beforeMission.scope.some((glob) => picomatch.isMatch(path, glob)),
           );
-        }
-        const missingAtTip: string[] = [];
-        for (const path of keyArtifacts) {
-          const type = await tryGit(this.repoRoot, ['cat-file', '-t', `${completionTip}:${path}`]);
-          if (type !== 'blob') missingAtTip.push(path);
-        }
-        if (missingAtTip.length > 0) {
-          throw new TowerProtocolError(
-            `TowerComplete key_artifacts for artifact mission ${beforeMission.id} must name files present at completion tip ${completionTip.slice(0, 7)}; missing or not files: ${missingAtTip.join(', ')}`,
-          );
+          if (outOfScope.length > 0) {
+            throw new TowerProtocolError(
+              `TowerComplete key_artifacts for artifact mission ${beforeMission.id} must stay inside its scope (${beforeMission.scope.join(', ')}): ${outOfScope.join(', ')}`,
+            );
+          }
+          const missingAtTip: string[] = [];
+          for (const path of keyArtifacts) {
+            const type = await tryGit(this.repoRoot, ['cat-file', '-t', `${completionTip}:${path}`]);
+            if (type !== 'blob') missingAtTip.push(path);
+          }
+          if (missingAtTip.length > 0) {
+            throw new TowerProtocolError(
+              `TowerComplete key_artifacts for artifact mission ${beforeMission.id} must name files present at completion tip ${completionTip.slice(0, 7)}; missing or not files: ${missingAtTip.join(', ')}`,
+            );
+          }
         }
       }
     }

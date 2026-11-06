@@ -3879,6 +3879,26 @@ describe('completion invariants', () => {
     expect(messages.some((item) => item.subject === 'review-request')).toBe(false);
   });
 
+  it('accepts key artifacts whose paths git would quote in default output', async () => {
+    const mission = await seedMission('non-ascii report', { kind: 'artifact', withWorktree: true });
+    await store.registerAgent(
+      rosterEntry({
+        name: 'w1',
+        kind: 'worker',
+        missionId: mission.id,
+        worktree: mission.worktree,
+        branch: mission.branch,
+      }),
+    );
+    const artifact = 'src/non-ascii-report/结果.html';
+    await commitFile(worktreeOf(mission), artifact, '<h1>结果</h1>\n', 'render non-ascii report');
+
+    const result = await store.complete('w1', `Key deliverable:\n- ${artifact}`, [artifact]);
+
+    expect(result.mission?.keyArtifacts).toEqual([artifact]);
+    expect(result.message?.item.body).toContain(artifact);
+  });
+
   it('rejects a deleted file as a key artifact at the completion tip', async () => {
     await commitFile(repo, 'src/remove-report/old.html', '<h1>Old</h1>\n', 'seed old artifact');
     const mission = await seedMission('remove report', { kind: 'artifact', withWorktree: true });

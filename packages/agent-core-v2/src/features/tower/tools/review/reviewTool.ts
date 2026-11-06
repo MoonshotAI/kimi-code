@@ -1,5 +1,7 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionEventBus } from '#/app/event/eventBus';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -27,6 +29,8 @@ export class TowerReviewTool implements ITowerReviewTool {
     @ISessionEventBus private readonly sessionBus: ISessionEventBus,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {}
 
   resolveExecution(args: TowerReviewToolInput): ToolExecution {
@@ -38,6 +42,25 @@ export class TowerReviewTool implements ITowerReviewTool {
           const store = newTowerStore(this.sessionContext);
           const state = await store.load();
           const caller = callerName(this.scopeContext.agentId, store, state);
+          const artifactMission = state.missions.find(
+            (mission) =>
+              mission.branch === args.target &&
+              mission.kind === 'artifact' &&
+              mission.status !== 'merged' &&
+              mission.status !== 'abandoned',
+          );
+          if (
+            caller === 'tower' &&
+            artifactMission !== undefined &&
+            args.status === 'clean' &&
+            args.merge === 'merge' &&
+            (this.bootstrap.args.nonInteractive === true || this.permissionMode.mode === 'auto')
+          ) {
+            return {
+              output: `artifact acceptance for ${args.target} cannot be recorded in an automatic or noninteractive run — leave mission ${artifactMission.id} completed and waiting for explicit human approval in an interactive session`,
+              isError: true,
+            };
+          }
           const result = await store.submitReview(caller, {
             target: args.target,
             status: args.status,
@@ -71,13 +94,6 @@ export class TowerReviewTool implements ITowerReviewTool {
           if (result.activityLogError !== undefined) {
             lines.push(`activity log error: ${result.activityLogError}`);
           }
-          const artifactMission = state.missions.find(
-            (mission) =>
-              mission.branch === args.target &&
-              mission.kind === 'artifact' &&
-              mission.status !== 'merged' &&
-              mission.status !== 'abandoned',
-          );
           if (artifactMission !== undefined) {
             if (
               args.status === 'clean' &&
