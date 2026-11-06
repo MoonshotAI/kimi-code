@@ -1166,13 +1166,16 @@ describe('AgentToolPolicyService executor enforcement', () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
     await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
     const probe = new PolicyProbeTool(SELECT_TOOLS_TOOL_NAME);
-    ctx.get(IAgentToolRegistryService).register(probe);
+    const registration = ctx.get(IAgentToolRegistryService).register(probe);
 
     const result = await executeDirectToolCall(ctx, SELECT_TOOLS_TOOL_NAME);
 
-    expect(result).toMatchObject({ output: 'executed' });
-    expect(result.isError).toBeFalsy();
-    expect(probe.calls).toBe(1);
+    expect(registration.status).toBe('pending');
+    expect(result).toMatchObject({
+      output: 'Invalid args for tool "select_tools": must have required property \'names\'',
+    });
+    expect(result.output).not.toContain('disabled by the active tool policy');
+    expect(probe.calls).toBe(0);
   });
 
   it.each([
