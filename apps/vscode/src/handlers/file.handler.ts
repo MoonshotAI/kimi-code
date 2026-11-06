@@ -85,12 +85,38 @@ const pickMedia: Handler<PickMediaParams, string[]> = async (params) => {
   return results;
 };
 
+const FILE_LOCATION_SUFFIX = /:([1-9]\d*)(?::([1-9]\d*))?$/;
+
 const openFile: Handler<FilePathParams, { ok: boolean }> = async ({ filePath }, ctx) => {
-  const resolved = await resolveExistingWorkspaceFile(ctx.requireWorkDirUri(), filePath);
+  const workDirUri = ctx.requireWorkDirUri();
+  // A real file may itself end in `:<digits>` (e.g. a log kept as `run.log:2`).
+  // Prefer the literal path when it exists, so a click on such a file opens
+  // that file instead of a truncated sibling at a line.
+  const literal = await resolveExistingWorkspaceFile(workDirUri, filePath);
+  const location = literal === undefined ? fileLocation(filePath) : { filePath };
+  const resolved = literal ?? (await resolveExistingWorkspaceFile(workDirUri, location.filePath));
   if (resolved === undefined) return { ok: false };
-  await vscode.commands.executeCommand("vscode.open", resolved.uri);
+  if (location.line === undefined) {
+    await vscode.commands.executeCommand("vscode.open", resolved.uri);
+  } else {
+    const line = location.line - 1;
+    const character = (location.column ?? 1) - 1;
+    await vscode.commands.executeCommand("vscode.open", resolved.uri, {
+      selection: new vscode.Range(line, character, line, character),
+    });
+  }
   return { ok: true };
 };
+
+function fileLocation(filePath: string): { filePath: string; line?: number; column?: number } {
+  const match = FILE_LOCATION_SUFFIX.exec(filePath);
+  if (match === null) return { filePath };
+  return {
+    filePath: filePath.slice(0, match.index),
+    line: Number(match[1]),
+    column: match[2] === undefined ? undefined : Number(match[2]),
+  };
+}
 
 const openFileDiff: Handler<FilePathParams, { ok: boolean }> = async ({ filePath }, ctx) => {
   const sessionId = ctx.getSessionId();
