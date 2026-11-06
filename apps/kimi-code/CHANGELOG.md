@@ -1,5 +1,15 @@
 # @moonshot-ai/kimi-code
 
+## 2.5.2
+
+### Patch Changes
+
+- [#4728](https://github.com/MoonshotAI/kimi-code/pull/4728) [`7b906ea`](https://github.com/MoonshotAI/kimi-code/commit/7b906ea345f40ed44aae3e759f5204d420e58482) Thanks [@sailist](https://github.com/sailist)! - Fix duplicate tool declaration errors in select_tools when MCP tool definitions change.
+
+- [#4731](https://github.com/MoonshotAI/kimi-code/pull/4731) [`ef10107`](https://github.com/MoonshotAI/kimi-code/commit/ef10107dd65ec6112f5b6cc836632fb068c02526) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Fix steered messages being incorrectly queued while a session is running.
+
+- [#4731](https://github.com/MoonshotAI/kimi-code/pull/4731) [`ef10107`](https://github.com/MoonshotAI/kimi-code/commit/ef10107dd65ec6112f5b6cc836632fb068c02526) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Fix project creation when accessing the Web UI over HTTP.
+
 ## 2.5.1
 
 ### Patch Changes
