@@ -5,6 +5,7 @@ import { Writable } from 'node:stream';
 
 import { pino, type Logger } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { WebSocket } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -131,7 +132,7 @@ describe('real password path (verifyPassword)', () => {
 });
 
 describe('auth-failure rate limit on a real bind', () => {
-  it('returns 429 on the 11th bad token', async () => {
+  async function bootLimited(): Promise<RunningServer> {
     const home = await tmpHome();
     const server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -147,6 +148,28 @@ describe('auth-failure rate limit on a real bind', () => {
       },
     });
     running.push(server);
+    return server;
+  }
+
+  function upgradeStatus(port: number, token: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/v1/ws`, [`kimi-code.bearer.${token}`]);
+      ws.once('open', () => {
+        ws.terminate();
+        resolve(101);
+      });
+      ws.once('unexpected-response', (_req, res) => {
+        ws.terminate();
+        resolve(res.statusCode ?? 0);
+      });
+      ws.once('error', (error) => {
+        if (ws.readyState !== WebSocket.CLOSED) reject(error);
+      });
+    });
+  }
+
+  it('returns 429 on the 11th bad token', async () => {
+    const server = await bootLimited();
     const url = `http://127.0.0.1:${server.port}/api/v1/sessions`;
     let lastStatus = 0;
     for (let i = 0; i < 11; i += 1) {
@@ -161,5 +184,26 @@ describe('auth-failure rate limit on a real bind', () => {
       code: number;
     };
     expect(body.code).toBe(42901);
+  });
+
+  it('counts failed WebSocket upgrades and then refuses them with 429', async () => {
+    const server = await bootLimited();
+    for (let i = 0; i < 10; i += 1) {
+      expect(await upgradeStatus(server.port, 'wrong')).toBe(401);
+    }
+    expect(await upgradeStatus(server.port, 'persistent-token')).toBe(429);
+    const res = await fetch(`http://127.0.0.1:${server.port}/api/v1/sessions`, {
+      headers: { authorization: 'Bearer persistent-token' },
+    });
+    expect(res.status).toBe(429);
+  });
+
+  it('refuses WebSocket upgrades from a source banned by failed HTTP requests', async () => {
+    const server = await bootLimited();
+    const url = `http://127.0.0.1:${server.port}/api/v1/sessions`;
+    for (let i = 0; i < 10; i += 1) {
+      await fetch(url, { headers: { authorization: 'Bearer wrong' } });
+    }
+    expect(await upgradeStatus(server.port, 'persistent-token')).toBe(429);
   });
 });
