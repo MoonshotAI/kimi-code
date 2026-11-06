@@ -199,6 +199,12 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 **Why not in the app:** The settled scroll state and the opportunity to repeat layout before terminal output belong to the alternate-screen render path. Hosts cannot reach this point through component composition alone.
 
+### above-viewport-in-place-change-is-not-destructive — keep
+
+**Decision:** When `preserveScrollbackOnAboveViewportChange` is explicitly enabled (it defaults to off, matching upstream), a change above the visible viewport does not fall back to the destructive ESC[2J/ESC[3J redraw when a differential repaint can cover the new visible tail (an in-place change or growing frame with no kitty image lines in the above-viewport part of the changed range), or when a shrink without kitty images leaves the complete visible tail unchanged. Entirely-above changes only commit the frame caches without painting (scrollback keeps a stale frame), and boundary-spanning changes repaint only from the viewport top on the differential path. Cache-only shrinks shift the existing viewport offset by the line-count delta instead of recomputing it from the tail, preserving blank rows left by an earlier tail-only shrink. Visible shrinks or image involvement keep the destructive redraw. The lowest potentially stale logical row is tracked in `aboveViewportStaleTop` — carried through `captureRenderState`/`restoreRenderState` — so the Termux height-increase path can invalidate and repaint re-exposed rows. Invisible shrinks use row 0 because their logical-to-physical mapping changes even before `firstChanged`; consecutive height increases cannot clear the marker before row 0 has been repainted.
+
+**Why not in the app:** The choice between painting, skipping, and clearing lives inside the main-screen differential renderer; the host only sees whole frames.
+
 ### refocus-mouse-guard — keep
 
 **Decision:** An optional `refocusMouseGuardMs` suppresses mouse-button gestures immediately after a terminal focus-in report, before they can activate controls, move a caret, start a selection, or open a link. The default is zero, focus reports still reach host listeners, and wheel handling is unchanged.

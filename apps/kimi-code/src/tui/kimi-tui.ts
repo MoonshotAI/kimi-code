@@ -1456,7 +1456,9 @@ export class KimiTUI {
       return;
     }
     ui.stop({ preserveScreen: true });
-    const main = new TuiMainScreen(ui.terminal);
+    const main = new TuiMainScreen(ui.terminal, undefined, undefined, {
+      preserveScrollbackOnAboveViewportChange: true,
+    });
     main.addChild(this.state.transcriptContainer);
     main.addChild(this.state.activityContainer);
     main.addChild(this.state.notifyPanelContainer);
