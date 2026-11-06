@@ -2436,7 +2436,7 @@ Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的�
 
 - `turn.started` 与 `turn.ended` 携带不含 `items` 的 `turn`，客户端用它替换本地的轮次并保留已有条目；已结束的轮次被修正时会再发一次 `turn.ended`。
 - `turn.updated` 携带 `turn_id`、每个已结束步骤一次的 `step`（按 `index` 写入 `steps`），以及替换该轮重试状态的 `retry`；不带 `retry` 时清除重试状态。
-- `item.started` 与 `item.ended` 携带 `turn_id` 与完整的 `item`，客户端用它替换本地同 `item_id` 的条目，本地没有的条目追加到该轮末尾。不流式产生的条目（例如 `user_message`）只发 `item.ended`。运行中的 `assistant_message` 或 `reasoning` 条目在同一步骤的下一段文本、思考或工具调用开始时即结束；该步骤完成后，会以落盘后的值再发一次它的 `item.ended`。
+- `item.started` 与 `item.ended` 携带 `turn_id` 与完整的 `item`，客户端用它替换本地同 `item_id` 的条目，本地没有的条目追加到该轮末尾。不流式产生的条目（例如 `user_message`）只发 `item.ended`。流式产生的条目保持 `running`，直到所在步骤落盘后，以落盘后的值发唯一一次 `item.ended`；同一步骤里下一段内容开始时，前面的条目不会提前结束，客户端以最后一个块判断是否仍在输出。
 - `item.updated` 携带 `turn_id`、`item_id` 与 `set`，即运行中的 `tool_call` 发生变化的字段，浅合并到条目上。
 - `item.delta` 携带 `turn_id`、`item_id`、`field`（`text`、`input_text` 或 `output`）与 `delta`，是追加到该字段的文本。
 - `item.removed` 携带 `turn_id` 与 `item_id`：一个不会完成的运行中条目，例如请求重试导致该步骤重新开始。
