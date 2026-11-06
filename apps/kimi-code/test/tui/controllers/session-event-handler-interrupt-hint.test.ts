@@ -99,6 +99,43 @@ describe('SessionEventHandler interrupted-turn hint', () => {
   });
 
   it.each([
+    [
+      { kind: 'skill_activation', activationId: 'a1', skillName: 'demo', trigger: 'user-slash' },
+      'skill_activation',
+    ],
+    [
+      {
+        kind: 'plugin_command',
+        activationId: 'a2',
+        pluginId: 'p1',
+        commandName: 'cmd',
+        trigger: 'user-slash',
+      },
+      'plugin_command',
+    ],
+  ])('shows the undo hint for a cancelled user-slash %s turn', (origin, _label) => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    runTurn(handler, host.showStatus, origin as object, 'cancelled');
+    expect(hintCalls(host.showStatus)).toHaveLength(1);
+  });
+
+  it.each(['model-tool', 'nested-skill'])(
+    'shows no hint for a cancelled skill_activation turn triggered by %s',
+    (trigger) => {
+      const { host } = makeHost();
+      const handler = new SessionEventHandler(host);
+      runTurn(
+        handler,
+        host.showStatus,
+        { kind: 'skill_activation', activationId: 'a1', skillName: 'demo', trigger },
+        'cancelled',
+      );
+      expect(hintCalls(host.showStatus)).toHaveLength(0);
+    },
+  );
+
+  it.each([
     [{ kind: 'cron_job', jobId: 'job-1', cron: '*/5 * * * *', recurring: true }, 'cron'],
     [{ kind: 'system_trigger' }, 'system_trigger'],
     [{ kind: 'task', taskId: 't1', status: 'completed' }, 'task'],

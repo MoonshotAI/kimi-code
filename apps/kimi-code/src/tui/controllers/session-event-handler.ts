@@ -48,6 +48,7 @@ import {
   argsRecord,
   formatErrorPayload,
   formatErrorMessage,
+  isUserSubmittedTurnOrigin,
   serializeToolResultOutput,
   stringValue,
 } from '../utils/event-payload';
@@ -187,7 +188,7 @@ export class SessionEventHandler {
   private goalCompletionTurnEnded = false;
   private currentTurnHasAssistantText = false;
   private pluginCommandTurns: Map<string, string> = new Map();
-  private turnOriginKinds: Map<string, string> = new Map();
+  private turnOrigins: Map<string, TurnStartedEvent['origin']> = new Map();
   private pluginMcpToolsUsedInTurn: Set<string> = new Set();
   private pendingModelBlockedFallback: GoalChange | undefined;
   private compactionFailed = false;
@@ -210,7 +211,7 @@ export class SessionEventHandler {
     this.goalCompletionTurnEnded = false;
     this.currentTurnHasAssistantText = false;
     this.pluginCommandTurns.clear();
-    this.turnOriginKinds.clear();
+    this.turnOrigins.clear();
     this.pluginMcpToolsUsedInTurn.clear();
     this.pendingModelBlockedFallback = undefined;
     this.compactionFailed = false;
@@ -376,7 +377,7 @@ export class SessionEventHandler {
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
     }
-    this.turnOriginKinds.set(String(event.turnId), event.origin?.kind ?? '');
+    this.turnOrigins.set(String(event.turnId), event.origin);
     if (event.origin?.kind === 'task') {
       this.anchorTaskNotificationTurn(event.origin.taskId, event.origin.status);
     }
@@ -426,8 +427,8 @@ export class SessionEventHandler {
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
     this.host.handleTurnEnded?.(event);
-    const wasUserTurn = this.turnOriginKinds.get(String(event.turnId)) === 'user';
-    this.turnOriginKinds.delete(String(event.turnId));
+    const wasUserTurn = isUserSubmittedTurnOrigin(this.turnOrigins.get(String(event.turnId)));
+    this.turnOrigins.delete(String(event.turnId));
     this.host.streamingUI.flushNow();
     this.clearStepRetry();
     if (event.reason === 'cancelled') {
