@@ -12,5 +12,6 @@ export default defineConfig({
     setupFiles: ['test/setup.ts'],
     globalSetup: ['test/globalSetup.ts'],
     testTimeout: 15_000,
+    tags: [{ name: 'L0' }, { name: 'L1' }, { name: 'L2' }],
   },
 });
