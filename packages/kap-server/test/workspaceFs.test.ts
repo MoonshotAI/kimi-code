@@ -519,17 +519,18 @@ describe('server-v2 /api/v1/environments::test', () => {
   });
 
   it('reports a draft connection failure without creating a config entry', async () => {
-    vi.spyOn(RemoteSession, 'connect').mockRejectedValue(new Error('SSH handshake failed'));
+    vi.spyOn(RemoteSession, 'connect').mockRejectedValue(new Error('SSH platform probe failed: ssh: Could not resolve hostname bad.example.test: Name or service not known'));
 
     const res = await fetch(`${base}/api/v1/environments:test`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
       body: JSON.stringify({ definition: { type: 'ssh', host: 'bad.example.test' } }),
     });
-    const body = await res.json() as Envelope<null>;
+    const body = await res.json() as Envelope<null> & { details?: unknown };
 
     expect(body.code).toBe(ErrorCode.ENVIRONMENT_UNAVAILABLE);
-    expect(body.msg).toBe('SSH handshake failed');
+    expect(body.msg).toContain('Could not resolve hostname bad.example.test');
+    expect(body.details).toEqual({ connect_failure: 'host_not_found' });
     expect(server!.core.accessor.get(IEnvironmentService).snapshot().environments.some((entry) => entry.environmentId === 'connection-test')).toBe(false);
   });
 });

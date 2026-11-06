@@ -467,6 +467,8 @@ describe('SSH password fallback', () => {
 
     await expect(registry.current('dev-box')!.connect!()).rejects.toBe(failure);
     expect(connect).toHaveBeenCalledTimes(1);
+    expect(registry.current('dev-box')!.connectFailure).toBe('authentication_failed');
+    expect(registry.snapshot().environments.find((entry) => entry.environmentId === 'dev-box')?.connectFailure).toBe('authentication_failed');
 
     await attachment.dispose();
     await registry.dispose();

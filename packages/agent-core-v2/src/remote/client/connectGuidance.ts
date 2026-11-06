@@ -1,3 +1,4 @@
+import type { EnvironmentConnectFailure } from '#/environment/environment';
 import { MIN_EXECUTOR_VERSION } from '#/remote/protocol/methods';
 
 import { HandshakeError } from './connection';
@@ -23,9 +24,36 @@ export function classifyHandshakeFailure(error: unknown): HandshakeFailureClass 
     const windowsSshMissing = error.exitCode === 49 && /not recognized as an internal or external command|command not found/i.test(error.message);
     return missingStatus || windowsSshMissing ? 'missing' : 'other';
   }
-  if (error.kind === 'timeout') return 'timeout';
+  if (error.kind === 'timeout' || error.kind === 'transport-timeout') return 'timeout';
   if (error.kind === 'incompatible') return 'incompatible';
   return 'other';
+}
+
+const FAILURE_PATTERNS: readonly (readonly [RegExp, EnvironmentConnectFailure])[] = [
+  [/launcher command "[^"]*" (?:is not an executable file|was not found on PATH)|spawn \S+ ENOENT/, 'launcher_not_found'],
+  [/Could not resolve hostname|Name or service not known|nodename nor servname provided|No address associated with hostname|Temporary failure in name resolution/i, 'host_not_found'],
+  [/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i, 'host_key_changed'],
+  [/Permission denied \(|Too many authentication failures|no such identity/i, 'authentication_failed'],
+  [/Cannot connect to the Docker daemon|docker daemon is not running|error during connect/i, 'docker_unavailable'],
+  [/No such container/i, 'container_not_found'],
+  [/container \S+ is (?:not running|paused|restarting)/i, 'container_not_running'],
+  [/Connection refused/i, 'connection_refused'],
+  [/No route to host|Network is unreachable|Host is down/i, 'host_unreachable'],
+  [/Connection timed out|Operation timed out/i, 'connect_timeout'],
+];
+
+export function classifyConnectFailure(error: unknown): EnvironmentConnectFailure {
+  if (error instanceof HandshakeError && error.kind === 'incompatible') return 'executor_outdated';
+  const message = error instanceof Error ? error.message : String(error);
+  const matched = FAILURE_PATTERNS.find(([pattern]) => pattern.test(message));
+  if (matched !== undefined) return matched[1];
+  if (!(error instanceof HandshakeError)) return 'unknown';
+  if (error.kind === 'transport-timeout') return 'connect_timeout';
+  if (error.kind === 'authentication') return 'authentication_failed';
+  const failure = classifyHandshakeFailure(error);
+  if (failure === 'missing') return 'executor_not_found';
+  if (failure === 'timeout') return 'executor_timeout';
+  return 'unknown';
 }
 
 function expectedPathSuffix(launcher: LauncherSpec): string {
@@ -94,9 +122,8 @@ export async function connectWithGuidance<T>(
   try {
     return await attempt(launcher);
   } catch (error) {
-    const failure = classifyHandshakeFailure(error);
-    if (failure === 'other') throw error;
-    if (failure === 'incompatible') {
+    const failure = classifyConnectFailure(error);
+    if (failure === 'executor_outdated') {
       const handshake = error instanceof HandshakeError ? error : undefined;
       throw withGuidance(
         error,
@@ -107,6 +134,8 @@ export async function connectWithGuidance<T>(
         ),
       );
     }
-    throw withGuidance(error, missingExecutorGuidance(launcher, failure));
+    if (failure === 'executor_not_found') throw withGuidance(error, missingExecutorGuidance(launcher, 'missing'));
+    if (failure === 'executor_timeout') throw withGuidance(error, missingExecutorGuidance(launcher, 'timeout'));
+    throw error;
   }
 }

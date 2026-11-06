@@ -12,6 +12,7 @@ import {
 import type {
   Environment,
   EnvironmentCapability,
+  EnvironmentConnectFailure,
   EnvironmentIdentity,
   EnvironmentStatus,
 } from '#/environment/environment';
@@ -26,7 +27,7 @@ import { ENVIRONMENT_PATHS, ENVIRONMENT_WORKSPACES } from '#/environment/environ
 import { REMOTE_SHELL_PATH_BRIDGE } from '#/_base/execEnv/shellPathBridge';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
-import { classifyHandshakeFailure, connectWithGuidance } from './connectGuidance';
+import { classifyConnectFailure, classifyHandshakeFailure, connectWithGuidance } from './connectGuidance';
 import { HandshakeError } from './connection';
 import { declarationFingerprint, toLauncherSpec, type LauncherSpec } from './launchers';
 import { RemoteSession, type RemoteSessionOptions } from './remoteSession';
@@ -46,6 +47,7 @@ class DeclaredRemoteEnvironment implements Environment {
   private currentStatus: EnvironmentStatus = 'pending';
   private inflight: Promise<void> | undefined;
   private lastConnectError: string | undefined;
+  private lastConnectFailure: EnvironmentConnectFailure | undefined;
   private epoch = 0;
   private readonly statusEmitter = new Emitter<EnvironmentStatus>();
   readonly onDidChangeStatus = this.statusEmitter.event;
@@ -105,6 +107,10 @@ class DeclaredRemoteEnvironment implements Environment {
     return this.lastConnectError;
   }
 
+  get connectFailure(): EnvironmentConnectFailure | undefined {
+    return this.lastConnectFailure;
+  }
+
   get whenReady(): Promise<void> | undefined {
     return this.inflight;
   }
@@ -151,6 +157,7 @@ class DeclaredRemoteEnvironment implements Environment {
     const started = performance.now();
     const isReconnect = this.hasConnected;
     this.lastConnectError = undefined;
+    this.lastConnectFailure = undefined;
     this.setStatus('connecting');
     const run = this.open(launcher).then((session) => {
       if (epoch !== this.epoch || this.currentStatus === 'disposed') {
@@ -174,6 +181,7 @@ class DeclaredRemoteEnvironment implements Environment {
       });
       if (epoch === this.epoch && this.currentStatus === 'connecting') {
         this.lastConnectError = error instanceof Error ? error.message : String(error);
+        this.lastConnectFailure = classifyConnectFailure(error);
         this.setStatus('disconnected');
       }
       throw error;
@@ -197,6 +205,7 @@ class DeclaredRemoteEnvironment implements Environment {
     this.enabled = enabled;
     if (!enabled) {
       this.lastConnectError = undefined;
+      this.lastConnectFailure = undefined;
       this.disconnect();
     }
     this.statusEmitter.fire(this.currentStatus);
@@ -224,6 +233,7 @@ class DeclaredRemoteEnvironment implements Environment {
         reason: info.kind ?? 'other',
       });
       this.lastConnectError = info.reason;
+      this.lastConnectFailure = info.reason === undefined ? undefined : classifyConnectFailure(info.reason);
       this.session = undefined;
       this.setStatus('disconnected');
       void session.dispose();

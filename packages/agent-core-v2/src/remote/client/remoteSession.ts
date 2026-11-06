@@ -145,7 +145,7 @@ async function detectSshPlatform(
         windowsHide: true,
       }, (error, stdout, stderr) => {
         if (error?.killed && error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-          reject(new HandshakeError(`SSH platform probe timed out after ${timeoutMs}ms${stderr.trim() ? `: ${stderr.trim()}` : ''}`, { kind: 'timeout', cause: error }));
+          reject(new HandshakeError(`SSH platform probe timed out after ${timeoutMs}ms${stderr.trim() ? `: ${stderr.trim()}` : ''}`, { kind: 'transport-timeout', cause: error }));
         } else if (error !== null && typeof error.code !== 'number') {
           reject(new HandshakeError(`SSH platform probe failed: ${error.message}`, { kind: 'executor-exit', cause: error }));
         } else {

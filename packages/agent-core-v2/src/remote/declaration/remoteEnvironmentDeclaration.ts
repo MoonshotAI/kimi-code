@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { LOCAL_ENVIRONMENT_ID, type EnvironmentCapability, type EnvironmentStatus } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID, type EnvironmentCapability, type EnvironmentConnectFailure, type EnvironmentStatus } from '#/environment/environment';
 import type { EnvironmentGenerationSnapshot } from '#/environment/environmentRegistry';
 
 export const ENVIRONMENT_ID_MAX_LENGTH = 64;
@@ -126,6 +126,7 @@ export interface EnvironmentEntryInfo {
   readonly defaultCwd?: string;
   readonly enabled: boolean;
   readonly connectError?: string;
+  readonly connectFailure?: EnvironmentConnectFailure;
 }
 
 export function environmentEntryInfo(
@@ -144,6 +145,7 @@ export function environmentEntryInfo(
     defaultCwd: entry?.defaultCwd,
     enabled: environmentEntryEnabled(entry),
     connectError: environment.connectError,
+    connectFailure: environment.connectFailure,
   };
 }
 

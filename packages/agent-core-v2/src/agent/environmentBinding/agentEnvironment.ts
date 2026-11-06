@@ -98,6 +98,7 @@ export function snapshotAgentEnvironmentBinding(
         status: environment.status,
         capabilities: [...environment.capabilities],
         connectError: environment.connectError,
+        connectFailure: environment.connectFailure,
       },
     };
   } catch {

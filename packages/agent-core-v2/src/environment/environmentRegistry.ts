@@ -1,6 +1,6 @@
 import { Emitter, type Event } from '#/_base/event';
 
-import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease } from './environment';
+import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentConnectFailure, EnvironmentLease } from './environment';
 
 export type EnvironmentErrorCode = 'environment.not_found' | 'environment.unavailable' | 'environment.capability_unavailable' | 'environment.conflict' | 'environment.invalid_cwd';
 
@@ -43,6 +43,7 @@ export interface EnvironmentGenerationSnapshot {
   readonly status: Environment['status'];
   readonly capabilities: readonly EnvironmentCapability[];
   readonly connectError?: string;
+  readonly connectFailure?: EnvironmentConnectFailure;
 }
 
 export interface EnvironmentRegistrySnapshot {
@@ -72,6 +73,7 @@ export class EnvironmentRegistry {
         status: environment.status,
         capabilities: [...environment.capabilities],
         connectError: environment.connectError,
+        connectFailure: environment.connectFailure,
       })),
     };
   }

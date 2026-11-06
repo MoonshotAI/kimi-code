@@ -17,7 +17,7 @@ import {
   type EnvironmentGenerationSnapshot,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { HandshakeError, RemoteSession, connectWithGuidance, toLauncherSpec } from '@moonshot-ai/agent-core-v2/remote';
+import { HandshakeError, RemoteSession, classifyConnectFailure, connectWithGuidance, toLauncherSpec } from '@moonshot-ai/agent-core-v2/remote';
 import { RemoteEnvironmentEntrySchema } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import { readSshConfigHosts } from '@moonshot-ai/agent-core-v2/remote/declaration/sshConfigHosts';
 import { z } from 'zod';
@@ -169,7 +169,13 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
         reply.send(okEnvelope({ connected: true as const }, req.id));
       } catch (error) {
         if (!sendEnvironmentError(reply, req.id, error)) {
-          reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error instanceof Error ? error.message : String(error), req.id));
+          reply.send(errEnvelope(
+            ErrorCode.ENVIRONMENT_UNAVAILABLE,
+            error instanceof Error ? error.message : String(error),
+            req.id,
+            undefined,
+            { connect_failure: classifyConnectFailure(error) },
+          ));
         }
       } finally {
         await session?.dispose();
@@ -269,6 +275,7 @@ export function toEntry(environment: EnvironmentGenerationSnapshot, entry: Remot
     status: info.status,
     enabled: info.enabled,
     connect_error: info.connectError,
+    connect_failure: info.connectFailure,
   };
 }
 
@@ -308,7 +315,7 @@ export function sendEnvironmentError(
     return true;
   }
   if (error instanceof HandshakeError) {
-    reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error.message, requestId));
+    reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error.message, requestId, undefined, { connect_failure: classifyConnectFailure(error) }));
     return true;
   }
   return false;
