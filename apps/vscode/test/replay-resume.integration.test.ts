@@ -39,11 +39,14 @@ afterEach(async () => {
   while (cleanups.length > 0) await cleanups.pop()?.();
 });
 
-async function createReplayRig(): Promise<ReplayRig> {
+async function createReplayRig(configToml?: string): Promise<ReplayRig> {
   const rootDir = await mkdtemp(join(tmpdir(), "kimi-vscode-replay-"));
   const homeDir = join(rootDir, "home");
   const workDir = join(rootDir, "workspace");
   await Promise.all([mkdir(homeDir), mkdir(workDir)]);
+  if (configToml !== undefined) {
+    await writeFile(join(homeDir, "config.toml"), configToml, "utf8");
+  }
   const provider = await createFakeProviderHarness();
   const harness = createKimiHarness({
     homeDir,
@@ -139,7 +142,7 @@ function waitForEvent(
 
 describe("VS Code replay from a public Node SDK resume state", () => {
   it("restores persisted file and todo displays", async () => {
-    const rig = await createReplayRig();
+    const rig = await createReplayRig("[todo]\nenabled = true\n");
     const filePath = join(rig.workDir, "sample.txt");
     await writeFile(filePath, "before\n", "utf8");
     let requestCount = 0;

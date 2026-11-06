@@ -81,7 +81,7 @@ Plan mode is a constrained working state that only the user can turn on (`Shift-
 | --- | --- | --- |
 | `TodoList` | Auto-allow | Manage a task to-do list |
 
-**`TodoList`** maintains a visible subtask list across multi-step operations; state is stored within the Agent session. The `todos` parameter accepts an array where each item has a `title` and `status` (`pending` / `in_progress` / `done`). Omitting `todos` queries the current list; passing an empty array clears it.
+**`TodoList`** maintains a visible subtask list across multi-step operations; state is stored within the Agent session. The `todos` parameter accepts an array where each item has a `title` and `status` (`pending` / `in_progress` / `done`). Omitting `todos` queries the current list; passing an empty array clears it. The tool is off by default; set `[todo] enabled = true` in `config.toml` or `KIMI_CODE_TODO=1` to turn it on for sessions created afterwards. See [`todo`](../configuration/config-files.md#todo).
 
 ## Collaboration Tools
 

@@ -1,4 +1,5 @@
 import { Disposable } from '#/_base/di/lifecycle';
+import { renderPrompt } from '#/_base/utils/render-prompt';
 import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import type {
   ContextInjectionContext,
@@ -12,6 +13,7 @@ import type { SwarmModeTrigger } from '../swarm';
 
 const SWARM_MODE_INJECTION_VARIANT = 'swarm_mode';
 const LEGACY_SWARM_MODE_EXIT_VARIANT = 'swarm_mode_exit';
+const SWARM_MODE_TODO_LIST_NOTE = 'You do not need to use TodoList to record this workflow.\n\n';
 
 interface SwarmModeInjectionDisclosure {
   readonly kind: 'swarm_mode';
@@ -20,6 +22,7 @@ interface SwarmModeInjectionDisclosure {
 
 export interface SwarmInjectionOptions {
   readonly getTrigger: () => SwarmModeTrigger | null;
+  readonly isTodoListActive: () => boolean;
 }
 
 export class SwarmInjection extends Disposable {
@@ -47,7 +50,9 @@ export class SwarmInjection extends Disposable {
       return rendered === 'active'
         ? undefined
         : {
-            content: SWARM_MODE_ENTER_REMINDER,
+            content: renderPrompt(SWARM_MODE_ENTER_REMINDER, {
+              todo_list_note: this.options.isTodoListActive() ? SWARM_MODE_TODO_LIST_NOTE : '',
+            }),
             disclosure: { kind: 'swarm_mode', state: 'active' },
           };
     }

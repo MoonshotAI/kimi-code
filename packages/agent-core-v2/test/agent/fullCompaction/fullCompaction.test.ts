@@ -50,6 +50,7 @@ import {
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IWireService } from '#/wire/wire';
 import { IAgentTodoService } from '#/features/todo/todoService';
+import { TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
@@ -313,7 +314,7 @@ describe('FullCompaction', () => {
         compacted_count: 6,
         retry_count: 0,
         thinking_effort: 'off',
-        input_tokens: 1215,
+        input_tokens: 1129,
         output_tokens: 8,
         input_cache_read: 0,
         input_cache_creation: 0,
@@ -3493,6 +3494,35 @@ describe('FullCompaction', () => {
     });
     await ctx.expectResumeMatches();
   });
+
+  it('leaves the todo list out of the instruction and the summary while TodoList is inactive', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.get(IAgentProfileService).update({ disallowedTools: [TODO_LIST_TOOL_NAME] });
+    await ctx.get(IAgentTodoService).replace([{ title: 'Fix the auth bug', status: 'in_progress' }]);
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+
+    const compacted = new Promise<void>((resolve) => {
+      ctx.emitter.once('full_compaction.complete', () => {
+        resolve();
+      });
+    });
+
+    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+
+    expect(messageText(ctx.llmCalls.at(-1)!.history.at(-1))).toBe(
+      renderCompactionInstruction({ todoListActive: false }),
+    );
+    const summary = ctx.compactHistory()[2];
+    expect(summary).toMatchObject({ role: 'user', text: expect.stringContaining('Compacted summary.') });
+    expect(summary).not.toMatchObject({ text: expect.stringContaining('## TODO List') });
+  });
 });
 
 describe('FullCompaction context recovery pointer', () => {
@@ -3677,13 +3707,29 @@ describe('FullCompaction context recovery pointer', () => {
   });
 
   it('tells the summarizer a recovery pointer follows the summary', () => {
-    const withPointer = renderCompactionInstruction({});
-    const withCustom = renderCompactionInstruction({ customInstruction: ' keep the API facts ' });
+    const withPointer = renderCompactionInstruction({ todoListActive: false });
+    const withCustom = renderCompactionInstruction({
+      customInstruction: ' keep the API facts ',
+      todoListActive: false,
+    });
 
     expect(withPointer).toContain('a recovery pointer is appended below this summary automatically');
     expect(withPointer).toContain('format for the final answer.\n\nThis conversation');
     expect(withPointer).not.toContain('${');
     expect(withCustom).toContain('Optional user instruction:\nkeep the API facts');
+  });
+
+  it('mentions the re-attached TODO list only while TodoList is active', () => {
+    const active = renderCompactionInstruction({ todoListActive: true });
+    const inactive = renderCompactionInstruction({ todoListActive: false });
+
+    expect(active).toContain(
+      'should look up.\n\nYour TODO list is re-attached automatically below this summary from its live\n',
+    );
+    expect(active).toContain('record that instead.\n\nBe honest about uncertainty.');
+    expect(inactive).not.toContain('TODO list');
+    expect(inactive).toContain('should look up.\n\nBe honest about uncertainty.');
+    expect(inactive).not.toContain('${');
   });
 });
 
@@ -4568,7 +4614,7 @@ describe('FullCompaction pre-shrink', () => {
     const [compactionCall, answerCall] = ctx.llmCalls;
     const compactionTexts = compactionCall!.history.map(messageText);
     expect(compactionTexts.slice(0, previousHistory.length)).toEqual(previousHistory);
-    expect(compactionTexts.at(-1)).toBe(renderCompactionInstruction({}));
+    expect(compactionTexts.at(-1)).toBe(renderCompactionInstruction({ todoListActive: true }));
     const answerTexts = answerCall!.history.map(messageText);
     expect(answerTexts.some((text) => text.includes('Full-history summary.'))).toBe(true);
   });
@@ -4798,7 +4844,9 @@ describe('FullCompaction prompt-cache prefix', () => {
       }
 
       const compactionCall = ctx.llmCalls[loopCalls]!;
-      expect(messageText(compactionCall.history.at(-1))).toBe(renderCompactionInstruction({}));
+      expect(messageText(compactionCall.history.at(-1))).toBe(
+        renderCompactionInstruction({ todoListActive: true }),
+      );
       expect(findGenerateCallPrefixBreak(lastLoopCall, compactionCall)).toBeUndefined();
     },
   );

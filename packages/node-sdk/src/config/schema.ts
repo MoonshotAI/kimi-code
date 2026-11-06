@@ -198,6 +198,12 @@ export const ModelCatalogConfigSchema = z.object({
 
 export type ModelCatalogConfig = z.infer<typeof ModelCatalogConfigSchema>;
 
+export const TodoConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+});
+
+export type TodoConfig = z.infer<typeof TodoConfigSchema>;
+
 export const ExperimentalConfigSchema = z.record(z.string(), z.boolean());
 
 export type ExperimentalConfig = z.infer<typeof ExperimentalConfigSchema>;
@@ -317,6 +323,7 @@ export const KimiConfigSchema = z.object({
   mcp: McpConfigSchema.optional(),
   image: ImageConfigSchema.optional(),
   modelCatalog: ModelCatalogConfigSchema.optional(),
+  todo: TodoConfigSchema.optional(),
   experimental: ExperimentalConfigSchema.optional(),
   environments: EnvironmentsConfigSchema.optional(),
   telemetry: z.boolean().optional(),
@@ -337,6 +344,7 @@ const SecondaryModelConfigPatchSchema = SecondaryModelConfigSchema.partial();
 const McpConfigPatchSchema = McpConfigSchema.partial();
 const ImageConfigPatchSchema = ImageConfigSchema.partial();
 const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
+const TodoConfigPatchSchema = TodoConfigSchema.partial();
 const ExperimentalConfigPatchSchema = ExperimentalConfigSchema;
 const MoonshotServiceConfigPatchSchema = MoonshotServiceConfigSchema.partial();
 const ServicesConfigPatchSchema = z.object({
@@ -369,6 +377,7 @@ export const KimiConfigPatchSchema = z
     mcp: McpConfigPatchSchema.optional(),
     image: ImageConfigPatchSchema.optional(),
     modelCatalog: ModelCatalogConfigPatchSchema.optional(),
+    todo: TodoConfigPatchSchema.optional(),
     experimental: ExperimentalConfigPatchSchema.optional(),
     environments: EnvironmentsConfigSchema.optional(),
     telemetry: z.boolean().optional(),

@@ -2156,6 +2156,24 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('round-trips todo.enabled to the [todo] config.toml section', async () => {
+    const { harness, homeDir } = await makeHarness();
+    try {
+      expect((await harness.getConfig()).todo?.enabled).toBeUndefined();
+
+      await harness.setConfig({ todo: { enabled: true } });
+
+      const toml = await readFile(join(homeDir, 'config.toml'), 'utf-8');
+      expect(toml).toContain('[todo]');
+      expect(toml).toContain('enabled = true');
+
+      const reread = await harness.getConfig({ reload: true });
+      expect(reread.todo).toEqual({ enabled: true });
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('round-trips disableFeedbackSurvey to the disable_feedback_survey config.toml field', async () => {
     const { harness, homeDir } = await makeHarness();
     try {

@@ -116,6 +116,7 @@ import {
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
+import { TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
 
 const signal = new AbortController().signal;
 
@@ -819,6 +820,15 @@ describe('Agent tool description', () => {
 
     expect(agentDescription().includes('NotifyUser')).toBe(enabled);
     expect(ctx.get(IAgentToolRegistryService).resolve('NotifyUser') !== undefined).toBe(enabled);
+  });
+
+  it.each([false, true])('never lists TodoList in subagent type descriptions when [todo] enabled=%s', (enabled) => {
+    ctx = createTestAgent({ initialConfig: { todo: { enabled } } });
+
+    const description = agentDescription();
+
+    expect(description).toMatch(/- coder: [^\n]*\n  Tools: [^\n]*\bBash\b/);
+    expect(description).not.toContain(TODO_LIST_TOOL_NAME);
   });
 
   it.each([false, true])('renders caller model tools without a pool when fork=%s', async (fork) => {

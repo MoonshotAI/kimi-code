@@ -164,7 +164,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         );
       }),
     );
-    this._register(new TowerModeInjection(reminder, this, context, this.flags));
+    this._register(new TowerModeInjection(reminder, this, context, this.flags, this.toolPolicy));
     this._register(
       eventBus.subscribe(TaskTerminatedNotice, (event) => {
         if (this.agentCtx.agentId !== 'main') return;
