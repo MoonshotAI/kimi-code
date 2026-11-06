@@ -274,6 +274,6 @@ export function renderHistory(
   });
   const messages: ImportMessage[] = [{ role: 'user', content: [{ type: 'text', text: [head, ...selected.map(item => item.text), tail].join('\n\n') }] }];
   const stats: ConversionStats = { tokenBudget, estimatedTokens: estimateMessages(messages), sourceTurns: total, includedTurns, omittedTurns: total - includedTurns, truncatedCharacters };
-  if (stats.estimatedTokens > tokenBudget) throw new Error('Rendered import exceeded its token budget.');
+  if (stats.estimatedTokens > tokenBudget) throw Object.assign(new Error('Rendered import exceeded its token budget.'), { code: 'BUDGET_ACCOUNTING_FAILED' });
   return { messages, stats, truncated: selected.length < all.length || truncatedCharacters > 0 };
 }
