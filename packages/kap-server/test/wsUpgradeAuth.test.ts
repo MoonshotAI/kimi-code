@@ -25,16 +25,10 @@ interface ConnectOptions {
   readonly headers?: Record<string, string>;
 }
 
-function openConn(url: string, opts?: ConnectOptions): Promise<{ ws: WebSocket; firstFrame: unknown }> {
+function openConn(url: string, opts?: ConnectOptions): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url, opts?.protocols, { headers: opts?.headers });
-    ws.once('message', (data) => {
-      try {
-        resolve({ ws, firstFrame: JSON.parse(rawToString(data)) });
-      } catch {
-        resolve({ ws, firstFrame: null });
-      }
-    });
+    ws.once('open', () => resolve(ws));
     ws.once('error', reject);
   });
 }
@@ -83,16 +77,22 @@ describe('WS upgrade auth', () => {
   }
 
   describe('/api/v1/ws', () => {
-    const firstType = 'server_hello';
     const url = (): string => v1Url();
 
     it('accepts a valid bearer subprotocol and echoes it', async () => {
-      const { ws, firstFrame } = await openConn(url(), {
+      const ws = await openConn(url(), {
         protocols: [`kimi-code.bearer.${token()}`],
       });
       sockets.push(ws);
       expect(ws.protocol).toBe(`kimi-code.bearer.${token()}`);
-      expect(firstFrame).toMatchObject({ type: firstType });
+    });
+
+    it('accepts a valid bearer Authorization header', async () => {
+      const ws = await openConn(url(), {
+        headers: { authorization: `Bearer ${token()}` },
+      });
+      sockets.push(ws);
+      expect(ws.readyState).toBe(WebSocket.OPEN);
     });
 
     it('rejects a wrong bearer token', async () => {

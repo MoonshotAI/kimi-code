@@ -1,13 +1,14 @@
 /**
  * WS layer for `DaemonClient` — owns the socket, queues incoming frames so
- * fast tests don't race the first `server_hello`, exposes a `waitForFrame`
- * with timeouts, and routes control-message acks back to the original sender
- * via `id` correlation.
+ * fast tests don't race the first frames after `open`, exposes a
+ * `waitForFrame` with timeouts, and routes command responses back to the
+ * original sender via `request_id` correlation.
  *
- * Frame shape is the union of WS.md §2 envelopes:
- *   - `event` envelope     : `{type, session_id, timestamp, payload}`
- *   - `ack`                : `{type:'ack', id, code, msg, payload}`
- *   - `server_hello`/`ping`/`error`: each carries `timestamp`
+ * Frame shapes:
+ *   - global event envelope: `{type, session_id, timestamp, payload}`
+ *   - session frames       : flat `{type, session_id, agent_id, ...}`
+ *   - `response`           : `{type:'response', request_id, code, msg?, task?}`
+ *   - `ping`               : `{type:'ping'}`, answered with `{type:'pong'}`
  *
  * We don't Zod-validate frames here — preserving forward-compat ("unknown
  * fields pass through") and avoiding double-work since the server emits the
@@ -22,7 +23,7 @@ export interface AnyFrame {
   readonly type: string;
   readonly session_id?: string;
   readonly timestamp?: string;
-  readonly id?: string;
+  readonly request_id?: string;
   readonly code?: number;
   readonly msg?: string;
   readonly payload?: unknown;
@@ -50,10 +51,8 @@ interface PendingWaiter {
  *   - `waitForFrame(predicate)` consumes the *first matching* frame; matching
  *     frames already in `_queue` are dispatched immediately.
  *
- * Both queue and waiters are needed because the server's first `server_hello`
- * can land in the same tick as `open`, before the test has a chance to
- * register its first waiter (see `server/test/ws-handshake.e2e.test.ts:88-117`
- * for the pattern this is ported from).
+ * Both queue and waiters are needed because a frame can land in the same tick
+ * as `open`, before the test has a chance to register its first waiter.
  */
 export class WsClient {
   private ws: WsWebSocket | null = null;
@@ -157,11 +156,14 @@ export class WsClient {
     });
   }
 
-  /** Send a control message and wait for its `ack` (matched by `id`). */
-  async sendAndAwaitAck(frame: { type: string; id: string; payload: unknown }, timeoutMs: number): Promise<AnyFrame> {
+  /** Send a command and wait for its `response` (matched by `request_id`). */
+  async sendCommand(
+    frame: { type: string; request_id: string; [field: string]: unknown },
+    timeoutMs: number,
+  ): Promise<AnyFrame> {
     this.send(frame);
     return this.waitForFrame(
-      (f) => f.type === 'ack' && f.id === frame.id,
+      (f) => f.type === 'response' && f.request_id === frame.request_id,
       timeoutMs,
     );
   }
@@ -206,7 +208,7 @@ export class WsClient {
     );
 
     if (frame.type === 'ping') {
-      this.send({ type: 'pong', payload: { nonce: pingNonce(frame) } });
+      this.send({ type: 'pong' });
     }
 
     // Dispatch to subscribers first — they observe every frame, regardless of
@@ -256,11 +258,6 @@ export class WsClient {
     }
     for (const w of this._closeWaiters.splice(0)) w(this._closeReason);
   }
-}
-
-function pingNonce(frame: AnyFrame): string {
-  const payload = frame.payload as { nonce?: unknown } | undefined;
-  return typeof payload?.nonce === 'string' ? payload.nonce : '';
 }
 
 function errorForReport(error: unknown): unknown {

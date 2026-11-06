@@ -244,10 +244,10 @@ describe('server-e2e report', () => {
     });
 
     await ws.open();
-    ws.send({ type: 'client_hello', id: 'hello_1', payload: { client_id: 'test' } });
+    ws.send({ type: 'subscribe', request_id: 'sub_1', session_id: 'session_1' });
     FakeWebSocket.instances[0]?.emit(
       'message',
-      JSON.stringify({ type: 'server_hello', payload: { heartbeat_ms: 30_000 } }),
+      JSON.stringify({ type: 'response', request_id: 'sub_1', code: 0 }),
     );
 
     const events = readReportEvents(reportDir).filter((event) => event.kind === 'ws');
@@ -261,12 +261,12 @@ describe('server-e2e report', () => {
         expect.objectContaining({
           caseName: 'client: ws handshake',
           direction: 'out',
-          frame: { type: 'client_hello', id: 'hello_1', payload: { client_id: 'test' } },
+          frame: { type: 'subscribe', request_id: 'sub_1', session_id: 'session_1' },
         }),
         expect.objectContaining({
           caseName: 'client: ws handshake',
           direction: 'in',
-          frame: { type: 'server_hello', payload: { heartbeat_ms: 30_000 } },
+          frame: { type: 'response', request_id: 'sub_1', code: 0 },
         }),
       ]),
     );
@@ -405,26 +405,11 @@ describe('server-e2e report', () => {
     });
 
     await client.createSession({ metadata: { cwd: '/tmp/workspace' } });
-    const connect = client.connect();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await client.connect();
     const ws = FakeWebSocket.instances[0];
     expect(ws).toBeDefined();
-    ws?.emit(
-      'message',
-      JSON.stringify({
-        type: 'server_hello',
-        payload: { heartbeat_ms: 30_000, ws_connection_id: 'ws_1' },
-      }),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const hello = ws?.sent.map((raw) => JSON.parse(raw) as { type: string; id?: string })
-      .find((frame) => frame.type === 'client_hello');
-    expect(hello?.id).toBeDefined();
-    ws?.emit(
-      'message',
-      JSON.stringify({ type: 'ack', id: hello?.id, code: 0, payload: {} }),
-    );
-    await connect;
+    ws?.emit('message', JSON.stringify({ type: 'ping' }));
+    expect(ws?.sent.map((raw) => JSON.parse(raw) as unknown)).toEqual([{ type: 'pong' }]);
     await client.close();
 
     const events = readReportEvents(reportDir);
@@ -438,13 +423,13 @@ describe('server-e2e report', () => {
         expect.objectContaining({
           kind: 'ws',
           direction: 'in',
-          frame: expect.objectContaining({ type: 'server_hello' }),
+          frame: { type: 'ping' },
           caseName: 'server client: custom report dir',
         }),
         expect.objectContaining({
           kind: 'ws',
           direction: 'out',
-          frame: expect.objectContaining({ type: 'client_hello' }),
+          frame: { type: 'pong' },
           caseName: 'server client: custom report dir',
         }),
       ]),
