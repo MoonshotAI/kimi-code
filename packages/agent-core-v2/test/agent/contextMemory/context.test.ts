@@ -18,10 +18,7 @@ import {
   INHERITED_IN_FLIGHT_TOOL_OUTPUT,
 } from '#/agent/contextMemory/openToolExchange';
 import { IWireService } from '#/wire/wire';
-import {
-  IAgentLoopService,
-  IAgentProfileService,
-} from '#/index';
+import { IAgentLoopService } from '#/index';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
 
@@ -29,14 +26,14 @@ describe('Agent context', () => {
   let ctx: TestAgentContext;
   let context: IAgentLoopService;
   let tokenCounting: TestAgentContext['tokenCounting'];
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
   let wire: IWireService;
 
   beforeEach(async () => {
     ctx = createTestAgent();
     context = ctx.get(IAgentLoopService);
     tokenCounting = ctx.tokenCounting;
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
     wire = ctx.get(IWireService);
     await ctx.restorePersisted();
   });

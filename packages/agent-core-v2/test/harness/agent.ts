@@ -207,6 +207,8 @@ import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
 import { TurnPrompt } from '#/agent/loop/turnOps';
+import { UsageRecord } from '#/agent/usage/usageOps';
+import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
 import { IModelService, type ModelsSection } from '#/llm-adapter/model/model';
 import {
   DEFAULT_MODEL_SECTION,
@@ -452,6 +454,7 @@ interface ConfigureOptions {
   readonly tools?: readonly string[] | undefined;
   readonly provider?: TestProviderConfig | undefined;
   readonly modelCapabilities?: ModelCapability | undefined;
+  readonly preserveProfile?: boolean | undefined;
 }
 
 export type TestAgentContext = AgentTestContext;
@@ -1112,6 +1115,7 @@ export class AgentTestContext {
   kimiConfig: KimiConfig;
   private cwd = process.cwd();
   private closed = false;
+  private runtimeStarted = false;
 
   readonly snapshots = recordAgentEvents();
   readonly emitter = new EventEmitter();
@@ -1458,11 +1462,18 @@ export class AgentTestContext {
       .activateAgent(harnessAgentContext);
     const loop = this.agent.accessor.get(IAgentLoopService) as {
       requester: IAgentLoopService['requester'];
+      start: IAgentLoopService['start'];
+    };
+    const start = loop.start.bind(loop);
+    loop.start = async () => {
+      await start();
+      this.runtimeStarted = true;
     };
     loop.requester = new PromptCacheGuardedLoopRequester(
       loop.requester,
       this.agent.accessor.get(IAgentLoopService),
       this.agent.accessor.get(IWireService),
+      () => this.restorePersisted(),
     );
     adoptAgent!();
     this.installInteractionBridge();
@@ -1481,7 +1492,7 @@ export class AgentTestContext {
     this.rpc = this.createPromiseAgentApi();
 
     if (options.autoConfigure !== false) {
-      this.configure();
+      this.configure({ preserveProfile: persistence.records.length > 0 });
     }
   }
 
@@ -1564,14 +1575,18 @@ export class AgentTestContext {
   async restorePersisted(): Promise<void> {
     this.persistedRestored ??= this.dispatcher.restore();
     await this.persistedRestored;
+    await this.context.start();
   }
 
   private async restoreRecordsOnly(records: readonly WireRecord[]): Promise<void> {
+    await this.persistedRestored;
+    this.context.flushReminders();
     const scopeContext = this.get(IAgentScopeContext);
     const log = this.get(IAppendLogStore);
     if (log instanceof PersistenceAppendLogStore) log.recordRestore(records);
     await log.rewrite(scopeContext.scope(), AGENT_WIRE_RECORD_KEY, records);
-    this.persistedRestored = this.dispatcher.restore();
+    const loop = this.context as IAgentLoopService & { resetLoop(): Promise<void> };
+    this.persistedRestored = this.dispatcher.restore().then(() => loop.resetLoop());
     await this.persistedRestored;
   }
 
@@ -1717,18 +1732,33 @@ export class AgentTestContext {
     tools = [],
     provider = MOCK_PROVIDER,
     modelCapabilities,
+    preserveProfile = false,
   }: ConfigureOptions = {}): void {
-    this.configureRuntimeModel(provider, modelCapabilities);
-    const profile = this.get(IAgentProfileService);
-    profile.update({
-      modelAlias: provider.model,
-      systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
-      thinkingLevel: 'off',
-      environmentDisclosure: mutedDateChangeEnvironment(),
-    });
-
-    if (tools.length > 0) {
-      profile.update({ activeToolNames: [...tools] });
+    this.configureRuntimeModel(provider, modelCapabilities, preserveProfile);
+    if (preserveProfile) {
+      this.snapshots.drain();
+      return;
+    }
+    const profile = this.get(IAgentLoopService);
+    const hasBinding = this.get(IWireService).readLoopChain().some(({ record }) => record.type === 'profile.bind');
+    if (!hasBinding) {
+      void profile.applyBindingSnapshot({
+        modelAlias: provider.model,
+        profileName: undefined,
+        systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
+        thinkingLevel: 'off',
+        environmentDisclosure: mutedDateChangeEnvironment(),
+        activeToolNames: tools.length === 0 ? undefined : [...tools],
+        disallowedTools: [],
+      });
+    } else {
+      profile.update({
+        modelAlias: provider.model,
+        systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
+        thinkingLevel: 'off',
+        environmentDisclosure: mutedDateChangeEnvironment(),
+      });
+      if (tools.length > 0) profile.update({ activeToolNames: [...tools] });
     }
 
     this.snapshots.drain();
@@ -1737,15 +1767,17 @@ export class AgentTestContext {
   configureRuntimeModel(
     provider: TestProviderConfig,
     modelCapabilities?: ModelCapability | undefined,
+    preserveProfile = false,
   ): void {
     this.kimiConfig = configWithProvider(this.kimiConfig, provider, modelCapabilities);
-    (this.get(IModelCatalog) as ModelCatalog).notifyConfigChanged();
-    const profile = this.get(IAgentProfileService);
+    (this.get(IModelCatalog) as Partial<ModelCatalog>).notifyConfigChanged?.();
+    if (preserveProfile) return;
+    const profile = this.get(IAgentLoopService);
     profile.update({ modelAlias: provider.model });
   }
 
   notifyModelConfigChanged(): void {
-    (this.get(IModelCatalog) as ModelCatalog).notifyConfigChanged();
+    (this.get(IModelCatalog) as Partial<ModelCatalog>).notifyConfigChanged?.();
   }
 
   contextData(): { readonly history: readonly ContextMessage[]; readonly tokenCount: number } {
@@ -2130,6 +2162,7 @@ export class AgentTestContext {
   async close(_reason = 'Agent runtime test closed'): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    await this.persistedRestored?.catch(() => undefined);
     for (const disposable of this.disposables.splice(0)) {
       disposable.dispose();
     }
@@ -2225,14 +2258,17 @@ export class AgentTestContext {
   }
 
   private createPromiseAgentApi(): PromiseAgentAPI {
+    const owner = this;
     const adapters = this.createRpcPassthroughAdapters();
     return new Proxy(adapters, {
       get(proxyTarget, property, receiver) {
         const value = Reflect.get(proxyTarget, property, receiver) as unknown;
         if (typeof value !== 'function') return value;
-        return (payload: unknown) => {
+        return async (payload: unknown) => {
+          await owner.restorePersisted();
+          owner.context.flushReminders();
           try {
-            return Promise.resolve(value(payload));
+            return await value(payload);
           } catch (error) {
             return Promise.reject(error);
           }
@@ -2270,9 +2306,9 @@ export class AgentTestContext {
       runShellCommand: (payload) => this.get(IAgentShellCommandService).run(payload),
       cancelShellCommand: (payload) =>
         this.get(IAgentShellCommandService).cancel(payload.commandId),
-      setThinking: (payload) => this.get(IAgentProfileService).setThinking(payload.level),
-      setModel: (payload) => this.get(IAgentProfileService).setModel(payload.model),
-      getModel: () => this.get(IAgentProfileService).getModel(),
+      setThinking: (payload) => this.get(IAgentLoopService).setThinking(payload.level),
+      setModel: (payload) => this.get(IAgentLoopService).setModel(payload.model),
+      getModel: () => this.get(IAgentLoopService).getModel(),
       enterPlan: () => this.get(IAgentPlanService).enter(),
       cancelPlan: (payload) => this.get(IAgentPlanService).cancel(payload.id),
       clearPlan: () => this.get(IAgentPlanService).clear(),
@@ -2288,7 +2324,7 @@ export class AgentTestContext {
       registerTool: (payload) => this.get(IAgentUserToolService).register(payload),
       unregisterTool: (payload) => this.get(IAgentUserToolService).unregister(payload.name),
       setActiveTools: (payload) =>
-        this.get(IAgentProfileService).update({ activeToolNames: payload.names }),
+        this.get(IAgentLoopService).update({ activeToolNames: payload.names }),
       stopTask: (payload) => {
         const tasks = this.get(IAgentTaskService);
         if (payload.reason === undefined) {
@@ -2306,7 +2342,7 @@ export class AgentTestContext {
       cancelGoal: () => this.get(IAgentGoalService).cancelGoal(),
       getTaskOutput: (payload) =>
         this.get(IAgentTaskService).readOutput(payload.taskId, payload.tail),
-      getConfig: () => this.get(IAgentProfileService).data(),
+      getConfig: () => this.get(IAgentLoopService).data(),
       getPermission: () => this.get(IAgentPermissionGate).data(),
       getPlan: () => this.get(IAgentPlanService).status(),
       getUsage: () => this.usage.status(),
@@ -2353,7 +2389,7 @@ export class AgentTestContext {
     const context = this.get(IAgentLoopService);
     const tokenCounting = this.tokenCounting;
     tokenCounting.measured(context.history(), [], usage);
-    const profile = this.get(IAgentProfileService);
+    const profile = this.get(IAgentLoopService);
     void this.usage.record(profile.data().modelAlias ?? 'mock-model', usage, {
       type: 'turn',
       turnId: context.history().length,
@@ -2548,7 +2584,7 @@ function taskNotificationKey(taskId: string, status: string): string {
 }
 
 function configStateSnapshot(ctx: AgentTestContext): ResumeStateSnapshot['config'] {
-  const profile = ctx.get(IAgentProfileService);
+  const profile = ctx.get(IAgentLoopService);
   const data = profile.data();
   let model: Model | undefined;
   try {

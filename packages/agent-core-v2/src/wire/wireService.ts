@@ -87,6 +87,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
   private writeGeneration = 0;
   private lastReadLineCount = 0;
   private modeTwoEntries: WireLine[] = [];
+  private modeTwoProfileEntries: WireLine[] = [];
   private readonly reportedDiagnostics = new Set<string>();
 
   constructor(
@@ -189,6 +190,13 @@ export class WireService extends Service implements IWireService, IAgentJournal 
   readHumanChain(): readonly WireLine[] {
     const tree = parseTree(this.modeTwoEntries, this.lines);
     return restorableChain(this.modeTwoEntries, tree);
+  }
+
+  readLoopChain(): readonly WireLine[] {
+    const entries = [...this.modeTwoEntries, ...this.modeTwoProfileEntries]
+      .toSorted((a, b) => a.line - b.line);
+    const tree = parseTree(entries, this.lines);
+    return restorableChain(entries, tree);
   }
 
   readHumanJournal(): readonly WireLine[] {
@@ -365,7 +373,9 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     let hasRecords = false;
     let legacyPlanRevisionMigrated = false;
     const modeTwoEntries: WireLine[] = [];
+    const modeTwoProfileEntries: WireLine[] = [];
     const modeTwoLengthAtStart = this.modeTwoEntries.length;
+    const modeTwoProfileLengthAtStart = this.modeTwoProfileEntries.length;
 
     for await (const candidate of source) {
       lineCount++;
@@ -430,6 +440,8 @@ export class WireService extends Service implements IWireService, IAgentJournal 
       const runtimeRecord = fromPersistentWireRecord(outputRecord);
       if (isHumanRecordType(runtimeRecord.type)) {
         modeTwoEntries.push({ record: runtimeRecord, line: lineCount });
+      } else if (isLoopProfileRecordType(runtimeRecord.type)) {
+        modeTwoProfileEntries.push({ record: runtimeRecord, line: lineCount });
       }
       yield { record: decodePersistent ? runtimeRecord : outputRecord, line: lineCount };
       if (outputRecord.type !== 'metadata') {
@@ -451,11 +463,18 @@ export class WireService extends Service implements IWireService, IAgentJournal 
         this.pendingRewrite = rewrittenRecords;
       }
     }
-    this.mergeModeTwoEntries(modeTwoEntries, this.modeTwoEntries.slice(modeTwoLengthAtStart), lineCount);
+    this.mergeModeTwoEntries('modeTwoEntries', modeTwoEntries, this.modeTwoEntries.slice(modeTwoLengthAtStart), lineCount);
+    this.mergeModeTwoEntries(
+      'modeTwoProfileEntries',
+      modeTwoProfileEntries,
+      this.modeTwoProfileEntries.slice(modeTwoProfileLengthAtStart),
+      lineCount,
+    );
     this.lastReadLineCount = lineCount;
   }
 
   private mergeModeTwoEntries(
+    target: 'modeTwoEntries' | 'modeTwoProfileEntries',
     fresh: WireLine[],
     appended: readonly WireLine[],
     lineCount: number,
@@ -467,7 +486,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
       line += 1;
       merged.push({ record: entry.record, line });
     }
-    this.modeTwoEntries = merged;
+    this[target] = merged;
   }
 
   lineCount(): number {
@@ -671,9 +690,18 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     this.lines += 1;
     if (isHumanRecordType(record.type)) {
       this.modeTwoEntries.push({ record, line: this.lines });
+    } else if (isLoopProfileRecordType(record.type)) {
+      this.modeTwoProfileEntries.push({ record, line: this.lines });
     }
     if (record.type === 'context.clear') this.lastClearLine = this.lines;
   }
+}
+
+function isLoopProfileRecordType(type: string): boolean {
+  return type === 'profile.bind' ||
+    type === 'config.update' ||
+    type === 'tools.set_active_tools' ||
+    type === 'tools.reset_active_tools';
 }
 
 type UnknownRecord = Record<string, unknown>;

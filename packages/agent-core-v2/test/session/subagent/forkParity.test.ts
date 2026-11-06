@@ -13,7 +13,6 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentTaskService } from '#/agent/task/task';
 import type {
   LlmRequestContent,
@@ -228,7 +227,7 @@ describe('subagent task reminders and fork request parity', () => {
     const agentLifecycle = ctx.get(IAgentLifecycleService);
     const parentContext = await agentLifecycle.create({ agentId: 'parent' });
     const parent = agentLifecycle.handleOf(parentContext.agentId)!;
-    const profile = parent.accessor.get(IAgentProfileService);
+    const profile = parent.accessor.get(IAgentLoopService);
     profile.update({
       modelAlias: 'mock-model',
       systemPrompt: PARENT_SYSTEM_PROMPT,
@@ -360,8 +359,8 @@ describe('subagent task reminders and fork request parity', () => {
   }
 
   async function runMainAgentFork(options?: { readonly disallowedTools?: readonly string[] }): Promise<void> {
-    const profile = ctx.get(IAgentProfileService);
-    await profile.bind({ profile: 'agent', model: 'mock-model' });
+    const profile = ctx.get(IAgentLoopService);
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
     profile.update({ activeToolNames: contributedToolNames() });
     if (options?.disallowedTools !== undefined) {
       profile.update({ disallowedTools: [...options.disallowedTools] });
@@ -523,7 +522,7 @@ describe('subagent task reminders and fork request parity', () => {
       const restoredContext = await lifecycle.create({ agentId: original.id });
       const restored = lifecycle.handleOf(restoredContext.agentId)!;
       expect(restoredContext.generation).not.toBe(originalContext.generation);
-      expect(restored.accessor.get(IAgentProfileService).data().profileName).toBe('coder');
+      expect(restored.accessor.get(IAgentLoopService).data().profileName).toBe('coder');
       const history = restored.accessor.get(IAgentLoopService).history();
       expect(taskReminders(history)).toHaveLength(hasReminder ? 1 : 0);
 
@@ -581,7 +580,7 @@ describe('subagent task reminders and fork request parity', () => {
       if (restriction === 'flag') {
         waitForEnabled = false;
       } else if (restriction === 'profile') {
-        child.accessor.get(IAgentProfileService).update({ disallowedTools: ['WaitFor'] });
+        child.accessor.get(IAgentLoopService).update({ disallowedTools: ['WaitFor'] });
       } else {
         await child.accessor.get(IAgentToolPolicyService).setSessionDisabledTools(['WaitFor']);
       }
@@ -620,8 +619,8 @@ describe('subagent task reminders and fork request parity', () => {
 
   it('keeps btw system, tools and inherited history identical to main', async () => {
     createMainForkCtx();
-    await ctx.get(IAgentProfileService).bind({ profile: 'agent', model: 'mock-model' });
-    ctx.get(IAgentProfileService).update({ activeToolNames: contributedToolNames() });
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
+    ctx.get(IAgentLoopService).update({ activeToolNames: contributedToolNames() });
     const lifecycle = ctx.get(IAgentLifecycleService);
     await runPrompt(lifecycle.handleOf('main')!);
     const childId = await ctx.get(ISessionBtwService).start();
@@ -641,8 +640,8 @@ describe('subagent task reminders and fork request parity', () => {
   it('keeps btw cache probes usage-driven when main compacts', async () => {
     const telemetry: TelemetryRecord[] = [];
     createMainForkCtx(stubFlag(true), telemetry);
-    await ctx.get(IAgentProfileService).bind({ profile: 'agent', model: 'mock-model' });
-    ctx.get(IAgentProfileService).update({ activeToolNames: contributedToolNames() });
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
+    ctx.get(IAgentLoopService).update({ activeToolNames: contributedToolNames() });
     const lifecycle = ctx.get(IAgentLifecycleService);
     const main = lifecycle.handleOf('main')!;
     await runPrompt(main);
@@ -704,8 +703,8 @@ describe('subagent task reminders and fork request parity', () => {
         await parentScript.requester.generate(config, content, control);
       },
     });
-    const profile = ctx.get(IAgentProfileService);
-    await profile.bind({ profile: 'agent', model: 'mock-model' });
+    const profile = ctx.get(IAgentLoopService);
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
     profile.update({ activeToolNames: contributedToolNames() });
     ctx.get(IAgentPermissionModeService).setMode('yolo');
     parentScript.mockNextResponse({
@@ -775,8 +774,8 @@ describe('subagent task reminders and fork request parity', () => {
         await parentScript.requester.generate(config, content, control);
       },
     });
-    const profile = ctx.get(IAgentProfileService);
-    await profile.bind({ profile: 'agent', model: 'mock-model' });
+    const profile = ctx.get(IAgentLoopService);
+    await ctx.get(IAgentLoopService).bindProfile({ profile: 'agent', model: 'mock-model' });
     profile.update({ activeToolNames: contributedToolNames() });
     ctx.get(IAgentPermissionModeService).setMode('yolo');
     parentScript.mockNextResponse({

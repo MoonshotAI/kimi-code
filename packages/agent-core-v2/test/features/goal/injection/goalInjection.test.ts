@@ -3,7 +3,6 @@ import type { ToolCall } from '#human/message';
 
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { compactContext } from '../../../agent/contextMemory/stubs';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 
@@ -25,7 +24,7 @@ async function injectDynamic(ctx: TestAgentContext, isNewTurn: boolean): Promise
 
 async function registerLookupTool(
   ctx: TestAgentContext,
-  profile: IAgentProfileService,
+  profile: IAgentLoopService,
 ): Promise<void> {
   profile.update({ activeToolNames: ['Lookup'] });
   await ctx.rpc.registerTool({
@@ -85,7 +84,7 @@ describe('GoalInjection content', () => {
 
   it('activates injection after restore and removes it on close', async () => {
     const local = createTestAgent(agentService(IAgentSwarmService, stubAgentSwarm()));
-    await local.dispatcher.restore();
+    await local.restorePersisted();
     const localGoals = local.get(IAgentGoalService);
     const localContext = local.get(IAgentLoopService);
     const localLoop = local.get(IAgentLoopService) as StubLoop;
@@ -343,7 +342,7 @@ describe('GoalInjection integration', () => {
   describe('enabled goal injection', () => {
     let ctx: TestAgentContext;
     let goals: GoalServiceTestManager;
-    let profile: IAgentProfileService;
+    let profile: IAgentLoopService;
     let persistence: InMemoryWireRecordPersistence;
 
     beforeEach(async () => {
@@ -353,7 +352,7 @@ describe('GoalInjection integration', () => {
         agentService(IAgentSwarmService, stubAgentSwarm()),
       );
       goals = ctx.get(IAgentGoalService);
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
       await ctx.restorePersisted();
     });
 

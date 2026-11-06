@@ -5,6 +5,13 @@ import type { IWireService } from '#/wire/wire';
 import { normalizeLegacyTurnSteerRecords } from '#/wire/human';
 import type { PartsTransformer, WireRecord } from '#/wire/record';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import type { ProfileBindingSnapshot } from '#/agent/profile/profile';
+import {
+  EMPTY_LOOP_PROFILE,
+  reduceLoopConfigUpdate,
+  reduceLoopProfileBind,
+  reduceLoopActiveTools,
+} from '#/agent/profile/profileOps';
 import { applyContextCompactionRecord } from '#/agent/contextMemory/contextOps';
 import { cutTurnUndo, wireLinesOf } from '#/agent/undo/turnUndo';
 import {
@@ -30,6 +37,8 @@ import type {
 
 export interface LoopJournalSnapshot {
   readonly input: LoopInput;
+  readonly profile?: ProfileBindingSnapshot;
+  readonly profileBound: boolean;
 }
 
 interface TurnClock {
@@ -122,8 +131,23 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
   }
 
   let context: readonly ContextMessage[] = [];
+  let profile: ProfileBindingSnapshot | undefined;
+  let profileBound = false;
   for (const record of contextRecords) {
     switch (record.type) {
+      case 'profile.bind':
+        profile = reduceLoopProfileBind(profile, record as never);
+        profileBound = true;
+        break;
+      case 'config.update':
+        profile = reduceLoopConfigUpdate(profile ?? EMPTY_LOOP_PROFILE, record as never);
+        break;
+      case 'tools.set_active_tools':
+        profile = reduceLoopActiveTools(profile ?? EMPTY_LOOP_PROFILE, record['names'] as readonly string[]);
+        break;
+      case 'tools.reset_active_tools':
+        profile = reduceLoopActiveTools(profile ?? EMPTY_LOOP_PROFILE, undefined);
+        break;
       case 'context.append_message':
         context = foldAppendMessage(context, record['message'] as ContextMessage);
         break;
@@ -143,7 +167,10 @@ export function restoreLoopJournal(records: readonly WireRecord[]): LoopJournalS
   }
   context = foldSettle(context);
   return {
+    profile,
+    profileBound,
     input: {
+      profile: profile === undefined ? undefined : { systemPrompt: profile.systemPrompt, tools: [] },
       messages: historyFromContext(
         context.map((message) => message.llmTiming === undefined ? message : { ...message, llmTiming: undefined }),
       ),
@@ -423,7 +450,7 @@ export class LoopJournal {
   }
 
   snapshot(): LoopJournalSnapshot {
-    return restoreLoopJournal(this.wire.readHumanChain().map(({ record }) => record));
+    return restoreLoopJournal(this.wire.readLoopChain().map(({ record }) => record));
   }
 
   settled(): Promise<void> {

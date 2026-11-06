@@ -11,7 +11,6 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult } from '#/tool/toolContract';
@@ -1111,7 +1110,7 @@ describe('AgentToolDedupeService', () => {
         execEnvServices({ processRunner: createFakeProcessRunner({ spawn: exec as unknown as IHostProcessService['spawn'] }) }),
         { initialConfig: { providers: {}, loopControl: { maxStepsPerTurn } } },
       );
-      ctx.get(IAgentProfileService).update({ activeToolNames: ['Bash'] });
+      ctx.get(IAgentLoopService).update({ activeToolNames: ['Bash'] });
       records.length = 0;
       return { ctx, exec };
     }

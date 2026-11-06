@@ -9,7 +9,6 @@ import type { LlmRequester } from '#human/llm-requester/requester';
 import { IAgentTaskService, type AgentTaskInfo } from '#/agent/task/task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnPrompt } from '#/agent/loop/turnOps';
@@ -46,13 +45,13 @@ describe('task notification → main agent (real Agent instance)', () => {
     let ctx: TestAgentContext;
     let background: IAgentTaskService;
     let loop: IAgentLoopService;
-    let profile: IAgentProfileService;
+    let profile: IAgentLoopService;
 
     beforeEach(() => {
       ctx = createTestAgent();
       background = ctx.get(IAgentTaskService);
       loop = ctx.get(IAgentLoopService);
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
       profile.update({ activeToolNames: [] });
     });
 
@@ -373,7 +372,7 @@ describe('task notification → main agent (real Agent instance)', () => {
       ctx = createTestAgent(homeDirServices(sessionDir), taskServices());
       background = ctx.get(IAgentTaskService) as TaskServiceTestManager;
       loop = ctx.get(IAgentLoopService);
-      const profile = ctx.get(IAgentProfileService);
+      const profile = ctx.get(IAgentLoopService);
       profile.update({ activeToolNames: [] });
     });
 

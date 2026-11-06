@@ -28,7 +28,7 @@
 
 // Index (67 record types)
 //   changeNotifier.snapshot            changeNotifier.snapshot                                         src/agent/changeNotifier/changeNotifierOps.ts
-//   config.update                      profile                                                         src/agent/profile/profileOps.ts
+//   config.update                      (none)                                                          src/agent/profile/profileOps.ts
 //   context.append_loop_event          changeNotifier.snapshot, plan, task.notificationDelivery, turn  src/agent/contextMemory/contextEvents.ts
 //   context.append_message             swarmReminderDelivered, task.notificationDelivery               src/agent/contextMemory/contextEvents.ts
 //   context.apply_compaction           changeNotifier.snapshot, plan, task.notificationDelivery, turn  src/agent/contextMemory/contextEvents.ts
@@ -62,7 +62,7 @@
 //   plan_mode.exit                     plan                                                            src/features/plan/planOps.ts
 //   plan.revision                      plan                                                            src/features/plan/planOps.ts
 //   plugin.session_start               pluginSessionStartSnapshot                                      src/agent/plugin/agentPluginOps.ts
-//   profile.bind                       profile, profile.activeTools                                    src/agent/profile/profileOps.ts
+//   profile.bind                       (none)                                                          src/agent/profile/profileOps.ts
 //   prompt.aborted                     (none)                                                          src/agent/prompt/promptEvents.ts
 //   prompt.completed                   (none)                                                          src/agent/prompt/promptEvents.ts
 //   prompt.steered                     (none)                                                          src/agent/prompt/promptEvents.ts
@@ -83,8 +83,8 @@
 //   tool_select.initialized            toolSelect                                                      src/agent/toolSelect/toolSelectOps.ts
 //   tool_select.tools_changed          toolSelect                                                      src/agent/toolSelect/toolSelectOps.ts
 //   tools.register_user_tool           userTool                                                        src/agent/userTool/userToolOps.ts
-//   tools.reset_active_tools           profile.activeTools                                             src/agent/profile/profileOps.ts
-//   tools.set_active_tools             profile.activeTools                                             src/agent/profile/profileOps.ts
+//   tools.reset_active_tools           (none)                                                          src/agent/profile/profileOps.ts
+//   tools.set_active_tools             (none)                                                          src/agent/profile/profileOps.ts
 //   tools.unregister_user_tool         userTool                                                        src/agent/userTool/userToolOps.ts
 //   tools.update_store                 (none)                                                          src/features/todo/todoOps.ts
 //   tower_mode.enter                   tower, tower.owner                                              src/features/tower/towerOps.ts
@@ -112,7 +112,7 @@ interface ChangeNotifierSnapshotPayload {
 }
 
 /**
- * states: profile
+ * states: (none)
  * owner: src/agent/profile/profileOps.ts
  */
 interface ConfigUpdatePayload {
@@ -570,7 +570,7 @@ interface PluginSessionStartPayload {
 }
 
 /**
- * states: profile, profile.activeTools
+ * states: (none)
  * owner: src/agent/profile/profileOps.ts
  */
 interface ProfileBindPayload {
@@ -821,7 +821,7 @@ interface ToolsRegisterUserToolPayload {
 }
 
 /**
- * states: profile.activeTools
+ * states: (none)
  * owner: src/agent/profile/profileOps.ts
  */
 interface ToolsResetActiveToolsPayload {
@@ -830,7 +830,7 @@ interface ToolsResetActiveToolsPayload {
 }
 
 /**
- * states: profile.activeTools
+ * states: (none)
  * owner: src/agent/profile/profileOps.ts
  */
 interface ToolsSetActiveToolsPayload {

@@ -1,7 +1,8 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IAgentProfileService, ProfileError, ProfileErrors } from '#/agent/profile/profile';
+import { ProfileError, ProfileErrors } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { TOOLS_SECTION, type ToolsConfig } from './configSection';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IConfigService } from '#/app/config/config';
@@ -18,7 +19,7 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
   private globalPolicy: ToolsConfig | undefined;
 
   constructor(
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLoopService private readonly profile: IAgentLoopService,
     @IConfigService private readonly config: IConfigService,
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,

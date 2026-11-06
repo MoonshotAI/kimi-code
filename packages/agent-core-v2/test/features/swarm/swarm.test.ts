@@ -57,7 +57,6 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IConfigService } from '#/app/config/config';
 import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -194,11 +193,11 @@ function stubCallerProfile(
     readonly modelAlias?: string;
     readonly thinkingLevel?: string;
   },
-): IAgentProfileService {
+): IAgentLoopService {
   return {
     _serviceBrand: undefined,
     data: () => data ?? { profileName: undefined },
-  } as unknown as IAgentProfileService;
+  } as unknown as IAgentLoopService;
 }
 
 const SWARM_MODEL_ALIASES: ReadonlySet<string> = new Set([
@@ -211,7 +210,7 @@ const SWARM_MODEL_ALIASES: ReadonlySet<string> = new Set([
 function realSubagents(
   catalog: ISessionAgentProfileCatalog,
   config: IConfigService,
-  callerProfile: IAgentProfileService,
+  callerProfile: IAgentLoopService,
 ): ISessionSubagentService {
   const caller = {
     _serviceBrand: undefined,
@@ -223,13 +222,13 @@ function realSubagents(
         thinkingLevel: data.thinkingLevel ?? 'off',
       };
     },
-  } as unknown as IAgentProfileService;
+  } as unknown as IAgentLoopService;
   const callerHandle = {
     id: 'main',
     kind: LifecycleScope.Agent,
     accessor: {
       get: (serviceId: unknown) =>
-        serviceId === IAgentProfileService ? caller : undefined,
+        serviceId === IAgentLoopService ? caller : undefined,
     },
     dispose: () => {},
   } as unknown as IAgentScopeHandle;

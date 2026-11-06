@@ -12,9 +12,8 @@ import {
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { ILogService } from '#/_base/log/log';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
-import '#/agent/contextMemory/conversationTime';
-import '#/agent/loop/turnOps';
-import { ContextAppendMessage, ContextUndo } from '#/agent/contextMemory/contextEvents';
+import { TurnPrompt } from '#/agent/loop/turnOps';
+import { ContextUndo } from '#/agent/contextMemory/contextEvents';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -54,6 +53,7 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     },
     readRestoreChains: async () => ({ restorable: [...journal], journal: [...journal] }),
     readHumanChain: () => [],
+    readLoopChain: () => [],
     readHumanJournal: () => [],
     read: async function* () {
       for (const record of journal) yield record;
@@ -697,10 +697,11 @@ describe('EventDispatcherService', () => {
     isolated.set(IAgentStateService, new AgentStateService());
     isolated.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
     const scoped = isolated.get(IEventDispatcher);
-    const prompt = (text: string): ContextAppendMessage =>
-      new ContextAppendMessage({
+    const prompt = (text: string): TurnPrompt =>
+      new TurnPrompt({
         agentId: 'main',
-        message: { role: 'user', content: [{ type: 'text', text }] },
+        input: [{ type: 'text', text }],
+        origin: { kind: 'user' },
       });
     records.push(
       prompt('a').serialize(),
@@ -711,10 +712,10 @@ describe('EventDispatcherService', () => {
     let state: CheckpointedState = { items: [] };
     scoped.attach({
       id: 'runtime.test.custom-undo',
-      events: [ContextAppendMessage],
+      events: [TurnPrompt],
       undoable: true,
       transition: (draft, event) => {
-        const part = (event as ContextAppendMessage).message.content[0];
+        const part = (event as TurnPrompt).input[0];
         if (part?.type === 'text') draft.items.push(part.text);
       },
       onUndo: (current, count) => ({ items: current.items.slice(0, -count) }),

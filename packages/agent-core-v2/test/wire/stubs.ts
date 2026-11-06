@@ -189,6 +189,7 @@ export function stubAgentWire(
     readRestorable: async function* () {},
     readRestoreChains: async () => ({ restorable: [], journal: [] }),
     readHumanChain: () => [],
+    readLoopChain: () => [],
     readHumanJournal: () => [],
     flush,
     drainPersisted: async () => {},

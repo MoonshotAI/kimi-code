@@ -14,7 +14,7 @@ import type { IAgentEnvironmentBindingService } from '@moonshot-ai/agent-core-v2
 
 import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
-import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
+import type { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
 import type { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
@@ -52,8 +52,8 @@ export type PromptWithSkillsInput = Omit<Parameters<IAgentSkillService['promptWi
 };
 export type PromptWithSkillsResult = Awaited<ReturnType<IAgentSkillService['promptWithSkills']>>;
 export type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
-export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
-export type ThinkingLevel = ReturnType<IAgentProfileService['getEffectiveThinkingLevel']>;
+export type SetModelResult = Awaited<ReturnType<IAgentLoopService['setModel']>>;
+export type ThinkingLevel = ReturnType<IAgentLoopService['getEffectiveThinkingLevel']>;
 export type UsageStatus = Awaited<ReturnType<ISessionUsageService['status']>>;
 type AgentContextMessage = LegacyMessage & {
   readonly id?: string;

@@ -74,9 +74,9 @@ class FakeAgentBus {
   private allHandlers: Array<(e: FakeBusEvent) => void> = [];
   private perType = new Map<string, Array<(e: FakeBusEvent) => void>>();
   subscribe(handler: (e: FakeBusEvent) => void): { dispose(): void };
-  subscribe(type: string, handler: (e: FakeBusEvent) => void): { dispose(): void };
-  subscribe(typeOrHandler: string | ((e: FakeBusEvent) => void), handler?: (e: FakeBusEvent) => void) {
-    if (typeof typeOrHandler === 'function') {
+  subscribe(type: string | Event2Class, handler: (e: FakeBusEvent) => void): { dispose(): void };
+  subscribe(typeOrHandler: string | Event2Class | ((e: FakeBusEvent) => void), handler?: (e: FakeBusEvent) => void) {
+    if (typeof typeOrHandler === 'function' && !('type' in typeOrHandler)) {
       this.allHandlers.push(typeOrHandler);
       return {
         dispose: () => {
@@ -85,9 +85,10 @@ class FakeAgentBus {
         },
       };
     }
-    const list = this.perType.get(typeOrHandler) ?? [];
+    const type = typeof typeOrHandler === 'string' ? typeOrHandler : typeOrHandler.type;
+    const list = this.perType.get(type) ?? [];
     list.push(handler!);
-    this.perType.set(typeOrHandler, list);
+    this.perType.set(type, list);
     return {
       dispose: () => {
         const i = list.indexOf(handler!);

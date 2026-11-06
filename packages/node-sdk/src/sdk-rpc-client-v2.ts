@@ -179,7 +179,6 @@ import {
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentPluginCommandService,
-  IAgentProfileService,
   IAgentReminderService,
   IAgentSkillService,
   IAgentSwarmService,
@@ -1417,7 +1416,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       facade.getTasks({ activeOnly: false }),
       earlyWireFold?.then((early) => early ?? foldWire()) ?? foldWire(),
     ]);
-    const profile = agent.accessor.get(IAgentProfileService).data();
+    const profile = agent.accessor.get(IAgentLoopService).data();
     const toolPolicy = agent.accessor.get(IAgentToolPolicyService);
     const tools = agent.accessor.get(IAgentToolRegistryService).list().map((tool) => ({
       name: tool.name,
@@ -2083,10 +2082,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (agent === undefined) {
       throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
-    const profile = agent.accessor.get(IAgentProfileService);
+    const profile = agent.accessor.get(IAgentLoopService);
+    const loop = agent.accessor.get(IAgentLoopService);
     if (binding !== undefined || profile.data().profileName === undefined) {
       try {
-        await profile.bind({
+        await loop.bindProfile({
           profile: DEFAULT_AGENT_PROFILE_NAME,
           model: binding?.model,
           thinking: binding?.thinking,
@@ -2139,7 +2139,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Through the agent scope (`IAgentProfileService.setThinking`) — no klient
+   * Through the agent scope (`IAgentLoopService.setThinking`) — no klient
    * facade exists. Same registry-driven strictness as v1's
    * `setThinkingEffort`: an unlisted effort on a strict-thinking model
    * rejects with `model.config_invalid` and the same message on both
@@ -2147,7 +2147,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async setThinking(input: SetSessionThinkingRpcInput): Promise<void> {
     const agent = await this.agentScope(input.sessionId);
-    agent.accessor.get(IAgentProfileService).setThinking(input.effort);
+    agent.accessor.get(IAgentLoopService).setThinking(input.effort);
   }
 
   override async setPermission(input: SetSessionPermissionRpcInput): Promise<void> {
@@ -2270,7 +2270,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       facade.getPlan(),
       facade.getUsage(),
     ]);
-    const profile = agent.accessor.get(IAgentProfileService).data();
+    const profile = agent.accessor.get(IAgentLoopService).data();
     const capability = profile.modelCapabilities;
     const maxContextTokens = capability.max_input_tokens ?? capability.max_context_tokens;
     const contextTokens = context.tokenCount;
@@ -2408,7 +2408,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       );
     }
     const message = buildImportContextMessage(input.content, input.source);
-    const capability = agent.accessor.get(IAgentProfileService).data().modelCapabilities;
+    const capability = agent.accessor.get(IAgentLoopService).data().modelCapabilities;
     const currentTokenCount = agent.accessor
       .get(ISessionTokenCountingService)
       .get(agentContextOf(agent)).size;
@@ -2568,7 +2568,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   override async getSessionWarnings(input: SessionIdRpcInput) {
     const agent = await this.agentScope(input.sessionId);
-    let warning = agent.accessor.get(IAgentProfileService).getAgentsMdWarning();
+    let warning = agent.accessor.get(IAgentLoopService).getAgentsMdWarning();
     if (warning === undefined) {
       const session = this.requireLiveSession(input.sessionId);
       const prepared = await prepareSystemPromptContext(

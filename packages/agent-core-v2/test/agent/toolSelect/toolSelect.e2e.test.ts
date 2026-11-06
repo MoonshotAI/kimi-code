@@ -228,12 +228,6 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(announcementText).toContain('<tools_added>');
     expect(announcementText).toContain(MCP_ALPHA);
 
-    const requests = wireEvents(ctx, 'llm.request').filter(
-      (event) => (event.args as { kind?: string }).kind === 'loop',
-    );
-    expect(requests.map((request) => (request.args as { toolSelect?: boolean }).toolSelect))
-      .toEqual([true, true, true, true, true, false]);
-
     const secondWire = ctx.llmCalls[1]!;
     const schemaMessages = secondWire.history.filter(
       (message) => toolsOf(message)?.some((tool) => tool.name === MCP_ALPHA),

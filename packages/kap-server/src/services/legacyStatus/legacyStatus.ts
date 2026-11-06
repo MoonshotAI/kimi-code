@@ -1,6 +1,6 @@
 import {
   agentContextOf,
-  IAgentProfileService,
+  IAgentLoopService,
   ISessionTokenCountingService,
   ISessionUsageService,
   IModelCatalog,
@@ -17,8 +17,8 @@ export interface LegacyStatusSnapshot {
 }
 
 export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot | undefined {
-  const profile = agent.accessor.get(IAgentProfileService) as
-    | IAgentProfileService
+  const profile = agent.accessor.get(IAgentLoopService) as
+    | IAgentLoopService
     | undefined;
   const usageService = agent.accessor.get(ISessionUsageService) as
     | ISessionUsageService

@@ -64,6 +64,7 @@ export class PromptCacheGuardedLoopRequester implements LoopRequester {
     private readonly inner: LoopRequester,
     private readonly context: IAgentLoopService,
     private readonly journal: IAgentJournal,
+    private readonly ready?: () => Promise<void>,
   ) {}
 
   createTurnExecution(input: AgentTurnExecutionInput): TurnExecution {
@@ -79,6 +80,7 @@ export class PromptCacheGuardedLoopRequester implements LoopRequester {
   }
 
   async prepareOperation(options: OperationLoopRequesterOptions, signal: AbortSignal): Promise<CoreLoopRequester> {
+    await this.ready?.();
     const requester = await this.inner.prepareOperation(options, signal);
     return this.guard(requester, options.source, () => this.context.historyRevision());
   }

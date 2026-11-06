@@ -33,6 +33,7 @@ function memoryWire(records: WireRecord[]): IWireService {
       records.push(record);
     },
     readHumanChain: () => records.map((record, index) => ({ record, line: index + 1 })),
+    readLoopChain: () => records.map((record, index) => ({ record, line: index + 1 })),
   };
 }
 
@@ -40,6 +41,8 @@ describe('loop journal restore', () => {
   it('restores public history and turn clock while ignoring agent records', () => {
     const snapshot = restoreLoopJournal([
       { type: 'agent.message.appended', message: prompt('ignored') },
+      { type: 'profile.bind', agentId: 'main', thinkingEffort: 'off', systemPrompt: 'from-bind', disallowedTools: [] },
+      { type: 'config.update', agentId: 'main', systemPrompt: 'from-update' },
       { type: 'context.append_message', message: contextFromHistoryEntry(prompt('old')) },
       { type: 'turn.prompt', input: [], trigger: 'normal', origin: { kind: 'user' }, turnId: 0 },
       { type: 'turn.cancel', turnId: 2, target: 'queued' },
@@ -49,6 +52,7 @@ describe('loop journal restore', () => {
 
     expect(snapshot.input.messages!.map((entry) => entry.message)).toMatchObject([prompt('old').message]);
     expect(snapshot.input.nextTurnId).toBe(3);
+    expect(snapshot.input.profile?.systemPrompt).toBe('from-update');
     expect(snapshot.input.unfinished).toBeUndefined();
   });
 

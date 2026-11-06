@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LoopRequester } from '#/agent/loop/requesterContract';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelRecord } from '#/llm-adapter/model/model';
 import { errorFromLlmOutcome } from '#/llm-adapter/model/generate';
@@ -34,7 +33,7 @@ function defaultGenerate(): GenerateFn {
 
 describe('ConfigState model capabilities', () => {
   let ctx: TestAgentContext;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
   let requester: LoopRequester;
   let kimiConfig: TestKimiConfig;
   let generate: GenerateFn;
@@ -53,7 +52,7 @@ describe('ConfigState model capabilities', () => {
       }),
       telemetryServices(recordingTelemetry(records)),
     );
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
     requester = ctx.get(IAgentLoopService).requester;
   });
 
@@ -356,7 +355,7 @@ describe('ConfigState model capabilities', () => {
 
 describe('ConfigState prompt cache hint', () => {
   let ctx: TestAgentContext;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
   let kimiConfig: TestKimiConfig;
 
   beforeEach(() => {
@@ -380,7 +379,7 @@ describe('ConfigState prompt cache hint', () => {
       configServices(() => kimiConfig),
       modelProviderOptionServices({ promptCacheKey: 'session-test' }),
     );
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
   });
 
   afterEach(async () => {
@@ -403,7 +402,7 @@ describe('ConfigState prompt cache hint', () => {
 
 describe('ConfigState thinking clamp for always-thinking models', () => {
   let ctx: TestAgentContext;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
   let requester: LoopRequester;
   let kimiConfig: TestKimiConfig;
   let capturedThinking: unknown;
@@ -466,7 +465,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
         };
       })),
     );
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
     requester = ctx.get(IAgentLoopService).requester;
   });
 
@@ -587,7 +586,7 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
   let ctx: TestAgentContext | undefined;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
   let requester: LoopRequester;
   let kimiConfig: TestKimiConfig;
   let capturedProvider: unknown;
@@ -641,7 +640,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
         };
       })),
     );
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
     requester = ctx.get(IAgentLoopService).requester;
   }
 

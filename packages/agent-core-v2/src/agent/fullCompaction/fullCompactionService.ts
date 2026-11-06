@@ -17,7 +17,7 @@ import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { isAbortError } from '#/_base/utils/abort';
-import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
+import type { ProfileModelContext } from '#/agent/profile/profile';
 import {
   agentContextOfScope,
   IAgentScopeContext,
@@ -140,7 +140,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   constructor(
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
     @IAgentScopeContext private readonly agent: IAgentScopeContext,
     @IAgentTodoService private readonly todo: IAgentTodoService,
@@ -251,9 +250,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private getEffectiveMaxContextTokens(): number {
-    const capability = this.profile.data().modelCapabilities;
+    const capability = this.loopService.data().modelCapabilities;
     const configured = capability.max_input_tokens ?? capability.max_context_tokens;
-    const modelAlias = this.profile.data().modelAlias;
+    const modelAlias = this.loopService.data().modelAlias;
     const observed =
       modelAlias === undefined ? undefined : this.observedMaxContextTokensByModel.get(modelAlias);
     if (observed === undefined) return configured;
@@ -262,7 +261,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 
   private resolveModelContextWithEffectiveMax(): ProfileModelContext {
-    const resolved = this.profile.resolveModelContext();
+    const resolved = this.loopService.resolveModelContext();
     const effectiveMax = this.getEffectiveMaxContextTokens();
     return {
       ...resolved,
@@ -280,7 +279,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private requestTokens(messages: readonly Message[]): number {
     return this.tokenCounting.requestSize({
-      systemPrompt: this.profile.getSystemPrompt(),
+      systemPrompt: this.loopService.getSystemPrompt(),
       tools: this.toolSelect.defaultTools().filter((tool) => tool.deferred !== true),
       messages,
     });
@@ -303,7 +302,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
   private observeContextOverflow(estimatedRequestTokens: number): void {
     if (!Number.isFinite(estimatedRequestTokens) || estimatedRequestTokens <= 0) return;
-    const modelAlias = this.profile.data().modelAlias;
+    const modelAlias = this.loopService.data().modelAlias;
     if (modelAlias === undefined) return;
     const observed = Math.max(
       1,
@@ -611,7 +610,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     const originalHistory = [...this.loopService.history()];
     const tokensBefore = this.requestTokens(originalHistory);
     let retryCount = 0;
-    let thinkingEffort = this.profile.data().thinkingLevel;
+    let thinkingEffort = this.loopService.data().thinkingLevel;
 
     try {
       const signal = active.abortController.signal;
@@ -619,7 +618,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       await this.hooks.onWillCompact.run(active);
 
-      const resolvedModel = this.profile.resolveModelContext();
+      const resolvedModel = this.loopService.resolveModelContext();
       thinkingEffort = resolvedModel.thinkingLevel;
       const maxContextTokens = resolvedModel.modelCapabilities.max_context_tokens;
       const defaultCompactionCap =

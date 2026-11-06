@@ -39,7 +39,6 @@ import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import {
   IAgentFullCompactionService,
   IModelOAuthTokens,
-  IAgentProfileService,
   ITelemetryService,
   IAgentToolRegistryService,
   DYNAMIC_TOOL_SCHEMA_VARIANT,
@@ -349,6 +348,8 @@ describe('FullCompaction', () => {
     );
     ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
 
+    await ctx.restorePersisted();
+    ctx.context.flushReminders();
     expect(ctx.get(IAgentFullCompactionService).begin({ source: 'manual' })).toBe(true);
     await compactionStarted;
     expect(ctx.get(IAgentLoopService).tryAcquireQuiescence()).toBeUndefined();
@@ -372,7 +373,7 @@ describe('FullCompaction', () => {
         { autoConfigure: false, cwd: workDir },
       );
       ctx.configureRuntimeModel(CATALOGUED_PROVIDER, CATALOGUED_MODEL_CAPABILITIES);
-      const profile = ctx.get(IAgentProfileService);
+      const profile = ctx.get(IAgentLoopService);
       await profile.applyProfile(EXACT_COMPACTION_PROFILE);
       profile.update({ activeToolNames: ['Read'] });
 
@@ -569,6 +570,8 @@ describe('FullCompaction', () => {
     const compacted = ctx.once('full_compaction.complete');
 
     ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
+    await ctx.restorePersisted();
+    ctx.context.flushReminders();
     ctx.get(IAgentFullCompactionService).begin({ source: 'auto', instruction: undefined });
     await compacted;
     await vi.waitFor(() => {
@@ -1791,6 +1794,8 @@ describe('FullCompaction', () => {
     const completed = ctx.once('compaction.completed');
     ctx.mockNextResponse({ type: 'text', text: 'Auto summary.' });
 
+    await ctx.restorePersisted();
+    ctx.context.flushReminders();
     ctx.get(IAgentFullCompactionService).begin({ source: 'auto', instruction: undefined });
     await completed;
     await ctx.wire.flush();
@@ -2983,7 +2988,7 @@ describe('FullCompaction', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    ctx.get(IAgentProfileService).update({ thinkingLevel: 'high' });
+    ctx.get(IAgentLoopService).update({ thinkingLevel: 'high' });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
 
@@ -3037,7 +3042,7 @@ describe('FullCompaction', () => {
       Object.defineProperty(resolved, 'capabilities', { value: UNKNOWN_CAPABILITY });
       return resolved;
     };
-    expect(ctx.get(IAgentProfileService).data().modelCapabilities.max_context_tokens).toBe(0);
+    expect(ctx.get(IAgentLoopService).data().modelCapabilities.max_context_tokens).toBe(0);
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.newEvents();
 
@@ -4417,7 +4422,7 @@ describe('FullCompaction pre-shrink', () => {
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: PRE_SHRINK_CAPABILITIES,
     });
-    loaded.get(IAgentProfileService).update({ systemPrompt: 'y'.repeat(80_000) });
+    loaded.get(IAgentLoopService).update({ systemPrompt: 'y'.repeat(80_000) });
     const registration = loaded.get(IAgentToolRegistryService).register(
       mcpTool('mcp__srv__preshrink', {
         type: 'object',
@@ -4653,7 +4658,7 @@ describe('FullCompaction pre-shrink', () => {
       Object.defineProperty(resolved, 'capabilities', { value: UNKNOWN_CAPABILITY });
       return resolved;
     };
-    expect(ctx.get(IAgentProfileService).data().modelCapabilities.max_context_tokens).toBe(0);
+    expect(ctx.get(IAgentLoopService).data().modelCapabilities.max_context_tokens).toBe(0);
     appendPreShrinkHistory(ctx);
     const completed = ctx.once('compaction.completed');
 

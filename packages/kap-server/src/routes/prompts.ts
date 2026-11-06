@@ -6,7 +6,6 @@ import {
   getOrRestoreAgent,
   IAgentLoopService,
   IAgentPermissionModeService,
-  IAgentProfileService,
   IAgentEnvironmentBindingService,
   IAgentEnvironmentService,
   IAgentToolPolicyService,
@@ -122,7 +121,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     prompt: agent.accessor.get(IAgentLoopService),
     skill: agent.accessor.get(IAgentSkillService),
     events: agent.accessor.get(IEventBus),
-    profile: agent.accessor.get(IAgentProfileService),
+    profile: agent.accessor.get(IAgentLoopService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
     binding: agent.accessor.get(IAgentEnvironmentBindingService),
@@ -151,14 +150,15 @@ async function assertActivatableSkills(
 }
 
 async function applyProfileSelection(
-  profile: IAgentProfileService,
+  profile: IAgentLoopService,
+  loop: IAgentLoopService,
   profileName: string,
   model: string | undefined,
   thinking: string | undefined,
 ): Promise<boolean> {
   if (profile.data().profileName === profileName) return false;
   try {
-    await profile.bind({
+    await loop.bindProfile({
       profile: profileName,
       model,
       thinking,
@@ -311,12 +311,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             thinkingConsumed =
               (await applyProfileSelection(
                 resolved.profile,
+                resolved.prompt,
                 req.body.profile,
                 req.body.model,
                 req.body.thinking,
               )) && req.body.thinking !== undefined;
           }
-          if (req.body.model !== undefined) await resolved.profile.setModel(req.body.model);
+          if (req.body.model !== undefined) await resolved.prompt.setModel(req.body.model);
           if (req.body.thinking !== undefined && !thinkingConsumed)
             resolved.profile.setThinking(req.body.thinking);
           if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);

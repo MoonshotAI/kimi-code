@@ -10,7 +10,6 @@ import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptSubmitted } from '#/agent/prompt/promptEvents';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -107,7 +106,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IFlagService private readonly flags: IFlagService,
@@ -154,10 +152,10 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       eventBus.subscribe(AgentStatusUpdated, () => {
         if (this.agentCtx.agentId !== 'main') return;
         if (!this.isActive) return;
-        const active = this.profile.getActiveToolNames();
+        const active = this.loop.getActiveToolNames();
         if (active === undefined) return;
         if (TOWER_MODE_TOOLS.every((name) => active.includes(name))) return;
-        for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
+        for (const name of TOWER_MODE_TOOLS) this.loop.addActiveTool(name);
         void this.dispatcher.dispatch(
           new AgentStatusUpdated({ agentId: this.agentCtx.agentId, towerMode: true }),
         );
@@ -353,7 +351,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     );
     this._register(
       toolExecutor.onBeforeExecuteTool(async (event) => {
-        if (this.profile.data().profileName !== TOWER_WORKER_PROFILE) return;
+        if (this.loop.data().profileName !== TOWER_WORKER_PROFILE) return;
         const toolName = event.toolCall.name;
         if (toolName !== 'Write' && toolName !== 'Edit') return;
 
@@ -451,7 +449,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       return { entered: true };
     }
     await this.adoptTowerRoster();
-    for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
+    for (const name of TOWER_MODE_TOOLS) this.loop.addActiveTool(name);
     this.lastPublished = true;
     this.dispatchEnter();
     return { entered: true };
@@ -905,7 +903,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (!this.flags.enabled(TOWER_FLAG_ID)) return;
     if (!this.isActive) return;
     if (this.agentCtx.agentId !== 'main') return;
-    for (const name of TOWER_MODE_TOOLS) this.profile.addActiveTool(name);
+    for (const name of TOWER_MODE_TOOLS) this.loop.addActiveTool(name);
     this.lastPublished = true;
     void this.dispatcher.dispatch(new AgentStatusUpdated({ agentId: this.agentCtx.agentId, towerMode: true }));
   }

@@ -9,7 +9,6 @@ import { IAgentLoopService, type PromptHandle } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnPrompt } from '#/agent/loop/turnOps';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import {
   PromptAborted,
   PromptCompleted,
@@ -700,7 +699,7 @@ describe('prompt queue', () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'seen' });
-    vi.spyOn(ctx.get(IAgentProfileService), 'getModelProviderType').mockReturnValue(undefined);
+    vi.spyOn(ctx.get(IAgentLoopService), 'getModelProviderType').mockReturnValue(undefined);
     const url = `data:image/avif;base64,${Buffer.from([1, 2, 3]).toString('base64')}`;
 
     await enqueue(loop, {
@@ -754,7 +753,7 @@ describe('prompt queue', () => {
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
     ctx.mockNextResponse({ type: 'text', text: 'merged' });
-    vi.spyOn(ctx.get(IAgentProfileService), 'getModelProviderType').mockReturnValue(undefined);
+    vi.spyOn(ctx.get(IAgentLoopService), 'getModelProviderType').mockReturnValue(undefined);
 
     await enqueue(loop, { message: message('active') });
     await hold.started;

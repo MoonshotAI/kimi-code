@@ -50,7 +50,7 @@ describe('activateSkill', () => {
     await ctx.rpc.activateSkill({ name: 'commit', promptId: 'msg_activation' });
     await ctx.untilTurnEnd();
 
-    const activation = ctx.context.get().find((message) => message.origin?.kind === 'skill_activation');
+    const activation = ctx.context.history().find((message) => message.origin?.kind === 'skill_activation');
     expect(activation?.id).toBe('msg_activation');
   });
 });
@@ -163,7 +163,7 @@ describe('promptWithSkills', () => {
     await ctx.untilTurnEnd();
 
     expect(launched.prompt_id).toBe('msg_bundled');
-    expect(ctx.context.get().find((message) => message.origin?.kind === 'user')?.id).toBe('msg_bundled');
+    expect(ctx.context.history().find((message) => message.origin?.kind === 'user')?.id).toBe('msg_bundled');
   });
 
   it('ends the active step and launches the bundled submission in a new turn', async () => {

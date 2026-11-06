@@ -9,7 +9,6 @@ import { Service } from "#/_base/di/service";
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { ErrorCodes, makeErrorPayload } from "#/errors";
 import { abortable } from '#/_base/utils/abort';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { environmentTempTarget, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -65,12 +64,11 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentLoopService loop: IAgentLoopService,
+    @IAgentLoopService private readonly loop: IAgentLoopService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionMediaStore private readonly attachmentStore: ISessionMediaStore,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
   ) {
@@ -371,7 +369,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
             attachmentStore: this.attachmentStore,
             originals: () => environmentTempTarget(this.environment, 'original-images'),
             telemetry: this.telemetry,
-            providerType: () => this.profile.getModelProviderType(),
+            providerType: () => this.loop.getModelProviderType(),
             reconnect: (signal) => this.reconnectForToolCall(serverName, client, signal),
             isRemoved: () =>
               this.mcpHandle.connectionManager.get(serverName)?.status === 'removed',

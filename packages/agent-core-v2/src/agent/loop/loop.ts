@@ -9,6 +9,16 @@ import type { TokenUsage } from '#human/llm-requester/usage';
 import type { Hooks } from '#/hooks';
 import type { HistoryMessage, UserEntry } from '#human/agent/turn';
 import type { LoopRequester } from './requesterContract';
+import type {
+  BindAgentInput,
+  EffectiveProfileReader,
+  ProfileBindingSnapshot,
+  ProfileSetModelResult,
+  ProfileUpdateData,
+  ResolvedAgentProfile,
+  SystemPromptContext,
+  ApplyProfileOptions,
+} from '#/agent/profile/profile';
 import { LoopErrors } from './errors';
 import type { ToolCompletionFactory } from './core/tool/outcome';
 export interface AgentActivityRetrySnapshot {
@@ -219,10 +229,32 @@ export interface LoopDetachedTask {
   readonly completion: ToolCompletionFactory;
 }
 
-export interface IAgentLoopService {
+export interface IAgentLoopService extends EffectiveProfileReader {
   readonly _serviceBrand: undefined;
 
   readonly requester: LoopRequester;
+
+  start(): Promise<void>;
+
+  setProfile(profile: ProfileBindingSnapshot): Promise<void>;
+
+  bindProfile(input: BindAgentInput): Promise<void>;
+
+  applyBindingSnapshot(profile: ProfileBindingSnapshot): Promise<void>;
+
+  applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void>;
+
+  useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;
+
+  update(changed: ProfileUpdateData): void;
+
+  setModel(model: string): Promise<ProfileSetModelResult>;
+
+  setThinking(level: string): void;
+
+  addActiveTool(name: string): void;
+
+  removeActiveTool(name: string): void;
 
   history(): readonly ContextMessage[];
 

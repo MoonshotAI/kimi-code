@@ -12,8 +12,8 @@ import { userCancellationReason } from '#/_base/utils/abort';
 import { Error2, ErrorCodes } from '#/errors';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import type { ProfileData } from '#/agent/profile/profile';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
 import type { Event2 } from '#/app/event/event2';
@@ -1253,7 +1253,7 @@ describe('SessionSwarmService metadata compatibility', () => {
       }),
     ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-existing' }]);
 
-    expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('stale-model');
+    expect(child.accessor.get(IAgentLoopService).data().modelAlias).toBe('stale-model');
     expect(eventBus.publish).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'subagent.spawned',
@@ -2480,7 +2480,7 @@ function agentHandle(
       get: ((serviceId: unknown) => {
         const service = services.get(serviceId);
         if (service !== undefined) return service;
-        if (serviceId === IAgentProfileService) return profile;
+        if (serviceId === IAgentLoopService) return profile;
         if (serviceId === IAgentEnvironmentBindingService) {
           return {
             _serviceBrand: undefined,
@@ -2516,7 +2516,7 @@ function agentHandle(
   };
 }
 
-function profileService(data: ProfileData): IAgentProfileService {
+function profileService(data: ProfileData): IAgentLoopService {
   let current = data;
   return {
     _serviceBrand: undefined,
@@ -2526,7 +2526,7 @@ function profileService(data: ProfileData): IAgentProfileService {
     },
     republishStatus: () => {},
     getEffectiveThinkingLevel: () => current.thinkingLevel,
-  } as IAgentProfileService;
+  } as IAgentLoopService;
 }
 
 function userToolServiceStub(): IAgentUserToolService {

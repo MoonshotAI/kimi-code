@@ -31,7 +31,6 @@ import { SubagentTask } from '#/agent/tools/agent/subagent-task';
 import type { SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
 import { IWaitForTool } from '#/agent/tools/task/task-wait/task-wait';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ToolProgress } from '#/agent/toolExecutor/toolExecutorEvents';
 import { IEventBus } from '#/app/event/eventBus';
@@ -1173,7 +1172,7 @@ describe('WaitForTool (harness)', () => {
     const slow = controllableProcess();
     try {
       await ctx.restorePersisted();
-      ctx.get(IAgentProfileService).update({ activeToolNames: ['TaskList', 'WaitFor'] });
+      ctx.get(IAgentLoopService).update({ activeToolNames: ['TaskList', 'WaitFor'] });
       const tasks = ctx.get(IAgentTaskService);
       const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work'));
       ctx.mockNextResponse(
@@ -1225,7 +1224,7 @@ describe('WaitForTool (harness)', () => {
     const slow = controllableProcess();
     try {
       await ctx.restorePersisted();
-      ctx.get(IAgentProfileService).update({ activeToolNames: ['WaitFor'] });
+      ctx.get(IAgentLoopService).update({ activeToolNames: ['WaitFor'] });
       const tasks = ctx.get(IAgentTaskService);
       const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work'));
       ctx.mockNextResponse(
@@ -1287,7 +1286,7 @@ describe('WaitForTool (harness)', () => {
     const slow = controllableProcess();
     try {
       await ctx.restorePersisted();
-      ctx.get(IAgentProfileService).update({ activeToolNames: ['WaitFor'] });
+      ctx.get(IAgentLoopService).update({ activeToolNames: ['WaitFor'] });
       const tasks = ctx.get(IAgentTaskService);
       const taskId = tasks.registerTask(new ProcessTask(slow.proc, 'sleep 60', 'background work'));
       ctx.mockNextResponse({

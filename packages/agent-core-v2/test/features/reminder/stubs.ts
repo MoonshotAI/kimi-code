@@ -100,17 +100,13 @@ export function createReminderHarness(
       return toDisposable(() => { entries.delete(variant); });
     },
     notify: (content, notification) => {
-      context.remind({
-        message: {
-          role: 'user',
-          content: [{ type: 'text', text: wrapSystemReminder(content) }],
-        },
-        meta: {
-          origin: {
-            kind: 'injection',
-            variant: notification.variant,
-            ownerPromptId: notification.ownerPromptId,
-          },
+      appendContext(context, {
+        role: 'user',
+        content: [{ type: 'text', text: wrapSystemReminder(content) }],
+        origin: {
+          kind: 'injection',
+          variant: notification.variant,
+          ownerPromptId: notification.ownerPromptId,
         },
       });
     },

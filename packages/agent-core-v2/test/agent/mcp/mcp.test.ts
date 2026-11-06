@@ -37,7 +37,6 @@ import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 
@@ -255,7 +254,6 @@ describe('AgentMcpService', () => {
     ix.stub(IAgentToolResultTruncationService, stubToolResultTruncationService());
     ix.stub(IAgentLoopService, stubLoopWithHooks());
     ix.set(IAgentStateService, new AgentStateService());
-    ix.stub(IAgentProfileService, { getModelProviderType: () => undefined });
     wire = registerTestAgentWire(ix, 'mcp-test', {
       eventBus: ix.get(IEventBus),
       log: recordingWireLog(records, (record) => {
@@ -1573,14 +1571,14 @@ describe('AgentMcpService', () => {
 describe('AgentMcpService + AgentProfileService', () => {
   let ctx: TestAgentContext;
   let manager: FakeMcpManager;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
 
   beforeEach(() => {
     manager = new FakeMcpManager();
     ctx = createTestAgent(mcpServices({ manager: manager as unknown as McpConnectionManager }));
     const mcp = ctx.get(IAgentMcpService);
     mcp.list();
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
   });
 
   afterEach(async () => {

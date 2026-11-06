@@ -26,7 +26,8 @@ import {
   extractAgentsMdPathsFromSystemPrompt,
   loadAgentsMdDetailed,
 } from '#/agent/profile/context';
-import { profileKey } from '#/agent/profile/profileOps';
+import { IInstantiationService } from '#/_base/di/instantiation';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import type {
@@ -83,6 +84,7 @@ export class AgentAgentsMdReminderService
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
     @ILogService private readonly log: ILogService,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
   ) {
     super();
     this.states.contributeState(agentsMdReminderKnownKey);
@@ -100,7 +102,7 @@ export class AgentAgentsMdReminderService
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('agentsMdReminder', async (_ctx, next) => {
-        const profile = this.states.get(profileKey);
+        const profile = this.instantiation.invokeFunction((accessor) => accessor.get(IAgentLoopService)).data();
         const paths =
           profile.agentsMdPaths ?? extractAgentsMdPathsFromSystemPrompt(profile.systemPrompt);
         this.seedInjected(paths, this.sessionContext.cwd);

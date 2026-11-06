@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 69 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 66 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -86,9 +86,6 @@
 //     plan                                            src/features/plan/planOps.ts
 //     plan.wasActive                                  src/features/plan/injection/planModeInjection.ts
 //     pluginSessionStartSnapshot                      src/agent/plugin/agentPluginOps.ts
-//     profile                                         src/agent/profile/profileOps.ts
-//     profile.activeToolNamesOverlay                  src/agent/profile/profileService.ts
-//     profile.activeTools                             src/agent/profile/profileOps.ts
 //     profile.agentsMdWarning                         src/agent/profile/profileService.ts
 //     profile.emittedPluginBudgetWarnings             src/agent/profile/profileService.ts
 //     profile.emittedThinkingEffortWarnings           src/agent/profile/profileService.ts
@@ -97,10 +94,10 @@
 //     swarm                                           src/features/swarm/swarmOps.ts
 //     swarmReminderDelivered                          src/features/swarm/swarmOps.ts
 //     task                                            src/agent/task/taskOps.ts
-//     task.activeTaskReminderPending                  src/agent/task/taskService.ts
-//     task.deliveredNotificationKeys                  src/agent/task/taskService.ts
-//     task.notificationDelivery                       src/agent/task/taskService.ts
-//     task.scheduledNotificationKeys                  src/agent/task/taskService.ts
+//     task.activeTaskReminderPending                  src/agent/task/taskRuntime.ts
+//     task.deliveredNotificationKeys                  src/agent/task/taskRuntime.ts
+//     task.notificationDelivery                       src/agent/task/taskRuntime.ts
+//     task.scheduledNotificationKeys                  src/agent/task/taskRuntime.ts
 //     toolDedupe.activeStep                           src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.activeTurnId                         src/agent/toolDedupe/toolDedupeService.ts
 //     toolDedupe.callKeyByCallId                      src/agent/toolDedupe/toolDedupeService.ts
@@ -1082,25 +1079,7 @@ export interface AgentStateSnapshot {
   };
   // src/agent/plugin/agentPluginService.ts
   'agentPlugin.sessionStartRefreshPending': boolean;
-  // src/agent/profile/profileOps.ts
-  // replayable · durable — folds: ProfileBind, ConfigUpdate
-  'profile': /* ProfileModelState — packages/agent-core-v2/src/agent/profile/profileOps.ts */ {
-    readonly modelAlias?: string;
-    readonly profileName?: string;
-    readonly thinkingLevel: string;
-    readonly systemPrompt: string;
-    readonly environmentDisclosure?: /* EnvironmentDisclosureSnapshot — packages/agent-core-v2/src/app/agentProfileCatalog/agentProfileCatalog.ts */ {
-      readonly cwd: string;
-    };
-    readonly renderGeneration: number;
-    readonly agentsMdPaths?: readonly string[];
-    readonly disallowedTools?: readonly string[];
-    readonly subagents?: readonly string[];
-  };
-  // replayable · durable — folds: ToolsSetActiveTools, ToolsResetActiveTools, ProfileBind
-  'profile.activeTools': /* ActiveToolsState — packages/agent-core-v2/src/agent/profile/profileOps.ts */ readonly string[] | undefined;
   // src/agent/profile/profileService.ts
-  'profile.activeToolNamesOverlay': readonly string[] | undefined;
   'profile.agentsMdWarning': string | undefined;
   'profile.emittedPluginBudgetWarnings': Set<string>;
   'profile.emittedThinkingEffortWarnings': Set<string>;
@@ -1161,7 +1140,7 @@ export interface AgentStateSnapshot {
     readonly resumeReminded?: boolean;
     readonly timeoutMs?: number;
   }>;
-  // src/agent/task/taskService.ts
+  // src/agent/task/taskRuntime.ts
   'task.activeTaskReminderPending': boolean;
   'task.deliveredNotificationKeys': Set<string>;
   // replayable · durable · undoable — folds: ContextAppendMessage, TaskWaitDelivered

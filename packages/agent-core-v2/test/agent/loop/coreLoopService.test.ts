@@ -8,7 +8,6 @@ import { IConfigService } from '#/app/config/config';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 import { TurnStarted } from '#/agent/loop/turnEvents';
@@ -41,7 +40,7 @@ describe('core LoopService integration', () => {
   });
 
   it('runs a text-only turn through the real RPC path', async () => {
-    ctx.get(IAgentProfileService).update({ activeToolNames: [] });
+    ctx.get(IAgentLoopService).update({ activeToolNames: [] });
     ctx.mockNextResponse({ type: 'think', think: 'reasoning' }, { type: 'text', text: 'answer' });
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
@@ -81,7 +80,7 @@ describe('core LoopService integration', () => {
       }),
     };
     await ctx.get(IConfigService).set(LOOP_CONTROL_SECTION, { maxStepsPerTurn: 0 });
-    ctx.get(IAgentProfileService).update({ activeToolNames: ['Lookup'] });
+    ctx.get(IAgentLoopService).update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
     ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall);
     ctx.mockNextResponse({ type: 'text', text: 'The lookup result is lookup-result.' });
@@ -173,7 +172,7 @@ describe('core LoopService integration', () => {
         execute: async () => ({ output: 'lookup-result' }),
       }),
     };
-    ctx.get(IAgentProfileService).update({ activeToolNames: ['Lookup'] });
+    ctx.get(IAgentLoopService).update({ activeToolNames: ['Lookup'] });
     ctx.get(IAgentToolRegistryService).register(lookupTool);
     loop.hooks.onDidFinishStep.register('ordinary-notify', async (hookCtx, next) => {
       if (hookCtx.turnId === 0 && hookCtx.step === 1) {
@@ -428,7 +427,7 @@ describe('core LoopService integration', () => {
         execute: () => new Promise(() => {}),
       }),
     };
-    original.get(IAgentProfileService).update({ activeToolNames: ['Work'] });
+    original.get(IAgentLoopService).update({ activeToolNames: ['Work'] });
     original.get(IAgentToolRegistryService).register(workTool);
     original.mockNextResponse(
       { type: 'text', text: 'working' },
@@ -613,7 +612,7 @@ describe('core LoopService integration', () => {
             },
           }),
         };
-        subject.get(IAgentProfileService).update({ activeToolNames: ['Work'] });
+        subject.get(IAgentLoopService).update({ activeToolNames: ['Work'] });
         subject.get(IAgentToolRegistryService).register(workTool);
         subject.mockNextResponse(
           { type: 'text', text: 'working' },

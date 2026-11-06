@@ -16,7 +16,6 @@ import {
   IAgentTaskService,
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import {
@@ -136,7 +135,6 @@ export class SubagentTool implements ISubagentTool {
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
@@ -165,7 +163,7 @@ export class SubagentTool implements ISubagentTool {
     if (this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
       description += `\n\n${AGENT_FORK_DESCRIPTION}`;
     }
-    const own = this.profile.data();
+    const own = this.loop.data();
     const catalogProfiles = this.catalogProfiles();
     const allowlist = this.effectiveAllowlist(own);
     const profiles =
@@ -243,7 +241,7 @@ export class SubagentTool implements ISubagentTool {
 
   private anySubagentModelSupports(supports: (capabilities: ModelCapability) => boolean): boolean {
     const pool = resolveSubagentModelPool(this.config);
-    if (pool === undefined) return supports(this.profile.getModelCapabilities());
+    if (pool === undefined) return supports(this.loop.getModelCapabilities());
     for (const alias of Object.keys(pool.models)) {
       try {
         const capabilities = this.modelCatalog.get(alias).capabilities;
@@ -270,7 +268,7 @@ export class SubagentTool implements ISubagentTool {
       if (!this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
         return { output: FORK_EXPERIMENTAL_UNAVAILABLE, isError: true };
       }
-      const forkError = forkIncompatibility(args, this.profile.data());
+      const forkError = forkIncompatibility(args, this.loop.data());
       if (forkError !== undefined) {
         return { output: forkError, isError: true };
       }
@@ -281,7 +279,7 @@ export class SubagentTool implements ISubagentTool {
         ? (await this.resumeProfileName(resumeAgentId)) ?? RESUMED_LABEL
         : (requestedProfileName ??
             (args.fork === true
-              ? (this.profile.data().profileName ?? DEFAULT_PROFILE_NAME)
+              ? (this.loop.data().profileName ?? DEFAULT_PROFILE_NAME)
               : DEFAULT_PROFILE_NAME));
     const prefix = args.run_in_background === true ? 'Launching background' : 'Launching';
     return {
@@ -301,7 +299,7 @@ export class SubagentTool implements ISubagentTool {
 
   private async resumeProfileName(agentId: string): Promise<string | undefined> {
     const target = this.agentLifecycle.handleOf(agentId);
-    if (target !== undefined) return target.accessor.get(IAgentProfileService).data().profileName;
+    if (target !== undefined) return target.accessor.get(IAgentLoopService).data().profileName;
     return subagentProfileName((await this.sessionMetadata.read()).agents?.[agentId]);
   }
 
@@ -330,7 +328,7 @@ export class SubagentTool implements ISubagentTool {
     if (isResume) {
       const target = await this.resolveResumeTarget(resumeAgentId, controller.signal);
       agentId = target.id;
-      const resumed = target.accessor.get(IAgentProfileService).data();
+      const resumed = target.accessor.get(IAgentLoopService).data();
       profileName = resumed.profileName ?? RESUMED_LABEL;
       displayModel = resumed.modelAlias;
     } else {
@@ -376,7 +374,7 @@ export class SubagentTool implements ISubagentTool {
       model: displayModel,
       modelSource: displayModelSource,
       thinkingEffort: this.agentLifecycle.handleOf(agentId)
-        ?.accessor.get(IAgentProfileService)
+        ?.accessor.get(IAgentLoopService)
         .getEffectiveThinkingLevel(),
       completion: mirrored.then((r) => ({
         result: r.summary,
@@ -437,7 +435,7 @@ export class SubagentTool implements ISubagentTool {
         details: { agentId },
       });
     }
-    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentProfileService).data().profileName)) {
+    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentLoopService).data().profileName)) {
       rebuilt.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
     }
     this.log.info('subagent rebuilt for resume', { agentId, callerAgentId: this.callerAgentId });
@@ -463,7 +461,7 @@ export class SubagentTool implements ISubagentTool {
         if (!this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
           return { output: FORK_EXPERIMENTAL_UNAVAILABLE, isError: true };
         }
-        const forkError = forkIncompatibility(args, this.profile.data());
+        const forkError = forkIncompatibility(args, this.loop.data());
         if (forkError !== undefined) {
           return { output: forkError, isError: true };
         }

@@ -1,6 +1,7 @@
 import { createRecoveryLedger, type LlmRecovery, type LlmRecoveryLedger } from '#human/llm/policy/recovery';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
+import { IInstantiationService } from '#/_base/di/instantiation';
+import type { EffectiveProfileReader, ProfileModelContext } from '#/agent/profile/profile';
 import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IConfigService } from '#/app/config/config';
@@ -72,9 +73,9 @@ export class AgentLoopRequestFactory {
 
   constructor(
     private readonly observer: AgentLoopRequestObserver,
+    private readonly profile: () => EffectiveProfileReader,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
-    @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
     @IConfigService private readonly config: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IProtocolAdapterRegistry private readonly protocolRegistry: IProtocolAdapterRegistry,
@@ -82,6 +83,10 @@ export class AgentLoopRequestFactory {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
     this.projector = new AgentLoopProjector((anomalies) => observer.reportProjectionRepairs(anomalies));
+  }
+
+  private get toolSelect(): IAgentToolSelectService {
+    return this.instantiation.invokeFunction((accessor) => accessor.get(IAgentToolSelectService));
   }
 
   registerMediaPolicy(factory: AgentMediaPolicyFactory): void {
@@ -93,10 +98,11 @@ export class AgentLoopRequestFactory {
   }
 
   requestConfigSnapshot(): RequestConfigSnapshot {
+    const profile = this.profile();
     return {
-      resolved: this.profile.resolveModelContext(),
-      params: this.profile.resolveRequestParams(),
-      systemPrompt: this.profile.getSystemPrompt(),
+      resolved: profile.resolveModelContext(),
+      params: profile.resolveRequestParams(),
+      systemPrompt: profile.getSystemPrompt(),
       maxCompletionTokensCap: this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens,
     };
   }

@@ -39,7 +39,7 @@ import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
-import type { IAgentProfileService } from '#/agent/profile/profile';
+import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
 import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService';
@@ -1094,7 +1094,7 @@ describe('truncation pipeline', () => {
       readConfig,
       {
         getModelCapabilities: () => ({ image_in: true, video_in: true }),
-      } as unknown as IAgentProfileService,
+      } as unknown as IAgentLoopService,
       { isToolActive: () => true } as unknown as IAgentToolPolicyService,
       { resolve: () => ({}) } as unknown as IAgentToolRegistryService,
       attachmentStore,

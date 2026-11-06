@@ -3,6 +3,7 @@ import { Event } from '#/_base/event';
 import type { IAgentLoopService, LoopErrorHandler, LoopErrorHandlerRegistrationOptions, LoopNotify, LoopNotifyEntry, PromptHandle, PromptPayload, Turn, TurnResult } from '#/agent/loop/loop';
 import type { HistoryMessage, UserEntry } from '#human/agent/turn';
 import { contextFromHistoryEntry, historyFromContext } from '#/agent/loop/history';
+import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 
 export function submitPromptTurn(
   loop: IAgentLoopService,
@@ -87,6 +88,30 @@ function registry(): { handlers: LoopErrorHandler[]; register: IAgentLoopService
   };
   return { handlers, register };
 }
+export class StubEffectiveProfileReader {
+  async applyProfile(): Promise<void> {}
+  useProfile(): void {}
+  update(): void {}
+  setThinking(): void {}
+  data() { return { modelCapabilities: UNKNOWN_CAPABILITY, thinkingLevel: 'off', systemPrompt: '' }; }
+  getEffectiveThinkingLevel() { return 'off' as const; }
+  resolveModelContext(): never { throw new Error('model is not configured'); }
+  resolveRequestParams() { return {}; }
+  getModelCapabilities() { return UNKNOWN_CAPABILITY; }
+  getModelProviderType() { return undefined; }
+  getMaxOutputSize() { return undefined; }
+  hasModel() { return false; }
+  isRunnable() { return false; }
+  hasProvider() { return false; }
+  getModel() { return ''; }
+  getSystemPrompt() { return ''; }
+  getActiveToolNames() { return undefined; }
+  getAgentsMdWarning() { return undefined; }
+  republishStatus(): void {}
+  addActiveTool(): void {}
+  removeActiveTool(): void {}
+}
+
 export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const hooks = createHooks(['onWillBeginStep', 'onDidFinishStep', 'onBeforeSubmitPrompt']) as IAgentLoopService['hooks'];
   const errorHandlers = registry(); const launches: number[] = []; const cancels: { turnId?: number; reason?: unknown }[] = [];
@@ -107,6 +132,32 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const stub: StubLoop = {
     _serviceBrand: undefined, hooks, launches, cancels, startTurn,
     requester: {} as IAgentLoopService['requester'],
+    start: async () => {},
+    setProfile: async () => {},
+    bindProfile: async () => {},
+    applyBindingSnapshot: async () => {},
+    setModel: async (model) => ({ model }),
+    applyProfile: async () => {},
+    useProfile: () => {},
+    update: () => {},
+    setThinking: () => {},
+    data: () => ({ modelCapabilities: UNKNOWN_CAPABILITY, thinkingLevel: 'off', systemPrompt: '' }),
+    getEffectiveThinkingLevel: () => 'off',
+    resolveModelContext: () => { throw new Error('model is not configured'); },
+    resolveRequestParams: () => ({}),
+    getModelCapabilities: () => UNKNOWN_CAPABILITY,
+    getModelProviderType: () => undefined,
+    getMaxOutputSize: () => undefined,
+    hasModel: () => false,
+    isRunnable: () => false,
+    hasProvider: () => false,
+    getModel: () => '',
+    getSystemPrompt: () => '',
+    getActiveToolNames: () => undefined,
+    getAgentsMdWarning: () => undefined,
+    republishStatus: () => {},
+    addActiveTool: () => {},
+    removeActiveTool: () => {},
     history: () => messages,
     historyRevision: () => 0,
     replaceHistory(next, _reason, onAccepted) {

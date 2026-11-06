@@ -23,7 +23,6 @@ import { TurnEnded } from '#/agent/loop/turnOps';
 import { PromptSubmitted } from '#/agent/prompt/promptEvents';
 import { isUserCancellation } from '#/_base/utils/abort';
 import { runWillBeginStepHooks, stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -238,7 +237,9 @@ describe('AgentTowerService', () => {
     ix.stub(IAgentToolPolicyService, {
       isToolActive: (name: string) => !policyInactiveTools.includes(name),
     } as unknown as IAgentToolPolicyService);
-    ix.stub(IAgentProfileService, {
+    ix.stub(IAgentLoopService, {
+      ...stubLoopWithHooks(),
+      get: () => [],
       data: () => ({ profileName: undefined }),
       getActiveToolNames: () => activeTools,
       addActiveTool: (name: string) => {
@@ -249,15 +250,12 @@ describe('AgentTowerService', () => {
         removedTools.push(name);
         activeTools = activeTools?.filter((candidate) => candidate !== name);
       },
-    } as unknown as IAgentProfileService);
+    } as unknown as IAgentLoopService);
     ix.stub(
       IAgentReminderService,
       createReminderStub(),
     );
     ix.stub(ILogService, stubLog());
-    ix.stub(IAgentLoopService, {
-      get: () => [],
-    } as unknown as IAgentLoopService);
     ix.stub(ISessionContext, { cwd: '/nonexistent-tower-repo' } as unknown as ISessionContext);
     registerTestAgentWire(ix, testWireScope('wire', 'tower-test'), {
       log: ix.get(IAppendLogStore),
@@ -1883,16 +1881,17 @@ describe('AgentTowerService', () => {
       createReminderStub(),
     );
     ix2.stub(IAgentLoopService, {
+      ...stubLoopWithHooks(),
       get: () => [],
     } as unknown as IAgentLoopService);
     const restoredAdded: string[] = [];
-    ix2.stub(IAgentProfileService, {
+    Object.assign(ix2.get(IAgentLoopService), {
       data: () => ({ profileName: undefined }),
       addActiveTool: (name: string) => {
         restoredAdded.push(name);
       },
       removeActiveTool: () => {},
-    } as unknown as IAgentProfileService);
+    });
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-restore'), {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
@@ -1985,16 +1984,17 @@ describe('AgentTowerService', () => {
       createReminderStub(),
     );
     ix2.stub(IAgentLoopService, {
+      ...stubLoopWithHooks(),
       get: () => [],
     } as unknown as IAgentLoopService);
     const restoredAdded: string[] = [];
-    ix2.stub(IAgentProfileService, {
+    Object.assign(ix2.get(IAgentLoopService), {
       data: () => ({ profileName: undefined }),
       addActiveTool: (name: string) => {
         restoredAdded.push(name);
       },
       removeActiveTool: () => {},
-    } as unknown as IAgentProfileService);
+    });
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-restore-flag-off'), {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
@@ -2052,16 +2052,17 @@ describe('AgentTowerService', () => {
       createReminderStub(),
     );
     ix2.stub(IAgentLoopService, {
+      ...stubLoopWithHooks(),
       get: () => [],
     } as unknown as IAgentLoopService);
     const restoredAdded: string[] = [];
-    ix2.stub(IAgentProfileService, {
+    Object.assign(ix2.get(IAgentLoopService), {
       data: () => ({ profileName: undefined }),
       addActiveTool: (name: string) => {
         restoredAdded.push(name);
       },
       removeActiveTool: () => {},
-    } as unknown as IAgentProfileService);
+    });
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-restore-non-main'), {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
@@ -2135,13 +2136,13 @@ describe('AgentTowerService', () => {
         get: () => [],
       } as unknown as IAgentLoopService);
       const restoredAdded: string[] = [];
-      ix2.stub(IAgentProfileService, {
+      Object.assign(ix2.get(IAgentLoopService), {
         data: () => ({ profileName: undefined }),
         addActiveTool: (name: string) => {
           restoredAdded.push(name);
         },
         removeActiveTool: () => {},
-      } as unknown as IAgentProfileService);
+      });
       registerTestAgentWire(ix2, testWireScope('wire', 'tower-fork-restore'), {
         log: ix2.get(IAppendLogStore),
         eventBus: ix2.get(IEventBus),
@@ -2246,13 +2247,13 @@ describe('AgentTowerService', () => {
         get: () => [],
       } as unknown as IAgentLoopService);
       const restoredAdded: string[] = [];
-      ix2.stub(IAgentProfileService, {
+      Object.assign(ix2.get(IAgentLoopService), {
         data: () => ({ profileName: undefined }),
         addActiveTool: (name: string) => {
           restoredAdded.push(name);
         },
         removeActiveTool: () => {},
-      } as unknown as IAgentProfileService);
+      });
       registerTestAgentWire(ix2, testWireScope('wire', 'tower-fork-stale-restore'), {
         log: ix2.get(IAppendLogStore),
         eventBus: ix2.get(IEventBus),
@@ -2338,13 +2339,13 @@ describe('AgentTowerService', () => {
         get: () => [],
       } as unknown as IAgentLoopService);
       const restoredAdded: string[] = [];
-      ix2.stub(IAgentProfileService, {
+      Object.assign(ix2.get(IAgentLoopService), {
         data: () => ({ profileName: undefined }),
         addActiveTool: (name: string) => {
           restoredAdded.push(name);
         },
         removeActiveTool: () => {},
-      } as unknown as IAgentProfileService);
+      });
       registerTestAgentWire(ix2, testWireScope('wire', 'tower-fork-adopt-fail-restore'), {
         log: ix2.get(IAppendLogStore),
         eventBus: ix2.get(IEventBus),
@@ -2431,13 +2432,13 @@ describe('AgentTowerService', () => {
         get: () => [],
       } as unknown as IAgentLoopService);
       const restoredAdded: string[] = [];
-      ix2.stub(IAgentProfileService, {
+      Object.assign(ix2.get(IAgentLoopService), {
         data: () => ({ profileName: undefined }),
         addActiveTool: (name: string) => {
           restoredAdded.push(name);
         },
         removeActiveTool: () => {},
-      } as unknown as IAgentProfileService);
+      });
       registerTestAgentWire(ix2, testWireScope('wire', 'tower-fork-flag-off-restore'), {
         log: ix2.get(IAppendLogStore),
         eventBus: ix2.get(IEventBus),
@@ -2509,16 +2510,17 @@ describe('AgentTowerService', () => {
       createReminderStub(),
     );
     ix2.stub(IAgentLoopService, {
+      ...stubLoopWithHooks(),
       get: () => [],
     } as unknown as IAgentLoopService);
     const restoredAdded: string[] = [];
-    ix2.stub(IAgentProfileService, {
+    Object.assign(ix2.get(IAgentLoopService), {
       data: () => ({ profileName: undefined }),
       addActiveTool: (name: string) => {
         restoredAdded.push(name);
       },
       removeActiveTool: () => {},
-    } as unknown as IAgentProfileService);
+    });
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-fork-noinit'), {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
@@ -2583,16 +2585,17 @@ describe('AgentTowerService', () => {
       createReminderStub(),
     );
     ix2.stub(IAgentLoopService, {
+      ...stubLoopWithHooks(),
       get: () => [],
     } as unknown as IAgentLoopService);
     const restoredAdded: string[] = [];
-    ix2.stub(IAgentProfileService, {
+    Object.assign(ix2.get(IAgentLoopService), {
       data: () => ({ profileName: undefined }),
       addActiveTool: (name: string) => {
         restoredAdded.push(name);
       },
       removeActiveTool: () => {},
-    } as unknown as IAgentProfileService);
+    });
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-resume-noinit'), {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
@@ -2638,16 +2641,17 @@ describe('AgentTowerService', () => {
       createReminderStub(),
     );
     ix2.stub(IAgentLoopService, {
+      ...stubLoopWithHooks(),
       get: () => [],
     } as unknown as IAgentLoopService);
     const restoredAdded: string[] = [];
-    ix2.stub(IAgentProfileService, {
+    Object.assign(ix2.get(IAgentLoopService), {
       data: () => ({ profileName: undefined }),
       addActiveTool: (name: string) => {
         restoredAdded.push(name);
       },
       removeActiveTool: () => {},
-    } as unknown as IAgentProfileService);
+    });
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-restore-idle'), {
       log: ix2.get(IAppendLogStore),
       eventBus: ix2.get(IEventBus),
@@ -2697,9 +2701,10 @@ describe('AgentTowerService', () => {
       });
       worktree = join(repo, '.tower/worktrees/wt-1');
 
-      ix.stub(IAgentProfileService, {
+      ix.stub(IAgentLoopService, {
+        ...ix.get(IAgentLoopService),
         data: () => ({ profileName: 'tower-worker' }),
-      } as unknown as IAgentProfileService);
+      } as unknown as IAgentLoopService);
       ix.stub(
         IAgentScopeContext,
         makeAgentScopeContext({ agentId: WORKER_AGENT_ID, agentScope: testWireScope('wire', 'tower-test'), generation: 0 }),
@@ -2764,9 +2769,10 @@ describe('AgentTowerService', () => {
     });
 
     it('abstains when the agent is not a tower worker', async () => {
-      ix.stub(IAgentProfileService, {
+      ix.stub(IAgentLoopService, {
+        ...ix.get(IAgentLoopService),
         data: () => ({ profileName: 'coder' }),
-      } as unknown as IAgentProfileService);
+      } as unknown as IAgentLoopService);
       ix.get(IAgentTowerService);
 
       const decision = await fire(writeHookContext('Write', [`${repo}/src/gemm.cpp`]));

@@ -25,6 +25,8 @@ import { abortedToolOutput } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TaskStarted, TaskTerminated } from '#/agent/task/taskOps';
 import { TERMINAL_STATUSES, type AgentTaskInfo } from '#/agent/task/types';
+import { AgentTaskService } from '#/agent/task/taskService';
+import { IAgentTaskOutputService } from '#/agent/task/taskOutput';
 import { IConfigService } from '#/app/config/config';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { type FinishReason } from '#human/llm-requester/finish-reason';
@@ -41,7 +43,35 @@ import { gateImageFormatParts } from '#/agent/media/image-compress';
 import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
 import { materializePromptDaemonRefs } from '#/agent/media/promptMediaIntake';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import {
+  IAgentProfileService,
+  ProfileError,
+  ProfileErrors,
+  type ApplyProfileOptions,
+  type BindAgentInput,
+  type ProfileBindingSnapshot,
+  type ProfileData,
+  type ProfileModelContext,
+  type ProfileSetModelResult,
+  type ProfileUpdateData,
+  type ResolvedAgentProfile,
+  type SystemPromptContext,
+} from '#/agent/profile/profile';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ModelRequestParams } from '#/llm-adapter/model/generate';
+import type { ThinkingEffort } from '#human/llm-requester/thinking';
+import {
+  ConfigUpdate,
+  EMPTY_LOOP_PROFILE,
+  ProfileBind,
+  reduceLoopActiveTools,
+  reduceLoopConfigUpdate,
+  reduceLoopProfileBind,
+  ToolsSetActiveTools,
+} from '#/agent/profile/profileOps';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentInterruptionReminderService } from '#/agent/interruptionReminder/interruptionReminder';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -178,7 +208,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private historyView: { readonly source: readonly HistoryMessage[]; readonly messages: readonly ContextMessage[] } | undefined;
   private activeRequestTrace: LLMRequestTrace | undefined;
   private loop: Loop | undefined;
+  private profileState: { readonly profile?: ProfileBindingSnapshot; readonly bound: boolean } = { bound: false };
+  private activeToolNamesOverlay: readonly string[] | undefined;
   private initialized = false;
+  private startPromise: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
   private readonly tools: CoreTools;
   private readonly journal: LoopJournal;
@@ -201,17 +234,20 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IWireService private readonly wire: IWireService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
+    @IProviderDiscoveryService private readonly discovery: IProviderDiscoveryService,
     @IPluginService private readonly plugins: IPluginService,
     @ISessionRunGate private readonly runGate: ISessionRunGate,
     @ILogService private readonly logger: ILogService,
     @IAgentMediaResolverService mediaResolver: IAgentMediaResolverService,
+    @IAgentTaskOutputService private readonly taskOutputs: IAgentTaskOutputService,
   ) {
     super();
     const space = this.scopeContext.agentContext.space;
     if (space instanceof AgentSpaceImpl) this._register(space._setHistoryProvider(() => this.history()));
     const observer = instantiation.createInstance(AgentLoopRequestObserver);
     const requester = instantiation.createInstance(
-      new SyncDescriptor(AgentLoopRequestFactory, [observer]),
+      new SyncDescriptor(AgentLoopRequestFactory, [observer, () => this]),
     ) as AgentLoopRequestFactory;
     requester.registerMediaPolicy((model, request) =>
       createAgentMediaPolicy(mediaResolver, model, request),
@@ -220,11 +256,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.requester = {
       createTurnExecution: (input) => requester.createTurnExecution(input),
       prepareOperation: async (options, signal) => {
-        this.ensureLoop();
+        if (this.loop === undefined) throw new BugIndicatingError('Agent loop is not started');
         const config = requester.requestConfigSnapshot();
         const tools = await requester.prepareTools(signal, config.resolved.modelCapabilities, options.tools);
         this.recordToolsSnapshot(tools);
-        return this.loop!.operation((runtime) => requester.coreRequester({ ...options, runtime, tools, config }));
+        return this.loop.operation((runtime) => requester.coreRequester({ ...options, runtime, tools, config }));
       },
     };
     this.journal = new LoopJournal(wire, scopeContext.agentId);
@@ -247,11 +283,24 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(loopLastRequestIdKey);
     this.states.contributeState(loopDisposingKey);
-    const restore = this.dispatcher.hooks.onDidRestore.register('loop.core', async (_ctx, next) => {
-      await this.initializeLoop();
+    const restore = this.dispatcher.hooks.onDidRestore.register('loop.profile', async (_ctx, next) => {
+      this.restoreProfileFromJournal();
+      const modelAlias = this.profileState.profile?.modelAlias;
+      const replacement = modelAlias === undefined
+        ? undefined
+        : this.discovery.retiredModelReplacement(modelAlias);
+      if (replacement !== undefined) await this.setModel(replacement).catch(() => {});
+      this.profile.afterConfigDispatch({ modelAlias: this.profileState.profile?.modelAlias }, this.profileSnapshot());
+      await this.refreshBoundSubagentAllowlist();
       await next();
     });
     this._register(restore);
+    this._register(this.catalog.onDidChange(() => {
+      void this.refreshBoundSubagentAllowlist().catch(() => {});
+    }));
+    this._register(this.discovery.onDidRetireModel(({ from, to }) => {
+      if (this.profileState.profile?.modelAlias === from) void this.setModel(to).catch(() => {});
+    }));
     this._register(toDisposable(() => this.disarmTurnWatch()));
   }
 
@@ -271,9 +320,218 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.states.set(loopDisposingKey, value);
   }
 
+  async start(): Promise<void> {
+    if (this.loop !== undefined) return;
+    this.startPromise ??= this.initializeLoop().finally(() => {
+      this.startPromise = undefined;
+    });
+    return this.startPromise;
+  }
+
+  private profileSnapshot(): ProfileBindingSnapshot {
+    return this.profileState.profile ?? EMPTY_LOOP_PROFILE;
+  }
+
+  data(): ProfileData {
+    const data = this.profile.data(this.profileSnapshot());
+    if (this.activeToolNamesOverlay === undefined) return data;
+    return { ...data, activeToolNames: [...this.activeToolNamesOverlay] };
+  }
+
+  getSystemPrompt(): string {
+    return this.profileSnapshot().systemPrompt;
+  }
+
+  getAgentsMdWarning(): string | undefined {
+    return this.profile.getAgentsMdWarning();
+  }
+
+  getModel(): string {
+    return this.profile.getModel(this.profileSnapshot());
+  }
+
+  getEffectiveThinkingLevel(): ThinkingEffort {
+    return this.profile.getEffectiveThinkingLevel(this.profileSnapshot());
+  }
+
+  resolveModelContext(): ProfileModelContext {
+    return this.profile.resolveModelContext(this.profileSnapshot());
+  }
+
+  resolveRequestParams(): ModelRequestParams {
+    return this.profile.resolveRequestParams(this.profileSnapshot());
+  }
+
+  getModelCapabilities(): ModelCapability {
+    return this.profile.getModelCapabilities(this.profileSnapshot());
+  }
+
+  getModelProviderType(alias?: string): string | undefined {
+    return this.profile.getModelProviderType(alias, this.profileSnapshot());
+  }
+
+  getMaxOutputSize(): number | undefined {
+    return this.profile.getMaxOutputSize(this.profileSnapshot());
+  }
+
+  hasModel(): boolean {
+    return this.profile.hasModel(this.profileSnapshot());
+  }
+
+  isRunnable(): boolean {
+    return this.profile.isRunnable(this.profileSnapshot());
+  }
+
+  hasProvider(): boolean {
+    return this.profile.hasProvider(this.profileSnapshot());
+  }
+
+  getActiveToolNames(): readonly string[] | undefined {
+    return this.data().activeToolNames;
+  }
+
+  async setProfile(profile: ProfileBindingSnapshot): Promise<void> {
+    const event = new ProfileBind({
+      agentId: this.scopeContext.agentId,
+      modelAlias: profile.modelAlias,
+      profileName: profile.profileName,
+      thinkingEffort: profile.thinkingLevel,
+      systemPrompt: profile.systemPrompt,
+      environmentDisclosure: profile.environmentDisclosure,
+      renderGeneration: profile.renderGeneration,
+      agentsMdPaths: profile.agentsMdPaths,
+      activeToolNames: profile.activeToolNames,
+      disallowedTools: profile.disallowedTools ?? [],
+      subagents: profile.subagents,
+    });
+    const dispatched = this.dispatcher.dispatch(event);
+    this.profileState = { profile: reduceLoopProfileBind(this.profileState.profile, event), bound: true };
+    this.activeToolNamesOverlay = undefined;
+    this.loop?.setSystemPrompt(this.getSystemPrompt());
+    this.profile.afterConfigDispatch({
+      modelAlias: profile.modelAlias,
+      profileName: profile.profileName,
+      thinkingLevel: profile.thinkingLevel,
+      systemPrompt: profile.systemPrompt,
+      environmentDisclosure: profile.environmentDisclosure,
+      agentsMdPaths: profile.agentsMdPaths,
+      disallowedTools: profile.disallowedTools ?? [],
+    }, this.profileSnapshot());
+    await dispatched;
+  }
+
+  async bindProfile(input: BindAgentInput): Promise<void> {
+    await this.setProfile(await this.profile.resolveBinding(input, this.profileState.profile));
+  }
+
+  applyBindingSnapshot(profile: ProfileBindingSnapshot): Promise<void> {
+    return this.setProfile(profile);
+  }
+
+  useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void {
+    const changed = this.profile.useProfile(profile, context);
+    this.applyProfileUpdate(
+      changed,
+      this.profile.prepareUpdate(changed, this.profileState.profile, profile.tools ?? null),
+    );
+  }
+
+  async applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void> {
+    const changed = await this.profile.applyProfile(profile, options);
+    this.applyProfileUpdate(
+      changed,
+      this.profile.prepareUpdate(changed, this.profileState.profile, profile.tools ?? null),
+    );
+  }
+
+  update(changed: ProfileUpdateData): void {
+    this.applyProfileUpdate(changed, this.profile.prepareUpdate(changed, this.profileState.profile));
+  }
+
+  private applyProfileUpdate(
+    changed: ProfileUpdateData,
+    plan: ReturnType<IAgentProfileService['prepareUpdate']>,
+  ): void {
+    if (plan.config !== undefined) {
+      void this.dispatcher.dispatch(new ConfigUpdate(plan.config));
+      this.profileState = {
+        ...this.profileState,
+        profile: reduceLoopConfigUpdate(this.profileSnapshot(), plan.config),
+      };
+    }
+    if (plan.tools !== undefined) {
+      void this.dispatcher.dispatch(plan.tools);
+      this.activeToolNamesOverlay = undefined;
+      this.profileState = {
+        ...this.profileState,
+        profile: reduceLoopActiveTools(
+          this.profileSnapshot(),
+          plan.tools instanceof ToolsSetActiveTools ? plan.tools.names : undefined,
+        ),
+      };
+    }
+    this.loop?.setSystemPrompt(this.getSystemPrompt());
+    if (plan.config !== undefined) {
+      const { activeToolNames: _activeToolNames, ...configChanged } = changed;
+      this.profile.afterConfigDispatch(configChanged, this.profileSnapshot());
+    }
+  }
+
+  async setModel(alias: string): Promise<ProfileSetModelResult> {
+    const result = this.profile.resolveModel(alias);
+    if (this.profileState.profile?.profileName === undefined) {
+      await this.bindProfile({ profile: DEFAULT_AGENT_PROFILE_NAME, model: alias });
+      this.telemetry.track2('model_switch', { model: alias });
+    } else if (this.profileState.profile.modelAlias !== alias) {
+      this.update({ modelAlias: alias });
+      this.telemetry.track2('model_switch', { model: alias });
+    }
+    return result;
+  }
+
+  setThinking(level: string): void {
+    const previousEffort = this.data().thinkingLevel;
+    const thinkingLevel = this.profile.resolveThinkingLevel(level, this.profileState.profile);
+    this.update({ thinkingLevel });
+    const effort = this.data().thinkingLevel;
+    if (effort !== previousEffort) {
+      this.telemetry.track2('thinking_toggle', {
+        enabled: effort !== 'off',
+        effort,
+        from: previousEffort,
+      });
+    }
+  }
+
+  republishStatus(): void {
+    this.profile.republishStatus(this.profileSnapshot());
+  }
+
+  addActiveTool(name: string): void {
+    const active = this.getActiveToolNames();
+    if (active === undefined || active.includes(name)) return;
+    this.activeToolNamesOverlay = [...active, name];
+  }
+
+  removeActiveTool(name: string): void {
+    const active = this.getActiveToolNames();
+    if (active === undefined || !active.includes(name)) return;
+    this.activeToolNamesOverlay = active.filter((candidate) => candidate !== name);
+  }
+
+  private async refreshBoundSubagentAllowlist(): Promise<void> {
+    const snapshot = await this.profile.refreshBoundSubagentAllowlist(this.profileState.profile);
+    if (snapshot !== undefined) await this.setProfile(snapshot);
+  }
+
+  private restoreProfileFromJournal(): void {
+    const snapshot = this.journal.snapshot();
+    this.profileState = { profile: snapshot.profile, bound: snapshot.profileBound };
+    this.activeToolNamesOverlay = undefined;
+  }
+
   history(): readonly ContextMessage[] {
-    this.ensureLoop();
-    const source = this.loop?.state.messages ?? [];
+    const source = this.loop?.state.messages ?? this.journal.snapshot().input.messages ?? [];
     const previous = this.historyView;
     if (previous?.source === source) return previous.messages;
     const messages = source.map((entry, index) =>
@@ -284,8 +542,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   historyRevision(): number {
-    this.ensureLoop();
-    return this.loop!.historyRevision;
+    return this.loop?.historyRevision ?? 0;
   }
 
   replaceHistory(messages: readonly HistoryMessage[], reason?: string, onAccepted?: () => void): boolean {
@@ -302,12 +559,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return true;
   }
 
-  private ensureLoop(): void {
-    if (this.loop !== undefined) return;
-    this.createLoopFromSnapshot(this.journal.snapshot());
-    this.initialized = false;
-  }
-
   private async initializeLoop(
     reset = false,
     seededMessages?: readonly HistoryMessage[],
@@ -315,14 +566,74 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     historyRevision?: number,
   ): Promise<void> {
     if (!reset && this.initialized) return;
-    if (this.dispatcher.restorePhase === 'new') {
-      this.ensureLoop();
-      this.initialized = true;
-      return;
-    }
     this.loop = undefined;
     await this.wire.drainPersisted().catch(() => undefined);
-    this.createLoopFromSnapshot(this.journal.snapshot(), seededMessages, minimumNextTurnId, historyRevision);
+    const snapshot = this.journal.snapshot();
+    this.restoreProfileFromJournal();
+    if (!reset && !this.profileState.bound) {
+      const defaultModel = this.config.get<string>('defaultModel');
+      if (defaultModel !== undefined && defaultModel !== '') {
+        try {
+          await this.setProfile({ ...this.profile.defaultProfile(), profileName: undefined });
+        } catch (error) {
+          if (!(error instanceof ProfileError && error.code === ProfileErrors.codes.MODEL_NOT_CONFIGURED)) {
+            throw error;
+          }
+        }
+      }
+    }
+    const completions = await this.restoreTaskCompletions(snapshot, seededMessages);
+    this.createLoopFromSnapshot({
+      ...snapshot,
+      input: {
+        ...snapshot.input,
+        profile: {
+          systemPrompt: this.getSystemPrompt(),
+          tools: snapshot.input.profile?.tools ?? [],
+        },
+      },
+    }, seededMessages, minimumNextTurnId, historyRevision, completions);
+  }
+
+  private async restoreTaskCompletions(
+    snapshot: LoopJournalSnapshot,
+    seededMessages?: readonly HistoryMessage[],
+  ): Promise<readonly UserEntry[]> {
+    const { journal } = await this.wire.readRestoreChains();
+    const history = new AgentTaskService(this.scopeContext.agentId);
+    history.restore(journal);
+    const delivered = new Set<string>();
+    for (const entry of seededMessages ?? snapshot.input.messages ?? []) {
+      const origin = contextFromHistoryEntry(entry).origin;
+      if (origin?.kind === 'task') delivered.add(`${origin.taskId}\0${origin.status}\0${origin.notificationId}`);
+    }
+    const completions: UserEntry[] = [];
+    for (const info of history.list(false)) {
+      if (info.status === 'lost' || !TERMINAL_STATUSES.has(info.status)) continue;
+      if (info.detached === false || info.terminalNotificationSuppressed === true) continue;
+      const origin = info.status;
+      const notificationId = `task:${info.taskId}:${info.status}`;
+      if (delivered.has(`${info.taskId}\0${origin}\0${notificationId}`)) continue;
+      const toolCallId = info.kind === 'question' ? info.toolCallId : info.parentToolCallId;
+      if (toolCallId === undefined) continue;
+      completions.push(await this.taskOutputs.createCompletion(info, toolCallId));
+    }
+    return completions;
+  }
+
+  private projectTaskCompletionNudge(entry: UserEntry): void {
+    if (entry.meta?.origin?.kind !== 'task' || entry.meta.source !== 'async-tool' || entry.meta.toolCallId === undefined) return;
+    const promptId = entry.meta.promptId;
+    if (promptId !== undefined && this.nudges.some((nudge) => nudge.entry?.meta?.promptId === promptId)) return;
+    this.nudges.push({
+      kind: 'notify',
+      entry,
+      contextMessage: contextFromHistoryEntry(entry),
+      promptIds: promptId === undefined ? [] : [promptId],
+      bypassMaxSteps: false,
+      turnScoped: false,
+      sentToMachine: true,
+    });
   }
 
   private createLoopFromSnapshot(
@@ -330,9 +641,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     seededMessages?: readonly HistoryMessage[],
     minimumNextTurnId?: number,
     historyRevision?: number,
+    completions: readonly UserEntry[] = [],
   ): void {
     this.initialized = true;
     this.tools.sync();
+    for (const entry of completions) this.projectTaskCompletionNudge(entry);
     const loop = createLoop({
       createTurnExecution: (input) => {
         return this.requester.createTurnExecution({
@@ -352,8 +665,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       executor: this.tools.executor,
       input: {
         ...snapshot.input,
-        profile: { systemPrompt: this.profile.getSystemPrompt(), tools: [] },
+        profile: {
+          ...snapshot.input.profile,
+          systemPrompt: this.getSystemPrompt(),
+          tools: snapshot.input.profile?.tools ?? [],
+        },
         messages: seededMessages === undefined ? snapshot.input.messages : [...seededMessages],
+        inbox: {
+          ...snapshot.input.inbox,
+          notify: [...(snapshot.input.inbox?.notify ?? []), ...completions],
+        },
         nextTurnId: Math.max(snapshot.input.nextTurnId ?? 0, minimumNextTurnId ?? 0),
         historyRevision,
       },
@@ -377,7 +698,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.projectLoopEvent(event);
       this.journal.append(journalEvent);
     });
-    this.syncProfile();
     this.drainPendingToLoop();
     this.maybeSettle();
   }
@@ -390,14 +710,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       hash: snapshot.hash,
       tools: snapshot.tools,
     }));
-  }
-
-  private syncProfile(): void {
-    const loop = this.loop;
-    if (loop === undefined) return;
-    const systemPrompt = this.profile.getSystemPrompt();
-    if (loop.state.profile.systemPrompt !== systemPrompt) loop.setSystemPrompt(systemPrompt);
-    this.tools.sync();
   }
 
   async initializeHistory(messages: readonly HistoryMessage[]): Promise<void> {
@@ -663,14 +975,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   remind(...entries: readonly HistoryMessage[]): void {
     if (this.disposing) throw abortError('Agent loop disposed');
-    this.ensureLoop();
     if (this.loop !== undefined && this.quiescenceDepth === 0) this.loop.remind(...entries);
     else this.pendingReminders.push(...entries);
   }
 
   flushReminders(): void {
-    if (this.pendingReminders.length > 0) this.loop?.remind(...this.pendingReminders.splice(0));
-    this.loop?.flushReminders();
+    const loop = this.loop;
+    if (loop === undefined) return;
+    if (this.pendingReminders.length > 0) loop.remind(...this.pendingReminders.splice(0));
+    loop.flushReminders();
   }
 
   private enqueueNudge(note: LoopNotify, kind: Nudge['kind']): LoopNotifyHandle {
@@ -1052,14 +1365,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   detachTool(task: LoopDetachedTask, text?: string): void {
     if (this.disposing) return;
-    this.ensureLoop();
     this.detachedTasks.set(task.toolCallId, { task, started: task.info() });
-    this.loop?.detachTool(task.toolCallId, text);
+    this.loop?.detachTool(task.toolCallId, text, task.completion);
   }
 
   abortTool(toolCallId: string, reason?: unknown): void {
     if (this.disposing) return;
-    this.ensureLoop();
     this.loop?.abortTool(toolCallId, reason);
   }
 
@@ -1162,7 +1473,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return (
       this.pendingSubmissions.length > 0 ||
       (this.loop?.state.inbox.normal.length ?? 0) > 0 ||
-      this.nudges.slice(this.nudgeCursor).some((nudge) => !nudge.dropped) ||
+      (this.loop?.state.inbox.notify.length ?? 0) > 0 ||
+      this.nudges.slice(this.nudgeCursor).some((nudge) => !nudge.dropped && !nudge.consumed) ||
       (this.loop !== undefined && this.loop.state.status !== 'idle')
     );
   }
@@ -1685,10 +1997,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         return this.finishTurn(turn, outcome);
       }
       case 'prompt.notified':
-      case 'prompt.steered': {
+        this.projectTaskCompletionNudge(event.entry);
         this.projectSteered(event);
         return;
-      }
+      case 'prompt.steered':
+        this.projectSteered(event);
+        return;
       default:
         return;
     }

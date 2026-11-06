@@ -13,7 +13,6 @@ import {
 import { permissionRulesKey } from '#/agent/permissionRules/permissionRulesOps';
 import { pluginSessionStartSnapshotKey } from '#/agent/plugin/agentPluginOps';
 import { changeNotifierSnapshotKey } from '#/agent/changeNotifier/changeNotifierOps';
-import { profileActiveToolsKey, profileKey } from '#/agent/profile/profileOps';
 import { environmentBindingKey } from '#/agent/environmentBinding/environmentBindingOps';
 import { taskKey } from '#/agent/task/taskOps';
 import { taskNotificationDeliveryKey } from '#/agent/task/taskRuntime';
@@ -37,8 +36,6 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   permissionRulesKey,
   pluginSessionStartSnapshotKey,
   changeNotifierSnapshotKey,
-  profileKey,
-  profileActiveToolsKey,
   environmentBindingKey,
   taskKey,
   taskNotificationDeliveryKey,

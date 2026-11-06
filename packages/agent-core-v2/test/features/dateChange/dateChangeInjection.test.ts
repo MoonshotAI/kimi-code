@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import {
@@ -53,7 +52,7 @@ function systemPromptWithDate(iso: string): string {
   ].join('\n');
 }
 
-function updateSystemPrompt(profile: IAgentProfileService, systemPrompt: string, cwd: string): void {
+function updateSystemPrompt(profile: IAgentLoopService, systemPrompt: string, cwd: string): void {
   profile.update({
     systemPrompt,
     environmentDisclosure: { cwd },
@@ -77,14 +76,14 @@ describe('AgentDateChangeService', () => {
   let context: IAgentLoopService;
   let clock: TestHostClock;
   let loop: IAgentLoopService;
-  let profile: IAgentProfileService;
+  let profile: IAgentLoopService;
 
   beforeEach(async () => {
     clock = testHostClock(INITIAL_INSTANT);
     ctx = createTestAgent({ autoConfigure: false }, appService(IHostClock, clock));
     context = ctx.get(IAgentLoopService);
     loop = ctx.get(IAgentLoopService);
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
     await ctx.restorePersisted();
     ctx.configure();
   });
@@ -167,7 +166,7 @@ describe('AgentDateChangeService', () => {
     const persistence = new InMemoryWireRecordPersistence();
     await ctx.dispose();
     ctx = createTestAgent({ persistence }, appService(IHostClock, clock));
-    profile = ctx.get(IAgentProfileService);
+    profile = ctx.get(IAgentLoopService);
     updateSystemPrompt(profile, systemPromptWithDate(INITIAL_INSTANT), ctx.get(ISessionContext).cwd);
     await ctx.wire.flush();
     await ctx.dispose();
@@ -192,8 +191,8 @@ describe('AgentDateChangeService', () => {
     const persistence = new InMemoryWireRecordPersistence();
     await ctx.dispose();
     ctx = createTestAgent({ persistence }, appService(IHostClock, clock));
-    profile = ctx.get(IAgentProfileService);
-    profile.applyBindingSnapshot({
+    profile = ctx.get(IAgentLoopService);
+    await profile.applyBindingSnapshot({
       modelAlias: 'mock-model',
       profileName: 'agent',
       thinkingLevel: 'off',
@@ -201,7 +200,7 @@ describe('AgentDateChangeService', () => {
       disallowedTools: [],
     });
     await ctx.wire.flush();
-    const legacyBind = persistence.records.find((record) => record.type === 'profile.bind');
+    const legacyBind = persistence.records.findLast((record) => record.type === 'profile.bind');
     expect(legacyBind?.['environmentDisclosure']).toBeUndefined();
     await ctx.dispose();
 
@@ -233,10 +232,10 @@ describe('AgentDateChangeService', () => {
       ctx = createTestAgent(appService(IHostClock, clock), hostEnvironmentServices(homeDir));
       context = ctx.get(IAgentLoopService);
       loop = ctx.get(IAgentLoopService);
-      profile = ctx.get(IAgentProfileService);
+      profile = ctx.get(IAgentLoopService);
         await ctx.restorePersisted();
 
-      await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'mock-model' });
+      await profile.bindProfile({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'mock-model' });
 
       await runWillBeginStepHooks(loop);
       const initial = dateReminders(context);

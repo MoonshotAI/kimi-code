@@ -490,10 +490,10 @@ async function runLegacyRequester(
               serverDecodeMs += arrivedAt - lastResumeAt;
             }
             const accumulated = accumulator.push(event.part);
-            const part = event.part.type === 'think' && accumulated.type === 'think'
-              ? { ...event.part, hidden: accumulated.hidden }
+            const part = event.part.type === 'think' && accumulated.part.type === 'think'
+              ? { ...event.part, hidden: accumulated.part.hidden }
               : event.part;
-            control.onEvent?.({ ...event, part });
+            control.onEvent?.({ ...event, part, block: accumulated.block });
             lastResumeAt = Date.now();
             clientConsumeMs += lastResumeAt - arrivedAt;
             return;

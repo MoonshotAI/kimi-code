@@ -8,6 +8,7 @@ import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -59,7 +60,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLoopService private readonly profile: IAgentLoopService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IFlagService private readonly flags: IFlagService,

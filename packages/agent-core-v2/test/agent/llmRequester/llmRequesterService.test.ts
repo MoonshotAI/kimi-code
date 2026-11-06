@@ -13,7 +13,7 @@ import { createAgentMediaPolicy } from '#/agent/loop/mediaPolicy';
 import { createMediaRecoveryStore, type LoopRequestRuntime } from '#/agent/loop/core/index';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -154,14 +154,14 @@ function createService(
     readonly modelAlias?: () => string;
     readonly prefixRevision?: () => number;
     readonly systemPrompt?: () => string;
-    readonly requestParams?: () => ReturnType<IAgentProfileService['resolveRequestParams']>;
+    readonly requestParams?: () => ReturnType<IAgentLoopService['resolveRequestParams']>;
     readonly maxAttemptsPerStep?: number;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-code-llm-requester-test', options.env ?? {}));
   const thinkingLevel = options.thinkingLevel ?? 'off';
-  const profile: Partial<IAgentProfileService> = {
+  const profile: Partial<IAgentLoopService> = {
     hasProvider: () => true,
     resolveModelContext: () => ({
       modelAlias: options.modelAlias?.() ?? 'm',
@@ -240,7 +240,7 @@ function createService(
   ix.stub(IAgentToolSelectService, toolSelect);
   ix.stub(IAgentMediaResolverService, mediaResolver);
   ix.stub(ISessionTokenCountingService, tokenCounting);
-  ix.stub(IAgentProfileService, profile);
+  ix.stub(IAgentLoopService, profile);
   ix.stub(ISessionUsageService, usage);
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);
@@ -270,7 +270,7 @@ function createService(
   ix.set(IAgentStateService, new AgentStateService());
   const observer = ix.createInstance(AgentLoopRequestObserver);
   const service = ix.createInstance(
-    new SyncDescriptor(AgentLoopRequestFactory, [observer]),
+    new SyncDescriptor(AgentLoopRequestFactory, [observer, () => profile as IAgentLoopService]),
   ) as AgentLoopRequestFactory;
   service.bindHistory(() => context.get());
   service.registerMediaPolicy((model, request) =>

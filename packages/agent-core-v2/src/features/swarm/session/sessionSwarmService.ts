@@ -3,7 +3,6 @@ import type { TokenUsage } from '#human/llm-requester/usage';
 import { Error2, ErrorCodes } from '#/errors';
 import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
@@ -222,9 +221,9 @@ export class SessionSwarmService implements ISessionSwarmService {
       (await this.rebuildSubagent(agentId, meta, caller, options.signal));
     this.requireIdleSubagent(agentId, child);
     const profileName =
-      child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
+      child.accessor.get(IAgentLoopService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
     if (!retryTurn) {
-      const resumedModel = child.accessor.get(IAgentProfileService).data().modelAlias;
+      const resumedModel = child.accessor.get(IAgentLoopService).data().modelAlias;
       emitAgentRunSpawned(caller, agentId, {
         profileName,
         parentToolCallId: options.parentToolCallId,
@@ -267,7 +266,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       signal: options.signal,
       terminalize,
     });
-    const profile = child.accessor.get(IAgentProfileService);
+    const profile = child.accessor.get(IAgentLoopService);
     return {
       agentId,
       profileName,
@@ -318,7 +317,7 @@ export class SessionSwarmService implements ISessionSwarmService {
         details: { agentId },
       });
     }
-    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentProfileService).data().profileName)) {
+    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentLoopService).data().profileName)) {
       rebuilt.accessor
         .get(IAgentPermissionModeService)
         .setMode(caller.accessor.get(IAgentPermissionModeService).mode);

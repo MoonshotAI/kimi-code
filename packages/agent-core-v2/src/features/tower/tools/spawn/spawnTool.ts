@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentTaskService } from '#/agent/task/task';
@@ -106,7 +106,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentLoopService private readonly profile: IAgentLoopService,
     @IConfigService private readonly config: IConfigService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {
@@ -444,7 +444,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       agentId,
       profileName: TOWER_WORKER_PROFILE,
       model: binding?.model,
-      thinkingEffort: created.accessor.get(IAgentProfileService).getEffectiveThinkingLevel(),
+      thinkingEffort: created.accessor.get(IAgentLoopService).getEffectiveThinkingLevel(),
       completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),
     };
   }

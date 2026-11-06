@@ -43,7 +43,6 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { profileKey } from '#/agent/profile/profileOps';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
@@ -158,12 +157,12 @@ function createHarness(
         getEnv: () => undefined,
       } as unknown as IBootstrapService);
       const agentState = new AgentStateService();
-      agentState.contributeState(profileKey);
-      agentState.set(profileKey, {
-        thinkingLevel: 'off',
-        renderGeneration: 0,
-        systemPrompt: options.restoredProfile?.systemPrompt ?? '',
-        agentsMdPaths: options.restoredProfile?.agentsMdPaths,
+      Object.assign(context, {
+        data: () => ({
+          ...loop.data(),
+          systemPrompt: options.restoredProfile?.systemPrompt ?? '',
+          agentsMdPaths: options.restoredProfile?.agentsMdPaths,
+        }),
       });
       reg.defineInstance(IAgentStateService, agentState);
       reg.defineInstance(

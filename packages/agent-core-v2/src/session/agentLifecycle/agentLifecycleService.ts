@@ -20,7 +20,6 @@ import { ISessionEventBus } from '#/app/event/eventBus';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import { permissionModeConfiguredKey } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import { profileKey } from '#/agent/profile/profileOps';
 import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -40,7 +39,10 @@ import {
   detachInteractionAgent,
 } from '#/agent/interaction/interactionWiring';
 import { interactions } from '#/human/interaction/facade';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import {
+  IAgentProfileService,
+  type ProfileBindingSnapshot,
+} from '#/agent/profile/profile';
 import { abortError } from '#/_base/utils/abort';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
@@ -223,6 +225,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         this.ctx,
       );
       wireView = wire;
+      stage = 'seal';
+      await wire.seal();
+      stage = 'scope';
       const handle = createScopedChildHandle(
         this.instantiation,
         LifecycleScope.Agent,
@@ -269,8 +274,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       };
       this.rosterAdopt(scopeHandle);
       managed = this.roster.get(agentId);
-      stage = 'seal';
-      await handle.accessor.get(IWireService).seal();
       stage = 'register';
       const meta: AgentMeta = {
         homedir: agentHomedir,
@@ -301,9 +304,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       await handle.accessor.get(IEventDispatcher).restore();
       attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));
       stage = 'bootstrap';
-      await this.bindBootstrap(handle, opts);
+      const initialProfile = await this.bindBootstrap(handle, opts);
+      if (initialProfile !== undefined) await loop.setProfile(initialProfile);
       stage = 'toolActivation';
       await handle.accessor.get(IAgentToolActivationService).activate();
+      stage = 'start';
+      await loop.start();
       return agent;
     } catch (error) {
       this.telemetry.track2('agent_create_failed', {
@@ -336,9 +342,13 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   private async bindBootstrap(
     handle: IAgentScopeHandle,
     opts: CreateAgentOptions,
-  ): Promise<void> {
+  ): Promise<ProfileBindingSnapshot | undefined> {
+    const profile = handle.accessor.get(IAgentProfileService);
+    let initialProfile: ProfileBindingSnapshot | undefined;
     if (opts.binding !== undefined) {
-      await handle.accessor.get(IAgentProfileService).bind(opts.binding);
+      initialProfile = await profile.bind(opts.binding);
+    } else if (opts.initialProfile !== undefined) {
+      initialProfile = profile.applyBindingSnapshot(opts.initialProfile);
     }
     const permissionMode = this.config.get<PermissionMode>(DEFAULT_PERMISSION_MODE_SECTION);
     const hasRestoredPermissionMode = handle.accessor
@@ -347,6 +357,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (permissionMode !== undefined && !hasRestoredPermissionMode) {
       handle.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
     }
+    const rules = this.config.get<PermissionConfig | undefined>(PERMISSION_SECTION)?.rules;
+    if (rules === undefined || rules.length === 0) return initialProfile;
+    handle.accessor.get(IAgentPermissionRulesService).addRules(rules);
+    return initialProfile;
   }
 
   async fork(sourceContext: AgentContext, opts?: ForkAgentOptions): Promise<AgentContext> {
@@ -364,11 +378,17 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       });
     }
     const source = sourceManaged.handle;
-    const sourceData = source.accessor.get(IAgentProfileService).data();
+    const sourceData = source.accessor.get(IAgentLoopService).data();
     const override = opts?.binding;
     const sourceBinding = source.accessor.get(IAgentEnvironmentBindingService).current;
     const childContext = await this.create({
       agentId: opts?.agentId,
+      binding: override?.profile === undefined ? undefined : {
+        profile: override.profile,
+        model: override.model ?? sourceData.modelAlias,
+        thinking: override.thinking ?? sourceData.thinkingLevel,
+      },
+      initialProfile: override?.profile === undefined ? sourceData : undefined,
       environmentId: sourceBinding.environmentId,
       environmentCwd: sourceBinding.cwd,
       forkedFrom: source.id,
@@ -376,17 +396,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     });
     const child = this.requireManaged(childContext).handle;
 
-    const childProfile = child.accessor.get(IAgentProfileService);
-    if (override?.profile !== undefined) {
-      await childProfile.bind({
-        profile: override.profile,
-        model: override.model ?? sourceData.modelAlias,
-        thinking: override?.thinking ?? sourceData.thinkingLevel,
-      });
-    } else {
-      childProfile.applyBindingSnapshot(sourceData);
-      if (override?.model !== undefined) await childProfile.setModel(override.model);
-      if (override?.thinking !== undefined) childProfile.setThinking(override.thinking);
+    const childLoop = child.accessor.get(IAgentLoopService);
+    if (override !== undefined && override.profile === undefined) {
+      if (override.model !== undefined) await childLoop.setModel(override.model);
+      if (override.thinking !== undefined) childLoop.setThinking(override.thinking);
     }
 
     const sourceMessages = source.accessor.get(IAgentLoopService).history();
@@ -417,7 +430,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     for (const managed of this.roster.values()) {
       if (managed.closing || !managed.active) continue;
       const handle = managed.handle;
-      if (hasPinnedPermissionMode(handle.accessor.get(IAgentStateService).get(profileKey).profileName)) {
+      if (hasPinnedPermissionMode(handle.accessor.get(IAgentLoopService).data().profileName)) {
         continue;
       }
       handle.accessor.get(IAgentPermissionModeService).setMode(mode);
