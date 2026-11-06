@@ -82,6 +82,11 @@ With `@agentclientprotocol/sdk@1.x`, the ACP method set is organized by namespac
 
 All methods not listed above return `methodNotFound`.
 
+## Background tasks after `end_turn`
+
+When a turn settles while background tasks are still running (e.g. `Bash` with `run_in_background`), the session adopts each running task for post-turn reporting: the client receives an in-flight `tool_call` (wire id `bg:<taskId>`) at turn end, then a terminal `tool_call_update` — `completed`, or `failed` for `failed` / `timed_out` / `killed` / `lost` — with an output tail when the task finishes, even if that happens after `session/prompt` has already settled. Tasks that start and finish inside one turn keep flowing through the normal `tool_call*` stream and are not adopted.
+
+
 ## MCP forwarding
 
 When an ACP client provides `mcpServers` in `session/new` or `session/load`, the ACP server performs the following conversions:

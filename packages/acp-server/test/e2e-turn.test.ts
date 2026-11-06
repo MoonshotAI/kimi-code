@@ -168,6 +168,82 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(JSON.stringify(scripted!.callHistory()[1])).toContain('hello_from_bash');
   }, 30_000);
 
+  type BackgroundWireUpdate = {
+    sessionUpdate?: string;
+    toolCallId?: string;
+    status?: string;
+    title?: string;
+  };
+
+  /** Poll the wire until a background-task `tool_call`/`tool_call_update` with the wanted status arrives. */
+  async function waitForBackgroundTaskUpdate(
+    c: TestClient,
+    kind: 'tool_call' | 'tool_call_update',
+    status: string,
+    timeoutMs = 10_000,
+  ): Promise<BackgroundWireUpdate | undefined> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const hit = c
+        .sessionUpdates()
+        .map((m) => (m.params as { update?: BackgroundWireUpdate }).update)
+        .find(
+          (u) =>
+            u?.sessionUpdate === kind &&
+            u.status === status &&
+            typeof u.toolCallId === 'string' &&
+            u.toolCallId.startsWith('bg:'),
+        );
+      if (hit !== undefined) return hit;
+      if (Date.now() > deadline) {
+        throw new Error(`timed out waiting for a ${kind} (${status}) background task update`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  it('reports a background task that outlives its turn via tool_call updates', async () => {
+    const c = await boot();
+    // First model response starts a background shell task; the second wraps
+    // the turn up while the task is still running.
+    scripted!.mockNextResponse({
+      type: 'function',
+      id: 'call_bg',
+      name: 'Bash',
+      arguments: JSON.stringify({
+        command: 'sleep 1 && echo bg_verify_done',
+        run_in_background: true,
+        description: 'background verify',
+      }),
+    });
+    scripted!.mockNextText('launched in background');
+    c.onRequest('session/request_permission', () => ({
+      outcome: { outcome: 'selected', optionId: 'approve_once' },
+    }));
+
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+      sessionId: string;
+    };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+
+    const result = (await c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'verify in background' }],
+    })) as { stopReason: string };
+    expect(result.stopReason).toBe('end_turn');
+
+    // Turn settlement adopts the still-running task: the client receives an
+    // in-flight tool_call it can hold the session open on.
+    const adopted = await waitForBackgroundTaskUpdate(c, 'tool_call', 'in_progress');
+    expect(adopted?.title ?? '').toContain('background verify');
+    expect(adopted?.toolCallId ?? '').toMatch(/^bg:bash-/);
+
+    // The task finishes after the turn settled: a terminal tool_call_update
+    // arrives on the same wire id.
+    const terminal = await waitForBackgroundTaskUpdate(c, 'tool_call_update', 'completed', 15_000);
+    expect(terminal?.toolCallId).toBe(adopted?.toolCallId);
+  }, 30_000);
+
   it('bridges AskUserQuestion through elicitation/create for form-capable clients', async () => {
     const c = await boot({ elicitation: { form: {} } });
     // First model response: an AskUserQuestion tool call with a single-select
@@ -222,8 +298,9 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     // The question went over `elicitation/create` — never the permission
     // bridge — as one form carrying both questions.
     expect(elicitationRequests).toHaveLength(1);
-    expect(permissionRequests.filter((p) => JSON.stringify(p).includes('AskUserQuestion')))
-      .toHaveLength(0);
+    expect(
+      permissionRequests.filter((p) => JSON.stringify(p).includes('AskUserQuestion')),
+    ).toHaveLength(0);
     const elicitation = elicitationRequests[0] as {
       mode?: string;
       toolCallId?: string;
@@ -480,7 +557,12 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const args = JSON.stringify({ path: mediaPath });
     const splitAt = 12;
     scripted!.mockNextResponse(
-      { type: 'function', id: 'call_media', name: 'ReadMediaFile', arguments: args.slice(0, splitAt) },
+      {
+        type: 'function',
+        id: 'call_media',
+        name: 'ReadMediaFile',
+        arguments: args.slice(0, splitAt),
+      },
       { type: 'tool_call_part', argumentsPart: args.slice(splitAt) },
     );
     scripted!.mockNextText('done');
@@ -532,9 +614,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       .filter((u) => u?.toolCallId?.endsWith(':call_media') && u.status === 'completed');
     expect(replayedUpdates).toHaveLength(1);
     expect(replayedUpdates[0]?.content).toEqual(
-      expect.arrayContaining([
-        { type: 'content', content: { type: 'text', text: '[image_url]' } },
-      ]),
+      expect.arrayContaining([{ type: 'content', content: { type: 'text', text: '[image_url]' } }]),
     );
     expect(JSON.stringify(replayedUpdates)).not.toContain('"source"');
   }, 30_000);

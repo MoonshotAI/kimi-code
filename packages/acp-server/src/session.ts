@@ -31,8 +31,15 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import type {
+  ToolCallDeltaEvent,
+  ToolCallStartedEvent,
+  ToolProgressEvent,
+} from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import { toCoreMessage } from '@moonshot-ai/agent-core-v2/human/message';
 import { toLlmMessage } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
+import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 import type {
   AgentEventPayloads,
   AgentHandle,
@@ -43,14 +50,8 @@ import type {
   SessionEventPayloads,
   SessionHandle,
   SkillSummary,
+  AgentTaskInfo,
 } from '@moonshot-ai/klient';
-import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
-import type {
-  ToolCallDeltaEvent,
-  ToolCallStartedEvent,
-  ToolProgressEvent,
-} from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
-import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 
 import type { AcpClient } from './acp-client';
 import type { AcpTerminalCreatedEvent, IAcpConnection } from './acp-fs';
@@ -193,6 +194,18 @@ interface TurnDriver {
   early: Array<{ readonly turnId: number; readonly dispatch: () => void }>;
 }
 
+/** ACP wire toolCallId for a background task adopted after its turn settled. */
+function backgroundToolCallId(taskId: string): string {
+  return `bg:${taskId}`;
+}
+
+/** Human-readable title for a background task card. */
+function backgroundTaskTitle(info: AgentTaskInfo): string {
+  if (info.description.trim() !== '') return info.description;
+  if (info.kind === 'process') return info.command;
+  return info.taskId;
+}
+
 export class AcpSession {
   /** The klient facade this session was created from. */
   private readonly klient: Klient;
@@ -255,6 +268,28 @@ export class AcpSession {
    * captured output; only the client-facing card content is de-duplicated.
    */
   private readonly terminalBackedCalls = new Map<string, string>();
+  /**
+   * Background tasks adopted for post-turn reporting: engine taskId → ACP
+   * wire toolCallId (`bg:<taskId>`). A task is adopted when a turn settles
+   * while the task is still running; the client then sees an in-flight
+   * `tool_call` it can hold the session open on, followed by a terminal
+   * `tool_call_update` when the task finishes. Tasks that start and finish
+   * inside one turn keep flowing through the normal `tool.call.*` events and
+   * are never adopted.
+   */
+  private readonly backgroundTaskCalls = new Map<string, string>();
+  /**
+   * Terminal task events that arrived before the task was adopted (the task
+   * finished between the turn settling and the adoption read). Consumed by
+   * {@link adoptRunningBackgroundTasks}; an entry never survives its task's
+   * adoption, and `dispose()` drops the rest.
+   */
+  private readonly pendingBackgroundTerminals = new Map<
+    string,
+    AgentEventPayloads['task.terminated']
+  >();
+  /** True while {@link adoptRunningBackgroundTasks} reads the task list. */
+  private backgroundAdoptionInFlight = false;
   /** Bridges engine approval / ask-user requests to the ACP client. */
   private readonly interactionBridge: AcpInteractionBridge;
 
@@ -275,16 +310,19 @@ export class AcpSession {
      * shared temp-dir fallback applies.
      */
     private readonly resolveOriginalsDir?: (sessionId: string) => string | undefined,
-    private readonly hostCommands:
-      | ReadonlyArray<AvailableCommand>
-      | HostSlashCommandsSnapshot = [],
+    private readonly hostCommands: ReadonlyArray<AvailableCommand> | HostSlashCommandsSnapshot = [],
   ) {
     this.klient = klient;
     this.session = klient.session(sessionId);
     // `main` is auto-materialized by the transport's scope resolution on the
     // first call — no explicit agent bootstrap is needed here.
     this.agent = this.session.agent('main');
-    this.interactionBridge = new AcpInteractionBridge(conn, this.session, sessionId, elicitationForm);
+    this.interactionBridge = new AcpInteractionBridge(
+      conn,
+      this.session,
+      sessionId,
+      elicitationForm,
+    );
   }
 
   /**
@@ -345,6 +383,13 @@ export class AcpSession {
         this.emitLocalChunk(
           'Compaction is blocked by the current turn; retry when the turn is idle.',
         );
+      }),
+      // Background tasks (`Bash` with run_in_background, …) keep running after
+      // the turn settles; the client must still see them complete. Not
+      // turn-scoped — agent-grained like the compaction block above, so this
+      // session only follows the main agent's tasks.
+      events.on('task.terminated', (event) => {
+        this.onBackgroundTaskTerminated(event);
       }),
     );
     // Session-scope stream: title changes surface as `session_info_update`.
@@ -409,6 +454,8 @@ export class AcpSession {
       });
     }
     this.interactionBridge.dispose();
+    this.backgroundTaskCalls.clear();
+    this.pendingBackgroundTerminals.clear();
     for (const subscription of this.subscriptions.splice(0)) {
       subscription.dispose();
     }
@@ -923,6 +970,119 @@ export class AcpSession {
     this.emitLocalChunk(formatCompactionCompleted(event.result));
   }
 
+  /**
+   * Adopt the agent's still-running background tasks after a turn settles, so
+   * the client can track work that outlives the turn: each adopted task gets
+   * an in-flight `tool_call` now and a terminal `tool_call_update` from
+   * {@link onBackgroundTaskTerminated} when it finishes. Tasks that start and
+   * finish inside one turn keep flowing through the normal `tool.call.*`
+   * events and are never adopted.
+   */
+  private async adoptRunningBackgroundTasks(): Promise<void> {
+    this.backgroundAdoptionInFlight = true;
+    try {
+      const tasks = await this.agent.getTasks({ activeOnly: true });
+      for (const info of tasks) {
+        if (this.backgroundTaskCalls.has(info.taskId)) continue;
+        const pending = this.pendingBackgroundTerminals.get(info.taskId);
+        if (pending !== undefined) {
+          // Terminated between the read and this adoption: report the
+          // terminal update without ever marking the call in flight.
+          this.pendingBackgroundTerminals.delete(info.taskId);
+          this.emitBackgroundTaskTerminal(info.taskId, pending.info, pending.outputTail);
+          continue;
+        }
+        const wireId = backgroundToolCallId(info.taskId);
+        this.backgroundTaskCalls.set(info.taskId, wireId);
+        this.emit({
+          sessionId: this.sessionId,
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: wireId,
+            title: backgroundTaskTitle(info),
+            kind: 'execute',
+            status: 'in_progress',
+            rawInput: info.kind === 'process' ? { command: info.command } : { taskId: info.taskId },
+            content: [
+              {
+                type: 'content',
+                content: {
+                  type: 'text',
+                  text: `Background task still running after the turn ended: ${backgroundTaskTitle(info)}`,
+                },
+              },
+            ],
+          },
+        });
+      }
+      // Tasks that terminated while the read was in flight but were not in
+      // the active snapshot: their terminals were stashed — report them now
+      // (they were never adopted, so no in-flight creation exists to reorder).
+      for (const [taskId, event] of this.pendingBackgroundTerminals) {
+        this.pendingBackgroundTerminals.delete(taskId);
+        this.emitBackgroundTaskTerminal(taskId, event.info, event.outputTail);
+      }
+    } catch (error) {
+      log.warn('acp: failed to adopt running background tasks', {
+        sessionId: this.sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.backgroundAdoptionInFlight = false;
+    }
+  }
+
+  /**
+   * Report a background task that finished after (or around) its turn's
+   * settlement. Adopted tasks answer with a terminal `tool_call_update` on
+   * the wire id created at adoption time. A task that was never adopted —
+   * it started and finished inside one turn, or it terminated while an
+   * adoption read was in flight — is either reported terminal directly or
+   * stashed for that adoption to report, so no completion is lost and no
+   * `tool_call` creation is ever emitted after its terminal update.
+   */
+  private onBackgroundTaskTerminated(event: AgentEventPayloads['task.terminated']): void {
+    const taskId = event.info.taskId;
+    const wireId = this.backgroundTaskCalls.get(taskId);
+    if (wireId !== undefined) {
+      this.backgroundTaskCalls.delete(taskId);
+      this.emitBackgroundTaskTerminal(taskId, event.info, event.outputTail, wireId);
+      return;
+    }
+    if (this.backgroundAdoptionInFlight) {
+      this.pendingBackgroundTerminals.set(taskId, event);
+      return;
+    }
+    this.emitBackgroundTaskTerminal(taskId, event.info, event.outputTail);
+  }
+
+  /** Push the terminal `tool_call_update` for a background task (never throws). */
+  private emitBackgroundTaskTerminal(
+    taskId: string,
+    info: AgentTaskInfo,
+    outputTail?: string,
+    knownWireId?: string,
+  ): void {
+    const wireId = knownWireId ?? backgroundToolCallId(taskId);
+    const status = info.status === 'completed' ? 'completed' : 'failed';
+    const lines = [`Background task ${status}: ${backgroundTaskTitle(info)}`];
+    if (info.kind === 'process') {
+      lines.push(`exit code: ${String(info.exitCode)}`);
+    }
+    if (outputTail !== undefined && outputTail.trim() !== '') {
+      lines.push('', outputTail);
+    }
+    this.emit({
+      sessionId: this.sessionId,
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: wireId,
+        status,
+        content: [{ type: 'content', content: { type: 'text', text: lines.join('\n') } }],
+      },
+    });
+  }
+
   /** Push one local `agent_message_chunk` (best-effort, never throws). */
   private emitLocalChunk(text: string): void {
     this.emit({
@@ -948,6 +1108,7 @@ export class AcpSession {
       driver.resolve({ stopReason: turnEndReasonToStopReason(event.reason, error) });
     });
     void this.emitUsageUpdate();
+    void this.adoptRunningBackgroundTasks();
   }
 
   /**

@@ -9,6 +9,7 @@
 
 import { z } from 'zod';
 
+import { agentTaskInfoSchema } from './schemas.js';
 import type { EventRegistration } from '../types.js';
 
 /**
@@ -205,6 +206,21 @@ export const agentStatusUpdatedEventSchema = z.looseObject({
   phase: z.string().optional(),
 });
 
+/** Background task lifecycle (engine `task.started` / `task.terminated`). */
+export const taskStartedEventSchema = z.object({
+  type: z.literal('task.started'),
+  agentId: z.string(),
+  info: agentTaskInfoSchema,
+});
+
+/** Terminal background task notice; `outputTail` is present on the durable event. */
+export const taskTerminatedEventSchema = z.object({
+  type: z.literal('task.terminated'),
+  agentId: z.string(),
+  info: agentTaskInfoSchema,
+  outputTail: z.string().optional(),
+});
+
 // ── registrations ───────────────────────────────────────────────────────────
 
 /** Public event name → payload type. Keys must stay in sync with `agentEvents`. */
@@ -228,6 +244,8 @@ export interface AgentEventPayloads {
   error: z.infer<typeof errorEventSchema>;
   warning: z.infer<typeof warningEventSchema>;
   'agent.status.updated': z.infer<typeof agentStatusUpdatedEventSchema>;
+  'task.started': z.infer<typeof taskStartedEventSchema>;
+  'task.terminated': z.infer<typeof taskTerminatedEventSchema>;
 }
 
 export type AgentEventName = keyof AgentEventPayloads;
@@ -287,5 +305,12 @@ export const agentEvents = {
     name: 'events',
     type: 'agent.status.updated',
     schema: agentStatusUpdatedEventSchema,
+  },
+  'task.started': { kind: 'stream', name: 'events', type: 'task.started', schema: taskStartedEventSchema },
+  'task.terminated': {
+    kind: 'stream',
+    name: 'events',
+    type: 'task.terminated',
+    schema: taskTerminatedEventSchema,
   },
 } satisfies Record<AgentEventName, AgentEventRegistration>;
