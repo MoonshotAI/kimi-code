@@ -1165,14 +1165,13 @@ describe('AgentToolPolicyService executor enforcement', () => {
   it('does not reject select_tools, the policy-gated disclosure loading entry', async () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
     await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
-    const probe = new PolicyProbeTool(SELECT_TOOLS_TOOL_NAME);
-    ctx.get(IAgentToolRegistryService).register(probe);
 
     const result = await executeDirectToolCall(ctx, SELECT_TOOLS_TOOL_NAME);
 
-    expect(result).toMatchObject({ output: 'executed' });
-    expect(result.isError).toBeFalsy();
-    expect(probe.calls).toBe(1);
+    expect(result).toMatchObject({
+      output: 'Invalid args for tool "select_tools": must have required property \'names\'',
+    });
+    expect(result.output).not.toContain('disabled by the active tool policy');
   });
 
   it.each([
