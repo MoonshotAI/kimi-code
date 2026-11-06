@@ -35,11 +35,12 @@ const FAILURE_PATTERNS: readonly (readonly [RegExp, EnvironmentConnectFailure])[
   [/Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED/i, 'host_key_changed'],
   [/Permission denied \(|Too many authentication failures|no such identity/i, 'authentication_failed'],
   [/Cannot connect to the Docker daemon|docker daemon is not running|error during connect/i, 'docker_unavailable'],
-  [/No such container/i, 'container_not_found'],
+  [/No such container|container \S+ not found/i, 'container_not_found'],
   [/container \S+ is (?:not running|paused|restarting)/i, 'container_not_running'],
   [/Connection refused/i, 'connection_refused'],
   [/No route to host|Network is unreachable|Host is down/i, 'host_unreachable'],
   [/Connection timed out|Operation timed out/i, 'connect_timeout'],
+  [/failed to find target executable|executable file not found|command not found|: not found\b/i, 'executor_not_found'],
 ];
 
 export function classifyConnectFailure(error: unknown): EnvironmentConnectFailure {

@@ -126,3 +126,38 @@ describe('classifyConnectFailure', () => {
     expect(error).toBe(stalled);
   });
 });
+
+describe('classifyConnectFailure for launchers without a shell', () => {
+  const exited = (detail: string, exitCode = 1) => new HandshakeError(
+    `executor process exited before the handshake completed (code ${exitCode}, signal null): ${detail}`,
+    { kind: 'executor-exit', exitCode },
+  );
+
+  it.each([
+    ['Apple Container', 'Error: failed to find target executable /no/such/kimi'],
+    ['kubectl and OCI runtimes', 'OCI runtime exec failed: exec failed: unable to start container process: exec: "kimi": executable file not found in $PATH'],
+    ['bash', 'bash: line 1: kimi: command not found'],
+    ['sh', 'sh: 1: kimi: not found'],
+  ])('reports a missing executor from %s even with a generic exit code', (_name, detail) => {
+    expect(classifyConnectFailure(exited(detail))).toBe('executor_not_found');
+  });
+
+  it('names a missing container from runtimes that do not say no such container', () => {
+    expect(classifyConnectFailure(exited('Error: get failed: container no-such-container not found'))).toBe('container_not_found');
+  });
+
+  it('does not mistake a missing kubernetes resource for a missing executor', () => {
+    expect(classifyConnectFailure(exited('Error from server (NotFound): pods "dev" not found'))).toBe('unknown');
+  });
+
+  it('adds install guidance to a missing executor reported with a generic exit code', async () => {
+    const error = await connectWithGuidance(
+      async () => {
+        throw exited('Error: failed to find target executable /no/such/kimi');
+      },
+      { launcher: { type: 'command', program: 'container', args: ['exec', '-i', 'box'], remoteBin: '/no/such/kimi' } },
+    ).catch((error: unknown) => error);
+    expect((error as Error).message).toContain('was not found on command:container');
+  });
+});
+
