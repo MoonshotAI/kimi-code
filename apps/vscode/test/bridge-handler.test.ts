@@ -32,6 +32,7 @@ const host = vi.hoisted(() => {
     deleteSession: vi.fn(async () => undefined),
   };
   const showWarningMessage = vi.fn(async () => undefined as string | undefined);
+  const writeText = vi.fn(async () => undefined);
 
   class Uri {
     readonly scheme = "file";
@@ -57,6 +58,7 @@ const host = vi.hoisted(() => {
     harness,
     createKimiHarness: vi.fn(() => harness),
     showWarningMessage,
+    writeText,
     workspaceFolders: [] as Array<{ uri: Uri }>,
   };
 });
@@ -72,6 +74,7 @@ vi.mock("vscode", () => ({
     textDocuments: [],
   },
   window: { showWarningMessage: host.showWarningMessage },
+  env: { clipboard: { writeText: host.writeText } },
 }));
 
 vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {
@@ -208,6 +211,21 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
       error: "Invalid bridge params for method: addInputHistory",
     });
     expect(workspaceState.update).not.toHaveBeenCalled();
+  });
+
+  it("copies validated text through the host clipboard", async () => {
+    const invalid = await bridge.handle(
+      { id: "rpc-1", method: Methods.CopyText, params: { text: 42 } },
+      "view-1",
+    );
+    const result = await bridge.handle(
+      { id: "rpc-2", method: Methods.CopyText, params: { text: "selected text" } },
+      "view-1",
+    );
+
+    expect(invalid).toEqual({ id: "rpc-1", error: "Invalid bridge params for method: copyText" });
+    expect(result).toEqual({ id: "rpc-2", result: { ok: true } });
+    expect(host.writeText).toHaveBeenCalledExactlyOnceWith("selected text");
   });
 
   it("dispatches a valid request through the existing bridge surface", async () => {
