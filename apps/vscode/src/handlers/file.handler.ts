@@ -88,8 +88,13 @@ const pickMedia: Handler<PickMediaParams, string[]> = async (params) => {
 const FILE_LOCATION_SUFFIX = /:([1-9]\d*)(?::([1-9]\d*))?$/;
 
 const openFile: Handler<FilePathParams, { ok: boolean }> = async ({ filePath }, ctx) => {
-  const location = fileLocation(filePath);
-  const resolved = await resolveExistingWorkspaceFile(ctx.requireWorkDirUri(), location.filePath);
+  const workDirUri = ctx.requireWorkDirUri();
+  // A real file may itself end in `:<digits>` (e.g. a log kept as `run.log:2`).
+  // Prefer the literal path when it exists, so a click on such a file opens
+  // that file instead of a truncated sibling at a line.
+  const literal = await resolveExistingWorkspaceFile(workDirUri, filePath);
+  const location = literal === undefined ? fileLocation(filePath) : { filePath };
+  const resolved = literal ?? (await resolveExistingWorkspaceFile(workDirUri, location.filePath));
   if (resolved === undefined) return { ok: false };
   if (location.line === undefined) {
     await vscode.commands.executeCommand("vscode.open", resolved.uri);

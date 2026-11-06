@@ -252,6 +252,20 @@ describe("Webview workspace paths (selected-directory containment)", () => {
     expect(options.selection.start.character).toBe(0);
   });
 
+  it("opens a file whose literal name ends in :<digits>", async () => {
+    const workDir = join(root, "project");
+    await mkdir(join(workDir, "reports"), { recursive: true });
+    await writeFile(join(workDir, "reports", "run.log:2"), "kept");
+    const ctx = createContext(vscodeHost.Uri.file(workDir));
+
+    const result = await fileHandlers[Methods.OpenFile]!({ filePath: "reports/run.log:2" }, ctx);
+
+    expect(result).toEqual({ ok: true });
+    const call = vscodeHost.executeCommand.mock.calls.at(-1)!;
+    expect((call[1] as { fsPath: string }).fsPath).toBe(join(workDir, "reports", "run.log:2"));
+    expect(call).toHaveLength(2);
+  });
+
   it("opens a path:line:col link at the column", async () => {
     const workDir = join(root, "project");
     await mkdir(join(workDir, "src"), { recursive: true });
