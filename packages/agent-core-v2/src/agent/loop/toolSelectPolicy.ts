@@ -23,7 +23,7 @@ export function createToolSelectResolver(toolSelect: IAgentToolSelectService): L
         },
         content: {
           ...request.content,
-          messages: toolSelect.shapeHistory(request.content.messages, disclosure),
+          messages: toolSelect.shapeHistory(request.content.messages, disclosure, tools),
         },
       };
     },
