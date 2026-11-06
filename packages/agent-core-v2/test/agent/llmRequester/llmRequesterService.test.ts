@@ -356,6 +356,25 @@ describe('AgentLoopRequester operation overrides', () => {
     expect(params?.thinkingEffort).toBe('off');
   });
 
+  it('does not inherit the main model thinking effort for an operation request', async () => {
+    const requester = createRequester({ value: 0 });
+    const base = requester.request.bind(requester);
+    let params: ModelRequestParams | undefined;
+    requester.request = (input, signal, options) => {
+      params = options;
+      return base(input, signal, options);
+    };
+    const { service } = createService(requester, { thinkingLevel: 'xhigh' });
+
+    await service.request({
+      messages: [],
+      thinkingEffort: 'off',
+      source: { type: 'operation', requestKind: 'auto_review' },
+    });
+
+    expect(params?.thinkingEffort).toBe('off');
+  });
+
   it('keeps the independent cache key when inheriting the main model request params', async () => {
     const requester = createRequester({ value: 0 });
     const base = requester.request.bind(requester);

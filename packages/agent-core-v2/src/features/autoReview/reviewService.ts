@@ -42,14 +42,28 @@ const RESPONSE_FORMAT = {
     name: 'auto_review_decision',
     strict: true,
     schema: {
-      type: 'object',
-      properties: {
-        risk: { type: 'string', enum: ['low', 'medium', 'high'] },
-        decision: { type: 'string', enum: ['allow', 'deny'] },
-        reason: { type: ['string', 'null'] },
-      },
-      required: ['risk', 'decision', 'reason'],
-      additionalProperties: false,
+      anyOf: [
+        {
+          type: 'object',
+          properties: {
+            risk: { type: 'string', enum: ['low', 'medium'] },
+            decision: { type: 'string', enum: ['allow'] },
+            reason: { type: 'null' },
+          },
+          required: ['risk', 'decision', 'reason'],
+          additionalProperties: false,
+        },
+        {
+          type: 'object',
+          properties: {
+            risk: { type: 'string', enum: ['medium', 'high'] },
+            decision: { type: 'string', enum: ['deny'] },
+            reason: { type: ['string', 'null'] },
+          },
+          required: ['risk', 'decision', 'reason'],
+          additionalProperties: false,
+        },
+      ],
     },
   },
 } as const;
@@ -170,6 +184,7 @@ export class AutoReviewService extends Service implements IAutoReviewService {
       source: { type: 'operation', turnId: context.turnId, requestKind: AUTO_REVIEW_REQUEST_KIND },
       responseFormat: RESPONSE_FORMAT,
       cacheKey: `${this.session.sessionId}:${AUTO_REVIEW_REQUEST_KIND}`,
+      thinkingEffort: 'off',
     }, undefined, deadline.signal), deadline.signal);
     const current = authorizationEntries(this.context.get());
     if (this.workspace.workDir !== cwd) return authorizationChanged();

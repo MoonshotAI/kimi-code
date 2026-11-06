@@ -337,7 +337,7 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 
 Only calls that Always Ask mode would ask you to approve are reviewed. Calls that a more specific rule already approves — default-approved tools, writes inside a Git working tree, your `allow` rules, and calls approved for this session — skip review. With Auto Review enabled, dangerous-command detection no longer asks first in Ask When Needed mode: a command matched by an `allow` rule or approved for this session runs, and the rest go to review. A reviewer `allow` lets the call run. A `deny` or a review failure asks for your approval in Ask When Needed mode; in Never Ask mode the tool returns an error without running and the main agent can continue.
 
-The reviewer receives the current working directory, the AGENTS.md snapshot frozen at agent initialization, retained user and parent instructions, recent tool arguments and execution status, and the pending tool's schema and complete arguments. Tool output text and media are not sent. If retained authorization instructions or the working directory change during review, the result is not used to execute the action.
+The reviewer receives the current working directory, the AGENTS.md snapshot frozen at agent initialization, retained user and parent instructions, recent tool arguments and execution status, and the pending tool's schema and complete arguments. Tool output text and media are not sent. Review requests turn thinking off, or use the model's own default effort when thinking cannot be disabled. They do not use the main loop's effort. If retained authorization instructions or the working directory change during review, the result is not used to execute the action.
 
 ```toml
 [auto_review]

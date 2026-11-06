@@ -50,6 +50,7 @@ export interface AgentLLMRequestOverrides {
   modelAlias?: string;
   responseFormat?: ResponseFormat;
   cacheKey?: string;
+  thinkingEffort?: ThinkingEffort;
   maxOutputSize?: number;
   usedContextTokens?: number;
   promptCacheProbe?: 'compaction';

@@ -678,20 +678,35 @@ describe('AutoReviewService', () => {
       systemPrompt: REVIEW_POLICY,
       messages: expect.any(Array),
       cacheKey: 'session-1:auto_review',
+      thinkingEffort: 'off',
       responseFormat: {
         type: 'json_schema',
         jsonSchema: {
           name: 'auto_review_decision',
           strict: true,
           schema: {
-            type: 'object',
-            properties: {
-              risk: { type: 'string', enum: ['low', 'medium', 'high'] },
-              decision: { type: 'string', enum: ['allow', 'deny'] },
-              reason: { type: ['string', 'null'] },
-            },
-            required: ['risk', 'decision', 'reason'],
-            additionalProperties: false,
+            anyOf: [
+              {
+                type: 'object',
+                properties: {
+                  risk: { type: 'string', enum: ['low', 'medium'] },
+                  decision: { type: 'string', enum: ['allow'] },
+                  reason: { type: 'null' },
+                },
+                required: ['risk', 'decision', 'reason'],
+                additionalProperties: false,
+              },
+              {
+                type: 'object',
+                properties: {
+                  risk: { type: 'string', enum: ['medium', 'high'] },
+                  decision: { type: 'string', enum: ['deny'] },
+                  reason: { type: ['string', 'null'] },
+                },
+                required: ['risk', 'decision', 'reason'],
+                additionalProperties: false,
+              },
+            ],
           },
         },
       },

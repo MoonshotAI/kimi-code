@@ -738,7 +738,7 @@ export class AgentLoopRequester implements LoopRequester {
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
     const modelAlias = overrides.modelAlias ?? resolved.modelAlias;
     const model = this.modelCatalog.get(modelAlias);
-    const thinkingEffort = modelAlias === resolved.modelAlias
+    const inheritedThinkingEffort = modelAlias === resolved.modelAlias
       ? resolved.thinkingLevel
       : resolveForcedThinkingEffort(
           this.config.get<ThinkingConfig>(THINKING_SECTION)?.forcedEffort,
@@ -750,6 +750,14 @@ export class AgentLoopRequester implements LoopRequester {
           ),
           drivesThinkingThroughTraits(model.providerType),
         ) ?? resolved.thinkingLevel;
+    const thinkingEffort = overrides.thinkingEffort === undefined
+      ? inheritedThinkingEffort
+      : resolveThinkingEffortForModel(
+          overrides.thinkingEffort,
+          undefined,
+          model,
+          requiresStrictThinkingValidation(this.protocolRegistry, model.protocol, model.providerType),
+        );
     const maxCompletionTokensCap =
       this.config.get<ModelOverrides>('modelOverrides')?.maxCompletionTokens;
     const usedContextTokens =
