@@ -9,10 +9,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { Event2 } from '#/app/event/event2';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
-import {
-  hasPinnedPermissionMode,
-  ISessionAgentProfileCatalog,
-} from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { createAgentAwaitingClose } from '#/session/agentLifecycle/createAwaitingClose';
 import {
@@ -77,7 +74,6 @@ export class SessionSwarmService implements ISessionSwarmService {
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
-    @ISessionAgentProfileCatalog private readonly profiles: ISessionAgentProfileCatalog,
   ) {}
 
   async getSwarmItem(args: {
@@ -322,8 +318,7 @@ export class SessionSwarmService implements ISessionSwarmService {
         details: { agentId },
       });
     }
-    const rebuiltProfileName = rebuilt.accessor.get(IAgentProfileService).data().profileName;
-    if (!hasPinnedPermissionMode(this.profiles, rebuiltProfileName)) {
+    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentProfileService).data().profileName)) {
       rebuilt.accessor
         .get(IAgentPermissionModeService)
         .setMode(caller.accessor.get(IAgentPermissionModeService).mode);

@@ -42,7 +42,6 @@ export interface AgentProfile {
   readonly description?: string;
   readonly whenToUse?: string;
   readonly override?: boolean;
-  readonly pinnedPermissionMode?: boolean;
   readonly tools?: readonly string[];
   readonly disallowedTools?: readonly string[];
   readonly subagents?: readonly string[];

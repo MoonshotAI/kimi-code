@@ -48,8 +48,4 @@ describe('tower-worker profile', () => {
     const coder = builtinProfile('coder');
     expect(TOWER_WORKER_PROFILE_DEF.whenToUse).toBe(coder.whenToUse);
   });
-
-  it('pins its permission mode against session-wide broadcasts', () => {
-    expect(TOWER_WORKER_PROFILE_DEF.pinnedPermissionMode).toBe(true);
-  });
 });

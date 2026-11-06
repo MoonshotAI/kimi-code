@@ -44,15 +44,13 @@ import {
 import { isToolAvailable } from '#/agent/toolActivation/toolAvailability';
 import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
 import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import {
-  hasPinnedPermissionMode,
-  ISessionAgentProfileCatalog,
-} from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import {
   subagentAllowlistFor,
   withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
+import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -438,8 +436,7 @@ export class SubagentTool implements ISubagentTool {
         details: { agentId },
       });
     }
-    const rebuiltProfileName = rebuilt.accessor.get(IAgentProfileService).data().profileName;
-    if (!hasPinnedPermissionMode(this.catalog, rebuiltProfileName)) {
+    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentProfileService).data().profileName)) {
       rebuilt.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
     }
     this.log.info('subagent rebuilt for resume', { agentId, callerAgentId: this.callerAgentId });

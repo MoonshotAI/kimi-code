@@ -53,7 +53,6 @@ const TOWER_WORKER_ROLE = `${CODER_ROLE}\n\n${TOWER_WORKER_ROLE_OVERLAY.trim()}`
 
 export const TOWER_WORKER_PROFILE_DEF: AgentProfile = normalizeAgentProfile({
   name: TOWER_WORKER_PROFILE,
-  pinnedPermissionMode: true,
   description:
     'Tower worker/reviewer agent — executes one tower mission in its own git worktree (or reviews one branch), coordinating only through Tower* tools. Spawned via the TowerSpawn tool.',
   whenToUse:

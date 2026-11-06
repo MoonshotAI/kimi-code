@@ -22,10 +22,7 @@ import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSe
 import { permissionModeConfiguredKey } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { profileKey } from '#/agent/profile/profileOps';
-import {
-  hasPinnedPermissionMode,
-  ISessionAgentProfileCatalog,
-} from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkdir } from '#/session/workdir/workdir';
@@ -138,7 +135,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @IBlobStore private readonly blobStore: IBlobStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     @ILogService private readonly logger: ILogService,
-    @ISessionAgentProfileCatalog private readonly profiles: ISessionAgentProfileCatalog,
   ) {
     super();
     setRootActorErrorReporter((err) => {
@@ -499,12 +495,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     for (const managed of this.roster.values()) {
       if (managed.closing || !managed.active) continue;
       const handle = managed.handle;
-      if (
-        hasPinnedPermissionMode(
-          this.profiles,
-          handle.accessor.get(IAgentStateService).get(profileKey).profileName,
-        )
-      ) {
+      if (hasPinnedPermissionMode(handle.accessor.get(IAgentStateService).get(profileKey).profileName)) {
         continue;
       }
       handle.accessor.get(IAgentPermissionModeService).setMode(mode);
