@@ -422,6 +422,35 @@ describe('ToolManager SkillTool wire behavior', () => {
     expect(JSON.stringify(siblings[0])).not.toContain('child from B');
     expect(JSON.stringify(siblings[0])).not.toContain('nested-skill');
   });
+  it('resets depth for sibling root calls after a batch', async () => {
+    const names = ['first', 'second', 'third'];
+    for (const name of names) {
+      skills.register({ ...makeSkill(name), path: `/work/A/${name}/SKILL.md`, dir: `/work/A/${name}`, content: `${name} from A`, workspaceDir: '/work/A' });
+    }
+    const calls: ToolCall[] = names.map((name) => ({
+      type: 'function',
+      id: `call_${name}`,
+      name: 'Skill',
+      arguments: JSON.stringify({ skill: name }),
+    }));
+    const nextCall: ToolCall = {
+      type: 'function',
+      id: 'call_next',
+      name: 'Skill',
+      arguments: '{"skill":"first"}',
+    };
+    ctx.mockNextResponse({ type: 'text', text: 'Load siblings.' }, ...calls);
+    ctx.mockNextResponse({ type: 'text', text: 'Load another sibling.' }, nextCall);
+    ctx.mockNextResponse({ type: 'text', text: 'Done.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Use sibling skills' }] });
+    await ctx.untilTurnEnd();
+
+    const loaded = persistence.records.filter((record) =>
+      names.some((name) => recordContainsSkillLoaded(record, name)),
+    );
+    expect(loaded).toHaveLength(4);
+    expect(JSON.stringify(loaded.slice(0, 3))).not.toContain('nested-skill');
+  });
 });
 
 describe('ToolManager SkillTool restore behavior', () => {
