@@ -45,8 +45,8 @@ import {
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
-import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
-import type { AgentTranscriptSnapshot } from '@moonshot-ai/transcript';
+import { TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { ConversationItem, ConversationTurnsPage } from '../src/protocol/conversation';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { EnvironmentSetBinding } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBindingOps';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
@@ -1475,17 +1475,15 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(suffix.body.code).toBe(40001);
   });
 
-  it('cold-loads a persisted session on :undo instead of 40401', async () => {
+  it('cold-loads a persisted session on :undo and reports an unknown turn instead of 40401', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
 
     await closeSessionById((server as RunningServer).core.accessor, id);
 
-    const res = await postJson<{ messages: unknown }>(`/api/v1/sessions/${id}:undo`, { count: 1 });
-    expect(res.body.code).toBe(40911);
-    expect(res.body.msg).toMatch(/nothing to undo/i);
-    expect(res.body.stack).toEqual(expect.stringContaining('undoService'));
+    const res = await postJson<null>(`/api/v1/sessions/${id}:undo`, { turn_id: 't_missing' });
+    expect(res.body.code).toBe(40421);
   });
 
   it('returns 40901 when :undo reports a busy session', async () => {
@@ -1498,6 +1496,15 @@ describe('server-v2 /api/v1/sessions', () => {
       .get(IAgentLifecycleService)
       .create({ agentId: MAIN_AGENT_ID });
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    await agent.accessor.get(IEventDispatcher).dispatch(new TurnPrompt({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'first prompt' }],
+      origin: { kind: 'user' },
+    }));
+    agent.accessor.get(IAgentContextMemoryService).append(
+      { role: 'user', content: [{ type: 'text', text: 'first prompt' }], origin: { kind: 'user' } },
+    );
+    const page = await getJson<ConversationTurnsPage>(`/api/v1/sessions/${created.body.data.id}/agents/main/turns`);
     const undo = vi
       .spyOn(agent.accessor.get(IAgentConversationUndoService), 'undo')
       .mockRejectedValue(new Error2(ErrorCodes.SESSION_BUSY, 'session is busy'));
@@ -1505,7 +1512,7 @@ describe('server-v2 /api/v1/sessions', () => {
     try {
       const response = await postJson<null>(
         `/api/v1/sessions/${created.body.data.id}:undo`,
-        { count: 1 },
+        { turn_id: page.body.data.turns[0]!.turn_id },
       );
 
       expect(response.body.code).toBe(40901);
@@ -1633,6 +1640,11 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(messages.body.code).toBe(40930);
     const message = await getJson<unknown>(`/api/v1/sessions/${parentId}/messages/msg_incompatible`);
     expect(message.body.code).toBe(40930);
+    const rating = await postJson<unknown>(`/api/v1/sessions/${parentId}/rating`, { op: 'evaluate', turn_id: 't0' });
+    expect(rating.body.code).toBe(40930);
+    const turns = await getJson<unknown>(`/api/v1/sessions/${parentId}/agents/${MAIN_AGENT_ID}/turns`);
+    expect(turns.body.code).toBe(40930);
+    expect(turns.body.msg).toContain('Upgrade Kimi Code');
     const sliced = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
       turn_index: 999,
     });
@@ -1737,17 +1749,18 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(forkedState.titleKind).toBe('custom');
   });
 
-  it.each([
-    { count: 1, code: 0, prompts: [] as string[], texts: [] as string[] },
-    { count: 2, code: 40911, prompts: ['original prompt'], texts: ['answer before steer', 'steered prompt', 'answer after steer', 'second steer', 'answer after second steer'] },
-    { count: 3, code: 40911, prompts: ['original prompt'], texts: ['answer before steer', 'steered prompt', 'answer after steer', 'second steer', 'answer after second steer'] },
-  ])('keeps the correct messages when undoing $count anchors in a steered turn', async ({ count, code, prompts, texts }) => {
+  it('undoes a steered turn by its id together with its in-turn steers', async () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const id = created.body.data.id;
     const session = getLiveSessionById((server as RunningServer).core.accessor, id)!;
     await session.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
     const context = agent.accessor.get(IAgentContextMemoryService);
+    await agent.accessor.get(IEventDispatcher).dispatch(new TurnPrompt({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'original prompt' }],
+      origin: { kind: 'user' },
+    }));
     context.append(
       { role: 'user', content: [{ type: 'text', text: 'original prompt' }], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer before steer' }], toolCalls: [] },
@@ -1771,17 +1784,18 @@ describe('server-v2 /api/v1/sessions', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'answer after second steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IWireService).flush();
-    const path = `/api/v1/sessions/${id}/transcript?agent_id=main`;
-    const before = await getJson<AgentTranscriptSnapshot>(path);
+    const path = `/api/v1/sessions/${id}/agents/main/turns`;
+    const before = await getJson<ConversationTurnsPage>(path);
     expect(before.body.code).toBe(0);
-    expect(before.body.data.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
-    const undone = await postJson(`/api/v1/sessions/${id}:undo`, { count });
-    expect(undone.body.code).toBe(code);
-    const after = await getJson<AgentTranscriptSnapshot>(path);
-    const turns = after.body.data.items.filter((item) => item.kind === 'turn');
-    expect(turns.map((turn) => turn.prompt)).toEqual(prompts);
-    expect(turns.flatMap((turn) => turn.steps).flatMap((step) => step.frames).filter((frame) => frame.kind === 'text').map((frame) => frame.text)).toEqual(texts);
-    expect(after.body.data.prompts).toEqual([]);
+    const [turn] = before.body.data.turns;
+    expect(before.body.data.turns).toHaveLength(1);
+    expect(turn!.items.filter((item) => item.type === 'user_message').map((item) => item.placement)).toEqual(['opener', 'steer', 'steer']);
+
+    expect((await postJson<null>(`/api/v1/sessions/${id}:undo`, {})).body.code).toBe(40001);
+    expect((await postJson<null>(`/api/v1/sessions/${id}:undo`, { turn_id: 't_missing' })).body.code).toBe(40421);
+    const undone = await postJson<{ removed_turn_ids: string[] }>(`/api/v1/sessions/${id}:undo`, { turn_id: turn!.turn_id });
+    expect(undone.body).toMatchObject({ code: 0, data: { removed_turn_ids: [turn!.turn_id] } });
+    expect((await getJson<ConversationTurnsPage>(path)).body.data.turns).toEqual([]);
   });
 
   it('forks an undo-branched wire self-contained and replays it equivalently', async () => {
@@ -2061,15 +2075,6 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const listed = await getJson<SessionWire>(`/api/v1/sessions/${forkedId}`);
     expect(listed.body.code).toBe(0);
-
-    const transcript = await getJson<{
-      items: { kind: string; marker?: string; payload?: { path?: string } }[];
-    }>(`/api/v1/sessions/${forkedId}/transcript?agent_id=main`);
-    expect(transcript.body.code).toBe(0);
-    const revisionMarker = transcript.body.data.items.find(
-      (item) => item.kind === 'marker' && item.marker === 'plan.revision',
-    );
-    expect(revisionMarker?.payload?.path).toContain(forkedId);
 
     const resumed = await resumeSessionById((server as RunningServer).core.accessor, forkedId);
     expect(resumed).toBeDefined();
@@ -3021,31 +3026,40 @@ describe('server-v2 /api/v1/sessions:btw', () => {
     return (await res.json()) as Envelope<T>;
   }
 
-  async function transcriptTurns(sessionId: string, agentId: string) {
-    const res = await fetch(`${base}/api/v1/sessions/${sessionId}/transcript?agent_id=${agentId}`, {
+  async function agentTurns(sessionId: string, agentId: string) {
+    const res = await fetch(`${base}/api/v1/sessions/${sessionId}/agents/${agentId}/turns`, {
       headers: authHeaders(server as RunningServer),
     } as never);
-    const body = (await res.json()) as Envelope<AgentTranscriptSnapshot>;
-    return body.data.items.flatMap((item) => (item.kind === 'turn' ? [item] : []));
+    const body = (await res.json()) as Envelope<ConversationTurnsPage>;
+    return body.data.turns.filter((turn) => turn.kind === 'agent');
   }
 
-  function answerOf(turn: Awaited<ReturnType<typeof transcriptTurns>>[number]): string[] {
-    return turn.steps.flatMap((step) =>
-      step.frames.flatMap((frame) => (frame.kind === 'text' && frame.role === 'assistant' ? [frame.text] : [])),
-    );
+  type AgentTurn = Awaited<ReturnType<typeof agentTurns>>[number];
+
+  function promptOf(turn: AgentTurn): string | undefined {
+    const opener = turn.items[0];
+    return opener?.type === 'user_message' ? opener.text : undefined;
+  }
+
+  function answerOf(turn: AgentTurn): string[] {
+    return turn.items.flatMap((item) => (item.type === 'assistant_message' ? [item.text] : []));
+  }
+
+  function endOf(turn: AgentTurn): string {
+    return turn.status === 'ended' ? turn.outcome ?? 'ended' : turn.status;
   }
 
   it('keeps the first side chat answer when its prompt starts before anyone reads the fork', async () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const sessionId = created.data.id;
-    await transcriptTurns(sessionId, 'main');
+    await agentTurns(sessionId, 'main');
     await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
       content: [{ type: 'text', text: 'main question' }],
       model: 'fake',
     });
     await vi.waitFor(
       async () => {
-        expect((await transcriptTurns(sessionId, 'main')).map((turn) => turn.state)).toEqual(['completed']);
+        expect((await agentTurns(sessionId, 'main')).map(endOf)).toEqual(['completed']);
       },
       { timeout: 10_000 },
     );
@@ -3060,21 +3074,21 @@ describe('server-v2 /api/v1/sessions:btw', () => {
       agent_id: agentId,
       model: 'fake',
     });
-    await transcriptTurns(sessionId, agentId);
+    await agentTurns(sessionId, agentId);
     releaseSideAnswer();
 
     await vi.waitFor(
       async () => {
-        const own = (await transcriptTurns(sessionId, agentId)).filter((turn) => turn.prompt === 'side question');
-        expect(own.map((turn) => turn.state)).toEqual(['completed']);
+        const own = (await agentTurns(sessionId, agentId)).filter((turn) => promptOf(turn) === 'side question');
+        expect(own.map(endOf)).toEqual(['completed']);
       },
       { timeout: 10_000 },
     );
     await new Promise((resolve) => setTimeout(resolve, 400));
-    const turns = await transcriptTurns(sessionId, agentId);
-    const own = turns.filter((turn) => turn.prompt === 'side question');
+    const turns = await agentTurns(sessionId, agentId);
+    const own = turns.filter((turn) => promptOf(turn) === 'side question');
     expect(own).toHaveLength(1);
     expect(answerOf(own[0]!)).toEqual([sideAnswer]);
-    expect(new Set(turns.map((turn) => turn.turnId)).size).toBe(turns.length);
+    expect(new Set(turns.map((turn) => turn.turn_id)).size).toBe(turns.length);
   });
 });

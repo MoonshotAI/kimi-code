@@ -1,4 +1,6 @@
 import { daemonFileRefFromPart, parseDaemonFileUrl, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
+import { stripBundledSkillBlocks, type SteerMessage } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import { fromCorePart } from '@moonshot-ai/agent-core-v2/human/message';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 
@@ -97,7 +99,7 @@ function projectToolResultMediaPart(part: unknown): unknown {
   return legacy;
 }
 
-export function projectToolResultOutput(output: unknown): unknown {
+function projectToolResultOutput(output: unknown): unknown {
   if (!Array.isArray(output)) return output;
   return output.map((part) => projectToolResultMediaPart(part));
 }
@@ -187,6 +189,12 @@ export function projectPromptContentParts(content: readonly ContentPart[]): Mess
     }
   }
   return parts;
+}
+
+export function projectUserContent(message: SteerMessage): MessageContent[] {
+  const origin = message.origin as { readonly kind: string; readonly name?: unknown } | undefined;
+  if (origin?.kind === 'retry' || (origin?.kind === 'system_trigger' && origin.name !== 'subagent')) return [];
+  return projectPromptContentParts(stripBundledSkillBlocks(message).filter((part) => !isUserPromptSubmitHookPart(part)));
 }
 
 export function toProtocolMessage(

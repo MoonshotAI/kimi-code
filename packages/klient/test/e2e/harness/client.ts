@@ -41,6 +41,7 @@ import type {
   PromptSubmitResult,
   PromptThinking,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
+import type { ConversationTurnsPage } from '@moonshot-ai/kap-server/protocol/conversation';
 import type {
   CompactSessionRequest,
   CompactSessionResponse,
@@ -210,7 +211,7 @@ export class DaemonClient {
   }
   undoSession(
     sid: string,
-    body: UndoSessionRequest = { count: 1 },
+    body: UndoSessionRequest,
   ): Promise<UndoSessionResponse> {
     return this.http.undoSession(sid, body);
   }
@@ -262,6 +263,9 @@ export class DaemonClient {
     query?: { page_size?: number; before_id?: string; after_id?: string; role?: string },
   ): Promise<{ items: Message[]; has_more: boolean }> {
     return this.http.listMessages(sid, query);
+  }
+  listTurns(sid: string): Promise<ConversationTurnsPage> {
+    return this.http.listTurns(sid);
   }
   submitPrompt(sid: string, input: PromptSubmitInput): Promise<PromptSubmitResult> {
     return this.http.submitPrompt(sid, fillPromptDefaults(input));
@@ -348,15 +352,15 @@ export class DaemonClient {
   }
 
   /**
-   * Send `subscribe_v2` for the session's transcript stream and await its
-   * ack. Throws when the server reports the session as not found.
+   * Send `subscribe_v2` for the session's main agent and await its ack.
+   * Throws when the server reports the session as not found.
    */
   async subscribe(sid: string): Promise<void> {
     const ws = this._requireWs();
     if (this._subscribed.has(sid)) return;
     const id = `sub-${ulid()}`;
     const ack = await ws.sendAndAwaitAck(
-      { type: 'subscribe_v2', id, payload: { session_id: sid, transcript: { '*': 'turn' } } },
+      { type: 'subscribe_v2', id, payload: { session_id: sid } },
       this._controlAckTimeoutMs,
     );
     if (ack.code !== 0) {

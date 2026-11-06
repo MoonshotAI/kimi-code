@@ -13,6 +13,7 @@ import { BugIndicatingError } from '#/_base/errors/errors';
 import { ILogService } from '#/_base/log/log';
 import { AgentSpaceImpl } from '#/agent/agentContext/agentSpace';
 import '#/agent/contextMemory/conversationTime';
+import { ContextAppendMessage, ContextUndo } from '#/agent/contextMemory/contextEvents';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -682,6 +683,83 @@ describe('EventDispatcherService', () => {
 
     await dispatcher.dispatch(new UndoEvent({ count: 1 }));
     expect(state.items).toEqual(['a']);
+  });
+
+  it('hands undo anchors and legacy undo records to a participant with a custom onUndo', async () => {
+    const isolated = new TestInstantiationService();
+    const records: WireRecord[] = [];
+    isolated.set(IEventBus, new SyncDescriptor(EventBusService));
+    isolated.set(IAgentBlobService, noopBlob);
+    isolated.set(IWireService, stubWireJournal(records));
+    isolated.set(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: 'agents/main' }));
+    isolated.set(IAgentStateService, new AgentStateService());
+    isolated.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));
+    const scoped = isolated.get(IEventDispatcher);
+    const prompt = (text: string): ContextAppendMessage =>
+      new ContextAppendMessage({
+        agentId: 'main',
+        message: { role: 'user', content: [{ type: 'text', text }] },
+      });
+    records.push(
+      prompt('a').serialize(),
+      prompt('b').serialize(),
+      new ContextUndo({ agentId: 'main', count: 1 }).serialize(),
+      prompt('c').serialize(),
+    );
+    let state: CheckpointedState = { items: [] };
+    scoped.attach({
+      id: 'runtime.test.custom-undo',
+      events: [ContextAppendMessage],
+      undoable: true,
+      transition: (draft, event) => {
+        const part = (event as ContextAppendMessage).message.content[0];
+        if (part?.type === 'text') draft.items.push(part.text);
+      },
+      onUndo: (current, count) => ({ items: current.items.slice(0, -count) }),
+      getState: () => state,
+      commit: (next) => { state = next; },
+    });
+
+    await scoped.restore();
+
+    expect(state.items).toEqual(['a', 'c']);
+    isolated.dispose();
+  });
+
+  it('brackets every restore pass with the replay hooks of runtime participants, failed passes included', async () => {
+    journal.push(new ItemAdd({ item: 'a' }).serialize());
+    const calls: string[] = [];
+    let state: CheckpointedState = { items: [] };
+    dispatcher.attach({
+      id: 'runtime.test.replay-hooks',
+      events: [ItemAdd],
+      undoable: true,
+      transition: (draft, event) => {
+        if (event instanceof ItemAdd) draft.items.push(event.item);
+      },
+      onWillReplay: () => {
+        calls.push(`will:${state.items.join(',')}`);
+      },
+      onDidReplay: (replayed, { ok }) => {
+        calls.push(`did:${ok}:${replayed.items.join(',')}`);
+        state = ok ? { items: [...replayed.items, 'settled'] } : replayed;
+      },
+      getState: () => state,
+      commit: (next) => { state = next; },
+    });
+
+    await dispatcher.restore();
+    expect(calls).toEqual(['did:true:a']);
+    expect(state.items).toEqual(['a', 'settled']);
+
+    journal.push(new ItemAdd({ item: 'b' }).serialize());
+    await dispatcher.restore();
+    expect(calls).toEqual(['did:true:a', 'will:a,settled', 'did:true:a,b']);
+    expect(state.items).toEqual(['a', 'b', 'settled']);
+
+    journal.push(new FailingEvent({}).serialize());
+    await expect(dispatcher.restore()).rejects.toThrow('fold failure');
+    expect(calls.slice(3)).toEqual(['will:a,b,settled', 'did:false:a,b']);
   });
 
   it('replays journal history into a late-attached participant and folds live events after', async () => {

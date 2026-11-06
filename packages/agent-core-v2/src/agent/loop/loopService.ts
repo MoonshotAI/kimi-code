@@ -102,6 +102,7 @@ import {
   TurnStepInterrupted,
   TurnStepRetrying,
   TurnStepStarted,
+  TurnStepStreamReset,
   type TurnInterruptReason,
 } from './turnEvents';
 import { TurnCancel, TurnEnded, turnKey, TurnPrompt, TurnSteer } from './turnOps';
@@ -1298,7 +1299,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       retryRequested: false,
       afterChain: Promise.resolve(),
       partials: [],
-      forceContentPartBoundary: false,
       readyResolved: false,
       mode: undefined,
       providerType: undefined,
@@ -1558,7 +1558,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           step: step.number,
         });
         turn.partials = [];
-        turn.forceContentPartBoundary = false;
+        return;
+      }
+      case 'streamReset': {
+        const turn = this.active;
+        const step = turn?.current;
+        if (turn === undefined || step === undefined) return;
+        turn.partials = [];
+        void this.dispatcher.dispatch(
+          new TurnStepStreamReset({
+            agentId: this.scopeContext.agentId,
+            turnId: turn.id,
+            step: step.number,
+            stepId: step.uuid,
+          }),
+        );
         return;
       }
       case 'delta': {
@@ -1567,28 +1581,39 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         const delta = event.delta;
         switch (delta.kind) {
           case 'assistant':
-            this.accumulateMachinePart(turn, { type: 'text', text: delta.delta });
+            if (delta.block === undefined) return;
+            this.accumulateMachinePart(turn, { type: 'text', text: delta.delta }, delta.block);
             void this.dispatcher.dispatch(
-              new AssistantDelta({ agentId: this.scopeContext.agentId, turnId: turn.id, delta: delta.delta }),
+              new AssistantDelta({
+                agentId: this.scopeContext.agentId,
+                turnId: turn.id,
+                delta: delta.delta,
+                block: delta.block,
+              }),
             );
             return;
           case 'thinking': {
-            const part = this.accumulateMachinePart(turn, {
+            if (delta.block === undefined) return;
+            this.accumulateMachinePart(turn, {
               type: 'think',
               think: delta.delta,
               encrypted: delta.encrypted,
               detailsIndex: delta.detailsIndex,
               hidden: delta.hidden,
               reasoningKey: delta.reasoningKey,
-            });
-            if (part?.type === 'think' && part.hidden === true) return;
+            }, delta.block);
+            if (delta.hidden === true) return;
             void this.dispatcher.dispatch(
-              new ThinkingDelta({ agentId: this.scopeContext.agentId, turnId: turn.id, delta: delta.delta }),
+              new ThinkingDelta({
+                agentId: this.scopeContext.agentId,
+                turnId: turn.id,
+                delta: delta.delta,
+                block: delta.block,
+              }),
             );
             return;
           }
           case 'toolCall':
-            if (delta.started === true) turn.forceContentPartBoundary = true;
             void this.dispatcher.dispatch(
               new ToolCallDelta({
                 agentId: this.scopeContext.agentId,
@@ -1612,14 +1637,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         step.providerFinishReason = event.finish?.finishReason ?? undefined;
         step.rawFinishReason = event.finish?.rawFinishReason ?? undefined;
         step.messageId = event.messageId;
-        for (const part of event.entry.message.content) {
+        for (const [block, part] of event.entry.message.content.entries()) {
+          const streamed = turn.partials.find((entry) => entry.block === block);
           this.context.appendLoopEvent({
             type: 'content.part',
             uuid: randomUUID(),
             turnId: String(turn.id),
             step: step.number,
             stepUuid: step.uuid,
+            block,
             part,
+            startedAt: streamed?.startedAt,
+            durationMs: streamed === undefined ? undefined : streamed.endedAt - streamed.startedAt,
           });
         }
         step.contentAppended = true;
@@ -1833,13 +1862,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
   }
 
-  private accumulateMachinePart(turn: ActiveTurn, part: ContentPart): ContentPart | undefined {
+  private accumulateMachinePart(turn: ActiveTurn, part: ContentPart, block: number): void {
+    const now = Date.now();
     const last = turn.partials.at(-1);
-    if (part.type === 'think' && last?.type === 'text' && isVacuousContentPart(part)) return undefined;
-    if (!turn.forceContentPartBoundary && last !== undefined && mergeInPlace(last, part)) return last;
-    turn.forceContentPartBoundary = false;
-    turn.partials.push({ ...part });
-    return turn.partials.at(-1);
+    if (last?.block === block) {
+      mergeInPlace(last.part, part);
+      last.endedAt = now;
+      return;
+    }
+    turn.partials.push({ part: { ...part }, block, startedAt: now, endedAt: now });
   }
 
   private appendMachineToolResult(
@@ -1871,15 +1902,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private drainMachinePartials(turn: ActiveTurn, step: MachineStepState): void {
-    const drained = turn.partials.splice(0).filter((entry) => !isVacuousContentPart(entry));
+    const drained = turn.partials.splice(0).filter((entry) => !isVacuousContentPart(entry.part));
     let lastCompleteThink = -1;
-    for (const [index, part] of drained.entries()) {
+    for (const [index, { part }] of drained.entries()) {
       if (part.type === 'think' && part.encrypted !== undefined) {
         lastCompleteThink = index;
       }
     }
-    for (const part of drained.filter(
-      (part, index) => part.type !== 'think' || index <= lastCompleteThink,
+    for (const { part, block, startedAt, endedAt } of drained.filter(
+      ({ part }, index) => part.type !== 'think' || index <= lastCompleteThink,
     )) {
       this.context.appendLoopEvent({
         type: 'content.part',
@@ -1887,7 +1918,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         turnId: String(turn.id),
         step: step.number,
         stepUuid: step.uuid,
+        block,
         part,
+        startedAt,
+        durationMs: endedAt - startedAt,
       });
     }
   }
@@ -2392,6 +2426,13 @@ interface MachineFailedStep {
   readonly error: unknown;
 }
 
+interface StreamedBlock {
+  readonly part: ContentPart;
+  readonly block: number;
+  readonly startedAt: number;
+  endedAt: number;
+}
+
 interface ActiveTurn {
   readonly id: number;
   readonly prompt: ActivePrompt;
@@ -2416,8 +2457,7 @@ interface ActiveTurn {
   abortReason: unknown;
   retryRequested: boolean;
   afterChain: Promise<void>;
-  partials: ContentPart[];
-  forceContentPartBoundary: boolean;
+  partials: StreamedBlock[];
   readyResolved: boolean;
   mode: 'agent' | 'plan' | undefined;
   providerType: string | undefined;

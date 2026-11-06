@@ -98,6 +98,7 @@ export class AgentSkillService implements IAgentSkillService {
         clientMetadata: input.clientMetadata,
       },
       content,
+      input.promptId,
     );
     if (turn === undefined) {
       throw new Error2(
@@ -160,6 +161,7 @@ export class AgentSkillService implements IAgentSkillService {
           content: [...prepared.map((activation) => activation.part), ...input.input],
         },
         meta: {
+          promptId: input.promptId,
           origin: {
             kind: 'user',
             skillActivations: prepared.map((activation) => activation.entry),
@@ -250,6 +252,7 @@ export class AgentSkillService implements IAgentSkillService {
   private async recordActivation(
     origin: SkillActivationOrigin,
     input?: readonly ContentPart[],
+    promptId?: string,
   ): Promise<Turn | undefined> {
     await this.dispatcher.dispatch(
       new SkillActivated({
@@ -269,7 +272,7 @@ export class AgentSkillService implements IAgentSkillService {
     const { id } = this.loop.submit(
       {
         message: { role: 'user', content: [...input] },
-        meta: { origin, tracked: !steer },
+        meta: { promptId, origin, tracked: !steer },
       },
       { steerIfActive: steer },
     );
