@@ -208,6 +208,28 @@ describe('createAuthFailureLimiter (unit)', () => {
     }
   });
 
+  it('keeps an active ban when the failure window rolls over', () => {
+    vi.useFakeTimers();
+    const limiter = createAuthFailureLimiter({ maxFailures: 3, windowMs: 60_000, banMs: 60_000 });
+    try {
+      limiter.recordFailure(IP_A);
+      vi.advanceTimersByTime(59_000);
+      limiter.recordFailure(IP_A);
+      limiter.recordFailure(IP_A);
+      expect(limiter.isBanned(IP_A)).toBe(true);
+
+      vi.advanceTimersByTime(2_000);
+      expect(limiter.reserve(IP_A)).toBeUndefined();
+      expect(limiter.isBanned(IP_A)).toBe(true);
+
+      vi.advanceTimersByTime(58_000);
+      expect(limiter.isBanned(IP_A)).toBe(false);
+      expect(limiter.reserve(IP_A)).toBeDefined();
+    } finally {
+      limiter.dispose();
+    }
+  });
+
   it('shares the limit between recorded failures and reservations', () => {
     const limiter = createAuthFailureLimiter({ maxFailures: 3, windowMs: 60_000, banMs: 60_000 });
     try {

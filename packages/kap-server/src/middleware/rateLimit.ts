@@ -58,7 +58,6 @@ export function createAuthFailureLimiter(
     if (now - entry.windowStart > windowMs) {
       entry.count = 0;
       entry.windowStart = now;
-      entry.bannedUntil = 0;
     }
     return entry;
   }
