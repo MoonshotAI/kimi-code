@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { messageSchema } from './message';
 import {
   sessionWarningSchema,
   sessionWarningsResponseSchema,
@@ -144,17 +143,14 @@ export type CompactSessionRequest = z.infer<typeof compactSessionRequestSchema>;
 export const compactSessionResponseSchema = z.object({});
 export type CompactSessionResponse = z.infer<typeof compactSessionResponseSchema>;
 
-export const undoSessionRequestSchema = z.preprocess(
-  (value) => value === undefined ? {} : value,
-  z.object({
-    count: z.number().int().positive().default(1),
-    page_size: z.number().int().min(1).max(100).optional(),
-  }),
-);
+export const undoSessionRequestSchema = z.object({
+  turn_id: z.string().min(1),
+  agent_id: z.string().min(1).optional(),
+});
 export type UndoSessionRequest = z.infer<typeof undoSessionRequestSchema>;
 
 export const undoSessionResponseSchema = z.object({
-  messages: pageResponseSchema(messageSchema),
+  removed_turn_ids: z.array(z.string().min(1)),
 });
 export type UndoSessionResponse = z.infer<typeof undoSessionResponseSchema>;
 

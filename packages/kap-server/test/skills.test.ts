@@ -226,10 +226,32 @@ describe('server-v2 /api/v1 skills', () => {
       expect(input?.metadata?.origin?.clientMetadata).toEqual([metadata]);
       expect(JSON.stringify(input?.content)).not.toContain('client-only literal');
       await closeSessionById(server!.core.accessor, id);
-      const transcript = await getJson<{ items: { kind: string; origin?: { payload?: { clientMetadata?: unknown } } }[] }>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
-      expect(transcript.body.data.items.find((item) => item.kind === 'turn')?.origin?.payload?.clientMetadata).toEqual([metadata]);
+      const page = await getJson<{ turns: { items: { type: string; metadata?: unknown }[] }[] }>(`/api/v1/sessions/${id}/agents/main/turns`);
+      expect(page.body.data.turns[0]?.items[0]).toMatchObject({
+        type: 'user_message',
+        origin: { kind: 'skill', name: 'update-config', args: 'Example argument' },
+        metadata,
+      });
       const session = await getJson<{ title: string }>(`/api/v1/sessions/${id}`);
       expect(session.body.data.title).toBe(metadata.display_text);
+    });
+
+    it('pairs the activation with a client-chosen prompt_id', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+
+      const activated = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`, {
+        args: '--help',
+        prompt_id: 'activation-1',
+      });
+      expect(activated.body.code).toBe(0);
+      const page = await getJson<{ turns: { items: { type: string; prompt_ids?: string[] }[] }[] }>(`/api/v1/sessions/${id}/agents/main/turns`);
+      expect(page.body.data.turns[0]?.items[0]).toMatchObject({ type: 'user_message', prompt_ids: ['activation-1'] });
+
+      const duplicate = await postJson<null>(`/api/v1/sessions/${id}/skills/update-config:activate`, {
+        prompt_id: 'activation-1',
+      });
+      expect(duplicate.body.code).toBe(40927);
     });
 
     it('keeps ordered text parts among activation attachments', async () => {
@@ -430,26 +452,15 @@ describe('server-v2 /api/v1 skills', () => {
         text: `Attached file "note.txt" (application/octet-stream, ${noteBytes.length} bytes): ${sourcePath} — open it with the Read tool`,
       });
 
-      const transcript = await getJson<{
-        items: Array<{ kind: string; attachmentIds?: string[] }>;
-        attachments: Array<{
-          attachmentId: string;
-          mediaType: string;
-          name?: string;
-          size?: number;
-          source?: unknown;
-        }>;
-      }>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
-      const transcriptAttachments = transcript.body.data.attachments;
-      expect(transcriptAttachments).toHaveLength(1);
-      expect(transcriptAttachments[0]).toMatchObject({
-        mediaType: 'application/octet-stream',
-        name: 'note.txt',
-        size: noteBytes.length,
-      });
-      expect(transcriptAttachments[0]).not.toHaveProperty('source');
-      const turn = transcript.body.data.items.find((item) => item.kind === 'turn');
-      expect(turn?.attachmentIds).toEqual([transcriptAttachments[0]!.attachmentId]);
+      const page = await getJson<{
+        turns: Array<{ items: Array<{ type: string; text?: string; attachments?: unknown[] }> }>;
+      }>(`/api/v1/sessions/${id}/agents/main/turns`);
+      const opener = page.body.data.turns[0]?.items[0];
+      expect(opener?.type).toBe('user_message');
+      expect(opener?.text).not.toContain(sourcePath);
+      expect(opener?.attachments).toEqual([
+        { kind: 'file', name: 'note.txt', media_type: 'application/octet-stream', size: noteBytes.length, ordinal: 1 },
+      ]);
     });
 
     it('rejects a relative attachment path on skill activation (40001)', async () => {

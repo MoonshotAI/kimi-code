@@ -284,7 +284,7 @@ export function salvageInterruptedMessage(message: AssistantMessage): AssistantM
 }
 
 export interface MessageAccumulator {
-  push(part: StreamedMessagePart): void;
+  push(part: StreamedMessagePart): number | undefined;
   toolCallEnd(index?: number | string): ToolCall | undefined;
   finish(): AssistantMessage;
 }
@@ -293,7 +293,13 @@ export function createMessageAccumulator(): MessageAccumulator {
   const message: AssistantMessage = { role: 'assistant', content: [], toolCalls: [] };
   const toolCallIndexMap = new Map<number | string, number>();
   let pending: StreamedMessagePart | null = null;
+  let pendingBlock: number | undefined;
   let deferredThink: ThinkPart | null = null;
+  const open = (part: StreamedMessagePart): number | undefined => {
+    pending = structuredClone(part);
+    pendingBlock = isContentPart(pending) ? message.content.length : undefined;
+    return pendingBlock;
+  };
   const flush = () => {
     if (pending !== null) {
       if (isContentPart(pending)) {
@@ -335,22 +341,20 @@ export function createMessageAccumulator(): MessageAccumulator {
                 ? part.argumentsPart
                 : target.arguments + part.argumentsPart;
           }
-          return;
+          return undefined;
         }
       }
       if (part.type === 'text') deferredThink = null;
-      if (pending === null) {
-        pending = structuredClone(part);
-        return;
-      }
+      if (pending === null) return open(part);
       if (pending.type === 'text' && part.type === 'think' && isVacuousContentPart(part)) {
         deferredThink = structuredClone(part);
-        return;
+        return undefined;
       }
       if (!mergeInPlace(pending, part)) {
         flush();
-        pending = structuredClone(part);
+        return open(part);
       }
+      return pendingBlock;
     },
     toolCallEnd(index) {
       if (
@@ -361,7 +365,7 @@ export function createMessageAccumulator(): MessageAccumulator {
         return undefined;
       }
       flush();
-      return message.toolCalls[message.toolCalls.length - 1];
+      return message.toolCalls.at(-1);
     },
     finish(): AssistantMessage {
       flush();
