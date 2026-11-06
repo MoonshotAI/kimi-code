@@ -15,6 +15,7 @@ import {
   IEventBus,
   IEventService,
   IFileService,
+  ISessionManager,
   ISessionMediaStore,
   ISessionMetadata,
   ISessionSkillCatalog,
@@ -173,6 +174,9 @@ async function applyProfileSelection(
 }
 
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
+  core.accessor.get(ISessionManager).onWillDeleteSession?.((event) => {
+    promptAttempts.delete(event.sessionId);
+  });
   const listRoute = defineRoute(
     {
       method: 'GET',
@@ -612,7 +616,10 @@ export function beginPromptAttempt(sessionId: string, promptId: string | undefin
     },
     succeed: resolve,
     fail: (error) => {
-      if (!enqueued && attempts.get(promptId)?.response === response) attempts.delete(promptId);
+      if (!enqueued && attempts.get(promptId)?.response === response) {
+        attempts.delete(promptId);
+        if (attempts.size === 0 && promptAttempts.get(sessionId) === attempts) promptAttempts.delete(sessionId);
+      }
       reject(error);
     },
   };
