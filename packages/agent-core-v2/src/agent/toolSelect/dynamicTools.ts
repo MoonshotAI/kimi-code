@@ -213,9 +213,8 @@ export function renderRuntimeToolChangeReminder(
   if (removed.length > 0) sections.push(`<tools_removed>\n${removed.join('\n')}\n</tools_removed>`);
   sections.push(
     'The available tools changed during this session. The current model cannot load runtime ' +
-      'tool additions or replacements with select_tools. Do not call select_tools. Tools from ' +
-      'the initial session snapshot remain visible, but removed or replaced definitions may be ' +
-      'unavailable or fail when called.',
+      'tool additions with select_tools. Do not call select_tools. Use the tool definitions ' +
+      'provided in this request. Removed tools may be unavailable or fail when called.',
   );
   return sections.join('\n\n');
 }

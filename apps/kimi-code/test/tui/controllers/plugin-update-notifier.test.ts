@@ -93,6 +93,8 @@ describe('PluginUpdateNotifier', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -311,6 +313,33 @@ describe('PluginUpdateNotifier', () => {
 
     await notifier.handlePluginCommandCompleted('kimi-datasource');
     expect(harness.notify).toHaveBeenCalledWith(EXPECTED_MESSAGE);
+  });
+
+  it('refreshes plugin slash commands after a background availability reload', async () => {
+    vi.stubEnv('KIMI_CODE_HOME', tempDir);
+    vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_URL', 'https://marketplace.test/catalog');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      plugins: makeMarketplace().plugins,
+    }), { status: 200 })));
+    const harness = makeHarness();
+    const reloadPlugins = vi.fn(async () => undefined);
+    const refreshPluginCommands = vi.fn(async () => undefined);
+    const notifier = new PluginUpdateNotifier({
+      getSession: () => harness.session,
+      workDir: tempDir,
+      notify: harness.notify,
+      reloadPlugins,
+      refreshPluginCommands,
+      stateFile,
+    });
+
+    await notifier.handlePluginCommandCompleted('kimi-datasource');
+
+    expect(reloadPlugins).toHaveBeenCalledOnce();
+    expect(refreshPluginCommands).toHaveBeenCalledOnce();
+    expect(refreshPluginCommands.mock.invocationCallOrder[0]).toBeGreaterThan(
+      reloadPlugins.mock.invocationCallOrder[0]!,
+    );
   });
 
   it('refreshes the memoized MCP server map when a lookup misses', async () => {

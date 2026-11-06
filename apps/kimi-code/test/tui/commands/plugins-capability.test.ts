@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   log,
@@ -8,6 +12,7 @@ import { resetCapabilitiesCache, setCapabilities, type Component } from '@moonsh
 
 import { __pluginsCommandInternals } from '#/tui/commands/plugins';
 import { NoticeMessageComponent } from '#/tui/components/messages/status-message';
+import { PluginStopProcessesConfirmComponent } from '#/tui/components/dialogs/plugins-selector';
 import {
   capabilityIdForMarketplaceEntry,
   installedPluginForMarketplaceEntry,
@@ -18,6 +23,7 @@ const {
   installMarketplaceEntryFromPanel,
   installPluginFromSource,
   isDefaultMarketplaceCatalog,
+  loadMarketplaceCatalog,
   pollCapabilityInstall,
   removePlugin,
 } = __pluginsCommandInternals;
@@ -26,7 +32,13 @@ function fakeHost(overrides: {
   capabilityStatus?: () => Promise<{
     state?: string;
     steps?: readonly unknown[];
-    install: { running: boolean; step?: string; percent?: number; error?: string };
+    install: {
+      running: boolean;
+      step?: string;
+      percent?: number;
+      error?: string;
+      confirmationRequired?: 'stop-processes';
+    };
   }>;
   installed?: readonly PluginSummary[];
 }) {
@@ -62,12 +74,17 @@ function fakeHost(overrides: {
   const getCapability =
     overrides.capabilityStatus ??
     (() => Promise.resolve({ state: 'ready', steps: [], install: { running: false } }));
+  const reloadPlugins = vi.fn(async () => undefined);
+  const refreshPluginCommands = vi.fn(async () => undefined);
+  const mountEditorReplacement = vi.fn();
+  const restoreEditor = vi.fn();
   const host = {
     session: undefined,
     harness: {
       listPlugins: () => Promise.resolve(installed),
       installPlugin,
       removePlugin: () => Promise.resolve(),
+      reloadPlugins,
       getCapability,
       installCapability,
       listCapabilities: () => Promise.resolve([]),
@@ -86,7 +103,9 @@ function fakeHost(overrides: {
       notices.push({ title, detail });
       transcriptEntries.push(new NoticeMessageComponent(title, detail));
     },
-    restoreEditor: () => undefined,
+    refreshPluginCommands,
+    restoreEditor,
+    mountEditorReplacement,
     state: {
       appState: { workDir: '/workspace' },
       ui: { requestRender: () => renders.push(1) },
@@ -103,6 +122,10 @@ function fakeHost(overrides: {
     transcriptEntries,
     installCapability,
     installPlugin,
+    reloadPlugins,
+    refreshPluginCommands,
+    mountEditorReplacement,
+    restoreEditor,
   };
 }
 
@@ -169,6 +192,7 @@ describe('plugins command capability surface', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     resetCapabilitiesCache();
   });
 
@@ -190,6 +214,45 @@ describe('plugins command capability surface', () => {
     expect(installedPluginForMarketplaceEntry('demo', [custom], undefined, true)).toBeUndefined();
     expect(installedPluginForMarketplaceEntry('demo', [marketplace], undefined, true)).toBe(marketplace);
     expect(installedPluginForMarketplaceEntry('demo', [legacy], undefined, true)).toBe(legacy);
+  });
+
+  it('refreshes plugin slash commands after marketplace availability reloads', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'plugins-command-marketplace-'));
+    try {
+      const { host, reloadPlugins, refreshPluginCommands } = fakeHost({});
+      const setInstalled = vi.fn();
+      const panel = {
+        setInstalled,
+        setMarketplace: vi.fn(),
+        setMarketplaceCatalogVersions: vi.fn(),
+        setMarketplaceError: vi.fn(),
+      } as never;
+      vi.stubEnv('KIMI_CODE_HOME', home);
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        plugins: [{
+          id: 'demo',
+          displayName: 'Demo',
+          version: '1.0.0',
+          source: 'https://cdn.example.test/demo.zip',
+          clients: ['desktop'],
+        }],
+      }), { status: 200 })));
+
+      await loadMarketplaceCatalog(host, panel, 'https://marketplace.test/catalog');
+
+      expect(reloadPlugins).toHaveBeenCalledOnce();
+      expect(refreshPluginCommands).toHaveBeenCalledOnce();
+      expect(setInstalled).toHaveBeenCalledOnce();
+      expect(refreshPluginCommands.mock.invocationCallOrder[0]).toBeGreaterThan(
+        reloadPlugins.mock.invocationCallOrder[0]!,
+      );
+
+      await loadMarketplaceCatalog(host, panel, 'https://marketplace.test/catalog');
+      expect(reloadPlugins).toHaveBeenCalledOnce();
+      expect(refreshPluginCommands).toHaveBeenCalledOnce();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('installs ordinary marketplace entries by id, expected version and digest', async () => {
@@ -268,7 +331,7 @@ describe('plugins command capability surface', () => {
     const { host, installCapability, installPlugin } = fakeHost({});
     await installPluginFromSource(host, './demo');
 
-    expect(installPlugin).toHaveBeenCalledWith({ source: '/workspace/demo' });
+    expect(installPlugin).toHaveBeenCalledWith({ source: resolve('/workspace', 'demo') });
     expect(installCapability).not.toHaveBeenCalled();
   });
 
@@ -428,6 +491,63 @@ describe('plugins command capability surface', () => {
     );
     expect(idle.installCapability).toHaveBeenCalledWith('kimi-cu');
   });
+
+  it.each(['cancel', 'escape', 'confirm', 'retry-error', 'still-blocked'] as const)(
+    'handles process confirmation: %s',
+    async (action) => {
+      const pending = fakeHost({
+        capabilityStatus: () => Promise.resolve({
+          state: 'ready',
+          steps: [],
+          install: pending.installCapability.mock.calls.length < 2 || action === 'still-blocked'
+            ? { running: false, confirmationRequired: 'stop-processes' }
+            : { running: false },
+        }),
+      });
+      if (action === 'retry-error') {
+        pending.installCapability.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Access denied'));
+      }
+      const panel = fakePanel();
+      const installing = installCapabilityFromPanel(
+        pending.host,
+        panel.panel,
+        { id: 'kimi-cu-win', displayName: 'Kimi Computer Use', source: 'capability:kimi-cu' } as never,
+        'kimi-cu',
+      );
+      await vi.waitFor(() => {
+        expect(pending.mountEditorReplacement).toHaveBeenCalled();
+      }, { timeout: 2000 });
+      expect(pending.installCapability).toHaveBeenCalledTimes(1);
+      expect(pending.installCapability).toHaveBeenCalledWith('kimi-cu');
+      const dialog = pending.mountEditorReplacement.mock.calls[0]![0] as PluginStopProcessesConfirmComponent;
+      expect(dialog).toBeInstanceOf(PluginStopProcessesConfirmComponent);
+      if (action === 'escape') {
+        dialog.handleInput('\u001B');
+      } else {
+        if (action !== 'cancel') dialog.handleInput('\u001B[B');
+        dialog.handleInput('\r');
+      }
+      await installing;
+      expect(pending.restoreEditor).toHaveBeenCalled();
+      expect(panel.lines.at(-1)).toBeUndefined();
+      if (action === 'cancel' || action === 'escape') {
+        expect(pending.installCapability).toHaveBeenCalledTimes(1);
+        expect(pending.statuses).toContain('Install cancelled: Kimi Computer Use.');
+      } else {
+        expect(pending.installCapability).toHaveBeenCalledTimes(2);
+        expect(pending.installCapability).toHaveBeenLastCalledWith('kimi-cu', { stopRunningProcesses: true });
+        expect(pending.mountEditorReplacement).toHaveBeenLastCalledWith(panel.panel);
+        if (action === 'retry-error') {
+          expect(pending.statuses).toContain('Failed to install Kimi Computer Use: Access denied');
+        } else if (action === 'still-blocked') {
+          expect(pending.statuses.some((status) => status.includes('Processes are still running'))).toBe(true);
+          expect(pending.statuses).not.toContain('Kimi Computer Use is installed.');
+        } else {
+          expect(pending.statuses).toContain('Kimi Computer Use is installed.');
+        }
+      }
+    },
+  );
 
   it('follows an in-progress capability install instead of restarting it', async () => {
     let calls = 0;

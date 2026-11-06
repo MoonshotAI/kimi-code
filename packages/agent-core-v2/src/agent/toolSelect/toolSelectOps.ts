@@ -3,7 +3,12 @@ import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
 import { defineState } from '#/state/state';
-import type { ToolDisclosure, ToolSource } from '#/tool/toolContract';
+import {
+  toolDefinitionSchemaSignature,
+  toolDefinitionVersionSignature,
+  type ToolDisclosure,
+  type ToolSource,
+} from '#/tool/toolContract';
 
 export interface ToolSelectTool {
   readonly name: string;
@@ -25,24 +30,14 @@ export interface ToolSelectModelState {
   readonly changes: readonly ToolSelectChange[];
 }
 
-function canonicalValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (typeof value !== 'object' || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => [key, canonicalValue(item)]),
-  );
-}
-
 export function toolSelectSchemaSignature(
   tool: Pick<ToolSelectTool, 'name' | 'description' | 'parameters'>,
 ): string {
-  return JSON.stringify([tool.name, tool.description, canonicalValue(tool.parameters)]);
+  return toolDefinitionSchemaSignature(tool);
 }
 
 export function toolSelectVersionSignature(tool: ToolSelectTool): string {
-  return JSON.stringify([toolSelectSchemaSignature(tool), tool.source, tool.disclosure]);
+  return toolDefinitionVersionSignature(tool);
 }
 
 const toolSchema = z.custom<ToolSelectTool>();

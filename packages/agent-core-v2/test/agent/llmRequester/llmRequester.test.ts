@@ -233,7 +233,7 @@ describe('LLMRequester service migration coverage', () => {
         llmGenerateServices(requesterFromGenerateFn(async () => {
           calls += 1;
           if (calls === 1) {
-            throw new APIStatusError(400, 'tool_use ids must be unique');
+            throw new APIStatusError(400, 'tool_use ids must be unique', false);
           }
           return {
             id: 'strict-response',
@@ -503,7 +503,7 @@ describe('LLMRequester service migration coverage', () => {
       const records: TelemetryRecord[] = [];
       ctx = createTestAgent(
         llmGenerateServices(requesterFromGenerateFn(async () => {
-          throw new APIStatusError(429, 'rate limited');
+          throw new APIStatusError(429, 'rate limited', true);
         })),
         telemetryServices(recordingTelemetry(records)),
       );
@@ -763,7 +763,7 @@ describe('LLMRequester service migration coverage', () => {
       },
       {
         recovery: 'media-stripped',
-        error: new APIStatusError(400, 'unsupported image format: image/avif is not supported'),
+        error: new APIStatusError(400, 'unsupported image format: image/avif is not supported', false),
         keptMedia: 0,
       },
     ])(

@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { MermaidPreferenceSelectorComponent } from '#/tui/components/dialogs/mermaid-preference-selector';
-import { SettingsSelectorComponent } from '#/tui/components/dialogs/settings-selector';
+import {
+  SettingsSelectorComponent,
+  TranscriptGroupThinkingSelectorComponent,
+  TranscriptGroupToolsSelectorComponent,
+} from '#/tui/components/dialogs/settings-selector';
 
 const ANSI = /\[[0-9;]*m/g;
 const strip = (s: string): string => s.replaceAll(ANSI, '');
@@ -34,6 +38,56 @@ describe('MermaidPreferenceSelectorComponent', () => {
     expect(selected).toEqual([true]);
     disabledPicker.handleInput('\r');
     expect(selected).toEqual([true, false]);
+  });
+});
+
+describe('transcript display selectors', () => {
+  it('lists the transcript grouping settings only in fullscreen', () => {
+    const settingsText = (fullscreen: boolean): string => {
+      const picker = new SettingsSelectorComponent({
+        fullscreen,
+        onSelect: () => {},
+        onCancel: () => {},
+      });
+      const firstPage = strip(picker.render(100).join('\n'));
+      picker.handleInput('\u001B[C');
+      return `${firstPage}\n${strip(picker.render(100).join('\n'))}`;
+    };
+
+    const regular = settingsText(false);
+    expect(regular).toContain('Usage');
+    expect(regular).not.toContain('Tool call folding');
+    expect(regular).not.toContain('Thinking folding');
+
+    const fullscreen = settingsText(true);
+    expect(fullscreen).toContain('Tool call folding');
+    expect(fullscreen).toContain('Choose which tool calls to fold into summary groups.');
+    expect(fullscreen).toContain('Thinking folding');
+    expect(fullscreen).toContain('Choose whether to fold finished thinking.');
+  });
+
+  it('selects tool call folding and thinking folding values with current markers', () => {
+    const onGroupTools = vi.fn();
+    const groupTools = new TranscriptGroupToolsSelectorComponent({
+      currentValue: 'auto',
+      onSelect: onGroupTools,
+      onCancel: () => {},
+    });
+    expect(strip(groupTools.render(90).join('\n'))).toContain('Fold most tools ← current');
+    groupTools.handleInput('\r');
+    expect(onGroupTools).toHaveBeenCalledWith('auto');
+
+    const onThinking = vi.fn();
+    const thinking = new TranscriptGroupThinkingSelectorComponent({
+      currentValue: true,
+      onSelect: onThinking,
+      onCancel: () => {},
+    });
+    const text = strip(thinking.render(100).join('\n'));
+    expect(text).toContain('Fold thinking ← current');
+    expect(text).toContain('Fold finished thinking into summary groups.');
+    thinking.handleInput('\r');
+    expect(onThinking).toHaveBeenCalledWith(true);
   });
 });
 

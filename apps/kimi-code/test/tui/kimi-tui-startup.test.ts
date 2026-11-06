@@ -17,6 +17,8 @@ import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
+import { MoonLoader } from '#/tui/components/chrome/moon-loader';
+import type { FooterGitBinding } from '#/tui/components/chrome/footer';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
 import { maybeShowModelMigrationPrompt } from '#/tui/controllers/model-migration';
 import type { ApprovalPanelData, QuestionPanelData } from '#/tui/reverse-rpc/types';
@@ -121,6 +123,7 @@ function makeStartupInput(
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
+      transcript: { groupTools: 'auto', groupThinking: true },
       statusLine: { items: null, command: null },
       ...tuiConfig,
     },
@@ -243,6 +246,8 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
     getWorkspaceAdditionalDirs: vi.fn(async () => []),
+    getGitStatus: vi.fn(async () => null),
+    getGitPullRequest: vi.fn(async () => null),
     getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], additionalDirSources: [], warnings: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] } })),
     refreshProviderModels: vi.fn(async () => ({ changed: [], unchanged: [], failed: [] })),
     auth: {
@@ -938,6 +943,33 @@ describe('KimiTUI startup', () => {
       release();
       await (driver as unknown as { waitForSessionAssembly(): Promise<void> }).waitForSessionAssembly();
     }
+  });
+
+  it('reads footer git state through the engine, skipping a remote binding until its session exists', async () => {
+    type GitBindingDriver = { footerGitBinding(state: TUIState['appState']): FooterGitBinding | null };
+    const localHarness = makeHarness();
+    const local = makeDriver(localHarness, makeStartupInput());
+    const localBinding = (local as unknown as GitBindingDriver).footerGitBinding(local.state.appState);
+    expect(localBinding?.source.localWorkDir).toBe(local.state.appState.workDir);
+    await localBinding?.source.status();
+    expect(localHarness.getGitStatus).toHaveBeenCalledWith(local.state.appState.workDir, { sessionId: undefined });
+
+    const remoteHarness = makeHarness();
+    const remote = makeDriver(remoteHarness, makeStartupInput({ environment: 'dev-box' }));
+    const driver = remote as unknown as GitBindingDriver;
+    expect(driver.footerGitBinding(remote.state.appState)).toBeNull();
+
+    const connected = {
+      ...remote.state.appState,
+      sessionId: 'ses-remote',
+      environment: { environmentId: 'dev-box', type: 'ssh' as const, status: 'ready' as const, cwd: '/remote/work' },
+    };
+    const remoteBinding = driver.footerGitBinding(connected);
+    expect(remoteBinding?.source.localWorkDir).toBeUndefined();
+    await remoteBinding?.source.pullRequest();
+    expect(remoteHarness.getGitPullRequest).toHaveBeenCalledWith(remote.state.appState.workDir, { sessionId: 'ses-remote' });
+    expect(driver.footerGitBinding({ ...connected, environment: { ...connected.environment, status: 'disconnected' } })?.key)
+      .toBe(remoteBinding?.key);
   });
 
   it('completes remote @ mentions through the live session', async () => {
@@ -3519,6 +3551,31 @@ describe('KimiTUI startup', () => {
 
     expect(driver.terminalFocusTrackingDispose).toBeUndefined();
     expect(onExit).toHaveBeenCalledWith(0);
+  });
+
+  it('removes the startup progress row once ready and keeps the failure row', async () => {
+    const startDriver = (initMainTui: () => Promise<boolean>): MigrateExitDriver => {
+      const driver = makeDriver(makeHarness(), makeStartupInput()) as unknown as MigrateExitDriver;
+      vi.spyOn(driver.state.ui, 'start').mockImplementation(() => {});
+      vi.spyOn(driver.state.ui, 'stop').mockImplementation(() => {});
+      vi.spyOn(driver.state.terminal, 'write').mockImplementation(() => {});
+      vi.spyOn(driver, 'initMainTui').mockImplementation(initMainTui);
+      vi.spyOn(driver as unknown as { finishStartup(): Promise<void> }, 'finishStartup').mockResolvedValue();
+      return driver;
+    };
+    const transcriptText = (driver: MigrateExitDriver): string =>
+      driver.state.transcriptContainer.children.flatMap((child) => child.render(80)).join('\n');
+
+    const ready = startDriver(async () => false);
+    await ready.start();
+    expect(ready.state.transcriptContainer.children.some((child) => child instanceof MoonLoader)).toBe(false);
+    expect(transcriptText(ready)).not.toContain('Ready.');
+
+    const failed = startDriver(async () => {
+      throw new Error('startup boom');
+    });
+    await expect(failed.start()).rejects.toThrow('startup boom');
+    expect(transcriptText(failed)).toContain('Startup failed.');
   });
 
   it('disposes terminal tracking when post-migration startup fails', async () => {

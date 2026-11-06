@@ -4,6 +4,7 @@ import type { PromptFileAttachment } from '#/agent/contextMemory/types';
 export interface SkillActivationInput {
   readonly name: string;
   readonly args?: string;
+  readonly promptId?: string;
   readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly content?: readonly ContentPart[];
   readonly attachments?: readonly PromptFileAttachment[];
@@ -16,6 +17,7 @@ export interface PromptSkillActivation {
 
 export interface PromptWithSkillsInput {
   readonly input: readonly ContentPart[];
+  readonly promptId?: string;
   readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly skills: readonly PromptSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];

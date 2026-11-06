@@ -28,7 +28,16 @@ import {
 
 export const USAGE_FRAME_INTERVAL_MS = 250;
 
-const STATE_EVENT_TYPES = ['turn.started', 'turn.ended', 'agent.status.updated', 'goal.updated'] as const;
+const STATE_EVENT_TYPES = [
+  'turn.started',
+  'turn.ended',
+  'compaction.started',
+  'compaction.completed',
+  'compaction.cancelled',
+  'compaction.blocked',
+  'agent.status.updated',
+  'goal.updated',
+] as const;
 
 export type AgentFeedSend = (agentId: string, message: AgentFeedMessage) => void;
 
