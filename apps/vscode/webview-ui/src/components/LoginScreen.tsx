@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { IconLoader2, IconCopy, IconCheck, IconExternalLink, IconArrowRight } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import { KimiMascot } from "./KimiMascot";
 import { bridge, Events } from "@/services";
 import {
@@ -87,9 +89,17 @@ export function LoginScreen({ onLoginSuccess, onSkip }: LoginScreenProps) {
 
   const handleCopyUrl = async () => {
     if (!url) return;
-    await navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      const success = await copyToClipboard(url);
+      if (success) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } else {
+        toast.error("Failed to copy URL");
+      }
+    } catch {
+      toast.error("Failed to copy URL");
+    }
   };
 
   if (state === "pending") {

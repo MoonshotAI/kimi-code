@@ -279,6 +279,10 @@ class Bridge {
     return this.call<string | null>(Methods.GetImageDataUri, { filePath });
   }
 
+  copyToClipboard(text: string) {
+    return this.call<{ ok: boolean }>(Methods.CopyToClipboard, { text });
+  }
+
   setPlanMode(enabled: boolean) {
     return this.call<{ ok: boolean; planMode: boolean }>(Methods.SetPlanMode, { enabled });
   }
