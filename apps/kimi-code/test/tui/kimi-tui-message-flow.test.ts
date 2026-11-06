@@ -9280,6 +9280,53 @@ capabilities = ["image_in", "video_in"]
     expect(session.prompt).not.toHaveBeenCalled();
   });
 
+  it('restores the selected variant after lazy session creation fails for /btw', async () => {
+    const input = '/btw check this /skill:review';
+    const selectedPath = '/work/B/review/SKILL.md';
+    const variants = [
+      { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+      { name: 'review', description: 'Review skill', path: selectedPath, source: 'project', workspaceDir: '/work/B' },
+    ];
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => variants),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => variants),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+    driver.restoreInputText(input, [{ skillName: 'review', path: selectedPath }]);
+    harness.createSession.mockRejectedValueOnce(new Error('create failed'));
+
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Failed to start a session: create failed');
+    });
+    expect(driver.state.editor.getText()).toBe(input);
+    expect(driver.skillVariantPathForCommand('skill:review', input.indexOf('/skill:review'))).toBe(selectedPath);
+
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('check this /skill:review', [
+        { name: 'review', path: selectedPath },
+      ]);
+    });
+    expect(harness.createSession).toHaveBeenCalledTimes(2);
+  });
+
   it('cancels a BTW skill prompt during original registration and releases its media', async () => {
     let finish!: (reference: string) => void;
     const attachFile = vi.fn(() => new Promise<string>((resolve) => { finish = resolve; }));

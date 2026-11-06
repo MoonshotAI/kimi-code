@@ -382,7 +382,7 @@ async function handleBuiltInSlashCommand(
     if (session === undefined) {
       // Creation failed after submit cleared the buffer; give the input
       // back unless the user moved on — a newer draft or an opened panel.
-      if (canRestoreSubmittedInput(host)) host.restoreInputText(input);
+      if (canRestoreSubmittedInput(host)) host.restoreInputText(input, activations);
       return;
     }
     // A first prompt may have started a turn while the session was being
