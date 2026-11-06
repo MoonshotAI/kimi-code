@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { resolveProgramPath } from '#/environment/programPath';
 
-import { resolveLauncher } from '#/remote/client/launchers';
+import { declarationFingerprint, resolveLauncher, toLauncherSpec } from '#/remote/client/launchers';
 
 describe('launcher lowering', () => {
   it('lowers ssh to the fixed argv shape', () => {
@@ -50,6 +50,18 @@ describe('launcher lowering', () => {
       'dev-box',
       `"$HOME"'/.kimi-code/bin/kimi' 'exec-server' '--listen' 'stdio'`,
     ]);
+  });
+  it('pins the configured identity file before the host', () => {
+    const spec = toLauncherSpec({ type: 'ssh', host: 'dev-box', identityFile: '~/.ssh/dev_ed25519' });
+    const args = resolveLauncher(spec).args;
+    expect(args.slice(3, 7)).toEqual(['-i', '~/.ssh/dev_ed25519', '-o', 'IdentitiesOnly=yes']);
+    expect(args.indexOf('-i')).toBeLessThan(args.indexOf('dev-box'));
+  });
+
+  it('reconnects when the identity file changes but keeps old fingerprints stable', () => {
+    const base = declarationFingerprint({ type: 'ssh', host: 'dev-box' });
+    expect(declarationFingerprint({ type: 'ssh', host: 'dev-box', enabled: true })).toBe(base);
+    expect(declarationFingerprint({ type: 'ssh', host: 'dev-box', identityFile: '~/.ssh/a' })).not.toBe(base);
   });
 });
 

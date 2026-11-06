@@ -25,7 +25,7 @@ export function dockerBaseArgs(context?: string): readonly string[] {
 }
 
 export type LauncherSpec =
-  | { readonly type: 'ssh'; readonly host: string; readonly remoteBin?: string }
+  | { readonly type: 'ssh'; readonly host: string; readonly identityFile?: string; readonly remoteBin?: string }
   | {
       readonly type: 'docker';
       readonly container: string;
@@ -45,7 +45,7 @@ export function toLauncherSpec(entry: RemoteEnvironmentEntry): LauncherSpec {
     return { type: 'command', program: entry.command, args: entry.args, env: entry.env, remoteBin: entry.remoteBin };
   }
   return entry.type === 'ssh'
-    ? { type: 'ssh', host: entry.host, remoteBin: entry.remoteBin }
+    ? { type: 'ssh', host: entry.host, identityFile: entry.identityFile, remoteBin: entry.remoteBin }
     : { type: 'docker', container: entry.container, context: entry.context, remoteBin: entry.remoteBin };
 }
 
@@ -127,14 +127,22 @@ function execServerPowerShellCommand(remoteBin: string): string {
   return powerShellCommand(`$ErrorActionPreference = 'Stop'; & ${executable} ${EXEC_SERVER_ARGV.join(' ')}; exit $LASTEXITCODE`);
 }
 
-export function resolveSshCommand(host: string, command: string, interactiveSshAuth = false): ResolvedLauncher {
-  assertLauncherOperand('ssh host', host);
+export interface SshTarget {
+  readonly host: string;
+  readonly identityFile?: string;
+}
+
+export function resolveSshCommand(target: SshTarget, command: string, interactiveSshAuth = false): ResolvedLauncher {
+  assertLauncherOperand('ssh host', target.host);
   const authOptions = interactiveSshAuth
     ? ['-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1']
     : ['-o', 'BatchMode=yes'];
+  const identityOptions = target.identityFile === undefined
+    ? []
+    : ['-i', target.identityFile, '-o', 'IdentitiesOnly=yes'];
   return {
     program: 'ssh',
-    args: ['-T', ...authOptions, ...SSH_CONFIG_OPTIONS.slice(2), host, command],
+    args: ['-T', ...authOptions, ...identityOptions, ...SSH_CONFIG_OPTIONS.slice(2), target.host, command],
   };
 }
 
@@ -179,7 +187,7 @@ export function resolveLauncher(
   switch (spec.type) {
     case 'ssh': {
       const remoteBin = spec.remoteBin ?? DEFAULT_REMOTE_BIN;
-      return resolveSshCommand(spec.host,
+      return resolveSshCommand(spec,
         sshPlatform === 'windows' && !isBareRemoteBin(remoteBin)
           ? execServerPowerShellCommand(remoteBin)
           : execServerShellCommand(remoteBin),

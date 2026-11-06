@@ -124,7 +124,7 @@ Kimi Code 以非交互方式连接 SSH 主机。在终端里执行下面的命�
 ssh -o BatchMode=yes dev-box true
 ```
 
-- **密钥**：`~/.ssh/config` 中的密钥、ssh-agent 和跳板机照常生效。带口令的密钥先在终端执行一次 `ssh-add`。
+- **密钥**：`~/.ssh/config` 中的密钥、ssh-agent 和跳板机照常生效。不想改 `~/.ssh/config` 时，可在条目上设置 `identityFile` 指定私钥。带口令的密钥先在终端执行一次 `ssh-add`。
 - **密码**：在 TUI 中，Kimi Code CLI 会提示输入 SSH 密码（需要 OpenSSH 8.4 或更高版本）。`kimi -p` 不支持密码登录。
 - **主机密钥**：首次连接时自动信任并写入 `known_hosts`；之后主机密钥变化时连接会失败，需要手动删除 `known_hosts` 中的对应条目。
 

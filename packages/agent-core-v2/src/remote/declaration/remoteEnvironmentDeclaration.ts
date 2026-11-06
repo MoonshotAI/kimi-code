@@ -10,6 +10,7 @@ const sshEnvironmentEntrySchema = z
   .object({
     type: z.literal('ssh'),
     host: z.string().min(1),
+    identityFile: z.string().min(1).optional(),
     remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
     enabled: z.boolean().optional(),

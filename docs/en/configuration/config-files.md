@@ -590,6 +590,7 @@ The optional top-level `default` names the environment a session binds to when c
 | --- | --- | --- | --- |
 | `type` | `string` | Yes | `"ssh"` |
 | `host` | `string` | Yes | SSH host; spawned through the system `ssh`, so `~/.ssh/config` (user, port, key, `ProxyJump`, `ControlMaster`) applies |
+| `identityFile` | `string` | No | Private key file on this machine, passed to `ssh -i` with `IdentitiesOnly=yes` so only this key is offered; `~/` is expanded by `ssh`. Leave unset to use the keys from `~/.ssh/config` and ssh-agent |
 | `remoteBin` | `string` | No | Path to `kimi` on the target; defaults to `~/.kimi-code/bin/kimi` on POSIX and `~/.kimi-code/bin/kimi.exe` on Windows. Supports absolute paths with spaces, `~/` paths under the target account's home, or bare names on the target's `PATH`, such as `kimi` |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session; not validated locally |
 | `enabled` | `boolean` | No | Set to `false` to disable the environment: its connection is closed and nothing reconnects it until it is enabled again. Defaults to `true` |

@@ -589,6 +589,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | --- | --- | --- | --- |
 | `type` | `string` | 是 | `"ssh"` |
 | `host` | `string` | 是 | SSH 主机；经系统 `ssh` 启动，`~/.ssh/config`（用户、端口、密钥、`ProxyJump`、`ControlMaster`）照常生效 |
+| `identityFile` | `string` | 否 | 本机上的私钥文件，以 `ssh -i` 传入并设置 `IdentitiesOnly=yes`，只提供这一把密钥；`~/` 由 `ssh` 展开。不填时使用 `~/.ssh/config` 和 ssh-agent 中的密钥 |
 | `remoteBin` | `string` | 否 | 目标环境上 `kimi` 的路径，POSIX 默认 `~/.kimi-code/bin/kimi`，Windows 默认 `~/.kimi-code/bin/kimi.exe`。支持含空格的绝对路径、目标账户主目录下的 `~/` 路径或目标 `PATH` 中的裸名称（如 `kimi`） |
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值，不在本机校验 |
 | `enabled` | `boolean` | 否 | 设为 `false` 停用该环境：断开现有连接，重新启用之前不会再连接。默认 `true` |

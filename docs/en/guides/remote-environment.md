@@ -124,7 +124,7 @@ Kimi Code connects to SSH hosts non-interactively. If the following command succ
 ssh -o BatchMode=yes dev-box true
 ```
 
-- **Keys**: keys, ssh-agent, and jump hosts in `~/.ssh/config` work as usual. For a key with a passphrase, run `ssh-add` once in your terminal first.
+- **Keys**: keys, ssh-agent, and jump hosts in `~/.ssh/config` work as usual. To use a specific key without editing `~/.ssh/config`, set `identityFile` on the entry. For a key with a passphrase, run `ssh-add` once in your terminal first.
 - **Passwords**: in the TUI, Kimi Code CLI prompts for the SSH password (requires OpenSSH 8.4 or later). `kimi -p` does not support password sign-in.
 - **Host keys**: a new host's key is trusted and written to `known_hosts` on first connection; if the host key later changes, the connection fails and you need to remove the matching entry from `known_hosts` manually.
 

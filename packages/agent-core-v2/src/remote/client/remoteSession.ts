@@ -11,7 +11,7 @@ import { RemoteFileSystem } from '#/os/backends/remote/remoteFileSystem';
 import { RemoteProcessService } from '#/os/backends/remote/remoteProcess';
 
 import { DEFAULT_INITIALIZE_TIMEOUT_MS, HandshakeError, RemoteExecConnection } from './connection';
-import { DEFAULT_REMOTE_BIN, isBareRemoteBin, powerShellCommand, resolveLauncher, resolveSshCommand, type LauncherSpec } from './launchers';
+import { DEFAULT_REMOTE_BIN, isBareRemoteBin, powerShellCommand, resolveLauncher, resolveSshCommand, type LauncherSpec, type SshTarget } from './launchers';
 import { createSshAskpass, type SshAuthOptions } from './sshAskpass';
 
 export interface RemoteEnvironmentProbe extends HostEnvironmentInfo {
@@ -40,7 +40,7 @@ export class RemoteSession {
     try {
       const sshEnv = askpass === undefined ? undefined : { ...process.env, ...askpass.env };
       const sshPlatform = options.launcher.type === 'ssh' && !isBareRemoteBin(options.launcher.remoteBin ?? DEFAULT_REMOTE_BIN)
-        ? await detectSshPlatform(options.launcher.host, sshEnv, options.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS)
+        ? await detectSshPlatform(options.launcher, sshEnv, options.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS)
         : 'posix';
       const resolved = resolveLauncher(options.launcher, options.sshAuth !== undefined, sshPlatform);
       const bridge = ExecBridge.spawn({
@@ -128,13 +128,13 @@ export class RemoteSession {
 }
 
 async function detectSshPlatform(
-  host: string,
+  target: SshTarget,
   env: NodeJS.ProcessEnv | undefined,
   timeoutMs: number,
 ): Promise<'posix' | 'windows'> {
   const probes = ['uname -s', powerShellCommand("[Console]::WriteLine('KIMI_WINDOWS')")];
   for (const [index, command] of probes.entries()) {
-    const launcher = resolveSshCommand(host, command, env !== undefined);
+    const launcher = resolveSshCommand(target, command, env !== undefined);
     const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve, reject) => {
       const child = execFile(launcher.program, [...launcher.args], {
         env,
