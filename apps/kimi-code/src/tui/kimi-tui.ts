@@ -723,11 +723,25 @@ export class KimiTUI {
 
   private applySkillCommands(skills: readonly SkillSummary[]): void {
     const skillCommands = buildSkillSlashCommands(skills);
+    const pathsBySkillName = new Map<string, Set<string>>();
+    for (const command of skillCommands.commands) {
+      const skillName = skillCommands.commandMap.get(command.name);
+      if (skillName === undefined || command.skillPath === undefined) continue;
+      const paths = pathsBySkillName.get(skillName) ?? new Set<string>();
+      paths.add(command.skillPath);
+      pathsBySkillName.set(skillName, paths);
+    }
     this.skillCommands = skillCommands.commands;
     this.skillCommandMap.clear();
-    this.skillVariantPaths.clear();
     for (const [commandName, skillName] of skillCommands.commandMap) {
       this.skillCommandMap.set(commandName, skillName);
+    }
+    for (const [start, selection] of this.skillVariantPaths) {
+      const skillName = this.skillCommandMap.get(selection.commandName) ??
+        this.skillCommandMap.get(selection.commandName.replace(/^skill:/, ''));
+      if (skillName === undefined || !pathsBySkillName.get(skillName)?.has(selection.path)) {
+        this.skillVariantPaths.delete(start);
+      }
     }
     this.setupAutocomplete();
   }
@@ -1522,7 +1536,7 @@ export class KimiTUI {
     this.updateEditorBorderHighlight();
   }
 
-  handleUserInput(text: string): void {
+  handleUserInput(text: string, leadingWhitespace = text.length - text.trimStart().length): void {
     const wasBashMode = this.state.appState.inputMode === 'bash';
     if (wasBashMode) {
       // A submit always exits bash mode (the `!` is consumed by this command).
@@ -1538,7 +1552,8 @@ export class KimiTUI {
     // apart from prompts and restore bash mode (see CustomEditor's mode-aware
     // history navigation). The `!` is stripped again when the entry is recalled.
     const historyText = wasBashMode ? `!${text}` : text;
-    void this.persistInputHistory(historyText);
+    if (leadingWhitespace === 0) void this.persistInputHistory(historyText);
+    else void this.persistInputHistory(historyText, leadingWhitespace);
     if (wasBashMode) {
       // Only one foreground action at a time: queue the shell command while
       // another shell command is running or an agent turn is in progress.
@@ -1551,7 +1566,8 @@ export class KimiTUI {
       void this.runShellCommandFromInput(text);
       return;
     }
-    slashCommands.dispatchInput(this, text);
+    if (leadingWhitespace === 0) slashCommands.dispatchInput(this, text);
+    else slashCommands.dispatchInput(this, text, leadingWhitespace);
   }
 
   private async runShellCommandFromInput(command: string): Promise<void> {
@@ -2035,10 +2051,9 @@ export class KimiTUI {
     }
   }
 
-  private async persistInputHistory(text: string): Promise<void> {
+  private async persistInputHistory(text: string, leadingWhitespace = text.length - text.trimStart().length): Promise<void> {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
-    const leadingWhitespace = text.length - text.trimStart().length;
     const activations = text.startsWith('!') ? [] : resolveUserInput({
       input: trimmed,
       skillCommandMap: this.skillCommandMap,

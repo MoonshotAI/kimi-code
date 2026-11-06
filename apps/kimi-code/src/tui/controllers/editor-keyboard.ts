@@ -45,7 +45,7 @@ export interface EditorKeyboardHost {
    */
   harness?: KimiHarness | undefined;
 
-  handleUserInput(text: string): void;
+  handleUserInput(text: string, leadingWhitespace?: number): void;
   readonly btwPanelController: BtwPanelController;
   readonly surveyController: SurveyController;
   readonly modelMigration?: ModelMigrationController;
@@ -102,9 +102,10 @@ export class EditorKeyboardController {
     const { host } = this;
     const editor = host.state.editor;
 
-    editor.onSubmit = (text: string) => {
+    editor.onSubmit = (text: string, leadingWhitespace = 0) => {
       if (host.surveyController.handleSubmit(text)) return;
-      host.handleUserInput(text);
+      if (leadingWhitespace === 0) host.handleUserInput(text);
+      else host.handleUserInput(text, leadingWhitespace);
     };
 
     // After dispose (shutdown), consume every key here so no shortcut can fire

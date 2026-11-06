@@ -239,7 +239,7 @@ export interface SlashCommandHost {
 // Dispatch — entry point from handleUserInput
 // ---------------------------------------------------------------------------
 
-export function dispatchInput(host: SlashCommandHost, text: string): void {
+export function dispatchInput(host: SlashCommandHost, text: string, leadingWhitespace = 0): void {
   const { intent, activations } = resolveUserInput({
     input: text,
     skillCommandMap: host.skillCommandMap,
@@ -248,7 +248,7 @@ export function dispatchInput(host: SlashCommandHost, text: string): void {
     isCompacting: host.state.appState.isCompacting,
     skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
       ? undefined
-      : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
+      : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart + leadingWhitespace),
   });
   if (intent.kind === 'skill' || (activations.length > 0 && intent.kind !== 'builtin')) {
     const leading = activations[0];

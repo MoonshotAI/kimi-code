@@ -98,6 +98,21 @@ describe("PasteBurst", () => {
 });
 
 describe("Editor component", () => {
+	describe("Submit metadata", () => {
+		it("reports leading whitespace removed from the submitted text", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted: { text: string; leadingWhitespace?: number } | undefined;
+			editor.onSubmit = (text, leadingWhitespace) => {
+				submitted = { text, leadingWhitespace };
+			};
+
+			editor.setText("  /skill:review \n");
+			editor.handleInput("\r");
+
+			assert.deepStrictEqual(submitted, { text: "/skill:review", leadingWhitespace: 2 });
+		});
+	});
+
 	describe("Prompt history navigation", () => {
 		it("does nothing on Up arrow when history is empty", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
