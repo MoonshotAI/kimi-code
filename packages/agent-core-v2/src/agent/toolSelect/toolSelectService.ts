@@ -6,6 +6,7 @@ import { IFlagService } from '#/app/flag/flag';
 import type { ToolDescription as Tool } from '#human/llm/message';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
@@ -36,7 +37,9 @@ import {
 } from './toolSelect';
 import {
   ToolSelectInitialized,
+  ToolSelectPendingUpdatesChanged,
   ToolSelectToolsChanged,
+  ToolSelectUpdateNotified,
   toolSelectKey,
   toolSelectSchemaSignature,
   toolSelectVersionSignature,
@@ -66,6 +69,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
+    @IAgentReminderService private readonly reminder: IAgentReminderService,
   ) {
     super();
     this.states.contributeState(toolSelectKey);
@@ -92,6 +96,23 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   async prepareForRequest(signal?: AbortSignal): Promise<void> {
     await (signal === undefined ? this.mcpHandle.ready : abortable(this.mcpHandle.ready, signal));
     const work = this.reconcileTail.then(() => this.reconcile(signal));
+    this.reconcileTail = work.catch(() => {});
+    await (signal === undefined ? work : abortable(work, signal));
+  }
+
+  async applyPendingUpdates(signal?: AbortSignal): Promise<void> {
+    await (signal === undefined ? this.mcpHandle.ready : abortable(this.mcpHandle.ready, signal));
+    const work = this.reconcileTail.then(async () => {
+      if (this.modelState().initial === undefined) return;
+      signal?.throwIfAborted();
+      await this.dispatcher.dispatch(
+        new ToolSelectInitialized({
+          agentId: this.scopeContext.agentId,
+          tools: this.liveTools('initial'),
+          reset: true,
+        }),
+      );
+    });
     this.reconcileTail = work.catch(() => {});
     await (signal === undefined ? work : abortable(work, signal));
   }
@@ -267,15 +288,22 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   private currentTools(): readonly ToolSelectTool[] {
     const state = this.modelState();
     if (state.initial !== undefined) return state.current;
-    return this.liveTools('initial');
+    return this.activeTools('initial');
   }
 
   private initialTools(): readonly ToolSelectTool[] {
-    return this.modelState().initial ?? this.liveTools('initial');
+    return this.modelState().initial ?? this.activeTools('initial');
+  }
+
+  private activeTools(origin: ToolSelectTool['origin']): readonly ToolSelectTool[] {
+    return this.toolRegistry.list()
+      .map((info) => normalizeTool(info, origin))
+      .toSorted((left, right) => left.name.localeCompare(right.name));
   }
 
   private liveTools(origin: ToolSelectTool['origin']): readonly ToolSelectTool[] {
-    return this.toolRegistry.list()
+    const live = this.toolRegistry.listLive?.() ?? this.toolRegistry.list();
+    return live
       .map((info) => normalizeTool(info, origin))
       .toSorted((left, right) => left.name.localeCompare(right.name));
   }
@@ -286,31 +314,80 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     const live = this.liveTools('initial');
     if (state.initial === undefined) {
       await this.dispatcher.dispatch(
-        new ToolSelectInitialized({ agentId: this.scopeContext.agentId, tools: live }),
+        new ToolSelectInitialized({ agentId: this.scopeContext.agentId, tools: this.activeTools('initial') }),
       );
+      await this.reconcilePendingUpdates(live, signal);
       return;
     }
-    const currentByName = new Map(state.current.map((tool) => [tool.name, tool]));
-    const liveByName = new Map(live.map((tool) => [tool.name, tool]));
+    const initialByName = new Map(state.initial.map((tool) => [tool.name, tool]));
     const removed = state.current.filter((tool) => {
-      const next = liveByName.get(tool.name);
-      return next === undefined || toolSelectVersionSignature(next) !== toolSelectVersionSignature(tool);
+      const initial = initialByName.get(tool.name);
+      return initial !== undefined &&
+        tool.origin === 'runtime' &&
+        toolSelectVersionSignature(initial) !== toolSelectVersionSignature(tool);
     });
-    const added = live.flatMap((tool) => {
-      const previous = currentByName.get(tool.name);
-      if (
-        previous !== undefined &&
-        toolSelectVersionSignature(previous) === toolSelectVersionSignature(tool)
-      ) {
+    if (removed.length > 0) {
+      const removedNames = new Set(removed.map((tool) => tool.name));
+      const added = state.initial.filter((tool) => removedNames.has(tool.name));
+      await this.dispatcher.dispatch(
+        new ToolSelectToolsChanged({ agentId: this.scopeContext.agentId, added, removed }),
+      );
+    }
+    const current = this.modelState().current;
+    const currentNames = new Set(current.map((tool) => tool.name));
+    const active = this.activeTools('initial');
+    const activeNames = new Set(active.map((tool) => tool.name));
+    const activeRemoved = current.filter((tool) => !activeNames.has(tool.name));
+    const activeAdded = active.flatMap((tool) =>
+      currentNames.has(tool.name) ? [] : [{ ...tool, origin: 'runtime' as const }]);
+    if (activeAdded.length > 0 || activeRemoved.length > 0) {
+      signal?.throwIfAborted();
+      await this.dispatcher.dispatch(
+        new ToolSelectToolsChanged({
+          agentId: this.scopeContext.agentId,
+          added: activeAdded,
+          removed: activeRemoved,
+        }),
+      );
+    }
+    await this.reconcilePendingUpdates(live, signal);
+  }
+
+  private async reconcilePendingUpdates(
+    live: readonly ToolSelectTool[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const liveByName = new Map(live.map((tool) => [tool.name, tool]));
+    const pending = this.modelState().current.flatMap((active) => {
+      const next = liveByName.get(active.name);
+      if (next === undefined || toolSelectVersionSignature(next) === toolSelectVersionSignature(active)) {
         return [];
       }
-      return [{ ...tool, origin: 'runtime' as const }];
+      return [{ ...next, origin: 'runtime' as const }];
     });
-    if (added.length === 0 && removed.length === 0) return;
-    signal?.throwIfAborted();
-    await this.dispatcher.dispatch(
-      new ToolSelectToolsChanged({ agentId: this.scopeContext.agentId, added, removed }),
-    );
+    const previous = this.modelState().pendingUpdates;
+    const changed = pending.length !== previous.length || pending.some((tool, index) =>
+      toolSelectVersionSignature(tool) !== toolSelectVersionSignature(previous[index]!));
+    if (changed) {
+      signal?.throwIfAborted();
+      await this.dispatcher.dispatch(
+        new ToolSelectPendingUpdatesChanged({ agentId: this.scopeContext.agentId, updates: pending }),
+      );
+    }
+    const notified = new Set(this.modelState().notifiedUpdates);
+    for (const tool of pending) {
+      const signature = toolSelectVersionSignature(tool);
+      if (notified.has(signature)) continue;
+      signal?.throwIfAborted();
+      this.reminder.notify(
+        `Tool "${tool.name}" has an update, but the update is not applied in this session. ` +
+          'Continue using the currently registered version. Apply it with /new or /reload.',
+        { variant: 'tool_update_pending' },
+      );
+      await this.dispatcher.dispatch(
+        new ToolSelectUpdateNotified({ agentId: this.scopeContext.agentId, signature }),
+      );
+    }
   }
 
   private defaultToolsForDisclosure(disclosure: boolean): readonly Tool[] {
