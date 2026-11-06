@@ -16,10 +16,12 @@ export const Methods = {
 
   GetSlashCommands: "getSlashCommands",
   CheckLoginStatus: "checkLoginStatus",
+  GetPlanUsage: "getPlanUsage",
   Login: "login",
   Logout: "logout",
   SaveConfig: "saveConfig",
   GetExtensionConfig: "getExtensionConfig",
+  MarkViewActive: "markViewActive",
   OpenSettings: "openSettings",
   OpenFolder: "openFolder",
   GetModels: "getModels",
@@ -60,6 +62,7 @@ export const Methods = {
   GetImageDataUri: "getImageDataUri",
   ShowLogs: "showLogs",
   ReloadWebview: "reloadWebview",
+  OpenNewSessionTab: "openNewSessionTab",
   RespondQuestion: "respondQuestion",
 } as const;
 
@@ -149,7 +152,14 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.ClearTrackedFiles:
     case Methods.ShowLogs:
     case Methods.ReloadWebview:
+    case Methods.OpenNewSessionTab:
+    case Methods.MarkViewActive:
       return params === undefined;
+
+    case Methods.GetPlanUsage:
+      return isPlainObject(params)
+        && params["provider"] === "managed:kimi-code"
+        && isOptionalType(params["force"], "boolean");
 
     case Methods.AddInputHistory:
       return hasString(params, "text");

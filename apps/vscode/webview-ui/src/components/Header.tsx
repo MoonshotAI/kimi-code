@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { IconPlus, IconChevronDown, IconInfoCircle } from "@tabler/icons-react";
+import {
+  IconChevronDown,
+  IconExternalLink,
+  IconInfoCircle,
+  IconLoader2,
+  IconPlus,
+} from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -8,11 +14,15 @@ import { KimiLogo } from "./KimiLogo";
 import { SessionList } from "./SessionList";
 import { useChatStore } from "@/stores";
 import { ChatStatus, TokenInfo } from "./ChatStatus";
+import { UsageStatus } from "./UsageStatus";
+import { bridge } from "@/services";
+import { toast } from "./ui/sonner";
 
 export function Header() {
   const [showSessionList, setShowSessionList] = useState(false);
   const [showSessionInfo, setShowSessionInfo] = useState(false);
   const [showConfirmNew, setShowConfirmNew] = useState(false);
+  const [openingSessionTab, setOpeningSessionTab] = useState(false);
   const { startNewConversation, sessionId, messages, isStreaming } = useChatStore();
 
   const handleNewSession = async () => {
@@ -31,13 +41,24 @@ export function Header() {
     setShowConfirmNew(false);
   };
 
+  const openNewSessionTab = async () => {
+    setOpeningSessionTab(true);
+    try {
+      await bridge.openNewSessionTab();
+    } catch (error) {
+      toast.error(`Unable to open a new Kimi session: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setOpeningSessionTab(false);
+    }
+  };
+
   return (
-    <header className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0 @container">
-      <div className="flex items-center gap-2 shrink-0">
+    <header className="flex flex-wrap items-center gap-x-1 gap-y-1 px-3 py-2 border-b border-border shrink-0 @container">
+      <div className="order-1 flex items-center gap-2 shrink-0">
         <KimiLogo className="size-5 shrink-0" />
         <span className="text-sm font-semibold whitespace-nowrap">Kimi Code</span>
       </div>
-      <div className="flex items-center gap-1">
+      <div className="order-2 flex items-center gap-1">
         {sessionId && (
           <Button
             variant="ghost"
@@ -67,10 +88,25 @@ export function Header() {
           onClick={() => {
             void handleNewSession();
           }}
+          aria-label="New conversation in this view"
         >
           <IconPlus className="size-3.5" />
         </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          disabled={openingSessionTab}
+          onClick={() => void openNewSessionTab()}
+          aria-label="Open new session tab"
+        >
+          {openingSessionTab ? (
+            <IconLoader2 className="size-3.5 animate-spin motion-reduce:animate-none" />
+          ) : (
+            <IconExternalLink className="size-3.5" />
+          )}
+        </Button>
       </div>
+      <UsageStatus />
 
       <Dialog open={showSessionInfo} onOpenChange={setShowSessionInfo}>
         <DialogContent className="sm:max-w-md">

@@ -68,10 +68,10 @@ export function ApprovalDialog() {
               className={cn(
                 "w-full text-left px-2 py-1 rounded-md text-xs transition-colors",
                 "border border-border cursor-pointer",
-                selectedIndex === opt.index ? "bg-blue-500 text-white border-blue-500" : "bg-background hover:bg-muted/50",
+                selectedIndex === opt.index ? "bg-blue-600 text-white border-blue-600" : "bg-background hover:bg-muted/50",
               )}
             >
-              <span className={cn("mr-2", selectedIndex === opt.index ? "text-blue-200" : "text-muted-foreground")}>{opt.index}</span>
+              <span className={cn("mr-2", selectedIndex === opt.index ? "text-blue-100" : "text-muted-foreground")}>{opt.index}</span>
               <span className="font-medium">{opt.label}</span>
             </button>
           ))}

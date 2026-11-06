@@ -3,7 +3,7 @@
   "publisher": "moonshot-ai",
   "displayName": "Kimi Code",
   "description": "Official Kimi Code plugin for VS Code",
-  "version": "0.9.0",
+  "version": "0.9.4",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -105,7 +105,7 @@
       },
       {
         "command": "kimi.openInTab",
-        "title": "Kimi Code: Open in New Tab",
+        "title": "Kimi Code: Open New Session in Tab",
         "icon": "$(link-external)"
       },
       {

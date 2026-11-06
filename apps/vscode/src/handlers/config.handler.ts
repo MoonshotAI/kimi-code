@@ -84,6 +84,13 @@ const openSettings: Handler<void, { ok: boolean }> = async () => {
   return { ok: true };
 };
 
+const openNewSessionTab: Handler<void, { ok: boolean }> = async () => {
+  await vscode.commands.executeCommand("kimi.openInTab");
+  return { ok: true };
+};
+
+const markViewActive: Handler<void, { ok: boolean }> = async () => ({ ok: true });
+
 const getModels: Handler<void, WebviewKimiConfig> = async (_, ctx) => {
   const config = await ctx.harness.getConfig({ reload: true });
   return toWebviewConfig(config);
@@ -124,6 +131,8 @@ export const configHandlers = {
   [Methods.SaveConfig]: saveConfig,
   [Methods.GetExtensionConfig]: getExtensionConfig,
   [Methods.OpenSettings]: openSettings,
+  [Methods.OpenNewSessionTab]: openNewSessionTab,
+  [Methods.MarkViewActive]: markViewActive,
   [Methods.GetModels]: getModels,
   [Methods.GetSlashCommands]: getSlashCommands,
   [Methods.ShowLogs]: showLogs,

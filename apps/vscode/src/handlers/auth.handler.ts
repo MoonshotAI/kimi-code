@@ -11,10 +11,13 @@ import { resolveKimiHome } from "@moonshot-ai/kimi-code-sdk";
 
 import { Events, Methods } from "../../shared/bridge";
 import type { LoginResult } from "../../shared/legacy-sdk";
-import type { LoginStatus } from "../../shared/types";
+import type { LoginStatus, PlanUsageResult } from "../../shared/types";
 import { updateLoginContext } from "../utils/context";
 import { readPersistedKimiOAuthRef, resolveExtensionRegion } from "../utils/region";
 import type { Handler } from "./types";
+import { ManagedUsageCache } from "./managed-usage";
+
+const managedUsageCache = new ManagedUsageCache();
 
 function regionForLogin(): KimiRegion | undefined {
   const homeDir = resolveKimiHome();
@@ -39,6 +42,16 @@ export const authHandlers: Record<string, Handler<any, any>> = {
       loggedIn: await updateLoginContext(ctx.harness),
       siteBase: kimiRegionProfile(region).siteBase,
     };
+  },
+
+  [Methods.GetPlanUsage]: async (
+    params: { provider: "managed:kimi-code"; force?: boolean },
+    ctx,
+  ): Promise<PlanUsageResult> => {
+    return managedUsageCache.get(
+      () => ctx.harness.auth.getManagedUsage(params.provider),
+      { force: params.force },
+    );
   },
 
   [Methods.Login]: async (_, ctx): Promise<LoginResult> => {
@@ -70,6 +83,7 @@ export const authHandlers: Record<string, Handler<any, any>> = {
   [Methods.Logout]: async (_, ctx): Promise<LoginResult> => {
     try {
       await ctx.harness.auth.logout();
+      managedUsageCache.clear();
       await updateLoginContext(ctx.harness);
       resolveExtensionRegion({ homeDir: resolveKimiHome(), refresh: true });
       return { success: true };

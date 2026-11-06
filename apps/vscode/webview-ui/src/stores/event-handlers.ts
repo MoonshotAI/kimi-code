@@ -31,6 +31,12 @@ function getLastAssistant(draft: ChatState): ChatMessage | undefined {
   return last?.role === "assistant" ? last : undefined;
 }
 
+function markWorkResumed(message: ChatMessage | undefined): void {
+  if (message && message.workState !== "working") {
+    message.workState = "working";
+  }
+}
+
 function hasContent(message: ChatMessage): boolean {
   if (typeof message.content === "string" && message.content.trim()) {
     return true;
@@ -278,6 +284,7 @@ function handleRuntimeError(draft: ChatState, code: string, message: string, det
 
   const lastAssistant = getLastAssistant(draft);
   if (lastAssistant) {
+    lastAssistant.workState = "stopped";
     // 如果完全没有内容，添加一个空的 step 以便显示错误
     if (!lastAssistant.steps) {
       lastAssistant.steps = [];
@@ -296,7 +303,7 @@ const eventHandlers: Record<string, EventHandler> = {
     }
   },
 
-  stream_complete: (draft, _payload: { result: RunResult }) => {
+  stream_complete: (draft, payload: { result: RunResult }) => {
     addTokenUsage(draft.tokenUsage, draft.activeTokenUsage);
     draft.activeTokenUsage = createEmptyTokenUsage();
     draft.isStreaming = false;
@@ -304,6 +311,9 @@ const eventHandlers: Record<string, EventHandler> = {
     draft.pendingInput = null;
     useApprovalStore.getState().clearRequests();
     const lastAssistant = getLastAssistant(draft);
+    if (lastAssistant) {
+      lastAssistant.workState = payload.result.status === "finished" ? "complete" : "stopped";
+    }
     if (lastAssistant?.steps) {
       finishAllTextItems(lastAssistant.steps);
     }
@@ -327,6 +337,9 @@ const eventHandlers: Record<string, EventHandler> = {
         draft.isCompacting = false;
         useApprovalStore.getState().clearRequests();
         const lastAssistant = getLastAssistant(draft);
+        if (lastAssistant) {
+          lastAssistant.workState = "stopped";
+        }
         if (lastAssistant?.steps) {
           finishAllTextItems(lastAssistant.steps);
         }
@@ -358,6 +371,7 @@ const eventHandlers: Record<string, EventHandler> = {
       steps: [],
       turnIndex: payload.turnIndex,
       forkable: payload.forkable,
+      workState: "working",
     });
 
     draft.isStreaming = true;
@@ -369,6 +383,7 @@ const eventHandlers: Record<string, EventHandler> = {
     const last = getLastAssistant(draft);
 
     if (last) {
+      markWorkResumed(last);
       if (!last.steps) {
         last.steps = [];
       }
@@ -393,6 +408,7 @@ const eventHandlers: Record<string, EventHandler> = {
     const last = getLastAssistant(draft);
 
     if (last) {
+      markWorkResumed(last);
       if (!last.steps) {
         last.steps = [];
       }
@@ -416,6 +432,9 @@ const eventHandlers: Record<string, EventHandler> = {
     draft.isStreaming = false;
     useApprovalStore.getState().clearRequests();
     const lastAssistant = getLastAssistant(draft);
+    if (lastAssistant) {
+      lastAssistant.workState = "stopped";
+    }
     if (lastAssistant?.steps) {
       finishAllTextItems(lastAssistant.steps);
     }
@@ -426,6 +445,8 @@ const eventHandlers: Record<string, EventHandler> = {
     if (!last?.steps) {
       return;
     }
+
+    markWorkResumed(last);
 
     applyEventToSteps(last.steps, { type: "ContentPart", payload }, (text) => {
       if (typeof last.content === "string") {
@@ -439,6 +460,7 @@ const eventHandlers: Record<string, EventHandler> = {
     if (!last?.steps) {
       return;
     }
+    markWorkResumed(last);
     applyEventToSteps(last.steps, { type: "ToolCall", payload });
   },
 
@@ -447,6 +469,7 @@ const eventHandlers: Record<string, EventHandler> = {
     if (!last?.steps) {
       return;
     }
+    markWorkResumed(last);
     applyEventToSteps(last.steps, { type: "ToolCallPart", payload });
   },
 
@@ -455,6 +478,7 @@ const eventHandlers: Record<string, EventHandler> = {
     if (!last?.steps) {
       return;
     }
+    markWorkResumed(last);
 
     if (isTaskToolResult(last.steps, payload.tool_call_id)) {
       addTokenUsage(draft.tokenUsage, draft.activeTokenUsage);
@@ -469,6 +493,7 @@ const eventHandlers: Record<string, EventHandler> = {
     if (!last?.steps) {
       return;
     }
+    markWorkResumed(last);
 
     const target = resolveSubagentTarget(last.steps, payload);
     if (!target) {
@@ -506,7 +531,7 @@ const eventHandlers: Record<string, EventHandler> = {
     applyEventToSteps(target.steps, target.event);
   },
 
-  ApprovalRequest: (_, payload: ApprovalRequestPayload) => {
+  ApprovalRequest: (draft, payload: ApprovalRequestPayload) => {
     useApprovalStore.getState().addRequest({
       id: payload.id,
       tool_call_id: payload.tool_call_id,
@@ -515,10 +540,20 @@ const eventHandlers: Record<string, EventHandler> = {
       description: payload.description,
       display: payload.display ?? [],
     });
+    const last = getLastAssistant(draft);
+    if (last) {
+      last.workState = "input_needed";
+    }
   },
 
   QuestionRequest: (draft, payload: QuestionRequest) => {
     draft.pendingQuestion = payload;
+    const last = getLastAssistant(draft);
+    if (last) {
+      // A question lives below the transcript. Keep the user's current Work
+      // details disclosure choice so its final activity does not disappear.
+      last.workState = "question_pending";
+    }
   },
 
   StatusUpdate: (draft, payload) => {

@@ -318,7 +318,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
   const canSend = (text.trim() || draftMedia.length > 0) && !isProcessing;
 
   return (
-    <div className="p-2 pt-0! flex flex-col min-h-0">
+    <div data-kimi-input-rail className="p-2 pt-0! flex flex-col min-h-0">
       <BottomToolbar />
       <div className="relative shrink-0">
         {showSlashMenu && filteredCommands.length > 0 && (

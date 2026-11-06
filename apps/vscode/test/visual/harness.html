@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kimi Code visual harness</title>
+  <style>html, body, #root { width: 100%; height: 100%; margin: 0; }</style>
+</head>
+<body data-baseuri="http://127.0.0.1:4201" data-webviewid="visual_harness">
+  <div id="root"></div>
+  <script>
+    if (location.port !== "4201") throw new Error(`UI Critic harness requires port 4201, got ${location.port}`);
+    const query = new URLSearchParams(location.search);
+    const fixture = query.get("state") || "normal";
+    document.body.classList.toggle("vscode-dark", query.get("theme") === "dark");
+    const now = new Date("2030-01-01T12:00:00Z");
+    const usage = {
+      normal: {
+        kind: "ok",
+        overall: { label: "Overall", percentLeft: 72, resetAt: "2030-02-01T00:00:00Z" },
+        fiveHour: { label: "5h", percentLeft: 39, resetAt: "2030-01-01T17:00:00Z" },
+        fetchedAt: now.toISOString(),
+      },
+      low: {
+        kind: "ok",
+        overall: { label: "Overall", percentLeft: 18, resetAt: "2030-02-01T00:00:00Z" },
+        fiveHour: { label: "5h", percentLeft: 15, resetAt: "2030-01-01T17:00:00Z" },
+        fetchedAt: now.toISOString(),
+      },
+      critical: {
+        kind: "ok",
+        overall: { label: "Overall", percentLeft: 3, resetAt: "2030-02-01T00:00:00Z" },
+        fiveHour: { label: "5h", percentLeft: 2, resetAt: "2030-01-01T17:00:00Z" },
+        fetchedAt: now.toISOString(),
+      },
+      stale: {
+        kind: "ok",
+        overall: { label: "Overall", percentLeft: 72, resetAt: "2030-02-01T00:00:00Z" },
+        fiveHour: { label: "5h", percentLeft: 39, resetAt: "2030-01-01T17:00:00Z" },
+        fetchedAt: now.toISOString(),
+        stale: true,
+        warning: "Using last update while Kimi usage refresh is unavailable.",
+      },
+      unavailable: { kind: "error", message: "Usage endpoint temporarily unavailable" },
+    };
+    const responses = {
+      checkWorkspace: { hasWorkspace: true, path: "/workspace", workspaceRoot: "/workspace" },
+      getExtensionConfig: {
+        yoloMode: false,
+        autosave: true,
+        useCtrlEnterToSend: false,
+        enableNewConversationShortcut: false,
+        showThinkingContent: true,
+        showThinkingExpanded: false,
+        version: "0.9.4",
+      },
+      getSlashCommands: [],
+      checkLoginStatus: { loggedIn: true, siteBase: "https://www.kimi.com" },
+      getModels: {
+        defaultModel: "kimi-k3",
+        defaultThinking: true,
+        models: [{
+          id: "kimi-k3",
+          name: "Kimi K3",
+          provider: "managed:kimi-code",
+          capabilities: ["thinking", "tool_use"],
+        }],
+      },
+      getPlanUsage: usage[fixture] || usage.normal,
+      getAllKimiSessions: [],
+      getKimiSessions: [],
+      getRegisteredWorkDirs: ["/workspace"],
+      getInputHistory: [],
+      getMCPServers: [],
+      openNewSessionTab: { ok: true },
+      markViewActive: { ok: true },
+    };
+    const requestCounts = {};
+    window.__visualRequests = [];
+    window.__emitStreamEvent = (data) => window.dispatchEvent(new MessageEvent("message", {
+      data: { event: "streamEvent", data },
+    }));
+    window.__emitHostEvent = (event, data) => window.dispatchEvent(new MessageEvent("message", {
+      data: { event, data },
+    }));
+
+    function acquireVsCodeApi() {
+      return {
+        postMessage(message) {
+          requestCounts[message.method] = (requestCounts[message.method] || 0) + 1;
+          window.__visualRequests.push({ method: message.method, params: message.params });
+          if (message.method === "getPlanUsage" && fixture === "loading") return;
+          const result = responses[message.method] || {};
+          const delay = message.method === "openNewSessionTab"
+            ? 500
+            : message.method === "getPlanUsage" && requestCounts[message.method] > 1
+              ? 500
+              : message.method === "getPlanUsage" ? 50 : 0;
+          setTimeout(() => window.dispatchEvent(new MessageEvent("message", {
+            data: { id: message.id, result },
+          })), delay);
+        },
+        getState() { return undefined; },
+        setState() {},
+      };
+    }
+  </script>
+  <script src="../../dist/webview.js"></script>
+</body>
+</html>
