@@ -11,14 +11,21 @@ import {
   PLAN_REJECT_AND_EXIT_OPTION_ID,
   PLAN_REVISE_OPTION_ID,
   REJECT_OPTION_ID,
+  type AcpPermissionResponse,
 } from '../src/approval';
 
 import type { PermissionOption, RequestPermissionResponse } from '@agentclientprotocol/sdk';
 import type { SessionApprovalRequest } from '@moonshot-ai/agent-core-v2';
 import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 
-function selected(optionId: string): RequestPermissionResponse {
-  return { outcome: { outcome: 'selected', optionId } };
+function selected(optionId: string, text?: string): AcpPermissionResponse {
+  return {
+    outcome: {
+      outcome: 'selected',
+      optionId,
+      ...(text !== undefined ? { text } : {}),
+    },
+  };
 }
 
 const cancelled: RequestPermissionResponse = { outcome: { outcome: 'cancelled' } };
@@ -153,6 +160,44 @@ describe('permissionResponseToApprovalResponse', () => {
       ),
     ).toEqual({ decision: 'rejected', selectedLabel: 'Reject and Exit' });
   });
+
+  it('forwards revision text as feedback when plan_revise supplies outcome.text', () => {
+    const display: ToolInputDisplay = {
+      kind: 'plan_review',
+      plan: 'p',
+      options: [{ label: 'A' }, { label: 'B' }],
+    } as unknown as ToolInputDisplay;
+    expect(
+      permissionResponseToApprovalResponse(
+        makeRequest(display),
+        selected(PLAN_REVISE_OPTION_ID, 'Add a wireframe before implementing the page'),
+      ),
+    ).toEqual({
+      decision: 'rejected',
+      selectedLabel: 'Revise',
+      feedback: 'Add a wireframe before implementing the page',
+    });
+  });
+
+  it('ignores empty or whitespace-only revision text on plan_revise', () => {
+    const display: ToolInputDisplay = {
+      kind: 'plan_review',
+      plan: 'p',
+      options: [{ label: 'A' }, { label: 'B' }],
+    } as unknown as ToolInputDisplay;
+    expect(
+      permissionResponseToApprovalResponse(
+        makeRequest(display),
+        selected(PLAN_REVISE_OPTION_ID, '   \n\t  '),
+      ),
+    ).toEqual({ decision: 'rejected', selectedLabel: 'Revise' });
+    expect(
+      permissionResponseToApprovalResponse(
+        makeRequest(display),
+        selected(PLAN_REVISE_OPTION_ID, ''),
+      ),
+    ).toEqual({ decision: 'rejected', selectedLabel: 'Revise' });
+  });
 });
 
 describe('buildPermissionToolCallUpdate', () => {
@@ -194,5 +239,19 @@ describe('attachSelectedLabel', () => {
   it('is a no-op for cancelled outcomes', () => {
     const result = attachSelectedLabel(cancelled, { decision: 'cancelled' }, options);
     expect(result).toEqual({ decision: 'cancelled' });
+  });
+
+  it('leaves plan_revise response with feedback unchanged', () => {
+    const approval = {
+      decision: 'rejected' as const,
+      selectedLabel: 'Revise',
+      feedback: 'Change the architecture',
+    };
+    const result = attachSelectedLabel(
+      selected(PLAN_REVISE_OPTION_ID, 'Change the architecture'),
+      approval,
+      options,
+    );
+    expect(result).toEqual(approval);
   });
 });
