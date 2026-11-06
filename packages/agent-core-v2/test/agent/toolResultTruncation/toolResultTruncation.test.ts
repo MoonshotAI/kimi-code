@@ -94,6 +94,45 @@ describe('ToolResultTruncationService', () => {
     await expect(readFile(outputPath, 'utf8')).resolves.toBe(fullOutput);
   });
 
+  it('previews up to five recent non-empty lines within the tail character budget', async () => {
+    const tail = ['error 1', 'error 2', 'error 3', 'error 4', 'error 5'].join('\n');
+    const fullOutput = `HEAD_MARKER\n${bulk('x', 510)}${tail}`;
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Bash',
+      toolCallId: 'call_tail_lines',
+      result: { output: fullOutput },
+    });
+
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain(`[preview: chars [${String(fullOutput.length - tail.length)}, ${String(fullOutput.length)})]\n${tail}`);
+    expect(rendered).not.toContain('HEAD_MARKER\nerror 1');
+  });
+
+  it('caps a long final log line without dropping earlier non-empty lines', async () => {
+    const finalLine = `failure: ${'z'.repeat(5_000)}`;
+    const tail = `first failure\nsecond failure\n${finalLine}`;
+    const fullOutput = `HEAD_MARKER\n${bulk('x', 510)}${tail}`;
+    const tailStart = fullOutput.length - finalLine.length - 'second failure\n'.length - 'first failure\n'.length - 300;
+    const previewStart = fullOutput.length - 4_096;
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Bash',
+      toolCallId: 'call_long_tail_line',
+      result: { output: fullOutput },
+    });
+
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain(`[preview: chars [${String(tailStart)}, ${String(fullOutput.length - finalLine.length)})]`);
+    expect(rendered).toContain('second failure\n');
+    expect(rendered).toContain(`[preview: chars [${String(previewStart)}, ${String(fullOutput.length)})]`);
+    expect(rendered).not.toContain(finalLine);
+  });
+
   it('renders the spill suffix after the pointer and strips the spill field', async () => {
     const full = `HEAD\n${bulk('x', 600)}TAIL\n`;
 
@@ -487,10 +526,7 @@ describe('ToolResultTruncationService', () => {
     expect(rendered).toContain('Tool output exceeded 50000 characters');
     expect(rendered).toContain(`[preview: chars [0, ${String(4_095)})]`);
     expect(rendered).toContain(
-      `[elided: chars [${String(4_095)}, ${String(full.length - 1_023)})]`,
-    );
-    expect(rendered).toContain(
-      `[preview: chars [${String(full.length - 1_023)}, ${String(full.length)})]`,
+      `[preview: chars [${String(full.length - 1_425)}, ${String(full.length)})]`,
     );
     expect(LONE_SURROGATE.test(rendered)).toBe(false);
     await expect(readFile(renderedOutputPath(rendered), 'utf8')).resolves.toBe(full);

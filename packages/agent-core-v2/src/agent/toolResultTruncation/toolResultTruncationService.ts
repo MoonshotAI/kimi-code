@@ -22,7 +22,8 @@ import {
 } from './toolResultTruncation';
 
 const TOOL_RESULT_PREVIEW_HEAD_CHARS = 4_096;
-const TOOL_RESULT_PREVIEW_TAIL_CHARS = 1_024;
+const TOOL_RESULT_PREVIEW_TAIL_CHARS = 4_096;
+const TOOL_RESULT_PREVIEW_TAIL_LINES = 5;
 const TOOL_RESULT_MAX_LINE_CHARS = 2_000;
 const TRUNCATION_MARKER = '[...truncated]';
 
@@ -311,17 +312,57 @@ function renderUnpersistedToolResult(
 
 function appendPreviewLines(lines: string[], previewText: string): void {
   const head = sliceOnCodePointBoundary(previewText, TOOL_RESULT_PREVIEW_HEAD_CHARS);
-  const tailStart = codePointBoundaryStart(
-    previewText,
-    Math.max(head.length, previewText.length - TOOL_RESULT_PREVIEW_TAIL_CHARS),
-  );
-  const tail = previewText.slice(tailStart);
-  lines.push('', `[preview: chars [0, ${String(head.length)})]`, head);
-  if (tail !== '') {
-    if (tailStart > head.length) {
-      lines.push('', `[elided: chars [${String(head.length)}, ${String(tailStart)})]`);
+  let tailStart = previewText.length;
+  let tailEnd = previewText.length;
+  let end = previewText.length;
+  let remainingChars = TOOL_RESULT_PREVIEW_TAIL_CHARS;
+  let remainingLines = TOOL_RESULT_PREVIEW_TAIL_LINES;
+  let needsFinalPreview = false;
+  while (end > head.length && remainingLines > 0 && remainingChars > 0) {
+    let contentEnd = end;
+    if (previewText[contentEnd - 1] === '\n') contentEnd -= 1;
+    if (contentEnd > 0 && previewText[contentEnd - 1] === '\r') contentEnd -= 1;
+    const lineStart =
+      Math.max(
+        previewText.lastIndexOf('\n', contentEnd - 1),
+        previewText.lastIndexOf('\r', contentEnd - 1),
+      ) + 1;
+    if (contentEnd - lineStart > remainingChars) {
+      tailEnd = lineStart;
+      needsFinalPreview = true;
+      end = lineStart;
+      continue;
     }
-    lines.push('', `[preview: chars [${String(tailStart)}, ${String(previewText.length)})]`, tail);
+    if (previewText.slice(lineStart, contentEnd).trim().length > 0) {
+      tailStart = lineStart;
+      remainingLines -= 1;
+      remainingChars -= contentEnd - lineStart;
+    }
+    end = lineStart;
+  }
+  lines.push('', `[preview: chars [0, ${String(head.length)})]`, head);
+  const finalStart = needsFinalPreview
+    ? Math.max(
+        tailStart,
+        codePointBoundaryStart(previewText, previewText.length - TOOL_RESULT_PREVIEW_TAIL_CHARS),
+      )
+    : tailEnd;
+  if (tailStart > head.length) {
+    lines.push('', `[elided: chars [${String(head.length)}, ${String(tailStart)})]`);
+  }
+  if (tailStart < tailEnd) {
+    lines.push(
+      '',
+      `[preview: chars [${String(tailStart)}, ${String(tailEnd)})]`,
+      previewText.slice(tailStart, tailEnd),
+    );
+  }
+  if (finalStart < previewText.length) {
+    lines.push(
+      '',
+      `[preview: chars [${String(finalStart)}, ${String(previewText.length)})]`,
+      previewText.slice(finalStart),
+    );
   }
 }
 
