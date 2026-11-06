@@ -16,6 +16,8 @@ import {
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AutoReviewService } from '#/features/autoReview/reviewService';
+import { AutoReviewCompleted } from '#/features/autoReview/autoReviewEvents';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AUTO_REVIEW_SECTION } from '#/features/autoReview/configSection';
 import type { AutoReviewResult } from '#/features/autoReview/review';
 import REVIEW_POLICY from '../../../src/features/autoReview/auto-review-policy.md?raw';
@@ -536,10 +538,12 @@ describe('AutoReviewService', () => {
   let history: ContextMessage[];
   let agentsMd: string;
   let telemetry: TelemetryRecord[];
+  let reviewEvents: AutoReviewCompleted[];
 
   beforeEach(() => {
     disposables = new DisposableStore();
     requests = [];
+    reviewEvents = [];
     response = {
       message: { role: 'assistant', content: [{ type: 'text', text: '{"risk":"low","decision":"allow","reason":null}' }], toolCalls: [] },
       usage: emptyUsage(),
@@ -579,6 +583,12 @@ describe('AutoReviewService', () => {
           resolveModelContext: () => ({ modelAlias: 'main-model' }) as ReturnType<IAgentProfileService['resolveModelContext']>,
         });
         reg.definePartialInstance(IAgentContextMemoryService, { get: () => history });
+        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+        reg.definePartialInstance(IEventDispatcher, {
+          dispatch: async (event) => {
+            if (event instanceof AutoReviewCompleted) reviewEvents.push(event);
+          },
+        });
         reg.definePartialInstance(ISessionContext, { sessionId: 'session-1' });
         reg.definePartialInstance(ISessionInstructionsProvider, {
           ready: Promise.resolve(),
@@ -680,6 +690,45 @@ describe('AutoReviewService', () => {
     expect(telemetry).toEqual([expect.objectContaining({
       event: 'auto_review_decision',
       properties: expect.objectContaining({ trigger_policy: 'fallback-ask', model: 'review-model', decision: 'allow' }),
+    })]);
+  });
+
+  it('persists the reviewer reason for a denied action', async () => {
+    response.message.content = [{
+      type: 'text',
+      text: '{"risk":"medium","decision":"deny","reason":"Creating remote resources was not explicitly authorized."}',
+    }];
+
+    await review();
+
+    expect(reviewEvents).toEqual([expect.objectContaining({
+      type: 'auto_review.decision',
+      agentId: 'main',
+      toolName: 'Bash',
+      triggerPolicy: 'fallback-ask',
+      model: 'main-model',
+      decision: 'deny',
+      risk: 'medium',
+      reason: 'Creating remote resources was not explicitly authorized.',
+    })]);
+    expect(AutoReviewCompleted.durable).toBe(true);
+    expect(reviewEvents[0]?.serialize()).toMatchObject({
+      type: 'auto_review.decision',
+      toolCallId: expect.any(String),
+      decision: 'deny',
+      reason: 'Creating remote resources was not explicitly authorized.',
+    });
+  });
+
+  it('persists the failure reason when review cannot complete', async () => {
+    await review(service(async () => {
+      throw new Error('provider rejected the review request');
+    }));
+
+    expect(reviewEvents).toEqual([expect.objectContaining({
+      type: 'auto_review.decision',
+      decision: 'failed',
+      reason: 'provider rejected the review request',
     })]);
   });
 

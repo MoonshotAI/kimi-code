@@ -124,6 +124,36 @@ describe('ApprovalPanelComponent', () => {
     expect(out).not.toContain('⚠');
   });
 
+  it('renders the reviewer reason before the pending command', () => {
+    const pending: PendingApproval = {
+      data: {
+        id: 'approval_review',
+        tool_call_id: 'tool_review',
+        tool_name: 'Bash',
+        action: 'run',
+        description: '',
+        approval_detail: {
+          title: 'Auto Review: denied (medium risk)',
+          detail: 'Creating remote resources was not explicitly authorized.',
+        },
+        display: [
+          {
+            type: 'review',
+            title: 'Auto Review: denied (medium risk)',
+            detail: 'Creating remote resources was not explicitly authorized.',
+          },
+          { type: 'shell', language: 'bash', command: 'agi sandbox create' },
+        ],
+        choices: [{ label: 'Approve once', response: 'approved' }],
+      },
+    };
+
+    const out = strip(mount(new ApprovalPanelComponent(pending, () => {})).render(100).join('\n'));
+    expect(out).toContain('Auto Review: denied (medium risk)');
+    expect(out).toContain('Creating remote resources was not explicitly authorized.');
+    expect(out.indexOf('Auto Review: denied')).toBeLessThan(out.indexOf('agi sandbox create'));
+  });
+
   it('wraps a long single-line shell command instead of truncating it', () => {
     const head = 'approve-long-command-head';
     const tail = 'approve-long-command-tail';

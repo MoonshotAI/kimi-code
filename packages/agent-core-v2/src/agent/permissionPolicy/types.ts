@@ -52,6 +52,10 @@ export type PermissionPolicyResult =
   | {
       readonly kind: 'ask';
       readonly reason?: PermissionDecisionReason;
+      readonly approvalDetail?: {
+        readonly title: string;
+        readonly detail: string;
+      };
       readonly resolveApproval?: (
         result: ApprovalResponse,
       ) => PermissionPolicyResolution | undefined;

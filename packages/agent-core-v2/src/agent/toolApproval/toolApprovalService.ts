@@ -140,6 +140,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
       toolName: name,
       action,
       display,
+      approvalDetail: result.approvalDetail,
     };
     const approvalContext = {
       ...approvalRequest,

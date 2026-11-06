@@ -746,6 +746,7 @@ export * from '#/features/todo/tools/todo-list/todo-list';
 import '#/features/todo/todoFeature';
 export * from '#/features/autoReview/flag';
 export * from '#/features/autoReview/review';
+export * from '#/features/autoReview/autoReviewEvents';
 import '#/features/autoReview/configSection';
 import '#/features/autoReview/autoReviewFeature';
 export * from '#/features/notify/flag';

@@ -3,6 +3,31 @@ import { describe, expect, it } from 'vitest';
 import { adaptApprovalRequest, adaptPanelResponse } from '#/tui/reverse-rpc/approval/adapter';
 
 describe('approval adapter', () => {
+  it('places the reviewer reason before the pending command', () => {
+    const adapted = adaptApprovalRequest({
+      toolCallId: 'tc-review',
+      toolName: 'Bash',
+      action: 'run',
+      display: { kind: 'command', command: 'agi sandbox create' },
+      approvalDetail: {
+        title: 'Auto Review: denied (medium risk)',
+        detail: 'Creating remote resources was not explicitly authorized.',
+      },
+    });
+
+    expect(adapted.display).toEqual([
+      {
+        type: 'review',
+        title: 'Auto Review: denied (medium risk)',
+        detail: 'Creating remote resources was not explicitly authorized.',
+      },
+      { type: 'shell', language: 'bash', command: 'agi sandbox create', danger: undefined },
+    ]);
+    expect(adapted.approval_detail).toEqual({
+      title: 'Auto Review: denied (medium risk)',
+      detail: 'Creating remote resources was not explicitly authorized.',
+    });
+  });
   it('adapts generic command displays into shell blocks with approval choices', () => {
     const adapted = adaptApprovalRequest(
       {

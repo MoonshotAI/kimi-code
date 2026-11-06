@@ -5,7 +5,9 @@ import { ILogService } from '#/_base/log/log';
 import { abortable, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { IConfigService } from '#/app/config/config';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
@@ -13,6 +15,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
+import { AutoReviewCompleted } from './autoReviewEvents';
 import REVIEW_POLICY from './auto-review-policy.md?raw';
 import { AUTO_REVIEW_SECTION, type AutoReviewConfig } from './configSection';
 import { authorizationEntries, buildReviewMessages } from './context';
@@ -64,11 +67,13 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     @IConfigService private readonly configService: IConfigService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ILogService private readonly log: ILogService,
   ) {
     super();
@@ -86,6 +91,22 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const config = this.configService.get<AutoReviewConfig>(AUTO_REVIEW_SECTION);
     const modelAlias = config?.model ?? this.profile.resolveModelContext().modelAlias;
     const result = await this.reviewWithDeadline(context, modelAlias, config?.timeoutMs ?? 30000);
+    void this.dispatcher.dispatch(new AutoReviewCompleted({
+      agentId: this.scopeContext.agentId,
+      turnId: context.turnId,
+      toolCallId: context.toolCall.id,
+      toolName: context.toolCall.name,
+      triggerPolicy: trigger,
+      model: modelAlias,
+      decision: result.kind === 'failed' ? 'failed' : result.decision.decision,
+      risk: result.kind === 'failed' ? undefined : result.decision.risk,
+      reason: result.kind === 'failed'
+        ? result.reason
+        : result.decision.decision === 'deny'
+          ? result.decision.reason
+          : undefined,
+      durationMs: Date.now() - startedAt,
+    }));
     if (result.kind === 'failed') {
       this.log.warn('auto review failed', { model: modelAlias, tool: context.toolCall.name, reason: result.reason });
     }

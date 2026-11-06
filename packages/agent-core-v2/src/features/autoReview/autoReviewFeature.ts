@@ -1,3 +1,5 @@
+import './autoReviewEvents';
+
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
 

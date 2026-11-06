@@ -9,6 +9,7 @@ import {
   type WireRecord,
 } from '#/index';
 import { IAutoReviewService } from '#/features/autoReview/review';
+import { AutoReviewCompleted } from '#/features/autoReview/autoReviewEvents';
 import { AUTO_REVIEW_FLAG_ENV, AUTO_REVIEW_FLAG_ID } from '#/features/autoReview/flag';
 import { IFlagService } from '#/app/flag/flag';
 import {
@@ -31,8 +32,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { TokenCountingMeasured } from '#/agent/tokenCounting/tokenCountingOps';
-import { TurnStepInterrupted } from '#/agent/loop/turnEvents';
-import { TurnStepRetrying } from '#/agent/loop/turnEvents';
+import { TurnStepInterrupted, TurnStepRetrying } from '#/agent/loop/turnEvents';
 import { ToolsUpdateStore } from '#/features/todo/todoOps';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { Event2Class } from '#/app/event/event2';
@@ -81,6 +81,7 @@ const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
+  'auto_review.decision',
   'tower_mode.enter',
   'tower_mode.exit',
   'task.started',
@@ -182,6 +183,30 @@ describe('v1 wire vocabulary', () => {
         `event "${type}" persists an unregistered record type`,
       ).toBe(true);
     }
+  });
+
+  it('persists the reviewer reason as a readable durable record', async () => {
+    await dispatcher.restore();
+    await dispatcher.dispatch(new AutoReviewCompleted({
+      agentId: 'test-agent',
+      turnId: 1,
+      toolCallId: 'call-1',
+      toolName: 'Bash',
+      triggerPolicy: 'fallback-ask',
+      model: 'review-model',
+      decision: 'deny',
+      risk: 'medium',
+      reason: 'Creating remote resources was not explicitly authorized.',
+      durationMs: 100,
+    }));
+
+    expect(await readRecords()).toContainEqual(expect.objectContaining({
+      type: 'auto_review.decision',
+      toolCallId: 'call-1',
+      decision: 'deny',
+      risk: 'medium',
+      reason: 'Creating remote resources was not explicitly authorized.',
+    }));
   });
 
   it('stamps persisted records with time, except the metadata envelope', async () => {

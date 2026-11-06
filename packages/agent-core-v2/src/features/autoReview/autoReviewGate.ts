@@ -86,6 +86,7 @@ function fallbackAsk(
     return {
       kind: 'ask',
       reason: { review_error: true },
+      approvalDetail: { title: 'Auto Review failed', detail: review.reason },
       resolveNonInteractive: () => denial(context, review),
       resolveError: () => ({
         kind: 'deny',
@@ -101,6 +102,10 @@ function fallbackAsk(
   return {
     kind: 'ask',
     reason: { review_risk: decision.risk },
+    approvalDetail: {
+      title: `Auto Review: denied (${decision.risk} risk)`,
+      detail: decision.reason ?? 'The reviewer did not provide a reason.',
+    },
     resolveNonInteractive: () => denial(context, review),
     resolveApproval: (response) => response.decision === 'approved'
       ? undefined
