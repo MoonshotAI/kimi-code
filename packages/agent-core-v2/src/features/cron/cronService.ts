@@ -25,6 +25,7 @@ import { BugIndicatingError } from '#/errors';
 import type { ContentPart } from '#human/llm/message';
 import { ContextAppendMessage } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { Forked } from '#/session/agentLifecycle/forked';
@@ -284,6 +285,7 @@ async function tickCron(
   await configOf(runtime).ready;
   if (cronConfigOf(runtime).disabled || runtime.getState().tasks.size === 0) return;
   if (runtime.get(IAgentLoopService).snapshot().state === 'running') return;
+  if (runtime.get(IAgentGoalService).getGoal().goal?.status === 'paused') return;
   const now = state.clocks.wallNow();
   await Promise.all([...runtime.getState().tasks.values()].map((task) => processDue(runtime, state, task, now)));
 }
