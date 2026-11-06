@@ -124,6 +124,31 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   private unavailableToolDescriber: UnavailableToolDescriber | undefined;
   private toolCallGuard: ToolCallGuard | undefined;
 
+  private readonly activeExecutions = new Set<Promise<unknown>>();
+  private readonly settleWaiters: Array<() => void> = [];
+
+  settled(): Promise<void> {
+    if (this.activeExecutions.size === 0) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      this.settleWaiters.push(resolve);
+    });
+  }
+
+  private trackExecution<T>(promise: Promise<T>): Promise<T> {
+    this.activeExecutions.add(promise);
+    const settle = () => {
+      this.activeExecutions.delete(promise);
+      if (this.activeExecutions.size === 0 && this.settleWaiters.length > 0) {
+        const waiters = this.settleWaiters.splice(0);
+        for (const resolve of waiters) resolve();
+      }
+    };
+    void promise.then(settle, settle);
+    return promise;
+  }
+
   recordDupType(toolCallId: string, dupType: ToolCallDupType): void {
     this.toolCallDupTypes.set(toolCallId, dupType);
   }
@@ -210,7 +235,9 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         continue;
       }
 
-      const prepared = await this.prepareToolCall(call, calls, options);
+      const prepared = await this.trackExecution(
+        this.prepareToolCall(call, calls, options),
+      );
       preparedTasks.push({
         task: prepared.task,
         call,
@@ -386,10 +413,27 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       return settleError(call.args, call.output, 'preflight-rejected');
     }
 
+    if (options.signal.aborted) {
+      return settleError(
+        call.args,
+        abortedToolOutput(call.toolName, options.signal.reason),
+        'aborted',
+      );
+    }
+
     let execution: ToolExecution;
     try {
-      execution = await call.tool.resolveExecution(call.args);
+      execution = await this.trackExecution(
+        Promise.resolve().then(() => call.tool.resolveExecution(call.args)),
+      );
     } catch (error) {
+      if (options.signal.aborted) {
+        return settleError(
+          call.args,
+          abortedToolOutput(call.toolName, options.signal.reason),
+          'aborted',
+        );
+      }
       const output =
         error instanceof PathSecurityError
           ? error.message
@@ -437,7 +481,9 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       task: {
         accesses: execution.accesses ?? ToolAccesses.all(),
         execute: async (taskSignal) =>
-          this.runSingleExecution(call, execution, executionMetadata, options, taskSignal),
+          this.trackExecution(
+            this.runSingleExecution(call, execution, executionMetadata, options, taskSignal),
+          ),
       },
       resolvedAccesses: execution.accesses,
       stopBatchAfterThis: execution.stopBatchAfterThis,
