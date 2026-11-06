@@ -1,7 +1,9 @@
 import type { IDisposable } from './lifecycle';
 import type { Emitter } from '../event';
+import { onUnexpectedError } from '../errors/unexpectedError';
 import { isPromiseLike, type EffectBody } from '../lifecycle/disposer';
 import { Ledger, type LedgerEntry } from '../lifecycle/ledger';
+import { createUnit, type UnitNode } from '../composition-api/runtime';
 import {
   collection,
   isCollectionToken,
@@ -113,6 +115,7 @@ export interface ConstructionFrame {
   readonly config: unknown;
   readonly token: ServiceIdentifier<any> | undefined;
   readonly host: FiberHost;
+  readonly onDidFail?: (reason: unknown) => void;
 }
 
 const _constructionStack: ConstructionFrame[] = [];
@@ -145,9 +148,11 @@ export function isClassRecipe(recipe: unknown): recipe is ServiceClassRecipe {
 export type BufferedOp = (runtime: Fiber) => void;
 
 export interface UnitInternals {
+  readonly name: string;
   readonly unitBook: Ledger;
   takeUnitBuffer(): BufferedOp[] | null;
   setUnitRuntime(runtime: Fiber): void;
+  setup(): void;
 }
 
 export interface FiberHost {
@@ -175,7 +180,14 @@ export interface FiberHost {
     providerBook: Ledger,
     value: T,
   ): () => void;
-  constructService<T>(ctor: new (...args: any[]) => T, config: unknown): T;
+  compositionRootNode(): UnitNode;
+  failService(id: ServiceIdentifier<any> | undefined, instance: IDisposable, reason: unknown): void | Promise<void>;
+  disposeService(instance: Partial<IDisposable>): void | Promise<void>;
+  constructService<T>(
+    ctor: new (...args: any[]) => T,
+    config: unknown,
+    onDidFail?: (reason: unknown) => void,
+  ): T;
 }
 
 export interface TokenProvideCore {
@@ -194,6 +206,12 @@ let _eventResolver: FiberEventResolver | undefined;
 
 export function setFiberEventResolver(resolver: FiberEventResolver | undefined): void {
   _eventResolver = resolver;
+}
+
+const compositionDisposers = new WeakMap<object, () => void | Promise<void>>();
+
+export function disposeServiceComposition(instance: UnitInternals): void | Promise<void> {
+  return compositionDisposers.get(instance)?.();
 }
 
 export function bindServiceUnit(instance: UnitInternals & IDisposable, frame: ConstructionFrame): void {
@@ -216,7 +234,46 @@ export function bindServiceUnit(instance: UnitInternals & IDisposable, frame: Co
     for (const op of buffer) {
       op(runtime);
     }
+    const node = frame.host.compositionRootNode().mount(
+      createUnit(instance.name, () => {
+        instance.setup();
+      }),
+      undefined,
+    );
+    let deferred = false;
+    let disposal: Promise<void> | undefined;
+    const disposeComposition = (): void | Promise<void> => {
+      if (disposal === undefined) {
+        deferred = node.hasDeferredCleanup;
+        disposal = node.dispose();
+        if (!deferred) {
+          disposal.catch(onUnexpectedError);
+        }
+      }
+      return deferred ? disposal : undefined;
+    };
+    compositionDisposers.set(instance, disposeComposition);
+    instance.unitBook.register(disposeComposition, `composition:${instance.name}`);
+    node.onDidFail((reason) => {
+      try {
+        runtime.cancelPendingProvides();
+        if (frame.onDidFail !== undefined) {
+          frame.onDidFail(reason);
+          return;
+        }
+        const retired = frame.host.failService(frame.token, instance, reason);
+        if (isPromiseLike(retired)) {
+          Promise.resolve(retired).catch(onUnexpectedError);
+        }
+      } catch (error) {
+        onUnexpectedError(error);
+      }
+    });
+    if (node.failed) {
+      throw node.reason;
+    }
   } catch (error) {
+    runtime.cancelPendingProvides();
     instance.dispose();
     throw error;
   }
@@ -265,6 +322,8 @@ function mapUnitState(state: string | undefined): FiberState {
 }
 
 export class FiberRuntime implements Fiber {
+  private readonly _provides = new Set<TokenProvideCore>();
+
   constructor(
     private readonly _host: FiberHost,
     private readonly _book: Ledger,
@@ -280,6 +339,21 @@ export class FiberRuntime implements Fiber {
       return mapUnitState(this._host.tokenState(this._token));
     }
     return FiberState.Active;
+  }
+
+  cancelPendingProvides(): void {
+    for (const core of this._provides) {
+      core.release();
+    }
+    this._provides.clear();
+  }
+
+  private _trackProvide(id: ServiceIdentifier<any>, core: TokenProvideCore): LedgerEntry {
+    this._provides.add(core);
+    return this._book.register(() => {
+      this._provides.delete(core);
+      return core.dispose();
+    }, `provide:${String(id)}`);
   }
 
   provide<T>(
@@ -398,7 +472,7 @@ export class FiberRuntime implements Fiber {
         config,
       },
     );
-    const entry = this._book.register(() => core.dispose(), `provide:${String(id)}`);
+    const entry = this._trackProvide(id, core);
     return new BasicFiberHandle<T>({
       name,
       uid: undefined,
@@ -421,7 +495,7 @@ export class FiberRuntime implements Fiber {
 
   private _provideTokenInstance<T>(id: ServiceIdentifier<T>, instance: T): FiberHandle<T> {
     const core = this._host.provideTokenInstance(id, instance);
-    const entry = this._book.register(() => core.dispose(), `provide:${String(id)}`);
+    const entry = this._trackProvide(id, core);
     return new BasicFiberHandle<T>({
       name: String(id),
       uid: undefined,
@@ -449,12 +523,33 @@ export class FiberRuntime implements Fiber {
     let failure: unknown;
     let instance: unknown;
     let entry: LedgerEntry | undefined;
+    let retirement: void | Promise<void>;
+    let generation = 0;
+    const retire = (): void | Promise<void> => {
+      retirement ??= entry?.dispose();
+      return retirement;
+    };
     const construct = (nextConfig: unknown): void => {
+      const current = ++generation;
+      retirement = undefined;
+      failure = undefined;
       state = FiberState.Activating;
-      instance = this._host.constructService(recipe, nextConfig);
+      instance = this._host.constructService(recipe, nextConfig, (reason) => {
+        if (current !== generation || state === FiberState.Failed) {
+          return;
+        }
+        state = FiberState.Failed;
+        failure = reason;
+        const retired = retire();
+        if (isPromiseLike(retired)) {
+          Promise.resolve(retired).catch(onUnexpectedError);
+        }
+      });
       entry = this._book.register(() => {
-        state = FiberState.Unloading;
-        (instance as Partial<IDisposable>).dispose?.();
+        if (state !== FiberState.Failed) {
+          state = FiberState.Unloading;
+        }
+        return this._host.disposeService(instance as IDisposable);
       }, `provide:${name}`);
       state = FiberState.Active;
     };
@@ -473,8 +568,9 @@ export class FiberRuntime implements Fiber {
       uid: this._host.mintUid(),
       state: () => state,
       update: async (next) => {
-        await entry?.dispose();
+        await retire();
         entry = undefined;
+        retirement = undefined;
         try {
           if (next !== undefined) {
             config = validateConfig(recipe.Config, next, name);
@@ -487,7 +583,7 @@ export class FiberRuntime implements Fiber {
         }
       },
       dispose: async () => {
-        await entry?.dispose();
+        await retire();
         entry = undefined;
       },
       whenActive: () => (failure !== undefined ? Promise.reject(failure) : Promise.resolve()),

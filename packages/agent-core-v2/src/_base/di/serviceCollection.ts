@@ -58,6 +58,7 @@ export class ServiceCollection {
       config: prev.config,
       recipe: prev.value,
     });
+    this._emitterFor(id).fire({ oldUid: prev.uid, newUid: prev.uid });
   }
 
   unmaterialize<T>(id: ServiceIdentifier<T>): void {
@@ -70,6 +71,7 @@ export class ServiceCollection {
       uid: prev.uid,
       config: prev.config,
     });
+    this._emitterFor(id).fire({ oldUid: prev.uid, newUid: prev.uid });
   }
 
   setConfig<T>(id: ServiceIdentifier<T>, config: unknown): void {
