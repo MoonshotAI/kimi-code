@@ -739,14 +739,20 @@ describe('SessionEventBroadcaster', () => {
 
     eventBus.emit({
       type: 'event.workspace.updated',
-      payload: { workspace: { ...workspace, name: 'renamed' } },
+      payload: { workspace: { ...workspace, name: 'renamed', primaryEnvironmentId: 'devbox' } },
     });
     await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(2));
     expect(globalView.envelopes[1]).toMatchObject({
       type: 'event.workspace.updated',
       payload: {
         type: 'event.workspace.updated',
-        workspace: { id: 'wd_a', name: 'renamed', session_count: 3 },
+        workspace: {
+          id: 'wd_a',
+          name: 'renamed',
+          session_count: 3,
+          primary_environment_id: 'devbox',
+          directories: [{ environment_id: 'devbox', path: '/repo/a' }],
+        },
       },
     });
     expect(globalView.deliveries).toEqual(['immediate', 'immediate']);

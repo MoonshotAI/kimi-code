@@ -1070,6 +1070,9 @@ function workspaceLifecyclePayload(payload: unknown): Workspace | undefined {
   return {
     id: ws.id,
     root: ws.root,
+    ...(typeof ws.primaryEnvironmentId === 'string' && ws.primaryEnvironmentId.length > 0
+      ? { primaryEnvironmentId: ws.primaryEnvironmentId }
+      : {}),
     name: ws.name,
     kind: ws.kind === 'managed' ? 'managed' : 'implicit',
     additionalDirs,
