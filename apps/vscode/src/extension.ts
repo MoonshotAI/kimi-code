@@ -120,6 +120,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await vscode.commands.executeCommand("kimi.webview.focus");
       provider?.broadcast(Events.NewConversation, {});
     },
+    "kimi.newConversationInPanel": () => {
+      provider?.newConversationInActivePanel();
+    },
     "kimi.showLogs": () => outputChannel?.show(),
     "kimi.resetKimi": () => provider?.resetAllWebviews(),
     "kimi.logout": async () => {
