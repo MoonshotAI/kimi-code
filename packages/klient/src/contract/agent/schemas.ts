@@ -47,6 +47,7 @@ export const promptPayloadSchema = z.object({
 /** Same shape as `PromptSkillActivation` in the engine. */
 export const promptSkillActivationSchema = z.object({
   name: z.string(),
+  path: z.string().optional(),
   args: z.string().optional(),
 });
 
@@ -75,6 +76,7 @@ export const steerPayloadSchema = z.object({
 /** Same shape as `SkillActivationInput`'s wire subset in the engine. */
 export const activateSkillPayloadSchema = z.object({
   name: z.string(),
+  path: z.string().optional(),
   args: z.string().optional(),
 });
 

@@ -102,7 +102,7 @@ export interface AgentFacade {
    * `prompt`). Resolves with the launched turn id; rejects when the skill is
    * unknown or the agent is busy.
    */
-  activateSkill(input: { name: string; args?: string }): Promise<PromptLaunchResult>;
+  activateSkill(input: { name: string; path?: string; args?: string }): Promise<PromptLaunchResult>;
   cancel(input?: { turnId?: number }): Promise<void>;
   runShellCommand(input: { command: string; commandId?: string }): Promise<ShellCommandResult>;
   cancelShellCommand(input: { commandId: string }): Promise<void>;

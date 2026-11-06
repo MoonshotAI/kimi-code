@@ -87,7 +87,7 @@ import {
   runModelSelector,
   type FeedbackPromptResult,
 } from '#/tui/commands/prompts';
-import { isPromptQueuedMessage, type QueuedMessage, type TranscriptEntry } from '#/tui/types';
+import { isPromptQueuedMessage, type InlineSkillActivation, type QueuedMessage, type TranscriptEntry } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import {
   extractMediaAttachments,
@@ -182,6 +182,7 @@ interface MessageDriver {
   };
   init(): Promise<boolean>;
   handleUserInput(text: string): void;
+  restoreInputText(text: string, inlineSkillActivations?: readonly InlineSkillActivation[]): void;
   toggleToolOutputExpansion(): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   persistInputHistory(text: string): Promise<void>;
@@ -191,6 +192,8 @@ interface MessageDriver {
   completedCompactionSerial: number;
   recallLastQueued(): QueuedMessage | undefined;
   recallStashedMedia(extraction: ExtractionResult | undefined): void;
+  retainSkillVariantSelection(text: string): void;
+  skillVariantPathForCommand(commandName: string, tokenStart: number): string | undefined;
   clearQueuedMessages(): void;
   closeSession(reason: string): Promise<void>;
   setSession(session: unknown): Promise<void>;
@@ -807,6 +810,267 @@ describe('KimiTUI message flow', () => {
     expect(session.activateSkill).not.toHaveBeenCalled();
   });
 
+  it('restores selected variant bindings when recalling a queued skill', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    const variants = driver as unknown as { skillVariantPaths: Map<number, { commandName: string; path: string }> };
+    const path = '/work/B/review/SKILL.md';
+    variants.skillVariantPaths.set(0, { commandName: 'skill:review', path });
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('/skill:review');
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+
+    driver.retainSkillVariantSelection('');
+    expect(variants.skillVariantPaths.size).toBe(0);
+    const recalled = driver.recallLastQueued();
+    expect(recalled).toBeDefined();
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(path);
+
+    driver.handleUserInput(recalled!.text);
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+    expect(driver.state.queuedMessages[0]).toMatchObject({
+      text: '/skill:review',
+      inlineSkillActivations: [{ skillName: 'review', path }],
+    });
+  });
+
+  it('restores variant bindings for returned skill drafts', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    const path = '/work/B/review/SKILL.md';
+
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path }]);
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(path);
+
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('/skill:review');
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+    expect(driver.state.queuedMessages[0]).toMatchObject({
+      text: '/skill:review',
+      inlineSkillActivations: [{ skillName: 'review', path }],
+    });
+  });
+
+  it('preserves the selected variant when Enter trims leading whitespace', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const path = '/work/B/review/SKILL.md';
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path, source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    const variants = driver as unknown as { skillVariantPaths: Map<number, { commandName: string; path: string }> };
+    driver.state.editor.setText('  /skill:review');
+    variants.skillVariantPaths.set(2, { commandName: 'skill:review', path });
+
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('/skill:review', [
+        expect.objectContaining({ name: 'review', path }),
+      ]);
+    });
+  });
+
+  it('retains valid variant bindings across skill list refreshes', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const path = '/work/B/review/SKILL.md';
+    let skills = [
+      { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project' as const, workspaceDir: '/work/A' },
+      { name: 'review', description: 'Review skill', path, source: 'project' as const, workspaceDir: '/work/B' },
+    ];
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => skills),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path }]);
+
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+
+    expect(driver.state.editor.getText()).toBe('/skill:review');
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(path);
+
+    skills = skills.filter((skill) => skill.path !== path);
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+  });
+
+  it('clears stale variant bindings when restoring replacement text', async () => {
+    const selectedPath = '/work/B/review/SKILL.md';
+    const session = makeSession({
+      listSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: selectedPath, source: 'project', workspaceDir: '/work/B' },
+      ]),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path: selectedPath }]);
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(selectedPath);
+
+    driver.restoreInputText('/skill:review');
+
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+
+    driver.restoreInputText('/skill:review', [{ skillName: 'review', path: selectedPath }]);
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(selectedPath);
+  });
+
+  it('restores skill variants from input history without losing duplicate bindings', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    driver.persistInputHistory = Object.getPrototypeOf(driver).persistInputHistory;
+    const history = await import('#/utils/history/input-history');
+    const { getInputHistoryFile } = await import('#/utils/paths');
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('pathe');
+    const home = await mkdtemp(join(tmpdir(), 'kimi-skill-input-history-'));
+    const previousHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = home;
+    const file = getInputHistoryFile(driver.state.appState.workDir);
+    const pathA = '/work/A/review/SKILL.md';
+    const pathB = '/work/B/review/SKILL.md';
+    const text = ' /skill:review /skill:review';
+    const trimmed = text.trim();
+    const variant = (path: string, start: number): InlineSkillActivation => ({
+      skillName: 'review', path, start, occurrences: [{ commandName: 'skill:review', start }],
+    });
+    try {
+      driver.restoreInputText(text, [variant(pathB, 1), variant(pathB, 15)]);
+      await driver.persistInputHistory(text);
+      expect(await history.loadInputHistory(file)).toEqual([{
+        content: trimmed,
+        inlineSkillActivations: [{
+          skillName: 'review',
+          path: pathB,
+          start: 0,
+          occurrences: [
+            { commandName: 'skill:review', start: 0 },
+            { commandName: 'skill:review', start: 14 },
+          ],
+        }],
+      }]);
+      await driver.persistInputHistory('another prompt');
+      driver.restoreInputText(text, [variant(pathA, 1), variant(pathA, 15)]);
+      await driver.persistInputHistory(text);
+      const entries = await history.loadInputHistory(file);
+      expect(entries).toHaveLength(3);
+      expect(entries[0]?.inlineSkillActivations?.[0]?.path).toBe(pathB);
+      expect(entries[1]?.content).toBe('another prompt');
+      expect(entries[2]?.inlineSkillActivations?.[0]?.path).toBe(pathA);
+
+      driver.state.editor.onHistoryDraftSave?.();
+      driver.state.editor.onRecall?.(trimmed, -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathA);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathA);
+      driver.state.editor.onRecall?.('another prompt', -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBeUndefined();
+      driver.state.editor.onRecall?.(trimmed, -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathB);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathB);
+      driver.state.editor.onHistoryDraftRestore?.('prompt');
+      expect(driver.skillVariantPathForCommand('skill:review', 1)).toBe(pathA);
+      expect(driver.skillVariantPathForCommand('skill:review', 15)).toBe(pathA);
+
+      (driver as unknown as { inputHistoryEntries: unknown[] }).inputHistoryEntries = [];
+      driver.retainSkillVariantSelection('');
+      await (driver as unknown as { loadPersistedInputHistory(): Promise<void> }).loadPersistedInputHistory();
+      driver.state.editor.onHistoryDraftSave?.();
+      driver.state.editor.onRecall?.(trimmed, -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathA);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathA);
+      driver.state.editor.onRecall?.('another prompt', -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBeUndefined();
+      driver.state.editor.onRecall?.(trimmed, -1);
+      expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathB);
+      expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathB);
+    } finally {
+      if (previousHome === undefined) delete process.env['KIMI_CODE_HOME'];
+      else process.env['KIMI_CODE_HOME'] = previousHome;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps both variants through queue recall and invalidates edited positions', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+    const text = '/skill:review /skill:review';
+    const pathA = '/work/A/review/SKILL.md';
+    const pathB = '/work/B/review/SKILL.md';
+    driver.restoreInputText(text, [
+      { skillName: 'review', path: pathA, start: 0 },
+      { skillName: 'review', path: pathB, start: 14 },
+    ]);
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput(text);
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+    expect(driver.state.queuedMessages[0]).toMatchObject({
+      inlineSkillActivations: [
+        { skillName: 'review', path: pathA, start: 0 },
+        { skillName: 'review', path: pathB, start: 14 },
+      ],
+    });
+
+    driver.retainSkillVariantSelection('');
+    const recalled = driver.recallLastQueued();
+    expect(recalled).toBeDefined();
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBe(pathA);
+    expect(driver.skillVariantPathForCommand('skill:review', 14)).toBe(pathB);
+    driver.retainSkillVariantSelection(`note ${text}`);
+    expect(driver.skillVariantPathForCommand('skill:review', 0)).toBeUndefined();
+    expect(driver.skillVariantPathForCommand('skill:review', 14)).toBeUndefined();
+
+    driver.restoreInputText(
+      recalled!.text,
+      recalled !== undefined && 'inlineSkillActivations' in recalled ? recalled.inlineSkillActivations : undefined,
+    );
+    driver.handleUserInput(recalled!.text);
+    await vi.waitFor(() => { expect(driver.state.queuedMessages).toHaveLength(1); });
+    expect(driver.state.queuedMessages[0]).toMatchObject({
+      inlineSkillActivations: [
+        { skillName: 'review', path: pathA, start: 0 },
+        { skillName: 'review', path: pathB, start: 14 },
+      ],
+    });
+  });
+
   it('combines a leading skill command with later inline skills into one submission (v2 engine)', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
@@ -1040,7 +1304,10 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.queuedMessages).toEqual([
       expect.objectContaining({
         text: '/skill:review check this /skill:security',
-        inlineSkillActivations: [{ skillName: 'review' }, { skillName: 'security' }],
+        inlineSkillActivations: [
+          { skillName: 'review', start: 0 },
+          { skillName: 'security', start: 25 },
+        ],
       }),
     ]);
   });
@@ -1221,6 +1488,55 @@ describe('KimiTUI message flow', () => {
       expect(prompt).toHaveBeenCalledTimes(2);
       expect(takeOverLock).not.toHaveBeenCalled();
     }
+  });
+
+  it('restores rebased skill variants after a manual steer conflict is cancelled', async () => {
+    const occupied = new KimiError(ErrorCodes.SESSION_OCCUPIED, 'in use');
+    const selectedPath = '/work/B/review/SKILL.md';
+    const variants = [
+      { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+      { name: 'review', description: 'Review skill', path: selectedPath, source: 'project', workspaceDir: '/work/B' },
+    ];
+    const session = makeSession({
+      listSkills: vi.fn(async () => variants),
+      promptWithSkills: vi.fn(async () => {}).mockRejectedValueOnce(occupied).mockRejectedValueOnce(occupied),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    type Picker = { handleInput(data: string): void; render(width: number): string[] };
+    const picker = (): Picker => driver.state.editorContainer.children[0] as Picker;
+
+    (
+      driver as unknown as {
+        steerMessage(
+          session: unknown,
+          input: ReadonlyArray<{
+            text: string;
+            inlineSkillActivations?: ReadonlyArray<{ skillName: string; path: string; start: number }>;
+          }>,
+          onSettled: undefined,
+          manual: boolean,
+        ): void;
+      }
+    ).steerMessage(session, [
+      { text: 'before' },
+      { text: '/skill:review', inlineSkillActivations: [{ skillName: 'review', path: selectedPath, start: 0 }] },
+    ], undefined, true);
+    await vi.waitFor(() => {
+      expect(stripSgr(picker().render(80).join(' '))).toContain('Session in use');
+    });
+    picker().handleInput('\r');
+    await vi.waitFor(() => {
+      expect(stripSgr(picker().render(80).join(' '))).toContain('Session still in use');
+    });
+    picker().handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editor.getText()).toBe('before\n/skill:review');
+    });
+    expect(driver.skillVariantPathForCommand('skill:review', 'before\n'.length)).toBe(selectedPath);
   });
 
   it('renders a bundled replay submission as a single turn', async () => {
@@ -5633,7 +5949,7 @@ command = "vim"
       {
         text: '/demo refactor auth and ui',
         agentId: 'main',
-        inlineSkillActivations: [{ skillName: 'demo', args: 'refactor auth and ui' }],
+        inlineSkillActivations: [{ skillName: 'demo', start: 0, args: 'refactor auth and ui' }],
       },
     ]);
     expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
@@ -5704,7 +6020,7 @@ command = "vim"
       {
         text: '/demo refactor auth and ui',
         agentId: 'main',
-        inlineSkillActivations: [{ skillName: 'demo', args: 'refactor auth and ui' }],
+        inlineSkillActivations: [{ skillName: 'demo', start: 0, args: 'refactor auth and ui' }],
       },
     ]);
     expect(driver.state.queueContainer.children.length).toBeGreaterThan(0);
@@ -9047,11 +9363,13 @@ capabilities = ["image_in", "video_in"]
   });
 
   it('activates inline skills in the initial /btw prompt (v2 engine)', async () => {
+    const variants = [
+      { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+      { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+    ];
     const session = makeSession({
       id: 'ses-lazy',
-      listSkills: vi.fn(async () => [
-        { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
-      ]),
+      listSkills: vi.fn(async () => variants),
     });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
@@ -9060,9 +9378,7 @@ capabilities = ["image_in", "video_in"]
     const { driver } = await makeDriver(
       session,
       {
-        listWorkspaceSkills: vi.fn(async () => [
-          { name: 'review', description: 'Review skill', path: '/tmp/review', source: 'user' },
-        ]),
+        listWorkspaceSkills: vi.fn(async () => variants),
         listPluginCommands: vi.fn(async () => []),
       },
       startupInput,
@@ -9070,15 +9386,65 @@ capabilities = ["image_in", "video_in"]
     await (
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
+    driver.restoreInputText('/btw check this /skill:review', [
+      { skillName: 'review', path: '/work/B/review/SKILL.md' },
+    ]);
 
     driver.handleUserInput('/btw check this /skill:review');
 
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith('check this /skill:review', [
-        { name: 'review' },
+        { name: 'review', path: '/work/B/review/SKILL.md' },
       ]);
     });
     expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('restores the selected variant after lazy session creation fails for /btw', async () => {
+    const input = '/btw check this /skill:review';
+    const selectedPath = '/work/B/review/SKILL.md';
+    const variants = [
+      { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+      { name: 'review', description: 'Review skill', path: selectedPath, source: 'project', workspaceDir: '/work/B' },
+    ];
+    const session = makeSession({
+      id: 'ses-lazy',
+      listSkills: vi.fn(async () => variants),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(
+      session,
+      {
+        listWorkspaceSkills: vi.fn(async () => variants),
+        listPluginCommands: vi.fn(async () => []),
+      },
+      startupInput,
+    );
+    await (
+      driver as unknown as { refreshSkillCommands(): Promise<void> }
+    ).refreshSkillCommands();
+    driver.restoreInputText(input, [{ skillName: 'review', path: selectedPath }]);
+    harness.createSession.mockRejectedValueOnce(new Error('create failed'));
+
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('Failed to start a session: create failed');
+    });
+    expect(driver.state.editor.getText()).toBe(input);
+    expect(driver.skillVariantPathForCommand('skill:review', input.indexOf('/skill:review'))).toBe(selectedPath);
+
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('check this /skill:review', [
+        { name: 'review', path: selectedPath },
+      ]);
+    });
+    expect(harness.createSession).toHaveBeenCalledTimes(2);
   });
 
   it('cancels a BTW skill prompt during original registration and releases its media', async () => {
@@ -9737,6 +10103,42 @@ capabilities = ["image_in", "video_in"]
     );
 
     resolveBtwPrompt?.();
+  });
+
+  it('keeps the selected variant when a busy /btw restores the draft', async () => {
+    const input = 'check /skill:review';
+    const selectedPath = '/work/B/review/SKILL.md';
+    const variants = [
+      { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+      { name: 'review', description: 'Review skill', path: selectedPath, source: 'project', workspaceDir: '/work/B' },
+    ];
+    const session = makeSession({
+      listSkills: vi.fn(async () => variants),
+      prompt: vi.fn(() => new Promise<void>(() => {})),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    await openBtwPanel(driver, session);
+    driver.restoreInputText(input, [{ skillName: 'review', path: selectedPath }]);
+
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editor.getText()).toBe(input);
+    });
+    await Promise.resolve();
+    expect(driver.skillVariantPathForCommand('skill:review', input.indexOf('/skill:review'))).toBe(selectedPath);
+
+    getMountedBtwPanel(driver).markDone();
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(input, [
+        { name: 'review', path: selectedPath },
+      ]);
+    });
   });
 
   it('replaces a running /btw panel when another /btw command is submitted', async () => {

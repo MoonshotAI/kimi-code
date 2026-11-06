@@ -7,6 +7,21 @@ export interface InlineSkillToken {
   readonly end: number;
 }
 
+export function rebaseInlineSkillActivations(
+  activations: readonly InlineSkillActivation[],
+  offset: number,
+): InlineSkillActivation[] {
+  if (offset === 0) return [...activations];
+  return activations.map((activation) => ({
+    ...activation,
+    start: activation.start === undefined ? undefined : activation.start + offset,
+    occurrences: activation.occurrences?.map((occurrence) => ({
+      ...occurrence,
+      start: occurrence.start + offset,
+    })),
+  }));
+}
+
 export interface FindInlineSkillTokensOptions {
   /** Decide whether a syntactically valid token names a known skill. */
   readonly isKnownSkill: (commandName: string) => boolean;
@@ -56,6 +71,7 @@ export function findInlineSkillTokens(
 export interface ExtractInlineSkillActivationsOptions {
   /** Also treat a `/` at the very start of the input as a skill token. */
   readonly includeLeading?: boolean;
+  readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
 }
 
 /**
@@ -75,14 +91,27 @@ export function extractInlineSkillActivations(
     includeLeading: options?.includeLeading,
   });
 
-  const seen = new Set<string>();
-  const activations: InlineSkillActivation[] = [];
+  const byKey = new Map<string, {
+    activation: InlineSkillActivation;
+    occurrences: Array<{ commandName: string; start: number }>;
+  }>();
   for (const token of tokens) {
     const skillName =
       skillCommandMap.get(token.commandName) ?? skillCommandMap.get(`skill:${token.commandName}`);
-    if (skillName === undefined || seen.has(skillName)) continue;
-    seen.add(skillName);
-    activations.push({ skillName });
+    if (skillName === undefined) continue;
+    const path = options?.skillVariantPathForCommand?.(token.commandName, token.start);
+    const key = `${skillName}\0${path ?? ''}`;
+    const existing = byKey.get(key);
+    if (existing !== undefined) {
+      existing.occurrences.push({ commandName: token.commandName, start: token.start });
+      continue;
+    }
+    byKey.set(key, {
+      activation: { skillName, path, start: token.start },
+      occurrences: [{ commandName: token.commandName, start: token.start }],
+    });
   }
-  return activations;
+  return [...byKey.values()].map(({ activation, occurrences }) =>
+    occurrences.length === 1 ? activation : { ...activation, occurrences }
+  );
 }

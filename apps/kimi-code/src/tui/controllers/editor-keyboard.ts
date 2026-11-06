@@ -45,12 +45,17 @@ export interface EditorKeyboardHost {
    */
   harness?: KimiHarness | undefined;
 
-  handleUserInput(text: string): void;
+  handleUserInput(text: string, leadingWhitespace?: number): void;
   readonly btwPanelController: BtwPanelController;
   readonly surveyController: SurveyController;
   readonly modelMigration?: ModelMigrationController;
   readonly skillCommandMap: Map<string, string>;
   readonly pluginCommandMap: Map<string, string>;
+  readonly skillVariantPathForCommand?: (commandName: string, tokenStart: number) => string | undefined;
+  retainSkillVariantSelection?(text: string): void;
+  beginInputHistoryRecall?(): void;
+  restoreInputHistoryEntry?(direction: 1 | -1): void;
+  restoreInputHistoryDraft?(): void;
   steerQueuedMessagesIntoRunningTurn(manual?: boolean): void;
   validateMediaCapabilities(extraction: {
     hasMedia: boolean;
@@ -97,9 +102,10 @@ export class EditorKeyboardController {
     const { host } = this;
     const editor = host.state.editor;
 
-    editor.onSubmit = (text: string) => {
+    editor.onSubmit = (text: string, leadingWhitespace = 0) => {
       if (host.surveyController.handleSubmit(text)) return;
-      host.handleUserInput(text);
+      if (leadingWhitespace === 0) host.handleUserInput(text);
+      else host.handleUserInput(text, leadingWhitespace);
     };
 
     // After dispose (shutdown), consume every key here so no shortcut can fire
@@ -116,6 +122,8 @@ export class EditorKeyboardController {
     editor.onChange = (text: string) => {
       if (this.pendingExit) this.clearPendingExit();
       host.surveyController.handleEditorChange(text);
+      if (text === '') queueMicrotask(() => host.retainSkillVariantSelection?.(editor.getText()));
+      else host.retainSkillVariantSelection?.(text);
       host.updateEditorBorderHighlight(text);
       if (text.length === 0) host.modelMigration?.retry();
       // Expanding paste markers costs a full-text pass, and only `/goal`
@@ -152,7 +160,8 @@ export class EditorKeyboardController {
     // mode; recalling a plain entry returns to prompt mode. The filter above
     // guarantees bash mode only ever lands on `!` entries, so this never
     // misfires on commands typed in bash mode.
-    editor.onRecall = (entry: string) => {
+    editor.onRecall = (entry: string, direction: 1 | -1) => {
+      host.restoreInputHistoryEntry?.(direction);
       if (entry.startsWith('!')) {
         editor.setInputMode('bash');
         return entry.slice(1);
@@ -167,10 +176,12 @@ export class EditorKeyboardController {
     // message would be submitted as a shell command. Also locks the history
     // filter (browseMode) for the duration of the browse session.
     editor.onHistoryDraftSave = () => {
+      host.beginInputHistoryRecall?.();
       browseMode = editor.inputMode;
       return editor.inputMode;
     };
     editor.onHistoryDraftRestore = (state: unknown) => {
+      host.restoreInputHistoryDraft?.();
       editor.setInputMode(state as 'prompt' | 'bash');
       browseMode = null;
     };
@@ -317,7 +328,9 @@ export class EditorKeyboardController {
         host.state.appState.isCompacting ||
         host.isSteeringQueuedMessages()
       ) return;
-      const text = (editor.getExpandedText?.() ?? editor.getText()).trim();
+      const expandedText = editor.getExpandedText?.() ?? editor.getText();
+      const text = expandedText.trim();
+      const leadingWhitespace = expandedText.length - expandedText.trimStart().length;
       const editorIsBash = editor.inputMode === 'bash';
       let extraction: ReturnType<typeof extractMediaAttachments> | undefined;
       if (!editorIsBash && text.length > 0) {
@@ -350,6 +363,9 @@ export class EditorKeyboardController {
           pluginCommandMap: host.pluginCommandMap,
           isStreaming: true,
           isCompacting: host.state.appState.isCompacting,
+          skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
+            ? undefined
+            : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart + leadingWhitespace),
         });
         host.state.queuedMessages.push({
           text,

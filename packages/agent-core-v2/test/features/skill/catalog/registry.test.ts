@@ -92,6 +92,26 @@ describe('InMemorySkillCatalog skill listing', () => {
     expect(rendered).not.toContain('builtin version');
   });
 
+  it('keeps same-name variants available for explicit path selection', () => {
+    const primary = {
+      ...makeSkill('foo', 'project', 'primary', '/tmp/primary/foo/SKILL.md'),
+      workspaceDir: '/tmp/primary',
+    };
+    const secondary = {
+      ...makeSkill('foo', 'project', 'secondary', '/tmp/secondary/foo/SKILL.md'),
+      workspaceDir: '/tmp/secondary',
+    };
+    const registry = makeRegistry([primary]);
+    registry.registerVariants([primary, secondary], { replace: true });
+
+    expect(registry.getSkill('foo')?.description).toBe('primary');
+    expect(registry.getSkill('foo', secondary.path)?.description).toBe('secondary');
+    expect(registry.getSkill('foo', '/tmp/missing/SKILL.md')).toBeUndefined();
+    expect(registry.listSkills().map((skill) => skill.description)).toEqual(['primary', 'secondary']);
+    expect(registry.listDefaultSkills().map((skill) => skill.description)).toEqual(['primary']);
+    expect(registry.getModelSkillListing()).toContain('Workspace: /tmp/secondary');
+  });
+
   it('registerBuiltinSkill stamps non-builtin skills as builtin', () => {
     const registry = new InMemorySkillCatalog();
     registry.registerBuiltinSkill(makeSkill('theme', 'user'));
