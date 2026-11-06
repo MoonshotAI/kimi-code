@@ -1047,6 +1047,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | `POST /api/v1/sessions/{session_id}/prompts:steer` | 把排队的提示词插入进行中的轮次 |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | 中止运行中的提示词 |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:steer` | 插入单条排队的提示词 |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` | 调整单条排队提示词的位置 |
 
 #### `GET /api/v1/sessions/{session_id}/prompts`
 
@@ -1076,6 +1077,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | `thinking` | body | string | Thinking 强度等级 |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
 | `disabled_tools` | body | array | 要为会话禁用的工具名 |
+| `delivery` | body | string | `queue`（默认）或 `steer`：Agent 正在运行轮次时如何处理这条提示词。`steer` 会在下一步把它交给正在运行的轮次；没有运行中的轮次，或队列里已有等待新轮次的提示词时，改为排队 |
 
 schema 还接受 `metadata`、`plan_mode`、`swarm_mode`、`goal_objective` 和 `goal_control`，但提交路由当前不会应用它们。每个 `content` 内容块是按 `type` 区分的对象：
 
@@ -1087,7 +1089,7 @@ schema 还接受 `metadata`、`plan_mode`、`swarm_mode`、`goal_objective` 和 
 
 schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinking` 内容块，但它们在用户提示词中没有意义。未知或 kind 不匹配的 `file_id` 引用会在提示词创建之前、任何覆盖项应用之前被拒绝。
 
-成功时，`data` 为被接受的提示词 `{ prompt_id, user_message_id, status, content, created_at }`。会话空闲时，响应会等到提示词开始执行轮次或未开始轮次就结束：hook 拒绝了该提示词时 `status` 为 `blocked`，提交在轮次开始前失败时为 `failed`，例如提示词 hook 出错或附件无法准备。
+成功时，`data` 为被接受的提示词 `{ prompt_id, user_message_id, status, content, created_at, accepted_as }`。`accepted_as` 说明提示词的去向：开启新一轮时为 `turn`，进入正在运行的轮次时为 `steer`，在 Agent 的队列中等待时为 `queue`，此时它会出现在 `queue` 帧里（见 [事件](#事件)）。会话空闲时，响应会等到提示词开始执行轮次或未开始轮次就结束：hook 拒绝了该提示词时 `status` 为 `blocked`，提交在轮次开始前失败时为 `failed`，例如提示词 hook 出错或附件无法准备。
 
 - `40001`：校验失败——例如未知的 `profile`
 - `40110`：尚未配置供应商——请先完成登录
@@ -1143,6 +1145,23 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 - `40401`：会话不存在
 - `40402`：没有该 id 的排队提示词
+
+#### `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move`
+
+把 Agent 的一条排队提示词移到另一条排队提示词之前，或移到队列末尾。轮次正在启动的提示词已经离开队列，不能再移动。尾部解析为 `{prompt_id}:{action}`，`move` 以外的动作返回 `40001`。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `agent_id` | path | string | **必填。** Agent id |
+| `prompt_id` | path | string | **必填。** 排队中的提示词 id |
+| `before_prompt_id` | body | string | 移到这条排队提示词之前。默认移到队列末尾 |
+
+成功时，`data` 为 `{}`，该 Agent 的订阅者会收到新的 `queue` 帧。
+
+- `40001`：校验失败
+- `40401`：会话或 Agent 不存在
+- `40402`：`prompt_id` 或 `before_prompt_id` 不在队列中
 
 ### 审批与提问
 
@@ -2392,22 +2411,23 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 全局事件是事件帧 `{ "type", "session_id"?, "timestamp", "payload" }`，`type` 即事件类型；会话帧是平铺帧 `{ "type", "session_id", "agent_id", ... }`。按投递范围分两类：
 
 - **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
-- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接，且只包含其接收的 agent——`turns`、`turns.removed`、`turns.failed`、`turn.*`、`item.*` 与 `notice`（见 [对话协议](#对话协议)），以及 `task.list`、`task`、`agent`、`usage`、`goal`、`todo`；`interaction` 帧发给该会话的所有订阅者。`task.output` 只发给用 `task.watch` 订阅了该任务输出的连接。
+- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接，且只包含其接收的 agent——`turns`、`turns.removed`、`turns.failed`、`turn.*`、`item.*` 与 `notice`（见 [对话协议](#对话协议)），以及 `task.list`、`task`、`agent`、`usage`、`goal`、`todo`、`queue`；`interaction` 帧发给该会话的所有订阅者。`task.output` 只发给用 `task.watch` 订阅了该任务输出的连接。
 
 有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
 每个 agent 正在跑的任务——Shell 命令（前台与后台）、subagent（含 swarm 成员）及其他异步工作——由 `task.list` 与 `task` 两种平铺帧同步，和 `interaction` 一样不回放。连接开始接收某个 agent 的任务时（`subscribe_v2` 的 `agent_ids` 中列出、且此前未接收的 agent），先收到一帧 `{ type: "task.list", session_id, agent_id, tasks }`，`tasks` 是该 agent 此刻正在跑的全部任务，客户端用它整份替换本地列表；之后每次变化收到一帧 `{ type: "task", session_id, agent_id, event_created_at, ...任务状态 }`，列出时尚未加入会话的 agent 直接从 `task` 帧开始。任务状态为 `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`，每帧都携带完整状态。`detached` 表示发起它的工具调用已不再等它，即后台任务；`outcome`（仅已结束的任务）为 `completed` / `failed` / `timed_out` / `killed` / `lost`；`phase`（仅运行中的 subagent）为 `working` / `suspended`，挂起原因在 `state_reason`；`child_agent_id` 是 subagent 任务的 agent id；`swarm_index` 是 swarm 成员在其 swarm 中的序号；`command` 是 Shell 任务的命令。任务结束时推送它最后一帧 `task`（`status: "ended"`），之后不再出现在 `task.list` 里：已结束任务的结果在会话历史中（工具结果与完成通知），需要精确的最终状态时对它发送 `task.watch`，应答带有其状态。任务与轮次互相独立：撤销轮次不影响任务。任务输出单独推送，形状为 `{ type: "task.output", session_id, agent_id, task_id, offset, text }`，`offset` 是 `text` 在任务输出中的 UTF-8 字节偏移。
 
-Agent 自身的状态由另外四种平铺帧同步，每帧都携带完整的值，客户端整份替换本地副本；和任务帧一样不回放。连接开始接收某个 agent 时（规则同 `task.list`），先收到当前的 `agent`、`usage`（该 agent 有模型上下文时）、`goal`（仅主 agent）与 `todo` 帧，之后每当某个值变化就再收到对应的帧；已列出、之后才加入会话的 agent 也会用这几种帧通告自己。订阅会话时如果主 agent 还不存在，服务端会先创建它，所以订阅之后总能收到主 agent 的这几种帧。四种帧都是 `{ type, session_id, agent_id, event_created_at, ... }`：
+Agent 自身的状态由另外五种平铺帧同步，每帧都携带完整的值，客户端整份替换本地副本；和任务帧一样不回放。连接开始接收某个 agent 时（规则同 `task.list`），先收到当前的 `agent`、`usage`（该 agent 有模型上下文时）、`goal`（仅主 agent）、`todo` 与 `queue` 帧，之后每当某个值变化就再收到对应的帧；已列出、之后才加入会话的 agent 也会用这几种帧通告自己。订阅会话时如果主 agent 还不存在，服务端会先创建它，所以订阅之后总能收到主 agent 的这几种帧。五种帧都是 `{ type, session_id, agent_id, event_created_at, ... }`：
 
 - `agent`：`{ status: "idle" | "running", compacting, model?, thinking?, permission_mode?, plan_mode, swarm_mode, tower_mode }`。agent 处理某一轮时 `status` 为 `running`，不处理时为 `idle`。正在压缩该 agent 的上下文时 `compacting` 为 `true`，无论是否在某一轮之中。正在运行的轮次以及模型请求失败后的重试状态随对话帧下发。`compacting` 和三个模式字段都是布尔值。
 - `usage`：`{ context_tokens, max_context_tokens? }`。只有最新值有意义，因此上下文增长期间服务端每秒最多发送几次。
 - `goal`：`{ goal? }`，会话没有目标时省略 `goal`，否则为 `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`。
 - `todo`：`{ items: [{ title, status: "pending" | "in_progress" | "done" }] }`，取自 agent 的待办存储，因此会跟随撤销回退，重启后也能恢复。
+- `queue`：`{ paused, inputs }`，等待该 agent 新轮次的提示词，按将要执行的顺序排列。每条输入为 `{ prompt_id, user_message_id, kind: "input", delivery: "queue", content, skills?, client_metadata?, created_at }`：`content` 是提交的内容，不含打包的 Skill 指令；`skills` 以 `{ name, args? }` 列出打包激活的 Skill；`client_metadata` 原样回显提交时的 `metadata`。提示词的轮次开始或被插入正在运行的轮次后，它就离开列表，之后携带它的 `user_message` 会在 `prompt_ids` 中列出它的 `prompt_id`。`paused` 目前总是 `false`。
 
 ### 断线恢复
 
-订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe_v2`：每个 agent 会重新从一帧携带最新一页的 `turns` 开始；确认后会补发待处理的交互，并重新收到各 agent 的 `task.list`、`agent`、`usage`、`goal` 与 `todo` 帧。任务输出的订阅同样会丢失：重新发送 `task.watch`，并把 `since_offset` 设为已有输出的末尾。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
+订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe_v2`：每个 agent 会重新从一帧携带最新一页的 `turns` 开始；确认后会补发待处理的交互，并重新收到各 agent 的 `task.list`、`agent`、`usage`、`goal`、`todo` 与 `queue` 帧。任务输出的订阅同样会丢失：重新发送 `task.watch`，并把 `since_offset` 设为已有输出的末尾。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
 
 ### 对话协议
 

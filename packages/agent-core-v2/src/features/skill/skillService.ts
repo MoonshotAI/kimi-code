@@ -149,12 +149,7 @@ export class AgentSkillService implements IAgentSkillService {
     for (const activation of prepared) {
       void this.recordActivation(activation.origin);
     }
-    const status = this.loop.snapshot();
-    const steerable =
-      input.steerIfActive === true &&
-      status.state === 'running' &&
-      status.activePromptId !== undefined;
-    const { id } = this.loop.submit(
+    const { id, acceptedAs } = this.loop.submit(
       {
         message: {
           role: 'user',
@@ -174,7 +169,7 @@ export class AgentSkillService implements IAgentSkillService {
       { steerIfActive: input.steerIfActive },
     );
     const handle = this.loop.promptHandle(id)!;
-    if (!steerable && (status.state === 'running' || status.paused || status.queue.length > 0)) {
+    if (acceptedAs === 'queue') {
       return { prompt_id: id, created_at: handle.createdAt, state: 'queued', steered: false };
     }
     await Promise.race([handle.launched, handle.completion]);
@@ -188,7 +183,7 @@ export class AgentSkillService implements IAgentSkillService {
       prompt_id: id,
       created_at: handle.createdAt,
       state: handle.state === 'blocked' ? 'blocked' : 'running',
-      steered: steerable && turn?.id === status.activeTurnId,
+      steered: acceptedAs === 'steer',
     };
   }
 

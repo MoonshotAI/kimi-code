@@ -240,6 +240,12 @@ class FakeLoopService implements IAgentLoopService {
     throw new Error('unused in this suite');
   }
 
+  moveQueued(): never {
+    throw new Error('unused in this suite');
+  }
+
+  readonly onDidChangeQueue: IAgentLoopService['onDidChangeQueue'] = () => ({ dispose: () => {} });
+
   cancel(): never {
     throw new Error('unused in this suite');
   }

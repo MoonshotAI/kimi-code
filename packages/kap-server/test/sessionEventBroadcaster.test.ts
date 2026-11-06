@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type {
   AgentContext,
   IScopeHandle,
+  LoopSnapshot,
   Scope,
   SessionActivityCause,
   SessionActivityChangedEvent,
@@ -199,6 +200,8 @@ class FakeAgentHandle {
   readonly accessor;
   readonly context: AgentContext;
   activity: AgentActivitySnapshot = {};
+  queue: { entries: LoopSnapshot['queue']; startingPromptId?: string } = { entries: [] };
+  private readonly queueListeners = new Set<() => void>();
   private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
     const scope = makeAgentScopeContext({
@@ -217,7 +220,13 @@ class FakeAgentHandle {
       snapshot: () => ({
         state: this.activity.turn === undefined ? 'idle' : 'running',
         turn: this.activity.turn,
+        queue: this.queue.entries,
+        startingPromptId: this.queue.startingPromptId,
       }),
+      onDidChangeQueue: (listener: () => void) => {
+        this.queueListeners.add(listener);
+        return { dispose: () => this.queueListeners.delete(listener) };
+      },
     });
     this.accessor = {
       get: (token: unknown) => this.services.get(token),
@@ -225,6 +234,10 @@ class FakeAgentHandle {
   }
   set(token: unknown, service: unknown): void {
     this.services.set(token, service);
+  }
+  setQueue(entries: LoopSnapshot['queue'], startingPromptId?: string): void {
+    this.queue = { entries, startingPromptId };
+    for (const listener of this.queueListeners) listener();
   }
   dispose(): void {}
 }
@@ -2002,6 +2015,57 @@ describe('SessionEventBroadcaster', () => {
           type: 'goal',
           goal: { objective: 'ship it', status: 'active', turns_used: 1, tokens_used: 10, wall_clock_ms: 5 },
         }),
+      ]);
+    });
+
+    it('sends the queued prompts of each subscribed agent without the starting or untracked ones', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      withAgentState(main);
+      sessions.set('s1', lc);
+      bc = makeBroadcasterForAgents();
+      const entry = (id: string, tracked = true) =>
+        ({
+          message: { role: 'user', content: [{ type: 'text', text: `prompt ${id}` }] },
+          meta: {
+            promptId: id,
+            userMessageId: id,
+            tracked,
+            createdAt: '2026-11-06T00:00:00.000Z',
+            origin: { kind: 'user', clientMetadata: [{ draft: id }] },
+          },
+        }) as LoopSnapshot['queue'][number];
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, ['main']);
+      const queueFrames = () =>
+        view.envelopes.filter((frame) => frame.type === 'queue') as unknown as { inputs: unknown[] }[];
+      expect(queueFrames()).toEqual([
+        expect.objectContaining({ type: 'queue', session_id: 's1', agent_id: 'main', paused: false, inputs: [] }),
+      ]);
+
+      main.setQueue([entry('a'), entry('b')], 'a');
+      await settle();
+      main.setQueue([entry('b')]);
+      await settle();
+      main.setQueue([entry('b'), entry('cron', false)]);
+      await settle();
+      main.setQueue([]);
+      await settle();
+
+      expect(queueFrames().slice(1).map((frame) => frame.inputs)).toEqual([
+        [
+          {
+            prompt_id: 'b',
+            user_message_id: 'b',
+            kind: 'input',
+            delivery: 'queue',
+            content: [{ type: 'text', text: 'prompt b' }],
+            client_metadata: { draft: 'b' },
+            created_at: '2026-11-06T00:00:00.000Z',
+          },
+        ],
+        [],
       ]);
     });
 

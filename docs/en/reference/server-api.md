@@ -1047,6 +1047,7 @@ A prompt is one unit of user input: submitting one enqueues it on the session's 
 | `POST /api/v1/sessions/{session_id}/prompts:steer` | Steer queued prompts into the active turn |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | Abort a running prompt |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:steer` | Steer one queued prompt |
+| `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move` | Move one queued prompt |
 
 #### `GET /api/v1/sessions/{session_id}/prompts`
 
@@ -1076,6 +1077,7 @@ Submits a user prompt to the session. Media references are validated first, then
 | `thinking` | body | string | Thinking-mode effort level |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
 | `disabled_tools` | body | array | Tool names to disable for the session |
+| `delivery` | body | string | `queue` (default) or `steer`: what to do with the prompt while the agent is running a turn. `steer` hands it to the running turn at its next step; when no turn is running, or the queue already holds prompts that wait for one, the prompt is queued instead |
 
 The schema also accepts `metadata`, `plan_mode`, `swarm_mode`, `goal_objective`, and `goal_control`, but the submit route currently does not apply them. Each `content` part is an object discriminated by `type`:
 
@@ -1087,7 +1089,7 @@ The schema also accepts `metadata`, `plan_mode`, `swarm_mode`, `goal_objective`,
 
 The schema also accepts the `tool_use`, `tool_result`, and `thinking` parts of the shared message format, but they are not meaningful in a user prompt. Unknown or mis-kinded `file_id` references are rejected before the prompt is created and before any override is applied.
 
-On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status, content, created_at }`. On an idle session the response waits until the prompt starts its turn or ends without one: `status` is `blocked` when a hook rejected the prompt, and `failed` when its submission failed before a turn started, for example because a prompt hook failed or an attachment could not be prepared.
+On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status, content, created_at, accepted_as }`. `accepted_as` tells where the prompt went: `turn` when it starts a new turn, `steer` when it joined the running turn, and `queue` when it waits in the agent's queue, which the `queue` frame then lists (see [Events](#events)). On an idle session the response waits until the prompt starts its turn or ends without one: `status` is `blocked` when a hook rejected the prompt, and `failed` when its submission failed before a turn started, for example because a prompt hook failed or an attachment could not be prepared.
 
 - `40001`: validation failure — for example an unknown `profile`
 - `40110`: no provider configured yet — finish login first
@@ -1143,6 +1145,23 @@ On success, `data` is `{ steered: true, prompt_ids: [prompt_id] }`.
 
 - `40401`: session not found
 - `40402`: no queued prompt with that id
+
+#### `POST /api/v1/sessions/{session_id}/agents/{agent_id}/queue/{prompt_id}:move`
+
+Moves one queued prompt of an agent before another queued prompt, or to the end of the queue. A prompt whose turn is starting has left the queue and can no longer be moved. The tail is parsed as `{prompt_id}:{action}`, and an action other than `move` fails `40001`.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `agent_id` | path | string | **Required.** Agent id |
+| `prompt_id` | path | string | **Required.** Queued prompt id |
+| `before_prompt_id` | body | string | Queued prompt to move it in front of. Default the end of the queue |
+
+On success, `data` is `{}` and the agent's subscribers get a new `queue` frame.
+
+- `40001`: validation failure
+- `40401`: session or agent not found
+- `40402`: `prompt_id` or `before_prompt_id` is not in the queue
 
 ### Approvals and questions
 
@@ -2391,22 +2410,23 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 Global events are envelopes `{ "type", "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself; session frames are flat `{ "type", "session_id", "agent_id", ... }`. Two delivery scopes:
 
 - **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
-- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2`, and only for the agents they receive — `turns`, `turns.removed`, `turns.failed`, `turn.*`, `item.*`, and `notice` (see [Conversation protocol](#conversation-protocol)), `task.list`, `task`, `agent`, `usage`, `goal`, `todo`; `interaction` frames go to every subscriber of the session. `task.output` goes only to connections watching that task with `task.watch`.
+- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2`, and only for the agents they receive — `turns`, `turns.removed`, `turns.failed`, `turn.*`, `item.*`, and `notice` (see [Conversation protocol](#conversation-protocol)), `task.list`, `task`, `agent`, `usage`, `goal`, `todo`, `queue`; `interaction` frames go to every subscriber of the session. `task.output` goes only to connections watching that task with `task.watch`.
 
 Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 
 Each agent's running tasks — shell commands in the foreground and background, subagents (swarm members included), and other asynchronous work — are synced by two flat frames, `task.list` and `task`, never replayed like `interaction`. When a connection starts receiving an agent's tasks (an agent listed in `subscribe_v2`'s `agent_ids` that it was not receiving yet), it first gets `{ type: "task.list", session_id, agent_id, tasks }`, where `tasks` is every task the agent is running right now and replaces the client's list; after that it gets `{ type: "task", session_id, agent_id, event_created_at, ...task state }` on every change. An agent listed before it joins the session starts directly with `task` frames. The task state is `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`, and every frame carries the full state. `detached` means the tool call that started the task no longer waits for it, so it runs in the background; `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`, with the reason in `state_reason`; `child_agent_id` is a subagent task's agent id; `swarm_index` is a swarm member's position in its swarm; `command` is a shell task's command. When a task ends, its last `task` frame (`status: "ended"`) is sent and it no longer appears in `task.list`: the outcome of an ended task lives in the session history (tool results and task notifications), and `task.watch` on it replies with its exact final state. Tasks are independent of turns: undoing turns does not touch tasks. Task output streams separately as `{ type: "task.output", session_id, agent_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
 
-An agent's own state is synced by four more flat frames, each carrying the full value and replacing the client copy; like the task frames they are never replayed. When a connection starts receiving an agent (the same rule as `task.list`), it first gets the current `agent`, `usage` (when the agent has a model context), `goal` (main agent only), and `todo` frames, and after that each frame again whenever its value changes; a listed agent that joins the session later announces itself with the same frames. Subscribing to a session creates its main agent if it does not exist yet, so the main agent's frames always follow the subscription. All four are `{ type, session_id, agent_id, event_created_at, ... }`:
+An agent's own state is synced by five more flat frames, each carrying the full value and replacing the client copy; like the task frames they are never replayed. When a connection starts receiving an agent (the same rule as `task.list`), it first gets the current `agent`, `usage` (when the agent has a model context), `goal` (main agent only), `todo`, and `queue` frames, and after that each frame again whenever its value changes; a listed agent that joins the session later announces itself with the same frames. Subscribing to a session creates its main agent if it does not exist yet, so the main agent's frames always follow the subscription. All five are `{ type, session_id, agent_id, event_created_at, ... }`:
 
 - `agent`: `{ status: "idle" | "running", compacting, model?, thinking?, permission_mode?, plan_mode, swarm_mode, tower_mode }`. `status` is `running` while the agent works on a turn and `idle` when it does not. `compacting` is `true` while the agent's context is being compacted, whether inside a turn or not. The running turn, and the retry state of a failed model request, come with the conversation frames. `compacting` and the three mode fields are booleans.
 - `usage`: `{ context_tokens, max_context_tokens? }`. Only the latest value matters, so while the context grows the server sends it at most a few times per second.
 - `goal`: `{ goal? }`, where `goal` is omitted when the session has none, or is `{ objective, status: "active" | "paused" | "blocked" | "complete", completion_criterion?, turns_used, tokens_used, wall_clock_ms }`.
 - `todo`: `{ items: [{ title, status: "pending" | "in_progress" | "done" }] }`, read from the agent's todo store, so it follows undo and survives a restart.
+- `queue`: `{ paused, inputs }`, the prompts waiting for a turn of the agent, in the order they will run. Each input is `{ prompt_id, user_message_id, kind: "input", delivery: "queue", content, skills?, client_metadata?, created_at }`, where `content` is the submitted content without bundled skill instructions, `skills` lists the bundled skill activations as `{ name, args? }`, and `client_metadata` echoes the `metadata` sent with the prompt. A prompt leaves the list once its turn starts or it is steered into the running turn, and the `user_message` that carries it then lists its `prompt_id` in `prompt_ids`. `paused` is always `false` for now.
 
 ### Reconnect and recovery
 
-Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: every agent starts again with a `turns` frame holding its latest page, pending interactions are resent after the ack, and every agent's `task.list`, `agent`, `usage`, `goal`, and `todo` frames are sent again. Task output watches are dropped as well: send `task.watch` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
+Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: every agent starts again with a `turns` frame holding its latest page, pending interactions are resent after the ack, and every agent's `task.list`, `agent`, `usage`, `goal`, `todo`, and `queue` frames are sent again. Task output watches are dropped as well: send `task.watch` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
 
 ### Conversation protocol
 

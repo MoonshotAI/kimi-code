@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
+import { messageContentSchema } from './message';
 
 const agentFrameFields = {
   session_id: z.string().min(1),
@@ -68,8 +69,29 @@ export const todoEventMessageSchema = z.object({
 });
 export type TodoEventMessage = z.infer<typeof todoEventMessageSchema>;
 
+export const queuedInputSchema = z.object({
+  prompt_id: z.string().min(1),
+  user_message_id: z.string().min(1),
+  kind: z.enum(['input', 'compact']),
+  delivery: z.enum(['steer', 'queue']),
+  content: z.array(messageContentSchema),
+  skills: z.array(z.object({ name: z.string(), args: z.string().optional() })).optional(),
+  client_metadata: z.record(z.string(), z.unknown()).optional(),
+  created_at: isoDateTimeSchema,
+});
+export type QueuedInput = z.infer<typeof queuedInputSchema>;
+
+export const queueEventMessageSchema = z.object({
+  type: z.literal('queue'),
+  ...agentFrameFields,
+  paused: z.boolean(),
+  inputs: z.array(queuedInputSchema),
+});
+export type QueueEventMessage = z.infer<typeof queueEventMessageSchema>;
+
 export type AgentFeedMessage =
   | AgentEventMessage
   | UsageEventMessage
   | GoalEventMessage
-  | TodoEventMessage;
+  | TodoEventMessage
+  | QueueEventMessage;
