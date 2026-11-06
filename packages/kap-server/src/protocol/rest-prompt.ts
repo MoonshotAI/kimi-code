@@ -67,6 +67,12 @@ export const promptSteerResultSchema = z.object({
 });
 export type PromptSteerResult = z.infer<typeof promptSteerResultSchema>;
 
+export const promptInterruptResultSchema = z.object({
+  interrupted: z.literal(true),
+  prompt_ids: z.array(z.string().min(1)).min(1),
+});
+export type PromptInterruptResult = z.infer<typeof promptInterruptResultSchema>;
+
 export const promptAbortResponseSchema = z.object({
   aborted: z.boolean(),
 });

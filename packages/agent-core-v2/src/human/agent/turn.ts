@@ -50,6 +50,7 @@ export type SystemMeta = EntryMeta;
 
 export interface UserMeta extends EntryMeta {
   promptId?: string;
+  steerPromptIds?: readonly string[];
   origin?: PromptOrigin;
   tracked?: boolean;
   createdAt?: string;
@@ -179,6 +180,7 @@ export type TurnEvent =
   | { type: 'turn.notify'; messages: HistoryMessage[] }
   | { type: 'turn.pause' }
   | { type: 'turn.continue' }
+  | { type: 'turn.interrupt'; promptIds: readonly string[] }
   | { type: 'turn.abort'; reason?: unknown }
   | {
       type: 'turn.failure.evaluated';
@@ -273,6 +275,17 @@ function maxStepsExceeded(context: TurnMachineContext): boolean {
   return maxSteps !== undefined && maxSteps > 0 && context.steps >= maxSteps;
 }
 
+function steerAlreadyProduced(context: TurnMachineContext, promptIds: readonly string[]): boolean {
+  if (promptIds.length === 0) return false;
+  const ids = new Set(promptIds);
+  return context.produced.some((entry) => {
+    if (entry.message.role !== 'user') return false;
+    const meta = entry.meta as UserMeta | undefined;
+    if (meta?.promptId !== undefined && ids.has(meta.promptId)) return true;
+    return meta?.steerPromptIds?.some((id) => ids.has(id)) === true;
+  });
+}
+
 function baseMessages(context: TurnMachineContext): readonly Message[] {
   return toInputMessages([...context.input.history, ...context.produced]);
 }
@@ -327,6 +340,18 @@ function emptyErrorOf(context: TurnMachineContext): LlmErrorMessage<'empty_respo
     context.input.request.model,
     entry.meta?.finish ?? NO_FINISH,
   );
+}
+
+function steeredAttemptEntry(context: TurnMachineContext): AssistantEntry {
+  const partial = context.accumulator.finish({ source: 'steered' });
+  return {
+    message: salvageInterruptedMessage(partial.message) ?? {
+      role: 'assistant',
+      content: [],
+      toolCalls: [],
+    },
+    meta: partial.meta,
+  };
 }
 
 export interface TurnBeforeStepContext {
@@ -392,6 +417,14 @@ export function createTurnMachine(
             salvaged === null
               ? context.produced
               : [...context.produced, { message: salvaged, meta: partial.meta }],
+        };
+      }),
+      salvageSteered: assign(({ context }) => {
+        const entry = steeredAttemptEntry(context);
+        return {
+          produced: entry.message.content.length === 0
+            ? context.produced
+            : [...context.produced, entry],
         };
       }),
       collectAborted: assign(({ context }) =>
@@ -674,6 +707,23 @@ export function createTurnMachine(
               ],
             },
           ],
+          'turn.interrupt': {
+            guard: ({ context, event }) => !steerAlreadyProduced(context, event.promptIds),
+            target: 'draining',
+            actions: [
+              ({ context }) => {
+                context.llmScope.abort();
+              },
+              'salvageSteered',
+              {
+                type: 'sendToParent',
+                params: ({ context }) => ({
+                  type: 'llm.done' as const,
+                  entry: steeredAttemptEntry(context),
+                }),
+              },
+            ],
+          },
           'turn.abort': {
             target: 'aborted',
             actions: [
@@ -691,6 +741,10 @@ export function createTurnMachine(
           retryDelay: 'thinking',
         },
         on: {
+          'turn.interrupt': {
+            guard: ({ context, event }) => !steerAlreadyProduced(context, event.promptIds),
+            target: 'draining',
+          },
           'turn.abort': {
             target: 'aborted',
             actions: assign({ outcome: 'aborted' as const }),

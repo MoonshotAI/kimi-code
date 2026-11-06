@@ -43,6 +43,7 @@ import { ErrorCode } from '../protocol/error-codes';
 import { projectPromptContentParts } from '../services/messages/messageProjection';
 import {
   promptAbortResponseSchema,
+  promptInterruptResultSchema,
   promptListResponseSchema,
   promptSteerRequestSchema,
   promptSteerResultSchema,
@@ -447,6 +448,35 @@ export function registerPromptsRoutes(
     },
   );
   app.post(steerManyRoute.path, steerManyRoute.options, steerManyRoute.handler as Parameters<PromptRouteHost['post']>[2]);
+
+  const interruptRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/prompts::interrupt',
+      body: promptSteerRequestSchema,
+      params: sessionIdParamSchema,
+      success: { data: promptInterruptResultSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.PROMPT_NOT_FOUND]: {},
+      },
+      description: 'Interrupt the active step to consume accepted steers',
+      tags: ['prompts'],
+      operationId: 'interruptSteer',
+    },
+    async (req, reply) => {
+      try {
+        const { session_id } = req.params;
+        const resolved = await resolvePrompt(core, session_id);
+        await resolved.prompt.interrupt(req.body.prompt_ids);
+        reply.send(okEnvelope({ interrupted: true, prompt_ids: [...req.body.prompt_ids] }, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      }
+    },
+  );
+  app.post(interruptRoute.path, interruptRoute.options, interruptRoute.handler as Parameters<PromptRouteHost['post']>[2]);
 
   const actionRoute = defineRoute(
     {

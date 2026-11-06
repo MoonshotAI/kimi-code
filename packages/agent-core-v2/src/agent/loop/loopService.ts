@@ -420,6 +420,38 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     engine.steer(promptIds);
   }
 
+  async interrupt(promptIds: readonly string[]): Promise<void> {
+    if (this.disposing) throw abortError('Agent loop disposed');
+    if (promptIds.length === 0) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_ids must not be empty');
+    }
+    const active = this.active;
+    if (active === undefined || !active.prompt.tracked) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to interrupt');
+    }
+    const pending = new Set(
+      this.nudges
+        .slice(this.nudgeCursor)
+        .filter((nudge) => !nudge.dropped && !nudge.consumed)
+        .flatMap((nudge) => nudge.promptIds ?? []),
+    );
+    const ids = new Set(promptIds);
+    if (ids.size !== promptIds.length || ![...ids].every((id) => pending.has(id))) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more steers are not waiting to be inserted');
+    }
+    const turn = this.machineEngine().snapshot().turn;
+    const unsafe = turn?.phase === 'tool_call'
+      ? turn.activeToolCalls.find((call) => call.name !== 'WaitFor')
+      : undefined;
+    if (unsafe !== undefined) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        `Cannot interrupt while tool "${unsafe.name}" is running; wait for the current step to finish`,
+      );
+    }
+    this.machineEngine().interrupt(promptIds);
+  }
+
   promptHandle(id: string): PromptHandle | undefined {
     const waiter = this.promptWaiters.get(id);
     if (waiter === undefined) return undefined;
@@ -1066,6 +1098,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       number: stepOrdinal,
       uuid: randomUUID(),
       signal: turn.controller.signal,
+      started: false,
       contentAppended: false,
       entry: undefined,
       usage: undefined,
@@ -1539,6 +1572,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         const turn = this.active;
         const step = turn?.current;
         if (turn === undefined || step === undefined) return;
+        step.started = true;
         if (!turn.readyResolved) {
           turn.readyResolved = true;
           turn.ready.resolve();
@@ -1606,6 +1640,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         const turn = this.active;
         const step = turn?.current;
         if (turn === undefined || step === undefined) return;
+        if (!step.started) {
+          turn.current = undefined;
+          turn.interruptStep = undefined;
+          return;
+        }
         step.entry = event.entry;
         step.usage = event.usage;
         step.timing = event.timing;
@@ -1626,8 +1665,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         this.lastRequestId = this.activeRequestTrace?.requestId;
         const toolCalls = event.entry.message.toolCalls;
         if (toolCalls.length === 0) {
-          const finishReason = step.providerFinishReason ?? 'completed';
-          this.endOrInterruptMachineStep(turn, step, finishReason === 'tool_calls' ? 'other' : finishReason);
+          if (event.interrupted === true) {
+            this.endMachineStep(turn, step, 'other', 'interrupted');
+          } else {
+            const finishReason = step.providerFinishReason ?? 'completed';
+            this.endOrInterruptMachineStep(turn, step, finishReason === 'tool_calls' ? 'other' : finishReason);
+          }
         } else {
           step.pendingToolIds = new Set(toolCalls.map((call) => call.id));
         }
@@ -1926,8 +1969,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.endMachineStep(turn, step, finishReason);
   }
 
-  private endMachineStep(turn: ActiveTurn, step: MachineStepState, finishReason: FinishReason): void {
-    const normalized = normalizeFinishReason(finishReason);
+  private endMachineStep(
+    turn: ActiveTurn,
+    step: MachineStepState,
+    finishReason: FinishReason,
+    normalizedOverride?: string,
+  ): void {
+    const normalized = normalizedOverride ?? normalizeFinishReason(finishReason);
     const usage = step.usage ?? emptyUsage();
     turn.lastStopReason = finishReason;
     turn.current = undefined;
@@ -2373,6 +2421,7 @@ interface MachineStepState {
   readonly number: number;
   readonly uuid: string;
   readonly signal: AbortSignal;
+  started: boolean;
   contentAppended: boolean;
   entry: MachineStepEntry | undefined;
   usage: TokenUsage | undefined;
