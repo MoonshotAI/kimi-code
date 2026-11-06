@@ -99,5 +99,16 @@ export function createReminderHarness(
       entries.set(variant, provider as ContextInjectionProvider);
       return toDisposable(() => { entries.delete(variant); });
     },
+    notify: (content, notification) => {
+      context.append({
+        role: 'user',
+        content: [{ type: 'text', text: wrapSystemReminder(content) }],
+        origin: {
+          kind: 'injection',
+          variant: notification.variant,
+          ownerPromptId: notification.ownerPromptId,
+        },
+      });
+    },
   });
 }

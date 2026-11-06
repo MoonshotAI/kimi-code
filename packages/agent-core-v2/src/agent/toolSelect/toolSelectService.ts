@@ -6,6 +6,7 @@ import { IFlagService } from '#/app/flag/flag';
 import type { ToolDescription as Tool } from '#human/llm/message';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
@@ -54,6 +55,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   declare readonly _serviceBrand: undefined;
 
   private reconcileTail: Promise<void> = Promise.resolve();
+  private readonly notifiedUpdates = new Set<string>();
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
@@ -66,6 +68,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
+    @IAgentReminderService private readonly reminder: IAgentReminderService,
   ) {
     super();
     this.states.contributeState(toolSelectKey);
@@ -267,15 +270,22 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   private currentTools(): readonly ToolSelectTool[] {
     const state = this.modelState();
     if (state.initial !== undefined) return state.current;
-    return this.liveTools('initial');
+    return this.activeTools('initial');
   }
 
   private initialTools(): readonly ToolSelectTool[] {
-    return this.modelState().initial ?? this.liveTools('initial');
+    return this.modelState().initial ?? this.activeTools('initial');
+  }
+
+  private activeTools(origin: ToolSelectTool['origin']): readonly ToolSelectTool[] {
+    return this.toolRegistry.list()
+      .map((info) => normalizeTool(info, origin))
+      .toSorted((left, right) => left.name.localeCompare(right.name));
   }
 
   private liveTools(origin: ToolSelectTool['origin']): readonly ToolSelectTool[] {
-    return this.toolRegistry.list()
+    const live = this.toolRegistry.listLive?.() ?? this.toolRegistry.list();
+    return live
       .map((info) => normalizeTool(info, origin))
       .toSorted((left, right) => left.name.localeCompare(right.name));
   }
@@ -286,31 +296,48 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     const live = this.liveTools('initial');
     if (state.initial === undefined) {
       await this.dispatcher.dispatch(
-        new ToolSelectInitialized({ agentId: this.scopeContext.agentId, tools: live }),
+        new ToolSelectInitialized({ agentId: this.scopeContext.agentId, tools: this.activeTools('initial') }),
       );
+      this.notifyUpdatedTools(live, signal);
       return;
     }
-    const currentByName = new Map(state.current.map((tool) => [tool.name, tool]));
+    const current = state.current;
+    const currentNames = new Set(current.map((tool) => tool.name));
+    const active = this.activeTools('initial');
+    const activeNames = new Set(active.map((tool) => tool.name));
+    const removed = current.filter((tool) => !activeNames.has(tool.name));
+    const added = active.flatMap((tool) =>
+      currentNames.has(tool.name) ? [] : [{ ...tool, origin: 'runtime' as const }]);
+    if (added.length > 0 || removed.length > 0) {
+      signal?.throwIfAborted();
+      await this.dispatcher.dispatch(
+        new ToolSelectToolsChanged({
+          agentId: this.scopeContext.agentId,
+          added,
+          removed,
+        }),
+      );
+    }
+    this.notifyUpdatedTools(live, signal);
+  }
+
+  private notifyUpdatedTools(live: readonly ToolSelectTool[], signal?: AbortSignal): void {
     const liveByName = new Map(live.map((tool) => [tool.name, tool]));
-    const removed = state.current.filter((tool) => {
-      const next = liveByName.get(tool.name);
-      return next === undefined || toolSelectVersionSignature(next) !== toolSelectVersionSignature(tool);
-    });
-    const added = live.flatMap((tool) => {
-      const previous = currentByName.get(tool.name);
-      if (
-        previous !== undefined &&
-        toolSelectVersionSignature(previous) === toolSelectVersionSignature(tool)
-      ) {
-        return [];
+    for (const active of this.modelState().current) {
+      const next = liveByName.get(active.name);
+      if (next === undefined || toolSelectVersionSignature(next) === toolSelectVersionSignature(active)) {
+        continue;
       }
-      return [{ ...tool, origin: 'runtime' as const }];
-    });
-    if (added.length === 0 && removed.length === 0) return;
-    signal?.throwIfAborted();
-    await this.dispatcher.dispatch(
-      new ToolSelectToolsChanged({ agentId: this.scopeContext.agentId, added, removed }),
-    );
+      const signature = toolSelectVersionSignature(next);
+      if (this.notifiedUpdates.has(signature)) continue;
+      signal?.throwIfAborted();
+      this.notifiedUpdates.add(signature);
+      this.reminder.notify(
+        `Tool "${active.name}" has an update, but the update is not applied in this session. ` +
+          'Continue using the currently registered version.',
+        { variant: 'tool_update_pending' },
+      );
+    }
   }
 
   private defaultToolsForDisclosure(disclosure: boolean): readonly Tool[] {
