@@ -26,6 +26,42 @@ function extractDiffPaths(display?: { type: string; path?: string }[]): string[]
   return display.filter((block): block is DiffBlock => block.type === "diff" && typeof block.path === "string").map((block) => block.path);
 }
 
+let pendingTrackPaths = new Set<string>();
+let trackFilesTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function scheduleTrackFiles(paths: string[], delayMs = 150): void {
+  for (const path of paths) {
+    if (path) pendingTrackPaths.add(path);
+  }
+  if (trackFilesTimer !== null) {
+    clearTimeout(trackFilesTimer);
+  }
+  trackFilesTimer = setTimeout(() => {
+    flushTrackFiles();
+  }, delayMs);
+}
+
+export function flushTrackFiles(): void {
+  if (trackFilesTimer !== null) {
+    clearTimeout(trackFilesTimer);
+    trackFilesTimer = null;
+  }
+  if (pendingTrackPaths.size === 0) {
+    return;
+  }
+  const paths = Array.from(pendingTrackPaths);
+  pendingTrackPaths.clear();
+  void bridge.trackFiles(paths);
+}
+
+export function clearTrackFilesBatch(): void {
+  if (trackFilesTimer !== null) {
+    clearTimeout(trackFilesTimer);
+    trackFilesTimer = null;
+  }
+  pendingTrackPaths.clear();
+}
+
 function getLastAssistant(draft: ChatState): ChatMessage | undefined {
   const last = draft.messages.at(-1);
   return last?.role === "assistant" ? last : undefined;
@@ -228,7 +264,7 @@ function applyEventToSteps(steps: UIStep[], event: { type: string; payload: any 
 
       const paths = extractDiffPaths(result.return_value.display);
       if (paths.length > 0) {
-        void bridge.trackFiles(paths);
+        scheduleTrackFiles(paths);
       }
 
       break;

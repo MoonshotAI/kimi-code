@@ -118,6 +118,7 @@ const trackFiles: Handler<PathsParams, FileChange[]> = async ({ paths }, ctx) =>
     const resolved = await resolveWorkspaceFile(workDirUri, filePath, true);
     if (resolved !== undefined) ctx.fileManager.trackFile(ctx.webviewId, resolved.uri.fsPath);
   }
+  ctx.fileManager.cancelScheduledRefresh(ctx.webviewId);
   const changes = await ctx.baselineManager.getChanges(session);
   ctx.broadcast(Events.FileChangesUpdated, changes, ctx.webviewId);
   return changes;
