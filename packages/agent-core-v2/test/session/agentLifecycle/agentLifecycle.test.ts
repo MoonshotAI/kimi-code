@@ -12,6 +12,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import '#/agent/profile/profileService';
 import { ProfileBind } from '#/agent/profile/profileOps';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
+import { TOWER_WORKER_PROFILE_DEF } from '#/features/tower/workerProfile';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
@@ -483,7 +484,8 @@ describe('AgentLifecycleService', () => {
     ix.stub(ISessionAgentProfileCatalog, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
-      get: () => undefined,
+      get: (name: string) =>
+        name === TOWER_WORKER_PROFILE ? TOWER_WORKER_PROFILE_DEF : undefined,
       getDefault: () => {
         throw new Error('catalog resolution is not expected');
       },

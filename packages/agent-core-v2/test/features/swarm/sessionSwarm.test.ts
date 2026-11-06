@@ -39,6 +39,7 @@ import {
   type AgentMeta,
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentEnvironmentBindingService } from '#/agent/environmentBinding/environmentBinding';
 import { IAgentTaskService, type RegisterAgentTaskOptions } from '#/agent/task/task';
@@ -1099,6 +1100,10 @@ describe('SessionSwarmService metadata compatibility', () => {
 
     ix.stub(IAgentLifecycleService, lifecycle);
     ix.stub(ISessionSubagentService, subagents);
+    ix.stub(ISessionAgentProfileCatalog, {
+      _serviceBrand: undefined,
+      get: () => undefined,
+    } as unknown as ISessionAgentProfileCatalog);
     ix.stub(ISessionMetadata, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),

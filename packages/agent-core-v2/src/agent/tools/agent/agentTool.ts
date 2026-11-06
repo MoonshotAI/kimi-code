@@ -18,8 +18,6 @@ import {
 } from '#/agent/task/task';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import type { ThinkingConfig } from '#/llm-adapter/model/thinking';
-import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import {
   isToolActive as evaluateToolActive,
@@ -46,13 +44,15 @@ import {
 import { isToolAvailable } from '#/agent/toolActivation/toolAvailability';
 import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
 import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import {
+  hasPinnedPermissionMode,
+  ISessionAgentProfileCatalog,
+} from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import {
   subagentAllowlistFor,
   withoutDelegatingTargets,
 } from '#/app/agentProfileCatalog/profile-shared';
 import { ILogService } from '#/_base/log/log';
-import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -80,7 +80,7 @@ import {
   formatSubagentTimeoutDescription,
   resolveSubagentBinding,
   resolveSubagentModelPool,
-  resolveSubagentThinking,
+  resolveResumedSubagentThinking,
   resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
   stripSubagentModelParameter,
@@ -352,10 +352,7 @@ export class SubagentTool implements ISubagentTool {
         try {
           await targetProfile.setModel(binding.model);
           const model = this.modelCatalog.get(binding.model);
-          const thinking =
-            this.config.get<ThinkingConfig>(THINKING_SECTION)?.enabled === false
-              ? 'off'
-              : resolveSubagentThinking(this.config, model, binding.thinking);
+          const thinking = resolveResumedSubagentThinking(this.config, model, binding.thinking);
           if (thinking !== undefined) targetProfile.setThinking(thinking);
         } catch (error) {
           throw wrapSubagentModelError(error, binding.model, own.modelAlias);
@@ -469,7 +466,8 @@ export class SubagentTool implements ISubagentTool {
         details: { agentId },
       });
     }
-    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentProfileService).data().profileName)) {
+    const rebuiltProfileName = rebuilt.accessor.get(IAgentProfileService).data().profileName;
+    if (!hasPinnedPermissionMode(this.catalog, rebuiltProfileName)) {
       rebuilt.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
     }
     this.log.info('subagent rebuilt for resume', { agentId, callerAgentId: this.callerAgentId });

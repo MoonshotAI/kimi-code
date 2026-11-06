@@ -31,3 +31,10 @@ export interface ISessionAgentProfileCatalog {
 
 export const ISessionAgentProfileCatalog =
   createDecorator<ISessionAgentProfileCatalog>('sessionAgentProfileCatalog');
+
+export function hasPinnedPermissionMode(
+  catalog: ISessionAgentProfileCatalog,
+  profileName: string | undefined,
+): boolean {
+  return profileName !== undefined && catalog.get(profileName)?.pinnedPermissionMode === true;
+}

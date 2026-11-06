@@ -116,6 +116,7 @@ import {
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../agent/agentContext/stubs';
 import { TOWER_WORKER_PROFILE } from '#/features/tower/tower';
+import { TOWER_WORKER_PROFILE_DEF } from '#/features/tower/workerProfile';
 
 const signal = new AbortController().signal;
 
@@ -623,6 +624,14 @@ function discoveredCatalog(): ISessionAgentProfileCatalog {
     },
     load: async () => {},
     reload: async () => {},
+  };
+}
+
+function catalogWithProfile(profile: AgentProfile): ISessionAgentProfileCatalog {
+  const catalog = discoveredCatalog();
+  return {
+    ...catalog,
+    get: (name) => (name === profile.name ? profile : catalog.get(name)),
   };
 }
 
@@ -3154,6 +3163,10 @@ describe('Agent tool execution contract', () => {
         sessionMetadataStub({
           'agent-existing': { labels, forkedFrom: 'main' },
         }),
+      ),
+      sessionService(
+        ISessionAgentProfileCatalog,
+        catalogWithProfile(TOWER_WORKER_PROFILE_DEF),
       ),
       {
         initialConfig: {
