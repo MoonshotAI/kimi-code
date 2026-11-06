@@ -42,6 +42,17 @@ describe('activateSkill', () => {
 
     await expect(ctx.rpc.activateSkill({ name: 'missing' })).rejects.toThrow(/not found/i);
   });
+
+  it('keeps the caller prompt id on the activation message', async () => {
+    ctx = agentWithCommitSkill();
+    ctx.mockNextResponse({ type: 'text', text: 'committed' });
+
+    await ctx.rpc.activateSkill({ name: 'commit', promptId: 'msg_activation' });
+    await ctx.untilTurnEnd();
+
+    const activation = ctx.context.get().find((message) => message.origin?.kind === 'skill_activation');
+    expect(activation?.id).toBe('msg_activation');
+  });
 });
 
 describe('promptWithSkills', () => {
@@ -138,6 +149,21 @@ describe('promptWithSkills', () => {
     ).toEqual(['review', 'security']);
     const started = events[2]?.args as { readonly prompt?: string };
     expect(started.prompt).toBe('Review this change.');
+  });
+
+  it('uses the caller prompt id for the bundled submission', async () => {
+    ctx = agentWithSkills();
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+    const launched = await ctx.rpc.promptWithSkills({
+      input: [{ type: 'text', text: 'Review this change.' }],
+      promptId: 'msg_bundled',
+      skills: [{ name: 'review' }],
+    });
+    await ctx.untilTurnEnd();
+
+    expect(launched.prompt_id).toBe('msg_bundled');
+    expect(ctx.context.get().find((message) => message.origin?.kind === 'user')?.id).toBe('msg_bundled');
   });
 
   it('steers the bundled submission into the running turn without starting a new one', async () => {

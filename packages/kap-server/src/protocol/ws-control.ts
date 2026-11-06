@@ -1,8 +1,19 @@
 import { z } from 'zod';
 
 import { isoDateTimeSchema } from '@moonshot-ai/agent-core-v2/_base/utils/isoDateTime';
-import { transcriptGradeSpecSchema, transcriptSeqSchema } from '@moonshot-ai/transcript';
 
+import {
+  itemDeltaMessageSchema,
+  itemMessageSchema,
+  itemRemovedMessageSchema,
+  itemUpdatedMessageSchema,
+  noticeMessageSchema,
+  turnMessageSchema,
+  turnUpdatedMessageSchema,
+  turnsFailedMessageSchema,
+  turnsMessageSchema,
+  turnsRemovedMessageSchema,
+} from './conversation';
 import { pushEventSchema } from './events-zod';
 import { interactionEventMessageSchema } from './interaction';
 import {
@@ -84,8 +95,7 @@ export const clientHelloAckMessageSchema = wsAckEnvelopeSchema(clientHelloAckPay
 
 export const subscribeV2PayloadSchema = z.object({
   session_id: z.string().min(1),
-  transcript: transcriptGradeSpecSchema,
-  transcript_since: z.record(z.string(), transcriptSeqSchema).optional(),
+  agent_ids: z.array(z.string().min(1)).min(1).optional(),
 });
 
 export const subscribeV2MessageSchema = z.object({
@@ -225,7 +235,7 @@ export const clientControlOperations = [
     messageSchema: subscribeV2MessageSchema,
     ackSchema: subscribeV2AckMessageSchema,
     description:
-      "Attach or update this connection's per-agent transcript grade stream for one session.",
+      'Start receiving agents of one session (agent_ids defaults to the main agent). Every newly added agent first gets a turns frame with its latest page, or turns.failed when its conversation cannot be loaded, then turn, item and notice frames. When the session itself cannot be opened, the ack carries the error code (40401 lists the session in not_found) and nothing is subscribed.',
   },
   {
     type: 'unsubscribe_v2',
@@ -234,7 +244,7 @@ export const clientControlOperations = [
     messageSchema: unsubscribeV2MessageSchema,
     ackSchema: unsubscribeV2AckMessageSchema,
     description:
-      "Detach this connection's transcript grade stream for one session, optionally per agent.",
+      'Stop receiving agents of one session; without agent_ids the whole session is dropped.',
   },
   {
     type: 'abort',
@@ -362,7 +372,7 @@ export const agentEventOperation = {
   kind: 'event',
   messageSchema: agentEventMessageSchema,
   description:
-    'Status, model, thinking effort, permission mode and plan / swarm / tower mode switches of one subscribed agent, sent when a connection starts receiving that agent and on every change; it replaces the client copy.',
+    'Status (idle, running or compacting), model, thinking effort, permission mode and plan / swarm / tower mode switches of one subscribed agent, sent when a connection starts receiving that agent and on every change; it replaces the client copy. Request retries ride on the running turn.',
 } as const satisfies WsOperationDefinition;
 
 export const usageEventOperation = {
@@ -392,6 +402,88 @@ export const todoEventOperation = {
     'Todo list of one subscribed agent, sent when a connection starts receiving that agent and on every change, including undo; it replaces the client list.',
 } as const satisfies WsOperationDefinition;
 
+export const conversationEventOperations = [
+  {
+    type: 'turns',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: turnsMessageSchema,
+    description:
+      'Latest page of turns of an agent, sent when a connection starts receiving that agent, including after a reconnect; it replaces the client copy of those turns. Older pages come from GET /sessions/{session_id}/agents/{agent_id}/turns.',
+  },
+  {
+    type: 'turns.removed',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: turnsRemovedMessageSchema,
+    description:
+      'Turns that left the conversation of an agent, in ordinal order: the undone turns after an undo, matching removed_turn_ids of the undo response, or every turn after a context clear. The client removes them by turn_id.',
+  },
+  {
+    type: 'turns.failed',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: turnsFailedMessageSchema,
+    description:
+      'The conversation of a subscribed agent could not be loaded; code and msg say why. The agent stays subscribed, and a later turns frame replaces the failure.',
+  },
+  {
+    type: 'turn',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: turnMessageSchema,
+    description:
+      'turn.started or turn.ended with the turn without its items; it replaces the client copy of the turn and keeps its items. turn.ended is sent again when an ended turn is corrected.',
+  },
+  {
+    type: 'turn.updated',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: turnUpdatedMessageSchema,
+    description:
+      'A step of a running turn ended (step, written into steps by index) or its retry state changed; retry replaces the client copy and an absent retry clears it.',
+  },
+  {
+    type: 'item',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: itemMessageSchema,
+    description:
+      'item.started or item.ended with the full item; it replaces the client copy of the item with the same item_id. item.ended is sent once per item, again only for a later authoritative replacement.',
+  },
+  {
+    type: 'item.updated',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: itemUpdatedMessageSchema,
+    description: 'Fields of a running tool_call item that changed; set is merged shallowly into the client copy.',
+  },
+  {
+    type: 'item.delta',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: itemDeltaMessageSchema,
+    description:
+      'Text appended to field of a running item: text of assistant_message and reasoning, input_text and output of tool_call.',
+  },
+  {
+    type: 'item.removed',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: itemRemovedMessageSchema,
+    description:
+      'A running item that will not be finished, for example after a request retry restarts the step.',
+  },
+  {
+    type: 'notice',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: noticeMessageSchema,
+    description:
+      'Live warning or error raised by an agent, such as a context compaction that did not finish; not part of the turns and not sent again on subscribe.',
+  },
+] as const satisfies readonly WsOperationDefinition[];
+
 export const wsOperations = [
   ...clientControlOperations,
   ...serverSystemOperations,
@@ -404,6 +496,7 @@ export const wsOperations = [
   usageEventOperation,
   goalEventOperation,
   todoEventOperation,
+  ...conversationEventOperations,
 ] as const satisfies readonly WsOperationDefinition[];
 
 export function getClientControlOperation(

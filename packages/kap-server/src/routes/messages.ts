@@ -5,7 +5,7 @@ import { getMessageResponseSchema, listMessagesResponseSchema } from '../protoco
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
-import { requestLog } from '../lib/requestLog';
+import { sendMappedError as sendSessionMappedError } from './sessionErrors';
 import { defineRoute } from '../middleware/defineRoute';
 import {
   getMessage,
@@ -65,6 +65,7 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'List messages for a session',
       tags: ['messages'],
@@ -95,6 +96,7 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.MESSAGE_NOT_FOUND]: {},
+        [ErrorCode.WIRE_VERSION_TOO_LOW]: {},
       },
       description: 'Get a message by ID',
       tags: ['messages'],
@@ -122,7 +124,6 @@ function sendMappedError(
   err: unknown,
 ): void {
   const requestId = req.id;
-  const log = requestLog(req);
   if (err instanceof SessionNotFoundError) {
     reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
     return;
@@ -131,8 +132,5 @@ function sendMappedError(
     reply.send(errEnvelope(ErrorCode.MESSAGE_NOT_FOUND, err.message, requestId, err.stack));
     return;
   }
-  log?.error({ err }, 'message request failed');
-  reply.send(
-    errEnvelope(ErrorCode.INTERNAL_ERROR, err instanceof Error ? err.message : String(err), requestId, err instanceof Error ? err.stack : undefined),
-  );
+  sendSessionMappedError(reply, req, err);
 }

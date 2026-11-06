@@ -10,6 +10,7 @@ import {
   wipeStoreDir,
   type BatchInputOp,
 } from '@moonshot-ai/minidb';
+import type { WireRecord } from '@moonshot-ai/agent-core-v2/wire/record';
 
 import { GlobalSearchError, type GlobalSearchIncomplete } from './contract.ts';
 import {
@@ -80,6 +81,54 @@ function syncBudgetExhausted(budget: SyncRoundBudget): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function assertSearchWireReaderVersion(line: string): void {
+  let record: WireRecord;
+  try {
+    record = JSON.parse(line) as WireRecord;
+  } catch {
+    throw new TypeError('Agent wire metadata is malformed');
+  }
+  if (record === null || typeof record !== 'object' || Array.isArray(record)) {
+    throw new TypeError('Agent wire metadata is malformed');
+  }
+  if (record.type !== 'metadata') return;
+  const protocolVersion = record['protocol_version'];
+  const createdAt = record['created_at'];
+  const minReaderVersion = record['min_protocol_version'];
+  if (typeof protocolVersion !== 'string' || typeof createdAt !== 'number') {
+    throw new TypeError('Agent wire metadata is malformed');
+  }
+  if (minReaderVersion === undefined) return;
+  if (typeof minReaderVersion !== 'string' || !/^\d+(\.\d+)*$/.test(minReaderVersion)) {
+    throw new TypeError('Agent wire metadata is malformed');
+  }
+  const current = SEARCH_WIRE_PROTOCOL_VERSION.split('.');
+  const required = minReaderVersion.split('.');
+  for (let index = 0; index < Math.max(current.length, required.length); index++) {
+    const diff = Number(current[index] ?? '0') - Number(required[index] ?? '0');
+    if (diff < 0) {
+      const error = new Error(
+        `This wire.jsonl requires reader protocol ${minReaderVersion}; current Kimi Code supports ${SEARCH_WIRE_PROTOCOL_VERSION}. Upgrade Kimi Code to read this session.`,
+      ) as Error & { code: string };
+      error.code = 'wire.version_too_low';
+      throw error;
+    }
+    if (diff > 0) return;
+  }
+}
+
+const SEARCH_WIRE_PROTOCOL_VERSION = '1.5';
+
+function isSearchWireCompatibilityError(error: unknown): boolean {
+  if (error instanceof TypeError && error.message === 'Agent wire metadata is malformed') return true;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'wire.version_too_low'
+  );
 }
 
 async function sessionDirectoryIdentity(dir: string): Promise<string | undefined> {
@@ -975,14 +1024,22 @@ export class SearchIndexCore {
           pending = EMPTY_BUFFER;
           const lineOffset = byteCursor;
           byteCursor += lineBuf.length + 1;
-          ({ turnState, stepState } = this.collectWireLine(
-            ops,
-            summary,
-            file,
-            lineBuf.toString('utf8'),
-            lineOffset,
-            { turnState, stepState },
-          ));
+          try {
+            ({ turnState, stepState } = this.collectWireLine(
+              ops,
+              summary,
+              file,
+              lineBuf.toString('utf8'),
+              lineOffset,
+              { turnState, stepState },
+            ));
+          } catch (error) {
+            if (isSearchWireCompatibilityError(error)) {
+              wireError = error;
+              break;
+            }
+            throw error;
+          }
           completedRecord = true;
           start = nl + 1;
         }
@@ -1005,6 +1062,12 @@ export class SearchIndexCore {
       await handle.close();
     }
 
+    if (isSearchWireCompatibilityError(wireError)) {
+      await this.deleteFileDocs(db, fileMeta(0, initialTurnState(), initialStepState()));
+      await db.del(metaKey);
+      if (legacyKey !== null) await db.del(legacyKey);
+      return { truncated: false, failed: true, error: errorMessage(wireError) };
+    }
     const truncated = position < size && syncBudgetExhausted(budget);
     if (byteCursor !== offset || legacyKey !== null) {
       ops.push({ op: 'set', key: metaKey, value: fileMeta(byteCursor, turnState, stepState) });
@@ -1027,6 +1090,9 @@ export class SearchIndexCore {
     counters: { turnState: TurnCounterState; stepState: StepTrackerState },
   ): { turnState: TurnCounterState; stepState: StepTrackerState } {
     let { turnState, stepState } = counters;
+    if (lineOffset === 0) {
+      assertSearchWireReaderVersion(line);
+    }
     const analysis = analyzeWireLine(line);
     const advanced = advanceTurnCounter(turnState, analysis.turn);
     if (

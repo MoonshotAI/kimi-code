@@ -571,6 +571,25 @@ export interface SessionStartedEvent {
   experimental_flags: string;
 }
 
+export interface SessionTitleGenerationFinishedEvent {
+  trigger: 'auto' | 'manual';
+  source: 'user_prompts' | 'first_turn' | 'digest';
+  outcome: 'success' | 'unavailable' | 'error';
+  duration_ms: number;
+  reason?:
+    | 'custom_title'
+    | 'no_agent'
+    | 'no_input'
+    | 'provider_unavailable'
+    | 'token_unavailable'
+    | 'oauth_unavailable'
+    | 'request_failed'
+    | 'unexpected';
+  error_type?: string;
+  title_chars?: number;
+  title_outcome?: 'ok' | 'truncated';
+}
+
 export interface SessionLoadFailedEvent {
   reason: string;
 }
@@ -1399,6 +1418,20 @@ export const telemetryEventDefinitions = {
       resumed: 'Whether the session was resumed from disk',
       experimental_flags:
         'Sorted comma-separated ids of enabled experimental flags, empty when none are enabled',
+    },
+  }),
+  session_title_generation_finished: defineTelemetryEvent<SessionTitleGenerationFinishedEvent>({
+    owner: 'kimi-code',
+    comment: 'An actual session title generation attempt reaches a terminal result.',
+    properties: {
+      trigger: 'Automatic or explicitly forced manual generation',
+      source: 'Conversation excerpt used for generation',
+      outcome: 'Generation result; skipped calls for existing titles are not recorded',
+      duration_ms: 'Wall-clock time from the generation attempt to its terminal result',
+      reason: 'Bounded unavailable or error category',
+      error_type: 'Error class name for an unexpected failure',
+      title_chars: 'Applied title length in UTF-16 code units; the title text is not recorded',
+      title_outcome: 'Whether the generated title was truncated before being applied',
     },
   }),
   session_load_failed: defineTelemetryEvent<SessionLoadFailedEvent>({

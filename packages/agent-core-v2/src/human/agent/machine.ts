@@ -95,6 +95,7 @@ export type AgentEvent =
   | { type: 'turn.drain' }
   | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
   | { type: 'step.started'; step: number }
+  | { type: 'step.stream_reset' }
   | { type: 'store.ready'; state: AgentStoreState; branch: string }
   | { type: 'store.changed'; state: AgentStoreState }
   | { type: 'store.reset'; state: AgentStoreState; branch: string }
@@ -107,6 +108,7 @@ export type AgentEmitted =
   | ToolEvent
   | { type: 'turn.started'; turnId: number; branchId: string; queueItemId?: string; entry?: UserEntry }
   | { type: 'step.started'; step: number }
+  | { type: 'step.stream_reset' }
   | { type: 'turn.aborting' }
   | { type: 'turn.reminders_consumed'; reminders: HistoryMessage[] }
   | { type: 'turn.done'; messages: HistoryMessage[]; branchId: string }
@@ -868,6 +870,9 @@ export function createAgentMachine({
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
           'step.started': {
+            actions: [emit(({ event }) => event), 'forwardToParent'],
+          },
+          'step.stream_reset': {
             actions: [emit(({ event }) => event), 'forwardToParent'],
           },
           'llm.streaming.*': {

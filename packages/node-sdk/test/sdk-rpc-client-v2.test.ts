@@ -74,6 +74,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
+import { CapabilityService } from '@moonshot-ai/agent-core-v2/app/capability/capabilityService';
 import { ISessionAgentProfileCatalog } from '@moonshot-ai/agent-core-v2/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { attachmentFileSource } from '@moonshot-ai/agent-core-v2/agent/tools/fileReadSource';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
@@ -173,6 +174,36 @@ async function findSessionDir(homeDir: string, sessionId: string): Promise<strin
 }
 
 describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
+  it('forwards process-stop authorization through harness and session capability installs', async () => {
+    const status = {
+      id: 'kimi-cu' as const,
+      displayName: 'Kimi Computer Use',
+      description: 'Computer operations on Windows',
+      supported: true,
+      state: 'partial' as const,
+      steps: [],
+      install: { running: false, confirmationRequired: 'stop-processes' as const },
+    };
+    const install = vi.spyOn(CapabilityService.prototype, 'installCapability').mockResolvedValue(status);
+    const { harness, homeDir } = await makeHarness();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const session = new Session({ id: 'capability-test', workDir: homeDir, rpc: client });
+    try {
+      for (const api of [harness, session]) {
+        expect(await api.installCapability('kimi-cu')).toMatchObject({
+          install: { confirmationRequired: 'stop-processes' },
+        });
+        expect(install).toHaveBeenLastCalledWith('kimi-cu', undefined);
+        await api.installCapability('kimi-cu', { stopRunningProcesses: true });
+        expect(install).toHaveBeenLastCalledWith('kimi-cu', { stopRunningProcesses: true });
+      }
+    } finally {
+      install.mockRestore();
+      await client.close();
+      await harness.close();
+    }
+  });
+
   it('loads explicit agent files for native print sessions', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-'));
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-print-work-'));
@@ -692,34 +723,18 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     });
 
     const message = '<html><title>Backend title</title><body>Backend body</body></html>\r\n';
-    expect(toKimiErrorPayload(new APIStatusError(502, message))).toMatchObject({
+    expect(toKimiErrorPayload(new APIStatusError(502, message, true))).toMatchObject({
       message,
     });
 
-    const retryableClientError = new APIStatusError(
-      400,
-      'explicitly retryable',
-      null,
-      null,
-      undefined,
-      undefined,
-      true,
-    );
+    const retryableClientError = new APIStatusError(400, 'explicitly retryable', true);
     expect(toKimiErrorPayload(retryableClientError)).toMatchObject({
       code: ErrorCodes.PROVIDER_API_ERROR,
       message: 'explicitly retryable',
       retryable: true,
     });
 
-    const deterministicServerError = new APIStatusError(
-      503,
-      'explicitly deterministic',
-      null,
-      null,
-      undefined,
-      undefined,
-      false,
-    );
+    const deterministicServerError = new APIStatusError(503, 'explicitly deterministic', false);
     expect(toKimiErrorPayload(deterministicServerError)).toMatchObject({
       code: ErrorCodes.PROVIDER_API_ERROR,
       message: 'explicitly deterministic',
@@ -1573,18 +1588,57 @@ key = "${titleOAuthRef.key}"
         source: "session 'source-a'",
       });
       await client.closeSession({ sessionId: 'ses_resume_fail' });
-      // Malform the wire's metadata record: the engine's cold restore throws,
-      // while the index entry (and thus the overlapped fold's wire path)
-      // stays intact.
+      // Require a newer reader: the engine's cold restore throws, while the
+      // index entry (and thus the overlapped fold's wire path) stays intact.
       const sessionDir = await findSessionDir(homeDir, 'ses_resume_fail');
+      const mainWirePath = join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl');
       await writeFile(
-        join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl'),
-        '{"type":"metadata"}\n',
+        mainWirePath,
+        '{"type":"metadata","protocol_version":"9.9","created_at":1,"min_protocol_version":"9.9"}\n',
         'utf-8',
       );
-      await expect(client.resumeSession({ id: 'ses_resume_fail' })).rejects.toThrow(
-        'Agent wire metadata is malformed',
+      const mainFailure = await client.resumeSession({ id: 'ses_resume_fail' }).catch((error: unknown) => error);
+      expect(isKimiError(mainFailure)).toBe(true);
+      expect(mainFailure).toMatchObject({ code: ErrorCodes.WIRE_VERSION_TOO_LOW });
+      expect(toKimiErrorPayload(mainFailure)).toMatchObject({
+        code: ErrorCodes.WIRE_VERSION_TOO_LOW,
+        message: expect.stringContaining('Upgrade Kimi Code'),
+      });
+      await expect(client.reloadSession({ sessionId: 'ses_resume_fail' })).rejects.toMatchObject({
+        code: ErrorCodes.WIRE_VERSION_TOO_LOW,
+      });
+      await expect(
+        client.renameSession({ id: 'ses_resume_fail', title: 'incompatible' }),
+      ).rejects.toMatchObject({ code: ErrorCodes.WIRE_VERSION_TOO_LOW });
+
+      await writeFile(
+        mainWirePath,
+        '{"type":"metadata","protocol_version":"1.5","created_at":1,"min_protocol_version":"1.5"}\n',
+        'utf-8',
       );
+      const subagentDir = join(sessionDir, 'agents', 'sub-incompatible');
+      await mkdir(subagentDir, { recursive: true });
+      await writeFile(
+        join(subagentDir, 'wire.jsonl'),
+        '{"type":"metadata","protocol_version":"9.9","created_at":1,"min_protocol_version":"9.9"}\n',
+        'utf-8',
+      );
+      await expect(
+        client.resumeSession({ id: 'ses_resume_fail', includeSubagents: true }),
+      ).rejects.toMatchObject({ code: ErrorCodes.WIRE_VERSION_TOO_LOW });
+      await expect(client.getStatus({ sessionId: 'ses_resume_fail' })).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+      const [successful, failed] = await Promise.allSettled([
+        client.resumeSession({ id: 'ses_resume_fail' }),
+        client.resumeSession({ id: 'ses_resume_fail', includeSubagents: true }),
+      ]);
+      expect(successful.status).toBe('fulfilled');
+      expect(failed.status).toBe('rejected');
+      expect(failed).toMatchObject({
+        reason: { code: ErrorCodes.WIRE_VERSION_TOO_LOW },
+      });
+      await expect(client.getStatus({ sessionId: 'ses_resume_fail' })).resolves.toBeDefined();
       // The abandoned fold promise must settle quietly.
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(unhandled).toEqual([]);

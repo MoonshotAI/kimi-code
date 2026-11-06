@@ -119,7 +119,7 @@ describe('server-v2 GET /api/v1/connections', () => {
       send(ws, {
         type: 'subscribe_v2',
         id: 's1',
-        payload: { session_id: sessionId, transcript: { '*': 'turn' } },
+        payload: { session_id: sessionId },
       });
       await vi.waitFor(async () => {
         expect((await listConnections())[0]?.subscriptions).toContain(sessionId);

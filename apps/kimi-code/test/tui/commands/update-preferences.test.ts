@@ -29,6 +29,7 @@ describe('update preference commands', () => {
           editorCommand: null,
           notifications: { enabled: true, condition: 'unfocused' as const },
           upgrade: { autoInstall: true },
+          transcript: { groupTools: 'auto' as const, groupThinking: true as const },
         },
         theme: { palette: darkColors },
       },
@@ -50,6 +51,7 @@ describe('update preference commands', () => {
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
       markdown: { mermaid: 'final' },
+      transcript: { groupTools: 'auto', groupThinking: true },
     });
     expect(setAppState).toHaveBeenCalledWith({ upgrade: { autoInstall: false } });
     expect(track).toHaveBeenCalledWith('upgrade_preference_changed', { auto_install: false });
