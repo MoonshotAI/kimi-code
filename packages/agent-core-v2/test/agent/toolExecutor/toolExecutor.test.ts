@@ -399,6 +399,39 @@ describe('AgentToolExecutorService', () => {
     expect(inner.calls[0]?.args).toEqual({ value: 1, model: 'fast' });
   });
 
+  it('normalizes offset and limit aliases for Read tool before schema validation', async () => {
+    const readTool = new TestTool('Read', {
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          line_offset: { type: 'number' },
+          n_lines: { type: 'number' },
+        },
+        required: ['path'],
+        additionalProperties: false,
+      },
+    });
+    registry.register(readTool);
+
+    const results = await execute([
+      toolCall('call_read_alias', 'Read', {
+        path: 'src/main.swift',
+        offset: 100,
+        limit: 40,
+        description_note: 'inspecting main logic',
+      }),
+    ]);
+
+    expect(results).toEqual([expect.objectContaining({ stopTurn: false })]);
+    expect(readTool.calls).toHaveLength(1);
+    expect(readTool.calls[0]?.args).toEqual({
+      path: 'src/main.swift',
+      line_offset: 100,
+      n_lines: 40,
+    });
+  });
+
   it('routes malformed JSON args through schema validation', async () => {
     const tool = new TestTool('strict', {
       parameters: {
