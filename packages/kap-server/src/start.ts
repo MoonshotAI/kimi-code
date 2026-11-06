@@ -558,7 +558,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
     if (opts.disableAuth !== true) {
       const source = req.socket.remoteAddress ?? '';
-      if (authFailureLimiter?.isBanned(source) === true) {
+      const releaseAttempt = authFailureLimiter?.reserve(source);
+      if (authFailureLimiter !== undefined && releaseAttempt === undefined) {
         logger.warn(
           { remoteAddress: req.socket.remoteAddress, path: url, reason: 'auth_rate_limited' },
           'ws upgrade rejected',
@@ -588,8 +589,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           ok = false;
         }
       }
+      if (!ok) authFailureLimiter?.recordFailure(source);
+      releaseAttempt?.();
       if (!ok) {
-        authFailureLimiter?.recordFailure(source);
         logger.warn(
           {
             remoteAddress: req.socket.remoteAddress,

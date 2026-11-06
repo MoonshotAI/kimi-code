@@ -24,7 +24,7 @@ All `/api/*` paths (including `/openapi.json` and `/asyncapi.json`) require the 
 
 How to carry it: REST uses the `Authorization: Bearer <token>` header; the WebSocket upgrade accepts the same header or the subprotocol `kimi-code.bearer.<token>`. Token generation and rotation are covered in [Using Kimi Code in the browser: Getting started](../guides/web.md#getting-started).
 
-Failed authentication returns HTTP 401 with envelope code `40101`. On non-loopback binds, a source that fails authentication 10 times within 60 seconds is banned for 60 seconds, during which every request gets HTTP 429 (code `42901`).
+Failed authentication returns HTTP 401 with envelope code `40101`. On non-loopback binds, a source that fails authentication 10 times within 60 seconds is banned for 60 seconds, during which every request gets HTTP 429 (code `42901`). WebSocket upgrades count toward the same limit, including attempts still being checked, and a refused upgrade gets only the status code (401, 403, or 429) with no envelope body.
 
 ### Response envelope
 

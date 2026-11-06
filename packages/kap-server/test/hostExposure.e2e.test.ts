@@ -132,7 +132,7 @@ describe('real password path (verifyPassword)', () => {
 });
 
 describe('auth-failure rate limit on a real bind', () => {
-  async function bootLimited(): Promise<RunningServer> {
+  async function bootLimited(validationDelayMs = 0): Promise<RunningServer> {
     const home = await tmpHome();
     const server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -144,7 +144,10 @@ describe('auth-failure rate limit on a real bind', () => {
       authTokenService: {
         _serviceBrand: undefined,
         getToken: () => 'persistent-token',
-        isValid: async (candidate) => candidate === 'persistent-token',
+        isValid: async (candidate) => {
+          if (validationDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, validationDelayMs));
+          return candidate === 'persistent-token';
+        },
       },
     });
     running.push(server);
@@ -196,6 +199,15 @@ describe('auth-failure rate limit on a real bind', () => {
       headers: { authorization: 'Bearer persistent-token' },
     });
     expect(res.status).toBe(429);
+  });
+
+  it('limits a concurrent burst of WebSocket upgrades still being validated', async () => {
+    const server = await bootLimited(300);
+    const statuses = await Promise.all(
+      Array.from({ length: 15 }, () => upgradeStatus(server.port, 'wrong')),
+    );
+    expect(statuses.filter((status) => status === 401)).toHaveLength(10);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(5);
   });
 
   it('refuses WebSocket upgrades from a source banned by failed HTTP requests', async () => {

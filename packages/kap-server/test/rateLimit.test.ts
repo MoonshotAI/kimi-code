@@ -189,4 +189,40 @@ describe('createAuthFailureLimiter (unit)', () => {
       limiter.dispose();
     }
   });
+
+  it('counts unreleased reservations toward the limit', () => {
+    const limiter = createAuthFailureLimiter({ maxFailures: 3, windowMs: 60_000, banMs: 60_000 });
+    try {
+      const releases = [limiter.reserve(IP_A), limiter.reserve(IP_A), limiter.reserve(IP_A)];
+      expect(releases.every((release) => release !== undefined)).toBe(true);
+      expect(limiter.reserve(IP_A)).toBeUndefined();
+      expect(limiter.reserve(IP_B)).toBeDefined();
+
+      releases[0]!();
+      releases[0]!();
+      expect(limiter.reserve(IP_A)).toBeDefined();
+      expect(limiter.reserve(IP_A)).toBeUndefined();
+      expect(limiter.isBanned(IP_A)).toBe(false);
+    } finally {
+      limiter.dispose();
+    }
+  });
+
+  it('shares the limit between recorded failures and reservations', () => {
+    const limiter = createAuthFailureLimiter({ maxFailures: 3, windowMs: 60_000, banMs: 60_000 });
+    try {
+      limiter.recordFailure(IP_A);
+      limiter.recordFailure(IP_A);
+      const release = limiter.reserve(IP_A);
+      expect(release).toBeDefined();
+      expect(limiter.reserve(IP_A)).toBeUndefined();
+
+      limiter.recordFailure(IP_A);
+      release!();
+      expect(limiter.isBanned(IP_A)).toBe(true);
+      expect(limiter.reserve(IP_A)).toBeUndefined();
+    } finally {
+      limiter.dispose();
+    }
+  });
 });
