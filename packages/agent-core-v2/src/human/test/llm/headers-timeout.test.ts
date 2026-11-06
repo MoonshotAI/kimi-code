@@ -235,3 +235,139 @@ describe('default client headers timeout', () => {
     }
   });
 });
+
+describe('OpenCode session header', () => {
+  async function generateWith(
+    requester: LlmRequester,
+    testModel: LlmModel,
+    cacheKey?: string,
+  ): Promise<LlmRequestEvent[]> {
+    const events: LlmRequestEvent[] = [];
+    await requester.generate(
+      { model: testModel, cacheKey },
+      { messages },
+      { signal: new AbortController().signal, onEvent: (event) => events.push(event) },
+    );
+    return events;
+  }
+
+  function sessionHeaderOf(fetchStub: ReturnType<typeof vi.fn>, call: number): string | null {
+    const init = fetchStub.mock.calls[call]?.[1] as RequestInit | undefined;
+    return init?.headers === undefined ? null : new Headers(init.headers).get('x-opencode-session');
+  }
+
+  function stubOpenAIFetch(): ReturnType<typeof vi.fn> {
+    const fetchStub = vi.fn(
+      async () =>
+        new Response(openAISse, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchStub);
+    return fetchStub;
+  }
+
+  it('uses the cache key as a stable per-conversation header across multiple requests', async () => {
+    const fetchStub = stubOpenAIFetch();
+    try {
+      const opencodeModel: LlmModel = {
+        ...model,
+        baseUrl: 'https://opencode.ai/inference/go/openai/v1',
+      };
+      const cacheKeys = ['conversation-a', 'conversation-a', 'conversation-b'];
+      for (const [index, cacheKey] of cacheKeys.entries()) {
+        const events = await generateWith(createOpenAIRequester(), opencodeModel, cacheKey);
+        expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+        expect(sessionHeaderOf(fetchStub, index)).toBe(cacheKey);
+        const init = fetchStub.mock.calls[index]?.[1] as RequestInit | undefined;
+        if (typeof init?.body !== 'string') throw new TypeError('Expected a JSON request body');
+        const body = JSON.parse(init.body) as { prompt_cache_key?: string };
+        expect(body.prompt_cache_key).toBe(cacheKey);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('sends conversation-scoped x-opencode-session header on openai_responses and anthropic protocols', async () => {
+    let currentSse = responsesSse;
+    const fetchStub = vi.fn(
+      async () =>
+        new Response(currentSse, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchStub);
+    try {
+      const opencodeModel: LlmModel = {
+        ...model,
+        baseUrl: 'https://opencode.ai/inference/go/v1',
+      };
+      currentSse = responsesSse;
+      let events = await generateWith(createOpenAIResponsesRequester(), opencodeModel, 'session-responses');
+      expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+      expect(sessionHeaderOf(fetchStub, 0)).toBe('session-responses');
+
+      currentSse = anthropicSse;
+      events = await generateWith(createAnthropicRequester(), opencodeModel, 'session-anthropic');
+      expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+      expect(sessionHeaderOf(fetchStub, 1)).toBe('session-anthropic');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('sends the cache key to opencode.ai subdomains', async () => {
+    const fetchStub = stubOpenAIFetch();
+    try {
+      const events = await generateWith(
+        createOpenAIRequester(),
+        { ...model, baseUrl: 'https://gateway.opencode.ai/v1' },
+        'conversation-subdomain',
+      );
+      expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+      expect(sessionHeaderOf(fetchStub, 0)).toBe('conversation-subdomain');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('omits the header for other hosts or when no cache key is available', async () => {
+    const fetchStub = stubOpenAIFetch();
+    try {
+      let events = await generateWith(createOpenAIRequester(), model, 'conversation-a');
+      expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+      expect(sessionHeaderOf(fetchStub, 0)).toBeNull();
+
+      events = await generateWith(createOpenAIRequester(), {
+        ...model,
+        baseUrl: 'https://opencode.ai/inference/go/openai/v1',
+      });
+      expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+      expect(sessionHeaderOf(fetchStub, 1)).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('preserves an explicitly configured header regardless of casing', async () => {
+    const fetchStub = stubOpenAIFetch();
+    try {
+      const events = await generateWith(
+        createOpenAIRequester(),
+        {
+          ...model,
+          baseUrl: 'https://opencode.ai/inference/go/openai/v1',
+          defaultHeaders: { 'X-OpenCode-Session': 'user-session' },
+        },
+        'conversation-a',
+      );
+      expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+      expect(sessionHeaderOf(fetchStub, 0)).toBe('user-session');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
