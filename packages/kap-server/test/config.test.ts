@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -238,6 +238,55 @@ describe('server-v2 /api/v1/config', () => {
 
     const after = await getConfig();
     expect(after['environments']).toEqual(cfg['environments']);
+  });
+
+  it('POST { environments } removes deleted devices from config.toml so they stay gone after a restart', async () => {
+    await boot([
+      '# keep this comment',
+      'default_model = "kimi-code/kimi-k2"',
+      '',
+      '[environments.first]',
+      'type = "ssh"',
+      'host = "first.example.test"',
+      '',
+      '[environments.second]',
+      'type = "ssh"',
+      'host = "second.example.test"',
+      '',
+    ].join('\n'));
+    const configPath = join(home as string, 'config.toml');
+
+    await patchConfig({ environments: { first: { type: 'ssh', host: 'first.example.test' } } });
+    const afterRemoval = await readFile(configPath, 'utf-8');
+    expect(afterRemoval).toContain('[environments.first]');
+    expect(afterRemoval).not.toContain('second');
+    expect(afterRemoval).toContain('# keep this comment');
+
+    await patchConfig({ environments: {} });
+    const afterLast = await readFile(configPath, 'utf-8');
+    expect(afterLast).not.toContain('environments');
+
+    await boot(afterLast);
+    expect((await getConfig())['environments'] ?? {}).toEqual({});
+  });
+
+  it('POST { environments } renames a device on disk and keeps ids and env names verbatim across a restart', async () => {
+    await boot('[environments.old_name]\ntype = "ssh"\nhost = "old.example.test"\n');
+    const environments = {
+      my_box: { type: 'ssh', host: 'old.example.test', default_cwd: '/srv/app' },
+      devBox: { command: 'kubectl', args: ['exec', '-i', 'pod', '--'], env: { KUBE_CONFIG: '/tmp/kube', fooBar: '1' } },
+    };
+
+    const cfg = await patchConfig({ environments });
+    const text = await readFile(join(home as string, 'config.toml'), 'utf-8');
+    expect(text).not.toContain('old_name');
+
+    await boot(text);
+    const after = await getConfig();
+    expect(after['environments']).toEqual(cfg['environments']);
+    expect(Object.keys(after['environments'] as object).toSorted()).toEqual(['devBox', 'my_box']);
+    expect((after['environments'] as Record<string, { env?: unknown; defaultCwd?: unknown }>)['devBox']?.env).toEqual({ KUBE_CONFIG: '/tmp/kube', fooBar: '1' });
+    expect((after['environments'] as Record<string, { defaultCwd?: unknown }>)['my_box']?.defaultCwd).toBe('/srv/app');
   });
 
   it('GET reports has_api_key for an api_key_env provider only while the variable is set', async () => {

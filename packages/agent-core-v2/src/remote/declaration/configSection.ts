@@ -10,7 +10,10 @@ import {
 
 export const ENVIRONMENTS_SECTION = 'environments';
 
-registerConfigSection(ENVIRONMENTS_SECTION, EnvironmentsSectionSchema);
+registerConfigSection(ENVIRONMENTS_SECTION, EnvironmentsSectionSchema, {
+  fromToml: (rawSnake) => rawSnake,
+  toToml: (value) => value,
+});
 
 export async function resolveWorkspaceEnvironmentDeclarations(
   config: IConfigService,
