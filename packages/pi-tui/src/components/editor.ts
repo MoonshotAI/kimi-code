@@ -1508,7 +1508,10 @@ export class Editor implements Component, Focusable {
 		this.lastAction = null;
 
 		if (this.onChange) this.onChange("");
-		if (this.onSubmit) this.onSubmit(result, leadingWhitespace);
+		if (this.onSubmit) {
+			if (leadingWhitespace === 0) this.onSubmit(result);
+			else this.onSubmit(result, leadingWhitespace);
+		}
 	}
 
 	private handleBackspace(): void {

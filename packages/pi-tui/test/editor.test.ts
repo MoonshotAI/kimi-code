@@ -111,6 +111,19 @@ describe("Editor component", () => {
 
 			assert.deepStrictEqual(submitted, { text: "/skill:review", leadingWhitespace: 2 });
 		});
+
+		it("keeps the single-argument callback shape without leading whitespace", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted: (string | number)[] = [];
+			editor.onSubmit = (...args) => {
+				submitted = args;
+			};
+
+			editor.setText("/skill:review \n");
+			editor.handleInput("\r");
+
+			assert.deepStrictEqual(submitted, ["/skill:review"]);
+		});
 	});
 
 	describe("Prompt history navigation", () => {
