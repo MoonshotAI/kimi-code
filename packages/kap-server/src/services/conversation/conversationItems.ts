@@ -104,7 +104,7 @@ export function userMessageItem(
     text: text.join('\n'),
     attachments,
     skills: origin?.kind === 'user'
-      ? (origin.skillActivations ?? []).map(({ skillName, skillArgs }) => ({ name: skillName, args: skillArgs }))
+      ? (origin.skillActivations ?? []).map(({ skillName, skillPath, skillArgs }) => ({ name: skillName, path: skillPath, args: skillArgs }))
       : [],
     metadata: origin?.kind === 'user' || origin?.kind === 'skill_activation' ? origin.clientMetadata?.[0] : undefined,
   };
@@ -329,7 +329,7 @@ function originOf(origin: PromptOrigin | undefined): UserMessageOrigin {
     case 'user':
       return { kind: 'user' };
     case 'skill_activation':
-      return { kind: 'skill', name: origin.skillName, args: origin.skillArgs };
+      return { kind: 'skill', name: origin.skillName, path: origin.skillPath, args: origin.skillArgs };
     case 'plugin_command':
       return { kind: 'plugin_command', plugin_id: origin.pluginId, command: origin.commandName, args: origin.commandArgs };
     case 'cron_job':
