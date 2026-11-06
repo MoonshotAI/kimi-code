@@ -839,7 +839,7 @@ describe('server-v2 /api/v1 workspaces on a remote environment', () => {
         directories: [{ environment_id: 'local', path: local }],
       });
       expect(switched.code).toBe(ErrorCode.VALIDATION_FAILED);
-      expect((await server!.core.accessor.get(IWorkspaceService).get(created.data.id))?.primaryEnvironmentId).toBe('remote-test');
+      expect((await server!.core.accessor.get(IWorkspaceService).get(created.data.id))?.directories[0]?.environmentId).toBe('remote-test');
     } finally {
       await rm(local, { recursive: true, force: true });
     }

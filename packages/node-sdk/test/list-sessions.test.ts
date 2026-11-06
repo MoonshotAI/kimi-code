@@ -184,8 +184,8 @@ describe('KimiHarness.listSessions', () => {
 
     try {
       const registry = client.engineAccessor.get(IWorkspaceService);
-      const projectM = await registry.create({ root: dirA, additionalDirs: [dirB], name: 'M' });
-      const projectN = await registry.create({ root: dirC, additionalDirs: [dirA], name: 'N' });
+      const projectM = await registry.create({ directories: [{ environmentId: 'local', path: dirA }, { environmentId: 'local', path: dirB }], name: 'M' });
+      const projectN = await registry.create({ directories: [{ environmentId: 'local', path: dirC }, { environmentId: 'local', path: dirA }], name: 'N' });
       const sessionManager = client.engineAccessor.get(ISessionManager);
       await sessionManager.create({ workspaceId: projectM.id, workDir: dirA, sessionId: 'ses_m' });
       await sessionManager.create({ workspaceId: projectN.id, workDir: dirC, sessionId: 'ses_n' });

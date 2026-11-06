@@ -95,11 +95,8 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
           delete merged['additional_dirs'];
         }
         merged['root'] = ws.root;
-        if (ws.primaryEnvironmentId !== undefined) {
-          merged['primary_environment_id'] = ws.primaryEnvironmentId;
-        } else {
-          delete merged['primary_environment_id'];
-        }
+        merged['directories'] = ws.directories.map((dir) => ({ environment_id: dir.environmentId, path: dir.path }));
+        delete merged['primary_environment_id'];
         merged['name'] = ws.name;
         merged['kind'] = ws.kind;
         merged['created_at'] = new Date(ws.createdAt).toISOString();
@@ -240,7 +237,7 @@ function parseProjectsDocument(value: unknown): {
     workspaces.push({
       id,
       root: entry.root,
-      ...(entry.primary_environment_id !== undefined ? { primaryEnvironmentId: entry.primary_environment_id } : {}),
+      directories: entry.directories!.map((dir) => ({ environmentId: dir.environment_id, path: dir.path })),
       name: entry.name,
       kind: entry.kind === 'managed' ? 'managed' : 'implicit',
       additionalDirs: entry.additional_dirs ?? [],
@@ -354,18 +351,36 @@ function sanitizeEntry(value: unknown, strict = false): PersistedWorkspaceEntry 
   if (strict && v.primary_environment_id !== undefined && typeof v.primary_environment_id !== 'string') {
     throw projectsCorrupted('invalid primary_environment_id');
   }
+  if (
+    strict &&
+    v.directories !== undefined &&
+    (!Array.isArray(v.directories) || v.directories.some((dir) => !isPersistedDirectory(dir)))
+  ) {
+    throw projectsCorrupted('invalid directories');
+  }
+  const environmentId =
+    typeof v.primary_environment_id === 'string' && v.primary_environment_id !== 'local'
+      ? v.primary_environment_id
+      : 'local';
+  const stored = Array.isArray(v.directories) ? v.directories.filter(isPersistedDirectory) : [];
+  const directories = stored.length > 0
+    ? stored
+    : [{ environment_id: environmentId, path: v.root }, ...(additionalDirs ?? []).map((path) => ({ environment_id: environmentId, path }))];
   return {
     root: v.root,
-    primary_environment_id:
-      typeof v.primary_environment_id === 'string' && v.primary_environment_id !== 'local'
-        ? v.primary_environment_id
-        : undefined,
+    directories,
     name: v.name,
     kind: typeof v.kind === 'string' ? v.kind : undefined,
     additional_dirs: additionalDirs,
     created_at: v.created_at,
     last_opened_at: v.last_opened_at,
   };
+}
+
+function isPersistedDirectory(value: unknown): value is { environment_id: string; path: string } {
+  if (typeof value !== 'object' || value === null) return false;
+  const dir = value as { environment_id?: unknown; path?: unknown };
+  return typeof dir.environment_id === 'string' && dir.environment_id.length > 0 && typeof dir.path === 'string' && dir.path.length > 0;
 }
 
 function parseTime(value: string, fallback: number): number {

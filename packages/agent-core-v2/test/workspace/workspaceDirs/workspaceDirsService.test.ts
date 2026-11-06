@@ -102,7 +102,7 @@ describe('WorkspaceDirsService (registry source)', () => {
   }
 
   it('injects the registry dir set minus cwd for both primary and member scopes', async () => {
-    const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
+    const project = await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }, { environmentId: 'local', path: dirB }], name: 'proj' });
 
     const primary = createDirs(dirA, project.id, 'managed');
     await primary.ready;
@@ -121,8 +121,8 @@ describe('WorkspaceDirsService (registry source)', () => {
   });
 
   it('keeps same-root managed workspaces scoped to their workspace id', async () => {
-    const first = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'first' });
-    const second = await workspaces.create({ root: dirA, additionalDirs: [dirC], name: 'second' });
+    const first = await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }, { environmentId: 'local', path: dirB }], name: 'first' });
+    const second = await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }, { environmentId: 'local', path: dirC }], name: 'second' });
     const firstDirs = createDirs(dirA, first.id, 'managed');
     const secondDirs = createDirs(dirA, second.id, 'managed');
     await Promise.all([firstDirs.ready, secondDirs.ready]);
@@ -132,7 +132,7 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(secondDirs.additionalDirs).toEqual([dirC]);
     expect(secondDirs.sessionInfo().primaryByWorkspace).toEqual({ [second.id]: dirA });
 
-    await workspaces.update(first.id, { additionalDirs: [] });
+    await workspaces.update(first.id, { directories: [{ environmentId: 'local', path: dirA }] });
     await vi.waitFor(() => {
       expect(firstDirs.additionalDirs).toEqual([]);
     });
@@ -141,7 +141,7 @@ describe('WorkspaceDirsService (registry source)', () => {
   });
 
   it('merges registry dirs with local.toml dirs for implicit scopes', async () => {
-    await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
+    await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }, { environmentId: 'local', path: dirB }], name: 'proj' });
     await mkdir(join(dirA, '.kimi-code'), { recursive: true });
     await writeFile(
       join(dirA, '.kimi-code', 'local.toml'),
@@ -158,7 +158,7 @@ describe('WorkspaceDirsService (registry source)', () => {
   });
 
   it('ignores local.toml entirely for managed workspaces', async () => {
-    const project = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
+    const project = await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }, { environmentId: 'local', path: dirB }], name: 'proj' });
     await mkdir(join(dirA, '.kimi-code'), { recursive: true });
     await writeFile(
       join(dirA, '.kimi-code', 'local.toml'),
@@ -189,7 +189,7 @@ describe('WorkspaceDirsService (registry source)', () => {
   });
 
   it('pushes registry updates live through the persistence change event', async () => {
-    const project = await workspaces.create({ root: dirA, name: 'proj' });
+    const project = await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }], name: 'proj' });
     const dirs = createDirs(dirA, project.id, 'managed');
     await dirs.ready;
     expect(dirs.additionalDirs).toEqual([]);
@@ -198,7 +198,7 @@ describe('WorkspaceDirsService (registry source)', () => {
     dirs.onDidChange(() => {
       fired += 1;
     });
-    await workspaces.update(project.id, { additionalDirs: [dirB] });
+    await workspaces.update(project.id, { directories: [{ environmentId: 'local', path: dirA }, { environmentId: 'local', path: dirB }] });
     await vi.waitFor(() => {
       expect(dirs.additionalDirs).toEqual([dirB]);
     });
@@ -206,7 +206,7 @@ describe('WorkspaceDirsService (registry source)', () => {
   });
 
   it('persists added dirs to the workspace registry instead of local.toml', async () => {
-    const project = await workspaces.create({ root: dirA, name: 'proj' });
+    const project = await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }], name: 'proj' });
     const dirs = createDirs(dirA, project.id, 'managed');
     await dirs.ready;
 
@@ -241,8 +241,8 @@ describe('WorkspaceDirsService (registry source)', () => {
     const aliasId = 'wd_alias_000000000002';
     await persistence.update(() => ({
       workspaces: [
-        { id: typedId, root: dirA, name: 'typed', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
-        { id: aliasId, root: aliasRoot, name: 'alias', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
+        { id: typedId, root: dirA, directories: [{ environmentId: 'local', path: dirA }], name: 'typed', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
+        { id: aliasId, root: aliasRoot, directories: [{ environmentId: 'local', path: aliasRoot }], name: 'alias', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
       ],
       deletedIds: [],
       idempotencyKeys: {},
@@ -261,7 +261,7 @@ describe('WorkspaceDirsService (registry source)', () => {
   });
 
   it('keeps persist:false dirs in memory only', async () => {
-    const project = await workspaces.create({ root: dirA, name: 'proj' });
+    const project = await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }], name: 'proj' });
     const dirs = createDirs(dirA, project.id, 'managed');
     await dirs.ready;
     let fired = 0;
@@ -282,7 +282,7 @@ describe('WorkspaceDirsService (registry source)', () => {
   });
 
   it('emits when a directory moves between ephemeral and shared sets', async () => {
-    const project = await workspaces.create({ root: dirA, name: 'proj' });
+    const project = await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }], name: 'proj' });
     const dirs = createDirs(dirA, project.id, 'managed');
     await dirs.ready;
     await dirs.addDir({ path: dirB, persist: false });
@@ -296,18 +296,14 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(dirs.sharedAdditionalDirs).toEqual([dirB]);
 
     fired = 0;
-    await workspaces.update(project.id, { additionalDirs: [] });
+    await workspaces.update(project.id, { directories: [{ environmentId: 'local', path: dirA }] });
     await vi.waitFor(() => expect(fired).toBeGreaterThan(0));
     expect(dirs.sharedAdditionalDirs).toEqual([]);
     expect(dirs.additionalDirs).toEqual([dirB]);
   });
 
   it('observes a primary swap from a member cwd even when additional dirs stay unchanged', async () => {
-    const project = await workspaces.create({
-      root: dirA,
-      additionalDirs: [dirB],
-      name: 'proj',
-    });
+    const project = await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }, { environmentId: 'local', path: dirB }], name: 'proj', });
     const dirs = createDirs(dirB, 'wd_member_000000000000');
     await dirs.ready;
     expect(dirs.additionalDirs).toEqual([dirA]);
@@ -329,11 +325,7 @@ describe('WorkspaceDirsService (registry source)', () => {
   });
 
   it('does not fire for project rename or touch', async () => {
-    const project = await workspaces.create({
-      root: dirA,
-      additionalDirs: [dirB],
-      name: 'proj',
-    });
+    const project = await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }, { environmentId: 'local', path: dirB }], name: 'proj', });
     const dirs = createDirs(dirA, project.id, 'managed');
     await dirs.ready;
     let fired = 0;
@@ -352,7 +344,7 @@ describe('WorkspaceDirsService (registry source)', () => {
   });
 
   it('coalesces local config and registry changes into one explicit reload event', async () => {
-    const project = await workspaces.create({ root: dirA, name: 'proj' });
+    const project = await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }], name: 'proj' });
     const dirs = createDirs(dirA, encodeWorkDirKey(dirA));
     await dirs.ready;
     await mkdir(join(dirA, '.kimi-code'), { recursive: true });
@@ -417,11 +409,7 @@ describe('WorkspaceDirsService (registry source)', () => {
   });
 
   it('drops a deleted project from the primary snapshot without substituting cwd', async () => {
-    const project = await workspaces.create({
-      root: dirA,
-      additionalDirs: [dirB],
-      name: 'proj',
-    });
+    const project = await workspaces.create({ directories: [{ environmentId: 'local', path: dirA }, { environmentId: 'local', path: dirB }], name: 'proj', });
     const dirs = createDirs(dirA, project.id, 'managed');
     await dirs.ready;
 

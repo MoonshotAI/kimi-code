@@ -739,7 +739,7 @@ describe('SessionEventBroadcaster', () => {
 
     eventBus.emit({
       type: 'event.workspace.updated',
-      payload: { workspace: { ...workspace, name: 'renamed', primaryEnvironmentId: 'devbox' } },
+      payload: { workspace: { ...workspace, name: 'renamed', directories: [{ environmentId: 'devbox', path: '/repo/a' }] } },
     });
     await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(2));
     expect(globalView.envelopes[1]).toMatchObject({

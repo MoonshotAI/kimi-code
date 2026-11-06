@@ -149,6 +149,7 @@ const workspaceStub: IWorkspaceService = {
     {
       id: WS_A,
       root: '/repo/a',
+      directories: [{ environmentId: 'local', path: '/repo/a' }],
       name: 'a',
       kind: 'managed',
       additionalDirs: [],
@@ -158,6 +159,7 @@ const workspaceStub: IWorkspaceService = {
     {
       id: WS_B,
       root: '/repo/b',
+      directories: [{ environmentId: 'local', path: '/repo/b' }],
       name: 'b',
       kind: 'managed',
       additionalDirs: [],

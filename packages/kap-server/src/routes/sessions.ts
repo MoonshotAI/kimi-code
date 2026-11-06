@@ -229,7 +229,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
 
       const registry = core.accessor.get(IWorkspaceService);
       let workDir: string;
-      let bucket: { readonly id: string; readonly root: string; readonly primaryEnvironmentId?: string } | undefined;
+      let bucket: { readonly id: string; readonly root: string; readonly directories: readonly { readonly environmentId: string; readonly path: string }[] } | undefined;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
         if (workspace === undefined) {
@@ -262,7 +262,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         workDir = callerCwd as string;
       }
 
-      const workspaceEnvironment = bucket?.primaryEnvironmentId;
+      const workspaceEnvironment = bucket?.directories[0]?.environmentId;
       if (workspaceEnvironment !== undefined && body.environment_id !== undefined && body.environment_id !== workspaceEnvironment) {
         reply.send(
           buildValidationEnvelope(

@@ -189,7 +189,7 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
         target.additionalDirs.some((kept) => workspaceRootKey(kept) === dirKey);
       if (!inSet) {
         await this.workspaces.update(target.id, {
-          additionalDirs: [...target.additionalDirs, dir],
+          directories: [...target.directories, { environmentId: target.directories[0]!.environmentId, path: dir }],
         });
         await this.reloadFromRegistry();
       }

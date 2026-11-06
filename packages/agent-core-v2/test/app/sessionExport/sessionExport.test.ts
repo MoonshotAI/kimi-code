@@ -917,6 +917,7 @@ function registerSessionExportServices(
     get: async (id) => ({
       id,
       root: `/workspaces/${id}`,
+      directories: [{ environmentId: 'local', path: `/workspaces/${id}` }],
       name: id,
       kind: 'implicit',
       additionalDirs: [],
@@ -925,7 +926,8 @@ function registerSessionExportServices(
     }),
     create: async (input) => ({
       id: 'ws_created',
-      root: input.root,
+      root: input.directories[0]!.path,
+      directories: input.directories,
       name: 'created',
       kind: 'implicit',
       additionalDirs: [],
@@ -935,6 +937,7 @@ function registerSessionExportServices(
     createOrTouch: async (root) => ({
       id: 'ws_created',
       root,
+      directories: [{ environmentId: 'local', path: root }],
       name: 'created',
       kind: 'implicit',
       additionalDirs: [],

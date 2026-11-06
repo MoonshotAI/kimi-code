@@ -13,7 +13,7 @@ function deferred(): { readonly promise: Promise<void>; resolve(): void } {
 }
 
 function workspace(id: string): Workspace {
-  return { id, root: `/${id}`, name: id, kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 };
+  return { id, root: `/${id}`, directories: [{ environmentId: 'local', path: `/${id}` }], name: id, kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 };
 }
 
 function environment(_workspaceId: string, environmentId: string, status: Environment['status'] = 'connecting'): FakeEnvironment {
@@ -44,9 +44,9 @@ function manager(
     _serviceBrand: undefined,
     list: async () => values,
     get: vi.fn(async (id: string) => byId.get(id)),
-    create: vi.fn(async (input: { root: string }) => {
-      const value = values.find((entry) => entry.root === input.root);
-      if (value === undefined) throw new Error(`unknown root ${input.root}`);
+    create: vi.fn(async (input: { directories: readonly { path: string }[] }) => {
+      const value = values.find((entry) => entry.root === input.directories[0]?.path);
+      if (value === undefined) throw new Error(`unknown root ${input.directories[0]?.path}`);
       return value;
     }),
     createOrTouch: vi.fn(async (root: string) => {
@@ -126,7 +126,7 @@ describe('WorkspaceInstanceManager', () => {
 
   describe('findContaining', () => {
     function rootedWorkspace(id: string, root: string): Workspace {
-      return { id, root, name: id, kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 };
+      return { id, root, directories: [{ environmentId: 'local', path: root }], name: id, kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 };
     }
 
     function stubDirs(lease: { instance: { program: object } }, additionalDirs: readonly string[]): { additionalDirs: readonly string[] } {

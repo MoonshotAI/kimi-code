@@ -1704,7 +1704,7 @@ key = "${titleOAuthRef.key}"
       const workspaces = client.engineAccessor.get(IWorkspaceService);
       try {
         await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([]);
-        await workspaces.create({ root: workDir, additionalDirs: [extraDir] });
+        await workspaces.create({ directories: [{ environmentId: 'local', path: workDir }, { environmentId: 'local', path: extraDir }] });
         await expect(harness.getWorkspaceAdditionalDirs(workDir)).resolves.toEqual([extraDir]);
         expect(harness.sessions.size).toBe(0);
       } finally {

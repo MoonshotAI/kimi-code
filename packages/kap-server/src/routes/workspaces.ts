@@ -4,7 +4,6 @@ import {
   IHostFileSystem,
   IWorkspaceService,
   LOCAL_ENVIRONMENT_ID,
-  workspaceDirectories,
   workspaceEnvironmentId,
   IWorkspaceSessions,
   IWorkspaceTrust,
@@ -125,7 +124,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         return;
       }
       const ws = await core.accessor.get(IWorkspaceService).create({
-        ...resolved.parts,
+        directories: resolved.parts.directories,
         name: req.body.name,
         idempotencyKey: req.body.idempotency_key,
       });
@@ -192,11 +191,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
       }
       const ws = await registry.update(workspace_id, {
         name: req.body.name,
-        ...(parts === undefined
-          ? {}
-          : {
-              directories: workspaceDirectories(parts),
-            }),
+        ...(parts === undefined ? {} : { directories: parts.directories }),
       });
       if (ws === undefined) {
         reply.send(
@@ -432,7 +427,7 @@ function resolveAdditionalDirPath(core: Scope, root: string, input: string): str
   return isAbsolute(expanded) ? normalize(expanded) : resolve(root, expanded);
 }
 
-type DirectoryParts = Pick<Workspace, 'root' | 'primaryEnvironmentId' | 'additionalDirs'>;
+type DirectoryParts = Pick<Workspace, 'root' | 'directories' | 'additionalDirs'>;
 
 async function normalizeDirectoriesInput(
   core: Scope,
@@ -476,7 +471,7 @@ async function normalizeDirectoriesInput(
     } catch (error) {
       return { error };
     }
-    return { parts: { root, primaryEnvironmentId: environmentId, additionalDirs: [] } };
+    return { parts: { root, directories: [{ environmentId, path: root }], additionalDirs: [] } };
   }
   const root = input[0]!.path;
   if (!isAbsolute(root)) {
@@ -501,7 +496,13 @@ async function normalizeDirectoriesInput(
     legacyFields ? (index) => `additional_dirs.${index}` : (index) => `directories.${index + 1}`,
   );
   if ('envelope' in additional) return additional;
-  return { parts: { root, additionalDirs: additional.dirs } };
+  return {
+    parts: {
+      root,
+      directories: [root, ...additional.dirs].map((path) => ({ environmentId: LOCAL_ENVIRONMENT_ID, path })),
+      additionalDirs: additional.dirs,
+    },
+  };
 }
 
 async function normalizeAdditionalDirsInput(
@@ -567,7 +568,7 @@ export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<Works
     id: ws.id,
     root: ws.root,
     primary_environment_id: workspaceEnvironmentId(ws),
-    directories: workspaceDirectories(ws).map((dir) => ({ environment_id: dir.environmentId, path: dir.path })),
+    directories: ws.directories.map((dir) => ({ environment_id: dir.environmentId, path: dir.path })),
     name: ws.name,
     kind: ws.kind,
     additional_dirs: [...ws.additionalDirs],

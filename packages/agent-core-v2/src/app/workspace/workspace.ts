@@ -12,7 +12,7 @@ export interface WorkspaceDirectory {
 export interface Workspace {
   readonly id: string;
   readonly root: string;
-  readonly primaryEnvironmentId?: string;
+  readonly directories: readonly WorkspaceDirectory[];
   readonly name: string;
   readonly kind: WorkspaceKind;
   readonly additionalDirs: readonly string[];
@@ -21,31 +21,21 @@ export interface Workspace {
 }
 
 export interface WorkspaceCreate {
-  readonly root: string;
-  readonly primaryEnvironmentId?: string;
+  readonly directories: readonly WorkspaceDirectory[];
   readonly name?: string;
-  readonly additionalDirs?: readonly string[];
   readonly idempotencyKey?: string;
 }
 
 export interface WorkspaceUpdate {
   readonly name?: string;
-  readonly additionalDirs?: readonly string[];
   readonly directories?: readonly WorkspaceDirectory[];
 }
 
-export function workspaceEnvironmentId(workspace: Pick<Workspace, 'primaryEnvironmentId'>): string {
-  return workspace.primaryEnvironmentId ?? LOCAL_ENVIRONMENT_ID;
+export function workspaceEnvironmentId(workspace: Pick<Workspace, 'directories'>): string {
+  return workspace.directories[0]?.environmentId ?? LOCAL_ENVIRONMENT_ID;
 }
 
-export function workspaceDirectories(workspace: Pick<Workspace, 'root' | 'primaryEnvironmentId' | 'additionalDirs'>): readonly WorkspaceDirectory[] {
-  const environmentId = workspaceEnvironmentId(workspace);
-  return [workspace.root, ...workspace.additionalDirs].map((path) => ({ environmentId, path }));
-}
-
-export function workspaceDirectoryParts(
-  directories: readonly WorkspaceDirectory[],
-): Pick<Workspace, 'root' | 'primaryEnvironmentId' | 'additionalDirs'> {
+export function workspaceDirectoryParts(directories: readonly WorkspaceDirectory[]): Pick<Workspace, 'root' | 'directories' | 'additionalDirs'> {
   const primary = directories[0];
   if (primary === undefined) {
     throw new Error2(ErrorCodes.CONFIG_INVALID, 'workspace requires a primary directory');
@@ -58,7 +48,7 @@ export function workspaceDirectoryParts(
   }
   return {
     root: primary.path,
-    primaryEnvironmentId: primary.environmentId === LOCAL_ENVIRONMENT_ID ? undefined : primary.environmentId,
+    directories,
     additionalDirs: directories.slice(1).map((dir) => dir.path),
   };
 }

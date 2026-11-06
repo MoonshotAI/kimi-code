@@ -173,24 +173,34 @@ describe('WorkspaceService (file-backed)', () => {
   });
 
   it('persists a remote workspace without touching the local filesystem', async () => {
-    const created = await build().create({ root: '/srv/does-not-exist-locally', primaryEnvironmentId: 'devbox' });
-    expect(created).toMatchObject({ root: '/srv/does-not-exist-locally', primaryEnvironmentId: 'devbox', additionalDirs: [] });
-    expect((await readRegistry()).workspaces[created.id]).toMatchObject({ primary_environment_id: 'devbox' });
+    const created = await build().create({
+      directories: [{ environmentId: 'devbox', path: '/srv/does-not-exist-locally' }],
+    });
+    expect(created).toMatchObject({
+      root: '/srv/does-not-exist-locally',
+      directories: [{ environmentId: 'devbox', path: '/srv/does-not-exist-locally' }],
+      additionalDirs: [],
+    });
+    expect((await readRegistry()).workspaces[created.id]).toMatchObject({
+      directories: [{ environment_id: 'devbox', path: '/srv/does-not-exist-locally' }],
+    });
+    expect((await readRegistry()).workspaces[created.id]).not.toHaveProperty('primary_environment_id');
 
     const service = restart();
-    expect(await service.get(created.id)).toMatchObject({ primaryEnvironmentId: 'devbox' });
-    expect(await service.touch(created.id)).toMatchObject({ primaryEnvironmentId: 'devbox' });
+    expect(await service.get(created.id)).toMatchObject({ directories: [{ environmentId: 'devbox', path: '/srv/does-not-exist-locally' }] });
+    expect(await service.touch(created.id)).toMatchObject({ directories: [{ environmentId: 'devbox', path: '/srv/does-not-exist-locally' }] });
     await expect(service.update(created.id, {
       directories: [{ environmentId: 'local', path: homeDir }],
     })).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
     await expect(service.create({
-      root: '/srv/app',
-      primaryEnvironmentId: 'devbox',
-      additionalDirs: ['/srv/api'],
+      directories: [
+        { environmentId: 'devbox', path: '/srv/app' },
+        { environmentId: 'devbox', path: '/srv/api' },
+      ],
     })).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
 
-    const local = await service.create({ root: homeDir });
-    expect(local.primaryEnvironmentId).toBeUndefined();
+    const local = await service.create({ directories: [{ environmentId: 'local', path: homeDir }] });
+    expect(local.directories).toEqual([{ environmentId: 'local', path: homeDir }]);
     expect((await readRegistry()).workspaces[local.id]).not.toHaveProperty('primary_environment_id');
   });
 
@@ -565,7 +575,7 @@ describe('WorkspaceService (file-backed)', () => {
     await fsp.mkdir(extra, { recursive: true });
     const implicit = await registry.createOrTouch(homeDir);
 
-    const created = await registry.create({ root: homeDir, additionalDirs: [extra], name: 'proj' });
+    const created = await registry.create({ directories: [{ environmentId: 'local', path: homeDir }, { environmentId: 'local', path: extra }], name: 'proj' });
 
     expect(created.id).toMatch(/^wm_[0-9a-f-]{36}$/);
     expect(created.additionalDirs).toEqual([extra]);
@@ -582,33 +592,33 @@ describe('WorkspaceService (file-backed)', () => {
 
   it('create dedupes retries by idempotency key across restarts', async () => {
     const registry = build();
-    const first = await registry.create({ root: homeDir, idempotencyKey: 'key-1' });
-    const second = await registry.create({ root: homeDir, idempotencyKey: 'key-1' });
+    const first = await registry.create({ directories: [{ environmentId: 'local', path: homeDir }], idempotencyKey: 'key-1' });
+    const second = await registry.create({ directories: [{ environmentId: 'local', path: homeDir }], idempotencyKey: 'key-1' });
     expect(second.id).toBe(first.id);
 
-    const other = await registry.create({ root: homeDir, idempotencyKey: 'key-2' });
+    const other = await registry.create({ directories: [{ environmentId: 'local', path: homeDir }], idempotencyKey: 'key-2' });
     expect(other.id).not.toBe(first.id);
 
-    const afterRestart = await restart().create({ root: homeDir, idempotencyKey: 'key-1' });
+    const afterRestart = await restart().create({ directories: [{ environmentId: 'local', path: homeDir }], idempotencyKey: 'key-1' });
     expect(afterRestart.id).toBe(first.id);
   });
 
   it('create rejects additional dirs that are missing or duplicate the root', async () => {
     const registry = build();
     await expect(
-      registry.create({ root: homeDir, additionalDirs: [join(homeDir, 'missing')] }),
+      registry.create({ directories: [{ environmentId: 'local', path: homeDir }, { environmentId: 'local', path: join(homeDir, 'missing') }] }),
     ).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
     await expect(
-      registry.create({ root: homeDir, additionalDirs: [homeDir] }),
+      registry.create({ directories: [{ environmentId: 'local', path: homeDir }, { environmentId: 'local', path: homeDir }] }),
     ).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
-    await expect(registry.create({ root: join(homeDir, 'missing-root') })).rejects.toMatchObject({
+    await expect(registry.create({ directories: [{ environmentId: 'local', path: join(homeDir, 'missing-root') }] })).rejects.toMatchObject({
       code: ErrorCodes.FS_PATH_NOT_FOUND,
     });
   });
 
   it('createOrTouch mints a separate hash entry when only a wm_ entry holds the root', async () => {
     const registry = build();
-    const project = await registry.create({ root: homeDir, name: 'proj' });
+    const project = await registry.create({ directories: [{ environmentId: 'local', path: homeDir }], name: 'proj' });
 
     const touched = await registry.createOrTouch(homeDir);
 
@@ -625,14 +635,14 @@ describe('WorkspaceService (file-backed)', () => {
     const extraB = join(homeDir, 'extra-b');
     await fsp.mkdir(extraA, { recursive: true });
     await fsp.mkdir(extraB, { recursive: true });
-    const created = await registry.create({ root: homeDir, additionalDirs: [extraA] });
+    const created = await registry.create({ directories: [{ environmentId: 'local', path: homeDir }, { environmentId: 'local', path: extraA }] });
 
-    const replaced = await registry.update(created.id, { additionalDirs: [extraB] });
+    const replaced = await registry.update(created.id, { directories: [{ environmentId: 'local', path: homeDir }, { environmentId: 'local', path: extraB }] });
     expect(replaced?.additionalDirs).toEqual([extraB]);
     let saved = await readRegistry();
     expect((saved.workspaces[created.id] as unknown as Record<string, unknown>)['additional_dirs']).toEqual([extraB]);
 
-    const cleared = await registry.update(created.id, { additionalDirs: [] });
+    const cleared = await registry.update(created.id, { directories: [{ environmentId: 'local', path: homeDir }] });
     expect(cleared?.additionalDirs).toEqual([]);
     saved = await readRegistry();
     expect((saved.workspaces[created.id] as unknown as Record<string, unknown>)['additional_dirs']).toBeUndefined();
@@ -645,7 +655,7 @@ describe('WorkspaceService (file-backed)', () => {
   it('delete of a wm_ entry tombstones only itself and keeps the same-root hash entry', async () => {
     const registry = build();
     const implicit = await registry.createOrTouch(homeDir);
-    const project = await registry.create({ root: homeDir, name: 'proj' });
+    const project = await registry.create({ directories: [{ environmentId: 'local', path: homeDir }], name: 'proj' });
 
     await registry.delete(project.id);
 
@@ -658,7 +668,7 @@ describe('WorkspaceService (file-backed)', () => {
   it('delete of a hash entry leaves the same-root wm_ entry registered', async () => {
     const registry = build();
     const implicit = await registry.createOrTouch(homeDir);
-    const project = await registry.create({ root: homeDir, name: 'proj' });
+    const project = await registry.create({ directories: [{ environmentId: 'local', path: homeDir }], name: 'proj' });
 
     await registry.delete(implicit.id);
 
@@ -681,7 +691,7 @@ describe('WorkspaceService (file-backed)', () => {
     );
 
     const registry = build();
-    const created = await registry.create({ root: homeDir, additionalDirs: [extraA] });
+    const created = await registry.create({ directories: [{ environmentId: 'local', path: homeDir }, { environmentId: 'local', path: extraA }] });
     expect(created.additionalDirs).toEqual([extraA]);
 
     const text = await fsp.readFile(join(homeDir, '.kimi-code', 'local.toml'), 'utf8');
@@ -692,7 +702,7 @@ describe('WorkspaceService (file-backed)', () => {
 
   it('persists kind per channel', async () => {
     const registry = build();
-    const managed = await registry.create({ root: homeDir, name: 'proj' });
+    const managed = await registry.create({ directories: [{ environmentId: 'local', path: homeDir }], name: 'proj' });
     expect(managed.kind).toBe('managed');
     const implicit = await registry.createOrTouch(homeDir);
     expect(implicit.kind).toBe('implicit');
@@ -760,11 +770,7 @@ describe('WorkspaceService (file-backed)', () => {
     const extraB = join(homeDir, 'extra-b');
     await fsp.mkdir(extraA, { recursive: true });
     await fsp.mkdir(extraB, { recursive: true });
-    const created = await registry.create({
-      root: homeDir,
-      additionalDirs: [extraA, extraB],
-      name: 'proj',
-    });
+    const created = await registry.create({ directories: [{ environmentId: 'local', path: homeDir }, { environmentId: 'local', path: extraA }, { environmentId: 'local', path: extraB }], name: 'proj', });
 
     const promoted = await registry.setPrimary(created.id, extraA);
     expect(promoted?.id).toBe(created.id);
@@ -784,7 +790,7 @@ describe('WorkspaceService (file-backed)', () => {
     const registry = build();
     const outside = join(homeDir, 'outside');
     await fsp.mkdir(outside, { recursive: true });
-    const created = await registry.create({ root: homeDir });
+    const created = await registry.create({ directories: [{ environmentId: 'local', path: homeDir }] });
 
     await expect(registry.setPrimary(created.id, outside)).rejects.toMatchObject({
       code: ErrorCodes.CONFIG_INVALID,

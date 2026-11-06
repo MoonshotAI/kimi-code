@@ -305,8 +305,8 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     const persistence = currentHost!.app.accessor.get(IWorkspacePersistence);
     await persistence.update(() => ({
       workspaces: [
-        { id: typedId, root: typedRoot, name: 'proj', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
-        { id: legacyId, root: 'c:\\users\\foo\\proj', name: 'proj', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
+        { id: typedId, root: typedRoot, directories: [{ environmentId: 'local', path: typedRoot }], name: 'proj', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
+        { id: legacyId, root: 'c:\\users\\foo\\proj', directories: [{ environmentId: 'local', path: 'c:\\users\\foo\\proj' }], name: 'proj', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
       ],
       deletedIds: [],
     }));
@@ -354,6 +354,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     const ws = (id: string, root: string): Workspace => ({
       id,
       root,
+      directories: [{ environmentId: 'local', path: root }],
       name: 'proj',
       kind: 'implicit',
       additionalDirs: [],
@@ -414,6 +415,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     const ws = (id: string, root: string): Workspace => ({
       id,
       root,
+      directories: [{ environmentId: 'local', path: root }],
       name: 'proj',
       kind: 'implicit',
       additionalDirs: [],

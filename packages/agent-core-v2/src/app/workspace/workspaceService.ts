@@ -17,6 +17,7 @@ import {
   IWorkspaceService,
   type Workspace,
   type WorkspaceCreate,
+  type WorkspaceDirectory,
   type WorkspaceUpdate,
   workspaceDirectoryParts,
   workspaceEnvironmentId,
@@ -110,6 +111,7 @@ export class WorkspaceService implements IWorkspaceService {
             : {
                 id,
                 root,
+                directories: [{ environmentId: LOCAL_ENVIRONMENT_ID, path: root }],
                 name: name ?? basename(root),
                 kind: 'implicit',
                 additionalDirs: [],
@@ -135,14 +137,15 @@ export class WorkspaceService implements IWorkspaceService {
 
   create(input: WorkspaceCreate): Promise<Workspace> {
     return this.runExclusive(async () => {
-      const remote = workspaceEnvironmentId(input) !== LOCAL_ENVIRONMENT_ID;
-      if (remote && (input.additionalDirs?.length ?? 0) > 0) {
-        throw new Error2(ErrorCodes.CONFIG_INVALID, 'remote workspaces support a single directory');
-      }
-      if (!remote) await this.requireDirectory(input.root);
-      const additionalDirs = remote
-        ? []
-        : await this.normalizeAdditionalDirs(input.root, input.additionalDirs ?? []);
+      const parsed = workspaceDirectoryParts(input.directories);
+      const local = workspaceEnvironmentId(parsed) === LOCAL_ENVIRONMENT_ID;
+      const additionalDirs = local
+        ? await this.normalizeAdditionalDirs(parsed.root, parsed.additionalDirs)
+        : parsed.additionalDirs;
+      const parts = local
+        ? { ...parsed, additionalDirs, directories: localDirectories(parsed.root, additionalDirs) }
+        : parsed;
+      if (local) await this.requireDirectory(parts.root);
       await this.ensureMerged();
       let ws!: Workspace;
       let reused = false;
@@ -162,11 +165,9 @@ export class WorkspaceService implements IWorkspaceService {
         const now = Date.now();
         ws = {
           id: `wm_${randomUUID()}`,
-          root: input.root,
-          ...(remote ? { primaryEnvironmentId: input.primaryEnvironmentId } : {}),
-          name: input.name ?? basename(input.root),
+          ...parts,
+          name: input.name ?? basename(parts.root),
           kind: 'managed',
-          additionalDirs,
           createdAt: now,
           lastOpenedAt: now,
         };
@@ -231,24 +232,24 @@ export class WorkspaceService implements IWorkspaceService {
         if (parts !== undefined && workspaceEnvironmentId(parts) !== workspaceEnvironmentId(existing)) {
           throw new Error2(ErrorCodes.CONFIG_INVALID, 'workspace environment cannot change');
         }
-        const root = parts?.root ?? existing.root;
-        const local = workspaceEnvironmentId(existing) === LOCAL_ENVIRONMENT_ID;
-        if (!local && patch.additionalDirs !== undefined && patch.additionalDirs.length > 0) {
-          throw new Error2(ErrorCodes.CONFIG_INVALID, 'remote workspaces support a single directory');
+        if (parts !== undefined && workspaceEnvironmentId(parts) === LOCAL_ENVIRONMENT_ID && parts.root !== existing.root) {
+          await this.requireDirectory(parts.root);
         }
-        if (local && root !== existing.root) await this.requireDirectory(root);
-        const requestedDirs = parts?.additionalDirs ?? patch.additionalDirs;
-        const additionalDirs =
-          requestedDirs === undefined
-            ? existing.additionalDirs
-            : local
-              ? await this.normalizeAdditionalDirs(root, requestedDirs)
-              : [];
+        const local = parts !== undefined && workspaceEnvironmentId(parts) === LOCAL_ENVIRONMENT_ID;
+        const additionalDirs = parts === undefined
+          ? existing.additionalDirs
+          : local
+            ? await this.normalizeAdditionalDirs(parts.root, parts.additionalDirs)
+            : [];
+        const directories = parts === undefined
+          ? existing.directories
+          : local
+            ? localDirectories(parts.root, additionalDirs)
+            : parts.directories;
         updated = {
           ...existing,
-          root,
+          ...(parts === undefined ? {} : { ...parts, additionalDirs, directories }),
           ...(patch.name !== undefined ? { name: patch.name } : {}),
-          additionalDirs,
         };
         return {
           workspaces: catalog.workspaces.map((ws) => (ws.id === id ? updated! : ws)),
@@ -294,13 +295,15 @@ export class WorkspaceService implements IWorkspaceService {
             `primary ${resolved} is not in the workspace dir set`,
           );
         }
+        const additionalDirs = [
+          existing.root,
+          ...existing.additionalDirs.filter((dir) => workspaceRootKey(dir) !== resolvedKey),
+        ];
         updated = {
           ...existing,
           root: resolved,
-          additionalDirs: [
-            existing.root,
-            ...existing.additionalDirs.filter((dir) => workspaceRootKey(dir) !== resolvedKey),
-          ],
+          directories: localDirectories(resolved, additionalDirs),
+          additionalDirs,
           lastOpenedAt: Date.now(),
         };
         changed = true;
@@ -431,6 +434,7 @@ export class WorkspaceService implements IWorkspaceService {
       byId.set(id, {
         id,
         root: entry.workDir,
+        directories: [{ environmentId: LOCAL_ENVIRONMENT_ID, path: entry.workDir }],
         name: basename(entry.workDir),
         kind: 'implicit',
         additionalDirs: [],
@@ -456,6 +460,7 @@ export class WorkspaceService implements IWorkspaceService {
       result.set(id, {
         id,
         root: entry.workDir,
+        directories: [{ environmentId: LOCAL_ENVIRONMENT_ID, path: entry.workDir }],
         name: basename(entry.workDir),
         kind: 'implicit',
         additionalDirs: [],
@@ -521,6 +526,10 @@ export class WorkspaceService implements IWorkspaceService {
     );
     return next;
   }
+}
+
+function localDirectories(root: string, additionalDirs: readonly string[]): readonly WorkspaceDirectory[] {
+  return [root, ...additionalDirs].map((path) => ({ environmentId: LOCAL_ENVIRONMENT_ID, path }));
 }
 
 registerScopedService(

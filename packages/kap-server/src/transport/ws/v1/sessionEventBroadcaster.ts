@@ -1067,12 +1067,15 @@ function workspaceLifecyclePayload(payload: unknown): Workspace | undefined {
   const additionalDirs = Array.isArray(ws.additionalDirs)
     ? ws.additionalDirs.filter((dir): dir is string => typeof dir === 'string')
     : [];
+  const directories = Array.isArray(ws.directories)
+    ? ws.directories.filter((dir): dir is { environmentId: string; path: string } =>
+      typeof dir === 'object' && dir !== null && typeof dir.environmentId === 'string' && typeof dir.path === 'string',
+    )
+    : [{ environmentId: 'local', path: ws.root }, ...additionalDirs.map((path) => ({ environmentId: 'local', path }))];
   return {
     id: ws.id,
     root: ws.root,
-    ...(typeof ws.primaryEnvironmentId === 'string' && ws.primaryEnvironmentId.length > 0
-      ? { primaryEnvironmentId: ws.primaryEnvironmentId }
-      : {}),
+    directories,
     name: ws.name,
     kind: ws.kind === 'managed' ? 'managed' : 'implicit',
     additionalDirs,
