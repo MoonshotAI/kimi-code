@@ -121,7 +121,7 @@ export class EditorKeyboardController {
     editor.onChange = (text: string) => {
       if (this.pendingExit) this.clearPendingExit();
       host.surveyController.handleEditorChange(text);
-      if (text === '') queueMicrotask(() => host.retainSkillVariantSelection?.(text));
+      if (text === '') queueMicrotask(() => host.retainSkillVariantSelection?.(editor.getText()));
       else host.retainSkillVariantSelection?.(text);
       host.updateEditorBorderHighlight(text);
       if (text.length === 0) host.modelMigration?.retry();
@@ -327,7 +327,9 @@ export class EditorKeyboardController {
         host.state.appState.isCompacting ||
         host.isSteeringQueuedMessages()
       ) return;
-      const text = (editor.getExpandedText?.() ?? editor.getText()).trim();
+      const expandedText = editor.getExpandedText?.() ?? editor.getText();
+      const text = expandedText.trim();
+      const leadingWhitespace = expandedText.length - expandedText.trimStart().length;
       const editorIsBash = editor.inputMode === 'bash';
       let extraction: ReturnType<typeof extractMediaAttachments> | undefined;
       if (!editorIsBash && text.length > 0) {
@@ -362,7 +364,7 @@ export class EditorKeyboardController {
           isCompacting: host.state.appState.isCompacting,
           skillVariantPathForCommand: host.skillVariantPathForCommand === undefined
             ? undefined
-            : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart),
+            : (commandName, tokenStart) => host.skillVariantPathForCommand!(commandName, tokenStart + leadingWhitespace),
         });
         host.state.queuedMessages.push({
           text,

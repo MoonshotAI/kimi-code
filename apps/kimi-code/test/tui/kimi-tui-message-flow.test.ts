@@ -9985,6 +9985,42 @@ capabilities = ["image_in", "video_in"]
     resolveBtwPrompt?.();
   });
 
+  it('keeps the selected variant when a busy /btw restores the draft', async () => {
+    const input = 'check /skill:review';
+    const selectedPath = '/work/B/review/SKILL.md';
+    const variants = [
+      { name: 'review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+      { name: 'review', description: 'Review skill', path: selectedPath, source: 'project', workspaceDir: '/work/B' },
+    ];
+    const session = makeSession({
+      listSkills: vi.fn(async () => variants),
+      prompt: vi.fn(() => new Promise<void>(() => {})),
+    });
+    const { driver } = await makeDriver(session);
+    await (
+      driver as unknown as { refreshSkillCommands(s: unknown): Promise<void> }
+    ).refreshSkillCommands(session);
+    await openBtwPanel(driver, session);
+    driver.restoreInputText(input, [{ skillName: 'review', path: selectedPath }]);
+
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editor.getText()).toBe(input);
+    });
+    await Promise.resolve();
+    expect(driver.skillVariantPathForCommand('skill:review', input.indexOf('/skill:review'))).toBe(selectedPath);
+
+    getMountedBtwPanel(driver).markDone();
+    driver.state.editor.handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(input, [
+        { name: 'review', path: selectedPath },
+      ]);
+    });
+  });
+
   it('replaces a running /btw panel when another /btw command is submitted', async () => {
     const session = makeSession({
       startBtw: vi.fn()
