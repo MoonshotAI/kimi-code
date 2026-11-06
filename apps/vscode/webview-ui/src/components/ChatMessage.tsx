@@ -95,7 +95,7 @@ function StepContent({ step, showConnector }: { step: UIStep; showConnector?: bo
       )}
       <div className="flex-1 min-w-0 space-y-2">
         {step.items.map((item, idx) => (
-          <StepItemRenderer key={`${step.n}-${idx}`} item={item} />
+          <StepItemRenderer key={idx} item={item} />
         ))}
       </div>
     </div>
@@ -249,8 +249,8 @@ function AssistantMessage({ message, turnIndex, isStreaming }: { message: ChatMe
     if (!hasSteps) {
       return typeof message.content === "string" ? message.content : "";
     }
-    const lastStep = steps[steps.length - 1];
-    const textItems = lastStep.items.filter((item) => item.type === "text");
+    const lastStep = steps.at(-1);
+    const textItems = (lastStep?.items ?? []).filter((item) => item.type === "text");
     if (textItems.length > 0) {
       return textItems.map((item) => (item as { type: "text"; content: string }).content).join("\n");
     }
@@ -285,7 +285,7 @@ function AssistantMessage({ message, turnIndex, isStreaming }: { message: ChatMe
                     const hasIndicator = stepHasIndicator[globalIndex];
                     const hasNextIndicator = stepHasIndicator.slice(globalIndex + 1).some(Boolean);
                     const showConnector = hasIndicator && hasNextIndicator && !isLastInGroup && !isLastOverall;
-                    return <StepContent key={step.n} step={step} showConnector={showConnector} />;
+                    return <StepContent key={globalIndex} step={step} showConnector={showConnector} />;
                   });
 
                   if (group.planMode) {
