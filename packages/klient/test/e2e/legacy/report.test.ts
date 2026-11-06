@@ -230,6 +230,28 @@ describe('server-e2e report', () => {
     });
   });
 
+  it('makes concurrent DaemonClient.connect calls wait for the same socket to open', async () => {
+    DeferredOpenWebSocket.instances = [];
+    const client = new DaemonClient({
+      baseUrl: 'http://server.example.test',
+      wsImpl: DeferredOpenWebSocket as unknown as typeof WsWebSocket,
+      logger: () => {},
+      reportDir: tmpReportDir(),
+    });
+
+    let settled = 0;
+    const first = client.connect().then(() => (settled += 1));
+    const second = client.connect().then(() => (settled += 1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).toBe(0);
+    expect(DeferredOpenWebSocket.instances).toHaveLength(1);
+
+    DeferredOpenWebSocket.instances[0]!.emit('open');
+    await Promise.all([first, second]);
+    expect(settled).toBe(2);
+    await client.close();
+  });
+
   it('records WsClient inbound and outbound frames', async () => {
     const reportDir = tmpReportDir();
     resetReportDir(reportDir);
@@ -441,6 +463,21 @@ async function recordLater(reportDir: string, caseName: string, delayMs: number)
   setActiveReportCase(caseName);
   await new Promise((resolve) => setTimeout(resolve, delayMs));
   recordReportEvent({ kind: 'log', label: 'later' }, { reportDir });
+}
+
+class DeferredOpenWebSocket extends EventEmitter {
+  static instances: DeferredOpenWebSocket[] = [];
+
+  constructor(readonly url: string) {
+    super();
+    DeferredOpenWebSocket.instances.push(this);
+  }
+
+  send(): void {}
+
+  close(): void {
+    this.emit('close', 1000, '');
+  }
 }
 
 class FakeWebSocket extends EventEmitter {

@@ -143,6 +143,7 @@ export class DaemonClient {
   private readonly _reportDir: string | undefined;
   private readonly _controlAckTimeoutMs: number;
   private _ws: WsClient | null = null;
+  private _connecting: Promise<void> | null = null;
   private readonly _subscribed = new Set<string>();
   private readonly _disposers: Array<() => void> = [];
 
@@ -304,8 +305,15 @@ export class DaemonClient {
    * Open the WS socket. There is no handshake: every connection receives the
    * global events, including `event.session.work_changed`, without subscribing.
    */
-  async connect(): Promise<void> {
-    if (this._ws) return;
+  connect(): Promise<void> {
+    this._connecting ??= this._open().catch((error: unknown) => {
+      this._connecting = null;
+      throw error;
+    });
+    return this._connecting;
+  }
+
+  private async _open(): Promise<void> {
     const wsUrl = `${this.baseUrl.replace(/^http/, 'ws')}${this.apiPrefix}/ws`;
     const ws = new WsClient({
       url: wsUrl,
@@ -313,8 +321,8 @@ export class DaemonClient {
       logger: this._logger,
       reportDir: this._reportDir,
     });
-    this._ws = ws;
     await ws.open();
+    this._ws = ws;
   }
 
   /**
@@ -358,6 +366,7 @@ export class DaemonClient {
         // ignore
       }
     }
+    this._connecting = null;
     if (this._ws) {
       await this._ws.close();
       this._ws = null;
