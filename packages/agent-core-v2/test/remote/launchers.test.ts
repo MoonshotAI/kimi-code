@@ -63,6 +63,12 @@ describe('launcher lowering', () => {
     expect(declarationFingerprint({ type: 'ssh', host: 'dev-box', enabled: true })).toBe(base);
     expect(declarationFingerprint({ type: 'ssh', host: 'dev-box', identityFile: '~/.ssh/a' })).not.toBe(base);
   });
+
+  it('keeps the connection when only the display name changes', () => {
+    const base = declarationFingerprint({ type: 'ssh', host: 'dev-box', name: 'Old' });
+    expect(declarationFingerprint({ type: 'ssh', host: 'dev-box', name: 'New' })).toBe(base);
+    expect(declarationFingerprint({ type: 'ssh', host: 'dev-box' })).toBe(base);
+  });
 });
 
 describe('launcher operand validation', () => {

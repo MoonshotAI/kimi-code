@@ -594,6 +594,7 @@ The optional top-level `default` names the environment a session binds to when c
 | `remoteBin` | `string` | No | Path to `kimi` on the target; defaults to `~/.kimi-code/bin/kimi` on POSIX and `~/.kimi-code/bin/kimi.exe` on Windows. Supports absolute paths with spaces, `~/` paths under the target account's home, or bare names on the target's `PATH`, such as `kimi` |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session; not validated locally |
 | `enabled` | `boolean` | No | Set to `false` to disable the environment: its connection is closed and nothing reconnects it until it is enabled again. Defaults to `true` |
+| `name` | `string` | No | Display name shown in apps. The entry's key stays its environment id, so renaming does not affect what is bound to it. Defaults to the id |
 
 ### Docker entries
 
@@ -605,6 +606,7 @@ The optional top-level `default` names the environment a session binds to when c
 | `remoteBin` | `string` | No | Path to `kimi` inside the container; defaults to `~/.kimi-code/bin/kimi` under the container user's home. The launcher runs through `docker exec … sh -c`, so a leading `~` is expanded by the container's shell |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
 | `enabled` | `boolean` | No | Set to `false` to disable the environment: its connection is closed and nothing reconnects it until it is enabled again. Defaults to `true` |
+| `name` | `string` | No | Display name shown in apps. The entry's key stays its environment id, so renaming does not affect what is bound to it. Defaults to the id |
 
 ### Command entries
 
@@ -618,6 +620,7 @@ The generic launcher form, for any environment the built-in launchers do not cov
 | `remoteBin` | `string` | No | Path to `kimi` on the target, appended after `args`; defaults to `~/.kimi-code/bin/kimi`. Use a plain path without spaces or shell metacharacters. `~` only expands when the launcher runs the arguments through a shell on the target, as ssh does; launchers that pass arguments straight through, such as `kubectl exec` and `docker exec`, need an absolute path |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
 | `enabled` | `boolean` | No | Set to `false` to disable the environment: its connection is closed and nothing reconnects it until it is enabled again. Defaults to `true` |
+| `name` | `string` | No | Display name shown in apps. The entry's key stays its environment id, so renaming does not affect what is bound to it. Defaults to the id |
 
 ```toml
 [environments]

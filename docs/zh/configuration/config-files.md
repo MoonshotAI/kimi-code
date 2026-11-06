@@ -593,6 +593,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `remoteBin` | `string` | 否 | 目标环境上 `kimi` 的路径，POSIX 默认 `~/.kimi-code/bin/kimi`，Windows 默认 `~/.kimi-code/bin/kimi.exe`。支持含空格的绝对路径、目标账户主目录下的 `~/` 路径或目标 `PATH` 中的裸名称（如 `kimi`） |
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值，不在本机校验 |
 | `enabled` | `boolean` | 否 | 设为 `false` 停用该环境：断开现有连接，重新启用之前不会再连接。默认 `true` |
+| `name` | `string` | 否 | 在应用中显示的名称。条目的键仍是环境 id，改名不影响绑定到它的内容。默认显示 id |
 
 ### Docker 条目
 
@@ -604,6 +605,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `remoteBin` | `string` | 否 | 容器内 `kimi` 的路径，默认为容器用户 home 下的 `~/.kimi-code/bin/kimi`；启动命令经 `docker exec … sh -c` 执行，`~` 前缀由容器内的 shell 展开 |
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
 | `enabled` | `boolean` | 否 | 设为 `false` 停用该环境：断开现有连接，重新启用之前不会再连接。默认 `true` |
+| `name` | `string` | 否 | 在应用中显示的名称。条目的键仍是环境 id，改名不影响绑定到它的内容。默认显示 id |
 
 ### command 条目
 
@@ -617,6 +619,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `remoteBin` | `string` | 否 | 目标环境上 `kimi` 的路径，追加在 `args` 之后，默认 `~/.kimi-code/bin/kimi`。应为不含空格和 shell 特殊字符的路径。只有经目标上的 shell 执行参数的启动器（如 ssh）会展开 `~`；`kubectl exec`、`docker exec` 这类原样传递参数的启动器需要绝对路径 |
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
 | `enabled` | `boolean` | 否 | 设为 `false` 停用该环境：断开现有连接，重新启用之前不会再连接。默认 `true` |
+| `name` | `string` | 否 | 在应用中显示的名称。条目的键仍是环境 id，改名不影响绑定到它的内容。默认显示 id |
 
 ```toml
 [environments]

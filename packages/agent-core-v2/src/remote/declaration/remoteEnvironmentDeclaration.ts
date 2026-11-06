@@ -4,6 +4,7 @@ import { LOCAL_ENVIRONMENT_ID, type EnvironmentCapability, type EnvironmentConne
 import type { EnvironmentGenerationSnapshot } from '#/environment/environmentRegistry';
 
 export const ENVIRONMENT_ID_MAX_LENGTH = 64;
+export const ENVIRONMENT_NAME_MAX_LENGTH = 64;
 export const RESERVED_ENVIRONMENT_IDS = ['local', 'default'] as const;
 
 const sshEnvironmentEntrySchema = z
@@ -14,6 +15,7 @@ const sshEnvironmentEntrySchema = z
     remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
     enabled: z.boolean().optional(),
+    name: z.string().min(1).max(ENVIRONMENT_NAME_MAX_LENGTH).optional(),
   })
   .strict();
 
@@ -25,6 +27,7 @@ const dockerEnvironmentEntrySchema = z
     remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
     enabled: z.boolean().optional(),
+    name: z.string().min(1).max(ENVIRONMENT_NAME_MAX_LENGTH).optional(),
   })
   .strict();
 
@@ -36,6 +39,7 @@ const commandEnvironmentEntrySchema = z
     remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
     enabled: z.boolean().optional(),
+    name: z.string().min(1).max(ENVIRONMENT_NAME_MAX_LENGTH).optional(),
   })
   .strict();
 

@@ -21,4 +21,12 @@ describe('EnvironmentsSectionSchema', () => {
     expect(parse({ dev: { type: 'ssh', host: 'x', identityFile: '' } }).success).toBe(false);
     expect(parse({ box: { type: 'docker', container: 'c', identityFile: '~/.ssh/id' } }).success).toBe(false);
   });
+
+  it('accepts a display name on every entry type', () => {
+    expect(parse({ dev: { type: 'ssh', host: 'x', name: 'Build box' } }).success).toBe(true);
+    expect(parse({ box: { type: 'docker', container: 'c', name: '开发容器' } }).success).toBe(true);
+    expect(parse({ pod: { command: 'kubectl', name: 'Pod' } }).success).toBe(true);
+    expect(parse({ dev: { type: 'ssh', host: 'x', name: '' } }).success).toBe(false);
+    expect(parse({ dev: { type: 'ssh', host: 'x', name: 'n'.repeat(65) } }).success).toBe(false);
+  });
 });
