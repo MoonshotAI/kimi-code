@@ -26,6 +26,7 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.SESSION_NOT_FOUND]: ErrorCode.SESSION_NOT_FOUND,
   [ErrorCodes.AGENT_NOT_FOUND]: ErrorCode.SESSION_NOT_FOUND,
   [ErrorCodes.SESSION_UNDO_UNAVAILABLE]: ErrorCode.SESSION_UNDO_UNAVAILABLE,
+  [ErrorCodes.TURN_NOT_FOUND]: ErrorCode.TURN_NOT_FOUND,
   [ErrorCodes.REQUEST_INVALID]: ErrorCode.VALIDATION_FAILED,
   [ErrorCodes.CONFIG_INVALID]: ErrorCode.VALIDATION_FAILED,
   [ErrorCodes.NOT_IMPLEMENTED]: ErrorCode.INTERNAL_ERROR,
@@ -56,11 +57,13 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.OS_FS_PERMISSION_DENIED]: ErrorCode.FS_PERMISSION_DENIED,
   [ErrorCodes.STORAGE_IO_FAILED]: ErrorCode.PERSISTENCE_FAILURE,
   [ErrorCodes.STORAGE_LOCKED]: ErrorCode.PERSISTENCE_FAILURE,
+  [ErrorCodes.WIRE_VERSION_TOO_LOW]: ErrorCode.WIRE_VERSION_TOO_LOW,
 };
 
 const PUBLIC_DETAIL_CODES: ReadonlySet<string> = new Set([
   ErrorCodes.SESSION_OCCUPIED,
   ErrorCodes.SESSION_STALE,
+  ErrorCodes.WIRE_VERSION_TOO_LOW,
 ]);
 
 export function mapError(err: unknown, requestId: string): ReturnType<typeof errEnvelope> {

@@ -45,8 +45,8 @@ import {
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
-import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
-import type { AgentTranscriptSnapshot } from '@moonshot-ai/transcript';
+import { TurnPrompt, TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { ConversationItem, ConversationTurnsPage } from '../src/protocol/conversation';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { EnvironmentSetBinding } from '@moonshot-ai/agent-core-v2/agent/environmentBinding/environmentBindingOps';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
@@ -1475,17 +1475,15 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(suffix.body.code).toBe(40001);
   });
 
-  it('cold-loads a persisted session on :undo instead of 40401', async () => {
+  it('cold-loads a persisted session on :undo and reports an unknown turn instead of 40401', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
 
     await closeSessionById((server as RunningServer).core.accessor, id);
 
-    const res = await postJson<{ messages: unknown }>(`/api/v1/sessions/${id}:undo`, { count: 1 });
-    expect(res.body.code).toBe(40911);
-    expect(res.body.msg).toMatch(/nothing to undo/i);
-    expect(res.body.stack).toEqual(expect.stringContaining('undoService'));
+    const res = await postJson<null>(`/api/v1/sessions/${id}:undo`, { turn_id: 't_missing' });
+    expect(res.body.code).toBe(40421);
   });
 
   it('returns 40901 when :undo reports a busy session', async () => {
@@ -1498,6 +1496,15 @@ describe('server-v2 /api/v1/sessions', () => {
       .get(IAgentLifecycleService)
       .create({ agentId: MAIN_AGENT_ID });
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    await agent.accessor.get(IEventDispatcher).dispatch(new TurnPrompt({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'first prompt' }],
+      origin: { kind: 'user' },
+    }));
+    agent.accessor.get(IAgentContextMemoryService).append(
+      { role: 'user', content: [{ type: 'text', text: 'first prompt' }], origin: { kind: 'user' } },
+    );
+    const page = await getJson<ConversationTurnsPage>(`/api/v1/sessions/${created.body.data.id}/agents/main/turns`);
     const undo = vi
       .spyOn(agent.accessor.get(IAgentConversationUndoService), 'undo')
       .mockRejectedValue(new Error2(ErrorCodes.SESSION_BUSY, 'session is busy'));
@@ -1505,7 +1512,7 @@ describe('server-v2 /api/v1/sessions', () => {
     try {
       const response = await postJson<null>(
         `/api/v1/sessions/${created.body.data.id}:undo`,
-        { count: 1 },
+        { turn_id: page.body.data.turns[0]!.turn_id },
       );
 
       expect(response.body.code).toBe(40901);
@@ -1594,10 +1601,15 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(childChildren.body.data.items.some((s) => s.id === grandchildId)).toBe(true);
   });
 
-  it('does not list a plain fork as a child (kind must be "child")', async () => {
+  it('does not list a plain fork as a child and rejects an incompatible source', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, parentId);
+    expect(session).toBeDefined();
+    await session!.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
+    const main = session!.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    await main.accessor.get(IWireService).flush();
     const invalid = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
       turn_index: -1,
     });
@@ -1608,6 +1620,42 @@ describe('server-v2 /api/v1/sessions', () => {
     const children = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children`);
     expect(children.body.code).toBe(0);
     expect(children.body.data.items.some((s) => s.id === forked.body.data.id)).toBe(false);
+
+    const sessionDir = sessionDirOf(
+      (server as RunningServer).core.accessor.get(IBootstrapService).homeDir,
+      `sessions/${parent.body.data.workspace_id}`,
+      parentId,
+    );
+    const wirePath = join(sessionDir, 'agents', MAIN_AGENT_ID, 'wire.jsonl');
+    const sourceWire = await readFile(wirePath, 'utf8');
+    expect(sourceWire).toContain('"min_protocol_version":"1.5"');
+    await writeFile(
+      wirePath,
+      sourceWire
+        .replace('"protocol_version":"1.5"', '"protocol_version":"9.9"')
+        .replace('"min_protocol_version":"1.5"', '"min_protocol_version":"9.9"'),
+    );
+    await closeSessionById((server as RunningServer).core.accessor, parentId);
+    const messages = await getJson<unknown>(`/api/v1/sessions/${parentId}/messages`);
+    expect(messages.body.code).toBe(40930);
+    const message = await getJson<unknown>(`/api/v1/sessions/${parentId}/messages/msg_incompatible`);
+    expect(message.body.code).toBe(40930);
+    const rating = await postJson<unknown>(`/api/v1/sessions/${parentId}/rating`, { op: 'evaluate', turn_id: 't0' });
+    expect(rating.body.code).toBe(40930);
+    const turns = await getJson<unknown>(`/api/v1/sessions/${parentId}/agents/${MAIN_AGENT_ID}/turns`);
+    expect(turns.body.code).toBe(40930);
+    expect(turns.body.msg).toContain('Upgrade Kimi Code');
+    const sliced = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {
+      turn_index: 999,
+    });
+    expect(sliced.body.code).toBe(40930);
+    expect(sliced.body.msg).toContain('Upgrade Kimi Code');
+    const incompatible = await postJson<SessionWire>(`/api/v1/sessions/${parentId}:fork`, {});
+    expect(incompatible.body.code).toBe(40930);
+    expect(incompatible.body.msg).toBe(
+      'This session requires a newer version of Kimi Code. Upgrade Kimi Code to the latest version to read this session.',
+    );
+    expect(incompatible.body.details).toEqual({ minReaderVersion: '9.9', readerVersion: '1.5' });
   });
 
   it('fork clears inherited cron tasks while the source keeps them', async () => {
@@ -1701,17 +1749,18 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(forkedState.titleKind).toBe('custom');
   });
 
-  it.each([
-    { count: 1, code: 0, prompts: [] as string[], texts: [] as string[] },
-    { count: 2, code: 40911, prompts: ['original prompt'], texts: ['answer before steer', 'steered prompt', 'answer after steer', 'second steer', 'answer after second steer'] },
-    { count: 3, code: 40911, prompts: ['original prompt'], texts: ['answer before steer', 'steered prompt', 'answer after steer', 'second steer', 'answer after second steer'] },
-  ])('keeps the correct messages when undoing $count anchors in a steered turn', async ({ count, code, prompts, texts }) => {
+  it('undoes a steered turn by its id together with its in-turn steers', async () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const id = created.body.data.id;
     const session = getLiveSessionById((server as RunningServer).core.accessor, id)!;
     await session.accessor.get(IAgentLifecycleService).create({ agentId: MAIN_AGENT_ID });
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
     const context = agent.accessor.get(IAgentContextMemoryService);
+    await agent.accessor.get(IEventDispatcher).dispatch(new TurnPrompt({
+      agentId: MAIN_AGENT_ID,
+      input: [{ type: 'text', text: 'original prompt' }],
+      origin: { kind: 'user' },
+    }));
     context.append(
       { role: 'user', content: [{ type: 'text', text: 'original prompt' }], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer before steer' }], toolCalls: [] },
@@ -1735,17 +1784,18 @@ describe('server-v2 /api/v1/sessions', () => {
       { role: 'assistant', content: [{ type: 'text', text: 'answer after second steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IWireService).flush();
-    const path = `/api/v1/sessions/${id}/transcript?agent_id=main`;
-    const before = await getJson<AgentTranscriptSnapshot>(path);
+    const path = `/api/v1/sessions/${id}/agents/main/turns`;
+    const before = await getJson<ConversationTurnsPage>(path);
     expect(before.body.code).toBe(0);
-    expect(before.body.data.items.filter((item) => item.kind === 'turn')).toHaveLength(1);
-    const undone = await postJson(`/api/v1/sessions/${id}:undo`, { count });
-    expect(undone.body.code).toBe(code);
-    const after = await getJson<AgentTranscriptSnapshot>(path);
-    const turns = after.body.data.items.filter((item) => item.kind === 'turn');
-    expect(turns.map((turn) => turn.prompt)).toEqual(prompts);
-    expect(turns.flatMap((turn) => turn.steps).flatMap((step) => step.frames).filter((frame) => frame.kind === 'text').map((frame) => frame.text)).toEqual(texts);
-    expect(after.body.data.prompts).toEqual([]);
+    const [turn] = before.body.data.turns;
+    expect(before.body.data.turns).toHaveLength(1);
+    expect(turn!.items.filter((item) => item.type === 'user_message').map((item) => item.placement)).toEqual(['opener', 'steer', 'steer']);
+
+    expect((await postJson<null>(`/api/v1/sessions/${id}:undo`, {})).body.code).toBe(40001);
+    expect((await postJson<null>(`/api/v1/sessions/${id}:undo`, { turn_id: 't_missing' })).body.code).toBe(40421);
+    const undone = await postJson<{ removed_turn_ids: string[] }>(`/api/v1/sessions/${id}:undo`, { turn_id: turn!.turn_id });
+    expect(undone.body).toMatchObject({ code: 0, data: { removed_turn_ids: [turn!.turn_id] } });
+    expect((await getJson<ConversationTurnsPage>(path)).body.data.turns).toEqual([]);
   });
 
   it('forks an undo-branched wire self-contained and replays it equivalently', async () => {
@@ -2025,15 +2075,6 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const listed = await getJson<SessionWire>(`/api/v1/sessions/${forkedId}`);
     expect(listed.body.code).toBe(0);
-
-    const transcript = await getJson<{
-      items: { kind: string; marker?: string; payload?: { path?: string } }[];
-    }>(`/api/v1/sessions/${forkedId}/transcript?agent_id=main`);
-    expect(transcript.body.code).toBe(0);
-    const revisionMarker = transcript.body.data.items.find(
-      (item) => item.kind === 'marker' && item.marker === 'plan.revision',
-    );
-    expect(revisionMarker?.payload?.path).toContain(forkedId);
 
     const resumed = await resumeSessionById((server as RunningServer).core.accessor, forkedId);
     expect(resumed).toBeDefined();
@@ -2411,7 +2452,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(running.body.data.items.some((s) => s.id === childId)).toBe(false);
   });
 
-  it('keeps a session listable and gettable with cwd after its workspace is unregistered (gap G3)', async () => {
+  it('hides a session from lists after its workspace is unregistered while keeping it gettable (gap G3)', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', {
       title: 'g3',
@@ -2426,9 +2467,11 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const listed = await getJson<PageWire>('/api/v1/sessions');
     expect(listed.body.code).toBe(0);
-    const found = listed.body.data.items.find((s) => s.id === id);
-    expect(found).toBeDefined();
-    expect(found?.metadata.cwd).toBe(cwd);
+    expect(listed.body.data.items.some((session) => session.id === id)).toBe(false);
+
+    const paged = await getJson<PageWire>('/api/v1/sessions?page_size=100');
+    expect(paged.body.code).toBe(0);
+    expect(paged.body.data.items.some((session) => session.id === id)).toBe(false);
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body.code).toBe(0);
@@ -2437,6 +2480,40 @@ describe('server-v2 /api/v1/sessions', () => {
     const profile = await getJson<SessionWire>(`/api/v1/sessions/${id}/profile`);
     expect(profile.body.code).toBe(0);
     expect(profile.body.data.metadata.cwd).toBe(cwd);
+  });
+
+  it('does not page a deleted managed workspace session into a same-root active project', async () => {
+    await restartWithFreshHome();
+    const cwd = home as string;
+    const activeWorkspace = await postJson<{ id: string }>('/api/v1/workspaces', {
+      root: cwd,
+      name: 'active',
+    });
+    const active = await postJson<SessionWire>('/api/v1/sessions', {
+      workspace_id: activeWorkspace.body.data.id,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const removedWorkspace = await postJson<{ id: string }>('/api/v1/workspaces', {
+      root: cwd,
+      name: 'removed',
+    });
+    const removed = await postJson<SessionWire>('/api/v1/sessions', {
+      workspace_id: removedWorkspace.body.data.id,
+    });
+
+    const del = await deleteJson<{ deleted: boolean }>(
+      `/api/v1/workspaces/${removedWorkspace.body.data.id}`,
+    );
+    expect(del.body.code).toBe(0);
+
+    const page = await getJson<PageWire>('/api/v1/sessions?page_size=1');
+    expect(page.body.code).toBe(0);
+    expect(page.body.data.items.map((session) => session.id)).toEqual([active.body.data.id]);
+    expect(page.body.data.has_more).toBe(false);
+
+    const got = await getJson<SessionWire>(`/api/v1/sessions/${removed.body.data.id}`);
+    expect(got.body.code).toBe(0);
+    expect(got.body.data.metadata.cwd).toBe(cwd);
   });
 
   it('merges metadata via profile and keeps cwd authoritative', async () => {
@@ -2859,5 +2936,159 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     expect(listed.body.data.items.some((s) => s.id === id)).toBe(true);
     const fetched = await getJson<{ id: string }>(`/api/v1/sessions/${id}`);
     expect(fetched.body.data.id).toBe(id);
+  });
+});
+
+describe('server-v2 /api/v1/sessions:btw', () => {
+  const modelBase = 'https://model.example.test/v1';
+  const mainAnswer = 'The main agent answered with a much longer explanation than the side chat.';
+  const sideAnswer = 'Short side answer.';
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+  let releaseSideAnswer: () => void = () => {};
+  let sideAnswerGate: Promise<void> = Promise.resolve();
+
+  function sseBody(text: string): string {
+    const chunk = (delta: Record<string, unknown>, finishReason: string | null) =>
+      `data: ${JSON.stringify({
+        id: 'chatcmpl-test',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'fake-model',
+        choices: [{ index: 0, delta, finish_reason: finishReason }],
+      })}\n\n`;
+    return `${chunk({ role: 'assistant', content: text }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`;
+  }
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-btw-'));
+    await writeFile(
+      join(home, 'config.toml'),
+      [
+        'default_model = "fake"',
+        '',
+        '[providers.fake]',
+        'type = "openai"',
+        'api_key = "sk-test"',
+        `base_url = "${modelBase}"`,
+        '',
+        '[models.fake]',
+        'provider = "fake"',
+        'model = "fake-model"',
+        'max_context_size = 131072',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const realFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (!url.startsWith(modelBase)) return realFetch(input, init);
+      const messages = JSON.stringify(JSON.parse(typeof init?.body === 'string' ? init.body : '{}').messages ?? []);
+      const side = messages.includes('side question');
+      if (side) await sideAnswerGate;
+      return new Response(sseBody(side ? sideAnswer : mainAnswer), {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterAll(async () => {
+    vi.restoreAllMocks();
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+      home = undefined;
+    }
+  });
+
+  async function postJson<T>(path: string, body: unknown): Promise<Envelope<T>> {
+    const res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    } as never);
+    return (await res.json()) as Envelope<T>;
+  }
+
+  async function agentTurns(sessionId: string, agentId: string) {
+    const res = await fetch(`${base}/api/v1/sessions/${sessionId}/agents/${agentId}/turns`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    const body = (await res.json()) as Envelope<ConversationTurnsPage>;
+    return body.data.turns.filter((turn) => turn.kind === 'agent');
+  }
+
+  type AgentTurn = Awaited<ReturnType<typeof agentTurns>>[number];
+
+  function promptOf(turn: AgentTurn): string | undefined {
+    const opener = turn.items[0];
+    return opener?.type === 'user_message' ? opener.text : undefined;
+  }
+
+  function answerOf(turn: AgentTurn): string[] {
+    return turn.items.flatMap((item) => (item.type === 'assistant_message' ? [item.text] : []));
+  }
+
+  function endOf(turn: AgentTurn): string {
+    return turn.status === 'ended' ? turn.outcome ?? 'ended' : turn.status;
+  }
+
+  it('keeps the first side chat answer when its prompt starts before anyone reads the fork', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
+    const sessionId = created.data.id;
+    await agentTurns(sessionId, 'main');
+    await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
+      content: [{ type: 'text', text: 'main question' }],
+      model: 'fake',
+    });
+    await vi.waitFor(
+      async () => {
+        expect((await agentTurns(sessionId, 'main')).map(endOf)).toEqual(['completed']);
+      },
+      { timeout: 10_000 },
+    );
+
+    sideAnswerGate = new Promise((resolve) => {
+      releaseSideAnswer = resolve;
+    });
+    const btw = await postJson<{ agent_id: string }>(`/api/v1/sessions/${sessionId}:btw`, {});
+    const agentId = btw.data.agent_id;
+    await postJson(`/api/v1/sessions/${sessionId}/prompts`, {
+      content: [{ type: 'text', text: 'side question' }],
+      agent_id: agentId,
+      model: 'fake',
+    });
+    await agentTurns(sessionId, agentId);
+    releaseSideAnswer();
+
+    await vi.waitFor(
+      async () => {
+        const own = (await agentTurns(sessionId, agentId)).filter((turn) => promptOf(turn) === 'side question');
+        expect(own.map(endOf)).toEqual(['completed']);
+      },
+      { timeout: 10_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const turns = await agentTurns(sessionId, agentId);
+    const own = turns.filter((turn) => promptOf(turn) === 'side question');
+    expect(own).toHaveLength(1);
+    expect(answerOf(own[0]!)).toEqual([sideAnswer]);
+    expect(new Set(turns.map((turn) => turn.turn_id)).size).toBe(turns.length);
   });
 });

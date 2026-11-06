@@ -45,6 +45,5 @@ export const searchMessagesResponseSchema = z.object({
     stale: z.boolean().optional(),
     degraded: z.string().optional(),
   }),
-  source: z.enum(['live', 'index']),
 });
 export type SearchMessagesResponse = z.infer<typeof searchMessagesResponseSchema>;

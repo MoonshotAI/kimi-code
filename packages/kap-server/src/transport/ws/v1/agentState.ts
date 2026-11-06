@@ -1,4 +1,5 @@
 import {
+  IAgentFullCompactionService,
   IAgentGoalService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -24,6 +25,7 @@ export function readAgentState(handle: IAgentScopeHandle, running: boolean): Age
   const model = profile?.getModel() ?? '';
   return {
     status: running ? 'running' : 'idle',
+    compacting: (optionalService(handle, IAgentFullCompactionService)?.compacting ?? null) !== null,
     model: text(model),
     thinking: model === '' ? undefined : text(profile?.getEffectiveThinkingLevel()),
     permission_mode: optionalService(handle, IAgentPermissionModeService)?.mode,

@@ -159,7 +159,7 @@ function createRequester(
           ? firstCallError === null
             ? undefined
             : (firstCallError ??
-              new APIStatusError(400, 'messages: `tool_use` ids must be unique'))
+              new APIStatusError(400, 'messages: `tool_use` ids must be unique', false))
           : subsequentCallErrors[calls.value - 2];
       if (error !== undefined) throw error;
       yield {
@@ -628,7 +628,7 @@ describe('AgentLoopRequester strict resend', () => {
   it('does not resend for non-recoverable errors', async () => {
     const calls = { value: 0 };
     const { service } = createService(
-      createRequester(calls, new APIStatusError(401, 'unauthorized')),
+      createRequester(calls, new APIStatusError(401, 'unauthorized', false)),
     );
 
     await expect(service.request()).rejects.toMatchObject({
@@ -646,8 +646,8 @@ describe('AgentLoopRequester infinite retry', () => {
   it('retries every request error while KIMI_CODE_INFINITE_RETRY is set', async () => {
     vi.useFakeTimers();
     const calls = { value: 0 };
-    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'), [
-      new APIStatusError(404, 'model not found'),
+    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken', false), [
+      new APIStatusError(404, 'model not found', false),
       new APIConnectionError('socket hang up'),
       new APIProviderQuotaExhaustedError('quota exhausted'),
     ]);
@@ -680,7 +680,7 @@ describe('AgentLoopRequester infinite retry', () => {
   it('stops retrying when the caller aborts during the backoff wait', async () => {
     vi.useFakeTimers();
     const calls = { value: 0 };
-    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'));
+    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken', false));
     const { service } = createService(requester, {
       env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
     });
@@ -726,8 +726,8 @@ describe('AgentLoopRequester infinite retry', () => {
   it('retries operation requests indefinitely', async () => {
     vi.useFakeTimers();
     const calls = { value: 0 };
-    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'), [
-      new APIStatusError(404, 'model not found'),
+    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken', false), [
+      new APIStatusError(404, 'model not found', false),
     ]);
     const { service } = createService(requester, {
       env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
@@ -745,7 +745,7 @@ describe('AgentLoopRequester infinite retry', () => {
   it('does not retry when the switch is unset', async () => {
     vi.useFakeTimers();
     const calls = { value: 0 };
-    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'));
+    const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken', false));
     const { service } = createService(requester);
 
     await expect(service.request()).rejects.toMatchObject({ statusCode: 400 });
@@ -757,6 +757,7 @@ describe('AgentLoopRequester media-stripped resend', () => {
   const IMAGE_FORMAT_400 = new APIStatusError(
     400,
     'unsupported image format: image/avif is not supported',
+    false,
   );
   const contextMessages: Message[] = [
     {
@@ -814,7 +815,7 @@ describe('AgentLoopRequester media-stripped resend', () => {
   it('does not resend for an unrelated 400', async () => {
     const calls = { value: 0 };
     const { service } = createService(
-      createRequester(calls, new APIStatusError(400, 'some other validation problem')),
+      createRequester(calls, new APIStatusError(400, 'some other validation problem', false)),
     );
 
     await expect(service.request()).rejects.toMatchObject({ statusCode: 400 });
@@ -1052,8 +1053,8 @@ describe('AgentLoopRequester media-degraded resend', () => {
 
   it('does not resend for a plain 400 or a non-413 status', async () => {
     for (const error of [
-      new APIStatusError(400, 'max_tokens must be positive'),
-      new APIStatusError(422, 'unprocessable'),
+      new APIStatusError(400, 'max_tokens must be positive', false),
+      new APIStatusError(422, 'unprocessable', false),
     ]) {
       const calls = { value: 0 };
       const { service } = createService(createRequester(calls, error));
@@ -1098,6 +1099,7 @@ describe('AgentLoopRequester media recovery prefix parity', () => {
   const IMAGE_FORMAT_400 = new APIStatusError(
     400,
     'unsupported image format: image/avif is not supported',
+    false,
   );
   const REJECTED_FORMAT_URL = 'data:image/avif;base64,REJECTED';
   const COMPACTION_INSTRUCTION = 'Summarize the conversation.';
@@ -1348,8 +1350,9 @@ describe('AgentLoopRequester combined recovery projections', () => {
   const IMAGE_FORMAT_400 = new APIStatusError(
     400,
     'unsupported image format: image/avif is not supported',
+    false,
   );
-  const STRUCTURAL_400 = new APIStatusError(400, 'messages: `tool_use` ids must be unique');
+  const STRUCTURAL_400 = new APIStatusError(400, 'messages: `tool_use` ids must be unique', false);
 
   const contextMessages: Message[] = [
     { role: 'assistant', content: [{ type: 'text', text: 'stale' }], toolCalls: [] },
@@ -1518,7 +1521,7 @@ describe('AgentLoopRequester request id', () => {
       value: async function* () {
         const events: ModelRequestEvent[] = [];
         for (const event of events) yield event;
-        throw new APIStatusError(500, 'boom', 'req-1', null, { requestId: 'trace-fail-1' });
+        throw new APIStatusError(500, 'boom', true, 'req-1', null, { requestId: 'trace-fail-1' });
       },
     });
     const { service, telemetryRecords } = createService(requester);
@@ -1634,7 +1637,7 @@ describe('AgentLoopRequester request id', () => {
       value: async function* () {
         const events: ModelRequestEvent[] = [];
         for (const event of events) yield event;
-        throw new APIStatusError(500, 'boom', 'req-1', null, {
+        throw new APIStatusError(500, 'boom', true, 'req-1', null, {
           requestId: 'trace-fail-ambient',
         });
       },
@@ -1994,7 +1997,7 @@ describe('AgentLoopRequester attempt retry notification', () => {
   it('does not notify when the error is final', async () => {
     const calls = { value: 0 };
     const { service } = createService(
-      createRequester(calls, new APIStatusError(400, 'max_tokens must be positive')),
+      createRequester(calls, new APIStatusError(400, 'max_tokens must be positive', false)),
     );
     const onAttemptRetry = vi.fn();
 

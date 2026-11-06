@@ -15,6 +15,18 @@ export type ResultRenderer = (
 
 export const PREVIEW_LINES = RESULT_PREVIEW_LINES;
 
+export class CardOnly implements Component {
+  constructor(private readonly inner: Component) {}
+
+  render(width: number): string[] {
+    return this.inner.render(width);
+  }
+
+  invalidate(): void {
+    this.inner.invalidate();
+  }
+}
+
 /**
  * Whether a tool result is the truncation envelope agent-core substitutes for
  * output over its size cap (metadata, `output_path`, and a head/tail preview).

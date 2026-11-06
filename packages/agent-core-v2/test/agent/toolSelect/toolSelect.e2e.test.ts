@@ -48,7 +48,7 @@ type WireEvent = Extract<
 >;
 
 class StubMcpTool implements ExecutableTool<Record<string, unknown>> {
-  readonly description: string;
+  description: string;
   readonly parameters: Record<string, unknown> = {
     type: 'object',
     properties: { query: { type: 'string' } },
@@ -176,7 +176,10 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(ctx.llmCalls).toHaveLength(0);
   });
 
-  it('announces the manifest, loads by name, keeps the top-level table byte-stable, and dispatches across model switches', async () => {
+  it('announces, loads, pins same-name updates, and keeps the top-level table byte-stable across model switches', async () => {
+    const inlineName = 'mcp__srv__inline';
+    const inlineTool = new StubMcpTool(inlineName);
+    ctx.get(IAgentToolRegistryService).register(inlineTool, { source: 'mcp', disclosure: 'inline' });
     ctx.mockNextResponse(selectToolsCall('call_select_1', [MCP_ALPHA]));
     ctx.mockNextResponse({
       type: 'function',
@@ -189,6 +192,13 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'try the srv alpha tool' }] });
     await ctx.untilTurnEnd();
     const initialTools = ctx.get(IAgentStateService).get(toolSelectKey).initial;
+
+    inlineTool.description = `${inlineName} updated desc`;
+    ctx.mockNextResponse(selectToolsCall('call_select_inline', [inlineName]));
+    ctx.mockNextResponse({ type: 'text', text: 'after pending update' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'try the updated inline tool' }] });
+    await ctx.untilTurnEnd();
+
     const runtimeTool = 'mcp__srv__runtime';
     ctx.get(IAgentToolRegistryService).register(new StubMcpTool(runtimeTool), {
       source: 'mcp',
@@ -204,7 +214,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue after the model switch' }] });
     await ctx.untilTurnEnd();
 
-    expect(ctx.llmCalls).toHaveLength(4);
+    expect(ctx.llmCalls).toHaveLength(6);
 
     const firstWire = ctx.llmCalls[0]!;
     expect(ctx.get(IAgentStateService).get(toolSelectKey).initial?.map((tool) => tool.name))
@@ -223,7 +233,7 @@ describe('progressive tool disclosure end-to-end', () => {
       (event) => (event.args as { kind?: string }).kind === 'loop',
     );
     expect(requests.map((request) => (request.args as { toolSelect?: boolean }).toolSelect))
-      .toEqual([true, true, true, false]);
+      .toEqual([true, true, true, true, true, false]);
 
     const secondWire = ctx.llmCalls[1]!;
     const schemaMessages = secondWire.history.filter(
@@ -237,18 +247,33 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(secondWire.tools).toEqual(firstWire.tools);
     expect(ctx.llmCalls[2]!.tools).toEqual(firstWire.tools);
 
-    const fourthWire = ctx.llmCalls[3]!;
+    const beforePendingSelect = ctx.llmCalls[3]!;
+    const afterPendingSelect = ctx.llmCalls[4]!;
+    for (const wire of [beforePendingSelect, afterPendingSelect]) {
+      expect(wire.tools).toEqual(firstWire.tools);
+      expect(wire.tools.find((tool) => tool.name === inlineName)?.description)
+        .toBe(`${inlineName} desc`);
+      expect(wire.history.flatMap((message) => toolsOf(message) ?? [])
+        .filter((tool) => tool.name === inlineName)).toEqual([]);
+    }
+    expect(historyText(beforePendingSelect.history)).toContain('not applied in this session');
+    expect(ctx.get(IAgentToolRegistryService).resolve(inlineName)).toBe(inlineTool);
+    expect(ctx.get(IAgentContextMemoryService).get().filter(
+      (message) => message.origin?.kind === 'injection' && message.origin.variant === 'tool_update_pending',
+    )).toHaveLength(1);
+
+    const switchWire = ctx.llmCalls[5]!;
     expect(ctx.get(IAgentProfileService).data().activeToolNames).toBeUndefined();
     expect(ctx.get(IAgentToolSelectService).defaultTools(false).map((tool) => tool.name))
       .toContain(MCP_ALPHA);
     expect(ctx.get(IAgentToolSelectService).defaultTools(false).find((tool) => tool.name === MCP_ALPHA)
       ?.deferred).toBeUndefined();
-    expect(toolNames(fourthWire.tools)).toContain(MCP_ALPHA);
-    expect(toolNames(fourthWire.tools)).not.toContain(runtimeTool);
-    expect(toolNames(fourthWire.tools)).not.toContain('select_tools');
-    expect(historyText(fourthWire.history)).toContain(runtimeTool);
-    expect(historyText(fourthWire.history)).toContain('The available tools changed during this session.');
-    expect(historyText(fourthWire.history)).not.toContain('Use the select_tools tool');
+    expect(toolNames(switchWire.tools)).toContain(MCP_ALPHA);
+    expect(toolNames(switchWire.tools)).not.toContain(runtimeTool);
+    expect(toolNames(switchWire.tools)).not.toContain('select_tools');
+    expect(historyText(switchWire.history)).toContain(runtimeTool);
+    expect(historyText(switchWire.history)).toContain('The available tools changed during this session.');
+    expect(historyText(switchWire.history)).not.toContain('Use the select_tools tool');
     expect(wireEvents(ctx, 'llm.tools_snapshot')).toHaveLength(2);
     expect(ctx.get(IAgentContextMemoryService).get().some((message) =>
       message.origin?.kind === 'injection' && message.origin.variant === LOADABLE_TOOLS_VARIANT)).toBe(true);

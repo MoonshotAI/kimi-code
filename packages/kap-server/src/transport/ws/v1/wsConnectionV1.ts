@@ -1,13 +1,15 @@
-import { unsubscribeV2PayloadSchema, WS_PROTOCOL_VERSION } from '../../../protocol/ws-control';
+import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2';
 import {
-  detachGrades,
-  transcriptSubscribeV2PayloadSchema,
-  type TranscriptGradeSpec,
-} from '@moonshot-ai/transcript';
+  subscribeV2PayloadSchema,
+  unsubscribeV2PayloadSchema,
+  WS_PROTOCOL_VERSION,
+} from '../../../protocol/ws-control';
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 
+import { ErrorCode } from '../../../protocol/error-codes';
 import type { CredentialValidator } from '../../../services/auth/credentials';
+import { mapError } from '../../errors';
 import type { IConnectionRegistry } from '../connectionRegistry';
 import { buildAck, buildPing, buildResponse, buildServerHello } from './protocol';
 import type {
@@ -71,7 +73,6 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private closed = false;
   private gotClientHello = false;
-  readonly subscriptions = new Map<string, TranscriptGradeSpec>();
   private controlQueue: Promise<void> = Promise.resolve();
 
   private outbound: unknown[] = [];
@@ -128,7 +129,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   get subscriptionSessionIds(): readonly string[] {
-    return Array.from(this.subscriptions.keys()).toSorted();
+    return this.broadcaster.sessionsOf(this);
   }
 
   send(frame: BroadcastFrame, delivery: BroadcastDelivery = 'subscription'): void {
@@ -194,22 +195,28 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   private async onSubscribeV2(frame: InboundFrame): Promise<void> {
-    const parsed = transcriptSubscribeV2PayloadSchema.safeParse(frame.payload ?? {});
+    const parsed = subscribeV2PayloadSchema.safeParse(frame.payload ?? {});
     if (!parsed.success) {
       this.sendImmediateFrame(buildAck(frame.id ?? '', 1, 'invalid subscribe_v2 payload', {}));
       return;
     }
     const sid = parsed.data.session_id;
-    const grades = parsed.data.transcript;
-    const ok = await this.broadcaster.subscribe(sid, this, grades, parsed.data.transcript_since);
-    if (ok) this.subscriptions.set(sid, grades);
-    this.sendImmediateFrame(
-      buildAck(frame.id ?? '', 0, 'success', {
-        accepted: ok ? [sid] : [],
-        not_found: ok ? [] : [sid],
-      }),
-    );
-    if (ok) this.broadcaster.sendPendingInteractions(sid, this);
+    try {
+      await this.broadcaster.subscribe(sid, this, parsed.data.agent_ids ?? [MAIN_AGENT_ID], () => {
+        this.sendImmediateFrame(buildAck(frame.id ?? '', 0, 'success', { accepted: [sid], not_found: [] }));
+        this.broadcaster.sendPendingInteractions(sid, this);
+      });
+    } catch (error) {
+      const failure = mapError(error, frame.id ?? '');
+      this.sendImmediateFrame(
+        buildAck(frame.id ?? '', failure.code, failure.msg, {
+          accepted: [],
+          not_found: failure.code === ErrorCode.SESSION_NOT_FOUND ? [sid] : [],
+        }),
+      );
+      return;
+    }
+    if (this.closed) this.broadcaster.removeTarget(this);
   }
 
   private async onUnsubscribeV2(frame: InboundFrame): Promise<void> {
@@ -219,19 +226,7 @@ export class WsConnectionV1 implements BroadcastTarget {
       return;
     }
     const sid = parsed.data.session_id;
-    const agentIds = parsed.data.agent_ids;
-
-    const existing = this.subscriptions.get(sid);
-    if (existing !== undefined) {
-      const next = agentIds === undefined ? undefined : detachGrades(existing, agentIds);
-      if (next === undefined) {
-        this.subscriptions.delete(sid);
-        this.broadcaster.unsubscribe(sid, this);
-      } else {
-        this.subscriptions.set(sid, next);
-        this.broadcaster.updateTranscriptGrades(sid, this, next);
-      }
-    }
+    this.broadcaster.unsubscribe(sid, this, parsed.data.agent_ids);
 
     this.sendImmediateFrame(
       buildAck(frame.id ?? '', 0, 'success', { accepted: [sid], not_found: [] }),
@@ -341,8 +336,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
     this.outbound = [];
     this.taskRequests.dispose();
-    this.broadcaster.removeGlobalTarget(this);
-    for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);
+    this.broadcaster.removeTarget(this);
   }
 }
 

@@ -33,7 +33,12 @@ import {
   type AgentModel,
   type AgentModelDefinition,
 } from './agentModel';
-import { IEventDispatcher, type DurableAgentRuntimeParticipant, type RestorePhase } from './eventDispatcher';
+import {
+  IEventDispatcher,
+  type DurableAgentRuntimeParticipant,
+  type ReplayOutcome,
+  type RestorePhase,
+} from './eventDispatcher';
 import { StateError, StateErrors } from './errors';
 import {
   expandedModelAppliers,
@@ -104,6 +109,7 @@ interface ParticipantAttachment {
   readonly initial: unknown;
   readonly getState: () => any;
   readonly commit: (state: any) => void;
+  readonly participant?: DurableAgentRuntimeParticipant;
 }
 
 interface PreparedParticipant {
@@ -351,6 +357,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
     } catch (error) {
       replayFailure = { error };
     }
+    this.notifyDidReplay([attachment], { ok: replayFailure === undefined });
     try {
       if (this.restorePhase !== 'restoring') this.drainQueue();
     } catch (error) {
@@ -374,7 +381,12 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
   ): ParticipantAttachment {
     const base = new Map<Event2Class<any, any>, StateFold<any, any>>();
     for (const cls of participant.events) base.set(cls, participant.transition);
-    const folds = expandedRuntimeFolds(participant.id, participant.undoable, base);
+    const folds = expandedRuntimeFolds(
+      participant.id,
+      participant.undoable,
+      base,
+      participant.onUndo,
+    );
     const appliers = new Map<Event2Class<any, any>, ParticipantApplier>();
     for (const [cls, fold] of folds) {
       appliers.set(cls, (state, event, ctx) => fold(state, event, ctx));
@@ -387,6 +399,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       initial: participant.getState(),
       getState: () => participant.getState(),
       commit: (state) => { participant.commit(state); },
+      participant,
     };
   }
 
@@ -771,10 +784,12 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       this.dispatching = true;
       this.dispatchingSince = Date.now();
     }
+    let replayed = false;
     try {
       if (this.lateAttachmentTail !== undefined) await this.lateAttachmentTail;
       if (rerun) {
         await this.wire.flush();
+        this.notifyWillReplay();
         this.resetReplayState();
       }
       await this.replayRecords();
@@ -785,6 +800,8 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         await this.hooks.onDidRestore.run({});
         this.didRunRestoreHooks = true;
       }
+      replayed = true;
+      this.notifyDidReplay(this.participantAttachments.values(), { ok: true });
       if (rerun) {
         this.drainQueue();
       }
@@ -796,6 +813,7 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
       if (rerun) {
         for (const entry of this.queue.splice(0)) entry.reject(error);
       }
+      if (!replayed) this.notifyDidReplay(this.participantAttachments.values(), { ok: false });
       throw error;
     } finally {
       if (rerun) {
@@ -814,6 +832,28 @@ export class EventDispatcherService extends Service implements IEventDispatcher 
         pending.resolve(await this.attachLate(pending.participant));
       } catch (error) {
         pending.reject(error);
+      }
+    }
+  }
+
+  private notifyWillReplay(): void {
+    for (const attachment of this.participantAttachments.values()) {
+      try {
+        attachment.participant?.onWillReplay?.();
+      } catch (error) {
+        onUnexpectedError(error);
+      }
+    }
+  }
+
+  private notifyDidReplay(attachments: Iterable<ParticipantAttachment>, outcome: ReplayOutcome): void {
+    for (const attachment of attachments) {
+      const participant = attachment.participant;
+      if (participant?.onDidReplay === undefined) continue;
+      try {
+        participant.onDidReplay(attachment.getState(), outcome);
+      } catch (error) {
+        onUnexpectedError(error);
       }
     }
   }
