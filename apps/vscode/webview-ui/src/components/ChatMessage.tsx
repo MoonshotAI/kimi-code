@@ -1,4 +1,4 @@
-import { useState, Fragment, memo } from "react";
+import { useEffect, useRef, useState, Fragment, memo } from "react";
 import { IconLoader3, IconGitFork } from "@tabler/icons-react";
 import { cn } from "@/lib/utils";
 import { Content } from "@/lib/content";
@@ -13,6 +13,7 @@ import { InlineError } from "./InlineError";
 import { PlanCard } from "./PlanCard";
 import { StreamingConfirmDialog } from "./StreamingConfirmDialog";
 import { Button } from "@/components/ui/button";
+import { ActivityDisclosure, type ActivityDisclosureStatus } from "@/components/ui/activity-disclosure";
 import { toast } from "@/components/ui/sonner";
 import { useChatStore } from "@/stores";
 import { bridge } from "@/services";
@@ -124,6 +125,72 @@ interface StepGroup {
   startIndex: number;
 }
 
+interface VisibleStepItem {
+  key: string;
+  item: UIStepItem;
+}
+
+export interface AssistantStepPartition {
+  activitySteps: UIStep[];
+  responseItems: VisibleStepItem[];
+}
+
+function isActivityItem(item: UIStepItem): boolean {
+  return item.type === "thinking" || item.type === "tool_use" || item.type === "compaction";
+}
+
+/**
+ * Keep the trailing answer visible while collecting all reasoning, tools, edits,
+ * and any text that preceded later activity into one chronological disclosure.
+ */
+export function partitionAssistantSteps(steps: UIStep[]): AssistantStepPartition {
+  const positions = new Map<UIStepItem, number>();
+  let position = 0;
+  let lastActivityPosition = -1;
+
+  for (const step of steps) {
+    for (const item of step.items) {
+      positions.set(item, position);
+      if (isActivityItem(item)) lastActivityPosition = position;
+      position += 1;
+    }
+  }
+
+  const activitySteps = steps
+    .map((step) => ({
+      ...step,
+      items: step.items.filter((item) => {
+        if (isActivityItem(item)) return true;
+        return item.type === "text" && (positions.get(item) ?? Number.POSITIVE_INFINITY) <= lastActivityPosition;
+      }),
+    }))
+    .filter((step) => step.items.length > 0);
+
+  const responseItems = steps.flatMap((step) =>
+    step.items.flatMap((item, itemIndex) => {
+      const isTrailingText = item.type === "text" && (positions.get(item) ?? -1) > lastActivityPosition;
+      if (!isTrailingText && item.type !== "steer") return [];
+      return [{ key: `${step.n}-${itemIndex}`, item }];
+    }),
+  );
+
+  return { activitySteps, responseItems };
+}
+
+/** Count semantic work activities, not SDK step containers or streamed text deltas. */
+export function countAssistantActivities(steps: UIStep[]): number {
+  return steps.reduce(
+    (stepTotal, step) => stepTotal + step.items.reduce((itemTotal, item) => {
+      if (!isActivityItem(item)) return itemTotal;
+      const nestedCount = item.type === "tool_use" && item.subagent_steps
+        ? countAssistantActivities(item.subagent_steps)
+        : 0;
+      return itemTotal + 1 + nestedCount;
+    }, 0),
+    0,
+  );
+}
+
 function groupStepsByPlanMode(steps: UIStep[]): StepGroup[] {
   const groups: StepGroup[] = [];
   for (let i = 0; i < steps.length; i++) {
@@ -136,6 +203,29 @@ function groupStepsByPlanMode(steps: UIStep[]): StepGroup[] {
     }
   }
   return groups;
+}
+
+function StepGroups({ steps }: { steps: UIStep[] }) {
+  const stepHasIndicator = steps.map((step) =>
+    step.items.some((item) => item.type === "tool_use" || item.type === "thinking" || item.type === "compaction"),
+  );
+
+  return groupStepsByPlanMode(steps).map((group, gi) => {
+    const stepsContent = group.steps.map((step, i) => {
+      const globalIndex = group.startIndex + i;
+      const isLastInGroup = i === group.steps.length - 1;
+      const isLastOverall = globalIndex === steps.length - 1;
+      const hasIndicator = stepHasIndicator[globalIndex];
+      const hasNextIndicator = stepHasIndicator.slice(globalIndex + 1).some(Boolean);
+      const showConnector = hasIndicator && hasNextIndicator && !isLastInGroup && !isLastOverall;
+      return <StepContent key={step.n} step={step} showConnector={showConnector} />;
+    });
+
+    if (group.planMode) {
+      return <PlanCard key={`plan-${gi}`}>{stepsContent}</PlanCard>;
+    }
+    return <Fragment key={`normal-${gi}`}>{stepsContent}</Fragment>;
+  });
 }
 
 interface ForkButtonProps {
@@ -240,16 +330,45 @@ function AssistantMessage({ message, turnIndex, isStreaming }: { message: ChatMe
 
   const steps = message.steps || [];
   const hasSteps = steps.length > 0;
+  const { activitySteps, responseItems } = partitionAssistantSteps(steps);
+  const hasActivity = activitySteps.length > 0;
+  const activityCount = countAssistantActivities(activitySteps);
   const images = Content.getImages(message.content);
   const videos = Content.getVideos(message.content);
+  const workState = message.workState ?? (isStreaming ? "working" : message.inlineError ? "stopped" : "complete");
+  const workStatus: ActivityDisclosureStatus = workState === "question_pending" ? "input_needed" : workState;
+  const [workOpen, setWorkOpen] = useState(workState === "working" || workState === "stopped" || workState === "question_pending");
+  const previousWorkState = useRef(workState);
+  const workTriggerRef = useRef<HTMLButtonElement>(null);
+  const workContentRef = useRef<HTMLDivElement>(null);
+  const [workAnnouncement, setWorkAnnouncement] = useState("");
 
-  const stepHasIndicator = steps.map((step) => step.items.some((item) => item.type === "tool_use" || item.type === "thinking" || item.type === "compaction"));
+  useEffect(() => {
+    if (previousWorkState.current === workState) return;
+    previousWorkState.current = workState;
+
+    if (workState === "question_pending") {
+      setWorkAnnouncement(`Input needed; work details remain ${workOpen ? "open" : "closed"}`);
+      return;
+    }
+
+    if (workState === "working" || workState === "stopped") {
+      setWorkOpen(true);
+      return;
+    }
+
+    if (workContentRef.current?.contains(document.activeElement)) {
+      workTriggerRef.current?.focus();
+    }
+    setWorkOpen(false);
+    setWorkAnnouncement(workState === "input_needed" ? "Input needed; work details collapsed" : "Response ready; work details collapsed");
+  }, [workOpen, workState]);
 
   const contentToCopy = (() => {
     if (!hasSteps) {
       return typeof message.content === "string" ? message.content : "";
     }
-    const lastStep = steps[steps.length - 1];
+    const lastStep = steps.at(-1)!;
     const textItems = lastStep.items.filter((item) => item.type === "text");
     if (textItems.length > 0) {
       return textItems.map((item) => (item as { type: "text"; content: string }).content).join("\n");
@@ -275,24 +394,25 @@ function AssistantMessage({ message, turnIndex, isStreaming }: { message: ChatMe
         <div className="flex-1 min-w-0">
           <div className="flex flex-col">
             <div className="[&>*:not(:last-child)]:mb-3">
-              {hasSteps &&
-                groupStepsByPlanMode(steps).map((group, gi) => {
-                  const totalSteps = steps.length;
-                  const stepsContent = group.steps.map((step, i) => {
-                    const globalIndex = group.startIndex + i;
-                    const isLastInGroup = i === group.steps.length - 1;
-                    const isLastOverall = globalIndex === totalSteps - 1;
-                    const hasIndicator = stepHasIndicator[globalIndex];
-                    const hasNextIndicator = stepHasIndicator.slice(globalIndex + 1).some(Boolean);
-                    const showConnector = hasIndicator && hasNextIndicator && !isLastInGroup && !isLastOverall;
-                    return <StepContent key={step.n} step={step} showConnector={showConnector} />;
-                  });
-
-                  if (group.planMode) {
-                    return <PlanCard key={`plan-${gi}`}>{stepsContent}</PlanCard>;
-                  }
-                  return <Fragment key={`normal-${gi}`}>{stepsContent}</Fragment>;
-                })}
+              {hasActivity && (
+                <ActivityDisclosure
+                  open={workOpen}
+                  onOpenChange={setWorkOpen}
+                  status={workStatus}
+                  stepCount={activityCount}
+                  triggerRef={workTriggerRef}
+                  contentRef={workContentRef}
+                >
+                  <div className="space-y-3">
+                    <StepGroups steps={activitySteps} />
+                  </div>
+                </ActivityDisclosure>
+              )}
+              {responseItems.length > 0 && (
+                <div className="space-y-2 @[420px]:pl-5">
+                  {responseItems.map(({ key, item }) => <StepItemRenderer key={key} item={item} />)}
+                </div>
+              )}
               {!hasSteps && displayContent && <Markdown content={displayContent} className="text-xs leading-relaxed @[420px]:pl-5" enableEnrichment={!isStreaming} />}
               {(images.length > 0 || videos.length > 0) && (
                 <div className="@[420px]:pl-5">
@@ -300,6 +420,7 @@ function AssistantMessage({ message, turnIndex, isStreaming }: { message: ChatMe
                 </div>
               )}
             </div>
+            <div className="sr-only" role="status" aria-live="polite">{workAnnouncement}</div>
 
             {/* 内嵌错误显示 */}
             {isShowingInlineError && message.inlineError && (
@@ -308,7 +429,7 @@ function AssistantMessage({ message, turnIndex, isStreaming }: { message: ChatMe
               </div>
             )}
             <div className="flex flex-row items-center space-between">
-              <div className="inline-flex flex-1">{isStreaming && !isShowingInlineError && !isCompacting && <ThinkingIndicator />}</div>
+              <div className="inline-flex flex-1">{isStreaming && !hasActivity && !isShowingInlineError && !isCompacting && <ThinkingIndicator />}</div>
               <div className="inline-flex flex-1" />
               {!isStreaming && contentToCopy.trim().length > 0 && (
                 <div className="flex justify-start pt-1 gap-1 opacity-0 group-hover/message:opacity-100 transition-opacity duration-100">

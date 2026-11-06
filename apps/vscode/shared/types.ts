@@ -71,4 +71,22 @@ export interface LoginStatus {
   siteBase: string;
 }
 
+export interface PlanUsageMetric {
+  label: "Overall" | "Weekly" | "5h";
+  percentLeft: number;
+  resetAt?: string;
+}
+
+export type PlanUsageResult =
+  | {
+      kind: "ok";
+      overall?: PlanUsageMetric;
+      fiveHour?: PlanUsageMetric;
+      fetchedAt: string;
+      stale?: boolean;
+      warning?: string;
+    }
+  | { kind: "unavailable"; message: string }
+  | { kind: "error"; message: string };
+
 export type { QuestionRequest, QuestionItem, QuestionOption, QuestionResponse } from "./legacy-sdk";

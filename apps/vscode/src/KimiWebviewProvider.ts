@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { KimiHarness } from "@moonshot-ai/kimi-code-sdk";
-import { Events } from "../shared/bridge";
+import { Events, Methods } from "../shared/bridge";
 import { BridgeHandler } from "./bridge-handler";
 
 function getNonce(): string {
@@ -19,6 +19,8 @@ function getNonce(): string {
 export class KimiWebviewProvider implements vscode.WebviewViewProvider {
   private webviews = new Map<string, vscode.Webview>();
   private bridgeHandler: BridgeHandler;
+  private activeWebviewId: string | undefined;
+  private sidebarWebviewId: string | undefined;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -50,11 +52,17 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     const webviewId = `sidebar_${crypto.randomUUID()}`;
+    this.sidebarWebviewId = webviewId;
+    if (webviewView.visible) this.activeWebviewId = webviewId;
     this.setupWebview(webviewId, webviewView.webview);
+
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible) this.activeWebviewId = webviewId;
+    });
 
     webviewView.onDidDispose(() => {
       void this.bridgeHandler.disposeView(webviewId);
-      this.webviews.delete(webviewId);
+      this.removeWebview(webviewId);
     });
   }
 
@@ -68,10 +76,15 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
     });
 
     this.setupWebview(webviewId, panel.webview);
+    this.activeWebviewId = webviewId;
+
+    panel.onDidChangeViewState(({ webviewPanel }) => {
+      if (webviewPanel.active) this.activeWebviewId = webviewId;
+    });
 
     panel.onDidDispose(() => {
       void this.bridgeHandler.disposeView(webviewId);
-      this.webviews.delete(webviewId);
+      this.removeWebview(webviewId);
     });
 
     return panel;
@@ -81,17 +94,24 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
     this.broadcastInternal(event, data);
   }
 
+  broadcastToActive(event: string, data: unknown): boolean {
+    const webviewId = this.activeTarget();
+    if (webviewId === undefined) return false;
+    this.broadcastInternal(event, data, webviewId);
+    return true;
+  }
+
+  activateSidebar(): void {
+    if (this.sidebarWebviewId !== undefined) this.activeWebviewId = this.sidebarWebviewId;
+  }
+
   async insertEditorMention(documentUri: vscode.Uri, selection: vscode.Selection): Promise<boolean> {
-    let inserted = false;
-    await Promise.all(
-      [...this.webviews.keys()].map(async (webviewId) => {
-        const mention = await this.bridgeHandler.getEditorMention(webviewId, documentUri, selection);
-        if (mention === null) return;
-        inserted = true;
-        this.broadcastInternal(Events.InsertMention, { mention }, webviewId);
-      }),
-    );
-    return inserted;
+    const webviewId = this.activeTarget();
+    if (webviewId === undefined) return false;
+    const mention = await this.bridgeHandler.getEditorMention(webviewId, documentUri, selection);
+    if (mention === null) return false;
+    this.broadcastInternal(Events.InsertMention, { mention }, webviewId);
+    return true;
   }
 
   private setupWebview(webviewId: string, webview: vscode.Webview): void {
@@ -104,9 +124,33 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
     this.webviews.set(webviewId, webview);
 
     webview.onDidReceiveMessage(async (msg: unknown) => {
+      if (
+        typeof msg === "object"
+        && msg !== null
+        && "method" in msg
+        && msg.method === Methods.MarkViewActive
+      ) {
+        this.activeWebviewId = webviewId;
+      }
       const result = await this.bridgeHandler.handle(msg, webviewId);
       webview.postMessage(result);
     });
+  }
+
+  private activeTarget(): string | undefined {
+    if (this.activeWebviewId !== undefined && this.webviews.has(this.activeWebviewId)) {
+      return this.activeWebviewId;
+    }
+    if (this.sidebarWebviewId !== undefined && this.webviews.has(this.sidebarWebviewId)) {
+      return this.sidebarWebviewId;
+    }
+    return this.webviews.keys().next().value;
+  }
+
+  private removeWebview(webviewId: string): void {
+    this.webviews.delete(webviewId);
+    if (this.sidebarWebviewId === webviewId) this.sidebarWebviewId = undefined;
+    if (this.activeWebviewId === webviewId) this.activeWebviewId = this.activeTarget();
   }
 
   private broadcastInternal(event: string, data: unknown, targetWebviewId?: string): void {

@@ -629,6 +629,54 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     expect(boundary.handlerInstallations).toEqual({ approval: 1, question: 1 });
   });
 
+  it("runs distinct sessions concurrently in two Webviews without cross-streaming", async () => {
+    const sdk = createFakeHarness();
+    const broadcasts: Array<{ webviewId?: string; data: unknown }> = [];
+    const runtime = new KimiRuntime({
+      version: "test",
+      harness: sdk.harness,
+      broadcast: (_event, data, webviewId) => broadcasts.push({ webviewId, data }),
+      captureBaseline: () => undefined,
+      log: () => undefined,
+    });
+    const first = await runtime.openSession(openOptions({ webviewId: "view-1" }));
+    const second = await runtime.openSession(openOptions({ webviewId: "view-2" }));
+    expect(first.id).not.toBe(second.id);
+
+    const firstBoundary = sdk.sessions.get(first.id)!;
+    const secondBoundary = sdk.sessions.get(second.id)!;
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    firstBoundary.setPromptImpl(() => new Promise<void>((resolve) => { releaseFirst = resolve; }));
+    secondBoundary.setPromptImpl(() => new Promise<void>((resolve) => { releaseSecond = resolve; }));
+
+    const firstPrompt = first.prompt("first");
+    const secondPrompt = second.prompt("second");
+    firstBoundary.emit({ type: "turn.started", agentId: "main", sessionId: first.id, turnId: 1 } as unknown as Event);
+    secondBoundary.emit({ type: "turn.started", agentId: "main", sessionId: second.id, turnId: 2 } as unknown as Event);
+    firstBoundary.emit({ type: "assistant.delta", sessionId: first.id, agentId: "main", turnId: 1, delta: "one" });
+    secondBoundary.emit({ type: "assistant.delta", sessionId: second.id, agentId: "main", turnId: 2, delta: "two" });
+
+    expect(first.isBusy).toBe(true);
+    expect(second.isBusy).toBe(true);
+    expect(broadcasts.some(({ webviewId, data }) =>
+      webviewId === "view-1" && (data as { payload?: { text?: string } }).payload?.text === "one"
+    )).toBe(true);
+    expect(broadcasts.some(({ webviewId, data }) =>
+      webviewId === "view-2" && (data as { payload?: { text?: string } }).payload?.text === "two"
+    )).toBe(true);
+    expect(broadcasts.some(({ webviewId, data }) =>
+      webviewId === "view-1" && (data as { payload?: { text?: string } }).payload?.text === "two"
+    )).toBe(false);
+
+    firstBoundary.emit({ type: "turn.ended", agentId: "main", sessionId: first.id, turnId: 1, reason: "completed" } as unknown as Event);
+    secondBoundary.emit({ type: "turn.ended", agentId: "main", sessionId: second.id, turnId: 2, reason: "completed" } as unknown as Event);
+    releaseFirst();
+    releaseSecond();
+    await expect(firstPrompt).resolves.toEqual({ status: "finished" });
+    await expect(secondPrompt).resolves.toEqual({ status: "finished" });
+  });
+
   it("does not double-wrap the SDK session when two opens race for it", async () => {
     const sdk = createFakeHarness();
     const broadcasts: { event: string; data: unknown; webviewId?: string }[] = [];

@@ -54,6 +54,8 @@ export interface ChatMessage {
   turnIndex?: number;
   /** False for host-only commands that do not create a forkable core turn. */
   forkable?: boolean;
+  /** Lifecycle for the per-turn work disclosure. */
+  workState?: "working" | "complete" | "input_needed" | "question_pending" | "stopped";
 }
 
 export interface TokenUsage {

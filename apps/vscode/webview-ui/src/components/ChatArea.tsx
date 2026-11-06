@@ -56,7 +56,7 @@ export function ChatArea() {
 
   return (
     <div className="h-full relative">
-      <ScrollToBottom className="h-full" scrollViewClassName="h-full overflow-y-auto overflow-x-hidden" followButtonClassName="hidden" initialScrollBehavior="auto">
+      <ScrollToBottom className="h-full" scrollViewClassName="kimi-chat-scroll h-full overflow-y-auto overflow-x-hidden" followButtonClassName="hidden" initialScrollBehavior="auto">
         <MessageList />
       </ScrollToBottom>
     </div>
