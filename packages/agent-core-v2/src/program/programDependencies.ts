@@ -24,6 +24,7 @@ import type { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProf
 import type { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
+import type { IWorkspaceTrust } from '#/workspace/workspaceTrust/workspaceTrust';
 import type { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 import type { ProgramWorkdir } from './programWorkdirs';
 
@@ -34,6 +35,7 @@ export interface ProgramSessionControllerInput {
   readonly userAgentProfiles: IUserAgentProfileLoader;
   readonly pluginAgentProfiles: IPluginAgentProfileLoader;
   readonly mcp: IWorkspaceMcpService;
+  readonly trust: IWorkspaceTrust;
   readonly acquireWorkdir: (environmentId: string, cwd: string) => Promise<ProgramWorkdir>;
   readonly onDispose: () => void;
 }
