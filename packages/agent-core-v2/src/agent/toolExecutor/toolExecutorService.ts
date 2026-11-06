@@ -12,7 +12,7 @@ import {
   type JsonType,
   type ToolArgsValidator,
 } from '#/tool/args-validator';
-import { parseToolCallArguments } from '#/tool/tool-args-parse';
+import { applyToolArgAliases, parseToolCallArguments } from '#/tool/tool-args-parse';
 import { PathSecurityError } from '#/tool/path-access';
 import { isAbortError, isUserCancellation } from '#/_base/utils/abort';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -779,17 +779,18 @@ function preflightToolCall(
       output: unavailable,
     };
   }
-  const validationError = validateExecutableToolArgs(tool, parsedArgs.data);
+  const args = applyToolArgAliases(tool.argAliases, parsedArgs.data);
+  const validationError = validateExecutableToolArgs(tool, args);
   if (validationError !== null) {
     return {
       kind: 'rejected',
       toolCall,
       toolName,
-      args: parsedArgs.data,
+      args,
       output: `Invalid args for tool "${toolName}": ${validationError}`,
     };
   }
-  return { kind: 'runnable', toolCall, toolName, tool, args: parsedArgs.data };
+  return { kind: 'runnable', toolCall, toolName, tool, args };
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {

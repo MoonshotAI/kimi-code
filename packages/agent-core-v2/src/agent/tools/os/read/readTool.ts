@@ -221,6 +221,10 @@ export class ReadTool implements IReadTool {
     });
   }
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadInputSchema);
+  readonly argAliases: Readonly<Record<string, string>> = {
+    offset: 'line_offset',
+    limit: 'n_lines',
+  };
   constructor(
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,

@@ -94,6 +94,7 @@ export type ToolExecution = RunnableToolExecution | ExecutableToolErrorResult;
 
 export interface ExecutableTool<Input = unknown> extends Tool {
   resolveExecution(input: Input): ToolExecution | Promise<ToolExecution>;
+  readonly argAliases?: Readonly<Record<string, string>>;
 }
 
 export type ToolSource = 'builtin' | 'user' | 'mcp';
