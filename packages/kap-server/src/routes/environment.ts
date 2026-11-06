@@ -69,7 +69,6 @@ const sshConfigHostsResponseSchema = z.object({
 
 const testEnvironmentRequestSchema = z.object({
   definition: RemoteEnvironmentEntrySchema,
-  path: z.string().min(1).optional(),
 }).strict();
 
 export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope, clientVersion?: string): void {
@@ -150,7 +149,6 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
-        [ErrorCode.FS_PATH_NOT_FOUND]: {},
       },
       description: 'Test a draft remote environment without changing configured environments',
       tags: ['environments'],
@@ -163,9 +161,6 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
           (spec) => RemoteSession.connect({ environmentId: 'connection-test', launcher: spec, clientVersion }),
           { launcher },
         );
-        const target = req.body.path ?? session.host.homeDir;
-        const path = await session.fs.realpath(target);
-        await session.fs.readdir(path);
         reply.send(okEnvelope({ connected: true as const }, req.id));
       } catch (error) {
         if (!sendEnvironmentError(reply, req.id, error)) {

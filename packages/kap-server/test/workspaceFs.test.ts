@@ -492,28 +492,20 @@ describe('server-v2 /api/v1/environments::test', () => {
     await rm(home as string, { recursive: true, force: true });
   });
 
-  it('connects a draft, checks its directory, and disposes it without registering an environment', async () => {
-    const realpath = vi.fn(async (path: string) => path);
-    const readdir = vi.fn(async () => []);
+  it('connects a draft and disposes it without registering an environment', async () => {
     const dispose = vi.fn(async () => undefined);
-    const connect = vi.spyOn(RemoteSession, 'connect').mockResolvedValue({
-      host: { homeDir: '/home/dev' },
-      fs: { realpath, readdir },
-      dispose,
-    } as unknown as RemoteSession);
+    const connect = vi.spyOn(RemoteSession, 'connect').mockResolvedValue({ dispose } as unknown as RemoteSession);
 
     const res = await fetch(`${base}/api/v1/environments:test`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-      body: JSON.stringify({ definition: { type: 'ssh', host: 'dev@example.test', defaultCwd: '/srv/app' }, path: '/srv/app' }),
+      body: JSON.stringify({ definition: { type: 'ssh', host: 'dev@example.test', defaultCwd: '/srv/app' } }),
     });
     const body = await res.json() as Envelope<{ connected: boolean }>;
 
     expect(body.code).toBe(0);
     expect(body.data.connected).toBe(true);
     expect(connect).toHaveBeenCalledOnce();
-    expect(realpath).toHaveBeenCalledWith('/srv/app');
-    expect(readdir).toHaveBeenCalledWith('/srv/app');
     expect(dispose).toHaveBeenCalledOnce();
     expect(server!.core.accessor.get(IEnvironmentService).snapshot().environments.some((entry) => entry.environmentId === 'connection-test')).toBe(false);
   });
