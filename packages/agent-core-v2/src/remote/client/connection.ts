@@ -10,6 +10,7 @@ import {
   ProtocolViolationError,
   type RequestId,
 } from '#/remote/protocol/messages';
+import type { EnvironmentConnectFailure } from '#/environment/environment';
 import {
   compareVersions,
   INITIALIZE_METHOD,
@@ -41,6 +42,7 @@ export type HandshakeErrorKind = 'timeout' | 'transport-timeout' | 'executor-exi
 
 export interface HandshakeErrorDetails {
   readonly kind?: HandshakeErrorKind;
+  readonly failure?: EnvironmentConnectFailure;
   readonly exitCode?: number | null;
   readonly executorVersion?: string;
   readonly minExecutorVersion?: string;
@@ -49,6 +51,7 @@ export interface HandshakeErrorDetails {
 
 export class HandshakeError extends Error {
   readonly kind?: HandshakeErrorKind;
+  readonly failure?: EnvironmentConnectFailure;
   readonly exitCode?: number | null;
   readonly executorVersion?: string;
   readonly minExecutorVersion?: string;
@@ -57,6 +60,7 @@ export class HandshakeError extends Error {
     super(message, details.cause === undefined ? undefined : { cause: details.cause });
     this.name = 'HandshakeError';
     this.kind = details.kind;
+    this.failure = details.failure;
     this.exitCode = details.exitCode;
     this.executorVersion = details.executorVersion;
     this.minExecutorVersion = details.minExecutorVersion;
@@ -120,7 +124,7 @@ export class RemoteExecConnection implements ExecChannel {
       this.livenessIntervalMs = options.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS;
       this.livenessTimeoutMs = options.livenessTimeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS;
       this.handshakeTimer = setTimeout(() => {
-        this.fail(new HandshakeError(`initialize timed out after ${timeoutMs}ms`, { kind: 'timeout' }));
+        this.fail(new HandshakeError(`initialize timed out after ${timeoutMs}ms`, { kind: 'timeout', failure: 'executor_timeout' }));
       }, timeoutMs);
       this.handshakeTimer.unref?.();
 
@@ -225,6 +229,7 @@ export class RemoteExecConnection implements ExecChannel {
         `executor version ${this.executorVersionValue} is below the minimum ${minExecutorVersion}; upgrade the remote executor (kimi exec-server) and retry`,
         {
           kind: 'incompatible',
+          failure: 'executor_outdated',
           executorVersion: this.executorVersionValue,
           minExecutorVersion,
         },
@@ -233,13 +238,13 @@ export class RemoteExecConnection implements ExecChannel {
     if (this.environmentValue.pathClass !== 'posix' && this.environmentValue.pathClass !== 'win32') {
       return new HandshakeError(
         `executor environment ${this.environmentValue.osKind} has unsupported path class ${this.environmentValue.pathClass}`,
-        { kind: 'incompatible' },
+        { kind: 'incompatible', failure: 'executor_outdated' },
       );
     }
     if (this.environmentValue.pathClass === 'win32' && this.environmentValue.windowsProcessLifecycle !== true) {
       return new HandshakeError(
         'Windows executor does not support the required process lifecycle; upgrade the remote executor (kimi exec-server) and retry',
-        { kind: 'incompatible' },
+        { kind: 'incompatible', failure: 'executor_outdated' },
       );
     }
     return undefined;

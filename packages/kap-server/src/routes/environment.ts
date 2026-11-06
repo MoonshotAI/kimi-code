@@ -17,7 +17,7 @@ import {
   type EnvironmentGenerationSnapshot,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { HandshakeError, RemoteSession, classifyConnectFailure, connectWithGuidance, toLauncherSpec } from '@moonshot-ai/agent-core-v2/remote';
+import { HandshakeError, RemoteSession, classifyConnectFailure, connectWithGuidance, toLauncherSpec, type TransportSource } from '@moonshot-ai/agent-core-v2/remote';
 import { RemoteEnvironmentEntrySchema } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import { readSshConfigHosts } from '@moonshot-ai/agent-core-v2/remote/declaration/sshConfigHosts';
 import { z } from 'zod';
@@ -155,21 +155,21 @@ export function registerEnvironmentRoutes(app: EnvironmentRouteHost, core: Scope
     },
     async (req, reply) => {
       let session: RemoteSession | undefined;
+      const launcher = toLauncherSpec(req.body.definition);
       try {
-        const launcher = toLauncherSpec(req.body.definition);
         session = await connectWithGuidance(
           (spec) => RemoteSession.connect({ environmentId: 'connection-test', launcher: spec, clientVersion }),
           { launcher },
         );
         reply.send(okEnvelope({ connected: true as const }, req.id));
       } catch (error) {
-        if (!sendEnvironmentError(reply, req.id, error)) {
+        if (!sendEnvironmentError(reply, req.id, error, launcher.type)) {
           reply.send(errEnvelope(
             ErrorCode.ENVIRONMENT_UNAVAILABLE,
             error instanceof Error ? error.message : String(error),
             req.id,
             undefined,
-            { connect_failure: classifyConnectFailure(error) },
+            { connect_failure: classifyConnectFailure(error, launcher.type) },
           ));
         }
       } finally {
@@ -304,13 +304,20 @@ export function sendEnvironmentError(
   reply: { send(payload: unknown): unknown },
   requestId: string,
   error: unknown,
+  source?: TransportSource,
 ): boolean {
   if (error instanceof EnvironmentError) {
     reply.send(errEnvelope(environmentErrorCode(error.code), error.message, requestId));
     return true;
   }
   if (error instanceof HandshakeError) {
-    reply.send(errEnvelope(ErrorCode.ENVIRONMENT_UNAVAILABLE, error.message, requestId, undefined, { connect_failure: classifyConnectFailure(error) }));
+    reply.send(errEnvelope(
+      ErrorCode.ENVIRONMENT_UNAVAILABLE,
+      error.message,
+      requestId,
+      undefined,
+      { connect_failure: classifyConnectFailure(error, source) },
+    ));
     return true;
   }
   return false;

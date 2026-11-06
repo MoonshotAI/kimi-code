@@ -1,6 +1,8 @@
 import { resolveProgramPath } from '#/environment/programPath';
 import type { RemoteEnvironmentEntry } from '#/remote/declaration/remoteEnvironmentDeclaration';
 
+import { HandshakeError } from './connection';
+
 export const DEFAULT_REMOTE_BIN = '~/.kimi-code/bin/kimi';
 export const EXEC_SERVER_SUBCOMMAND = 'exec-server';
 export const EXEC_SERVER_ARGV: readonly string[] = [EXEC_SERVER_SUBCOMMAND, '--listen', 'stdio'];
@@ -179,6 +181,18 @@ export function commandLauncherEnv(
   return env;
 }
 
+function resolveCommandProgram(program: string, pathEnv: string | undefined): string {
+  try {
+    return resolveProgramPath(program, { pathEnv });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/launcher command "[^"]*" (?:is not an executable file|was not found on PATH)/.test(message)) {
+      throw new HandshakeError(message, { failure: 'launcher_not_found', cause: error });
+    }
+    throw error;
+  }
+}
+
 export function resolveLauncher(
   spec: LauncherSpec,
   interactiveSshAuth = false,
@@ -212,7 +226,7 @@ export function resolveLauncher(
       const remoteBin = launcherRemoteBin(spec);
       if (remoteBin !== undefined) assertLauncherOperand('remote bin', remoteBin);
       return {
-        program: resolveProgramPath(spec.program, { pathEnv: spec.env?.['PATH'] }),
+        program: resolveCommandProgram(spec.program, spec.env?.['PATH']),
         args: remoteBin === undefined
           ? [...(spec.args ?? [])]
           : [...(spec.args ?? []), remoteBin, EXEC_SERVER_SUBCOMMAND],

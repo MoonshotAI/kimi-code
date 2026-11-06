@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 
+import type { EnvironmentConnectFailure } from '#/environment/environment';
 import type {
   HostEnvironmentInfo,
   PathClass,
@@ -10,6 +11,7 @@ import { ExecBridge, type ExecBridgeExit } from './execBridge';
 import { RemoteFileSystem } from '#/os/backends/remote/remoteFileSystem';
 import { RemoteProcessService } from '#/os/backends/remote/remoteProcess';
 
+import { classifyTransportStderr, passwordAuthenticationFailed, type TransportSource } from './connectGuidance';
 import { DEFAULT_INITIALIZE_TIMEOUT_MS, HandshakeError, RemoteExecConnection } from './connection';
 import { DEFAULT_REMOTE_BIN, isBareRemoteBin, powerShellCommand, resolveLauncher, resolveSshCommand, type LauncherSpec, type SshTarget } from './launchers';
 import { createSshAskpass, type SshAuthOptions } from './sshAskpass';
@@ -73,11 +75,15 @@ export class RemoteSession {
         if (exit !== undefined && !(error instanceof HandshakeError)) {
           const stderr = bridge.getStderrTail().trim();
           const detail = stderr.length > 0 ? stderr : exit.error?.message;
-          const authenticationFailed = options.launcher.type === 'ssh' && exit.code === 255 &&
-            /Permission denied \([^)]*(?:password|keyboard-interactive)[^)]*\)/i.test(stderr);
+          const authenticationFailed = options.launcher.type === 'ssh' && exit.code === 255 && passwordAuthenticationFailed(stderr);
           throw new HandshakeError(
             `executor process exited before the handshake completed (code ${exit.code ?? 'null'}, signal ${exit.signal ?? 'null'})${detail !== undefined && detail.length > 0 ? `: ${detail}` : ''}`,
-            { kind: authenticationFailed ? 'authentication' : 'executor-exit', exitCode: exit.code, cause: error },
+            {
+              kind: authenticationFailed ? 'authentication' : 'executor-exit',
+              failure: launcherFailure(options.launcher.type, stderr, exit.error),
+              exitCode: exit.code,
+              cause: error,
+            },
           );
         }
         if (error instanceof HandshakeError && error.kind === 'timeout') {
@@ -85,6 +91,7 @@ export class RemoteSession {
           if (stderr.length > 0) {
             throw new HandshakeError(`${error.message}; executor stderr: ${stderr}`, {
               kind: 'timeout',
+              failure: classifyTransportStderr(stderr, options.launcher.type) ?? error.failure,
               cause: error,
             });
           }
@@ -145,9 +152,17 @@ async function detectSshPlatform(
         windowsHide: true,
       }, (error, stdout, stderr) => {
         if (error?.killed && error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-          reject(new HandshakeError(`SSH platform probe timed out after ${timeoutMs}ms${stderr.trim() ? `: ${stderr.trim()}` : ''}`, { kind: 'transport-timeout', cause: error }));
+          reject(new HandshakeError(`SSH platform probe timed out after ${timeoutMs}ms${stderr.trim() ? `: ${stderr.trim()}` : ''}`, {
+            kind: 'transport-timeout',
+            failure: classifyTransportStderr(stderr, 'ssh') ?? 'connect_timeout',
+            cause: error,
+          }));
         } else if (error !== null && typeof error.code !== 'number') {
-          reject(new HandshakeError(`SSH platform probe failed: ${error.message}`, { kind: 'executor-exit', cause: error }));
+          reject(new HandshakeError(`SSH platform probe failed: ${error.message}`, {
+            kind: 'executor-exit',
+            failure: error.code === 'ENOENT' ? 'launcher_not_found' : classifyTransportStderr(stderr, 'ssh'),
+            cause: error,
+          }));
         } else {
           resolve({ stdout, stderr, code: typeof error?.code === 'number' ? error.code : 0 });
         }
@@ -156,9 +171,11 @@ async function detectSshPlatform(
     });
     const output = result.stdout.trim().split(/\r?\n/).at(-1);
     if (result.code === 255) {
-      const authenticationFailed = /Permission denied \([^)]*(?:password|keyboard-interactive)[^)]*\)/i.test(result.stderr);
+      const authenticationFailed = passwordAuthenticationFailed(result.stderr);
       throw new HandshakeError(`SSH platform probe failed: ${result.stderr.trim() || 'ssh exited with code 255'}`, {
-        kind: authenticationFailed ? 'authentication' : 'executor-exit', exitCode: 255,
+        kind: authenticationFailed ? 'authentication' : 'executor-exit',
+        failure: classifyTransportStderr(result.stderr, 'ssh'),
+        exitCode: 255,
       });
     }
     if (result.code === 0 && output) {
@@ -167,9 +184,20 @@ async function detectSshPlatform(
     }
     if (index === probes.length - 1) {
       throw new HandshakeError(`Could not detect the SSH target platform: ${result.stderr.trim() || result.stdout.trim() || `probe exited with code ${result.code}`}`, {
-        kind: 'executor-exit', exitCode: result.code,
+        kind: 'executor-exit',
+        failure: classifyTransportStderr(`${result.stderr}\n${result.stdout}`, 'ssh'),
+        exitCode: result.code,
       });
     }
   }
   throw new Error('SSH platform probes exhausted');
+}
+
+function launcherFailure(
+  source: TransportSource,
+  stderr: string,
+  spawnError: Error | undefined,
+): EnvironmentConnectFailure | undefined {
+  if (spawnError !== undefined && 'code' in spawnError && spawnError.code === 'ENOENT') return 'launcher_not_found';
+  return classifyTransportStderr(stderr, source);
 }

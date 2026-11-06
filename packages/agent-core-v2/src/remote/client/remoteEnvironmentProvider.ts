@@ -181,7 +181,7 @@ class DeclaredRemoteEnvironment implements Environment {
       });
       if (epoch === this.epoch && this.currentStatus === 'connecting') {
         this.lastConnectError = error instanceof Error ? error.message : String(error);
-        this.lastConnectFailure = classifyConnectFailure(error);
+        this.lastConnectFailure = classifyConnectFailure(error, launcher.type);
         this.setStatus('disconnected');
       }
       throw error;
@@ -233,7 +233,7 @@ class DeclaredRemoteEnvironment implements Environment {
         reason: info.kind ?? 'other',
       });
       this.lastConnectError = info.reason;
-      this.lastConnectFailure = info.reason === undefined ? undefined : classifyConnectFailure(info.reason);
+      this.lastConnectFailure = classifyConnectFailure(info.reason, this.launcher.type);
       this.session = undefined;
       this.setStatus('disconnected');
       void session.dispose();

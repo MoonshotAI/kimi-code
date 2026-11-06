@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { classifyConnectFailure, connectWithGuidance } from '#/remote/client/connectGuidance';
+import { classifyConnectFailure, classifyTransportStderr, connectWithGuidance } from '#/remote/client/connectGuidance';
 import { HandshakeError } from '#/remote/client/connection';
 import type { LauncherSpec } from '#/remote/client/launchers';
 
@@ -92,19 +92,37 @@ describe('connectWithGuidance', () => {
 
 describe('classifyConnectFailure', () => {
   it.each([
-    ['SSH platform probe failed: ssh: Could not resolve hostname dev-box: nodename nor servname provided, or not known', 'executor-exit', 'host_not_found'],
-    ['SSH platform probe failed: ssh: connect to host dev-box port 22: Connection refused', 'executor-exit', 'connection_refused'],
-    ['SSH platform probe failed: ssh: connect to host dev-box port 22: No route to host', 'executor-exit', 'host_unreachable'],
-    ['SSH platform probe failed: ssh: connect to host dev-box port 22: Operation timed out', 'executor-exit', 'connect_timeout'],
-    ['SSH platform probe failed: me@dev-box: Permission denied (publickey).', 'executor-exit', 'authentication_failed'],
-    ['SSH platform probe failed: @@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.', 'executor-exit', 'host_key_changed'],
-    ['executor process exited before the handshake completed (code 1, signal null): Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?', 'executor-exit', 'docker_unavailable'],
-    ['executor process exited before the handshake completed (code 1, signal null): Error response from daemon: No such container: dev', 'executor-exit', 'container_not_found'],
-    ['executor process exited before the handshake completed (code 1, signal null): Error response from daemon: container 3f2a is not running', 'executor-exit', 'container_not_running'],
-    ['initialize timed out after 10000ms; executor stderr: ssh: connect to host dev-box port 22: Connection refused', 'timeout', 'connection_refused'],
-    ['initialize timed out after 10000ms', 'timeout', 'executor_timeout'],
-  ] as const)('classifies %s', (message, kind, expected) => {
-    expect(classifyConnectFailure(new HandshakeError(message, { kind, exitCode: kind === 'executor-exit' ? 255 : undefined }))).toBe(expected);
+    ['ssh: Could not resolve hostname dev-box: nodename nor servname provided, or not known', 'ssh', 'host_not_found'],
+    ['ssh: connect to host dev-box port 22: Connection refused', 'ssh', 'connection_refused'],
+    ['ssh: connect to host dev-box port 22: No route to host', 'ssh', 'host_unreachable'],
+    ['ssh: connect to host dev-box port 22: Operation timed out', 'ssh', 'connect_timeout'],
+    ['me@dev-box: Permission denied (publickey).', 'ssh', 'authentication_failed'],
+    ['@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.', 'ssh', 'host_key_changed'],
+    ['Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?', 'docker', 'docker_unavailable'],
+    ['Error response from daemon: No such container: dev', 'docker', 'container_not_found'],
+    ['Error response from daemon: container 3f2a is not running', 'docker', 'container_not_running'],
+    ['dial unix:///var/run/docker.sock: connect: connection refused', 'docker', 'connection_refused'],
+  ] as const)('classifies %s from the producing process', (stderr, source, expected) => {
+    expect(classifyTransportStderr(stderr, source)).toBe(expected);
+    expect(classifyConnectFailure(new HandshakeError(stderr, { kind: 'executor-exit', failure: expected }))).toBe(expected);
+  });
+
+  it('tries both transport tables for a custom command and keeps SSH and Docker phrases apart', () => {
+    const refused = 'dial unix:///var/run/docker.sock: connect: connection refused';
+    expect(classifyTransportStderr(refused, 'ssh')).toBe('connection_refused');
+    expect(classifyTransportStderr(refused, 'docker')).toBe('connection_refused');
+    expect(classifyTransportStderr('Error response from daemon: No such container: dev', 'command')).toBe('container_not_found');
+    expect(classifyTransportStderr('ssh: Could not resolve hostname dev-box: Name or service not known', 'command')).toBe('host_not_found');
+    expect(classifyTransportStderr('Error: get failed: container no-such-container not found', 'ssh')).toBeUndefined();
+    expect(classifyConnectFailure(new Error('pods "dev" not found'), 'command')).toBe('unknown');
+  });
+
+  it('keeps the failure recorded at the throw site instead of rescanning the message', () => {
+    const recorded = new HandshakeError('ssh: connect to host dev-box port 22: Connection refused', {
+      kind: 'timeout',
+      failure: 'executor_timeout',
+    });
+    expect(classifyConnectFailure(recorded, 'ssh')).toBe('executor_timeout');
   });
 
   it('separates a missing executor, an outdated executor, and a stalled SSH connection', () => {
@@ -143,7 +161,7 @@ describe('classifyConnectFailure for launchers without a shell', () => {
   });
 
   it('names a missing container from runtimes that do not say no such container', () => {
-    expect(classifyConnectFailure(exited('Error: get failed: container no-such-container not found'))).toBe('container_not_found');
+    expect(classifyConnectFailure(exited('Error: get failed: container no-such-container not found'), 'command')).toBe('container_not_found');
   });
 
   it('does not mistake a missing kubernetes resource for a missing executor', () => {
