@@ -747,10 +747,10 @@ function rankFsMentionCandidates(
   }
 
   scored.sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score;
     if (a.candidate.ignored !== b.candidate.ignored) {
       return Number(a.candidate.ignored === true) - Number(b.candidate.ignored === true);
     }
-    if (a.score !== b.score) return b.score - a.score;
     if (a.candidate.isDirectory !== b.candidate.isDirectory) {
       return a.candidate.isDirectory ? -1 : 1;
     }

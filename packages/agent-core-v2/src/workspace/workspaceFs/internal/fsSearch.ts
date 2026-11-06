@@ -285,8 +285,8 @@ export function evaluateSuggestCandidate(
 }
 
 export function compareSuggestCandidates(a: SuggestCandidate, b: SuggestCandidate): number {
-  if (a.ignored !== b.ignored) return Number(a.ignored) - Number(b.ignored);
   if (a.tier !== b.tier) return b.tier - a.tier;
+  if (a.ignored !== b.ignored) return Number(a.ignored) - Number(b.ignored);
   if (a.depth !== b.depth) return a.depth - b.depth;
   if (a.name.length !== b.name.length) return a.name.length - b.name.length;
   if (a.span !== b.span) return a.span - b.span;
@@ -302,6 +302,10 @@ export class SuggestTopHeap {
 
   get size(): number {
     return this.heap.length;
+  }
+
+  get worst(): SuggestCandidate | undefined {
+    return this.heap[0];
   }
 
   push(candidate: SuggestCandidate): void {

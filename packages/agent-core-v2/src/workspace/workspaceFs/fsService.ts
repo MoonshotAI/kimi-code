@@ -665,7 +665,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       );
     }
 
-    const candidates: Array<FsSearchHit & { ignored: boolean }> = [];
+    const candidates: Array<FsSearchHit & { ignored: boolean; tier: number }> = [];
     const queryLower = req.query.toLowerCase();
     const seenPaths = new Set<string>();
     const effectiveCap = Math.min(req.limit, SEARCH_HARD_CAP);
@@ -685,12 +685,15 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           if (req.exclude_globs && matchesAnyGlob(relPath, req.exclude_globs)) {
             return;
           }
+          const nameLower = name.toLowerCase();
+          const tier = nameLower === queryLower ? 3 : nameLower.startsWith(queryLower) ? 2 : 1;
           const path = this.suggestDisplayPath(root, relPath);
           candidates.push({
             path,
             name,
             kind,
             ignored,
+            tier,
             score,
             match_positions: computeMatchPositions(path, queryLower),
           });
@@ -698,11 +701,13 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       }
     };
     await runPass(false);
-    if (!req.follow_gitignore && candidates.length <= effectiveCap) {
+    const exactMatches = candidates.reduce((count, candidate) => count + Number(candidate.tier === 3), 0);
+    if (!req.follow_gitignore && exactMatches <= effectiveCap) {
       await runPass(true);
     }
 
     candidates.sort((a, b) => {
+      if (a.tier !== b.tier) return b.tier - a.tier;
       if (a.ignored !== b.ignored) return Number(a.ignored) - Number(b.ignored);
       if (b.score !== a.score) return b.score - a.score;
       return a.path.localeCompare(b.path);
@@ -731,7 +736,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const query: SuggestQuery = {
       nameQuery: queryLower,
       pathSegments,
-      showHidden: req.show_hidden,
+      showHidden: req.show_hidden || queryLower.startsWith('.'),
       followGitignore: req.follow_gitignore,
       includeGlobs: req.include_globs,
       excludeGlobs: req.exclude_globs,
@@ -1008,7 +1013,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     };
 
     await runPass(false);
-    if (!query.followGitignore && matched <= cap && !signal.aborted) {
+    if (!query.followGitignore && (matched <= cap || top.worst?.tier !== 3) && !signal.aborted) {
       await runPass(true);
     }
 
@@ -1051,7 +1056,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       }
     };
     await runPass(false);
-    if (!query.followGitignore && matched <= cap && !signal.aborted && Date.now() < deadline) {
+    if (!query.followGitignore && (matched <= cap || top.worst?.tier !== 3) && !signal.aborted && Date.now() < deadline) {
       await runPass(true);
     }
     const items = top.drain().map((candidate) => ({

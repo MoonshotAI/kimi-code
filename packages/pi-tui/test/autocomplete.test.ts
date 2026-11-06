@@ -131,7 +131,7 @@ describe("CombinedAutocompleteProvider", () => {
 			rmSync(rootDir, { recursive: true, force: true });
 		});
 
-		test("includes gitignored files last only when explicitly enabled", async () => {
+		test("includes gitignored files by match quality only when explicitly enabled", async () => {
 			assert.strictEqual(spawnSync("git", ["init", "--quiet"], { cwd: baseDir }).status, 0);
 			setupFolder(baseDir, {
 				dirs: ["src"],
@@ -158,6 +158,12 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(values.at(-1), "@ignored.ts");
 			assert.ok(values.indexOf("@README.md") < values.indexOf("@ignored.ts"));
 			assert.ok(values.indexOf("@src/") < values.indexOf("@ignored.ts"));
+
+			const weakFiles: Record<string, string> = { ".gitignore": ".tmp/**\n", ".tmp/ignored.ts": "ignored" };
+			for (let i = 0; i < 25; i++) weakFiles[`weak-${i}.tmp.ts`] = "export {};";
+			setupFolder(baseDir, { files: weakFiles });
+			const exact = await getSuggestions(provider, ["@.tmp"], 0, 5);
+			assert.strictEqual(exact?.items[0]?.value, "@.tmp/");
 		});
 
 		test("recognizes @ after CJK punctuation without consuming the preceding text", async () => {
@@ -354,7 +360,7 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.ok(!values?.includes("@packages/ai/src/autocomplete.ts"));
 		});
 
-		test("groups ignored matches after ordinary matches across additional roots", async () => {
+		test("ranks exact matches before ignored status across additional roots", async () => {
 			assert.strictEqual(spawnSync("git", ["init", "--quiet"], { cwd: baseDir }).status, 0);
 			assert.strictEqual(spawnSync("git", ["init", "--quiet"], { cwd: outsideDir }).status, 0);
 			setupFolder(baseDir, {
@@ -376,10 +382,10 @@ describe("CombinedAutocompleteProvider", () => {
 			const ignoredExtra = values.indexOf(`@${join(outsideDir, "shared").replace(/\\/g, "/")}`);
 			assert.ok(values.includes(cwd));
 			assert.ok(values.includes(extra));
-			assert.ok(ignoredCwd > values.indexOf(cwd));
-			assert.ok(ignoredCwd > values.indexOf(extra));
-			assert.ok(ignoredExtra > values.indexOf(cwd));
-			assert.ok(ignoredExtra > values.indexOf(extra));
+			assert.ok(ignoredCwd < values.indexOf(cwd));
+			assert.ok(ignoredCwd < values.indexOf(extra));
+			assert.ok(ignoredExtra < values.indexOf(cwd));
+			assert.ok(ignoredExtra < values.indexOf(extra));
 		});
 
 		test("scopes @dir/ queries across every root", async () => {

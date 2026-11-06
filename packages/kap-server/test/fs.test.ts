@@ -483,7 +483,7 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.data.entries['missing.txt']).toBeNull();
   });
 
-  it('fs:search groups ignored files after ordinary matches only when requested', async () => {
+  it('fs:search groups ignored files after ordinary matches by default and when requested', async () => {
     await writeFile(join(work!, '.gitignore'), 'alpha-ignored.ts\n');
     await writeFile(join(work!, 'alpha.ts'), '');
     await writeFile(join(work!, 'alpha-ignored.ts'), '');
@@ -492,15 +492,23 @@ describe('server-v2 /api/v1 fs routes', () => {
     const included = await postFs<{ items: { path: string }[]; truncated: boolean }>(
       id,
       'search',
-      { query: 'alpha', follow_gitignore: false },
+      { query: 'alpha' },
     );
     expect(included.code).toBe(0);
     expect(included.data.items.map((i) => i.path)).toEqual(['alpha.ts', 'alpha-ignored.ts']);
 
+    const explicitlyIncluded = await postFs<{ items: { path: string }[]; truncated: boolean }>(
+      id,
+      'search',
+      { query: 'alpha', follow_gitignore: false },
+    );
+    expect(explicitlyIncluded.code).toBe(0);
+    expect(explicitlyIncluded.data.items.map((i) => i.path)).toEqual(['alpha.ts', 'alpha-ignored.ts']);
+
     const filtered = await postFs<{ items: { path: string }[]; truncated: boolean }>(
       id,
       'search',
-      { query: 'alpha' },
+      { query: 'alpha', follow_gitignore: true },
     );
     expect(filtered.code).toBe(0);
     expect(filtered.data.items.map((i) => i.path)).toEqual(['alpha.ts']);
@@ -880,10 +888,11 @@ describe('server-v2 /api/v1 fs routes', () => {
         query: 'shared',
       });
       expect(shared.code).toBe(0);
-      expect(shared.data.items.map((item) => item.path)).toHaveLength(2);
+      expect(shared.data.items.map((item) => item.path)).toHaveLength(3);
       expect(shared.data.items.map((item) => item.path)).toEqual(
         expect.arrayContaining(['shared.ts', extraShared]),
       );
+      expect(shared.data.items.at(-1)?.path).toBe(extraIgnored);
 
       const withIgnored = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
         workspace: workspace.id,
@@ -1348,24 +1357,44 @@ describe('server-v2 /api/v1 fs routes', () => {
     }
   });
 
-  it('fs:suggest honors follow_gitignore on each root', async () => {
+  it('fs:suggest includes ignored files by default and honors explicit filtering on each root', async () => {
     const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-extra-'));
     try {
-      await writeFile(join(extra, '.gitignore'), 'ignored-extra.ts\n');
+      await writeFile(join(extra, '.gitignore'), 'ignored-extra.ts\n.tmp/**\n');
       await writeFile(join(extra, 'ignored-extra.ts'), '');
-      const followed = await postRootSuggest<{ items: SuggestItemWire[] }>({
+      await writeFile(join(extra, 'ignored-visible.ts'), '');
+      await mkdir(join(extra, '.tmp'));
+      await writeFile(join(extra, '.tmp', 'ignored.ts'), '');
+      for (let i = 0; i < 25; i++) await writeFile(join(extra, `weak-${i}.tmp.ts`), '');
+      const included = await postRootSuggest<{ items: SuggestItemWire[] }>({
         roots: [extra],
         query: 'ignored',
       });
-      expect(followed.code).toBe(0);
-      expect(followed.data.items).toEqual([]);
-      const ignored = await postRootSuggest<{ items: SuggestItemWire[] }>({
+      expect(included.code).toBe(0);
+      expect(included.data.items.map((i) => i.path)).toEqual(['ignored-visible.ts', 'ignored-extra.ts']);
+      const explicitlyIncluded = await postRootSuggest<{ items: SuggestItemWire[] }>({
         roots: [extra],
         query: 'ignored',
         follow_gitignore: false,
       });
-      expect(ignored.code).toBe(0);
-      expect(ignored.data.items.map((i) => i.path)).toContain('ignored-extra.ts');
+      expect(explicitlyIncluded.code).toBe(0);
+      expect(explicitlyIncluded.data.items.map((i) => i.path)).toEqual(['ignored-visible.ts', 'ignored-extra.ts']);
+      const filtered = await postRootSuggest<{ items: SuggestItemWire[] }>({
+        roots: [extra],
+        query: 'ignored',
+        follow_gitignore: true,
+      });
+      expect(filtered.code).toBe(0);
+      expect(filtered.data.items.map((i) => i.path)).toEqual(['ignored-visible.ts']);
+
+      const exact = await postRootSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
+        roots: [extra],
+        query: '.tmp',
+        limit: 1,
+      });
+      expect(exact.code).toBe(0);
+      expect(exact.data.items.map((i) => i.path)).toEqual(['.tmp']);
+      expect(exact.data.truncated).toBe(true);
     } finally {
       await rm(extra, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }

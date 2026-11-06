@@ -931,7 +931,9 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				}
 			};
 			collect(perRoot, false);
-			if (this.includeGitignoredFiles && bestByAbs.size < 20 && !options.signal.aborted) {
+			const highestScoreMatches = [...bestByAbs.values()].filter((item) => item.score >= 110).length;
+			const canSkipIgnored = bestByAbs.size >= 20 && highestScoreMatches >= 20;
+			if (this.includeGitignoredFiles && !canSkipIgnored && !options.signal.aborted) {
 				const ignoredPerRoot = await Promise.all(
 					targets.map(async (target) => {
 						const entries = await walkDirectoryWithFd(
@@ -954,9 +956,9 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 			const scored = [...bestByAbs.values()];
 			scored.sort((a, b) => {
-				if (a.ignored !== b.ignored) return Number(a.ignored) - Number(b.ignored);
 				const scoreDiff = b.score - a.score;
 				if (scoreDiff !== 0) return scoreDiff;
+				if (a.ignored !== b.ignored) return Number(a.ignored) - Number(b.ignored);
 
 				const aDepth = toDisplayPath(a.path).split("/").filter(Boolean).length;
 				const bDepth = toDisplayPath(b.path).split("/").filter(Boolean).length;

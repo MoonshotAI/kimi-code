@@ -820,7 +820,7 @@ describe('WorkspaceFsService.diff', () => {
 });
 
 describe('WorkspaceFsService.search', () => {
-  it('groups ignored matches after ordinary files before applying the result cap', async () => {
+  it('ranks match quality before ignored status when applying the result cap', async () => {
     const backend = fakeFs({
       '.gitignore': 'b.ts\n',
       'a.ts': '',
@@ -839,15 +839,26 @@ describe('WorkspaceFsService.search', () => {
     const capped = await fs.search({ query: 'ts', limit: 2, follow_gitignore: false });
     expect(capped.items.map((item) => item.path)).toEqual(['a.ts', 'm.ts']);
     expect(capped.truncated).toBe(true);
-    expect(walks).toBe(1);
+    expect(walks).toBe(2);
 
     const all = await fs.search({ query: 'ts', limit: 50, follow_gitignore: false });
     expect(all.items.map((item) => item.path)).toEqual(['a.ts', 'm.ts', 'z.ts', 'b.ts']);
-    expect(walks).toBe(3);
+    expect(walks).toBe(4);
 
     const filtered = await fs.search({ query: 'ts', limit: 50, follow_gitignore: true });
     expect(filtered.items.map((item) => item.path)).toEqual(['a.ts', 'm.ts', 'z.ts']);
-    expect(walks).toBe(4);
+    expect(walks).toBe(5);
+
+    const dotBackend = fakeFs({
+      '.gitignore': '.tmp/**\n',
+      '.tmp/ignored.ts': '',
+      'weak-one.tmp.ts': '',
+      'weak-two.tmp.ts': '',
+    });
+    const dotFs = makeRemoteWalkSession(dotBackend);
+    const exact = await dotFs.search({ query: '.tmp', limit: 1, follow_gitignore: false });
+    expect(exact.items.map((item) => item.path)).toEqual(['.tmp']);
+    expect(exact.truncated).toBe(true);
   });
 
   it('reports symlinks as kind symlink and does not recurse into them', async () => {
@@ -1136,6 +1147,23 @@ describe('WorkspaceFsService.suggest', () => {
     expect(captured[0]).not.toContain('--no-ignore');
     expect(captured[1]).toContain('--no-ignore');
     expect(captured[1]).toContain('--no-require-git');
+
+    const dotFs = makeSession({}, (args) => {
+      if (args[0] === 'rg' && args[1] === '--version') return { stdout: 'ripgrep 15.0.0', exitCode: 0 };
+      if (args[0] === 'rg' && args.includes('--files')) {
+        captured.push([...args]);
+        const lines = args.includes('--no-ignore')
+          ? ['weak-one.tmp.ts', 'weak-two.tmp.ts', '.tmp/ignored.ts']
+          : ['weak-one.tmp.ts', 'weak-two.tmp.ts'];
+        return { stdout: `${lines.join('\n')}\n`, exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 0 };
+    });
+    const exact = await dotFs.suggest({ query: '.tmp', limit: 1, follow_gitignore: false, show_hidden: false });
+    expect(exact.items.map((item) => item.path)).toEqual(['.tmp']);
+    expect(captured).toHaveLength(4);
+    expect(captured[2]).toContain('--hidden');
+    expect(captured[3]).toContain('--hidden');
   });
 
   it('hides dot-prefixed entries at any depth unless show_hidden is set', async () => {
@@ -1200,16 +1228,16 @@ describe('WorkspaceFsService.suggest', () => {
     expect(hidden.items.map((i) => i.path)).not.toContain('.hidden.ts');
   });
 
-  it('truncates at the limit without an ignored supplement when ordinary matches already exceed it', async () => {
+  it('skips the ignored supplement only when highest-quality matches already fill the cap', async () => {
     const captured: string[][] = [];
-    const fs = makeSession({}, rgLinesHandler(['a1.ts', 'a2.ts', 'a3.ts', 'a4.ts'], captured));
+    const fs = makeSession({}, rgLinesHandler(['a.ts', 'dir/a.ts'], captured));
     const result = await fs.suggest({
-      query: 'a',
-      limit: 2,
+      query: 'a.ts',
+      limit: 1,
       follow_gitignore: false,
       show_hidden: false,
     });
-    expect(result.items).toHaveLength(2);
+    expect(result.items).toHaveLength(1);
     expect(result.truncated).toBe(true);
     expect(captured.filter((args) => args.includes('--files'))).toHaveLength(1);
   });

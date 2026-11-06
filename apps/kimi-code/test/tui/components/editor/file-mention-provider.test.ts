@@ -661,7 +661,7 @@ describe('FileMentionProvider', () => {
     },
   );
 
-  it('filesystem fallback groups gitignored files after ordinary files and excludes .git', async () => {
+  it('filesystem fallback ranks match quality before gitignored status and excludes .git', async () => {
     expect(spawnSync('git', ['init', '--quiet'], { cwd: workDir }).status).toBe(0);
     mkdirSync(join(workDir, 'src'));
     writeFileSync(join(workDir, '.gitignore'), 'ignored.ts\n');
@@ -675,6 +675,13 @@ describe('FileMentionProvider', () => {
     const values = result!.items.map((item) => item.value);
     expect(values).toEqual(['@kept.ts', '@ignored.ts']);
     expect(values.some((value) => value.startsWith('@.git'))).toBe(false);
+
+    writeFileSync(join(workDir, '.gitignore'), '.tmp/**\n');
+    mkdirSync(join(workDir, '.tmp'));
+    writeFileSync(join(workDir, '.tmp', 'ignored.ts'), 'ignored');
+    for (let i = 0; i < 25; i++) writeFileSync(join(workDir, `weak-${i}.tmp.ts`), 'weak');
+    const exact = await provider.getSuggestions(['@.tmp'], 0, 5, { signal: ctrl() });
+    expect(exact?.items[0]?.value).toBe('@.tmp/');
   });
 
   it('uses the filesystem fallback for an unclosed quoted @ mention', async () => {

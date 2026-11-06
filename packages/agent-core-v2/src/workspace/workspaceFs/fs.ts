@@ -201,7 +201,7 @@ export const fsSearchRequestSchema = z.object({
   limit: z.number().int().min(1).max(200).default(50),
   include_globs: z.array(z.string()).optional(),
   exclude_globs: z.array(z.string()).optional(),
-  follow_gitignore: z.boolean().default(true),
+  follow_gitignore: z.boolean().default(false),
 });
 export type FsSearchRequest = z.infer<typeof fsSearchRequestSchema>;
 
@@ -223,7 +223,7 @@ export type FsSuggestItem = z.infer<typeof fsSuggestItemSchema>;
 export const fsSuggestRequestSchema = z.object({
   query: z.string(),
   limit: z.number().int().min(1).max(200).default(50),
-  follow_gitignore: z.boolean().default(true),
+  follow_gitignore: z.boolean().default(false),
   show_hidden: z.boolean().default(false),
   include_globs: z.array(z.string()).optional(),
   exclude_globs: z.array(z.string()).optional(),

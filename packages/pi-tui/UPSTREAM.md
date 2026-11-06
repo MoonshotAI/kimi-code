@@ -135,7 +135,7 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 ### opt-in-gitignored-at-completion — keep
 
-**Decision:** `CombinedAutocompleteProvider` accepts a default-off `includeGitignoredFiles` option. When enabled, `@` completion keeps ordinary fd matches first and, only when fewer than 20 ordinary matches remain, supplements them with deduplicated `--no-ignore-vcs` matches. The existing signal, hidden-file arguments, `.git` exclusions, root fan-out, scoring, and 20-item cap are shared by both phases.
+**Decision:** `CombinedAutocompleteProvider` accepts a default-off `includeGitignoredFiles` option. When enabled, `@` completion scores ordinary fd matches first, supplements them with deduplicated `--no-ignore-vcs` matches unless the 20-item cap is already filled with the highest-scoring ordinary matches, and then ranks by score before ignored status. The existing signal, hidden-file arguments, `.git` exclusions, root fan-out, scoring, and 20-item cap are shared by both phases.
 
 **Why not in the app:** The ordinary and supplemental fd walkers feed the same internal absolute-path dedupe and ranking pipeline. An app wrapper would have to replace that pipeline and could not avoid duplicate scans when the ordinary result already fills the list.
 
