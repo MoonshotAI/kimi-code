@@ -42,6 +42,22 @@ export interface EnvironmentWorkspaceMapper {
   mapRoots(roots: EnvironmentWorkspaceRoots): EnvironmentWorkspaceRoots;
 }
 
+export type EnvironmentConnectFailure =
+  | 'host_not_found'
+  | 'connection_refused'
+  | 'host_unreachable'
+  | 'connect_timeout'
+  | 'authentication_failed'
+  | 'host_key_changed'
+  | 'docker_unavailable'
+  | 'container_not_found'
+  | 'container_not_running'
+  | 'launcher_not_found'
+  | 'executor_not_found'
+  | 'executor_outdated'
+  | 'executor_timeout'
+  | 'unknown';
+
 export interface Environment {
   readonly identity: EnvironmentIdentity;
   readonly capabilities: ReadonlySet<EnvironmentCapability>;
@@ -55,6 +71,7 @@ export interface Environment {
   readonly onDidChangeStatus: Event<EnvironmentStatus>;
   readonly whenReady?: Promise<void>;
   readonly connectError?: string;
+  readonly connectFailure?: EnvironmentConnectFailure;
   connect?(): Promise<void>;
   dispose(): void | Promise<void>;
 }

@@ -327,6 +327,50 @@ describe('declaration watch', () => {
     await registry.dispose();
   });
 
+  it('refuses to connect a disabled environment and drops its live connection when disabled', async () => {
+    const registry = new EnvironmentRegistry();
+    const config = watchableConfigService({
+      'dev-box': { type: 'ssh', host: 'dev-box', enabled: false },
+    });
+    const produced: FakeSession[] = [];
+    const connect = vi.fn(async () => {
+      const session = connectedSession();
+      produced.push(session);
+      return session;
+    });
+    const factory = new RemoteEnvironmentProviderFactory(factoryOptions({ connect }));
+    const attachment = await factory.attach(fakeHost(baseServices(registry, { config: config.service }), registry));
+
+    await expect(registry.acquireWhenReady({ environmentId: 'dev-box' })).rejects.toMatchObject({
+      code: 'environment.unavailable',
+      message: 'environment dev-box is disabled',
+    });
+    expect(connect).not.toHaveBeenCalled();
+
+    config.setSection({ 'dev-box': { type: 'ssh', host: 'dev-box' } });
+    await vi.waitFor(async () => {
+      await registry.acquireWhenReady({ environmentId: 'dev-box' }).then((lease) => lease.dispose());
+    });
+    const environment = registry.current('dev-box')!;
+    expect(environment.status).toBe('ready');
+
+    config.setSection({ 'dev-box': { type: 'ssh', host: 'dev-box', enabled: false } });
+    await vi.waitFor(() => {
+      expect(environment.status).toBe('disconnected');
+    });
+    expect(environment.connectError).toBeUndefined();
+    expect(produced[0]!.released).toBe(true);
+    expect(registry.current('dev-box')).toBe(environment);
+
+    const changes: string[] = [];
+    registry.onDidChange((change) => changes.push(`${change.environmentId}:${change.status}`));
+    config.setSection({ 'dev-box': { type: 'ssh', host: 'dev-box' } });
+    await vi.waitFor(() => expect(changes).toEqual(['dev-box:disconnected']));
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
   it('discards a connect that finishes after its declaration was replaced', async () => {
     const registry = new EnvironmentRegistry();
     const config = watchableConfigService({
@@ -423,6 +467,8 @@ describe('SSH password fallback', () => {
 
     await expect(registry.current('dev-box')!.connect!()).rejects.toBe(failure);
     expect(connect).toHaveBeenCalledTimes(1);
+    expect(registry.current('dev-box')!.connectFailure).toBe('authentication_failed');
+    expect(registry.snapshot().environments.find((entry) => entry.environmentId === 'dev-box')?.connectFailure).toBe('authentication_failed');
 
     await attachment.dispose();
     await registry.dispose();

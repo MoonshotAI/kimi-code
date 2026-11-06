@@ -168,17 +168,16 @@ describe('server-v2 /api/v1 fs routes', () => {
     await writeFile(join(work!, 'selected.txt'), 'local');
     const remote = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-')));
     await writeFile(join(remote, 'selected.txt'), 'remote');
+    const fake = new FakeEnvironment(
+      { environmentId: 'remote-session', generation: 'remote-generation' },
+      { capabilities: ['fs', 'process'] },
+    );
     const provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
       id: 'remote-session-provider',
       attach: async (host) => {
-        const environment = Object.assign(
-          new FakeEnvironment(
-            { environmentId: 'remote-session', generation: 'remote-generation' },
-            { capabilities: ['fs', 'process'] },
-          ),
-          { fs: new HostFileSystem(), process: new HostProcessService() },
+        const registration = host.registerEnvironment(
+          Object.assign(fake, { fs: new HostFileSystem(), process: new HostProcessService() }),
         );
-        const registration = host.registerEnvironment(environment);
         return { dispose: () => registration.remove() };
       },
     });
@@ -199,6 +198,14 @@ describe('server-v2 /api/v1 fs routes', () => {
       expect(await download.text()).toBe('remote');
       const opened = await postFs<null>(session.data.id, 'reveal', { path: 'selected.txt' });
       expect(opened.code).not.toBe(0);
+
+      fake.setStatus('disconnected');
+      const connect = vi.fn(async () => fake.setStatus('ready'));
+      Object.assign(fake, { connect });
+      const reconnected = await postFs<{ content: string }>(session.data.id, 'read', { path: 'selected.txt' });
+      expect(reconnected.code).toBe(0);
+      expect(reconnected.data.content).toBe('remote');
+      expect(connect).toHaveBeenCalledOnce();
     } finally {
       await provider.dispose();
       await rm(remote, { recursive: true, force: true });

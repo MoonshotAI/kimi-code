@@ -6,6 +6,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey, isWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { IEventService } from '#/app/event/event';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -17,6 +18,8 @@ import {
   type Workspace,
   type WorkspaceCreate,
   type WorkspaceUpdate,
+  workspaceDirectoryParts,
+  workspaceEnvironmentId,
 } from './workspace';
 import {
   WorkspaceCreated,
@@ -132,11 +135,14 @@ export class WorkspaceService implements IWorkspaceService {
 
   create(input: WorkspaceCreate): Promise<Workspace> {
     return this.runExclusive(async () => {
-      await this.requireDirectory(input.root);
-      const additionalDirs = await this.normalizeAdditionalDirs(
-        input.root,
-        input.additionalDirs ?? [],
-      );
+      const remote = workspaceEnvironmentId(input) !== LOCAL_ENVIRONMENT_ID;
+      if (remote && (input.additionalDirs?.length ?? 0) > 0) {
+        throw new Error2(ErrorCodes.CONFIG_INVALID, 'remote workspaces support a single directory');
+      }
+      if (!remote) await this.requireDirectory(input.root);
+      const additionalDirs = remote
+        ? []
+        : await this.normalizeAdditionalDirs(input.root, input.additionalDirs ?? []);
       await this.ensureMerged();
       let ws!: Workspace;
       let reused = false;
@@ -157,6 +163,7 @@ export class WorkspaceService implements IWorkspaceService {
         ws = {
           id: `wm_${randomUUID()}`,
           root: input.root,
+          ...(remote ? { primaryEnvironmentId: input.primaryEnvironmentId } : {}),
           name: input.name ?? basename(input.root),
           kind: 'managed',
           additionalDirs,
@@ -198,7 +205,7 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
-        await this.requireDirectory(existing.root);
+        if (workspaceEnvironmentId(existing) === LOCAL_ENVIRONMENT_ID) await this.requireDirectory(existing.root);
         touched = { ...existing, lastOpenedAt: Date.now() };
         return {
           workspaces: catalog.workspaces.map((ws) => (ws.id === id ? touched! : ws)),
@@ -220,12 +227,26 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
+        const parts = patch.directories === undefined ? undefined : workspaceDirectoryParts(patch.directories);
+        if (parts !== undefined && workspaceEnvironmentId(parts) !== workspaceEnvironmentId(existing)) {
+          throw new Error2(ErrorCodes.CONFIG_INVALID, 'workspace environment cannot change');
+        }
+        const root = parts?.root ?? existing.root;
+        const local = workspaceEnvironmentId(existing) === LOCAL_ENVIRONMENT_ID;
+        if (!local && patch.additionalDirs !== undefined && patch.additionalDirs.length > 0) {
+          throw new Error2(ErrorCodes.CONFIG_INVALID, 'remote workspaces support a single directory');
+        }
+        if (local && root !== existing.root) await this.requireDirectory(root);
+        const requestedDirs = parts?.additionalDirs ?? patch.additionalDirs;
         const additionalDirs =
-          patch.additionalDirs === undefined
+          requestedDirs === undefined
             ? existing.additionalDirs
-            : await this.normalizeAdditionalDirs(existing.root, patch.additionalDirs);
+            : local
+              ? await this.normalizeAdditionalDirs(root, requestedDirs)
+              : [];
         updated = {
           ...existing,
+          root,
           ...(patch.name !== undefined ? { name: patch.name } : {}),
           additionalDirs,
         };
@@ -250,6 +271,13 @@ export class WorkspaceService implements IWorkspaceService {
       await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
+        if (workspaceEnvironmentId(existing) !== LOCAL_ENVIRONMENT_ID) {
+          if (path === existing.root) {
+            updated = existing;
+            return catalog;
+          }
+          throw new Error2(ErrorCodes.CONFIG_INVALID, `primary ${path} is not in the workspace dir set`);
+        }
         const resolved = (await this.localConfig.resolveAdditionalDirs(existing.root, [path]))[0];
         if (resolved === undefined) {
           throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `primary ${path} does not exist`);

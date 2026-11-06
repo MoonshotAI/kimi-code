@@ -37,7 +37,7 @@ export interface ConnectOptions {
   readonly livenessTimeoutMs?: number;
 }
 
-export type HandshakeErrorKind = 'timeout' | 'executor-exit' | 'incompatible' | 'authentication';
+export type HandshakeErrorKind = 'timeout' | 'transport-timeout' | 'executor-exit' | 'incompatible' | 'authentication';
 
 export interface HandshakeErrorDetails {
   readonly kind?: HandshakeErrorKind;

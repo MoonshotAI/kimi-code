@@ -256,7 +256,7 @@ if (mode === 'timeout') {
     vi.stubEnv('TEST_SSH_MODE', 'timeout');
     await expect(RemoteSession.connect({
       environmentId: 'example', launcher: { type: 'ssh', host: 'example.test' }, initializeTimeoutMs: 300,
-    })).rejects.toMatchObject({ kind: 'timeout' });
+    })).rejects.toMatchObject({ kind: 'transport-timeout' });
     expect(await calls()).toEqual(['uname -s']);
   });
 

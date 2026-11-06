@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { environmentStatusSchema } from './events-zod';
+import { environmentEntrySchema } from './events-zod';
 
 export const environmentBindingResponseSchema = z.object({
   workspace_id: z.string(),
@@ -12,12 +12,11 @@ export const sessionEnvironmentParamsSchema = z.object({
   session_id: z.string().min(1),
 });
 
-export const sessionEnvironmentEntrySchema = z.object({
-  environment_id: z.string(),
-  type: z.enum(['local', 'ssh', 'docker', 'command']),
-  status: environmentStatusSchema,
-  connect_error: z.string().optional(),
-});
+export const sessionEnvironmentEntrySchema = environmentEntrySchema;
+
+export const connectEnvironmentRequestSchema = z.object({
+  environment_id: z.string().min(1),
+}).strict();
 
 export const sessionEnvironmentsResponseSchema = z.object({
   environments: z.array(sessionEnvironmentEntrySchema),

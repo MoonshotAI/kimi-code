@@ -943,7 +943,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 
-成功时，`data` 为 `{ environments }`。`environments` 每项为 `{ environment_id, type, status, connect_error? }`，其中 `type` 取 `local` / `ssh` / `docker` / `command` 之一，`status` 取 `pending` / `connecting` / `ready` / `disconnected` / `disposed` 之一；`pending` 表示没有可用连接且未观察到失败（尚未连接过），`connect_error` 记录 `disconnected` 条目的失败原因。
+成功时，`data` 为 `{ environments }`。`environments` 每项为 `{ environment_id, type, status, connect_error?, connect_failure? }`，其中 `type` 取 `local` / `ssh` / `docker` / `command` 之一，`status` 取 `pending` / `connecting` / `ready` / `disconnected` / `disposed` 之一；`pending` 表示没有可用连接且未观察到失败（尚未连接过），`connect_error` 记录 `disconnected` 条目的失败信息，`connect_failure` 给出其分类，取 `host_not_found` / `connection_refused` / `host_unreachable` / `connect_timeout` / `authentication_failed` / `host_key_changed` / `docker_unavailable` / `container_not_found` / `container_not_running` / `launcher_not_found` / `executor_not_found` / `executor_outdated` / `executor_timeout` / `unknown` 之一。
 
 - `40401`：会话不存在
 

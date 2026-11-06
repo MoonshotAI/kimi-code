@@ -229,7 +229,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
 
       const registry = core.accessor.get(IWorkspaceService);
       let workDir: string;
-      let bucket: { readonly id: string; readonly root: string } | undefined;
+      let bucket: { readonly id: string; readonly root: string; readonly primaryEnvironmentId?: string } | undefined;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
         if (workspace === undefined) {
@@ -262,17 +262,28 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         workDir = callerCwd as string;
       }
 
+      const workspaceEnvironment = bucket?.primaryEnvironmentId;
+      if (workspaceEnvironment !== undefined && body.environment_id !== undefined && body.environment_id !== workspaceEnvironment) {
+        reply.send(
+          buildValidationEnvelope(
+            [{ path: 'environment_id', message: `workspace ${bucket!.id} runs on environment ${workspaceEnvironment}` }],
+            req.id,
+          ),
+        );
+        return;
+      }
       try {
         const resolved =
           bucket === undefined
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
+        const environmentId = workspaceEnvironment ?? body.environment_id;
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: resolved.id,
           workDir,
-          environmentId: body.environment_id,
-          environmentCwd: body.environment_cwd,
-          ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
+          environmentId,
+          environmentCwd: workspaceEnvironment !== undefined ? workDir : body.environment_cwd,
+          ensureMainAgent: environmentId !== undefined && environmentId !== 'local',
         });
         if (typeof body.title === 'string') {
           await handle.accessor.get(ISessionMetadata).setTitle(body.title);

@@ -193,7 +193,7 @@ export class ProgramWorkdirs {
   private buildView(own: Own, input: ProgramViewInput): ProgramView {
     const state = own(new WorkspaceStateService(this.dependencies.appState));
     const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, input.hostFs, input.homeDir);
-    const dirs = own(new WorkspaceDirsService(input.context, localConfig, this.dependencies.workspaces, this.dependencies.workspaceStore, this.dependencies.log, state));
+    const dirs = own(new WorkspaceDirsService(input.context, localConfig, this.dependencies.workspaces, this.dependencies.workspaceStore, this.dependencies.log, state, input.environmentId === LOCAL_ENVIRONMENT_ID));
     const git = new WorkspaceGitService(input.context, input.git);
     const fs = new WorkspaceFsService(input.context, dirs, input.hostFs, this.environments, this.dependencies.telemetry, git, input.environmentId);
     const instructions = own(new WorkspaceInstructionsService(input.context, input.hostFs, input.instructionsHost, this.dependencies.bootstrap, this.dependencies.log, state, input.personalFs, input.watch));

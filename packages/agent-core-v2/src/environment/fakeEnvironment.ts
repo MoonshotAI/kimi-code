@@ -3,7 +3,7 @@ import * as win32Path from 'node:path/win32';
 
 import { Emitter } from '#/_base/event';
 
-import type { Environment, EnvironmentCapability, EnvironmentPath, EnvironmentStatus } from './environment';
+import type { Environment, EnvironmentCapability, EnvironmentConnectFailure, EnvironmentPath, EnvironmentStatus } from './environment';
 
 export class FakeEnvironment implements Environment {
   readonly capabilities: ReadonlySet<EnvironmentCapability>;
@@ -17,6 +17,7 @@ export class FakeEnvironment implements Environment {
   readonly onDidChangeStatus = this.statusEmitter.event;
   whenReady?: Promise<void>;
   connectError?: string;
+  connectFailure?: EnvironmentConnectFailure;
   disposed = false;
 
   constructor(

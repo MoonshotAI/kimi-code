@@ -943,7 +943,7 @@ Lists the environments available to the session.
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 
-On success, `data` is `{ environments }`. Each `environments` entry is `{ environment_id, type, status, connect_error? }` with `type` one of `local` / `ssh` / `docker` / `command` and `status` one of `pending` / `connecting` / `ready` / `disconnected` / `disposed`; `pending` means no live connection and no observed failure (never connected), and `connect_error` carries the recorded failure reason for a `disconnected` entry.
+On success, `data` is `{ environments }`. Each `environments` entry is `{ environment_id, type, status, connect_error?, connect_failure? }` with `type` one of `local` / `ssh` / `docker` / `command` and `status` one of `pending` / `connecting` / `ready` / `disconnected` / `disposed`; `pending` means no live connection and no observed failure (never connected), `connect_error` carries the recorded failure message for a `disconnected` entry, and `connect_failure` classifies it as one of `host_not_found` / `connection_refused` / `host_unreachable` / `connect_timeout` / `authentication_failed` / `host_key_changed` / `docker_unavailable` / `container_not_found` / `container_not_running` / `launcher_not_found` / `executor_not_found` / `executor_outdated` / `executor_timeout` / `unknown`.
 
 - `40401`: session not found
 

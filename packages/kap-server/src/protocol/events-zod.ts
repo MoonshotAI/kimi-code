@@ -57,6 +57,38 @@ export const environmentStatusSchema = z.enum([
   'disposed',
 ]);
 
+export const environmentConnectFailureSchema = z.enum([
+  'host_not_found',
+  'connection_refused',
+  'host_unreachable',
+  'connect_timeout',
+  'authentication_failed',
+  'host_key_changed',
+  'docker_unavailable',
+  'container_not_found',
+  'container_not_running',
+  'launcher_not_found',
+  'executor_not_found',
+  'executor_outdated',
+  'executor_timeout',
+  'unknown',
+]);
+
+export const environmentEntrySchema = z.object({
+  environment_id: z.string(),
+  type: z.enum(['local', 'ssh', 'docker', 'command']),
+  status: environmentStatusSchema,
+  enabled: z.boolean(),
+  connect_error: z.string().optional(),
+  connect_failure: environmentConnectFailureSchema.optional(),
+});
+
+export const environmentChangedEventSchema = z.object({
+  type: z.literal('event.environment.changed'),
+  environment_id: z.string().min(1),
+  environment: environmentEntrySchema.optional(),
+});
+
 export const configChangedEventSchema = z.object({
   type: z.literal('event.config.changed'),
   changedFields: z.array(z.string().min(1)),
@@ -135,6 +167,7 @@ export const pushEventSchema = z.discriminatedUnion('type', [
   sessionWorkChangedEventSchema,
   configChangedEventSchema,
   configWarningEventSchema,
+  environmentChangedEventSchema,
   modelCatalogChangedEventSchema,
   diUnitChangedEventSchema,
   pluginChangedEventSchema,

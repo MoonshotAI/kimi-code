@@ -589,8 +589,10 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | --- | --- | --- | --- |
 | `type` | `string` | 是 | `"ssh"` |
 | `host` | `string` | 是 | SSH 主机；经系统 `ssh` 启动，`~/.ssh/config`（用户、端口、密钥、`ProxyJump`、`ControlMaster`）照常生效 |
+| `identityFile` | `string` | 否 | 本机上的私钥文件，以 `ssh -i` 传入并设置 `IdentitiesOnly=yes`，只提供这一把密钥；`~/` 由 `ssh` 展开。不填时使用 `~/.ssh/config` 和 ssh-agent 中的密钥 |
 | `remoteBin` | `string` | 否 | 目标环境上 `kimi` 的路径，POSIX 默认 `~/.kimi-code/bin/kimi`，Windows 默认 `~/.kimi-code/bin/kimi.exe`。支持含空格的绝对路径、目标账户主目录下的 `~/` 路径或目标 `PATH` 中的裸名称（如 `kimi`） |
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值，不在本机校验 |
+| `enabled` | `boolean` | 否 | 设为 `false` 停用该环境：断开现有连接，重新启用之前不会再连接。默认 `true` |
 
 ### Docker 条目
 
@@ -601,6 +603,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `context` | `string` | 否 | Docker context（例如 `orbstack`） |
 | `remoteBin` | `string` | 否 | 容器内 `kimi` 的路径，默认为容器用户 home 下的 `~/.kimi-code/bin/kimi`；启动命令经 `docker exec … sh -c` 执行，`~` 前缀由容器内的 shell 展开 |
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
+| `enabled` | `boolean` | 否 | 设为 `false` 停用该环境：断开现有连接，重新启用之前不会再连接。默认 `true` |
 
 ### command 条目
 
@@ -613,6 +616,7 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `env` | `table<string, string>` | 否 | 本机启动器进程的环境变量，不会传播到目标环境执行的命令中 |
 | `remoteBin` | `string` | 否 | 目标环境上 `kimi` 的路径，追加在 `args` 之后，默认 `~/.kimi-code/bin/kimi`。应为不含空格和 shell 特殊字符的路径。只有经目标上的 shell 执行参数的启动器（如 ssh）会展开 `~`；`kubectl exec`、`docker exec` 这类原样传递参数的启动器需要绝对路径 |
 | `defaultCwd` | `string` | 否 | 绑定会话时工作目录的预填值 |
+| `enabled` | `boolean` | 否 | 设为 `false` 停用该环境：断开现有连接，重新启用之前不会再连接。默认 `true` |
 
 ```toml
 [environments]

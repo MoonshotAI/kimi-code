@@ -1,14 +1,15 @@
-import { IEnvironmentService } from '@moonshot-ai/agent-core-v2';
 import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { IModelCatalog, IWorkspaceInstanceManager, IWorkspaceService } from '@moonshot-ai/agent-core-v2';
+import { IEnvironmentService, IModelCatalog, IWorkspaceInstanceManager, IWorkspaceService } from '@moonshot-ai/agent-core-v2';
+import { RemoteSession } from '@moonshot-ai/agent-core-v2/remote';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '@moonshot-ai/agent-core-v2/os/interface/hostFileSystem';
 import { FakeEnvironment } from '@moonshot-ai/agent-core-v2/environment/fakeEnvironment';
-import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ErrorCode } from '../src/protocol/error-codes';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
@@ -471,12 +472,76 @@ function mappingHostFs(remoteRoot: string): IHostFileSystem {
   };
 }
 
-describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => {
+describe('server-v2 /api/v1/environments::test', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-environment-test-'));
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterAll(async () => {
+    await server?.close();
+    await rm(home as string, { recursive: true, force: true });
+  });
+
+  it('connects a draft, checks its directory, and disposes it without registering an environment', async () => {
+    const realpath = vi.fn(async (path: string) => path);
+    const readdir = vi.fn(async () => []);
+    const dispose = vi.fn(async () => undefined);
+    const connect = vi.spyOn(RemoteSession, 'connect').mockResolvedValue({
+      host: { homeDir: '/home/dev' },
+      fs: { realpath, readdir },
+      dispose,
+    } as unknown as RemoteSession);
+
+    const res = await fetch(`${base}/api/v1/environments:test`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ definition: { type: 'ssh', host: 'dev@example.test', defaultCwd: '/srv/app' }, path: '/srv/app' }),
+    });
+    const body = await res.json() as Envelope<{ connected: boolean }>;
+
+    expect(body.code).toBe(0);
+    expect(body.data.connected).toBe(true);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(realpath).toHaveBeenCalledWith('/srv/app');
+    expect(readdir).toHaveBeenCalledWith('/srv/app');
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(server!.core.accessor.get(IEnvironmentService).snapshot().environments.some((entry) => entry.environmentId === 'connection-test')).toBe(false);
+  });
+
+  it('reports a draft connection failure without creating a config entry', async () => {
+    vi.spyOn(RemoteSession, 'connect').mockRejectedValue(new Error('SSH platform probe failed: ssh: Could not resolve hostname bad.example.test: Name or service not known'));
+
+    const res = await fetch(`${base}/api/v1/environments:test`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ definition: { type: 'ssh', host: 'bad.example.test' } }),
+    });
+    const body = await res.json() as Envelope<null> & { details?: unknown };
+
+    expect(body.code).toBe(ErrorCode.ENVIRONMENT_UNAVAILABLE);
+    expect(body.msg).toContain('Could not resolve hostname bad.example.test');
+    expect(body.details).toEqual({ connect_failure: 'host_not_found' });
+    expect(server!.core.accessor.get(IEnvironmentService).snapshot().environments.some((entry) => entry.environmentId === 'connection-test')).toBe(false);
+  });
+});
+
+describe('server-v2 /api/v1 fs:browse, fs:content and fs:mkdir with environment_id', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let localRoot: string | undefined;
   let remoteRoot: string | undefined;
   let provider: { dispose(): void | Promise<void> } | undefined;
+  let remoteEnvironment: FakeEnvironment | undefined;
   let base: string;
   const remoteRoots = new Map<string, string>();
 
@@ -507,6 +572,7 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
           ),
           { fs: mappingHostFs(remoteRoot as string) },
         );
+        remoteEnvironment = environment;
         const registration = host.registerEnvironment(environment);
         return { dispose: () => registration.remove() };
       },
@@ -543,6 +609,13 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     return `${base}/api/v1/fs:content?${query.toString()}`;
   }
 
+  async function browse(query: Record<string, string>): Promise<Envelope<BrowseWire | null>> {
+    const res = await fetch(`${base}/api/v1/fs:browse?${new URLSearchParams(query).toString()}`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    return (await res.json()) as Envelope<BrowseWire | null>;
+  }
+
   async function postMkdir(body: unknown): Promise<Envelope<{ path: string } | null>> {
     const res = await fetch(`${base}/api/v1/fs:mkdir`, {
       method: 'POST',
@@ -551,6 +624,28 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     } as never);
     return (await res.json()) as Envelope<{ path: string } | null>;
   }
+
+  it('browses only the directories of the environment fs', async () => {
+    await mkdir(join(remoteRoot as string, 'srv', 'app', 'beta'), { recursive: true });
+    await mkdir(join(remoteRoot as string, 'srv', 'app', 'alpha'));
+    await writeFile(join(remoteRoot as string, 'srv', 'app', 'README.md'), 'hi');
+
+    const body = await browse({ path: '/srv/app', environment_id: 'remote-test' });
+    expect(body.code).toBe(0);
+    expect(body.data).toEqual({
+      path: '/srv/app',
+      parent: '/srv',
+      entries: [
+        { name: 'alpha', path: '/srv/app/alpha', is_dir: true },
+        { name: 'beta', path: '/srv/app/beta', is_dir: true },
+      ],
+    });
+  });
+
+  it('maps a missing environment directory and an unknown environment to their error codes', async () => {
+    expect((await browse({ path: '/missing', environment_id: 'remote-test' })).code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
+    expect((await browse({ path: '/srv', environment_id: 'nope' })).code).toBe(ErrorCode.ENVIRONMENT_NOT_FOUND);
+  });
 
   it('reads stat, sample, and body from the environment fs when the path exists on both filesystems', async () => {
     const requestPath = join(localRoot as string, 'shared.txt');
@@ -567,6 +662,24 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     expect(await res.text()).toBe('remote-bytes');
   });
 
+  it('reconnects a disconnected environment before serving fs:content', async () => {
+    const requestPath = join(localRoot as string, 'after-drop.txt');
+    const remoteFile = join(remoteRoot as string, requestPath);
+    await mkdir(dirname(remoteFile), { recursive: true });
+    await writeFile(remoteFile, 'reconnected');
+    const environment = remoteEnvironment!;
+    environment.setStatus('disconnected');
+    const connect = vi.fn(async () => environment.setStatus('ready'));
+    Object.assign(environment, { connect });
+
+    const res = await fetch(contentUrl(requestPath, 'remote-test'), {
+      headers: { connection: 'close', ...authHeaders(server as RunningServer) },
+    } as never);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('reconnected');
+    expect(connect).toHaveBeenCalledOnce();
+  });
+
   it('creates directories on the environment fs, never on the server-local disk', async () => {
     const requestPath = join(localRoot as string, 'made-remote');
     await mkdir(join(remoteRoot as string, localRoot as string), { recursive: true });
@@ -578,5 +691,172 @@ describe('server-v2 /api/v1 fs:content and fs:mkdir with environment_id', () => 
     const remoteStat = await stat(join(remoteRoot as string, requestPath));
     expect(remoteStat.isDirectory()).toBe(true);
     await expect(stat(requestPath)).rejects.toThrow();
+  });
+});
+
+describe('server-v2 /api/v1 workspaces on a remote environment', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let remoteRoot: string | undefined;
+  let provider: { dispose(): void | Promise<void> } | undefined;
+  let base: string;
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-rws-home-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds: [[IModelCatalog, fakeModelCatalog()]],
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  beforeEach(async () => {
+    remoteRoot = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-rws-remote-')));
+    await mkdir(join(remoteRoot, 'srv', 'app', 'src'), { recursive: true });
+    await mkdir(join(remoteRoot, 'srv', 'api'), { recursive: true });
+    await writeFile(join(remoteRoot, 'srv', 'app', 'README.md'), 'hi');
+    provider = await server!.core.accessor.get(IEnvironmentService).addProvider({
+      id: 'remote-workspace-provider',
+      attach: async (host) => {
+        const environment = Object.assign(
+          new FakeEnvironment(
+            { environmentId: 'remote-test', generation: 'remote-generation' },
+            { capabilities: ['fs'] },
+          ),
+          { fs: mappingHostFs(remoteRoot as string) },
+        );
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
+  });
+
+  afterEach(async () => {
+    await provider?.dispose();
+    provider = undefined;
+    if (remoteRoot !== undefined) await rm(remoteRoot, { recursive: true, force: true });
+    remoteRoot = undefined;
+  });
+
+  afterAll(async () => {
+    await server?.close();
+    server = undefined;
+    if (home !== undefined) await rm(home, { recursive: true, force: true });
+    home = undefined;
+  });
+
+  async function send<T>(method: string, path: string, body: unknown): Promise<Envelope<T>> {
+    const res = await fetch(`${base}/api/v1${path}`, {
+      method,
+      headers: { ...authHeaders(server as RunningServer), 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    } as never);
+    return (await res.json()) as Envelope<T>;
+  }
+
+  interface WorkspaceWire {
+    id: string;
+    root: string;
+    name: string;
+    primary_environment_id: string;
+    directories: { environment_id: string; path: string }[];
+    additional_dirs: string[];
+  }
+
+  it('creates a remote workspace and serves its files from the environment', async () => {
+    const created = await send<WorkspaceWire>('POST', '/workspaces', {
+      directories: [{ environment_id: 'remote-test', path: '/srv/app/' }],
+    });
+    expect(created.code).toBe(0);
+    expect(created.data).toMatchObject({
+      root: '/srv/app',
+      name: 'app',
+      primary_environment_id: 'remote-test',
+      directories: [{ environment_id: 'remote-test', path: '/srv/app' }],
+      additional_dirs: [],
+    });
+
+    const listed = await send<{ items: { name: string }[] }>('POST', '/workspace/fs:list', {
+      workspace: created.data.id,
+    });
+    expect(listed.code).toBe(0);
+    expect(listed.data.items.map((item) => item.name)).toEqual(['src', 'README.md']);
+
+    const mismatch = await send<null>('POST', '/workspace/fs:list', {
+      workspace: created.data.id,
+      environment_id: 'local',
+    });
+    expect(mismatch.code).toBe(ErrorCode.VALIDATION_FAILED);
+  });
+
+  it('lists an unregistered directory on the requested environment', async () => {
+    const listed = await send<{ items: { name: string }[] }>('POST', '/workspace/fs:list', {
+      workspace: '/srv/app',
+      environment_id: 'remote-test',
+    });
+    expect(listed.code).toBe(0);
+    expect(listed.data.items.map((item) => item.name)).toEqual(['src', 'README.md']);
+    const registered = await server!.core.accessor.get(IWorkspaceService).list();
+    expect(registered.some((ws) => ws.kind === 'implicit' && ws.root === '/srv/app')).toBe(false);
+  });
+
+  it('keeps every workspace on one environment and remote workspaces on one directory', async () => {
+    const local = await realpath(await mkdtemp(join(tmpdir(), 'kimi-server-v2-rws-local-')));
+    try {
+      const mixed = await send<null>('POST', '/workspaces', {
+        directories: [
+          { environment_id: 'local', path: local },
+          { environment_id: 'remote-test', path: '/srv/app' },
+        ],
+      });
+      expect(mixed.code).toBe(ErrorCode.VALIDATION_FAILED);
+      expect(mixed.details?.[0]?.path).toBe('directories.1.environment_id');
+
+      const extra = await send<null>('POST', '/workspaces', {
+        directories: [
+          { environment_id: 'remote-test', path: '/srv/app' },
+          { environment_id: 'remote-test', path: '/srv/api' },
+        ],
+      });
+      expect(extra.code).toBe(ErrorCode.VALIDATION_FAILED);
+      expect(extra.details?.[0]?.path).toBe('directories.1');
+
+      const created = await send<WorkspaceWire>('POST', '/workspaces', {
+        directories: [{ environment_id: 'remote-test', path: '/srv/app' }],
+      });
+      const moved = await send<WorkspaceWire>('PATCH', `/workspaces/${created.data.id}`, {
+        name: 'api',
+        directories: [{ environment_id: 'remote-test', path: '/srv/api' }],
+      });
+      expect(moved.code).toBe(0);
+      expect(moved.data).toMatchObject({ id: created.data.id, root: '/srv/api', name: 'api', primary_environment_id: 'remote-test' });
+
+      const switched = await send<null>('PATCH', `/workspaces/${created.data.id}`, {
+        directories: [{ environment_id: 'local', path: local }],
+      });
+      expect(switched.code).toBe(ErrorCode.VALIDATION_FAILED);
+      expect((await server!.core.accessor.get(IWorkspaceService).get(created.data.id))?.primaryEnvironmentId).toBe('remote-test');
+    } finally {
+      await rm(local, { recursive: true, force: true });
+    }
+  });
+
+  it('reports missing remote directories and unknown environments', async () => {
+    const missing = await send<null>('POST', '/workspaces', {
+      directories: [{ environment_id: 'remote-test', path: '/srv/missing' }],
+    });
+    expect(missing.code).toBe(ErrorCode.VALIDATION_FAILED);
+    const unknown = await send<null>('POST', '/workspaces', {
+      directories: [{ environment_id: 'nope', path: '/srv/app' }],
+    });
+    expect(unknown.code).toBe(ErrorCode.ENVIRONMENT_NOT_FOUND);
+    const relative = await send<null>('POST', '/workspaces', {
+      directories: [{ environment_id: 'remote-test', path: 'srv/app' }],
+    });
+    expect(relative.code).toBe(ErrorCode.VALIDATION_FAILED);
   });
 });

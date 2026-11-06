@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { LOCAL_ENVIRONMENT_ID, type EnvironmentCapability, type EnvironmentStatus } from '#/environment/environment';
+import { LOCAL_ENVIRONMENT_ID, type EnvironmentCapability, type EnvironmentConnectFailure, type EnvironmentStatus } from '#/environment/environment';
 import type { EnvironmentGenerationSnapshot } from '#/environment/environmentRegistry';
 
 export const ENVIRONMENT_ID_MAX_LENGTH = 64;
@@ -10,8 +10,10 @@ const sshEnvironmentEntrySchema = z
   .object({
     type: z.literal('ssh'),
     host: z.string().min(1),
+    identityFile: z.string().min(1).optional(),
     remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
+    enabled: z.boolean().optional(),
   })
   .strict();
 
@@ -22,6 +24,7 @@ const dockerEnvironmentEntrySchema = z
     context: z.string().min(1).optional(),
     remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
+    enabled: z.boolean().optional(),
   })
   .strict();
 
@@ -32,6 +35,7 @@ const commandEnvironmentEntrySchema = z
     env: z.record(z.string(), z.string()).optional(),
     remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
+    enabled: z.boolean().optional(),
   })
   .strict();
 
@@ -120,7 +124,9 @@ export interface EnvironmentEntryInfo {
   readonly generation: string;
   readonly capabilities: readonly EnvironmentCapability[];
   readonly defaultCwd?: string;
+  readonly enabled: boolean;
   readonly connectError?: string;
+  readonly connectFailure?: EnvironmentConnectFailure;
 }
 
 export function environmentEntryInfo(
@@ -137,6 +143,12 @@ export function environmentEntryInfo(
     generation: environment.generation,
     capabilities: [...environment.capabilities],
     defaultCwd: entry?.defaultCwd,
+    enabled: environmentEntryEnabled(entry),
     connectError: environment.connectError,
+    connectFailure: environment.connectFailure,
   };
+}
+
+export function environmentEntryEnabled(entry: RemoteEnvironmentEntry | undefined): boolean {
+  return entry?.enabled !== false;
 }

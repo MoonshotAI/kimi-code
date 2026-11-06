@@ -4,13 +4,15 @@ import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
-import type {
-  RemoteEnvironmentDeclaration,
-  EnvironmentDeclarationSet,
+import {
+  environmentEntryEnabled,
+  type RemoteEnvironmentDeclaration,
+  type EnvironmentDeclarationSet,
 } from '#/remote/declaration/remoteEnvironmentDeclaration';
 import type {
   Environment,
   EnvironmentCapability,
+  EnvironmentConnectFailure,
   EnvironmentIdentity,
   EnvironmentStatus,
 } from '#/environment/environment';
@@ -25,7 +27,7 @@ import { ENVIRONMENT_PATHS, ENVIRONMENT_WORKSPACES } from '#/environment/environ
 import { REMOTE_SHELL_PATH_BRIDGE } from '#/_base/execEnv/shellPathBridge';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
-import { classifyHandshakeFailure, connectWithGuidance } from './connectGuidance';
+import { classifyConnectFailure, classifyHandshakeFailure, connectWithGuidance } from './connectGuidance';
 import { HandshakeError } from './connection';
 import { declarationFingerprint, toLauncherSpec, type LauncherSpec } from './launchers';
 import { RemoteSession, type RemoteSessionOptions } from './remoteSession';
@@ -45,6 +47,7 @@ class DeclaredRemoteEnvironment implements Environment {
   private currentStatus: EnvironmentStatus = 'pending';
   private inflight: Promise<void> | undefined;
   private lastConnectError: string | undefined;
+  private lastConnectFailure: EnvironmentConnectFailure | undefined;
   private epoch = 0;
   private readonly statusEmitter = new Emitter<EnvironmentStatus>();
   readonly onDidChangeStatus = this.statusEmitter.event;
@@ -80,6 +83,7 @@ class DeclaredRemoteEnvironment implements Environment {
     fingerprint: string,
     private readonly open: (launcher: LauncherSpec) => Promise<RemoteSession>,
     private readonly telemetry: ITelemetryService,
+    private enabled: boolean,
   ) {
     this.launcher = launcher;
     this.fingerprint = fingerprint;
@@ -101,6 +105,10 @@ class DeclaredRemoteEnvironment implements Environment {
 
   get connectError(): string | undefined {
     return this.lastConnectError;
+  }
+
+  get connectFailure(): EnvironmentConnectFailure | undefined {
+    return this.lastConnectFailure;
   }
 
   get whenReady(): Promise<void> | undefined {
@@ -139,6 +147,9 @@ class DeclaredRemoteEnvironment implements Environment {
 
   connect(): Promise<void> {
     if (this.currentStatus === 'disposed') return Promise.reject(new Error('remote environment is disposed'));
+    if (!this.enabled) {
+      return Promise.reject(new EnvironmentError('environment.unavailable', `environment ${this.environmentId} is disabled`));
+    }
     if (this.currentStatus === 'ready') return Promise.resolve();
     if (this.inflight !== undefined) return this.inflight;
     const epoch = this.epoch;
@@ -146,6 +157,7 @@ class DeclaredRemoteEnvironment implements Environment {
     const started = performance.now();
     const isReconnect = this.hasConnected;
     this.lastConnectError = undefined;
+    this.lastConnectFailure = undefined;
     this.setStatus('connecting');
     const run = this.open(launcher).then((session) => {
       if (epoch !== this.epoch || this.currentStatus === 'disposed') {
@@ -169,6 +181,7 @@ class DeclaredRemoteEnvironment implements Environment {
       });
       if (epoch === this.epoch && this.currentStatus === 'connecting') {
         this.lastConnectError = error instanceof Error ? error.message : String(error);
+        this.lastConnectFailure = classifyConnectFailure(error);
         this.setStatus('disconnected');
       }
       throw error;
@@ -185,6 +198,17 @@ class DeclaredRemoteEnvironment implements Environment {
     this.inflight = undefined;
     void this.dropSession();
     this.setStatus('disconnected');
+  }
+
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled || this.currentStatus === 'disposed') return;
+    this.enabled = enabled;
+    if (!enabled) {
+      this.lastConnectError = undefined;
+      this.lastConnectFailure = undefined;
+      this.disconnect();
+    }
+    this.statusEmitter.fire(this.currentStatus);
   }
 
   applyLauncher(launcher: LauncherSpec, fingerprint: string): void {
@@ -209,6 +233,7 @@ class DeclaredRemoteEnvironment implements Environment {
         reason: info.kind ?? 'other',
       });
       this.lastConnectError = info.reason;
+      this.lastConnectFailure = info.reason === undefined ? undefined : classifyConnectFailure(info.reason);
       this.session = undefined;
       this.setStatus('disconnected');
       void session.dispose();
@@ -302,6 +327,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
             }
             continue;
           }
+          record.environment.setEnabled(environmentEntryEnabled(declaration.entry));
           if (record.fingerprint === fingerprint) {
             record.declaration = declaration;
             continue;
@@ -335,7 +361,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
   ): DeclaredEnvironmentRecord {
     const launcher = toLauncherSpec(declaration.entry);
     const fingerprint = declarationFingerprint(declaration.entry);
-    const environment = new DeclaredRemoteEnvironment(declaration.id, launcher, fingerprint, (nextLauncher) => this.open(declaration.id, nextLauncher), host.get(ITelemetryService));
+    const environment = new DeclaredRemoteEnvironment(declaration.id, launcher, fingerprint, (nextLauncher) => this.open(declaration.id, nextLauncher), host.get(ITelemetryService), environmentEntryEnabled(declaration.entry));
     try {
       const handle = host.registerEnvironment(environment);
       return { handle, environment, declaration, fingerprint };

@@ -106,6 +106,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/environments",
+    ],
+    [
+      "GET",
+      "/api/v1/environments:ssh-hosts",
+    ],
+    [
+      "GET",
       "/api/v1/files/{file_id}",
     ],
     [
@@ -347,6 +355,14 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/debug/session/{session_id}/agent/{agent_id}/{service}/{method}",
+    ],
+    [
+      "POST",
+      "/api/v1/environments:connect",
+    ],
+    [
+      "POST",
+      "/api/v1/environments:test",
     ],
     [
       "POST",
