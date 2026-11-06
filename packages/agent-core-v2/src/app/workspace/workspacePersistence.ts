@@ -10,7 +10,6 @@ export interface PersistedWorkspaceDirectory {
 
 export interface PersistedWorkspaceEntry {
   readonly root: string;
-  readonly primary_environment_id?: string;
   readonly directories?: readonly PersistedWorkspaceDirectory[];
   readonly name: string;
   readonly kind?: string;

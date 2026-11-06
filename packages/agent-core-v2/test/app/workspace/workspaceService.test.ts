@@ -184,7 +184,7 @@ describe('WorkspaceService (file-backed)', () => {
     expect((await readRegistry()).workspaces[created.id]).toMatchObject({
       directories: [{ environment_id: 'devbox', path: '/srv/does-not-exist-locally' }],
     });
-    expect((await readRegistry()).workspaces[created.id]).not.toHaveProperty('primary_environment_id');
+
 
     const service = restart();
     expect(await service.get(created.id)).toMatchObject({ directories: [{ environmentId: 'devbox', path: '/srv/does-not-exist-locally' }] });
@@ -201,7 +201,6 @@ describe('WorkspaceService (file-backed)', () => {
 
     const local = await service.create({ directories: [{ environmentId: 'local', path: homeDir }] });
     expect(local.directories).toEqual([{ environmentId: 'local', path: homeDir }]);
-    expect((await readRegistry()).workspaces[local.id]).not.toHaveProperty('primary_environment_id');
   });
 
   it('publishes lifecycle events on create, touch, rename, and delete', async () => {

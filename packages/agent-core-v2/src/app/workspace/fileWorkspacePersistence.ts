@@ -96,7 +96,6 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
         }
         merged['root'] = ws.root;
         merged['directories'] = ws.directories.map((dir) => ({ environment_id: dir.environmentId, path: dir.path }));
-        delete merged['primary_environment_id'];
         merged['name'] = ws.name;
         merged['kind'] = ws.kind;
         merged['created_at'] = new Date(ws.createdAt).toISOString();
@@ -348,9 +347,6 @@ function sanitizeEntry(value: unknown, strict = false): PersistedWorkspaceEntry 
   const additionalDirs = Array.isArray(rawDirs)
     ? rawDirs.filter((dir): dir is string => typeof dir === 'string')
     : undefined;
-  if (strict && v.primary_environment_id !== undefined && typeof v.primary_environment_id !== 'string') {
-    throw projectsCorrupted('invalid primary_environment_id');
-  }
   if (
     strict &&
     v.directories !== undefined &&
@@ -358,14 +354,10 @@ function sanitizeEntry(value: unknown, strict = false): PersistedWorkspaceEntry 
   ) {
     throw projectsCorrupted('invalid directories');
   }
-  const environmentId =
-    typeof v.primary_environment_id === 'string' && v.primary_environment_id !== 'local'
-      ? v.primary_environment_id
-      : 'local';
   const stored = Array.isArray(v.directories) ? v.directories.filter(isPersistedDirectory) : [];
   const directories = stored.length > 0
     ? stored
-    : [{ environment_id: environmentId, path: v.root }, ...(additionalDirs ?? []).map((path) => ({ environment_id: environmentId, path }))];
+    : [{ environment_id: 'local', path: v.root }, ...(additionalDirs ?? []).map((path) => ({ environment_id: 'local', path }))];
   return {
     root: v.root,
     directories,
