@@ -20,6 +20,8 @@ import type {
 } from '#/interaction';
 import type { BeginGlobalMcpServerAuthResult } from '#/mcp';
 import type {
+  AgentHistoryOptions,
+  AgentHistoryPage,
   AddAdditionalDirInput,
   AddAdditionalDirResult,
   AgentCommandInfo,
@@ -404,6 +406,12 @@ export abstract class SDKRpcClientBase {
   abstract undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void>;
 
   abstract takeOverSessionLock(input: SessionIdRpcInput): Promise<void>;
+
+  async readAgentHistory(
+    _input: SessionIdRpcInput & AgentHistoryOptions & { agentId: string },
+  ): Promise<AgentHistoryPage> {
+    throw new KimiError(ErrorCodes.NOT_IMPLEMENTED, 'Agent history is unavailable on this engine');
+  }
 
   abstract getContext(input: SessionIdRpcInput): Promise<AgentContextData>;
 

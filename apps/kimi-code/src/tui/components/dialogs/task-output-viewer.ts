@@ -27,6 +27,9 @@ import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 const ELLIPSIS = '…';
 
 export interface TaskOutputViewerProps {
+  readonly title?: string;
+  readonly onLoadOlder?: () => void;
+  readonly loading?: boolean;
   readonly taskId: string;
   readonly info: BackgroundTaskInfo | undefined;
   readonly output: string;
@@ -92,7 +95,7 @@ export class TaskOutputViewer extends Container implements Focusable {
    * at the bottom; otherwise keep the user's current scroll position
    * so they can read history without being yanked around.
    */
-  setProps(next: TaskOutputViewerProps): void {
+  setProps(next: TaskOutputViewerProps, showStart = false): void {
     const previousOutput = this.props.output;
     const wasAtBottom = this.scrollTop >= this.maxScroll();
     this.props = next;
@@ -101,6 +104,7 @@ export class TaskOutputViewer extends Container implements Focusable {
       if (wasAtBottom) this.scrollTop = this.maxScroll();
       else this.scrollTop = Math.min(this.scrollTop, this.maxScroll());
     }
+    if (showStart) this.scrollTop = 0;
     this.invalidate();
   }
 
@@ -116,6 +120,10 @@ export class TaskOutputViewer extends Container implements Focusable {
 
     if (matchesKey(data, Key.escape) || k === 'q' || k === 'Q') {
       this.props.onClose();
+      return;
+    }
+    if ((k === 'p' || k === 'P') && !this.props.loading && this.props.onLoadOlder !== undefined) {
+      this.props.onLoadOlder();
       return;
     }
     if (matchesKey(data, Key.up) || k === 'k') {
@@ -191,7 +199,7 @@ export class TaskOutputViewer extends Container implements Focusable {
   }
 
   private renderHeader(width: number): string {
-    const title = currentTheme.boldFg('primary', ' Task output ');
+    const title = currentTheme.boldFg('primary', ' ' + (this.props.title ?? 'Task output') + ' ');
     const id = currentTheme.boldFg('text', this.props.taskId);
     const info = this.props.info;
     const segments: string[] = [];
@@ -248,7 +256,8 @@ export class TaskOutputViewer extends Container implements Focusable {
       'textMuted',
       ` ${String(lineFrom)}-${String(lineTo)} / ${String(total)} (${String(percent)}%) `,
     );
-    const keys =
+    const historyKeys = this.props.loading ? dim('loading…  ') : this.props.onLoadOlder === undefined ? '' : key('P') + dim(' older turns  ');
+    const keys = historyKeys +
       `${key('↑↓')} ${dim('line')}  ` +
       `${key('PgUp/PgDn/Ctrl+U/D')} ${dim('page')}  ` +
       `${key('g/G')} ${dim('top/bot')}  ` +
