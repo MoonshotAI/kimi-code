@@ -1222,3 +1222,150 @@ function waitForEvent(
     });
   });
 }
+
+function historyResponse(delta: Record<string, unknown>, finish = 'stop') {
+  const data = (value: unknown) => 'data: ' + JSON.stringify(value) + '\n\n';
+  return new Response(
+    data({
+      id: 'local',
+      object: 'chat.completion.chunk',
+      model: 'local',
+      choices: [{ index: 0, delta, finish_reason: null }],
+    }) +
+      data({
+        id: 'local',
+        object: 'chat.completion.chunk',
+        model: 'local',
+        choices: [{ index: 0, delta: {}, finish_reason: finish }],
+      }) +
+      'data: [DONE]\n\n',
+    { headers: { 'content-type': 'text/event-stream' } },
+  );
+}
+it('reads a cold subagent transcript on demand without materializing child scopes or calling the model', async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-child-history-home-'));
+  const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-child-history-work-'));
+  let requests = 0,
+    parentCalls = 0,
+    childCalls = 0;
+  const events: Event[] = [];
+  fetchStub!.mockImplementation(
+    async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url !== MODEL_URL) throw new Error('Unexpected network');
+      if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body');
+      requests++;
+      const messages = JSON.parse(init.body).messages;
+      const child = messages.some(
+        (m: { role: string; content: unknown }) =>
+          m.role === 'user' && JSON.stringify(m.content).includes('child-only-prompt'),
+      );
+      if (child) {
+        childCalls++;
+        if (childCalls === 1)
+          return historyResponse(
+            {
+              role: 'assistant',
+              content: 'historical child detail',
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'child-task-list',
+                  type: 'function',
+                  function: { name: 'TaskList', arguments: '{}' },
+                },
+              ],
+            },
+            'tool_calls',
+          );
+        return historyResponse({ role: 'assistant', content: 'child-completed-answer' });
+      }
+      parentCalls++;
+      if (parentCalls === 1)
+        return historyResponse(
+          {
+            role: 'assistant',
+            tool_calls: [
+              {
+                index: 0,
+                id: 'parent-agent-call',
+                type: 'function',
+                function: {
+                  name: 'Agent',
+                  arguments: JSON.stringify({
+                    description: 'Local history control',
+                    prompt: 'child-only-prompt',
+                    run_in_background: false,
+                  }),
+                },
+              },
+            ],
+          },
+          'tool_calls',
+        );
+      return historyResponse({ role: 'assistant', content: 'parent-completed-answer' });
+    },
+  );
+  let harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+  try {
+    await harness.setConfig({
+      providers: {
+        local: {
+          type: 'openai',
+          baseUrl: 'https://model.example.test/v1',
+          apiKey: 'local-fixture',
+        },
+      },
+      models: { local: { provider: 'local', model: 'local', maxContextSize: 262144 } },
+      defaultModel: 'local',
+    });
+    const session = await harness.createSession({ id: 'ses_history_control', workDir });
+    await session.setPermission('yolo');
+    const completed = new Promise<void>((yes, no) => {
+      const timeout = setTimeout(() => {
+        no(new Error('Parent did not complete'));
+      }, 10000);
+      session.onEvent((event) => {
+        events.push(event);
+        if (event.type === 'turn.ended' && event.agentId === 'main') {
+          clearTimeout(timeout);
+          yes();
+        }
+      });
+    });
+    await session.prompt('Run the local child once');
+    await completed;
+    const spawned = events.find(
+      (e): e is Extract<Event, { type: 'subagent.spawned' }> => e.type === 'subagent.spawned',
+    );
+    expect(spawned).toBeDefined();
+    expect(childCalls).toBe(2);
+    const beforeResume = requests;
+    await harness.close();
+    harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const plain = await harness.resumeSession({ id: session.id, replayTurnLimit: 11 });
+    const defaultSnapshot = plain.getResumeState();
+    expect(defaultSnapshot?.agents[spawned!.subagentId]).toBeUndefined();
+    const page = await plain.readAgentHistory(spawned!.subagentId);
+    expect(JSON.stringify(page.replay)).toContain('historical child detail');
+    expect(defaultSnapshot?.agents[spawned!.subagentId]).toBeUndefined();
+    await plain.close();
+    const full = await harness.resumeSession({
+      id: session.id,
+      replayTurnLimit: 11,
+      includeSubagents: true,
+    });
+    const fullSnapshot = full.getResumeState();
+    expect(JSON.stringify(fullSnapshot?.agents[spawned!.subagentId]?.replay)).toContain(
+      'historical child detail',
+    );
+    expect(JSON.stringify(fullSnapshot?.agents[spawned!.subagentId]?.replay)).toContain(
+      'child-task-list',
+    );
+    expect(requests).toBe(beforeResume);
+  } finally {
+    await harness.close();
+    await rm(homeDir, { recursive: true, force: true });
+    await rm(workDir, { recursive: true, force: true });
+  }
+}, 20000);
