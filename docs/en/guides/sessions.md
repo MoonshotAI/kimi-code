@@ -56,6 +56,8 @@ When a session is being restored, the TUI shows progress while it attempts the s
 `--continue` and `--session` are mutually exclusive.
 :::
 
+In the TUI, click a completed subagent card to read its saved messages and tool calls. For background agents, you can also select the agent in `/tasks` and press `Enter`. History loads only when opened, starting with the latest 10 turns. Press `P` to load older turns and `Q` or `Esc` to return. Reading saved history does not restart the agent.
+
 ## Switching sessions inside the TUI
 
 You can manage sessions without leaving the terminal. The following slash commands are available only when the agent is idle:
