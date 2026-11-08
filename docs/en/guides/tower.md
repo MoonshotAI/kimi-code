@@ -85,6 +85,7 @@ The worker commits all deliverables inside the reserved scope and marks `reports
 You do not need to understand the worker communication protocol to monitor and intervene in Tower.
 
 - **Read the dashboard:** `/tower` or `/tower status` reads the current state directly without triggering a new model request. It shows the base, missions, roster, merge checks, inbox count, concurrency, and recent activity.
+- **Watch the side panel:** with `tui_mode = "fullscreen"` (experimental), a tower run pins a live panel to the right of the transcript — open missions with task progress, live worker counts, recent activity, and recently closed missions. The panel appears only while tower mode is on with recorded content, and hides on terminals narrower than 120 columns.
 - **Redirect work:** while Tower is active, send a normal message to add constraints, change priorities, or request a summary. After Tower relays a message to a worker, the worker sees it on the next step without interrupting the current tool call.
 - **Inspect or stop an agent:** open `/tasks` to view background agent progress and output, and stop one if needed. For a worker or reviewer you stop deliberately, Tower does not resume, reassign, or replace it unless you say otherwise.
 - **Change the base:** run `/tower <base-branch>` again. Tower re-evaluates existing missions against the new base, and only stale branches need a rebase. The main checkout must be on the recorded base before merging.

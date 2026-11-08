@@ -1,14 +1,15 @@
 import {
   Spacer,
   Text,
-  VStack,
   ScrollView,
   type Component,
   type Focusable,
   type TuiMouseEvent,
   type Terminal,
   TuiAltScreen,
+  visibleWidth,
 } from '@moonshot-ai/pi-tui';
+import type { TowerProjection } from '@moonshot-ai/kimi-code-sdk';
 /**
  * Fullscreen layout contract tests: the docked chrome must keep the editor's
  * full height (top border / input / bottom border) even when the transcript
@@ -172,9 +173,9 @@ function pendingApproval(): NonNullable<ReturnType<typeof createTUIState>['liveP
 }
 
 function pillLines(state: ReturnType<typeof createTUIState>): string[] {
-  const root = (state.ui as TuiAltScreen).getLayoutRoot() as VStack;
-  const transcript = root.children[0] as VStack;
-  return transcript.children[0]!.render(state.ui.terminal.columns);
+  const view = state.transcriptView;
+  if (view === undefined) throw new Error('transcript view missing');
+  return view.children[0]!.render(state.ui.terminal.columns);
 }
 
 function groupTranscript(state: ReturnType<typeof createTUIState>): void {
@@ -359,6 +360,48 @@ describe('fullscreen layout', () => {
     await vt.waitForRender();
     expect(pillLines(state)).toEqual([]);
     expect(topRow()).toContain('❯ four');
+    alt.stop();
+  });
+
+  it('mounts the tower pane on the right only when its visibility predicate allows it', async () => {
+    const { state, vt } = await mountFullscreen();
+    const alt = state.ui as TuiAltScreen;
+    const projection: TowerProjection = {
+      status: 'active',
+      hasContent: true,
+      base: 'main',
+      missionCounts: {
+        planned: 0,
+        active: 1,
+        completed: 0,
+        blocked: 0,
+        paused: 0,
+        merged: 0,
+        abandoned: 0,
+      },
+      workersLive: 1,
+      reviewersLive: 0,
+      rosterTotal: 1,
+      openMissions: [],
+      recentClosed: [],
+      events: [],
+      logOffset: 0,
+    };
+    state.towerPane.setProjection(projection);
+    let visible = false;
+    state.towerPanelVisible = () => visible;
+    alt.requestRender();
+    await vt.waitForRender();
+    expect(screenRows(vt).some((row) => row.includes('⚡ tower'))).toBe(false);
+
+    visible = true;
+    alt.requestRender();
+    await vt.waitForRender();
+    const rows = screenRows(vt);
+    const header = rows.find((row) => row.includes('⚡ tower · main'));
+    expect(header).toBeDefined();
+    expect(header!.indexOf('⚡ tower · main')).toBeGreaterThanOrEqual(WIDTH - 44);
+    expect(rows.every((row) => visibleWidth(row) <= WIDTH)).toBe(true);
     alt.stop();
   });
 
@@ -589,7 +632,8 @@ describe('fullscreen layout', () => {
       new Text(Array.from({ length: 40 }, (_, i) => `body ${i}`).join('\n'), 0, 0),
     );
     const alt = state.ui as TuiAltScreen;
-    const view = (alt.getLayoutRoot() as VStack).children[0] as VStack;
+    const view = state.transcriptView;
+    if (view === undefined) throw new Error('transcript view missing');
     const scroll = view.children[1] as ScrollView;
     const passes: { top: number; height: number }[] = [];
     const dispose = alt.addLayoutEffect(() =>

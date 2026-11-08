@@ -1,5 +1,10 @@
-import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2';
-import { subscribeMessageSchema, unsubscribeMessageSchema } from '../../../protocol/ws-control';
+import { ErrorCodes, Error2, MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2';
+import {
+  subscribeMessageSchema,
+  subscribeTowerMessageSchema,
+  unsubscribeMessageSchema,
+  unsubscribeTowerMessageSchema,
+} from '../../../protocol/ws-control';
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 
@@ -13,11 +18,14 @@ import type {
   BroadcastTarget,
   SessionEventBroadcaster,
 } from './sessionEventBroadcaster';
+import type { TowerWatchService } from '../../../services/tower/towerWatchService';
 import { TaskRequests, type TaskSource } from './taskRequests';
 
 const COMMAND_TYPES: ReadonlySet<string> = new Set([
   'subscribe',
   'unsubscribe',
+  'tower.subscribe',
+  'tower.unsubscribe',
   'task.watch',
   'task.unwatch',
   'task.stop',
@@ -40,6 +48,7 @@ interface InboundFrame {
 export interface WsConnectionV1Options {
   readonly socket: WebSocket;
   readonly broadcaster: SessionEventBroadcaster;
+  readonly towerWatch: TowerWatchService;
   readonly taskSource: TaskSource;
   readonly connectionRegistry: IConnectionRegistry;
   readonly remoteAddress: string | null;
@@ -58,6 +67,7 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private readonly socket: WebSocket;
   private readonly broadcaster: SessionEventBroadcaster;
+  private readonly towerWatch: TowerWatchService;
   private readonly flushIntervalMs: number;
   private readonly maxBatchSize: number;
   private readonly highWaterMarkBytes: number;
@@ -82,6 +92,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.userAgent = opts.userAgent;
     this.socket = opts.socket;
     this.broadcaster = opts.broadcaster;
+    this.towerWatch = opts.towerWatch;
     this.flushIntervalMs = opts.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.maxBatchSize = opts.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
     this.highWaterMarkBytes = opts.highWaterMarkBytes ?? DEFAULT_HIGH_WATER_MARK_BYTES;
@@ -137,6 +148,10 @@ export class WsConnectionV1 implements BroadcastTarget {
       this.enqueueControl(() => this.onSubscribe(requestId, frame));
     } else if (frame.type === 'unsubscribe') {
       this.enqueueControl(() => this.onUnsubscribe(requestId, frame));
+    } else if (frame.type === 'tower.subscribe') {
+      this.enqueueControl(() => this.onSubscribeTower(requestId, frame));
+    } else if (frame.type === 'tower.unsubscribe') {
+      this.enqueueControl(() => this.onUnsubscribeTower(requestId, frame));
     } else {
       this.taskRequests.handle(requestId, frame);
     }
@@ -187,6 +202,37 @@ export class WsConnectionV1 implements BroadcastTarget {
 
   private respond(requestId: string, code: number, msg?: string): void {
     this.sendImmediateFrame(buildResponse(requestId, code, msg));
+  }
+
+  private async onSubscribeTower(requestId: string, frame: InboundFrame): Promise<void> {
+    const parsed = subscribeTowerMessageSchema.safeParse(frame);
+    if (!parsed.success) {
+      this.respond(requestId, ErrorCode.VALIDATION_FAILED, 'invalid tower.subscribe message');
+      return;
+    }
+    try {
+      await this.towerWatch.subscribe(parsed.data.workspace_id, this);
+    } catch (error) {
+      if (error instanceof Error2 && error.code === ErrorCodes.WORKSPACE_NOT_FOUND) {
+        this.respond(requestId, ErrorCode.WORKSPACE_NOT_FOUND, error.message);
+        return;
+      }
+      const failure = mapError(error, requestId);
+      this.respond(requestId, failure.code, failure.msg);
+      return;
+    }
+    this.respond(requestId, ErrorCode.SUCCESS);
+    if (this.closed) this.towerWatch.removeTarget(this);
+  }
+
+  private async onUnsubscribeTower(requestId: string, frame: InboundFrame): Promise<void> {
+    const parsed = unsubscribeTowerMessageSchema.safeParse(frame);
+    if (!parsed.success) {
+      this.respond(requestId, ErrorCode.VALIDATION_FAILED, 'invalid tower.unsubscribe message');
+      return;
+    }
+    this.towerWatch.unsubscribe(parsed.data.workspace_id, this);
+    this.respond(requestId, ErrorCode.SUCCESS);
   }
 
   private sendSubscribedFrame(msg: unknown): void {
@@ -275,6 +321,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.outbound = [];
     this.taskRequests.dispose();
     this.broadcaster.removeTarget(this);
+    this.towerWatch.removeTarget(this);
   }
 }
 

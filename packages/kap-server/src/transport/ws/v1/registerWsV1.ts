@@ -1,6 +1,7 @@
 import type { Scope } from '@moonshot-ai/agent-core-v2';
 import { WebSocketServer } from 'ws';
 
+import type { TowerWatchService } from '../../../services/tower/towerWatchService';
 import { type IConnectionRegistry } from '../connectionRegistry';
 import type { SessionEventBroadcaster } from './sessionEventBroadcaster';
 import { createTaskSource } from './taskRequests';
@@ -12,6 +13,7 @@ export const WS_PATH = '/api/v1/ws';
 export interface RegisterWsV1Options {
   readonly registry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
+  readonly towerWatch: TowerWatchService;
   readonly flushIntervalMs?: number;
   readonly maxBatchSize?: number;
   readonly highWaterMarkBytes?: number;
@@ -27,6 +29,7 @@ export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketS
     const conn = new WsConnectionV1({
       socket,
       broadcaster,
+      towerWatch: opts.towerWatch,
       taskSource,
       connectionRegistry: registry,
       remoteAddress: req.socket.remoteAddress ?? null,

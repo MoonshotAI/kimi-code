@@ -16,6 +16,7 @@ import {
 } from './conversation';
 import { pushEventSchema } from './events-zod';
 import { interactionEventMessageSchema } from './interaction';
+import { towerActivityEventSchema, towerProjectionResponseSchema } from './rest-tower';
 import {
   agentEventMessageSchema,
   goalEventMessageSchema,
@@ -65,6 +66,44 @@ export const responseMessageSchema = z.object({
 
 export type ResponseMessage = z.infer<typeof responseMessageSchema>;
 
+export const subscribeTowerMessageSchema = z.object({
+  type: z.literal('tower.subscribe'),
+  request_id: z.string().min(1),
+  workspace_id: z.string().min(1),
+});
+
+export type SubscribeTowerMessage = z.infer<typeof subscribeTowerMessageSchema>;
+
+export const unsubscribeTowerMessageSchema = z.object({
+  type: z.literal('tower.unsubscribe'),
+  request_id: z.string().min(1),
+  workspace_id: z.string().min(1),
+});
+
+export type UnsubscribeTowerMessage = z.infer<typeof unsubscribeTowerMessageSchema>;
+
+export const towerStatePayloadSchema = z
+  .object({ workspace_id: z.string().min(1) })
+  .extend(towerProjectionResponseSchema.shape);
+
+export const towerStateMessageSchema = wsEventEnvelopeSchema(towerStatePayloadSchema).extend({
+  type: z.literal('tower.state'),
+});
+
+export type TowerStateMessage = z.infer<typeof towerStateMessageSchema>;
+
+export const towerActivityPayloadSchema = z.object({
+  workspace_id: z.string().min(1),
+  events: z.array(towerActivityEventSchema),
+  offset: z.number().int().nonnegative(),
+});
+
+export const towerActivityMessageSchema = wsEventEnvelopeSchema(towerActivityPayloadSchema).extend({
+  type: z.literal('tower.activity'),
+});
+
+export type TowerActivityMessage = z.infer<typeof towerActivityMessageSchema>;
+
 export const pingMessageSchema = z.object({
   type: z.literal('ping'),
 });
@@ -103,6 +142,21 @@ export const clientControlOperations = [
     messageSchema: unsubscribeMessageSchema,
     description:
       'Stop receiving agents of one session; without agent_ids the whole session is dropped.',
+  },
+  {
+    type: 'tower.subscribe',
+    direction: 'client_to_server',
+    kind: 'control',
+    messageSchema: subscribeTowerMessageSchema,
+    description:
+      'Start receiving the tower projection of one workspace: the response comes first (40410 when the workspace does not exist), then a tower.state frame with the full snapshot (recent whitelisted events and the current activity.log byte offset), then tower.state whenever state.json changes and tower.activity for whitelisted lines appended to activity.log.',
+  },
+  {
+    type: 'tower.unsubscribe',
+    direction: 'client_to_server',
+    kind: 'control',
+    messageSchema: unsubscribeTowerMessageSchema,
+    description: 'Stop receiving tower frames of one workspace.',
   },
   {
     type: 'task.watch',
@@ -325,6 +379,25 @@ export const conversationEventOperations = [
   },
 ] as const satisfies readonly WsOperationDefinition[];
 
+export const towerEventOperations = [
+  {
+    type: 'tower.state',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: towerStateMessageSchema,
+    description:
+      'Full tower projection of a subscribed workspace, sent right after tower.subscribe and whenever state.json changes; it replaces the client copy. events holds the recent whitelisted activity lines and log_offset the current activity.log byte offset.',
+  },
+  {
+    type: 'tower.activity',
+    direction: 'server_to_client',
+    kind: 'event',
+    messageSchema: towerActivityMessageSchema,
+    description:
+      'Whitelisted activity lines appended to activity.log of a subscribed workspace; offset is the new byte offset and advances even when no line survives the whitelist.',
+  },
+] as const satisfies readonly WsOperationDefinition[];
+
 export const wsOperations = [
   ...clientControlOperations,
   ...serverSystemOperations,
@@ -337,5 +410,6 @@ export const wsOperations = [
   usageEventOperation,
   goalEventOperation,
   todoEventOperation,
+  ...towerEventOperations,
   ...conversationEventOperations,
 ] as const satisfies readonly WsOperationDefinition[];

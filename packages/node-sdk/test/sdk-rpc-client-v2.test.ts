@@ -35,6 +35,7 @@ import {
   Session,
   toKimiErrorPayload,
   type Event,
+  type TowerProjection,
 } from '#/index';
 import { foldAgentWireReplay } from '#/v2/resume-replay';
 import {
@@ -2529,6 +2530,12 @@ key = "${titleOAuthRef.key}"
     await expect(session.getTowerStatus()).rejects.toMatchObject({
       code: ErrorCodes.NOT_IMPLEMENTED,
     });
+    await expect(session.getTowerProjection()).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
+    await expect(session.watchTowerProjection(() => {})).rejects.toMatchObject({
+      code: ErrorCodes.NOT_IMPLEMENTED,
+    });
   });
 
   it('serves setTowerMode and getStatus towerMode through the agent scope tower service', async () => {
@@ -2664,6 +2671,22 @@ key = "${titleOAuthRef.key}"
       expect(body).toContain('Concurrency: budget: ');
       expect(body).toContain('Recent activity:');
       expect(body).toContain(' tower init');
+
+      const projection = await session.getTowerProjection();
+      expect(projection.base).toBe('main');
+      expect(projection.hasContent).toBe(true);
+      expect(projection.openMissions.map((mission) => mission.id)).toEqual(['M1']);
+
+      const received: TowerProjection[] = [];
+      const unsubscribe = await session.watchTowerProjection((value) => {
+        received.push(value);
+      });
+      try {
+        expect(received.length).toBeGreaterThanOrEqual(1);
+        expect(received[0]!.base).toBe('main');
+      } finally {
+        unsubscribe();
+      }
 
       await session.setTowerMode(false);
       const inactiveStatus = await session.getTowerStatus();

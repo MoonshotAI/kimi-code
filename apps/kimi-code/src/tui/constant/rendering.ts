@@ -29,6 +29,11 @@ export const DOCK_QUEUE_ROWS = 3;
 export const DOCK_UPDATES_ROWS = 6;
 export const DOCK_APPROVAL_ROWS = 6;
 export const DOCK_PREVIEW_ROWS = Number.POSITIVE_INFINITY;
+
+// Fullscreen tower side panel: fixed width, and the terminal width below which
+// it stays hidden so the transcript keeps enough room to read.
+export const TOWER_PANEL_WIDTH = 44;
+export const TOWER_PANEL_MIN_COLUMNS = 120;
 // Below this terminal height, docked Updates folds to its one-line stub while
 // an approval or question waits: a typical approval (13 rows) plus expanded
 // Updates (7) and the activity rows (2) would leave the transcript under 10.

@@ -141,6 +141,14 @@ export type {
 } from '@moonshot-ai/agent-core-v2/app/plugin/marketplace';
 export type { InstallPluginInput } from '@moonshot-ai/agent-core-v2/app/plugin/plugin';
 export type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';
+export type {
+  TowerActivityEvent,
+  TowerProjection,
+  TowerProjectionClosedMission,
+  TowerProjectionMissionCounts,
+  TowerProjectionOpenMission,
+  TowerProjectionStatus,
+} from '@moonshot-ai/agent-core-v2/features/tower/projection/index';
 export type { ToolInfo } from '#/tool';
 export type {
   ExportSessionManifest,
