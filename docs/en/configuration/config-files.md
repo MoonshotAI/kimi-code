@@ -656,8 +656,8 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
 | `[notifications].notification_condition` | `string` | `unfocused` | When to notify: `unfocused` (only when the terminal is not focused) or `always` |
 | `[upgrade].auto_install` | `boolean` | `true` | Whether new versions are installed automatically |
-| `[transcript.group].tools` | `string` | `auto` | Which tool calls fold into summary groups in `fullscreen` mode: `auto` folds every tool call except subagents and tools that ask or notify you, `explore` folds only reads, searches, and read-only commands such as `ls` or `git status`, `off` keeps every tool call as its own card; same as Tool call folding in `/settings`; no effect in `regular` mode |
-| `[transcript.group].group_thinking` | `boolean` | `true` | Whether finished thinking folds into summary groups in `fullscreen` mode; `false` shows a two-line preview of each thinking block instead; same as Thinking folding in `/settings`; no effect in `regular` mode |
+| `[transcript].tool_call_density` | `string` | `compact` | How tool calls show in `fullscreen` mode: `compact` folds every tool call into summary groups, `balanced` folds reads, searches, and read-only commands such as `ls` or `git status` and draws every other tool call as one line you can click to open, `detailed` folds the same calls and keeps every other tool call as its own card, `ungrouped` keeps every tool call as its own card; subagents and tools that ask or notify you always stay as cards; same as Tool calls in `/settings`, which offers every value except `ungrouped`; no effect in `regular` mode |
+| `[transcript].thinking` | `string` | `grouped` | How thinking shows in `fullscreen` mode: `grouped` folds thinking into summary groups and shows its latest line under the group title while it streams, `ungrouped` shows a two-line preview of each thinking block instead; same as Thinking in `/settings`; no effect in `regular` mode |
 | `[status_line].items` | `string[]` | `[]` | Built-in slots on the first footer line and their order: `mode`, `goal`, `model`, `tasks`, `cwd`, `git`, `tips`; unknown ids are skipped with a warning |
 | `[status_line].command` | `string` | `""` | Custom status line command: its first stdout line replaces the footer, and a JSON snapshot is passed on stdin; capped at 300ms, throttled to once per second, failures fall back to the built-in layout |
 
@@ -687,9 +687,9 @@ notification_condition = "unfocused" # "unfocused" | "always"
 [upgrade]
 auto_install = true
 
-[transcript.group] # fullscreen mode only
-tools = "auto" # "auto" | "explore" | "off"
-group_thinking = true # false shows each thinking block as a two-line preview
+[transcript] # fullscreen mode only
+tool_call_density = "compact" # "compact" | "balanced" | "detailed" | "ungrouped"
+thinking = "grouped" # "grouped" | "ungrouped"
 
 # [status_line]
 # items = ["mode", "goal", "model", "tasks", "cwd", "git", "tips"]

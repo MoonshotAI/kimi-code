@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { MermaidPreferenceSelectorComponent } from '#/tui/components/dialogs/mermaid-preference-selector';
 import {
   SettingsSelectorComponent,
-  TranscriptGroupThinkingSelectorComponent,
-  TranscriptGroupToolsSelectorComponent,
+  ThinkingDisplaySelectorComponent,
+  ToolCallDensitySelectorComponent,
 } from '#/tui/components/dialogs/settings-selector';
 
 const ANSI = /\[[0-9;]*m/g;
@@ -42,7 +42,7 @@ describe('MermaidPreferenceSelectorComponent', () => {
 });
 
 describe('transcript display selectors', () => {
-  it('lists the transcript grouping settings only in fullscreen', () => {
+  it('lists the tool call and thinking settings only in fullscreen', () => {
     const settingsText = (fullscreen: boolean): string => {
       const picker = new SettingsSelectorComponent({
         fullscreen,
@@ -56,38 +56,70 @@ describe('transcript display selectors', () => {
 
     const regular = settingsText(false);
     expect(regular).toContain('Usage');
-    expect(regular).not.toContain('Tool call folding');
-    expect(regular).not.toContain('Thinking folding');
+    expect(regular).not.toContain('Tool calls');
+    expect(regular).not.toContain('Choose whether thinking folds into tool groups.');
 
     const fullscreen = settingsText(true);
-    expect(fullscreen).toContain('Tool call folding');
-    expect(fullscreen).toContain('Choose which tool calls to fold into summary groups.');
-    expect(fullscreen).toContain('Thinking folding');
-    expect(fullscreen).toContain('Choose whether to fold finished thinking.');
+    expect(fullscreen).toContain('Tool calls');
+    expect(fullscreen).toContain('Choose how much of each tool call the transcript shows.');
+    expect(fullscreen).toContain('Thinking');
+    expect(fullscreen).toContain('Choose whether thinking folds into tool groups.');
+    expect(fullscreen).not.toContain('Tool call folding');
+    expect(fullscreen).not.toContain('Thinking folding');
   });
 
-  it('selects tool call folding and thinking folding values with current markers', () => {
-    const onGroupTools = vi.fn();
-    const groupTools = new TranscriptGroupToolsSelectorComponent({
-      currentValue: 'auto',
-      onSelect: onGroupTools,
+  it('offers compact, balanced, and detailed tool calls with the current marker', () => {
+    const onSelect = vi.fn();
+    const picker = new ToolCallDensitySelectorComponent({
+      currentValue: 'balanced',
+      onSelect,
       onCancel: () => {},
     });
-    expect(strip(groupTools.render(90).join('\n'))).toContain('Fold most tools ← current');
-    groupTools.handleInput('\r');
-    expect(onGroupTools).toHaveBeenCalledWith('auto');
+    const lines = picker.render(100).map(strip);
+    expect(lines).toContain('  ❯ Balanced ← current');
+    expect(lines).toContain('    Compact');
+    expect(lines).toContain('    Fold tool calls into one summary. Subagents and questions stay as cards.');
+    expect(lines).toContain('    Fold read-only calls. Edits and commands get one line each that you can open.');
+    expect(lines).toContain('    Detailed');
+    expect(lines).toContain('    Fold read-only calls. Edits and commands stay as full cards.');
+    expect(lines.join('\n')).not.toMatch(/ungrouped/i);
 
-    const onThinking = vi.fn();
-    const thinking = new TranscriptGroupThinkingSelectorComponent({
-      currentValue: true,
-      onSelect: onThinking,
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith('detailed');
+  });
+
+  it('marks no tool call row as current while the file holds ungrouped', () => {
+    const onSelect = vi.fn();
+    const picker = new ToolCallDensitySelectorComponent({
+      currentValue: 'ungrouped',
+      onSelect,
       onCancel: () => {},
     });
-    const text = strip(thinking.render(100).join('\n'));
-    expect(text).toContain('Fold thinking ← current');
-    expect(text).toContain('Fold finished thinking into summary groups.');
-    thinking.handleInput('\r');
-    expect(onThinking).toHaveBeenCalledWith(true);
+    const text = strip(picker.render(100).join('\n'));
+    expect(text).not.toContain('← current');
+    expect(text).not.toMatch(/ungrouped/i);
+
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith('compact');
+  });
+
+  it('offers grouped and ungrouped thinking with the current marker', () => {
+    const onSelect = vi.fn();
+    const picker = new ThinkingDisplaySelectorComponent({
+      currentValue: 'grouped',
+      onSelect,
+      onCancel: () => {},
+    });
+    const lines = picker.render(100).map(strip);
+    expect(lines).toContain('  ❯ Grouped ← current');
+    expect(lines).toContain('    Show thinking inside the group, with the latest line under the title.');
+    expect(lines).toContain('    Ungrouped');
+    expect(lines).toContain('    Show thinking as its own block.');
+
+    picker.handleInput('\u001B[B');
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith('ungrouped');
   });
 });
 

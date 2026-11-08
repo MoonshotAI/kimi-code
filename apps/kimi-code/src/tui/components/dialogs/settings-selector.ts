@@ -1,12 +1,12 @@
-import type { TranscriptGroupTools } from '../../config';
+import type { ThinkingDisplay, ToolCallDensity } from '../../config';
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
 export type SettingsSelection =
   | 'model'
   | 'theme'
   | 'tuiMode'
-  | 'groupTools'
-  | 'groupThinking'
+  | 'toolCallDensity'
+  | 'thinking'
   | 'mermaid'
   | 'editor'
   | 'permission'
@@ -37,14 +37,14 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     description: 'Choose the regular or fullscreen layout.',
   },
   {
-    value: 'groupTools',
-    label: 'Tool call folding',
-    description: 'Choose which tool calls to fold into summary groups.',
+    value: 'toolCallDensity',
+    label: 'Tool calls',
+    description: 'Choose how much of each tool call the transcript shows.',
   },
   {
-    value: 'groupThinking',
-    label: 'Thinking folding',
-    description: 'Choose whether to fold finished thinking.',
+    value: 'thinking',
+    label: 'Thinking',
+    description: 'Choose whether thinking folds into tool groups.',
   },
   {
     value: 'mermaid',
@@ -83,8 +83,8 @@ function isSettingsSelection(value: string): value is SettingsSelection {
     value === 'model' ||
     value === 'theme' ||
     value === 'tuiMode' ||
-    value === 'groupTools' ||
-    value === 'groupThinking' ||
+    value === 'toolCallDensity' ||
+    value === 'thinking' ||
     value === 'mermaid' ||
     value === 'editor' ||
     value === 'permission' ||
@@ -108,7 +108,7 @@ export class SettingsSelectorComponent extends ChoicePickerComponent {
       options: SETTINGS_OPTIONS.filter(
         (option) =>
           opts.fullscreen === true ||
-          (option.value !== 'groupTools' && option.value !== 'groupThinking'),
+          (option.value !== 'toolCallDensity' && option.value !== 'thinking'),
       ),
       onSelect: (value) => {
         if (isSettingsSelection(value)) opts.onSelect(value);
@@ -118,71 +118,74 @@ export class SettingsSelectorComponent extends ChoicePickerComponent {
   }
 }
 
-const GROUP_TOOLS_OPTIONS: readonly ChoiceOption[] = [
+const TOOL_CALL_DENSITY_OPTIONS = [
   {
-    value: 'auto',
-    label: 'Fold most tools',
-    description: 'Fold all tools except subagents and communication tools.',
+    value: 'compact',
+    label: 'Compact',
+    description: 'Fold tool calls into one summary. Subagents and questions stay as cards.',
   },
   {
-    value: 'explore',
-    label: 'Fold read-only tools',
-    description: 'Fold reads, searches, and other read-only commands.',
+    value: 'balanced',
+    label: 'Balanced',
+    description: 'Fold read-only calls. Edits and commands get one line each that you can open.',
   },
   {
-    value: 'off',
-    label: 'Show every tool call separately',
-    description: 'Keep each tool call as its own card.',
+    value: 'detailed',
+    label: 'Detailed',
+    description: 'Fold read-only calls. Edits and commands stay as full cards.',
   },
-];
+] as const satisfies readonly (ChoiceOption & { readonly value: ToolCallDensity })[];
 
-const GROUP_THINKING_OPTIONS: readonly ChoiceOption[] = [
+const THINKING_OPTIONS = [
   {
-    value: 'on',
-    label: 'Fold thinking',
-    description: 'Fold finished thinking into summary groups.',
+    value: 'grouped',
+    label: 'Grouped',
+    description: 'Show thinking inside the group, with the latest line under the title.',
   },
   {
-    value: 'off',
-    label: "Don't fold thinking",
-    description: 'Show each thinking block as a two-line preview.',
+    value: 'ungrouped',
+    label: 'Ungrouped',
+    description: 'Show thinking as its own block.',
   },
-];
+] as const satisfies readonly (ChoiceOption & { readonly value: ThinkingDisplay })[];
 
-export interface TranscriptGroupToolsSelectorOptions {
-  readonly currentValue: TranscriptGroupTools;
-  readonly onSelect: (value: TranscriptGroupTools) => void;
+export interface ToolCallDensitySelectorOptions {
+  /** `ungrouped` is file-only: it has no row, so no row is marked current. */
+  readonly currentValue: ToolCallDensity;
+  readonly onSelect: (value: ToolCallDensity) => void;
   readonly onCancel: () => void;
 }
 
-export class TranscriptGroupToolsSelectorComponent extends ChoicePickerComponent {
-  constructor(opts: TranscriptGroupToolsSelectorOptions) {
+export class ToolCallDensitySelectorComponent extends ChoicePickerComponent {
+  constructor(opts: ToolCallDensitySelectorOptions) {
     super({
-      title: 'Tool call folding',
-      options: GROUP_TOOLS_OPTIONS,
+      title: 'Tool calls',
+      options: TOOL_CALL_DENSITY_OPTIONS,
       currentValue: opts.currentValue,
       onSelect: (value) => {
-        if (value === 'auto' || value === 'explore' || value === 'off') opts.onSelect(value);
+        const option = TOOL_CALL_DENSITY_OPTIONS.find((candidate) => candidate.value === value);
+        if (option !== undefined) opts.onSelect(option.value);
       },
       onCancel: opts.onCancel,
     });
   }
 }
 
-export interface TranscriptGroupThinkingSelectorOptions {
-  readonly currentValue: boolean;
-  readonly onSelect: (value: boolean) => void;
+export interface ThinkingDisplaySelectorOptions {
+  readonly currentValue: ThinkingDisplay;
+  readonly onSelect: (value: ThinkingDisplay) => void;
   readonly onCancel: () => void;
 }
 
-export class TranscriptGroupThinkingSelectorComponent extends ChoicePickerComponent {
-  constructor(opts: TranscriptGroupThinkingSelectorOptions) {
+export class ThinkingDisplaySelectorComponent extends ChoicePickerComponent {
+  constructor(opts: ThinkingDisplaySelectorOptions) {
     super({
-      title: 'Thinking folding',
-      options: GROUP_THINKING_OPTIONS,
-      currentValue: opts.currentValue ? 'on' : 'off',
+      title: 'Thinking',
+      options: THINKING_OPTIONS,
+      currentValue: opts.currentValue,
       onSelect: (value) => {
-        if (value === 'on' || value === 'off') opts.onSelect(value === 'on');
+        const option = THINKING_OPTIONS.find((candidate) => candidate.value === value);
+        if (option !== undefined) opts.onSelect(option.value);
       },
       onCancel: opts.onCancel,
     });

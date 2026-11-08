@@ -504,6 +504,6 @@ function samePresentation(
   right: TranscriptPresentationOptions,
 ): boolean {
   return left.fullscreen === right.fullscreen &&
-    left.groupTools === right.groupTools &&
-    left.groupThinking === right.groupThinking;
+    left.toolCallDensity === right.toolCallDensity &&
+    left.thinking === right.thinking;
 }

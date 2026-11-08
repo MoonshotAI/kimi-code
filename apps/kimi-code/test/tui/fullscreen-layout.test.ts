@@ -82,7 +82,7 @@ function fakeInitialAppState(): AppState {
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },
-    transcript: { groupTools: 'auto', groupThinking: true },
+    transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
     availableModels: {},
     availableProviders: {},
     sessionTitle: null,
@@ -156,7 +156,7 @@ function pillLines(state: ReturnType<typeof createTUIState>): string[] {
 function groupTranscript(state: ReturnType<typeof createTUIState>): void {
   const view = state.transcriptView;
   if (view === undefined) throw new Error('transcript view missing');
-  state.transcriptContainer.setPresentationOptions({ fullscreen: true, groupTools: 'auto', groupThinking: true });
+  state.transcriptContainer.setPresentationOptions({ fullscreen: true, toolCallDensity: 'compact', thinking: 'grouped' });
   state.transcriptContainer.setHost({
     withScrollAnchor: (toggle) => {
       view.withAnchoredScroll(toggle);

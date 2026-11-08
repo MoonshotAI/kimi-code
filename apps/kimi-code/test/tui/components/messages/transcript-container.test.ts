@@ -29,8 +29,8 @@ const defaultChalkLevel = chalk.level;
 function options(overrides: Partial<TranscriptPresentationOptions> = {}): TranscriptPresentationOptions {
   return {
     fullscreen: true,
-    groupTools: 'explore',
-    groupThinking: true,
+    toolCallDensity: 'detailed',
+    thinking: 'grouped',
     ...overrides,
   };
 }
@@ -206,7 +206,7 @@ describe('TranscriptGroupComponent', () => {
   });
 
   it('keeps regular thinking previews unchanged by grouping preferences', () => {
-    const { container } = makeContainer(options({ fullscreen: false, groupThinking: true }));
+    const { container } = makeContainer(options({ fullscreen: false, thinking: 'grouped' }));
     const thinking = new ThinkingComponent('one\ntwo\nthree\nfour\nfive', true, 'live');
     container.addChild(thinking);
 
@@ -215,12 +215,12 @@ describe('TranscriptGroupComponent', () => {
     expect(preview).toContain('four');
     expect(preview).toContain('five');
 
-    container.setPresentationOptions(options({ fullscreen: false, groupThinking: false }));
+    container.setPresentationOptions(options({ fullscreen: false, thinking: 'ungrouped' }));
     expect(plain(container.render(80))).toBe(preview);
   });
 
   it('keeps thinking as a visible boundary when grouping is off', () => {
-    const { container } = makeContainer(options({ groupThinking: false }));
+    const { container } = makeContainer(options({ thinking: 'ungrouped' }));
     const thinking = thought();
     container.addChild(thinking);
     container.addChild(tool('Read', { path: '/work/a.ts' }));
@@ -244,7 +244,7 @@ describe('TranscriptGroupComponent', () => {
 
   it('draws one row per member with the stats each row keeps', () => {
     chalk.level = 3;
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     const thinking = thought();
     container.addChild(thinking);
     container.addChild(tool('Grep', { pattern: 'needle' }, {
@@ -356,7 +356,7 @@ describe('TranscriptGroupComponent', () => {
   });
 
   it('wraps the whole command of an opened Bash row under its first word', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     const heredoc = tool('Bash', { command: "cat <<'EOF' > a.txt\nhello\nEOF" }, {
       tool_call_id: 'bash-heredoc',
       output: 'written',
@@ -378,7 +378,7 @@ describe('TranscriptGroupComponent', () => {
   });
 
   it('drops the Edit diff header and the search samples from opened rows', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     const grep = tool('Grep', { pattern: 'needle' }, {
       tool_call_id: 'grep-open',
       output: 'src/a.ts\nsrc/b.ts',
@@ -426,7 +426,7 @@ describe('TranscriptGroupComponent', () => {
   });
 
   it('titles a finished one-item group with the item and opens its detail from the title', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     const bash = runningTool('Bash', { command: 'ls -la' });
     container.addChild(bash);
     container.setTurnActive(true);
@@ -456,7 +456,7 @@ describe('TranscriptGroupComponent', () => {
   });
 
   it('wraps an expanded one-item title and shows a thought in full', () => {
-    const { container } = makeContainer(options({ groupTools: 'off' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'ungrouped' }));
     const thinking = new ThinkingComponent('one\ntwo\nthree\nfour\nfive\nsix', true, 'finalized');
     thinking.finalize({ known: true, ms: 2_000 });
     container.addChild(thinking);
@@ -470,7 +470,7 @@ describe('TranscriptGroupComponent', () => {
   });
 
   it('wraps a long expanded one-item title with continuation lines at column 3', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     const command = 'pnpm --filter @moonshot-ai/kimi-code exec vitest run test/tui/components/messages --reporter verbose';
     const bash = tool('Bash', { command }, { tool_call_id: 'long-bash', output: 'ok', is_error: false });
     container.addChild(bash);
@@ -543,7 +543,7 @@ describe('TranscriptGroupComponent', () => {
   });
 
   it('leaves failed and interrupted edits out of the title diff total', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     const ok = tool('Edit', { path: '/work/ok.ts', old_string: 'a', new_string: 'b' });
     container.addChild(ok);
     container.addChild(tool('Edit', { path: '/work/bad.ts', old_string: 'a', new_string: 'b\nc' }, {
@@ -568,7 +568,7 @@ describe('TranscriptGroupComponent', () => {
   });
 
   it('keeps diff and failure tails at 70 columns', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     const components = [
       thought(9000),
       tool('Read', { path: '/work/a.ts' }),
@@ -891,7 +891,7 @@ describe('TranscriptGroupComponent', () => {
   });
 
   it('keeps a running Bash in the tail after a finished thought', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     container.addChild(runningTool('Bash', { command: 'sleep 5' }));
     container.addChild(thought());
     container.setTurnActive(true);
@@ -937,7 +937,7 @@ describe('TranscriptGroupComponent', () => {
     ['TodoList', { todos: [{ title: '', status: 'in_progress' }] }, 'Update todos'],
     ['CustomTool', { input: '\nvalue' }, 'CustomTool'],
   ])('renders the %s tail description', (name, args, expected) => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     container.addChild(runningTool(name, args));
     container.setTurnActive(true);
 
@@ -1030,8 +1030,8 @@ describe('TranscriptGroupComponent', () => {
   });
 
   const ungroupedThinking = [
-    ['grouping is off', options({ groupTools: 'off', groupThinking: false })],
-    ['thinking does not fold', options({ groupThinking: false })],
+    ['grouping is off', options({ toolCallDensity: 'ungrouped', thinking: 'ungrouped' })],
+    ['thinking does not fold', options({ thinking: 'ungrouped' })],
     ['the transcript is regular', options({ fullscreen: false })],
   ] as const;
 
@@ -1288,7 +1288,7 @@ describe('Ctrl+O expansion across presentation changes', () => {
     return { group, reads };
   }
 
-  const groupingOff = options({ groupTools: 'off', groupThinking: false });
+  const groupingOff = options({ toolCallDensity: 'ungrouped', thinking: 'ungrouped' });
 
   it('keeps the read group card expanded when grouping is turned off after Ctrl+O', () => {
     const { container } = makeContainer();
@@ -1344,7 +1344,7 @@ describe('skill activation cards in grouped transcripts', () => {
 
   it('hides model-triggered cards and keeps the group in one piece', () => {
     for (const trigger of ['model-tool', 'nested-skill'] as const) {
-      const { container } = makeContainer(options({ groupTools: 'auto' }));
+      const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
       skillCalls(container, new SkillActivationComponent('foo', undefined, trigger));
       container.toggleGroup(container.children[0] as Component);
 
@@ -1354,21 +1354,21 @@ describe('skill activation cards in grouped transcripts', () => {
   });
 
   it('shows the card when tools are not grouped', () => {
-    const { container } = makeContainer(options({ groupTools: 'off' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'ungrouped' }));
     skillCalls(container, new SkillActivationComponent('foo', undefined, 'model-tool'));
 
     expect(plain(container.render(80))).toContain('Activated skill: foo');
   });
 
   it('shows a user-triggered card in a grouped transcript', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     skillCalls(container, new SkillActivationComponent('foo', undefined, 'user-slash'));
 
     expect(plain(container.render(80))).toContain('Activated skill: foo');
   });
 
   it('shows the card in the regular transcript', () => {
-    const { container } = makeContainer(options({ fullscreen: false, groupTools: 'auto' }));
+    const { container } = makeContainer(options({ fullscreen: false, toolCallDensity: 'compact' }));
     skillCalls(container, new SkillActivationComponent('foo', undefined, 'model-tool'));
 
     expect(plain(container.render(80))).toContain('Activated skill: foo');
@@ -1395,7 +1395,7 @@ describe('Ctrl+O turn counting with skill activation cards', () => {
   }
 
   it('expands a group spanning model skill cards in the latest turn', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     history(container);
     container.addChild(user('latest'));
     container.addChild(tool('Read', { path: '/work/a.ts' }));
@@ -1413,7 +1413,7 @@ describe('Ctrl+O turn counting with skill activation cards', () => {
   });
 
   it('expands cards before model skill cards in the regular transcript', () => {
-    const { container } = makeContainer(options({ fullscreen: false, groupTools: 'off' }));
+    const { container } = makeContainer(options({ fullscreen: false, toolCallDensity: 'ungrouped' }));
     history(container);
     container.addChild(user('latest'));
     const read = tool('Read', { path: '/work/a.ts' });
@@ -1428,7 +1428,7 @@ describe('Ctrl+O turn counting with skill activation cards', () => {
   });
 
   it('still counts a user-triggered skill card as the start of a turn', () => {
-    const { container } = makeContainer(options({ fullscreen: false, groupTools: 'off' }));
+    const { container } = makeContainer(options({ fullscreen: false, toolCallDensity: 'ungrouped' }));
     for (const text of ['one', 'two']) container.addChild(user(text));
     const read = tool('Read', { path: '/work/a.ts' });
     container.addChild(read);
@@ -1482,7 +1482,7 @@ describe('TranscriptContainer streaming updates', () => {
   });
 
   it('updates Edit diff counts while arguments are still streaming', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     const edit = runningTool('Edit', { path: '/work/a.ts' });
     edit.updateToolCall({ ...edit.toolCallView, streamingArguments: '{"path":"/work/a.ts"}' });
     container.addChild(edit);
@@ -1501,7 +1501,7 @@ describe('TranscriptContainer streaming updates', () => {
 
 describe('TranscriptContainer dense segments', () => {
   it('shows every group and card in a dense segment and applies Ctrl+O to all of them', () => {
-    const { container } = makeContainer(options({ groupTools: 'auto' }));
+    const { container } = makeContainer(options({ toolCallDensity: 'compact' }));
     const components = [
       tool('Read', { path: '/work/a.ts' }),
       tool('Agent', { description: 'first-agent' }),
@@ -1626,7 +1626,7 @@ describe('TranscriptContainer interaction', () => {
     container.toggleGroup(thinking);
     expect(onlyGroup(container).expanded).toBe(true);
 
-    container.setPresentationOptions(options({ groupTools: 'off' }));
+    container.setPresentationOptions(options({ toolCallDensity: 'ungrouped' }));
 
     expect(onlyGroup(container)).toMatchObject({
       title: '● Thought for 3s',

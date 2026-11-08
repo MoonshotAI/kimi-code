@@ -1196,8 +1196,8 @@ export class KimiTUI {
     this.sessionEventHandler.notifications.setEnabled(isExperimentalFlagEnabled('notify_user'));
     if (this.state.ui instanceof TuiAltScreen) {
       this.track('transcript_display_settings', {
-        group_tools: this.state.appState.transcript.groupTools,
-        group_thinking: this.state.appState.transcript.groupThinking,
+        tool_call_density: this.state.appState.transcript.toolCallDensity,
+        thinking: this.state.appState.transcript.thinking,
         source: 'startup',
       });
     }

@@ -1,6 +1,6 @@
 import type { Component } from '@moonshot-ai/pi-tui';
 
-import { transcriptGroupingActive, type TranscriptPresentationOptions } from '#/tui/config';
+import { DENSITY, transcriptGroupingActive, type TranscriptPresentationOptions } from '#/tui/config';
 import { combineOutcomes, formatDuration } from '#/tui/utils/transcript-items';
 import type {
   LogicalTranscriptItem,
@@ -75,9 +75,10 @@ export function canFoldItem(
   item: LogicalTranscriptItem,
   options: TranscriptPresentationOptions,
 ): boolean {
-  if (item.foldClass === 'thinking') return options.groupThinking;
-  if (item.foldClass === 'explore') return options.groupTools !== 'off';
-  return options.groupTools === 'auto';
+  if (item.foldClass === 'thinking') return options.thinking === 'grouped';
+  const { folding } = DENSITY[options.toolCallDensity];
+  if (item.foldClass === 'explore') return folding !== 'none';
+  return folding === 'all';
 }
 
 export interface GroupSummary {

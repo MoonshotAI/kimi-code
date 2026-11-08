@@ -15,8 +15,9 @@ import {
 } from '#/tui/components/messages/tool-renderers/chip';
 import { parseWaitForOutput } from '#/tui/components/messages/tool-renderers/wait-for';
 import {
+  DENSITY,
   transcriptGroupingActive,
-  type TranscriptGroupTools,
+  type ToolFolding,
   type TranscriptPresentationOptions,
 } from '#/tui/config';
 import type { ToolResultBlockData } from '#/tui/types';
@@ -110,7 +111,7 @@ export type TranscriptItem =
 
 interface ItemInspection {
   readonly version: number;
-  readonly groupTools: TranscriptGroupTools;
+  readonly folding: ToolFolding;
   readonly items: readonly TranscriptItem[];
 }
 
@@ -244,16 +245,17 @@ export class TranscriptItemInspector {
     if (!transcriptGroupingActive(options)) {
       return children.map((child, index) => boundary(child, index));
     }
-    return children.flatMap((child, index) => this.cached(child, index, options.groupTools));
+    const { folding } = DENSITY[options.toolCallDensity];
+    return children.flatMap((child, index) => this.cached(child, index, folding));
   }
 
   private cached(
     component: Component,
     sourceIndex: number,
-    groupTools: TranscriptGroupTools,
+    folding: ToolFolding,
   ): readonly TranscriptItem[] {
     if (component instanceof UserMessageComponent) return [boundary(component, sourceIndex, 'text')];
-    if (groupTools !== 'off' && component instanceof SkillActivationComponent && component.loadedByModel) {
+    if (folding !== 'none' && component instanceof SkillActivationComponent && component.loadedByModel) {
       return [transparent(component, sourceIndex)];
     }
     if (
@@ -268,7 +270,7 @@ export class TranscriptItemInspector {
     }
     const version = transcriptProjectionVersion(component);
     const cached = this.cache.get(component);
-    if (cached?.version === version && cached.groupTools === groupTools) {
+    if (cached?.version === version && cached.folding === folding) {
       return cached.items.map((item) => ({ ...item, sourceIndex }));
     }
     let items: readonly TranscriptItem[];
@@ -281,12 +283,12 @@ export class TranscriptItemInspector {
     else if (component instanceof ToolCallComponent) {
       const role = TOOL_BOUNDARY_ROLES[component.toolCallView.name];
       items = role === undefined
-        ? [this.inspectTool(component, sourceIndex, groupTools)]
+        ? [this.inspectTool(component, sourceIndex, folding)]
         : [boundary(component, sourceIndex, role)];
     }
-    else if (component instanceof ReadGroupComponent) items = this.inspectReadGroup(component, sourceIndex, groupTools);
+    else if (component instanceof ReadGroupComponent) items = this.inspectReadGroup(component, sourceIndex, folding);
     else items = [boundary(component, sourceIndex, 'card')];
-    this.cache.set(component, { version, groupTools, items });
+    this.cache.set(component, { version, folding, items });
     return items.map((item) => ({ ...item, sourceIndex }));
   }
 
@@ -317,14 +319,14 @@ export class TranscriptItemInspector {
   private inspectTool(
     component: ToolCallComponent,
     sourceIndex: number,
-    groupTools: TranscriptGroupTools,
+    folding: ToolFolding,
   ): LogicalTranscriptItem {
     const profile = this.profileFor(component);
     const outcome = this.inspectOutcome(component);
     const current = this.isCurrent(component);
     const toolCall = component.toolCallView;
     let foldClass = profile.foldClass;
-    if (toolCall.name === 'Bash' && toolCall.streamingArguments === undefined && groupTools === 'explore') {
+    if (toolCall.name === 'Bash' && toolCall.streamingArguments === undefined && folding === 'readonly') {
       foldClass = isReadonlyBash(typeof toolCall.args['command'] === 'string' ? toolCall.args['command'] : '')
         ? 'explore'
         : 'all';
@@ -350,10 +352,10 @@ export class TranscriptItemInspector {
   private inspectReadGroup(
     component: ReadGroupComponent,
     sourceIndex: number,
-    groupTools: TranscriptGroupTools,
+    folding: ToolFolding,
   ): readonly TranscriptItem[] {
     const tools = component.getToolComponents();
-    if (groupTools !== 'off') return tools.map((tool) => this.inspectTool(tool, sourceIndex, groupTools));
+    if (folding !== 'none') return tools.map((tool) => this.inspectTool(tool, sourceIndex, folding));
     const first = tools[0];
     const outcome = combineOutcomes(tools.map((tool) => this.inspectOutcome(tool)));
     const path = first?.getReadSnapshot().filePath ?? first?.toolCallView.id ?? '';

@@ -26,8 +26,8 @@ let id = 0;
 function options(overrides: Partial<TranscriptPresentationOptions> = {}): TranscriptPresentationOptions {
   return {
     fullscreen: true,
-    groupTools: 'explore',
-    groupThinking: true,
+    toolCallDensity: 'detailed',
+    thinking: 'grouped',
     ...overrides,
   };
 }
@@ -86,7 +86,7 @@ describe('transcript projection', () => {
     const components = [thought(1000), group];
 
     for (const presentation of [
-      options({ groupTools: 'off', groupThinking: false }),
+      options({ toolCallDensity: 'ungrouped', thinking: 'ungrouped' }),
       options({ fullscreen: false }),
     ]) {
       const items = inspect(components, presentation);
@@ -181,7 +181,7 @@ describe('transcript projection', () => {
       agent,
       swarm,
       tool('Read', { path: '/work/b.ts' }),
-    ], options({ groupTools: 'auto' }));
+    ], options({ toolCallDensity: 'compact' }));
 
     expect(projections.map((item) => item.kind)).toEqual(['group', 'single', 'single', 'group']);
     expect(projections[1]).toMatchObject({ kind: 'single', item: { display: agent } });
@@ -243,7 +243,7 @@ describe('transcript projection', () => {
     expect(projections[1]).toMatchObject({ kind: 'single', item: { display: bash } });
   });
 
-  it('keeps web tools as cards in explore and folds them in auto', () => {
+  it('keeps web tools as cards in detailed and folds them in compact', () => {
     const components = [
       tool('WebSearch'),
       tool('Read', { path: '/work/a.ts' }),
@@ -251,11 +251,30 @@ describe('transcript projection', () => {
     ];
 
     expect(project(components).map((item) => item.kind)).toEqual(['single', 'group', 'single']);
-    expect(summary(components, options({ groupTools: 'auto' })).fragments).toEqual([
+    expect(summary(components, options({ toolCallDensity: 'compact' })).fragments).toEqual([
       'Read 1 file',
       'fetched 1 page',
       'ran 1 web search',
     ]);
+  });
+
+  it.each([
+    ['compact', 'grouped', ['group']],
+    ['balanced', 'grouped', ['group', 'single', 'single', 'group']],
+    ['detailed', 'grouped', ['group', 'single', 'single', 'group']],
+    ['ungrouped', 'grouped', ['group', 'single', 'single', 'single', 'single', 'single']],
+    ['compact', 'ungrouped', ['single', 'group']],
+  ] as const)('folds %s tool calls with %s thinking', (toolCallDensity, thinking, kinds) => {
+    const components = [
+      thought(1000),
+      tool('Read', { path: '/work/a.ts' }),
+      tool('Edit', { path: '/work/a.ts', old_string: 'a', new_string: 'b' }),
+      tool('Bash', { command: 'npm install' }),
+      tool('Bash', { command: 'ls -la' }),
+      tool('Read', { path: '/work/b.ts' }),
+    ];
+
+    expect(project(components, options({ toolCallDensity, thinking })).map((item) => item.kind)).toEqual(kinds);
   });
 
   it('groups one tool and silently includes select_tools in the same group', () => {
@@ -300,7 +319,7 @@ describe('transcript projection', () => {
       thought(65_000),
     ];
 
-    expect(summary(components, options({ groupTools: 'auto' })).fragments).toEqual([
+    expect(summary(components, options({ toolCallDensity: 'compact' })).fragments).toEqual([
       'Thought for 2m 5s',
       'read 2 files',
       'searched 1 pattern',
@@ -338,7 +357,7 @@ describe('transcript projection', () => {
       tool('Edit', editArgs),
       tool('Write', writeArgs),
       thought(1),
-    ], options({ groupTools: 'auto' }));
+    ], options({ toolCallDensity: 'compact' }));
 
     expect(result.added).toBe(edit.added + write.lines);
     expect(result.removed).toBe(edit.removed);
@@ -354,7 +373,7 @@ describe('transcript projection', () => {
     ['CustomTool', 'User tool "CustomTool" was aborted.'],
   ])('counts %s interruption output separately from failures', (name, output) => {
     const interrupted = tool(name, {}, result(output, true));
-    const summaryResult = summary([interrupted, thought(1)], options({ groupTools: 'auto' }));
+    const summaryResult = summary([interrupted, thought(1)], options({ toolCallDensity: 'compact' }));
 
     expect(summaryResult.failed).toBe(0);
     expect(summaryResult.interrupted).toBe(1);
@@ -365,7 +384,7 @@ describe('transcript projection', () => {
     'counts TaskOutput %s status even when the error bit is false',
     (status) => {
       const failed = tool('TaskOutput', {}, result(`retrieval_status: success\nstatus: ${status}\n\n[output]\ntests failed`));
-      const summaryResult = summary([failed, thought(1)], options({ groupTools: 'auto' }));
+      const summaryResult = summary([failed, thought(1)], options({ toolCallDensity: 'compact' }));
 
       expect(summaryResult.failed).toBe(1);
       expect(summaryResult.interrupted).toBe(0);
@@ -388,7 +407,7 @@ describe('transcript projection', () => {
     const summaryResult = summary([
       tool('WaitFor', {}, result(output)),
       thought(1),
-    ], options({ groupTools: 'auto' }));
+    ], options({ toolCallDensity: 'compact' }));
 
     expect(summaryResult.failed).toBe(1);
     expect(summaryResult.interrupted).toBe(0);
@@ -407,7 +426,7 @@ describe('transcript projection', () => {
     const summaryResult = summary([
       tool('WaitFor', {}, result(output)),
       thought(1),
-    ], options({ groupTools: 'auto' }));
+    ], options({ toolCallDensity: 'compact' }));
 
     expect(summaryResult.failed).toBe(0);
     expect(summaryResult.interrupted).toBe(0);
@@ -417,7 +436,7 @@ describe('transcript projection', () => {
     const summaryResult = summary([
       tool('Bash', {}, result('failed', true)),
       tool('Read', {}, result('missing', true)),
-    ], options({ groupTools: 'auto' }));
+    ], options({ toolCallDensity: 'compact' }));
 
     expect(summaryResult.failed).toBe(2);
     expect(summaryResult.allFailed).toBe(true);
@@ -431,7 +450,7 @@ describe('transcript projection', () => {
     group.attach(second.toolCallView.id, second);
 
     expect(inspect([group]).map((item) => item.display)).toEqual([first, second]);
-    expect(project([group], options({ groupTools: 'off' }))).toEqual([
+    expect(project([group], options({ toolCallDensity: 'ungrouped' }))).toEqual([
       expect.objectContaining({ kind: 'single', item: expect.objectContaining({ display: group }) }),
     ]);
   });
@@ -439,12 +458,12 @@ describe('transcript projection', () => {
   it('treats AgentSwarmProgress as a card boundary before and after completion', () => {
     const component = new AgentSwarmProgressComponent({ description: 'review' });
     component.updateArgs({ items: ['a', 'b'] });
-    expect(inspect([component], options({ groupTools: 'auto' }))[0]).toMatchObject({
+    expect(inspect([component], options({ toolCallDensity: 'compact' }))[0]).toMatchObject({
       kind: 'boundary',
       role: 'card',
       display: component,
     });
-    expect(project([component], options({ groupTools: 'auto' }))[0])
+    expect(project([component], options({ toolCallDensity: 'compact' }))[0])
       .toMatchObject({ kind: 'single', item: { display: component } });
 
     component.applyResult([
@@ -455,7 +474,7 @@ describe('transcript projection', () => {
       '</agent_swarm_result>',
     ].join('\n'));
     component.markToolCallEnded();
-    expect(inspect([component], options({ groupTools: 'auto' }))[0]).toMatchObject({
+    expect(inspect([component], options({ toolCallDensity: 'compact' }))[0]).toMatchObject({
       kind: 'boundary',
       role: 'card',
       display: component,
@@ -469,12 +488,12 @@ describe('transcript projection', () => {
     group.attach(first.toolCallView.id, first);
     group.attach(second.toolCallView.id, second);
 
-    expect(inspect([group], options({ groupTools: 'auto' }))[0]).toMatchObject({
+    expect(inspect([group], options({ toolCallDensity: 'compact' }))[0]).toMatchObject({
       kind: 'boundary',
       role: 'card',
       display: group,
     });
-    expect(project([group], options({ groupTools: 'auto' }))[0])
+    expect(project([group], options({ toolCallDensity: 'compact' }))[0])
       .toMatchObject({ kind: 'single', item: { display: group } });
   });
 });

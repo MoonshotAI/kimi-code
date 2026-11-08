@@ -247,7 +247,7 @@ function makeStartupInput(): KimiTUIStartupInput {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
-      transcript: { groupTools: 'auto', groupThinking: true },
+      transcript: { toolCallDensity: 'compact', thinking: 'grouped' },
       statusLine: { items: null, command: null },
     },
     version: '0.0.0-test',
@@ -4845,8 +4845,8 @@ command = "vim"
     try {
       driver.state.transcriptContainer.setPresentationOptions({
         fullscreen: true,
-        groupTools: 'auto',
-        groupThinking: true,
+        toolCallDensity: 'compact',
+        thinking: 'grouped',
       });
       driver.state.transcriptContainer.addChild(new ToolCallComponent(
         { id: 'shutdown-live', name: 'Read', args: { path: '/work/a.ts' } },
@@ -14194,7 +14194,7 @@ describe('transcript step and assistant folding', () => {
       tuiConfig: {
         ...base.tuiConfig,
         tuiMode: 'fullscreen' as const,
-        transcript: { groupTools: 'off' as const, groupThinking: false },
+        transcript: { toolCallDensity: 'ungrouped' as const, thinking: 'ungrouped' as const },
       },
     };
     const { driver, session } = await makeDriver(makeSession(), {}, startup);
@@ -14217,8 +14217,8 @@ describe('transcript step and assistant folding', () => {
       tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const },
     });
     expect(fullscreen.harness.track).toHaveBeenCalledWith('transcript_display_settings', {
-      group_tools: 'auto',
-      group_thinking: true,
+      tool_call_density: 'compact',
+      thinking: 'grouped',
       source: 'startup',
     });
 
@@ -14351,7 +14351,7 @@ describe('footer ctrl+o hint', () => {
   });
 
   it('hides the hint while transcript grouping is active and keeps it when grouping is off', async () => {
-    async function fullscreenDriver(transcript: { groupTools: 'auto' | 'off'; groupThinking: boolean }) {
+    async function fullscreenDriver(transcript: TranscriptConfig) {
       const base = makeStartupInput();
       const { driver, session } = await makeDriver(makeSession(), {}, {
         ...base,
@@ -14363,14 +14363,14 @@ describe('footer ctrl+o hint', () => {
       return driver;
     }
 
-    const grouped = await fullscreenDriver({ groupTools: 'auto', groupThinking: true });
+    const grouped = await fullscreenDriver({ toolCallDensity: 'compact', thinking: 'grouped' });
     expect(stripSgr(renderTranscript(grouped))).not.toContain('line1');
     expect(renderFooterLine1(grouped)).not.toContain('ctrl+o');
     grouped.toggleToolOutputExpansion();
     expect(stripSgr(renderTranscript(grouped))).toContain('line1');
     expect(renderFooterLine1(grouped)).not.toContain('ctrl+o');
 
-    const ungrouped = await fullscreenDriver({ groupTools: 'off', groupThinking: false });
+    const ungrouped = await fullscreenDriver({ toolCallDensity: 'ungrouped', thinking: 'ungrouped' });
     expect(renderFooterLine1(ungrouped)).toContain('ctrl+o expand');
   });
 });
@@ -14515,7 +14515,7 @@ describe('activity bar Ctrl+B hint', () => {
       tuiConfig: {
         ...base.tuiConfig,
         tuiMode: 'fullscreen' as const,
-        transcript: { groupTools: 'off' as const, groupThinking: false },
+        transcript: { toolCallDensity: 'ungrouped' as const, thinking: 'ungrouped' as const },
       },
     };
     const session = makeSession();
@@ -14575,7 +14575,7 @@ describe('activity bar Ctrl+B hint', () => {
     }
   });
 
-  const AUTO: TranscriptConfig = { groupTools: 'auto', groupThinking: true };
+  const COMPACT_GROUPED: TranscriptConfig = { toolCallDensity: 'compact', thinking: 'grouped' };
 
   function hintCounts(driver: MessageDriver): { readonly transcript: number; readonly activity: number } {
     const hint = 'Press Ctrl+B to run in background';
@@ -14627,7 +14627,7 @@ describe('activity bar Ctrl+B hint', () => {
   }
 
   it('shows the hint once, in the card, when only thinking folds', async () => {
-    await withTenSecondBash({ groupTools: 'off', groupThinking: true }, 'sleep 30', (driver) => {
+    await withTenSecondBash({ toolCallDensity: 'ungrouped', thinking: 'grouped' }, 'sleep 30', (driver) => {
       expect(hintCounts(driver)).toEqual({ transcript: 1, activity: 0 });
     });
   });
@@ -14637,7 +14637,7 @@ describe('activity bar Ctrl+B hint', () => {
     ['ls -la', true, { transcript: 0, activity: 1 }],
   ] as const)('shows the hint for `%s` once when only read-only tools fold', async (command, readonly, counts) => {
     expect(isReadonlyBash(command)).toBe(readonly);
-    await withTenSecondBash({ groupTools: 'explore', groupThinking: true }, command, (driver) => {
+    await withTenSecondBash({ toolCallDensity: 'detailed', thinking: 'grouped' }, command, (driver) => {
       expect(hintCounts(driver)).toEqual(counts);
     });
   });
@@ -14650,7 +14650,7 @@ describe('activity bar Ctrl+B hint', () => {
       clickTranscriptLine(driver, 'sleep 30');
     }],
   ])('keeps the hint only on the activity line after %s opens the group', async (_name, open) => {
-    await withTenSecondBash(AUTO, 'sleep 30', (driver) => {
+    await withTenSecondBash(COMPACT_GROUPED, 'sleep 30', (driver) => {
       expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
       expect(stripSgr(renderTranscript(driver))).not.toContain('out-1');
 
@@ -14669,10 +14669,10 @@ describe('activity bar Ctrl+B hint', () => {
       driver.toggleToolOutputExpansion();
     }],
   ])('moves the hint from an opened card to the activity line when %s folds the card', async (_name, close) => {
-    await withTenSecondBash({ groupTools: 'off', groupThinking: true }, 'sleep 30', async (driver) => {
+    await withTenSecondBash({ toolCallDensity: 'ungrouped', thinking: 'grouped' }, 'sleep 30', async (driver) => {
       expect(stripSgr(renderTranscript(driver))).not.toContain('out-1');
       clickTranscriptLine(driver, 'out-3');
-      await applyTranscriptConfigChoice(driver as unknown as SlashCommandHost, AUTO);
+      await applyTranscriptConfigChoice(driver as unknown as SlashCommandHost, COMPACT_GROUPED);
       expect(stripSgr(renderTranscript(driver))).toContain('out-1');
       expect(hintCounts(driver)).toEqual({ transcript: 1, activity: 0 });
 
@@ -14683,24 +14683,24 @@ describe('activity bar Ctrl+B hint', () => {
   });
 
   it.each([
-    ['thinking still folds', { groupTools: 'off', groupThinking: true }],
-    ['nothing folds', { groupTools: 'off', groupThinking: false }],
+    ['thinking still folds', { toolCallDensity: 'ungrouped', thinking: 'grouped' }],
+    ['nothing folds', { toolCallDensity: 'ungrouped', thinking: 'ungrouped' }],
   ] as const)('moves the hint when /settings stops tool folding while %s, and back', async (_name, unfolded) => {
-    await withTenSecondBash(AUTO, 'sleep 30', async (driver) => {
+    await withTenSecondBash(COMPACT_GROUPED, 'sleep 30', async (driver) => {
       const host = driver as unknown as SlashCommandHost;
       expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
 
       await applyTranscriptConfigChoice(host, unfolded);
       expect(hintCounts(driver)).toEqual({ transcript: 1, activity: 0 });
 
-      await applyTranscriptConfigChoice(host, AUTO);
+      await applyTranscriptConfigChoice(host, COMPACT_GROUPED);
       expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
     });
   });
 
   it.each([
-    ['only read-only tools fold', { groupTools: 'explore', groupThinking: true }, { transcript: 1, activity: 0 }],
-    ['every tool folds', AUTO, { transcript: 0, activity: 1 }],
+    ['only read-only tools fold', { toolCallDensity: 'detailed', thinking: 'grouped' }, { transcript: 1, activity: 0 }],
+    ['every tool folds', COMPACT_GROUPED, { transcript: 0, activity: 1 }],
   ] as const)('keeps one hint when a folded argument preview becomes `npm install` while %s', async (_name, transcript, counts) => {
     await withTenSecondBash(transcript, 'npm install', (driver) => {
       expect(hintCounts(driver)).toEqual({ transcript: 0, activity: 1 });
@@ -14741,7 +14741,7 @@ describe('activity bar Ctrl+B hint', () => {
     const base = makeStartupInput();
     const { driver } = await makeDriver(session, {}, {
       ...base,
-      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const, transcript: AUTO },
+      tuiConfig: { ...base.tuiConfig, tuiMode: 'fullscreen' as const, transcript: COMPACT_GROUPED },
     });
     try {
       driver.toggleToolOutputExpansion();
