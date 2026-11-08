@@ -89,6 +89,7 @@ import {
 } from '#/tui/commands/prompts';
 import { isPromptQueuedMessage, type InlineSkillActivation, type QueuedMessage, type TranscriptEntry } from '#/tui/types';
 import type { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
+import { isToolCallId, monotonicNow, phaseAt } from '#/tui/utils/turn-timeline';
 import {
   extractMediaAttachments,
   type ExtractionResult,
@@ -3975,6 +3976,90 @@ command = "vim"
     expect(transcript).not.toContain('launch swarm');
     expect(transcript).not.toContain('Agent Swarm');
     expect(transcript).not.toContain('Review changed files');
+  });
+
+  it('records the turn and each call as events and approvals arrive', async () => {
+    const { driver, session } = await makeDriver();
+    const approvalHandler = vi.mocked(session.setApprovalHandler).mock.calls[0]?.[0] as
+      | ((request: ApprovalRequest) => Promise<ApprovalResponse>)
+      | undefined;
+    if (approvalHandler === undefined) throw new Error('expected approval handler');
+    const { timeline } = driver.streamingUI;
+    const emit = (event: Record<string, unknown>): void => {
+      driver.sessionEventHandler.handleEvent(
+        { agentId: 'main', sessionId: 'ses-1', turnId: 1, ...event } as Event,
+        () => {},
+      );
+    };
+    const facts = (id: string) => (isToolCallId(id) ? timeline.call(id) : undefined);
+    const phase = (id: string) => phaseAt(facts(id), monotonicNow()).kind;
+
+    driver.handleUserInput('hello');
+    const sent = timeline.turn();
+    expect(sent?.kind).toBe('live');
+    emit({ type: 'turn.started', origin: { kind: 'user' } });
+    expect(timeline.turn()).toBe(sent);
+
+    emit({ type: 'tool.call.delta', toolCallId: 'call_bash', name: 'Bash', argumentsPart: '{"command":"echo ok"}' });
+    expect(phase('call_bash')).toBe('writing');
+    const response = approvalHandler({
+      agentId: 'main',
+      turnId: 1,
+      toolCallId: 'call_bash',
+      toolName: 'Bash',
+      action: 'Run shell command',
+      display: {
+        kind: 'generic',
+        summary: 'Run shell command',
+        detail: { command: 'echo ok', description: 'Run a shell command' },
+      },
+    });
+    expect(phase('call_bash')).toBe('queued');
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApprovalPanelComponent);
+    });
+    (driver.state.editorContainer.children[0] as ApprovalPanelComponent).handleInput('1');
+    await expect(response).resolves.toMatchObject({ decision: 'approved' });
+
+    emit({ type: 'tool.call.started', toolCallId: 'call_bash', name: 'Bash', args: { command: 'echo ok' } });
+    expect(phase('call_bash')).toBe('executing');
+    emit({ type: 'tool.result', toolCallId: 'call_bash', output: 'ok' });
+    expect(facts('call_bash')?.settle?.kind).toBe('result');
+
+    emit({ type: 'tool.call.delta', toolCallId: 'call_write', name: 'Write', argumentsPart: '{"path":' });
+    emit({
+      type: 'turn.step.retrying',
+      step: 1,
+      failedAttempt: 1,
+      nextAttempt: 2,
+      maxAttempts: 6,
+      delayMs: 30_000,
+      errorName: 'RateLimitError',
+      errorMessage: 'too many requests',
+      statusCode: 429,
+    });
+    expect(facts('call_write')?.settle?.kind).toBe('abandoned');
+
+    emit({ type: 'turn.ended', reason: 'completed' });
+    expect(timeline.turn()).toMatchObject({ kind: 'ended', start: sent?.start });
+  });
+
+  it.each(['new', 'switch'] as const)('forgets recorded turns when the session changes (%s)', async (action) => {
+    const nextSession = makeSession({ id: 'ses-next' });
+    const { driver } = await makeDriver(makeSession(), { createSession: vi.fn(async () => nextSession) });
+    const { timeline } = driver.streamingUI;
+    driver.handleUserInput('hello');
+    emitTurn(driver, 1);
+    expect(timeline.turn()).toMatchObject({ kind: 'ended' });
+
+    if (action === 'new') driver.handleUserInput('/new');
+    else await (
+      driver as unknown as { switchToSession(s: unknown, status: string): Promise<void> }
+    ).switchToSession(nextSession, 'Resumed session');
+
+    await vi.waitFor(() => {
+      expect(timeline.turn()).toBeUndefined();
+    });
   });
 
   it('removes approval notices from undone turns', async () => {

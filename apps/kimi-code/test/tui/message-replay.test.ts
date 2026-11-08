@@ -29,12 +29,18 @@ import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 import { replayBackgroundProjection } from '#/tui/utils/message-replay';
 import type { TaskNotificationOrigin } from '#/tui/utils/message-replay';
+import { isToolCallId, monotonicNow, phaseAt, type ToolCallId } from '#/tui/utils/turn-timeline';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
 type GoalReplayRecord = Extract<AgentReplayRecord, { type: 'goal_updated' }>;
 
 const REPLAY_TIME = 1_700_000_000_000;
+
+function callId(id: string): ToolCallId {
+  if (!isToolCallId(id)) throw new Error('a tool call id is never empty');
+  return id;
+}
 
 function stripAnsi(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
@@ -784,6 +790,8 @@ describe('KimiTUI resume message replay', () => {
     expect(driver.streamingUI.hasPendingReadGroup()).toBe(false);
     expect(driver.streamingUI.getToolComponent('call_read_1')).toBeUndefined();
     expect(driver.streamingUI.getToolComponent('call_read_2')).toBeUndefined();
+    expect(phaseAt(driver.streamingUI.timeline.call(callId('call_read_1')), monotonicNow())).toEqual({ kind: 'history' });
+    expect(driver.streamingUI.timeline.turn()).toBeUndefined();
   });
 
   it('renders replayed AgentSwarm calls as compact result summaries', async () => {

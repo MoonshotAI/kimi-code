@@ -11,6 +11,7 @@ import { hasDispose } from '../utils/component-capabilities';
 import { appendStreamingArgsPreview, parseStreamingArgs } from '../utils/event-payload';
 import { notifyTerminalOnce } from '../utils/terminal-notification';
 import { nextTranscriptId } from '../utils/transcript-id';
+import { TurnTimeline } from '../utils/turn-timeline';
 import type {
   AppState,
   Elapsed,
@@ -76,6 +77,8 @@ export class StreamingUIController {
     solo?: ToolCallComponent;
     group?: ReadGroupComponent;
   } | null = null;
+
+  readonly timeline = new TurnTimeline();
 
   constructor(private readonly host: StreamingUIHost) {}
 
@@ -576,6 +579,7 @@ export class StreamingUIController {
   }
 
   finalizeTurn(sendQueued: (item: QueuedMessage) => void): void {
+    this.timeline.turnEnded();
     const { state } = this.host;
     if (state.appState.streamingPhase === 'idle') return;
     this.host.deferUserMessages = false;

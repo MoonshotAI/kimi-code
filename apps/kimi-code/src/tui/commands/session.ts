@@ -193,6 +193,7 @@ export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
     });
   } catch (error) {
     if (isAbortError(error)) {
+      host.streamingUI.timeline.turnEnded();
       host.setAppState({ streamingPhase: 'idle' });
       host.resetLivePane();
       return;

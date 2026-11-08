@@ -12,6 +12,7 @@ import {
   computeWriteStats,
 } from '#/tui/components/messages/tool-renderers/chip';
 import type { TranscriptPresentationOptions } from '#/tui/config';
+import { TRANSCRIPT_TAIL_THINKING_TICK_MS } from '#/tui/constant/rendering';
 import type { ToolResultBlockData } from '#/tui/types';
 import { TranscriptItemInspector } from '#/tui/utils/transcript-items';
 import {
@@ -20,6 +21,23 @@ import {
   type GroupProjection,
   type GroupSummary,
 } from '#/tui/utils/transcript-projection';
+import {
+  countedAt,
+  instant,
+  isToolCallId,
+  phaseAt,
+  preparingAt,
+  settledAt,
+  slowAt,
+  slowSince,
+  thinkingTextAt,
+  turnLiveAt,
+  TurnTimeline,
+  type CallFacts,
+  type Instant,
+  type ThinkingFacts,
+  type ToolCallId,
+} from '#/tui/utils/turn-timeline';
 
 let id = 0;
 
@@ -535,5 +553,269 @@ describe('transcript projection versions', () => {
     expect(component.transcriptProjectionVersion).toBe(initial);
     component.markCompleted('agent-1');
     expect(component.transcriptProjectionVersion).toBeGreaterThan(initial);
+  });
+});
+
+function callId(id: string): ToolCallId {
+  if (!isToolCallId(id)) throw new Error('a tool call id is never empty');
+  return id;
+}
+
+function scriptedTimeline(): { timeline: TurnTimeline; at: (ms: number) => TurnTimeline } {
+  let clock = 0;
+  const timeline = new TurnTimeline(() => instant(clock));
+  return {
+    timeline,
+    at: (ms) => {
+      clock = ms;
+      return timeline;
+    },
+  };
+}
+
+function latestThought(timeline: TurnTimeline, now: Instant): ThinkingFacts {
+  const thinking = timeline.latestThinking(now);
+  if (thinking === undefined) throw new Error('expected a thought');
+  return thinking;
+}
+
+describe('turn timeline', () => {
+  it('ends arguments at the next call, an approval or the start of execution', () => {
+    const { timeline, at } = scriptedTimeline();
+    at(0).turnStarted();
+    at(100).callDelta(callId('read'), 'Read');
+    at(300).callDelta(callId('read'));
+    at(400).callDelta(callId('bash'), 'Bash');
+    at(450).callDelta(callId('read'));
+    at(700).approvalRequested(callId('bash'), 'Bash');
+    at(900).callStarted(callId('read'), 'Read');
+    at(1000).callStarted(callId('bash'), 'Bash');
+    at(1500).callResult(callId('read'));
+
+    const read = timeline.call(callId('read'));
+    const bash = timeline.call(callId('bash'));
+    expect(read).toEqual({
+      start: 100,
+      name: 'Read',
+      argsEnd: 400,
+      exec: 900,
+      settle: { kind: 'result', at: 1500 },
+    });
+    expect(phaseAt(bash, instant(500))).toEqual({ kind: 'writing', since: 400 });
+    expect(phaseAt(bash, instant(800))).toEqual({ kind: 'queued', since: 700 });
+    expect(phaseAt(bash, instant(1200))).toEqual({ kind: 'executing', since: 1000 });
+    expect(phaseAt(read, instant(1400))).toEqual({ kind: 'executing', since: 900 });
+    expect(phaseAt(read, instant(1500))).toEqual({ kind: 'settled', settle: { kind: 'result', at: 1500 } });
+    expect(phaseAt(timeline.call(callId('replayed')), instant(1500))).toEqual({ kind: 'history' });
+  });
+
+  it('ignores repeated and late marks', () => {
+    const { timeline, at } = scriptedTimeline();
+    at(0).turnStarted();
+    at(100).callDelta(callId('read'), 'Read');
+    at(200).callStarted(callId('read'), 'Read');
+    at(300).callStarted(callId('read'), 'Grep');
+    at(400).callResult(callId('read'));
+    at(500).callResult(callId('read'));
+    at(600).callDelta(callId('read'), 'Glob');
+    at(700).approvalRequested(callId('read'), 'Read');
+    at(800).callDelta(callId('write'), 'Write');
+    at(900).abandonUnstarted();
+    at(1000).callStarted(callId('write'), 'Write');
+    at(1100).callResult(callId('write'));
+
+    expect(timeline.call(callId('read'))).toEqual({
+      start: 100,
+      name: 'Read',
+      argsEnd: 200,
+      exec: 200,
+      settle: { kind: 'result', at: 400 },
+    });
+    expect(timeline.call(callId('write'))).toEqual({
+      start: 800,
+      name: 'Write',
+      argsEnd: 900,
+      settle: { kind: 'abandoned', at: 900 },
+    });
+  });
+
+  it('abandons calls that never started at a retry, a step boundary and the end of the turn', () => {
+    const { timeline, at } = scriptedTimeline();
+    at(0).turnStarted();
+    at(100).callDelta(callId('cut'), 'Write');
+    at(300).abandonUnstarted();
+    at(400).callDelta(callId('run'), 'Bash');
+    at(500).callStarted(callId('run'), 'Bash');
+    at(600).abandonUnstarted();
+    at(700).turnEnded();
+
+    const cut = timeline.call(callId('cut'));
+    const run = timeline.call(callId('run'));
+    expect(cut).toMatchObject({ argsEnd: 300, settle: { kind: 'abandoned', at: 300 } });
+    expect(run).toMatchObject({ exec: 500, settle: { kind: 'abandoned', at: 700 } });
+    expect(countedAt(cut, instant(60_000))).toBe(false);
+    expect(countedAt(run, instant(700))).toBe(true);
+    expect(settledAt(run, instant(699))).toBe(false);
+    expect(settledAt(run, instant(700))).toBe(true);
+  });
+
+  it('starts the turn when the request is sent, ends it once and clears on reset', () => {
+    const { timeline, at } = scriptedTimeline();
+    at(0).turnStarted();
+    at(300).turnStarted();
+    expect(timeline.turn()).toEqual({ kind: 'live', start: 0 });
+
+    at(400).thinkingDelta('plan');
+    at(1000).turnEnded();
+    at(1200).turnEnded();
+    expect(timeline.turn()).toEqual({ kind: 'ended', start: 0, end: 1000 });
+    expect(timeline.latestThinking(instant(1200))).toMatchObject({ start: 400, end: 1000 });
+    expect(turnLiveAt(timeline.turn(), instant(999))).toBe(true);
+    expect(turnLiveAt(timeline.turn(), instant(1000))).toBe(false);
+
+    at(1500).turnStarted();
+    expect(timeline.turn()).toEqual({ kind: 'live', start: 1500 });
+    expect(timeline.latestThinking(instant(1500))).toBeUndefined();
+
+    at(1600).callDelta(callId('read'), 'Read');
+    timeline.reset();
+    expect(timeline.turn()).toBeUndefined();
+    expect(phaseAt(timeline.call(callId('read')), instant(1600))).toEqual({ kind: 'history' });
+  });
+
+  it('counts a call 200 ms after it starts executing, or at its result if that comes first', () => {
+    const running: CallFacts = { start: instant(0), argsEnd: instant(100), exec: instant(100) };
+    const quick: CallFacts = { start: instant(0), exec: instant(100), settle: { kind: 'result', at: instant(150) } };
+    const resultOnly: CallFacts = { start: instant(0), settle: { kind: 'result', at: instant(50) } };
+
+    expect(countedAt(running, instant(299))).toBe(false);
+    expect(countedAt(running, instant(300))).toBe(true);
+    expect(countedAt(quick, instant(149))).toBe(false);
+    expect(countedAt(quick, instant(150))).toBe(true);
+    expect(countedAt(resultOnly, instant(49))).toBe(false);
+    expect(countedAt(resultOnly, instant(50))).toBe(true);
+    expect(countedAt(undefined, instant(0))).toBe(true);
+    expect(settledAt(undefined, instant(0))).toBe(true);
+  });
+
+  it('reports the idle gap the model is waiting in', () => {
+    const { timeline, at } = scriptedTimeline();
+    at(0).turnStarted();
+    at(1000).thinkingDelta('plan');
+    at(1600).callDelta(callId('read'), 'Read');
+    at(1900).callStarted(callId('read'), 'Read');
+    at(2500).callResult(callId('read'));
+    at(4000).turnEnded();
+
+    expect([500, 1200, 1700, 2000, 3000, 4500].map((now) => timeline.waitingSince(instant(now)))).toEqual([
+      0,
+      undefined,
+      undefined,
+      undefined,
+      2500,
+      undefined,
+    ]);
+  });
+
+  it('changes the live thinking line only on the 240 ms grid', () => {
+    const { timeline, at } = scriptedTimeline();
+    at(0).turnStarted();
+    at(1000).thinkingDelta('He');
+    at(1100).thinkingDelta('llo');
+    at(1300).thinkingDelta(' wor');
+    at(1500).thinkingDelta('ld');
+    const thinking = latestThought(timeline, instant(1500));
+
+    expect(TRANSCRIPT_TAIL_THINKING_TICK_MS).toBe(240);
+    expect([1100, 1199, 1200, 1439, 1440, 1680].map((now) => thinkingTextAt(thinking, instant(now)))).toEqual([
+      'He',
+      'He',
+      'Hello',
+      'Hello',
+      'Hello wor',
+      'Hello world',
+    ]);
+  });
+
+  it('keeps one slow-call timer across chained calls and restarts it after a break', () => {
+    const chained: CallFacts[] = [
+      { start: instant(0), exec: instant(0), settle: { kind: 'result', at: instant(3000) } },
+      { start: instant(0), exec: instant(1500), settle: { kind: 'result', at: instant(6000) } },
+      { start: instant(0), exec: instant(6500) },
+    ];
+    const touching: CallFacts[] = [
+      { start: instant(0), exec: instant(0), settle: { kind: 'result', at: instant(2000) } },
+      { start: instant(0), exec: instant(1000), settle: { kind: 'result', at: instant(4000) } },
+    ];
+
+    expect([999, 1000, 2999, 3500, 5999, 6000, 7500].map((now) => slowSince(chained, instant(now)))).toEqual([
+      undefined,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      6500,
+    ]);
+    expect(slowSince(touching, instant(2000))).toBe(0);
+    expect(slowAt(chained[0], instant(1000))).toBe(true);
+    expect(slowAt(chained[0], instant(3000))).toBe(false);
+  });
+
+  it('reports an argument stream as preparing once it has run for a second', () => {
+    const long: CallFacts = { start: instant(0), argsEnd: instant(1500) };
+    const short: CallFacts = { start: instant(0), argsEnd: instant(800) };
+    const open: CallFacts = { start: instant(0) };
+
+    expect([999, 1000, 1499, 1500].map((now) => preparingAt(long, instant(now)))).toEqual([false, true, true, false]);
+    expect(preparingAt(short, instant(1000))).toBe(false);
+    expect(preparingAt(open, instant(5000))).toBe(true);
+  });
+
+  it.each([
+    ['an argument stream that runs for a second', (at: (ms: number) => TurnTimeline) => {
+      at(1000).callDelta(callId('write'), 'Write');
+    }, 2000],
+    ['a call that runs for a second', (at: (ms: number) => TurnTimeline) => {
+      at(1000).callDelta(callId('bash'), 'Bash');
+      at(1100).callStarted(callId('bash'), 'Bash');
+    }, 2100],
+    ['a new thought', (at: (ms: number) => TurnTimeline) => {
+      at(1000).callDelta(callId('read'), 'Read');
+      at(1100).callStarted(callId('read'), 'Read');
+      at(1200).callResult(callId('read'));
+      at(1400).thinkingDelta('next');
+    }, 1400],
+    ['a wait for the model, even one that is over', (at: (ms: number) => TurnTimeline) => {
+      at(500).callDelta(callId('read'), 'Read');
+      at(700).callStarted(callId('read'), 'Read');
+      at(800).callResult(callId('read'));
+      at(2000).callDelta(callId('grep'), 'Grep');
+    }, 1800],
+    ['two seconds when nothing else takes the tail', (at: (ms: number) => TurnTimeline) => {
+      at(1000).callDelta(callId('read'), 'Read');
+      at(1500).callStarted(callId('read'), 'Read');
+      at(2200).callResult(callId('read'));
+      at(2600).callDelta(callId('grep'), 'Grep');
+    }, 3000],
+  ])('holds a finished thought until %s', (_case, script, deadline) => {
+    const { timeline, at } = scriptedTimeline();
+    at(0).turnStarted();
+    at(100).thinkingDelta('plan');
+    script(at);
+
+    expect(timeline.thoughtHeldUntil(latestThought(timeline, instant(100)))).toBe(deadline);
+  });
+
+  it('holds no thought that is still being written or that belongs to an earlier turn', () => {
+    const { timeline, at } = scriptedTimeline();
+    at(0).turnStarted();
+    at(100).thinkingDelta('plan');
+    const thought = latestThought(timeline, instant(100));
+    expect(timeline.thoughtHeldUntil(thought)).toBeUndefined();
+
+    at(500).turnEnded();
+    at(600).turnStarted();
+    expect(timeline.thoughtHeldUntil(thought)).toBe(500);
   });
 });
