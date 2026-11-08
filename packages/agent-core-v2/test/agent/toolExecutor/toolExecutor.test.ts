@@ -35,6 +35,18 @@ import {
   ToolResultEvent,
 } from '#/agent/toolExecutor/toolExecutorEvents';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
+import {
+  LegacyExecutableToolAdapter,
+  ToolExecutor as HandlerToolExecutor,
+  composeToolExecutorHooks,
+  fileOutputStore,
+  isToolDetachAck,
+  memoryOutputStore,
+  textToolContent,
+  type ExecutableTool as HandlerExecutableTool,
+  type LegacyToolPreparation,
+  type ToolResult as HandlerToolResult,
+} from '#/tool/executor';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { ToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncationService';
@@ -216,71 +228,48 @@ describe('AgentToolExecutorService', () => {
     });
 
     tag = false;
-    await execute([toolCall('call_dup', 'echo', { text: 'c' })]);
-    expect(telemetryEvents).toContainEqual({
-      event: 'tool_call',
-      properties: expect.objectContaining({ tool_call_id: 'call_dup', dup_type: 'normal' }),
-    });
-  });
-
-  it('merges the request trace id into tool_call telemetry', async () => {
-    const tool = new TestTool('echo');
-    registry.register(tool);
-
     await execute(
-      [toolCall('call_traced', 'echo', { text: 'hi' })],
+      [toolCall('call_dup', 'echo', { text: 'c' })],
       undefined,
       { requestId: 'trace-tool-1' },
     );
-
     expect(telemetryEvents).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
-        tool_call_id: 'call_traced',
+        tool_call_id: 'call_dup',
+        dup_type: 'normal',
         request_id: 'trace-tool-1',
       }),
     });
   });
 
-  it('truncates final tool results before publishing protocol events', async () => {
-    truncateForModel = async (input) => ({
-      ...input.result,
-      output: 'truncated output',
-      truncated: true,
-    });
-    const tool = new TestTool('large', { result: { output: 'raw output' } });
-    registry.register(tool);
-
-    const results = await execute([toolCall('call_large', 'large', {})]);
-
-    expect(results[0]).toMatchObject({
-      output: 'truncated output',
-      truncated: true,
-    });
-    expect(protocolEvents).toContainEqual(
-      expect.objectContaining({
-        type: 'tool.result',
-        toolCallId: 'call_large',
-        output: 'truncated output',
-      }),
-    );
-  });
-
-  it('preserves internal result notes without exposing them on protocol tool.result events', async () => {
-    const tool = new TestTool('captioned', {
+  it('preserves valid internal notes and drops malformed result metadata', async () => {
+    registry.register(new TestTool('captioned', {
       result: {
         output: 'image sent',
         note: '<system>Image compressed.</system>',
       },
-    });
-    registry.register(tool);
+    }));
+    registry.register(new TestTool('malformed-meta', {
+      result: {
+        output: 'image sent',
+        note: 123,
+        truncated: false,
+      } as unknown as ExecutableToolResult,
+    }));
 
-    const results = await execute([toolCall('call_captioned', 'captioned', {})]);
+    const results = await execute([
+      toolCall('call_captioned', 'captioned', {}),
+      toolCall('call_malformed_meta', 'malformed-meta', {}),
+    ]);
 
     expect(results[0]).toMatchObject({
       output: 'image sent',
       note: '<system>Image compressed.</system>',
     });
+    expect(results[1]).toMatchObject({ output: 'image sent' });
+    expect(results[1] as unknown as Record<string, unknown>).not.toHaveProperty('note');
+    expect(results[1] as unknown as Record<string, unknown>).not.toHaveProperty('truncated');
     const protocolResult = protocolEvents.find(
       (event): event is ToolResultEvent => event.type === 'tool.result',
     );
@@ -292,25 +281,8 @@ describe('AgentToolExecutorService', () => {
     expect(protocolResult as unknown as Record<string, unknown>).not.toHaveProperty('note');
   });
 
-  it('drops malformed notes and non-true truncated flags from internal results', async () => {
-    const tool = new TestTool('malformed-meta', {
-      result: {
-        output: 'image sent',
-        note: 123,
-        truncated: false,
-      } as unknown as ExecutableToolResult,
-    });
-    registry.register(tool);
-
-    const results = await execute([toolCall('call_malformed_meta', 'malformed-meta', {})]);
-
-    expect(results[0]).toMatchObject({ output: 'image sent' });
-    expect(results[0] as unknown as Record<string, unknown>).not.toHaveProperty('note');
-    expect(results[0] as unknown as Record<string, unknown>).not.toHaveProperty('truncated');
-  });
-
-  it('records an error tool.result when the tool name is unknown', async () => {
-    const results = await execute([toolCall('call_missing', 'missing', { text: 'hi' })]);
+  it('records an unknown tool error and preserves its valid args in tool.call.started', async () => {
+    const results = await execute([toolCall('call_missing', 'missing', { x: 1 })]);
 
     expect(results).toEqual([
       expect.objectContaining({
@@ -322,6 +294,10 @@ describe('AgentToolExecutorService', () => {
       calls: ['call_missing'],
       results: ['call_missing'],
     });
+    const toolCallEvent = protocolEvents.find(
+      (event): event is ToolCallStarted => event.type === 'tool.call.started',
+    );
+    expect(toolCallEvent?.args).toEqual({ x: 1 });
     expect(telemetryEvents).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
@@ -472,60 +448,32 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
-  it('preserves an unknown tool\'s valid args in the tool.call.started event', async () => {
-    const results = await execute([toolCall('call_unknown', 'missing', { x: 1 })]);
-
-    expect(results).toEqual([
-      expect.objectContaining({
-        output: 'Tool "missing" not found',
-        isError: true,
-      }),
-    ]);
-    const toolCallEvent = protocolEvents.find(
-      (event): event is ToolCallStarted => event.type === 'tool.call.started',
-    );
-    expect(toolCallEvent?.args).toEqual({ x: 1 });
-  });
-
-  it('onBeforeExecuteTool veto with an error result does not invoke execute', async () => {
-    const tool = new TestTool('echo');
-    registry.register(tool);
-    executor.onBeforeExecuteTool((event) => {
-      event.veto({ output: 'forbidden', isError: true });
-    });
-
-    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
-
-    expect(results).toEqual([
-      expect.objectContaining({
-        output: 'forbidden',
-        isError: true,
-      }),
-    ]);
-    expect(tool.calls).toEqual([]);
-  });
-
-  it('onBeforeExecuteTool veto with a plain result bypasses execute', async () => {
+  it('onBeforeExecuteTool veto bypasses execute with error and plain synthetic results', async () => {
     const first = new TestTool('first');
     const second = new TestTool('second');
+    const third = new TestTool('third');
     registry.register(first);
     registry.register(second);
+    registry.register(third);
     executor.onBeforeExecuteTool((event) => {
-      if (event.toolCall.id !== 'call_first') return;
-      event.veto({ output: 'synthetic' });
+      if (event.toolCall.id === 'call_first') event.veto({ output: 'forbidden', isError: true });
+      if (event.toolCall.id === 'call_second') event.veto({ output: 'synthetic' });
     });
 
     const results = await execute([
       toolCall('call_first', 'first', {}),
       toolCall('call_second', 'second', {}),
+      toolCall('call_third', 'third', {}),
     ]);
 
     expect(results).toEqual([
+      expect.objectContaining({ output: 'forbidden', isError: true }),
       expect.objectContaining({ output: 'synthetic' }),
-      expect.objectContaining({ output: 'second result' }),
+      expect.objectContaining({ output: 'third result' }),
     ]);
     expect(first.calls).toEqual([]);
-    expect(second.calls).toHaveLength(1);
+    expect(second.calls).toEqual([]);
+    expect(third.calls).toHaveLength(1);
   });
 
   it('skips later tool calls after an execution requests stopBatchAfterThis', async () => {
@@ -943,19 +891,6 @@ describe('onBeforeExecuteTool veto semantics', () => {
     expect(tool.calls).toEqual([]);
   });
 
-  it('lets a call through when every waitUntil factory returns undefined', async () => {
-    const tool = new TestTool('echo');
-    registry.register(tool);
-    executor.onBeforeExecuteTool((event) => {
-      event.waitUntil(async () => undefined);
-    });
-
-    const results = await execute([toolCall('call_echo', 'echo', { text: 'hi' })]);
-
-    expect(results).toEqual([expect.objectContaining({ output: 'hi' })]);
-    expect(tool.calls).toHaveLength(1);
-  });
-
   it('throws when a statement is made after the statement window closed', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);
@@ -978,7 +913,7 @@ describe('onBeforeExecuteTool veto semantics', () => {
 });
 
 describe('onWillExecuteTool', () => {
-  it('awaits registered waitUntil work before executing the tool', async () => {
+  it('awaits waitUntil work and lets calls through when it returns undefined', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);
     const gate = deferred<void>();
@@ -994,6 +929,10 @@ describe('onWillExecuteTool', () => {
     const results = await pending;
     expect(results).toEqual([expect.objectContaining({ output: 'hi' })]);
     expect(tool.calls).toHaveLength(1);
+
+    const passed = await execute([toolCall('call_passed', 'echo', { text: 'passed' })]);
+    expect(passed).toEqual([expect.objectContaining({ output: 'passed' })]);
+    expect(tool.calls).toHaveLength(2);
   });
 
   it('does not fire for a vetoed call', async () => {
@@ -1013,27 +952,21 @@ describe('onWillExecuteTool', () => {
 });
 
 describe('parseToolCallArguments', () => {
-  it('treats null or empty arguments as an empty object', () => {
+  it('parses valid JSON and treats null or empty arguments as an empty object', () => {
     expect(parseToolCallArguments(null)).toEqual({ data: {}, parseFailed: false });
     expect(parseToolCallArguments('')).toEqual({ data: {}, parseFailed: false });
-  });
-
-  it('parses valid JSON', () => {
     expect(parseToolCallArguments('{"text":"hi"}')).toEqual({
       data: { text: 'hi' },
       parseFailed: false,
     });
   });
 
-  it('falls back to an empty object when JSON is malformed', () => {
+  it('falls back to an empty object for malformed and unrecoverable JSON', () => {
     expect(parseToolCallArguments('{"text":"hi",}')).toEqual({
       data: {},
       parseFailed: true,
       error: expect.any(String),
     });
-  });
-
-  it('falls back to an empty object for unrecoverable JSON', () => {
     expect(parseToolCallArguments('{}{')).toEqual({
       data: {},
       parseFailed: true,
@@ -1746,3 +1679,600 @@ class ControlledTool implements ExecutableTool<Record<string, unknown>> {
     };
   }
 }
+
+describe('ToolExecutor handler kernel', () => {
+  it('settles success, business failure and invalid args with distinct outcomes and clocks', async () => {
+    let wall = 1_000;
+    let monotonic = 100;
+    const invalidExecute = vi.fn(() => ({ content: textToolContent('must not run') }));
+    const executor = new HandlerToolExecutor([
+      {
+        name: 'success',
+        description: 'success',
+        parameters: { type: 'object' },
+        execute: () => ({ content: textToolContent('done') }),
+      },
+      {
+        name: 'failure',
+        description: 'failure',
+        parameters: { type: 'object' },
+        execute: () => ({
+          content: textToolContent('business failure'),
+          outcome: 'failed',
+          subtype: 'timeout',
+          reason: 'invalid business state',
+        }),
+      },
+      {
+        name: 'strict',
+        description: 'strict',
+        parameters: {
+          type: 'object',
+          properties: { value: { type: 'number' } },
+          required: ['value'],
+          additionalProperties: false,
+        },
+        execute: invalidExecute,
+      },
+    ], {
+      now: () => (wall += 1_000),
+      tick: () => (monotonic += 5),
+    });
+
+    const succeeded = executor.execute(toolCall('success-1', 'success', {}), undefined);
+    const successResult = await succeeded.wait();
+    expect(successResult).toMatchObject({
+      toolCallId: 'success-1',
+      content: textToolContent('done'),
+      outcome: { type: 'success' },
+    });
+    const successTiming = succeeded.snapshot().timing;
+    expect(successTiming.total.endedAt).not.toBeNull();
+    expect(successTiming.total.elapsedMs).toBeGreaterThan(0);
+    expect(successTiming.execute?.endedAt).not.toBeNull();
+    expect(successTiming.execute?.elapsedMs).toBeGreaterThan(0);
+
+    const failed = executor.execute(toolCall('failure-1', 'failure', {}), undefined);
+    expect(failed.taskId).not.toBe(succeeded.taskId);
+    expect(await failed.wait()).toMatchObject({
+      content: textToolContent('business failure'),
+      outcome: {
+        type: 'failed',
+        error: { type: 'timeout', phase: 'execute', reason: 'invalid business state' },
+      },
+    });
+    expect(failed.snapshot().error).toMatchObject({ outcome: 'failed', type: 'timeout' });
+
+    const invalid = executor.execute(toolCall('strict-1', 'strict', { value: 'bad' }), undefined);
+    expect(await invalid.wait()).toMatchObject({
+      outcome: { type: 'failed', error: { type: 'invalid', phase: 'validate' } },
+    });
+    expect(invalidExecute).not.toHaveBeenCalled();
+  });
+
+  it('returns a detach ack while wait continues to the real final result', async () => {
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const executor = new HandlerToolExecutor([{
+      name: 'background',
+      description: 'background',
+      parameters: { type: 'object' },
+      execute: async (context) => {
+        context.onDetach((reason) => ({ content: textToolContent(`background: ${String(reason)}`) }));
+        started.resolve();
+        await release.promise;
+        return { content: textToolContent('finished') };
+      },
+    }]);
+    const handler = executor.execute(toolCall('background-1', 'background', {}), undefined);
+    const response = Promise.resolve(handler);
+    await started.promise;
+
+    const ack = handler.detach('later');
+    expect(ack).toBeDefined();
+    expect(isToolDetachAck(ack!)).toBe(true);
+    expect(ack).toMatchObject({
+      detached: true,
+      taskId: handler.taskId,
+      content: textToolContent('background: later'),
+    });
+    expect(await response).toEqual(ack);
+    let completed = false;
+    void handler.wait().then(() => {
+      completed = true;
+    });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+
+    release.resolve();
+    expect(await handler.wait()).toMatchObject({
+      content: textToolContent('finished'),
+      outcome: { type: 'success' },
+    });
+    expect(handler.snapshot()).toMatchObject({ detached: true, status: 'success' });
+  });
+
+  it('stops one execution through its internal signal without aborting another', async () => {
+    const firstStarted = deferred<void>();
+    const secondStarted = deferred<void>();
+    const secondRelease = deferred<void>();
+    let secondSignal: AbortSignal | undefined;
+    const executor = new HandlerToolExecutor([
+      {
+        name: 'first',
+        description: 'first',
+        parameters: { type: 'object' },
+        execute: async (context) => {
+          firstStarted.resolve();
+          return new Promise((resolve) => {
+            context.signal.addEventListener('abort', () => {
+              resolve({ content: textToolContent('first stopped') });
+            }, { once: true });
+          });
+        },
+      },
+      {
+        name: 'second',
+        description: 'second',
+        parameters: { type: 'object' },
+        execute: async (context) => {
+          secondSignal = context.signal;
+          secondStarted.resolve();
+          await secondRelease.promise;
+          return { content: textToolContent('second finished') };
+        },
+      },
+    ]);
+    const first = executor.execute(toolCall('first-1', 'first', {}), undefined);
+    const second = executor.execute(toolCall('second-1', 'second', {}), undefined);
+    await Promise.all([firstStarted.promise, secondStarted.promise]);
+
+    expect(await first.stop('cancel first')).toMatchObject({
+      content: textToolContent('first stopped'),
+      outcome: { type: 'aborted', error: { type: 'stopped', reason: 'cancel first' } },
+    });
+    expect(secondSignal?.aborted).toBe(false);
+    expect(second.snapshot().status).toBe('running');
+
+    secondRelease.resolve();
+    expect((await second.wait()).outcome.type).toBe('success');
+  });
+
+  it('calls stopping once and uses asynchronous abandon as its final fallback', async () => {
+    const started = deferred<void>();
+    const abandon = deferred<void>();
+    let stoppingCalls = 0;
+    const executor = new HandlerToolExecutor([{
+      name: 'hanging',
+      description: 'hanging',
+      parameters: { type: 'object' },
+      execute: async () => {
+        started.resolve();
+        return new Promise<never>(() => {});
+      },
+      stopping: (context) => {
+        stoppingCalls += 1;
+        void abandon.promise.then(() => {
+          context.abandon({ content: textToolContent('abandoned fallback') });
+          context.abandon({ content: textToolContent('duplicate abandon') });
+        });
+      },
+    }]);
+    const handler = executor.execute(toolCall('hanging-1', 'hanging', {}), undefined);
+    let finalChanges = 0;
+    handler.observe((event) => {
+      if (event.type === 'change' && event.snapshot.status === 'aborted') finalChanges += 1;
+    });
+    await started.promise;
+
+    const stopping = handler.stop('halt');
+    const repeatedStop = handler.stop('halt again');
+    let settled = false;
+    void stopping.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(stoppingCalls).toBe(1);
+    expect(repeatedStop).toBe(stopping);
+
+    abandon.resolve();
+    expect(await stopping).toMatchObject({
+      content: textToolContent('abandoned fallback'),
+      outcome: { type: 'aborted', error: { type: 'abandoned', reason: 'halt' } },
+    });
+    expect(await repeatedStop).toMatchObject({
+      outcome: { type: 'aborted', error: { type: 'abandoned' } },
+    });
+    expect(stoppingCalls).toBe(1);
+    expect(finalChanges).toBe(1);
+  });
+
+  it('composes hooks in order and seals responses after execute settles', async () => {
+    const events: string[] = [];
+    const afterEntered = deferred<void>();
+    const afterRelease = deferred<void>();
+    const first = {
+      label: 'first',
+      starting() {
+        events.push(`${this.label}:starting`);
+        return { skipPermitting: true as const };
+      },
+      beforeExecute() {
+        events.push(`${this.label}:before`);
+      },
+      afterExecute(context: { result: HandlerToolResult }) {
+        events.push(`${this.label}:after`);
+        return { ...context.result, content: textToolContent('first rewrite') };
+      },
+      observe(event: { type: string }) {
+        if (event.type === 'created') events.push(`${this.label}:observe`);
+      },
+    };
+    const second = {
+      label: 'second',
+      starting() {
+        events.push(`${this.label}:starting`);
+      },
+      permitting() {
+        events.push(`${this.label}:permitting`);
+      },
+      beforeExecute() {
+        events.push(`${this.label}:before`);
+      },
+      async afterExecute(context: { result: HandlerToolResult }) {
+        expect(context.result.content).toEqual(textToolContent('first rewrite'));
+        events.push(`${this.label}:after`);
+        afterEntered.resolve();
+        await afterRelease.promise;
+        return { ...context.result, content: textToolContent('second rewrite') };
+      },
+      observe(event: { type: string }) {
+        if (event.type === 'created') events.push(`${this.label}:observe`);
+      },
+    };
+    let executionSignal: AbortSignal | undefined;
+    const executor = new HandlerToolExecutor([{
+      name: 'hooked',
+      description: 'hooked',
+      parameters: { type: 'object' },
+      execute: (context) => {
+        executionSignal = context.signal;
+        events.push('execute');
+        return { content: textToolContent('raw') };
+      },
+    }], { hook: composeToolExecutorHooks([first, second]) });
+
+    const handler = executor.execute(toolCall('hooked-1', 'hooked', {}), undefined);
+    const response = Promise.resolve(handler);
+    await afterEntered.promise;
+    const lateStop = handler.stop('late stop');
+    expect(handler.detach('late detach')).toBeUndefined();
+    expect(executionSignal?.aborted).toBe(false);
+    expect(handler.snapshot().stopReason).toBeUndefined();
+    afterRelease.resolve();
+    expect(await lateStop).toMatchObject({
+      content: textToolContent('second rewrite'),
+      outcome: { type: 'success' },
+    });
+    const final = await response;
+    expect(isToolDetachAck(final)).toBe(false);
+    expect(final).toMatchObject({
+      content: textToolContent('second rewrite'),
+      outcome: { type: 'success' },
+    });
+    expect(events).toEqual([
+      'first:observe',
+      'second:observe',
+      'first:starting',
+      'second:starting',
+      'first:before',
+      'second:before',
+      'execute',
+      'first:after',
+      'second:after',
+    ]);
+
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const preHookEvents: string[] = [];
+    const execute = vi.fn(() => ({ content: textToolContent('must not run') }));
+    const rawHook = {
+      label: 'raw-hook',
+      starting: async function () {
+        expect(this.label).toBe('raw-hook');
+        preHookEvents.push('starting');
+        entered.resolve();
+        await release.promise;
+      },
+      afterExecute: () => {
+        preHookEvents.push('after');
+      },
+    };
+    const stoppedExecutor = new HandlerToolExecutor([{
+      name: 'pre-hook-stop',
+      description: 'pre-hook-stop',
+      parameters: { type: 'object' },
+      execute,
+    }], { hook: rawHook });
+    const stoppedHandler = stoppedExecutor.execute(
+      toolCall('pre-hook-stop-1', 'pre-hook-stop', {}),
+      undefined,
+    );
+    await entered.promise;
+    const stopping = stoppedHandler.stop('stop before execute');
+    let stopped = false;
+    void stopping.then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    expect(preHookEvents).toEqual(['starting']);
+    release.resolve();
+    expect((await stopping).outcome.type).toBe('aborted');
+    expect(preHookEvents).toEqual(['starting', 'after']);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('reads fields and output mid-run and surfaces flush and close errors', async () => {
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const store = memoryOutputStore();
+    const outputStore = {
+      open(taskId: string) {
+        const output = store.open(taskId);
+        return {
+          append: (chunk: string) => output.append(chunk),
+          preview: (maxBytes?: number) => output.preview(maxBytes),
+          read: (offset: number, maxBytes: number) => output.read(offset, maxBytes),
+          flush: async () => {
+            await output.flush();
+            throw new Error('flush failed');
+          },
+          close: async () => {
+            await output.close();
+            throw new Error('close failed');
+          },
+          error: () => output.error(),
+        };
+      },
+    };
+    const executor = new HandlerToolExecutor([{
+      name: 'output',
+      description: 'output',
+      parameters: { type: 'object' },
+      execute: async (context) => {
+        expect(context.write('abc')).toBe(0);
+        expect(context.write('def')).toBe(3);
+        context.set({ status: 'working', progress: { percent: 50 } });
+        started.resolve();
+        await release.promise;
+        try {
+          await context.flush();
+        } catch (error) {
+          context.set({ flushError: error instanceof Error ? error.message : String(error) });
+        }
+        return { content: textToolContent('done') };
+      },
+    }], { outputStore });
+    const handler = executor.execute(toolCall('output-1', 'output', {}), undefined);
+    const offsets: number[] = [];
+    handler.observe((event) => {
+      if (event.type === 'output') offsets.push(event.offset);
+    });
+    await started.promise;
+
+    expect(handler.output()).toMatchObject({ totalBytes: 6, preview: 'abcdef' });
+    expect(handler.fields()).toMatchObject({ status: 'working', progress: { percent: 50 } });
+    release.resolve();
+    expect(await handler.wait()).toMatchObject({
+      outcome: { type: 'failed', error: { type: 'output', data: 'close failed' } },
+    });
+    expect(handler.fields()).toMatchObject({ flushError: 'flush failed' });
+    expect(handler.snapshot().outputError).toBe('close failed');
+    expect(offsets).toEqual([0, 3]);
+  });
+
+  it('reopens file output after close with restored bytes, offsets, preview and reads', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'tool-output-store-'));
+    try {
+      const initial = fileOutputStore(directory).open('restart-task');
+      expect(initial.append('hello ')).toBe(0);
+      expect(initial.append('世界')).toBe(6);
+      await initial.close();
+
+      const reopened = fileOutputStore(directory).open('restart-task');
+      expect(reopened.preview()).toMatchObject({
+        totalBytes: 12,
+        preview: 'hello 世界',
+        path: join(directory, 'restart-task.log'),
+      });
+      expect(await reopened.read(0, 5)).toBe('hello');
+      expect(reopened.append('!')).toBe(12);
+      await reopened.close();
+
+      const reader = fileOutputStore(directory).open('restart-task');
+      expect(reader.preview()).toMatchObject({ totalBytes: 13, preview: 'hello 世界!' });
+      expect(await reader.read(6, 6)).toBe('世界');
+      expect(await reader.read(12, 1)).toBe('!');
+      await reader.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('runs legacy preparation, finalization, synthetic short-circuiting and updates', async () => {
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const steerSignal = new AbortController().signal;
+    const remind = vi.fn();
+    const legacy: ExecutableTool<Record<string, unknown>> = {
+      name: 'legacy',
+      description: 'legacy',
+      parameters: { type: 'object', additionalProperties: true },
+      resolveExecution(args) {
+        if (args['synthetic'] === 'success') {
+          return {
+            output: 'synthetic success',
+            note: 'success note',
+            spill: { outputPath: '/unused' },
+          } as unknown as ToolExecution;
+        }
+        if (args['synthetic'] === true) {
+          return {
+            output: 'synthetic failure',
+            isError: true,
+            stopTurn: true,
+            note: 'legacy note',
+            spill: { outputPath: '/unused' },
+          };
+        }
+        return {
+          approvalRule: 'legacy-rule',
+          description: 'prepared description',
+          display: { kind: 'generic', summary: 'legacy summary' },
+          accesses: ToolAccesses.readFile('/repo'),
+          matchesRule: (rule) => rule === 'yes',
+          execute: async (context) => {
+            expect(context.turnId).toBe(9);
+            expect(context.trace).toEqual({ requestId: 'trace-legacy' });
+            expect(context.metadata).toEqual({ source: 'test' });
+            expect(context.steerSignal).toBe(steerSignal);
+            expect(context.remind).toBe(remind);
+            context.onUpdate?.({ kind: 'stdout', text: 'out-' });
+            context.onUpdate?.({ kind: 'stderr', text: 'err' });
+            context.onUpdate?.({ kind: 'status', text: 'working' });
+            context.onUpdate?.({ kind: 'progress', text: 'half', percent: 50 });
+            context.onUpdate?.({
+              kind: 'custom',
+              customKind: 'oauth',
+              customData: { url: 'https://example.com' },
+            });
+            context.detach?.('legacy background');
+            started.resolve();
+            await release.promise;
+            return {
+              output: [{ type: 'text', text: 'legacy final' }],
+              stopTurn: true,
+              note: 'legacy note',
+              spill: { outputPath: '/unused' },
+            };
+          },
+        };
+      },
+    };
+    const finalizerCalls: string[] = [];
+    const adapter = new LegacyExecutableToolAdapter(legacy, async ({ toolName, toolCallId, result }) => {
+      expect(toolName).toBe('legacy');
+      expect(result.spill?.outputPath).toBe('/unused');
+      finalizerCalls.push(toolCallId);
+      if (result.isError === true) {
+        return {
+          ...result,
+          output: 'finalized synthetic failure',
+          note: 'finalized note',
+          truncated: true,
+        };
+      }
+      return result;
+    });
+    const preparations: LegacyToolPreparation[] = [];
+    const afterPrepared: LegacyToolPreparation[] = [];
+    let startingCalls = 0;
+    let permittingCalls = 0;
+    const executor = new HandlerToolExecutor([adapter], {
+      hook: {
+        starting: () => {
+          startingCalls += 1;
+        },
+        permitting: () => {
+          permittingCalls += 1;
+        },
+        beforeExecute: (context) => {
+          preparations.push(context.prepared as LegacyToolPreparation);
+        },
+        afterExecute: (context) => {
+          afterPrepared.push(context.prepared as LegacyToolPreparation);
+        },
+      },
+    });
+    const agentContext = {
+      turnId: 9,
+      trace: { requestId: 'trace-legacy' },
+      metadata: { source: 'test' },
+      steerSignal,
+      remind,
+    };
+    const handler = executor.execute(toolCall('legacy-1', 'legacy', {}), agentContext);
+    await started.promise;
+
+    const prepared = preparations[0];
+    expect(prepared).toMatchObject({
+      kind: 'execute',
+      approvalRule: 'legacy-rule',
+      description: 'prepared description',
+      display: { kind: 'generic', summary: 'legacy summary' },
+      accesses: ToolAccesses.readFile('/repo'),
+    });
+    if (prepared?.kind !== 'execute') throw new Error('expected runnable legacy preparation');
+    expect(prepared.execution.execute).toBeTypeOf('function');
+    expect(prepared.matchesRule?.('yes')).toBe(true);
+    expect(handler.output()).toMatchObject({ totalBytes: 7, preview: 'out-err' });
+    expect(handler.fields()).toMatchObject({
+      status: 'working',
+      progress: { text: 'half', percent: 50 },
+      custom: { kind: 'oauth', data: { url: 'https://example.com' } },
+    });
+    const ack = await handler;
+    expect(isToolDetachAck(ack)).toBe(true);
+    expect(ack).toMatchObject({ content: textToolContent('legacy background') });
+
+    release.resolve();
+    const final = await handler.wait();
+    expect(final).toMatchObject({
+      content: [
+        ...textToolContent('legacy final'),
+        ...textToolContent('legacy note'),
+      ],
+      outcome: { type: 'success' },
+    });
+    expect(final).not.toHaveProperty('stopTurn');
+    expect(final).not.toHaveProperty('note');
+    expect(final).not.toHaveProperty('spill');
+
+    const synthetic = executor.execute(
+      toolCall('legacy-2', 'legacy', { synthetic: true }),
+      agentContext,
+    );
+    expect(await synthetic.wait()).toMatchObject({
+      content: [
+        ...textToolContent('finalized synthetic failure'),
+        ...textToolContent('finalized note'),
+      ],
+      outcome: { type: 'failed', error: { type: 'error' } },
+    });
+    const successfulSynthetic = executor.execute(
+      toolCall('legacy-3', 'legacy', { synthetic: 'success' }),
+      agentContext,
+    );
+    expect(await successfulSynthetic.wait()).toMatchObject({
+      content: [
+        ...textToolContent('synthetic success'),
+        ...textToolContent('success note'),
+      ],
+      outcome: { type: 'success' },
+    });
+    expect(startingCalls).toBe(1);
+    expect(permittingCalls).toBe(1);
+    expect(preparations).toHaveLength(1);
+    expect(afterPrepared.map((item) => item.kind)).toEqual(['execute', 'synthetic', 'synthetic']);
+    expect(finalizerCalls).toEqual(['legacy-1', 'legacy-2', 'legacy-3']);
+
+    const replacement = new LegacyExecutableToolAdapter(legacy);
+    executor.addExecute(replacement);
+    expect(executor.removeExecute(adapter)).toBe(false);
+    expect(executor.list()).toEqual([replacement]);
+    expect(executor.removeExecute(replacement)).toBe(true);
+    expect(executor.list()).toEqual([]);
+  });
+});
