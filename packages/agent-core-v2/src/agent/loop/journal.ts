@@ -425,10 +425,10 @@ export class LoopJournal {
         });
         return;
       }
-      case 'turn.ended':
+      case 'turn.ended': {
         this.writeTurnPrompt();
         this.turn = undefined;
-        this.write({
+        const record: WireRecord = {
           type: 'turn.ended',
           agentId: this.agentId,
           turnId: event.turnId,
@@ -439,8 +439,12 @@ export class LoopJournal {
           durationMs: event.durationMs,
           stopReason: event.stopReason,
           requestId: event.requestId,
-        });
+        };
+        this.write(record['requestId'] === undefined
+          ? Object.fromEntries(Object.entries(record).filter(([key]) => key !== 'requestId')) as WireRecord
+          : record);
         return;
+      }
       case 'context.settled':
         this.settleContext(event.messages, event.reason);
         return;

@@ -12,6 +12,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { isMcpToolName, type ToolInfo } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { legacyRejectedResult, runLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -72,12 +73,18 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   ) {
     super();
     this.states.contributeState(toolSelectKey);
-    this._register(
-      toolExecutor.registerUnavailableToolDescriber((name) => this.describeUnavailableTool(name)),
-    );
-    this._register(
-      toolExecutor.registerMissingToolDescriber((name) => this.describeMissingTool(name)),
-    );
+    this._register(toolExecutor.registerHook({
+      starting: (context) => {
+        const text = this.describeUnavailableTool(context.call.name);
+        return text === undefined
+          ? undefined
+          : runLegacyStarting(context, (event) => event.veto({ output: text, isError: true }));
+      },
+      afterExecute: (context) => {
+        const text = this.describeMissingTool(context.call.name);
+        return text === undefined ? undefined : legacyRejectedResult(context, text);
+      },
+    }));
   }
 
   private history(): readonly ContextMessage[] {
@@ -310,7 +317,7 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private liveTools(origin: ToolSelectTool['origin']): readonly ToolSelectTool[] {
-    const live = this.toolRegistry.listLive?.() ?? this.toolRegistry.list();
+    const live = this.toolRegistry.list();
     return live
       .map((info) => normalizeTool(info, origin))
       .toSorted((left, right) => left.name.localeCompare(right.name));

@@ -1,7 +1,8 @@
 import type { HistoryMessage, UserEntry } from '#human/agent/turn';
-import type { ToolDescription } from '#human/llm/message';
+import type { SystemMessage, ToolCall, ToolDescription, UserMessage } from '#human/llm/message';
 import type { PolicyRegistry } from '#human/llm/policy/registry';
-import type { ToolExecutor } from '#human/tool/executor';
+import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
+import type { ToolExecutionHandler } from '#/tool/executor';
 import type { WaitOpts } from '#human/utils/wait';
 import { createActorLoop } from './loop-actor';
 import type { LoopInput } from './contract/command';
@@ -15,9 +16,24 @@ import type { LoopState } from './state';
 import type { WaitForTasks } from './tool/tasks';
 import type { ToolCompletionFactory } from './tool/outcome';
 
+export interface LoopToolContext {
+  readonly turnId: number;
+  readonly step?: number;
+  readonly trace?: LLMRequestTrace;
+  readonly steerSignal?: AbortSignal;
+  readonly metadata?: unknown;
+  readonly remind?: (message: SystemMessage | UserMessage) => void;
+  readonly onForegroundTaskStart?: (taskId: string) => void;
+}
+
+export interface LoopToolExecutor {
+  execute(call: ToolCall, context: LoopToolContext): ToolExecutionHandler;
+}
+
 export interface CreateLoopOptions {
   readonly createTurnExecution?: TurnExecutionFactory;
-  readonly executor: ToolExecutor;
+  readonly executor: LoopToolExecutor;
+  readonly toolContext?: (turnId: number) => Omit<LoopToolContext, 'turnId'>;
   readonly hooks?: readonly HookRegistration[];
   readonly input?: LoopInput;
   readonly abortGraceMs?: number;
@@ -28,7 +44,7 @@ export interface Loop {
   readonly state: LoopState;
   readonly turnExecution: TurnExecution | undefined;
   readonly historyRevision: number;
-  readonly executor: ToolExecutor;
+  readonly executor: LoopToolExecutor;
   readonly waitForTasks: WaitForTasks;
   readonly hooks: HookRegistry;
   readonly policy: PolicyRegistry;
@@ -38,7 +54,9 @@ export interface Loop {
   flushReminders(): void;
   steer(promptIds: readonly string[]): LoopAck<'prompt.steered'> | undefined;
   cancel(promptId: string): LoopAck<'prompt.canceled'> | undefined;
-  continue(): void;
+  start(): void;
+  resume(): void;
+  continue(options?: { readonly force?: boolean }): void;
   abort(reason?: unknown): void;
   abortTool(toolCallId: string, reason?: unknown): void;
   detachTool(toolCallId: string, text?: string, completion?: ToolCompletionFactory): void;

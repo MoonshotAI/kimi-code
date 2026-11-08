@@ -19,6 +19,7 @@ import type { AgentTaskInfo } from '#/agent/task/types';
 import { TaskTerminatedNotice } from '#/agent/task/taskOps';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
@@ -232,7 +233,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+      registerLegacyStarting(toolExecutor, (event) => {
         if (this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!TOWER_FLAG_VETO_TOOLS.has(event.toolCall.name)) return;
         event.veto(
@@ -245,7 +246,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+      registerLegacyStarting(toolExecutor, (event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;
         if (event.toolCall.name !== 'TodoList') return;
@@ -259,7 +260,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+      registerLegacyStarting(toolExecutor, (event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;
         if (event.toolCall.name !== 'AgentSwarm') return;
@@ -273,7 +274,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
+      registerLegacyStarting(toolExecutor, (event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;
         if (event.toolCall.name === 'CreateGoal') {
@@ -300,7 +301,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool(async (event) => {
+      registerLegacyStarting(toolExecutor, async (event) => {
         if (!this.flags.enabled(TOWER_FLAG_ID)) return;
         if (!this.isActive) return;
         if (event.toolCall.name !== 'Agent') return;
@@ -350,7 +351,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool(async (event) => {
+      registerLegacyStarting(toolExecutor, async (event) => {
         if (this.loop.data().profileName !== TOWER_WORKER_PROFILE) return;
         const toolName = event.toolCall.name;
         if (toolName !== 'Write' && toolName !== 'Edit') return;
@@ -386,7 +387,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }),
     );
     this._register(
-      toolExecutor.onBeforeExecuteTool(async (event) => {
+      registerLegacyStarting(toolExecutor, async (event) => {
         if (event.toolCall.name !== 'Bash') return;
         const args = event.args;
         if (typeof args !== 'object' || args === null) return;

@@ -31,6 +31,8 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
+import { parseToolCallArguments } from '#/tool/tool-args-parse';
 import type { BeforeToolExecuteEvent } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -1174,13 +1176,21 @@ function createGoalEffectHandlers(runtime: AgentActorContext<GoalRuntimeState>) 
         event.veto({ output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE });
       }
     },
-    toolCompleted: (tool: Parameters<Parameters<IAgentToolExecutorService['hooks']['onDidExecuteTool']['register']>[1]>[0]) => {
-      const goalId = goalTurnTarget(context, tool.turnId);
-      if (goalId === undefined || !isTerminalUpdateGoalResult(tool.toolCall.name, tool.args, tool.result)) return;
+    toolCompleted: (step: AfterStepContext) => {
+      const goalId = goalTurnTarget(context, step.turnId);
+      if (goalId === undefined) return;
       const maxSteps = context.runtime.get(IConfigService).get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn;
-      const step = context.runtime.get(IAgentLoopService).snapshot().turn?.step;
-      if (step !== undefined && !hasStepBudgetRemaining(maxSteps, step)) {
-        tool.result = { ...tool.result, stopTurn: true };
+      for (const tool of step.tools) {
+        const output = typeof tool.result?.output === 'string'
+          ? tool.result.output
+          : [...(tool.result?.output ?? tool.outcome.entry.message.content)];
+        const result: ExecutableToolResult = {
+          output,
+          isError: tool.result?.isError ?? (tool.outcome.type === 'succeeded' ? undefined : true),
+        };
+        const args = parseToolCallArguments(tool.toolCall.arguments).data;
+        if (!isTerminalUpdateGoalResult(tool.toolCall.name, args, result)) continue;
+        if (!hasStepBudgetRemaining(maxSteps, step.step)) step.stopTurn = true;
       }
     },
     turnEnded: (event: TurnEnded) => {
@@ -1230,18 +1240,12 @@ const goalEffects = fromCallback(({
     }));
     disposables.push(loop.hooks.onDidFinishStep.register('goal-outcome-continuation', async (context, next) => {
       handlers.afterStep(context);
+      handlers.toolCompleted(context);
       await next();
     }));
     const tools = input.runtime.get(IAgentToolExecutorService);
-    disposables.push(tools.onBeforeExecuteTool(handlers.approval));
-    disposables.push(tools.onBeforeExecuteTool(handlers.veto));
-    disposables.push(tools.hooks.onDidExecuteTool.register(
-      'goal-outcome-tool-result',
-      async (context, next) => {
-        handlers.toolCompleted(context);
-        await next();
-      },
-    ));
+    disposables.push(registerLegacyStarting(tools, handlers.approval));
+    disposables.push(registerLegacyStarting(tools, handlers.veto));
     disposables.push(input.runtime.get(IEventBus).subscribe(TurnEnded, handlers.turnEnded));
     handlers.normalize();
   }

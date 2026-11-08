@@ -10,10 +10,11 @@ import type { MessageSource, RemindEntry, TurnTrigger } from './inbox';
 import type { AsyncToolOutcome, Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from './outcome';
 
 export type ToolEvent =
-  | { type: 'tool.started'; turnId: number; step: number; toolCall: ToolCall; display?: ToolInputDisplay }
+  | { type: 'tool.started'; taskId?: string; turnId: number; step: number; toolCall: ToolCall; args?: unknown; display?: ToolInputDisplay }
   | { type: 'tool.delta'; toolCallId: string; update: ToolUpdate }
   | {
       type: 'tool.ended';
+      taskId?: string;
       toolCallId: string;
       outcome: ToolCallOutcome;
       detached: boolean;
@@ -22,9 +23,11 @@ export type ToolEvent =
         isError?: boolean;
         note?: string;
         durationMs?: number;
+        stopTurn?: boolean;
+        stopTurnReason?: string;
       };
     }
-  | { type: 'tool.async_ended'; toolCallId: string; outcome: AsyncToolOutcome; entry: UserEntry };
+  | { type: 'tool.async_ended'; taskId?: string; toolCallId: string; outcome: AsyncToolOutcome; entry: UserEntry };
 
 export type HookFailedEvent = {
   type: 'hook.failed';

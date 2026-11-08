@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 import type { ContentPart } from '#human/llm/message';
 import { parseToolCallArguments } from '#/tool/tool-args-parse';
+import { abortedToolOutput, isUserCancellation } from '#/_base/utils/abort';
 
 import { memoryOutputStore } from './output-store';
 import type {
@@ -95,7 +96,7 @@ export class ToolExecutor<TContext = unknown> {
       control.signal.throwIfAborted();
       if (decision === undefined) return;
       if ('reject' in decision) {
-        throw new ToolStop(rejected(phase, decision.reject, decision.data));
+        throw new ToolStop(rejected(phase, decision.reject, decision.data), decision.result);
       }
       if ('args' in decision) control.setArgs(decision.args);
       return decision;
@@ -122,19 +123,19 @@ export class ToolExecutor<TContext = unknown> {
     const run = async (): Promise<ToolResult> => {
       try {
         const tool = this.tools.get(call.name);
-        if (tool === undefined) {
-          throw new ToolStop(rejected('resolve', `Tool "${call.name}" not found`, undefined, 'resolve'));
-        }
         control.enter('parse');
         const parsed = parseToolCallArguments(call.arguments);
         if (parsed.parseFailed) {
           throw new ToolStop(rejected(
             'parse',
-            `Invalid args for tool "${tool.name}": ${parsed.error ?? 'Malformed JSON'}`,
+            `Invalid args for tool "${call.name}": ${parsed.error ?? 'Malformed JSON'}`,
             parsed.error,
           ));
         }
         control.setArgs(parsed.data);
+        if (tool === undefined) {
+          throw new ToolStop(rejected('resolve', `Tool "${call.name}" not found`, undefined, 'resolve'));
+        }
         const synthetic = await prepare(tool);
         if (synthetic !== undefined) return control.returned(synthetic);
         if (tool.execute === undefined) {
@@ -165,7 +166,7 @@ export class ToolExecutor<TContext = unknown> {
         const toolContext: ToolExecuteContext<unknown, TContext, any, any> = {
           ...decisionContext(),
           ...control.view,
-          detach: (reason) => control.detach(reason),
+          detach: (reason, acknowledgement) => control.detach(reason, acknowledgement),
           onDetach: (acknowledge) => control.onDetach(acknowledge),
           write: (text) => control.write(text),
           flush: () => control.flush(),
@@ -179,9 +180,13 @@ export class ToolExecutor<TContext = unknown> {
         }
         return control.returned(returned);
       } catch (thrown) {
+        if (thrown instanceof ToolStop && thrown.result !== undefined) {
+          return control.returned(thrown.result, thrown.error);
+        }
         const error = control.wasStopped()
           ? abortedError(control.call, control.phase, 'stopped', control.stopCause())
           : toToolError(control, thrown);
+        if (isPreExecutionHookError(error)) throw error.data ?? error;
         return this.fail(control, error);
       }
     };
@@ -204,7 +209,11 @@ export class ToolExecutor<TContext = unknown> {
         try {
           const hookContext: AfterExecuteHookContext<unknown, TContext, any> = {
             ...decisionContext(),
+            get fields() {
+              return control.fields();
+            },
             result,
+            set: (fields) => control.update(fields),
           };
           const replaced = await hook?.afterExecute?.(hookContext);
           if (replaced !== undefined) result = reconcile(result, replaced, call.id);
@@ -218,21 +227,22 @@ export class ToolExecutor<TContext = unknown> {
         return result;
       } catch (thrown) {
         const error = toToolError(control, thrown);
+        if (isPreExecutionHookError(error)) throw error.data ?? error;
         return control.errorResult(error, [{ type: 'text', text: error.reason }]);
       }
     })();
 
     const handler = control.handle(completion);
     if (hook?.observe !== undefined) {
-      const emit = (event: ToolExecutionEvent<any, any>): void => {
+      const emit = (event: ToolExecutionEvent<any, any, any>): void => {
         try {
           hook.observe?.(event);
         } catch {
           return;
         }
       };
-      control.observe((event) => emit({ call, handler, ...event }));
-      emit({ call, handler, type: 'created' });
+      control.observe((event) => emit({ call, context, handler, ...event }));
+      emit({ call, context, handler, type: 'created' });
     }
     return handler;
   }
@@ -264,6 +274,12 @@ export class ToolExecutor<TContext = unknown> {
 
 export function isToolDetachAck(value: ToolExecutionResponse): value is ToolDetachAck {
   return 'detached' in value && value.detached === true;
+}
+
+function isPreExecutionHookError(error: ToolError): boolean {
+  return error.outcome === 'failed' &&
+    error.type === 'unknown' &&
+    (error.phase === 'starting' || error.phase === 'before-execute');
 }
 
 export function textToolContent(text: string): ContentPart[] {
@@ -432,6 +448,10 @@ class CallControl<TContext> {
 
   set(fields: object): void {
     if (this.frozen) return;
+    this.update(fields);
+  }
+
+  update(fields: object): void {
     this.change(() => {
       Object.assign(this.structured, fields);
     });
@@ -512,7 +532,7 @@ class CallControl<TContext> {
     this.seal();
   }
 
-  returned(value: ToolReturn): ToolResult {
+  returned(value: ToolReturn, cause?: ToolError): ToolResult {
     if (this.stopped !== undefined) {
       const outcome: ToolOutcome = {
         type: 'aborted',
@@ -520,6 +540,7 @@ class CallControl<TContext> {
       };
       return { toolCallId: this.call.id, content: value.content, outcome };
     }
+    if (cause !== undefined) return this.errorResult(cause, value.content);
     if (value.outcome === 'failed') {
       const error: ToolError = {
         outcome: 'failed',
@@ -587,7 +608,7 @@ class CallControl<TContext> {
     this.release(result);
   }
 
-  detach(reason?: unknown): ToolDetachAck | undefined {
+  detach(reason?: unknown, provided?: ToolAcknowledgement): ToolDetachAck | undefined {
     if (
       this.responseSettled ||
       this.signal.aborted ||
@@ -598,7 +619,7 @@ class CallControl<TContext> {
     }
     let acknowledgement: ToolAcknowledgement;
     try {
-      acknowledgement = this.detachAck?.(reason) ?? this.defaultDetachAck(this.snapshot(), reason);
+      acknowledgement = provided ?? this.detachAck?.(reason) ?? this.defaultDetachAck(this.snapshot(), reason);
     } catch {
       acknowledgement = this.defaultDetachAck(this.snapshot(), reason);
     }
@@ -638,7 +659,7 @@ class CallControl<TContext> {
         if (this.outcome === undefined) this.requestStop(reason);
         return settled;
       },
-      detach: (reason) => this.detach(reason),
+      detach: (reason, acknowledgement) => this.detach(reason, acknowledgement),
       snapshot: () => this.snapshot(),
       output: (maxPreviewBytes?: number) => this.output(maxPreviewBytes),
       fields: () => this.fields(),
@@ -669,9 +690,11 @@ class CallControl<TContext> {
 
 class ToolStop {
   readonly error: ToolError;
+  readonly result: ToolReturn | undefined;
 
-  constructor(error: ToolError) {
+  constructor(error: ToolError, result?: ToolReturn) {
     this.error = error;
+    this.result = result;
   }
 }
 
@@ -738,9 +761,10 @@ function reconcile(previous: ToolResult, replacement: ToolResult, toolCallId: st
 }
 
 function describeAbort(call: ToolCall, reason: unknown): string {
+  if (isUserCancellation(reason)) return abortedToolOutput(call.name, reason);
   if (typeof reason === 'string') return reason;
   if (reason instanceof Error && reason.name !== 'AbortError') return reason.message;
-  return `Tool "${call.name}" was aborted`;
+  return abortedToolOutput(call.name, reason);
 }
 
 function assertToolName(name: string): void {

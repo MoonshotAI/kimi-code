@@ -36,6 +36,7 @@ import type {
 } from '#/features/reminder/types';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { legacyDidExecuteContext } from '#/agent/toolExecutor/legacyHooks';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
@@ -109,11 +110,11 @@ export class AgentAgentsMdReminderService
         await next();
       }),
     );
-    const handler = async (ctx: ToolDidExecuteContext, next: () => Promise<void>): Promise<void> => {
-      await this.probeAndRemind(ctx);
-      await next();
-    };
-    this._register(toolExecutor.hooks.onDidExecuteTool.register('agentsMdReminder', handler));
+    this._register(toolExecutor.registerHook({
+      afterExecute: async (context) => {
+        await this.probeAndRemind(legacyDidExecuteContext(context));
+      },
+    }));
   }
 
   seedInjected(paths: readonly string[], cwd: string): void {

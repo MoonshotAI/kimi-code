@@ -1,6 +1,6 @@
 import { APIProviderRateLimitError, isProviderRateLimitError } from '#/llm-adapter/contract/errors';
 
-import { linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
+import { abortable, linkAbortSignal, userCancellationReason } from '#/_base/utils/abort';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { codePointBoundaryStart } from '#/_base/text/code-points';
@@ -44,15 +44,18 @@ export async function runAgentTurn(
 ): Promise<AgentRunHandle> {
   options.signal.throwIfAborted();
   const loop = target.accessor.get(IAgentLoopService);
-  const { id } = request.kind === 'prompt'
-    ? loop.submit({
-        message: { role: 'user', content: [{ type: 'text', text: request.prompt }] },
-        meta: { origin: AGENT_RUN_PROMPT_ORIGIN, tracked: true },
-      })
-    : loop.submit({
-        message: { role: 'user', content: [] },
-        meta: { origin: { kind: 'retry' } },
-      });
+  if (request.kind === 'retry') {
+    const output = collectLoopOutput(target.accessor.get(IEventBus), options.onReady);
+    const completion = awaitRetry(target, options).finally(() => {
+      output.dispose();
+    });
+    return { agentId: target.id, completion, partialOutput: () => output.text() };
+  }
+
+  const { id } = loop.submit({
+    message: { role: 'user', content: [{ type: 'text', text: request.prompt }] },
+    meta: { origin: AGENT_RUN_PROMPT_ORIGIN, tracked: true },
+  });
   const output = collectRunOutput(target.accessor.get(IEventBus));
   const turn = await loop.promptHandle(id)?.launched;
   if (turn === undefined) {
@@ -69,6 +72,40 @@ export async function runAgentTurn(
     output.dispose();
   });
   return { agentId: target.id, turn, completion, partialOutput: () => output.text() };
+}
+
+async function awaitRetry(
+  target: IAgentScopeHandle,
+  options: RunAgentTurnOptions,
+): Promise<AgentRunCompletion> {
+  const loop = target.accessor.get(IAgentLoopService);
+  const controller = new AbortController();
+  const unlink = linkAbortSignal(options.signal, controller);
+  const onAbort = (): void => {
+    loop.cancel(undefined, controller.signal.reason);
+  };
+  controller.signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    const result = await abortable(loop.retry(), controller.signal);
+    controller.signal.throwIfAborted();
+    if (result === undefined) throw new Error2(ErrorCodes.INTERNAL, 'Agent turn could not be started');
+    const classified = classifyTurnResult(result);
+    const summary = latestAssistantText(loop.history());
+    const stopReason = classified.stopReason;
+    if (summary.trim().length === 0) {
+      throw new Error2(
+        ErrorCodes.AGENT_NO_FINAL_MESSAGE,
+        noFinalMessageError(stopReason),
+        stopReason === undefined ? undefined : { details: { stopReason } },
+      );
+    }
+    const usage = target.accessor.get(ISessionUsageService)?.status(agentContextOf(target)).total;
+    return { summary, usage, stopReason };
+  } finally {
+    controller.signal.removeEventListener('abort', onAbort);
+    unlink();
+    if (controller.signal.aborted) onAbort();
+  }
 }
 
 async function awaitRun(
@@ -202,6 +239,35 @@ function contentText(content: ContextMessage['content']): string {
 interface RunOutputCollector extends IDisposable {
   bind(turnId: number | undefined): void;
   text(): string;
+}
+
+interface LoopOutputCollector extends IDisposable {
+  text(): string;
+}
+
+function collectLoopOutput(bus: IEventBus, onReady?: () => void): LoopOutputCollector {
+  const text = new RunText();
+  let ready = false;
+  const subscriptions = [
+    bus.subscribe(TurnStepStarted, () => {
+      text.startStep();
+      if (ready) return;
+      ready = true;
+      onReady?.();
+    }),
+    bus.subscribe(AssistantDelta, (event) => {
+      text.append(event.delta);
+    }),
+    bus.subscribe(TurnStepRetrying, () => {
+      text.discardStep();
+    }),
+  ];
+  return {
+    text: () => text.render(),
+    dispose() {
+      for (const subscription of subscriptions.splice(0)) subscription.dispose();
+    },
+  };
 }
 
 function collectRunOutput(bus: IEventBus): RunOutputCollector {

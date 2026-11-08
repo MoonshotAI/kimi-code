@@ -19,8 +19,6 @@ export type ToolRemind = (message: SystemMessage | UserMessage) => void;
 export interface ExecutableToolSuccessResult {
   readonly output: ExecutableToolOutput;
   readonly isError?: false | undefined;
-  readonly stopTurn?: boolean | undefined;
-  readonly stopTurnReason?: string;
   readonly truncated?: boolean | undefined;
   readonly note?: string;
   readonly spill?: ToolResultSpill;
@@ -30,8 +28,6 @@ export interface ExecutableToolSuccessResult {
 export interface ExecutableToolErrorResult {
   readonly output: ExecutableToolOutput;
   readonly isError: true;
-  readonly stopTurn?: boolean | undefined;
-  readonly stopTurnReason?: string;
   readonly truncated?: boolean | undefined;
   readonly note?: string;
   readonly spill?: ToolResultSpill;
@@ -69,7 +65,6 @@ export interface RunnableToolExecution {
   readonly accesses?: ToolAccesses | undefined;
   readonly display?: ToolInputDisplay | undefined;
   readonly description?: string;
-  readonly stopBatchAfterThis?: boolean | undefined;
   readonly approvalRule: string;
   readonly matchesRule?: ((ruleArgs: string) => boolean) | undefined;
   readonly execute: (ctx: ExecutableToolContext) => Promise<ExecutableToolResult>;
@@ -126,7 +121,6 @@ export type ToolResult = ExecutableToolResult & {
   readonly description?: string;
   readonly display?: ToolInputDisplay;
   readonly approvalRule?: string;
-  readonly stopBatchAfterThis?: boolean;
 };
 
 export type ToolFileAccessOperation = 'read' | 'write' | 'readwrite' | 'search';

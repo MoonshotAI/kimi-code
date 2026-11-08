@@ -2,37 +2,62 @@ import { createToolMessage, type ContentPart, type ToolCall } from '#human/llm/m
 import { abortedToolOutput } from '#/agent/toolExecutor/toolExecutorService';
 import { errorText } from '#human/llm/protocol/errors';
 import { createToolEntry, createUserEntry, type ToolEntry, type UserEntry } from '#human/agent/turn';
-import type { ToolResult } from '#human/tool/executor';
+import type { ToolDetachAck, ToolResult } from '#/tool/executor';
 import type { AsyncToolOutcome, Cause, ToolCallOutcome } from '../contract/outcome';
 
-export function errorResult(text: string): ToolResult {
-  return { content: [{ type: 'text', text }], isError: true };
-}
-
-export function toolEntry(toolCall: ToolCall, result: ToolResult, detached?: true): ToolEntry {
+export function toolEntry(toolCall: ToolCall, result: ToolResult | ToolDetachAck, detached?: true): ToolEntry {
+  const failed = 'outcome' in result && result.outcome.type !== 'success';
   return createToolEntry(createToolMessage(toolCall.id, result.content), {
     source: 'tool',
-    ...(result.isError === true ? { isError: true as const } : {}),
-    ...(result.stopTurn === true ? { stopTurn: true as const } : {}),
-    ...(result.durationMs !== undefined ? { durationMs: result.durationMs } : {}),
-    ...(detached === true ? { detached } : {}),
+    isError: failed ? true : undefined,
+    detached,
   });
 }
 
 export function abortedToolOutcome(toolCall: ToolCall, reason?: unknown): ToolCallOutcome {
-  return { type: 'aborted', entry: toolEntry(toolCall, errorResult(abortedToolOutput(toolCall.name, reason))), reason };
+  const text = abortedToolOutput(toolCall.name, reason);
+  const error = {
+    outcome: 'aborted' as const,
+    type: 'stopped' as const,
+    phase: 'execute' as const,
+    reason: text,
+    data: reason,
+  };
+  const result: ToolResult = {
+    toolCallId: toolCall.id,
+    content: [{ type: 'text', text }],
+    outcome: { type: 'aborted', error },
+  };
+  return { type: 'aborted', entry: toolEntry(toolCall, result), reason };
 }
 
-export function blockedToolOutcome(toolCall: ToolCall, cause: Cause, result?: ToolResult): ToolCallOutcome {
+export function blockedToolOutcome(
+  toolCall: ToolCall,
+  cause: Cause,
+  result?: { readonly content: ContentPart[] },
+): ToolCallOutcome {
+  const content = result?.content ?? [{ type: 'text', text: cause.message ?? cause.reason }];
   return {
     type: 'blocked',
-    entry: toolEntry(toolCall, { ...(result ?? errorResult(cause.message ?? cause.reason)), isError: true }),
+    entry: createToolEntry(createToolMessage(toolCall.id, content), { source: 'tool', isError: true }),
     cause,
   };
 }
 
 export function failedToolOutcome(toolCall: ToolCall, error: unknown): ToolCallOutcome {
-  return { type: 'failed', entry: toolEntry(toolCall, errorResult(errorText(error))), error };
+  const failure = {
+    outcome: 'failed' as const,
+    type: 'unknown' as const,
+    phase: 'execute' as const,
+    reason: errorText(error),
+    data: error,
+  };
+  const result: ToolResult = {
+    toolCallId: toolCall.id,
+    content: [{ type: 'text', text: errorText(error) }],
+    outcome: { type: 'failed', error: failure },
+  };
+  return { type: 'failed', entry: toolEntry(toolCall, result), error };
 }
 
 export interface ToolCompletionInput {
@@ -41,7 +66,10 @@ export interface ToolCompletionInput {
   readonly result?: ToolResult;
 }
 
-export type ToolCompletionFactory = (input: ToolCompletionInput) => UserEntry | Promise<UserEntry>;
+export interface ToolCompletionFactory {
+  (input: ToolCompletionInput): UserEntry | Promise<UserEntry>;
+  onRejected?(error: unknown, input: ToolCompletionInput): UserEntry | Promise<UserEntry>;
+}
 
 export function completionEntry(
   toolCall: ToolCall,

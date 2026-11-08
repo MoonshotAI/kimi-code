@@ -2,8 +2,7 @@ import { Service } from '#/_base/di/service';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
-import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IEventBus } from '#/app/event/eventBus';
 import type { SwarmModeTransitionEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -24,7 +23,7 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
     @IAgentReminderService reminder: IAgentReminderService,
     @IEventBus eventBus: IEventBus,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentLoopService loop: IAgentLoopService,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @IAgentStateService private readonly agentState: IAgentStateService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -48,26 +47,26 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
         }
       }),
     );
-    this._register(
-      toolExecutor.onBeforeExecuteTool((event) => {
-        if (!this.isActive) return;
-        const agentSwarmCount = event.toolCalls.filter(
-          (toolCall) => toolCall.name === 'AgentSwarm',
-        ).length;
-        if (agentSwarmCount === 0 || (agentSwarmCount === 1 && event.toolCalls.length === 1)) {
-          return;
-        }
-        event.veto(
-          denyToolExecution(
-            this.toolApproval.formatDenyMessage(
-              agentSwarmCount > 1
-                ? multipleAgentSwarmDeniedMessage(event.toolCalls.length > agentSwarmCount)
-                : mixedAgentSwarmDeniedMessage(),
-            ),
+    this._register(loop.registerToolBatchStarting((event) => {
+      if (!this.isActive) return undefined;
+      const agentSwarmCount = event.toolCalls.filter(
+        (toolCall) => toolCall.name === 'AgentSwarm',
+      ).length;
+      if (agentSwarmCount === 0 || (agentSwarmCount === 1 && event.toolCalls.length === 1)) {
+        return undefined;
+      }
+      return {
+        blocked: {
+          by: 'swarm',
+          reason: 'agent_swarm_batch',
+          message: this.toolApproval.formatDenyMessage(
+            agentSwarmCount > 1
+              ? multipleAgentSwarmDeniedMessage(event.toolCalls.length > agentSwarmCount)
+              : mixedAgentSwarmDeniedMessage(),
           ),
-        );
-      }),
-    );
+        },
+      };
+    }));
   }
 
   enter(trigger: SwarmModeTrigger): void {

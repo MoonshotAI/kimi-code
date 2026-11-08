@@ -190,7 +190,7 @@ describe('notifyStreak', () => {
       retryPrompt(),
       assistantWithTools('Read'),
     ];
-    expect(notifyStreak(retryTurn).rounds).toBe(1);
+    expect(notifyStreak(retryTurn).rounds).toBe(2);
   });
 
   it('stops at a subagent system trigger but not at a stop-hook continuation', () => {

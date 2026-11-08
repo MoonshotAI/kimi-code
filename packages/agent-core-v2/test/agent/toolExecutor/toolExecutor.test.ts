@@ -632,6 +632,8 @@ describe('AgentToolExecutorService', () => {
 
     const detachedRelease = deferred();
     const detachedStarted = deferred();
+    const detachedFinalizerStarted = deferred();
+    const detachedFinalizerRelease = deferred();
     const conflictingStarted = deferred();
     const nextBatchStarted = deferred();
     const accesses = ToolAccesses.writeFile('/repo/shared.ts');
@@ -661,6 +663,13 @@ describe('AgentToolExecutorService', () => {
     registry.register(conflictingTool);
     registry.register(nextBatchTool);
 
+    truncateForModel = async (input) => {
+      if (input.toolCallId === 'call_detached') {
+        detachedFinalizerStarted.resolve();
+        await detachedFinalizerRelease.promise;
+      }
+      return input.result;
+    };
     const detached = executor.executor.execute(toolCall('call_detached', 'detached', {}), { turnId: 1, step: 0 });
     const conflicting = executor.executor.execute(toolCall('call_conflicting', 'conflicting', {}), { turnId: 1, step: 0 });
     const nextBatch = executor.executor.execute(toolCall('call_next_batch', 'next-batch', {}), { turnId: 1, step: 1 });
@@ -671,9 +680,14 @@ describe('AgentToolExecutorService', () => {
     expect(nextBatchTool.calls).toHaveLength(1);
 
     detachedRelease.resolve();
+    await detachedFinalizerStarted.promise;
+    await vi.waitFor(() => {
+      expect(conflictingTool.calls).toHaveLength(1);
+    }, { timeout: 100 });
+    expect(detached.snapshot().status).toBe('running');
+    detachedFinalizerRelease.resolve();
     await detached.wait();
     await conflictingStarted.promise;
-    expect(conflictingTool.calls).toHaveLength(1);
     await Promise.all([conflicting.wait(), nextBatch.wait()]);
     executor.release(detached.taskId);
     executor.release(conflicting.taskId);

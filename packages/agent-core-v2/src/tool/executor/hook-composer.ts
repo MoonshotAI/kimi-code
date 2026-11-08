@@ -12,7 +12,6 @@ export function composeToolExecutorHooks<TContext = unknown, TPrepared = unknown
   return {
     async starting(context) {
       let current = context;
-      let skipPermitting = false;
       let rewritten = false;
       for (const hook of hooks) {
         if (hook.starting === undefined) continue;
@@ -23,10 +22,9 @@ export function composeToolExecutorHooks<TContext = unknown, TPrepared = unknown
           current = { ...current, args: decision.args };
           rewritten = true;
         }
-        if ('skipPermitting' in decision) skipPermitting = true;
-      }
-      if (skipPermitting) {
-        return rewritten ? { skipPermitting: true, args: current.args } : { skipPermitting: true };
+        if ('skipPermitting' in decision) {
+          return rewritten ? { skipPermitting: true, args: current.args } : { skipPermitting: true };
+        }
       }
       return rewritten ? { args: current.args } : undefined;
     },

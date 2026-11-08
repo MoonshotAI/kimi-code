@@ -1,12 +1,11 @@
 import type { HistoryMessage, UserEntry } from '#human/agent/turn';
 import type { ToolDescription } from '#human/llm/message';
-import { errorText } from '#human/llm/protocol/errors';
 import type { LlmOutcome } from '#human/llm/response';
 import { createPolicyRegistry, type PolicyRegistry } from '#human/llm/policy/registry';
-import { isToolExecutorHost, type ToolExecutor, type ToolHookFailure, type ToolHookPoint } from '#human/tool/executor';
-import { createAbortScope, withAbort, type AbortScope } from '#human/utils/abort';
+import { isToolDetachAck, type ToolExecutionResponse, type ToolResult } from '#/tool/executor';
+import { createAbortScope, type AbortScope } from '#human/utils/abort';
 import { waitEvent, type WaitOpts } from '#human/utils/wait';
-import type { CreateLoopOptions, Loop } from './create-loop';
+import type { CreateLoopOptions, Loop, LoopToolContext, LoopToolExecutor } from './create-loop';
 import type { LoopCommand, LoopInput, UnfinishedTurn } from './contract/command';
 import type { LoopAck, LoopEmitted } from './contract/emitted';
 import type { HookLifecycleEvent, HookPoint } from './contract/hook';
@@ -61,12 +60,10 @@ import {
   type StepState,
   type TurnCompletion,
 } from './state';
-import { executeLoopTool, type ToolExecOutput } from './tool/execute';
-import { abortedToolOutput } from '#/agent/toolExecutor/toolExecutorService';
 import {
   abortedToolOutcome,
   blockedToolOutcome,
-  errorResult,
+  completionEntry,
   resolveCompletionEntry,
   toolEntry,
   type ToolCompletionFactory,
@@ -100,24 +97,26 @@ function turnCompletion(): TurnCompletion {
 }
 
 function toolOutcomeOf(slot: LiveTool) {
-  const result = slot.result ?? errorResult('missing tool result');
-  if (result.blocked !== undefined) return blockedToolOutcome(slot.toolCall, result.blocked, result);
-  const stops = slot.status !== 'aborted' && result.stopTurn === true;
-  const entry = toolEntry(slot.toolCall, stops ? { ...result, stopTurn: true } : result);
-  switch (slot.status) {
-    case 'succeeded':
-      return stops ? { type: 'succeeded' as const, entry, stopTurn: true as const } : { type: 'succeeded' as const, entry };
+  const result = slot.result!;
+  const outcome = result.outcome;
+  const entry = toolEntry(slot.toolCall, result);
+  switch (outcome.type) {
+    case 'success':
+      return { type: 'succeeded' as const, entry };
     case 'aborted':
-      return { type: 'aborted' as const, entry, reason: slot.reason };
+      return { type: 'aborted' as const, entry, reason: outcome.error.data ?? outcome.error.reason };
     default:
-      return { type: 'failed' as const, entry, error: slot.error };
+      return { type: 'failed' as const, entry, error: outcome.error };
   }
 }
 
-function asyncOutcomeOf(slot: LiveTool) {
-  if (slot.status === 'succeeded') return { type: 'succeeded' as const };
-  if (slot.status === 'aborted') return { type: 'aborted' as const, reason: slot.reason };
-  return { type: 'failed' as const, error: slot.error };
+function asyncOutcomeOf(slot: LiveTool): AsyncToolOutcome {
+  const outcome = slot.result!.outcome;
+  if (outcome.type === 'success') return { type: 'succeeded' };
+  if (outcome.type === 'aborted') {
+    return { type: 'aborted', reason: outcome.error.data ?? outcome.error.reason };
+  }
+  return { type: 'failed', error: outcome.error };
 }
 
 interface MailboxTurn {
@@ -274,17 +273,17 @@ type ActorMessage =
   | { readonly type: 'batch.started'; readonly turn: LiveTurn; readonly step: StepState; readonly run: ToolBatchStartingRun }
   | { readonly type: 'tools.start'; readonly turn: LiveTurn; readonly step: StepState }
   | { readonly type: 'tools.execute'; readonly turn: LiveTurn; readonly step: StepState; readonly slots: LiveTool[] }
-  | { readonly type: 'tool.adjudicated'; readonly slot: LiveTool; readonly toolCall: LiveTool['toolCall'] }
-  | { readonly type: 'tool.hook_failed'; readonly slot: LiveTool; readonly point: ToolHookPoint; readonly failure: ToolHookFailure }
-  | { readonly type: 'tool.updated'; readonly slot: LiveTool; readonly update: Parameters<NonNullable<Parameters<ToolExecutor['execute']>[0]['onUpdate']>>[0] }
-  | { readonly type: 'tool.detach'; readonly slot: LiveTool; readonly text?: string }
-  | { readonly type: 'tool.completed'; readonly slot: LiveTool; readonly output: ToolExecOutput }
+  | { readonly type: 'tool.prepared'; readonly slot: LiveTool }
+  | { readonly type: 'tool.responded'; readonly slot: LiveTool; readonly response: ToolExecutionResponse }
+  | { readonly type: 'tool.failed'; readonly slot: LiveTool; readonly error: unknown }
+  | { readonly type: 'tool.completed'; readonly slot: LiveTool; readonly result: ToolResult }
   | { readonly type: 'tool.detached_completed'; readonly slot: LiveTool; readonly outcome: AsyncToolOutcome; readonly entry: UserEntry }
+  | { readonly type: 'tool.detached_rejected'; readonly slot: LiveTool; readonly outcome: AsyncToolOutcome; readonly entry: UserEntry }
   | { readonly type: 'tool.abort'; readonly toolCallId: string; readonly reason?: unknown }
   | { readonly type: 'acting.complete'; readonly turn: LiveTurn; readonly step: StepState }
   | { readonly type: 'abort.requested'; readonly turn?: LiveTurn; readonly reason?: unknown }
   | { readonly type: 'abort.expired'; readonly turn: LiveTurn }
-  | { readonly type: 'continue' }
+  | { readonly type: 'continue'; readonly force: boolean }
   | { readonly type: 'close' }
   | {
       readonly type: 'close.detached';
@@ -293,7 +292,7 @@ type ActorMessage =
   | { readonly type: 'close.failed'; readonly error: unknown };
 
 class LoopActor implements Loop {
-  readonly executor: ToolExecutor;
+  readonly executor: LoopToolExecutor;
   readonly hooks: HookRegistry;
   readonly policy: PolicyRegistry;
   readonly waitForTasks: WaitForTasks;
@@ -307,7 +306,7 @@ class LoopActor implements Loop {
   private readonly messages: ActorMessage[] = [];
   private readonly events: LoopEmitted[] = [];
   private readonly completedTurns: LiveTurn[] = [];
-  private readonly adjudicates: boolean;
+  private readonly toolContext?: CreateLoopOptions['toolContext'];
   private readonly abortGraceMs: number;
   private readonly onListenerError?: CreateLoopOptions['onListenerError'];
   private phase: 'idle' | 'running' | 'closed' = 'idle';
@@ -349,7 +348,7 @@ class LoopActor implements Loop {
     });
     this.factory = options.createTurnExecution;
     this.executor = options.executor;
-    this.adjudicates = options.executor.adjudicates === true || isToolExecutorHost(options.executor);
+    this.toolContext = options.toolContext;
     this.abortGraceMs = options.abortGraceMs ?? 2_500;
     this.onListenerError = options.onListenerError;
     this.registry = createHookRegistry();
@@ -553,7 +552,13 @@ class LoopActor implements Loop {
   }
 
   private settleClose(): void {
-    if (this.phase !== 'closed' || this.closePending || this.messages.length > 0 || this.events.length > 0) return;
+    if (
+      this.phase !== 'closed' ||
+      this.turn !== undefined ||
+      this.closePending ||
+      this.messages.length > 0 ||
+      this.events.length > 0
+    ) return;
     this.closeCompletion?.resolve();
   }
 
@@ -664,23 +669,23 @@ class LoopActor implements Loop {
       case 'tools.execute':
         this.executeTools(message.turn, message.step, message.slots);
         return;
-      case 'tool.adjudicated':
-        this.adjudicateTool(message.slot, message.toolCall);
+      case 'tool.prepared':
+        this.announceTool(message.slot);
         return;
-      case 'tool.hook_failed':
-        this.failToolHook(message.slot, message.point, message.failure);
+      case 'tool.responded':
+        this.respondToTool(message.slot, message.response);
         return;
-      case 'tool.updated':
-        this.updateTool(message.slot, message.update);
-        return;
-      case 'tool.detach':
-        this.detach(message.slot, message.text);
+      case 'tool.failed':
+        this.failTool(message.slot, message.error);
         return;
       case 'tool.completed':
-        this.completeTool(message.slot, message.output);
+        this.completeTool(message.slot, message.result);
         return;
       case 'tool.detached_completed':
         this.completeDetached(message.slot, message.outcome, message.entry);
+        return;
+      case 'tool.detached_rejected':
+        if (this.phase !== 'closed') this.completeDetached(message.slot, message.outcome, message.entry);
         return;
       case 'tool.abort':
         this.abortToolCall(message.toolCallId, message.reason);
@@ -695,7 +700,7 @@ class LoopActor implements Loop {
         this.expireAbort(message.turn);
         return;
       case 'continue':
-        this.continueTurn();
+        this.continueTurn(message.force);
         return;
       case 'close':
         this.closeRuntime();
@@ -759,9 +764,20 @@ class LoopActor implements Loop {
     return ack;
   }
 
-  continue(): void {
+  start(): void {
     if (!this.open()) return;
-    this.post({ type: 'continue' });
+    this.held = false;
+    this.schedule();
+  }
+
+  resume(): void {
+    if (this.durable.unfinished === undefined || !isResumable(this.durable)) return;
+    this.continue();
+  }
+
+  continue(options?: { readonly force?: boolean }): void {
+    if (!this.open()) return;
+    this.post({ type: 'continue', force: options?.force === true });
     this.kick();
   }
 
@@ -784,11 +800,11 @@ class LoopActor implements Loop {
     for (const slot of Array.from(this.tools.values())) {
       if (slot.toolCall.id === toolCallId && !slot.detached) {
         slot.completion = completion;
-        this.post({
-          type: 'tool.detach',
-          slot,
-          text: text ?? `moved to background by the user: ${slot.toolCall.name} (tool_call_id=${toolCallId})`,
+        const acknowledgement = text ?? `moved to background by the user: ${slot.toolCall.name} (tool_call_id=${toolCallId})`;
+        const response = slot.handler.detach(acknowledgement, {
+          content: [{ type: 'text', text: acknowledgement }],
         });
+        if (response !== undefined) this.post({ type: 'tool.responded', slot, response });
       }
     }
     this.kick();
@@ -942,7 +958,7 @@ class LoopActor implements Loop {
   }
 
   private report(
-    point: HookPoint | ToolHookPoint,
+    point: HookPoint,
     turn: LiveTurn,
     reports: readonly HookFailureReport[],
     notify: boolean,
@@ -1008,13 +1024,22 @@ class LoopActor implements Loop {
     if (this.step !== undefined) this.step.outcome = { type: 'aborted', reason };
     turn.scope.abort(reason);
     for (const slot of this.tools.values()) {
-      if (slot.turnId === turn.id && !slot.detached && !slot.done) slot.scope.abort(reason);
+      if (slot.turnId === turn.id && slot.step === turn.step && !slot.detached && !slot.done) {
+        void slot.handler.stop(reason);
+      }
     }
-    if (turn.phase === 'requesting' || turn.phase === 'acting') {
+    if (turn.phase === 'requesting') {
       turn.abortGrace = setTimeout(() => {
         this.post({ type: 'abort.expired', turn });
         this.kick();
       }, this.abortGraceMs);
+      return;
+    }
+    if (turn.phase === 'acting') {
+      if (this.step !== undefined) {
+        this.settleUnstartedTools(turn, this.step, reason);
+        if (allSettled(this.step)) this.post({ type: 'acting.complete', turn, step: this.step });
+      }
       return;
     }
     this.post({ type: 'abort.expired', turn });
@@ -1028,7 +1053,7 @@ class LoopActor implements Loop {
       return;
     }
     if (turn.phase === 'acting' || turn.phase === 'batching') {
-      this.expireToolsAndFinish(turn);
+      this.settleToolsAndFinish(turn);
       return;
     }
     this.post({ type: 'turn.finish', turn });
@@ -1369,27 +1394,30 @@ class LoopActor implements Loop {
     if (!this.isCurrentStep(turn, step, 'acting')) return;
     const slots: LiveTool[] = [];
     if (turn.outcome?.type === 'aborted') {
-      this.expireTools(turn, step, turn.outcome.reason);
+      this.settleUnstartedTools(turn, step, turn.outcome.reason);
     } else {
       for (const call of step.calls) {
         if (step.settled[call.key] !== undefined) continue;
+        const context: LoopToolContext = {
+          turnId: turn.id,
+          step: turn.step,
+          ...this.toolContext?.(turn.id),
+        };
+        const handler = this.executor.execute(call.toolCall, context);
         const slot: LiveTool = {
           key: call.key,
           toolCall: call.toolCall,
           turnId: turn.id,
           step: turn.step,
-          scope: withAbort(this.root.signal),
+          handler,
           detached: false,
           announced: false,
+          responded: false,
           done: false,
           waiters: new Set(),
         };
         this.tools.set(call.key, slot);
         slots.push(slot);
-        if (!this.adjudicates) {
-          slot.announced = true;
-          this.record({ type: 'tool.started', turnId: turn.id, step: turn.step, toolCall: slot.toolCall });
-        }
       }
     }
     this.post({ type: 'tools.execute', turn, step, slots });
@@ -1397,138 +1425,165 @@ class LoopActor implements Loop {
 
   private executeTools(turn: LiveTurn, step: StepState, slots: LiveTool[]): void {
     if (!this.isCurrentStep(turn, step, 'acting')) return;
-    for (const slot of slots) {
-      if (!slot.done) this.executeTool(slot);
-    }
+    for (const slot of slots) this.executeTool(slot);
     if (allSettled(step)) this.post({ type: 'acting.complete', turn, step });
   }
 
   private executeTool(slot: LiveTool): void {
-    const output = executeLoopTool(this.executor, {
-      toolCall: slot.toolCall,
-      signal: slot.scope.signal,
+    const prepared = (): void => {
+      this.post({ type: 'tool.prepared', slot });
+      this.kick();
+    };
+    const unsubscribe = slot.handler.observe((event) => {
+      if (event.type !== 'change') return;
+      const snapshot = event.snapshot;
+      if (
+        snapshot.phase === 'execute' ||
+        snapshot.status === 'success' ||
+        snapshot.status === 'failed' ||
+        snapshot.status === 'aborted'
+      ) prepared();
+    });
+    void Promise.resolve(slot.handler).then((response) => {
+      this.post({ type: 'tool.responded', slot, response });
+      this.kick();
+    }, (error: unknown) => {
+      unsubscribe();
+      this.post({ type: 'tool.failed', slot, error });
+      this.kick();
+    });
+    void slot.handler.wait().then((result) => {
+      unsubscribe();
+      this.post({ type: 'tool.completed', slot, result });
+      this.kick();
+    }, () => undefined);
+  }
+
+  private announceTool(slot: LiveTool): void {
+    if (slot.announced || slot.done) return;
+    slot.announced = true;
+    const prepared = slot.handler.snapshot().prepared as { display?: import('#/tool/toolInputDisplay').ToolInputDisplay } | undefined;
+    this.record({
+      type: 'tool.started',
+      taskId: slot.handler.taskId,
       turnId: slot.turnId,
       step: slot.step,
-      onAdjudicated: (toolCall) => {
-        this.post({ type: 'tool.adjudicated', slot, toolCall });
-        this.kick();
-      },
-      onHookFailure: (point: ToolHookPoint, failure: ToolHookFailure) => {
-        this.post({ type: 'tool.hook_failed', slot, point, failure });
-        this.kick();
-      },
-      onUpdate: (update) => {
-        this.post({ type: 'tool.updated', slot, update });
-        this.kick();
-      },
-      detach: (input) => {
-        this.post({ type: 'tool.detach', slot, text: typeof input === 'string' ? input : input.text });
-        this.kick();
-      },
+      toolCall: slot.toolCall,
+      args: slot.handler.snapshot().args,
+      display: prepared?.display,
     });
-    void output.then(
-      (result) => {
-        this.post({ type: 'tool.completed', slot, output: result });
-        this.kick();
-      },
-      (error: unknown) => {
-        this.post({ type: 'tool.completed', slot, output: { type: 'failed', error } });
-        this.kick();
-      },
-    );
   }
 
-  private adjudicateTool(slot: LiveTool, toolCall: LiveTool['toolCall']): void {
-    if (slot.done || this.tools.get(slot.key) !== slot) return;
-    slot.toolCall = toolCall;
-    if (!slot.announced) {
-      slot.announced = true;
-      this.record({ type: 'tool.started', turnId: slot.turnId, step: slot.step, toolCall });
-    }
-  }
-
-  private failToolHook(slot: LiveTool, point: ToolHookPoint, failure: ToolHookFailure): void {
-    if (slot.done || this.tools.get(slot.key) !== slot) return;
-    this.record(hookFailedEvent(point, slot.turnId, slot.step, failure));
-    if (failure.paused && failure.hookId !== undefined) this.registry.suspend(failure.hookId);
-  }
-
-  private updateTool(slot: LiveTool, update: Extract<ActorMessage, { type: 'tool.updated' }>['update']): void {
-    if (slot.done || slot.detached || this.tools.get(slot.key) !== slot) return;
-    this.record({ type: 'tool.delta', toolCallId: slot.toolCall.id, update });
-  }
-
-  private detach(slot: LiveTool, text?: string): void {
-    if (slot.done || slot.detached || this.tools.get(slot.key) !== slot) return;
-    slot.detached = true;
-    const outcome = {
-      type: 'succeeded' as const,
-      entry: toolEntry(
-        slot.toolCall,
-        {
-          content: [
-            {
-              type: 'text' as const,
-              text: text === undefined || text === '' ? `async running: ${slot.toolCall.name}` : text,
-            },
-          ],
-        },
-        true,
-      ),
-    };
-    this.record({ type: 'tool.ended', toolCallId: slot.toolCall.id, outcome, detached: true });
-    const turn = this.turn;
-    const step = this.step;
-    if (turn?.id === slot.turnId && turn.step === slot.step && step !== undefined) {
-      settle(step, slot.key, outcome);
-      if (allSettled(step)) this.post({ type: 'acting.complete', turn, step });
-    }
-  }
-
-  private completeTool(slot: LiveTool, output: ToolExecOutput): void {
+  private failTool(slot: LiveTool, error: unknown): void {
     if (slot.done) return;
+    slot.responded = true;
     slot.done = true;
-    if (output.type === 'succeeded') {
-      slot.status = 'succeeded';
-      slot.result = output.result;
-    } else if (output.type === 'aborted') {
-      slot.status = 'aborted';
-      slot.reason = output.reason;
-      slot.result = errorResult(abortedToolOutput(slot.toolCall.name, slot.reason));
-    } else {
-      slot.status = 'failed';
-      slot.error = output.error;
-      slot.result = output.result ?? errorResult(errorText(output.error));
-    }
-    if (slot.detached) {
-      const outcome = asyncOutcomeOf(slot);
-      slot.completionEntry = resolveCompletionEntry({
-        toolCall: slot.toolCall,
-        outcome,
-        result: slot.result,
-      }, slot.completion);
-      void slot.completionEntry.then((entry) => {
-        this.post({ type: 'tool.detached_completed', slot, outcome, entry });
-        this.kick();
-      });
-      return;
-    }
     this.tools.delete(slot.key);
     this.notifyTool(slot);
     const turn = this.turn;
     const step = this.step;
     if (turn?.id !== slot.turnId || turn.step !== slot.step || step === undefined) return;
-    const outcome = toolOutcomeOf(slot);
-    this.record({ type: 'tool.ended', toolCallId: slot.toolCall.id, outcome, detached: false });
+    step.outcome = { type: 'failed', error };
+    step.settled[slot.key] = null;
+    if (allSettled(step)) this.post({ type: 'acting.complete', turn, step });
+  }
+
+  private respondToTool(slot: LiveTool, response: ToolExecutionResponse): void {
+    if (slot.responded) return;
+    slot.responded = true;
+    if (isToolDetachAck(response)) {
+      slot.detached = true;
+      const outcome = {
+        type: 'succeeded' as const,
+        entry: toolEntry(slot.toolCall, response, true),
+      };
+      this.record({
+        type: 'tool.ended',
+        taskId: slot.handler.taskId,
+        toolCallId: slot.toolCall.id,
+        outcome,
+        detached: true,
+      });
+    } else {
+      slot.result = response;
+      const outcome = toolOutcomeOf(slot);
+      this.record({
+        type: 'tool.ended',
+        taskId: slot.handler.taskId,
+        toolCallId: slot.toolCall.id,
+        outcome,
+        detached: false,
+      });
+    }
+    const turn = this.turn;
+    const step = this.step;
+    if (turn?.id !== slot.turnId || turn.step !== slot.step || step === undefined) return;
+    const outcome = isToolDetachAck(response)
+      ? { type: 'succeeded' as const, entry: toolEntry(slot.toolCall, response, true) }
+      : toolOutcomeOf(slot);
     settle(step, slot.key, outcome);
     if (allSettled(step)) this.post({ type: 'acting.complete', turn, step });
   }
 
-  private completeDetached(slot: LiveTool, outcome: AsyncToolOutcome, entry: UserEntry): void {
-    if (this.phase === 'closed' || this.tools.get(slot.key) !== slot) return;
+  private completeTool(slot: LiveTool, result: ToolResult): void {
+    if (slot.done) return;
+    slot.result = result;
+    slot.done = true;
+    if (slot.detached) {
+      const outcome = asyncOutcomeOf(slot);
+      if (slot.completion === undefined) {
+        const entry = completionEntry(slot.toolCall, outcome, result);
+        slot.completionEntry = Promise.resolve(entry);
+        this.post({ type: 'tool.detached_completed', slot, outcome, entry });
+      } else {
+        slot.completionEntry = resolveCompletionEntry({
+          toolCall: slot.toolCall,
+          outcome,
+          result,
+        }, slot.completion);
+        void slot.completionEntry.then((entry) => {
+          this.post({ type: 'tool.detached_completed', slot, outcome, entry });
+          this.kick();
+        }, (error: unknown) => {
+          if (this.phase === 'closed') {
+            this.closeDetached();
+            this.kick();
+            return;
+          }
+          const failed: AsyncToolOutcome = { type: 'failed', error };
+          const input = { toolCall: slot.toolCall, outcome: failed, result };
+          const fallback = async (): Promise<UserEntry> => {
+            try {
+              if (slot.completion?.onRejected !== undefined) {
+                return await slot.completion.onRejected(error, input);
+              }
+            } catch {
+            }
+            return completionEntry(slot.toolCall, failed, result);
+          };
+          void fallback().then((entry) => {
+            if (this.phase === 'closed') return;
+            this.post({ type: 'tool.detached_rejected', slot, outcome: failed, entry });
+            this.kick();
+          });
+        });
+      }
+      this.kick();
+      return;
+    }
     this.tools.delete(slot.key);
     this.notifyTool(slot);
-    this.record({ type: 'tool.async_ended', toolCallId: slot.toolCall.id, outcome, entry });
+  }
+
+  private completeDetached(slot: LiveTool, outcome: AsyncToolOutcome, entry: UserEntry): void {
+    if (this.tools.get(slot.key) !== slot) return;
+    if (this.phase === 'closed') {
+      this.completeDetachedClose([{ slot, outcome, entry }]);
+      return;
+    }
+    this.tools.delete(slot.key);
+    this.notifyTool(slot);
+    this.record({ type: 'tool.async_ended', taskId: slot.handler.taskId, toolCallId: slot.toolCall.id, outcome, entry });
     this.record({ type: 'prompt.notified', entry });
     this.mailbox.queue([entry]);
     this.held = false;
@@ -1541,25 +1596,18 @@ class LoopActor implements Loop {
 
   private abortToolCall(toolCallId: string, reason: unknown): void {
     for (const slot of this.tools.values()) {
-      if (slot.toolCall.id === toolCallId && !slot.done) slot.scope.abort(reason);
+      if (slot.toolCall.id === toolCallId && !slot.detached && !slot.done) {
+        void slot.handler.stop(reason);
+      }
     }
   }
 
-  private expireTools(turn: LiveTurn, step: StepState, reason: unknown): void {
+  private settleUnstartedTools(turn: LiveTurn, step: StepState, reason: unknown): void {
     for (const call of step.calls) {
-      if (step.settled[call.key] !== undefined) continue;
-      const slot = this.tools.get(call.key);
-      const toolCall = slot?.toolCall ?? call.toolCall;
-      if (slot === undefined || !slot.announced) {
-        this.record({ type: 'tool.started', turnId: turn.id, step: turn.step, toolCall });
-      }
-      if (slot !== undefined) {
-        slot.done = true;
-        this.tools.delete(call.key);
-        this.notifyTool(slot);
-      }
-      const outcome = abortedToolOutcome(toolCall, reason);
-      this.record({ type: 'tool.ended', toolCallId: toolCall.id, outcome, detached: false });
+      if (step.settled[call.key] !== undefined || this.tools.has(call.key)) continue;
+      this.record({ type: 'tool.started', turnId: turn.id, step: turn.step, toolCall: call.toolCall });
+      const outcome = abortedToolOutcome(call.toolCall, reason);
+      this.record({ type: 'tool.ended', toolCallId: call.toolCall.id, outcome, detached: false });
       settle(step, call.key, outcome);
     }
   }
@@ -1571,21 +1619,22 @@ class LoopActor implements Loop {
     }
   }
 
-  private expireToolsAndFinish(turn: LiveTurn): void {
+  private settleToolsAndFinish(turn: LiveTurn): void {
     if (!this.isCurrent(turn)) return;
     const step = this.step;
     if (step === undefined) {
       this.post({ type: 'turn.finish', turn });
       return;
     }
-    this.expireTools(turn, step, turn.outcome?.type === 'aborted' ? turn.outcome.reason : undefined);
+    this.settleUnstartedTools(turn, step, turn.outcome?.type === 'aborted' ? turn.outcome.reason : undefined);
+    if (!allSettled(step)) return;
     this.appendToolEntries(turn, step);
     this.finalizeStep(turn, step);
     this.post({ type: 'turn.finish', turn });
   }
 
   private completeActing(turn: LiveTurn, step: StepState): void {
-    if (!this.isCurrentStep(turn, step, 'acting') || !allSettled(step)) return;
+    if (this.turn !== turn || this.step !== step || turn.phase !== 'acting' || !allSettled(step)) return;
     this.appendToolEntries(turn, step);
     if (turn.outcome?.type === 'aborted') {
       this.finalizeStep(turn, step);
@@ -1696,7 +1745,7 @@ class LoopActor implements Loop {
     this.record({ type: 'turn.ended', turnId: unfinished.turnId, outcome });
   }
 
-  private continueTurn(): void {
+  private continueTurn(force: boolean): void {
     if (this.phase !== 'idle') return;
     const unfinished = this.durable.unfinished;
     if (unfinished !== undefined && isResumable(this.durable)) {
@@ -1711,7 +1760,7 @@ class LoopActor implements Loop {
       return;
     }
     this.closeUnfinished();
-    if (!this.mailbox.hasTrigger && canContinue(this.durable.messages)) {
+    if (!this.mailbox.hasTrigger && (force || canContinue(this.durable.messages))) {
       this.activate(createTurn(this.root, {
         id: this.durable.nextTurnId,
         trigger: 'continue',
@@ -1740,6 +1789,11 @@ class LoopActor implements Loop {
     const step = this.step;
     if (step !== undefined && step.outcome?.type !== 'aborted') step.outcome = { type: 'aborted', reason };
     turn.scope.abort(reason);
+    for (const slot of this.tools.values()) {
+      if (slot.turnId === turn.id && slot.step === turn.step && !slot.detached && !slot.done) {
+        void slot.handler.stop(reason);
+      }
+    }
     if (turn.phase === 'requesting' && step !== undefined) {
       const outcome: LlmOutcome = { type: 'aborted', message: null, usage: undefined, reason: undefined };
       step.llm = outcome;
@@ -1749,24 +1803,35 @@ class LoopActor implements Loop {
         this.record({ type: 'message.appended', turnId: turn.id, step: turn.step, source: 'llm', entry });
       }
       this.finalizeStep(turn, step);
-    } else if ((turn.phase === 'batching' || turn.phase === 'acting') && step !== undefined) {
-      this.expireTools(turn, step, reason);
+      this.finishTurn(turn);
+      return;
+    }
+    if ((turn.phase === 'batching' || turn.phase === 'acting') && step !== undefined) {
+      this.settleUnstartedTools(turn, step, reason);
+      if (!allSettled(step)) {
+        turn.phase = 'acting';
+        return;
+      }
       this.appendToolEntries(turn, step);
       this.finalizeStep(turn, step);
-    } else if (step !== undefined) {
-      this.finalizeStep(turn, step);
+      this.finishTurn(turn);
+      return;
     }
+    if (step !== undefined) this.finalizeStep(turn, step);
     this.finishTurn(turn);
   }
 
   private closeDetached(): void {
     const closing: { slot: LiveTool; outcome: AsyncToolOutcome; entry: Promise<UserEntry> }[] = [];
+    let pending = false;
     for (const slot of this.tools.values()) {
       if (!slot.detached) continue;
-      const outcome: AsyncToolOutcome = slot.status === undefined
-        ? { type: 'aborted', reason: CLOSED }
-        : asyncOutcomeOf(slot);
-      slot.done = true;
+      pending = true;
+      if (!slot.done) {
+        void slot.handler.stop(CLOSED);
+        continue;
+      }
+      const outcome = asyncOutcomeOf(slot);
       slot.completionEntry ??= resolveCompletionEntry({
         toolCall: slot.toolCall,
         outcome,
@@ -1774,11 +1839,29 @@ class LoopActor implements Loop {
       }, slot.completion);
       closing.push({ slot, outcome, entry: slot.completionEntry });
     }
+    this.closePending = pending;
     if (closing.length === 0) return;
-    this.closePending = true;
-    void Promise.all(closing.map(async ({ slot, outcome, entry }) => ({ slot, outcome, entry: await entry }))).then(
+    void Promise.all(closing.map(async ({ slot, outcome, entry }) => {
+      try {
+        return { slot, outcome, entry: await entry, failure: undefined };
+      } catch (error) {
+        const failed: AsyncToolOutcome = { type: 'failed', error };
+        const input = { toolCall: slot.toolCall, outcome: failed, result: slot.result };
+        let terminalEntry: UserEntry;
+        try {
+          terminalEntry = slot.completion?.onRejected === undefined
+            ? completionEntry(slot.toolCall, failed, slot.result)
+            : await slot.completion.onRejected(error, input);
+        } catch {
+          terminalEntry = completionEntry(slot.toolCall, failed, slot.result);
+        }
+        return { slot, outcome: failed, entry: terminalEntry, failure: { error } };
+      }
+    })).then(
       (entries) => {
         this.post({ type: 'close.detached', entries });
+        const failure = entries.find((entry) => entry.failure !== undefined)?.failure;
+        if (failure !== undefined) this.post({ type: 'close.failed', error: failure.error });
         this.kick();
       },
       (error: unknown) => {
@@ -1791,13 +1874,13 @@ class LoopActor implements Loop {
   private completeDetachedClose(
     entries: readonly { readonly slot: LiveTool; readonly outcome: AsyncToolOutcome; readonly entry: UserEntry }[],
   ): void {
-    this.closePending = false;
     for (const { slot, outcome, entry } of entries) {
       if (this.tools.get(slot.key) !== slot) continue;
       this.tools.delete(slot.key);
-      this.record({ type: 'tool.async_ended', toolCallId: slot.toolCall.id, outcome, entry });
+      this.record({ type: 'tool.async_ended', taskId: slot.handler.taskId, toolCallId: slot.toolCall.id, outcome, entry });
       this.notifyTool(slot);
     }
+    this.closePending = Array.from(this.tools.values()).some((slot) => slot.detached);
   }
 
   private failClose(error: unknown): void {

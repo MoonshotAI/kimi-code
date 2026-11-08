@@ -10,7 +10,7 @@ import { type ToolCall } from '#human/llm/message';
 import { usableOutputOf } from '#human/llm/policy/settle';
 import type { LlmModelSpec } from '#human/llm/request';
 import type { LlmOutcome } from '#human/llm/response';
-import type { ToolResult } from '#human/tool/executor';
+import type { ToolExecutionHandler, ToolResult } from '#/tool/executor';
 import { withAbort, type AbortScope } from '#human/utils/abort';
 import type { LoopInput } from './contract/command';
 import type { LoopAck, LoopEmitted } from './contract/emitted';
@@ -85,26 +85,21 @@ export interface StepState {
   model?: LlmModelSpec;
   llm?: LlmOutcome;
   readonly calls: StepCall[];
-  readonly settled: Record<string, ToolEntry>;
-  stoppedBy?: string;
+  readonly settled: Record<string, ToolEntry | null>;
   outcome?: StepOutcome;
 }
-
-export type ToolStatus = 'succeeded' | 'failed' | 'aborted';
 
 export interface LiveTool {
   readonly key: string;
   toolCall: ToolCall;
   readonly turnId: number;
   readonly step: number;
-  readonly scope: AbortScope;
+  readonly handler: ToolExecutionHandler;
   detached: boolean;
   announced: boolean;
+  responded: boolean;
   done: boolean;
-  status?: ToolStatus;
   result?: ToolResult;
-  error?: unknown;
-  reason?: unknown;
   completion?: ToolCompletionFactory;
   completionEntry?: Promise<UserEntry>;
   readonly waiters: Set<() => void>;
@@ -407,13 +402,13 @@ export function viewOf({ phase, held, inbox, durable, turn, tools }: AgentState)
 }
 
 export function draftOutcome(step: StepState): StepOutcome {
+  if (step.outcome !== undefined) return step.outcome;
   const llm = step.llm;
   if (llm === undefined) return { type: 'failed' };
   if (llm.type === 'aborted') return { type: 'aborted', reason: llm.reason };
   if (llm.type === 'failed') {
     return { type: 'failed', error: llm.error.kind === 'syntax' ? llm.error : (llm.rawError ?? llm.error) };
   }
-  if (step.stoppedBy !== undefined) return { type: 'done', cause: { by: step.stoppedBy, reason: 'stop_turn' } };
   if (llm.message.toolCalls.length === 0) return { type: 'done' };
   return { type: 'continue' };
 }
@@ -441,5 +436,4 @@ export function settle(step: StepState, key: string, outcome: ToolCallOutcome): 
   const call = step.calls.find((item) => item.key === key);
   if (call === undefined || step.settled[key] !== undefined) return;
   step.settled[key] = outcome.entry;
-  if (outcome.type !== 'aborted' && outcome.entry.meta?.stopTurn === true) step.stoppedBy ??= call.toolCall.id;
 }

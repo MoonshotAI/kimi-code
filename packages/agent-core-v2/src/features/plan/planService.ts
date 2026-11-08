@@ -16,6 +16,7 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { registerLegacyStarting } from '#/agent/toolExecutor/legacyHooks';
 import type {
   BeforeToolExecuteEvent,
   ResolvedToolExecutionHookContext,
@@ -88,10 +89,23 @@ export class AgentPlanService extends Service implements IAgentPlanService {
 
     this._register(new PlanModeInjection(reminder, this, this.context, agentState));
     this._register(this.registerPlanGuard(toolExecutor));
+    this._register(this.context.hooks.onDidFinishStep.register('plan-rejection-stop', (context, next) => {
+      for (const tool of context.tools) {
+        if (tool.toolCall.name !== 'ExitPlanMode') continue;
+        const text = tool.outcome.entry.message.content
+          .map((part) => part.type === 'text' ? part.text : '')
+          .join('\n');
+        if (
+          text === 'Plan rejected by user. Plan mode deactivated.' ||
+          text === 'Plan rejected by user. Plan mode remains active.'
+        ) context.stopTurn = true;
+      }
+      return next();
+    }));
   }
 
   private registerPlanGuard(toolExecutor: IAgentToolExecutorService): IDisposable {
-    return toolExecutor.onBeforeExecuteTool((event) => this.guardToolExecution(event));
+    return registerLegacyStarting(toolExecutor, (event) => this.guardToolExecution(event));
   }
 
   private async guardToolExecution(event: BeforeToolExecuteEvent): Promise<void> {

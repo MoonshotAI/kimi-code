@@ -25,7 +25,7 @@ export type StepOutcome =
   | { readonly type: 'blocked'; readonly at: 'step.starting' | StepEndingPoint; readonly cause: Cause };
 
 export type ToolCallOutcome =
-  | { readonly type: 'succeeded'; readonly entry: ToolEntry; readonly stopTurn?: true }
+  | { readonly type: 'succeeded'; readonly entry: ToolEntry }
   | { readonly type: 'failed'; readonly entry: ToolEntry; readonly error: unknown }
   | { readonly type: 'aborted'; readonly entry: ToolEntry; readonly reason?: unknown }
   | { readonly type: 'blocked'; readonly entry: ToolEntry; readonly cause: Cause };

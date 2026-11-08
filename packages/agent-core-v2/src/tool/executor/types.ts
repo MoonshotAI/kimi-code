@@ -142,7 +142,7 @@ export interface ToolExecuteContext<
   TFields extends object = object,
   TPrepared = unknown,
 > extends ToolDecisionContext<TArgs, TContext, TPrepared>, ToolView<TFields, TPrepared> {
-  detach(reason?: unknown): ToolDetachAck | undefined;
+  detach(reason?: unknown, acknowledgement?: ToolAcknowledgement): ToolDetachAck | undefined;
   onDetach(acknowledge: (reason: unknown) => ToolAcknowledgement): void;
   write(text: string): number | undefined;
   flush(): Promise<void>;
@@ -157,7 +157,9 @@ export interface ToolStoppingContext<TFields extends object = object, TPrepared 
 
 export interface AfterExecuteHookContext<TArgs = unknown, TContext = unknown, TPrepared = unknown>
   extends ToolDecisionContext<TArgs, TContext, TPrepared> {
+  readonly fields: Readonly<Record<string, unknown>>;
   result: ToolResult;
+  set(fields: Record<string, unknown>): void;
 }
 
 export type ToolHandlerEvent<TFields extends object = object, TPrepared = unknown> =
@@ -173,12 +175,13 @@ export interface ToolExecutionHandler<TFields extends object = object, TPrepared
   readonly taskId: string;
   wait(): Promise<ToolResult>;
   stop(reason?: unknown): Promise<ToolResult>;
-  detach(reason?: unknown): ToolDetachAck | undefined;
+  detach(reason?: unknown, acknowledgement?: ToolAcknowledgement): ToolDetachAck | undefined;
   observe(listener: (event: ToolHandlerEvent<TFields, TPrepared>) => void): () => void;
 }
 
-export type ToolExecutionEvent<TFields extends object = object, TPrepared = unknown> = {
+export type ToolExecutionEvent<TFields extends object = object, TPrepared = unknown, TContext = unknown> = {
   readonly call: ToolCall;
+  readonly context: TContext;
   readonly handler: ToolExecutionHandler<TFields, TPrepared>;
 } & ({ readonly type: 'created' } | ToolHandlerEvent<TFields, TPrepared>);
 
@@ -193,7 +196,7 @@ export interface ToolExecutorHook<TContext = unknown, TPrepared = unknown> {
   afterExecute?(
     context: AfterExecuteHookContext<any, TContext, TPrepared>,
   ): ToolResult | void | Promise<ToolResult | void>;
-  observe?(event: ToolExecutionEvent<any, TPrepared>): void;
+  observe?(event: ToolExecutionEvent<any, TPrepared, TContext>): void;
 }
 
 export interface ToolCallRewrite {
@@ -203,6 +206,7 @@ export interface ToolCallRewrite {
 export interface ToolCallRejection {
   readonly reject: string;
   readonly data?: unknown;
+  readonly result?: ToolReturn;
 }
 
 export type ToolDecision = ToolCallRewrite | ToolCallRejection;

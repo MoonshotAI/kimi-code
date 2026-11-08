@@ -34,8 +34,7 @@ export class AgentInterruptionReminderService
 
   notifyUserCancellation(reason: unknown): void {
     if (!isUserCancellation(reason)) return;
-    const history = this.context.history();
-    const origin = lastComparableMessage(history)?.origin;
+    const origin = lastComparableMessage(this.context.history())?.origin;
     if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;
     this.reminder.notify(INTERRUPTION_REMINDER, {
       variant: INTERRUPTION_REMINDER_VARIANT,
