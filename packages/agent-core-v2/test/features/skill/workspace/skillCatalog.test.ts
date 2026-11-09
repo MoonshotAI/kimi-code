@@ -1,5 +1,6 @@
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { parse } from 'node:path';
 
 import { join } from 'pathe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -62,6 +63,7 @@ import { stubLog } from '../../../_base/log/stubs';
 const watchMockState = vi.hoisted(() => ({
   calls: [] as { path: string; options?: WatchOptions }[],
   factory: undefined as undefined | ((path: string, options?: WatchOptions) => unknown),
+  useRealWatch: false,
 }));
 
 vi.mock('#human/utils/watch', async (importOriginal) => {
@@ -80,8 +82,10 @@ vi.mock('#human/utils/watch', async (importOriginal) => {
   return {
     ...original,
     watch,
-    watchCandidates: (root: string, _candidates: readonly string[], options?: WatchOptions) =>
-      watch(root, options),
+    watchCandidates: (root: string, candidates: readonly string[], options?: WatchOptions) =>
+      watchMockState.useRealWatch
+        ? original.watchCandidates(root, candidates, options)
+        : watch(root, options),
   };
 });
 
@@ -273,6 +277,7 @@ describe('WorkspaceSkillCatalogService', () => {
   beforeEach(() => {
     watchMockState.calls = [];
     watchMockState.factory = undefined;
+    watchMockState.useRealWatch = false;
     _clearScopedRegistryForTests();
     registerScopedService(LifecycleScope.App, IBuiltinSkillSource, BuiltinSkillSource);
     registerScopedService(LifecycleScope.App, IUserFileSkillSource, UserFileSkillSource);
@@ -685,6 +690,75 @@ describe('WorkspaceSkillCatalogService', () => {
     expect(catalog.catalog.getSkill('extra-only')?.description).toBe('from extra');
     expect(catalog.catalog.getSkill('demo:plugin-only')?.description).toBe('from plugin');
     host.dispose();
+  });
+
+  it('refreshes the loaded catalog when a skill is added to a configured root', async () => {
+    const workDir = await realpath(await mkdtemp(join(tmpdir(), 'explicit-skill-watch-')));
+    const skillRoot = join(workDir, 'managed', 'skills');
+    const skillDir = join(skillRoot, 'new-skill');
+    await mkdir(skillRoot, { recursive: true });
+    watchMockState.useRealWatch = true;
+    const { host, workspace } = makeHost(
+      new FileSkillDiscovery(stubLog()),
+      workspaceContextStub(workDir),
+      [],
+      ['managed/skills'],
+    );
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      const watcherScan = waitForEvents(catalog.onDidChange, 1);
+      await catalog.load();
+      await watcherScan;
+      const sessionData = catalog.sessionData();
+      expect(sessionData.catalog.getSkill('new-skill')).toBeUndefined();
+
+      await mkdir(skillDir);
+      await writeFile(
+        join(skillDir, 'SKILL.md'),
+        '---\nname: new-skill\ndescription: Added after catalog load\n---\n',
+      );
+      await expect.poll(() => sessionData.catalog.getSkill('new-skill')?.description, { timeout: 5000 }).toBe(
+        'Added after catalog load',
+      );
+    } finally {
+      host.dispose();
+      await rm(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it('loads configured skills before watching is ready and refreshes when watching starts', async () => {
+    await withSkillCatalogWorkspace(async ({ workDir, skillRoot }) => {
+      const watchReady = deferred<void>();
+      const watchRoot = parse(skillRoot).root;
+      watchMockState.factory = (path) => ({
+        ready: path === watchRoot ? watchReady.promise : Promise.resolve(),
+        onDidChange: () => ({ dispose: () => {} }),
+        dispose: () => {},
+      });
+      const store = new InMemorySkillDiscovery();
+      const existingSkill = stubSkill('existing-skill', { description: 'Available before watching starts' });
+      store.setUserSkills([existingSkill]);
+      const { host, workspace } = makeHost(store, workspaceContextStub(workDir), [], [skillRoot]);
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      const loaded = catalog.load();
+
+      try {
+        await expect.poll(() => catalog.catalog.getSkill('existing-skill')?.description).toBe(existingSkill.description);
+        await loaded;
+
+        const addedSkill = stubSkill('added-skill', { description: 'Added before watching starts' });
+        store.setUserSkills([existingSkill, addedSkill]);
+        expect(catalog.catalog.getSkill('added-skill')).toBeUndefined();
+
+        watchReady.resolve(undefined);
+        await expect.poll(() => catalog.catalog.getSkill('added-skill')?.description).toBe(addedSkill.description);
+      } finally {
+        watchReady.resolve(undefined);
+        await loaded.catch(() => undefined);
+        host.dispose();
+      }
+    });
   });
 
   it('waits for config ready before loading extra skill dirs', async () => {
