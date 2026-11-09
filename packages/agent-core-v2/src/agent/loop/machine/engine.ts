@@ -178,7 +178,7 @@ export interface MachineEngineSnapshot {
 }
 
 export interface MachineEngine {
-  submit(entry: UserEntry): void;
+  submit(entry: UserEntry, beforeId?: string): void;
   steer(id: string | readonly string[]): void;
   notify(entry: UserEntry): void;
   remind(entry: SystemEntry | UserEntry): void;
@@ -186,7 +186,7 @@ export interface MachineEngine {
   abort(reason?: unknown): void;
   pause(): void;
   resume(): void;
-  move(id: string, beforeId?: string): void;
+  move(id: string, beforeId?: string, delivery?: 'steer'): void;
   resetHistory(history: readonly HistoryMessage[]): Promise<void>;
   resetJournal(journal: SyncStoreJournal): Promise<void>;
   stop(): void;
@@ -229,7 +229,10 @@ function startingIdOf(snapshot: MachineSnapshotLike): string | undefined {
 }
 
 function queueKeyOf(snapshot: MachineSnapshotLike): string {
-  return JSON.stringify([snapshot.context.queue.map((entry) => entry.meta?.promptId), startingIdOf(snapshot)]);
+  return JSON.stringify([
+    snapshot.context.queue.map((entry) => [entry.meta?.promptId, entry.meta?.delivery]),
+    startingIdOf(snapshot),
+  ]);
 }
 
 function createDeltaSplitter(): (part: StreamedMessagePart) => MachineEngineDelta | undefined {
@@ -534,9 +537,9 @@ export function attachMachineEngine(
   );
 
   return {
-    submit: (entry) => {
+    submit: (entry, beforeId) => {
       tools.sync();
-      ref.send({ type: 'input.submit', entry });
+      ref.send({ type: 'input.submit', entry, beforeId });
     },
     steer: (id) => {
       tools.sync();
@@ -562,8 +565,8 @@ export function attachMachineEngine(
     resume: () => {
       ref.send({ type: 'input.continue' });
     },
-    move: (id, beforeId) => {
-      ref.send({ type: 'input.move', id, beforeId });
+    move: (id, beforeId, delivery) => {
+      ref.send({ type: 'input.move', id, beforeId, delivery });
     },
     resetHistory: (history) => {
       const events: ExternalEvent[] = history.map((message) => messageAppended({ message }));

@@ -82,7 +82,7 @@ type SpawnChild = <TLogic extends AnyActorLogic>(
 export type AgentEvent =
   | TurnLlmEvent
   | ToolEvent
-  | { type: 'input.submit'; entry: UserEntry }
+  | { type: 'input.submit'; entry: UserEntry; beforeId?: string }
   | { type: 'input.notify'; entry: UserEntry }
   | { type: 'input.remind'; entry: SystemEntry | UserEntry }
   | { type: 'input.steer'; id: string | readonly string[] }
@@ -90,7 +90,7 @@ export type AgentEvent =
   | { type: 'input.abort'; reason?: unknown }
   | { type: 'input.pause' }
   | { type: 'input.continue' }
-  | { type: 'input.move'; id: string; beforeId?: string }
+  | { type: 'input.move'; id: string; beforeId?: string; delivery?: 'steer' }
   | { type: 'input.close' }
   | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
@@ -248,12 +248,24 @@ function hasBackgroundWork(context: AgentMachineContext): boolean {
   return Object.keys(context.background).length > 0;
 }
 
-function movedQueue(queue: readonly UserEntry[], id: string, beforeId: string | undefined): UserEntry[] | undefined {
-  const moved = queue.find((item) => item.meta?.promptId === id);
-  if (moved === undefined) return undefined;
-  const rest = queue.filter((item) => item !== moved);
+function insertedBefore(queue: readonly UserEntry[], entry: UserEntry, beforeId: string | undefined): UserEntry[] {
+  const index = beforeId === undefined ? -1 : queue.findIndex((item) => item.meta?.promptId === beforeId);
+  if (index === -1) return [...queue, entry];
+  return [...queue.slice(0, index), entry, ...queue.slice(index)];
+}
+
+function movedQueue(
+  queue: readonly UserEntry[],
+  id: string,
+  beforeId: string | undefined,
+  delivery: 'steer' | undefined,
+): UserEntry[] | undefined {
+  const found = queue.find((item) => item.meta?.promptId === id);
+  if (found === undefined) return undefined;
+  const rest = queue.filter((item) => item !== found);
   const index = beforeId === undefined ? rest.length : rest.findIndex((item) => item.meta?.promptId === beforeId);
   if (index === -1) return undefined;
+  const moved = delivery === undefined ? found : { ...found, meta: { ...found.meta, delivery } };
   return [...rest.slice(0, index), moved, ...rest.slice(index)];
 }
 
@@ -481,10 +493,11 @@ export function createAgentMachine({
         actions: assign(({ context, event }) => {
           if (event.type !== 'input.submit') return {};
           return {
-            queue: [
-              ...context.queue,
+            queue: insertedBefore(
+              context.queue,
               createUserEntry(event.entry.message, { source: 'input', ...event.entry.meta }),
-            ],
+              event.beforeId,
+            ),
           };
         }),
       },
@@ -563,7 +576,7 @@ export function createAgentMachine({
       'input.move': {
         actions: assign(({ context, event }) => {
           if (event.type !== 'input.move') return {};
-          const queue = movedQueue(context.queue, event.id, event.beforeId);
+          const queue = movedQueue(context.queue, event.id, event.beforeId, event.delivery);
           return queue === undefined ? {} : { queue };
         }),
       },

@@ -2006,6 +2006,8 @@ describe('SessionEventBroadcaster', () => {
       await settle();
       main.setQueue([entry('b'), entry('cron', false)]);
       await settle();
+      main.setQueue([{ ...entry('b'), meta: { ...entry('b').meta, delivery: 'steer' } }]);
+      await settle();
       main.setQueue([entry('parked')], undefined, false);
       await settle();
       main.setQueue([]);
@@ -2023,6 +2025,7 @@ describe('SessionEventBroadcaster', () => {
             created_at: '2026-11-06T00:00:00.000Z',
           },
         ],
+        [expect.objectContaining({ prompt_id: 'b', delivery: 'steer' })],
         [],
       ]);
     });

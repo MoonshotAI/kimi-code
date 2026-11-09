@@ -24,6 +24,7 @@ export interface PromptWithSkillsInput {
   readonly skills: readonly PromptSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];
   readonly steerIfActive?: boolean;
+  readonly steer?: boolean;
 }
 
 export interface PromptWithSkillsResult {

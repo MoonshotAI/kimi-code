@@ -54,6 +54,7 @@ export interface UserMeta extends EntryMeta {
   tracked?: boolean;
   createdAt?: string;
   userMessageId?: string;
+  delivery?: 'queue' | 'steer';
 }
 
 export type ToolMeta = EntryMeta;

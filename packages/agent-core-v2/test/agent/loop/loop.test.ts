@@ -2436,7 +2436,7 @@ describe('prompt queue', () => {
     await ctx.dispose();
   });
 
-  const submit = (id: string, options?: { readonly steerIfActive?: boolean }) =>
+  const submit = (id: string, options?: { readonly steerIfActive?: boolean; readonly steer?: boolean }) =>
     loop.submit(
       {
         message: { role: 'user', content: [{ type: 'text', text: id }] },
@@ -2446,6 +2446,11 @@ describe('prompt queue', () => {
     ).acceptedAs;
   const queueIds = () => loop.snapshot().queue.map((entry) => entry.meta?.promptId);
   const notQueued = expect.objectContaining({ code: ErrorCodes.PROMPT_NOT_FOUND });
+  const userTexts = () =>
+    ctx
+      .contextData()
+      .history.filter((message) => message.role === 'user')
+      .map((message) => message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''));
 
   async function untilModelRequest(): Promise<void> {
     await vi.waitFor(() => expect(heldRequests.length).toBeGreaterThan(0));
@@ -2523,6 +2528,68 @@ describe('prompt queue', () => {
     expect(queueIds()).toEqual(['b']);
   });
 
+  it('starts a turn for a steer when the agent is idle with an empty queue', () => {
+    expect(submit('a', { steer: true })).toBe('turn');
+    expect(queueIds()).toEqual(['a']);
+    expect(loop.snapshot().queue[0]?.meta?.delivery).toBeUndefined();
+  });
+
+  it('holds steers in the steer slot until a user turn starts, then steers the rest into it', async () => {
+    loop.notify({
+      message: { role: 'user', content: [{ type: 'text', text: 'system' }], origin: { kind: 'system_trigger', name: 'test' } },
+    });
+    await untilModelRequest();
+    const deliveries = () => loop.snapshot().queue.map((entry) => [entry.meta?.promptId, entry.meta?.delivery ?? 'queue']);
+    const invalid = expect.objectContaining({ code: ErrorCodes.REQUEST_INVALID });
+
+    expect(submit('q1')).toBe('queue');
+    expect(submit('s1', { steer: true })).toBe('steer');
+    expect(submit('s2', { steer: true })).toBe('steer');
+    expect(deliveries()).toEqual([['s1', 'steer'], ['s2', 'steer'], ['q1', 'queue']]);
+    expect(() => loop.moveQueued('s1')).toThrow(invalid);
+    expect(() => loop.moveQueued('q1', 's2')).toThrow(invalid);
+    await loop.steer(['q1']);
+    submit('q2');
+    expect(deliveries()).toEqual([['s1', 'steer'], ['s2', 'steer'], ['q1', 'steer'], ['q2', 'queue']]);
+
+    const started: (string | undefined)[] = [];
+    const turnStarts = ctx.get(IEventBus).subscribe(TurnStarted, (event) => started.push(event.prompt));
+    try {
+      for (let round = 0; round < 20 && (heldRequests.length > 0 || queueIds().length > 0); round += 1) {
+        heldRequests.shift()?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      await loop.settled();
+    } finally {
+      turnStarts.dispose();
+    }
+
+    expect(started).toEqual(['s1', 'q2']);
+    expect(userTexts()).toEqual(['system', 's1', 's2q1', 'q2']);
+  });
+
+  it('places a steer behind the head whose submit hooks are running and steers it into that turn', async () => {
+    const gate = deferred();
+    loop.hooks.onBeforeSubmitPrompt.register('test-hold-gate', async (_hookCtx, next) => {
+      await gate.promise;
+      await next();
+    });
+    submit('a');
+    await vi.waitFor(() => expect(loop.snapshot().startingPromptId).toBe('a'));
+
+    expect(submit('s', { steer: true })).toBe('steer');
+    expect(queueIds()).toEqual(['a', 's']);
+
+    gate.resolve();
+    await vi.waitFor(() => expect(queueIds()).toEqual([]));
+    for (let round = 0; round < 20 && heldRequests.length > 0; round += 1) {
+      heldRequests.shift()?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await loop.settled();
+    expect(userTexts()).toEqual(['a', 's']);
+  });
+
   it('finishes a continued turn before the queued head starts, gating the head once', async () => {
     let continued = false;
     loop.hooks.onDidFinishStep.register('test-continue-once', async (_hookCtx, next) => {
@@ -2565,11 +2632,7 @@ describe('prompt queue', () => {
     expect(started).toEqual(['a', 'b']);
     expect(hooked).toEqual(['a', 'b']);
     expect(queues).toEqual(['[["b"],null]', '[["b"],"b"]', '[[],null]']);
-    const userTexts = ctx
-      .contextData()
-      .history.filter((message) => message.role === 'user')
-      .map((message) => message.content.map((part) => (part.type === 'text' ? part.text : '')).join(''));
-    expect(userTexts).toEqual(['a', 'continue', 'b']);
+    expect(userTexts()).toEqual(['a', 'continue', 'b']);
   });
 
   it.each([1, 2, 3, 4, 5])('keeps queue invariants under random operations (seed %i)', async (seed) => {

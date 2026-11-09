@@ -81,7 +81,7 @@ export function readQueuedInputs(handle: IAgentScopeHandle): QueuedInput[] {
         prompt_id: meta.promptId,
         user_message_id: meta.userMessageId ?? meta.promptId,
         kind: 'input',
-        delivery: 'queue',
+        delivery: meta.delivery ?? 'queue',
         content: projectUserContent({ ...entry.message, origin }),
         skills: skills !== undefined && skills.length > 0 ? skills : undefined,
         client_metadata: user?.clientMetadata?.[0],

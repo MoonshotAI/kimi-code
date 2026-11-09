@@ -362,7 +362,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 clientMetadata,
                 skills: req.body.skills,
                 attachments: promptAttachments,
-                steerIfActive: req.body.delivery === 'steer',
+                steer: req.body.delivery === 'steer',
               });
             } catch (error) {
               settlement.dispose();
@@ -395,7 +395,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
                 tracked: true,
               },
             },
-            { steerIfActive: req.body.delivery === 'steer' },
+            { steer: req.body.delivery === 'steer' },
           );
           attempt.enqueued();
           enqueued = true;

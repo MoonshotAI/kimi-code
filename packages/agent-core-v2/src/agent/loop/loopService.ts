@@ -362,7 +362,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.machinePaused() ||
       this.pendingSubmissions.length > 0 ||
       (this.engine !== undefined && this.engine.snapshot().queue.length > 0);
-    let acceptedAs: PromptAcceptance = queued ? 'queue' : 'turn';
+    const steersActive =
+      (options?.steerIfActive === true || (options?.steer === true && !this.machinePaused())) &&
+      this.active !== undefined &&
+      this.active.prompt.tracked &&
+      this.engine !== undefined;
+    const slotted = options?.steer === true && queued && !steersActive;
+    let acceptedAs: PromptAcceptance = slotted ? 'steer' : queued ? 'queue' : 'turn';
     if (tracked) {
       this.publishPromptSubmitted(
         { promptId: id, origin, userMessageId, createdAt, message },
@@ -372,11 +378,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     const entry: UserEntry = {
       message: { role: 'user', content: [...input.message.content] },
-      meta: { promptId: id, origin, tracked, createdAt, userMessageId },
+      meta: { promptId: id, origin, tracked, createdAt, userMessageId, delivery: slotted ? 'steer' : undefined },
     };
     if (this.engine !== undefined) {
       try {
-        this.machineEngine().submit(entry);
+        this.machineEngine().submit(
+          entry,
+          slotted ? steerSlotBefore(this.engine.snapshot().queue, this.snapshot().startingPromptId) : undefined,
+        );
       } catch {
         waiter.launched.resolve(undefined);
         waiter.completion.resolve({
@@ -389,15 +398,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         waiter.failedEntry = entry;
         return { id, acceptedAs };
       }
+    } else if (slotted) {
+      const index = this.pendingSubmissions.findIndex((item) => item.meta?.delivery !== 'steer');
+      this.pendingSubmissions.splice(index === -1 ? this.pendingSubmissions.length : index, 0, entry);
     } else {
       this.pendingSubmissions.push(entry);
     }
-    if (
-      options?.steerIfActive === true &&
-      this.active !== undefined &&
-      this.active.prompt.tracked &&
-      this.engine !== undefined
-    ) {
+    if (steersActive) {
       this.machineEngine().steer(id);
       if (!this.machineEngine().snapshot().queueIds.includes(id)) acceptedAs = 'steer';
     }
@@ -413,6 +420,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (!movable(promptId) || (beforePromptId !== undefined && !movable(beforePromptId))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'prompt is not queued');
     }
+    const isSteer = (id: string): boolean =>
+      snapshot?.queue.find((item) => item.meta?.promptId === id)?.meta?.delivery === 'steer';
+    if (isSteer(promptId) || (beforePromptId !== undefined && isSteer(beforePromptId))) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, 'steer entries keep their place ahead of queued prompts');
+    }
     this.machineEngine().move(promptId, beforePromptId);
   }
 
@@ -421,27 +433,36 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (promptIds.length === 0) {
       throw new Error2(ErrorCodes.REQUEST_INVALID, 'prompt_ids must not be empty');
     }
-    const active = this.active;
-    if (active === undefined || !active.prompt.tracked) {
-      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'no active prompt to steer into');
+    if (this.engine === undefined) {
+      throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
     const engine = this.machineEngine();
     const ids = new Set(promptIds);
-    const queuedIds = new Set(engine.snapshot().queue.map((item) => item.meta?.promptId));
-    if (ids.size !== promptIds.length || ![...ids].every((id) => queuedIds.has(id))) {
+    const queuedIds = (): Set<string | undefined> => new Set(engine.snapshot().queue.map((item) => item.meta?.promptId));
+    if (ids.size !== promptIds.length || ![...ids].every((id) => queuedIds().has(id))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are not pending');
     }
     for (const id of ids) {
       const entry = engine.snapshot().queue.find((item) => item.meta?.promptId === id);
       if (entry !== undefined) await this.materializeDaemonRefs(entry.message);
     }
-    if (
-      this.active !== active ||
-      ![...ids].every((id) => new Set(engine.snapshot().queue.map((item) => item.meta?.promptId)).has(id))
-    ) {
+    if (![...ids].every((id) => queuedIds().has(id))) {
       throw new Error2(ErrorCodes.PROMPT_NOT_FOUND, 'one or more prompts are no longer pending');
     }
-    engine.steer(promptIds);
+    if (this.active?.prompt.tracked === true && !this.machinePaused()) {
+      engine.steer(promptIds);
+      return;
+    }
+    for (const id of promptIds) {
+      const queue = engine.snapshot().queue;
+      const starting = this.snapshot().startingPromptId;
+      const index = queue.findIndex((item) => item.meta?.promptId === id);
+      const before =
+        id === starting
+          ? queue[index + 1]?.meta?.promptId
+          : steerSlotBefore(queue.filter((item) => item.meta?.promptId !== id), starting);
+      engine.move(id, before, 'steer');
+    }
   }
 
   promptHandle(id: string): PromptHandle | undefined {
@@ -545,7 +566,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private signalQueueChange(): void {
     const snapshot = this.snapshot();
-    const key = JSON.stringify([snapshot.queue.map((entry) => entry.meta?.promptId), snapshot.startingPromptId]);
+    const key = JSON.stringify([
+      snapshot.queue.map((entry) => [entry.meta?.promptId, entry.meta?.delivery]),
+      snapshot.startingPromptId,
+    ]);
     if (key === this.queueKey) return;
     this.queueKey = key;
     this.queueChange.fire();
@@ -1201,6 +1225,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       waiter.onMaterialize?.();
       this.materializeMessage(this.gatedProjectionMessage(boundTurn.prompt));
       this.settlePromptLaunched(waiter, boundTurn);
+      if (boundTurn.prompt.tracked) this.steerSlotIntoActiveTurn();
       return true;
     }
     const seeded = this.nudges.slice(this.nudgeCursor).find(
@@ -1220,6 +1245,15 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const seededTurn = this.beginActiveTurn(waiter, entry, pending.id);
     this.settlePromptLaunched(waiter, seededTurn);
     return true;
+  }
+
+  private steerSlotIntoActiveTurn(): void {
+    const slot = this.machineEngine()
+      .snapshot()
+      .queue.filter((item) => item.meta?.delivery === 'steer')
+      .map((item) => item.meta?.promptId)
+      .filter((id): id is string => id !== undefined);
+    if (slot.length > 0) this.machineEngine().steer(slot);
   }
 
   private gatedProjectionMessage(prompt: ActivePrompt): ContextMessage {
@@ -2539,3 +2573,7 @@ registerScopedService(
   ScopeActivation.OnScopeCreated,
   'loop',
 );
+
+function steerSlotBefore(queue: readonly UserEntry[], starting: string | undefined): string | undefined {
+  return queue.find((item) => item.meta?.delivery !== 'steer' && item.meta?.promptId !== starting)?.meta?.promptId;
+}
