@@ -434,6 +434,23 @@ disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 与 Agent 文件中的 `tools` / `disallowedTools` 一样，本节不仅决定模型能"看到"哪些工具，还会在执行前再次强制检查。[权限规则](#permission)仍是独立的控制层，用于决定哪些操作需要审批。
 :::
 
+## `todo`
+
+`todo` 控制 [`TodoList` 工具](../reference/tools.md)以及由它驱动的任务进度显示。默认关闭。修改后仅对之后新建的会话生效，已有会话保持创建时的状态。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `enabled` | `boolean` | `false` | 是否为没有自行列出 `TodoList` 的 Agent 提供该工具 |
+
+`enabled` 可被环境变量 `KIMI_CODE_TODO` 覆盖，优先级高于配置文件。
+
+```toml
+[todo]
+enabled = true
+```
+
+`enabled` 只决定默认值：Agent 文件的 `tools` 列表或全局 [`[tools] enabled`](#tools) 中写了 `TodoList` 时，即使 `enabled = false` 也会提供该工具。要在任何情况下都禁用，把它加入 `[tools] disabled`。
+
 ## `read`
 
 `read` 控制 [`Read` 工具](../reference/tools.md) 的字符额度，包含文件正文、行号和状态信息，不额外叠加行数或 UTF-8 字节数上限。

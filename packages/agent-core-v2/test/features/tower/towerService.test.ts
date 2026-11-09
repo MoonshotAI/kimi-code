@@ -24,6 +24,7 @@ import { PromptSubmitted } from '#/agent/prompt/promptEvents';
 import { isUserCancellation } from '#/_base/utils/abort';
 import { runWillBeginStepHooks, stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -4183,6 +4184,43 @@ describe('TowerModeInjection', () => {
     expect(text).toContain('.tower/comms/');
     expect(text).not.toContain('This supersedes any other instructions');
     expect(text).not.toContain('never create or edit files under `.tower/` by hand');
+  });
+
+  it('keeps the TodoList mentions in the reminders while TodoList is active', async () => {
+    await tower.enter();
+
+    await injectDynamic(ctx);
+    const full = lastTowerReminder(context);
+    await tower.exit();
+    await injectDynamic(ctx);
+
+    expect(full).toContain('and `MISSIONS.md`, not `TodoList`. Parallel delegation');
+    expect(lastTowerReminder(context)).toContain(
+      'your normal capabilities (including TodoList) are restored;',
+    );
+  });
+
+  it('drops the TodoList mentions from the reminders while TodoList is inactive', async () => {
+    ctx.get(IAgentProfileService).update({ disallowedTools: [TODO_LIST_TOOL_NAME] });
+    await tower.enter();
+
+    await injectDynamic(ctx);
+    const full = lastTowerReminder(context);
+    appendAssistantTurn(ctx, context, 'assistant one');
+    appendAssistantTurn(ctx, context, 'assistant two');
+    await injectDynamic(ctx);
+    const sparse = lastTowerReminder(context);
+    await tower.exit();
+    await injectDynamic(ctx);
+    const exit = lastTowerReminder(context);
+
+    expect(full).toContain('and `MISSIONS.md`. Parallel delegation');
+    expect(sparse).toContain('(`MISSIONS.md`). Never write product code yourself');
+    expect(exit).toContain('your normal capabilities are restored;');
+    for (const text of [full, sparse, exit]) {
+      expect(text).not.toContain('TodoList');
+      expect(text).not.toContain('${');
+    }
   });
 
   it('injects the exit reminder when tower mode turns off after being active', async () => {

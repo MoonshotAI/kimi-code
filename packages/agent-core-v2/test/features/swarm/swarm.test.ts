@@ -45,6 +45,7 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
@@ -283,8 +284,10 @@ describe('AgentSwarmService', () => {
   let permissionGateRan: boolean;
   let formatDenyMessage: Mock<(message: string) => string>;
   let telemetryTrack2: Mock<(event: string, properties?: unknown) => void>;
+  let todoListActive: boolean;
 
   beforeEach(() => {
+    todoListActive = true;
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
@@ -354,6 +357,7 @@ describe('AgentSwarmService', () => {
     ix.stub(IAgentToolApprovalService, { formatDenyMessage });
     telemetryTrack2 = vi.fn();
     ix.stub(ITelemetryService, { track2: telemetryTrack2 });
+    ix.stub(IAgentToolPolicyService, { isToolActive: () => todoListActive });
     registerTestAgentWire(ix, testWireScope('wire', 'swarm-test'), {
       log: ix.get(IAppendLogStore),
       eventBus: ix.get(IEventBus),
@@ -425,6 +429,28 @@ describe('AgentSwarmService', () => {
       disclosure: { kind: 'swarm_mode', state: 'active' },
     });
     expect(context.get()).toHaveLength(1);
+  });
+
+  it('tells the agent it need not track the swarm in TodoList only while TodoList is active', async () => {
+    const swarm = ix.get(IAgentSwarmService);
+    const context = ix.get(IAgentContextMemoryService);
+    const note = 'You do not need to use TodoList to record this workflow.';
+
+    swarm.enter('manual');
+    await runInjectionBoundary(ix.get(IAgentLoopService));
+    const withTodoList = messageText(context.get().at(-1));
+    swarm.exit();
+    await runInjectionBoundary(ix.get(IAgentLoopService));
+
+    todoListActive = false;
+    swarm.enter('manual');
+    await runInjectionBoundary(ix.get(IAgentLoopService));
+    const withoutTodoList = messageText(context.get().at(-1));
+
+    expect(withTodoList).toContain(`## Workflow\n\n${note}\n\n1. First,`);
+    expect(withoutTodoList).toContain('## Workflow\n\n1. First,');
+    expect(withoutTodoList).not.toContain('TodoList');
+    expect(withoutTodoList).not.toContain('${');
   });
 
   it('keeps one enter guidance when a later boundary sees the same active state', async () => {

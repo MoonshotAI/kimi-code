@@ -8,7 +8,7 @@
 # commented "# field: type" lines describe the remaining schema fields.
 # Values resolve as: default -> config.toml -> env overlay -> memory.
 
-# Index (31 sections · 2 overlay(s))
+# Index (32 sections · 2 overlay(s))
 #   background               src/agent/task/configSection.ts
 #   builtinProductSkills     src/features/skill/catalog/configSection.ts
 #   cron                     src/features/cron/configSection.ts
@@ -36,6 +36,7 @@
 #   swarm                    src/features/swarm/configSection.ts
 #   task                     src/agent/task/configSection.ts
 #   thinking                 src/app/kosongConfig/configSection.ts
+#   todo                     src/features/todo/configSection.ts
 #   tokenCounting            src/agent/tokenCounting/configSection.ts
 #   tools                    src/agent/toolPolicy/configSection.ts
 #   watch                    src/app/watch/configSection.ts
@@ -484,6 +485,18 @@ timeout_ms = 7200000
 # effort: string
 # forced_effort: string
 # keep: string
+
+# ##########################################################################
+# todo
+#   owner: src/features/todo/configSection.ts
+#   scope: core
+#   hooks: stripEnv
+#   env:
+#     enabled <- KIMI_CODE_TODO (custom parse)
+# ##########################################################################
+
+[todo]
+# enabled: boolean
 
 # ##########################################################################
 # tokenCounting (config.toml: token_counting)

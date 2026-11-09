@@ -4,9 +4,7 @@ You are now in "agent swarm" mode. The user may send tasks that require a large 
 
 ## Workflow
 
-You do not need to use TodoList to record this workflow.
-
-1. First, you may need to do a small amount of exploratory work before deciding how to divide the task across subagents. You may not need subagents during this exploratory phase.
+${todo_list_note}1. First, you may need to do a small amount of exploratory work before deciding how to divide the task across subagents. You may not need subagents during this exploratory phase.
 
 2. After exploring, if you are convinced no subagent is needed to complete the task, tell the user why and wait for further instructions; otherwise, continue with the appropriate delegation.
 
