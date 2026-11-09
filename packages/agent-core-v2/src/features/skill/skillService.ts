@@ -49,6 +49,7 @@ export const IAgentSkillService = createDecorator<IAgentSkillService>('agentSkil
 export class AgentSkillService implements IAgentSkillService {
   declare readonly _serviceBrand: undefined;
   private modelToolParent?: ModelToolSkillContext & { readonly turnId: number };
+  private ambiguousModelToolTurnId?: number;
 
   constructor(
     @ISessionSkillCatalog private readonly catalog: ISessionSkillCatalog,
@@ -224,10 +225,12 @@ export class AgentSkillService implements IAgentSkillService {
   }
 
   private rememberModelToolParent(origin: SkillActivationOrigin, turnId: number): void {
+    if (this.ambiguousModelToolTurnId === turnId) return;
     const parent = this.modelToolParent?.turnId === turnId ? this.modelToolParent : undefined;
     const workspaceDir = this.catalog.catalog.listSkills().find((skill) => skill.path === origin.skillPath)?.workspaceDir;
     if (origin.trigger === 'model-tool' && parent !== undefined && parent.workspaceDir !== workspaceDir) {
       this.modelToolParent = undefined;
+      this.ambiguousModelToolTurnId = turnId;
       return;
     }
     const queryDepth = origin.trigger === 'nested-skill' ? (parent?.queryDepth ?? 0) + 1 : 1;

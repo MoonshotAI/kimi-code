@@ -471,13 +471,19 @@ describe('ToolManager SkillTool wire behavior', () => {
       name: 'Skill',
       arguments: '{"skill":"parent","path":"/work/B/parent/SKILL.md"}',
     };
+    const parentBAgain: ToolCall = {
+      type: 'function',
+      id: 'call_parent_b_again',
+      name: 'Skill',
+      arguments: '{"skill":"parent","path":"/work/B/parent/SKILL.md"}',
+    };
     const childCall: ToolCall = {
       type: 'function',
       id: 'call_child_after_batch',
       name: 'Skill',
       arguments: '{"skill":"child"}',
     };
-    ctx.mockNextResponse({ type: 'text', text: 'Load both parents.' }, parentA, parentB);
+    ctx.mockNextResponse({ type: 'text', text: 'Load both parents.' }, parentA, parentB, parentBAgain);
     ctx.mockNextResponse({ type: 'text', text: 'Load the child.' }, childCall);
     ctx.mockNextResponse({ type: 'text', text: 'Done.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Use both parents' }] });
