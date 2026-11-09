@@ -100,6 +100,7 @@ export class PromptPredictionController {
     if (
       (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) &&
       this.suggestion?.accepted === false &&
+      this.host.state.editor.inputMode === 'prompt' &&
       !this.host.state.editor.hasAutocompleteActivity()
     ) {
       return this.accept(matchesKey(data, Key.right) ? 'right' : 'tab');

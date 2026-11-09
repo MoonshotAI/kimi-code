@@ -116,6 +116,15 @@ describe('PromptPredictionController', () => {
       accepted: true,
     }));
 
+    nextPrediction = () => Promise.resolve('git push');
+    controller.handleTurnEnded(turnEnded(13));
+    await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
+    editor.handleInput('!');
+    expect(editor.inputMode).toBe('bash');
+    expect(controller.handlePreInput('\t')).toBe(false);
+    expect(controller.handlePreInput(`${String.fromCodePoint(0x1b)}[C`)).toBe(false);
+    expect(editor.getText()).toBe('');
+
     for (const [, properties] of track.mock.calls) {
       expect(properties).not.toHaveProperty('text');
       expect(properties).not.toHaveProperty('prediction');
