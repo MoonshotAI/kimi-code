@@ -115,6 +115,19 @@ describe('server-v2 OpenAPI', () => {
     ).toBe(true);
   });
 
+  it('documents the Tower mode failure on the profile route', async () => {
+    const doc = await fetchOpenApi();
+    const op = operation(doc, '/api/v1/sessions/{session_id}/profile', 'post');
+    const content = asRecord(asRecord(asRecord(op['responses'])['200'])['content']);
+    const variants = asRecord(asRecord(content['application/json'])['schema'])['oneOf'];
+    expect(
+      (variants as unknown[]).some((variant) => {
+        const values = asRecord(asRecord(asRecord(variant)['properties'])['code'])['enum'];
+        return Array.isArray(values) && values.includes(40935);
+      }),
+    ).toBe(true);
+  });
+
   it('documents session conflicts for session mutation routes', async () => {
     const doc = await fetchOpenApi();
     const paths = [
