@@ -392,7 +392,15 @@ export function createDecoder(
         if (chunkHasText) {
           emit({ type: 'text', text: delta.content as string });
         }
-        const toolCallParts = (delta.tool_calls ?? []).map((toolCall) => {
+        const survivor = discardedMarkers.at(-1);
+        const survivorKey = survivor?.reasoningKey;
+        let pendingSurvivor =
+          survivor !== undefined && survivorKey !== undefined && !emittedThinkKeys.has(survivorKey)
+            ? survivor
+            : undefined;
+        let survivorEmitted = false;
+        let retainsReplay = false;
+        for (const toolCall of delta.tool_calls ?? []) {
           const streamIndex = toolCall.index;
           if (
             streamIndex !== undefined &&
@@ -403,26 +411,20 @@ export function createDecoder(
             seenIndexes.add(streamIndex);
             lastActiveIndex = streamIndex;
           }
-          return convertStreamToolCall(toolCall);
-        });
-        const flatToolParts = toolCallParts.flat();
-        if (flatToolParts.length > 0) {
-          const survivor = discardedMarkers.at(-1);
-          const key = survivor?.reasoningKey;
-          if (survivor !== undefined && key !== undefined && !emittedThinkKeys.has(key)) {
-            const retainsReplay = flatToolParts.some(
-              (part) => part.type !== 'tool_call_part' || part.index === undefined,
-            );
-            if (retainsReplay) {
-              emittedThinkKeys.add(key);
+          for (const part of convertStreamToolCall(toolCall)) {
+            if (pendingSurvivor !== undefined) {
+              emit(pendingSurvivor);
+              pendingSurvivor = undefined;
+              survivorEmitted = true;
             }
-            emit(survivor);
-          }
-        }
-        for (const parts of toolCallParts) {
-          for (const part of parts) {
+            if (part.type !== 'tool_call_part' || part.index === undefined) {
+              retainsReplay = true;
+            }
             emit(part);
           }
+        }
+        if (retainsReplay && survivorEmitted && survivorKey !== undefined) {
+          emittedThinkKeys.add(survivorKey);
         }
       }
       const finishReason = chunk.choices?.[0]?.finish_reason;

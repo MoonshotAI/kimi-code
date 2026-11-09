@@ -21,6 +21,8 @@ import { classifyKimiQuotaError } from '#/llm/builtin/provider/kimi/errors';
 import { createKimiOpenAIRequester, createOpenAIRequester, kimiEndpoint } from '#/llm-requester/factories';
 import type { LlmClientContext, LlmRequestEvent } from '#/llm-requester/requester';
 import { lowerMessage } from '#/llm/builtin/protocol/openai/lower';
+import { createDecoder as createOpenAIDecoder } from '#/llm/builtin/protocol/openai/decode';
+import type { DecodeSink } from '#/llm/protocol/protocol';
 
 const model: LlmModel = {
   provider: 'test',
@@ -1310,6 +1312,81 @@ describe('openai requester thinking', () => {
       expect.objectContaining({
         function: { name: 'lookup', arguments: '{}' },
       }),
+    ]);
+  });
+});
+
+describe('openai decoder tool-call ordering', () => {
+  function recordingSink(): { sink: DecodeSink; events: string[] } {
+    const events: string[] = [];
+    const sink: DecodeSink = {
+      onDelta: (part) => {
+        if (part.type === 'function') events.push(`function:${part.name}:${part.arguments ?? ''}`);
+        else if (part.type === 'tool_call_part') events.push(`args:${String(part.index)}:${part.argumentsPart ?? ''}`);
+        else if (part.type === 'think') events.push(`think:${part.reasoningKey ?? ''}:${part.think}`);
+        else if (part.type === 'text') events.push(`text:${part.text}`);
+      },
+      onFinish: () => {},
+      onMessageId: () => {},
+      onUsage: () => {},
+      onError: () => {},
+      onToolCallEnd: (index) => events.push(`end:${String(index)}`),
+    };
+    return { sink, events };
+  }
+
+  it('emits each tool call before ending it when one delta carries two headers', () => {
+    const { sink, events } = recordingSink();
+    const decoder = createOpenAIDecoder(sink);
+    decoder.push({
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              { index: 0, id: 'a', function: { name: 'first', arguments: '{}' } },
+              { index: 1, id: 'b', function: { name: 'second', arguments: '{}' } },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    });
+    expect(events).toEqual(['function:first:{}', 'end:0', 'function:second:{}', 'end:1']);
+  });
+
+  it('emits the active call\'s final arguments before a new header ends it', () => {
+    const { sink, events } = recordingSink();
+    const decoder = createOpenAIDecoder(sink);
+    decoder.push({
+      choices: [
+        {
+          index: 0,
+          delta: { tool_calls: [{ index: 0, id: 'a', function: { name: 'first', arguments: '{"q":' } }] },
+          finish_reason: null,
+        },
+      ],
+    });
+    decoder.push({
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              { index: 0, function: { arguments: '1}' } },
+              { index: 1, id: 'b', function: { name: 'second', arguments: '{}' } },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    });
+    expect(events).toEqual([
+      'function:first:{"q":',
+      'args:0:1}',
+      'end:0',
+      'function:second:{}',
+      'end:1',
     ]);
   });
 });
