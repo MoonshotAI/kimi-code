@@ -183,7 +183,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       },
     };
     this.journal = new LoopJournal(wire, scopeContext.agentId, dispatcher);
-    this.prompts = new AgentPromptProjection(dispatcher, scopeContext.agentId, () => this.snapshot().queue.length);
+    this.prompts = new AgentPromptProjection(
+      dispatcher,
+      scopeContext.agentId,
+      (includeCurrent) => this.snapshot().queue.length + (includeCurrent ? 1 : 0),
+    );
     this.turns = new AgentTurnProjection({
       dispatcher,
       scopeContext,
@@ -218,6 +222,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this._register(this.dispatcher.hooks.onDidRestore.register('loop.profile', async (_ctx, next) => {
       this.profileAdapter.restore(this.journal.snapshot());
       await this.profileAdapter.afterRestore();
+      await this.ensureDefaultProfile();
       await next();
     }));
     this._register(this.catalog.onDidChange(() => {
@@ -373,16 +378,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     await this.wire.drainPersisted().catch(() => undefined);
     const snapshot = this.journal.snapshot();
     this.profileAdapter.restore(snapshot);
-    if (!this.profileAdapter.bound) {
-      const defaultModel = this.config.get<string>('defaultModel');
-      if (defaultModel !== undefined && defaultModel !== '') {
-        try {
-          await this.setProfile(this.profileAdapter.defaultProfile());
-        } catch (error) {
-          if (!(error instanceof ProfileError && error.code === ProfileErrors.codes.MODEL_NOT_CONFIGURED)) throw error;
-        }
-      }
-    }
+    await this.ensureDefaultProfile();
     const tools = this.requestFactory.baselineTools();
     const completions = await restoreTaskCompletions({
       wire: this.wire,
@@ -391,6 +387,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       messages: seededMessages ?? snapshot.input.messages ?? [],
     });
     this.createLoopFromSnapshot(snapshot, tools, completions, seededMessages);
+  }
+
+  private async ensureDefaultProfile(): Promise<void> {
+    if (this.profileAdapter.bound && this.profileAdapter.data().modelAlias !== undefined) return;
+    const defaultModel = this.config.get<string>('defaultModel');
+    if (defaultModel === undefined || defaultModel === '') return;
+    try {
+      const profile = this.profileAdapter.defaultProfile();
+      await this.setProfile({ ...profile, modelAlias: profile.modelAlias ?? defaultModel });
+    } catch (error) {
+      if (!(error instanceof ProfileError && error.code === ProfileErrors.codes.MODEL_NOT_CONFIGURED)) throw error;
+    }
   }
 
   private createLoopFromSnapshot(
@@ -539,6 +547,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await this.wire.drainPersisted().catch(() => undefined);
       const snapshot = this.journal.snapshot();
       this.profileAdapter.restore(snapshot);
+      await this.ensureDefaultProfile();
       const completions = await restoreTaskCompletions({
         wire: this.wire,
         agentId: this.scopeContext.agentId,
@@ -751,10 +760,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   snapshot(): LoopSnapshot {
     const loop = this.loop;
     const machineQueue = loop?.state.inbox.normal ?? [];
+    const inFlight = this.prompts.pendingEntries().filter(
+      (entry) => !machineQueue.some((item) => item.meta?.promptId === entry.meta?.promptId),
+    );
     const parked = this.pendingSubmissions.filter(
       (entry) => !machineQueue.some((item) => item.meta?.promptId === entry.meta?.promptId),
     );
-    const queue = [...machineQueue, ...parked];
+    const queue = [...machineQueue, ...inFlight, ...parked];
     const notificationCount =
       (loop === undefined ? 0 : loop.state.inbox.notify.length + loop.state.inbox.remind.length) +
       this.pendingNotifications.length;

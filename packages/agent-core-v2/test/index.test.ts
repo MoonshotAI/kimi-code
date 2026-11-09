@@ -148,7 +148,9 @@ describe('v1 wire vocabulary', () => {
   }
 
   it('every durable event type is a known (v1 or v2) record type', () => {
-    for (const type of EVENT2_REGISTRY.keys()) {
+    for (const cls of EVENT2_REGISTRY.values()) {
+      if (!cls.durable) continue;
+      const type = cls.type;
       expect(
         V1_RECORD_TYPES.has(type) ||
           V2_ONLY_RECORD_TYPES.has(type) ||
@@ -182,7 +184,7 @@ describe('v1 wire vocabulary', () => {
     ]);
   });
 
-  it('persists step retrying and interrupted records with full payloads and replays them safely', async () => {
+  it('keeps step retrying and interrupted events live-only and replays safely', async () => {
     await dispatcher.restore();
     await dispatcher.dispatch(
       new TurnStepRetrying({
@@ -214,29 +216,6 @@ describe('v1 wire vocabulary', () => {
         protocol_version: WIRE_PROTOCOL_VERSION,
         min_protocol_version: WIRE_MIN_READER_VERSION,
         created_at: expect.any(Number),
-      },
-      {
-        type: 'turn.step.retrying',
-        agentId: 'test-agent',
-        turnId: 1,
-        step: 2,
-        failedAttempt: 1,
-        nextAttempt: 2,
-        maxAttempts: 10,
-        delayMs: 500,
-        errorName: 'APIStatusError',
-        errorMessage: 'Overloaded',
-        statusCode: 429,
-        time: expect.any(Number),
-      },
-      {
-        type: 'turn.step.interrupted',
-        agentId: 'test-agent',
-        turnId: 1,
-        step: 2,
-        reason: 'error',
-        message: 'boom',
-        time: expect.any(Number),
       },
     ]);
 
@@ -361,6 +340,7 @@ describe('AgentRecords persistence metadata', () => {
     expect(persistence.records.map((record) => record.type)).toEqual([
       'metadata',
       'context.append_message',
+      'profile.bind',
     ]);
     expect(persistence.records[0]).toMatchObject({
       type: 'metadata',
@@ -543,6 +523,8 @@ describe('AgentRecords persistence metadata', () => {
       'forked',
     ]);
     expect(ctx.get(IAgentGoalService).getGoal().goal).toBeNull();
+    expect(context.history()).toHaveLength(0);
+    context.flushReminders();
     const reminder = context.history().at(-1);
     expect(reminder?.origin).toEqual({
       kind: 'injection',
@@ -572,6 +554,8 @@ describe('AgentRecords persistence metadata', () => {
       goalId: 'fork-goal',
       objective: 'fork work',
     });
+    expect(context.history()).toHaveLength(0);
+    context.flushReminders();
     expect(context.history().at(-1)?.origin).toEqual({
       kind: 'injection',
       variant: 'goal_fork_cleared',

@@ -68,7 +68,7 @@ describe('AgentReminderService', () => {
     const loop = ctx.get(IAgentLoopService);
     const backing = [...loop.history()];
     backing.splice(start, deleteCount, ...inserted);
-    loop.replaceHistory(historyFromContext(backing), inserted.some(isCompactionSummaryMessage) ? 'compaction' : 'test');
+    loop.replaceHistory(historyFromContext(backing), inserted.some(isCompactionSummaryMessage) ? 'compaction' : 'fork');
     ctx.get(IEventBus).publish(
       new ContextSpliced({
         agentId: 'main',
@@ -477,6 +477,7 @@ describe('AgentReminderService', () => {
     expect(() => ctx.get(IAgentReminderService)).toThrow("unknown service 'agentReminderService'");
 
     ctx.get(IFeatureManager).provideUnit(ReminderFeature);
+    await ctx.restorePersisted();
 
     let calls = 0;
     const revived = await vi.waitFor(() => ctx.get(IAgentReminderService));

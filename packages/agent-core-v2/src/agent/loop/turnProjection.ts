@@ -374,6 +374,11 @@ export class AgentTurnProjection {
         if (this.active === undefined || promptId === undefined) return event;
         return { type: 'prompt.steered', promptIds: [promptId], entries: [event.entry] };
       }
+      case 'turn.started': {
+        const pending = this.options.prompts.pending(event.turnId);
+        if (pending === undefined) return event;
+        return { ...event, entry: { ...pending.entry, message: pending.message } };
+      }
       case 'tool.started': {
         const handler = event.taskId === undefined ? undefined : toolExecutor.handler(event.taskId);
         const prepared = handler?.snapshot().prepared;

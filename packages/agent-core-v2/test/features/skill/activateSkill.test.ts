@@ -264,23 +264,24 @@ describe('promptWithSkills', () => {
     const hold = holdFirstStep();
     const promptPromise = ctx.rpc.prompt({ input: [{ type: 'text', text: 'start' }] });
     await hold.started;
-    await ctx.rpc.promptWithSkills({
+    const parentSteer = ctx.rpc.promptWithSkills({
       input: [{ type: 'text', text: 'Use parent B' }],
       skills: [{ name: 'parent', path: parentB.path }],
       steerIfActive: true,
     });
-
-    const steered = await ctx.rpc.promptWithSkills({
+    const multipleSteer = ctx.rpc.promptWithSkills({
       input: [{ type: 'text', text: 'Use multiple skills' }],
       skills: [{ name: 'parent', path: parentB.path }, { name: 'other' }],
       steerIfActive: true,
     });
-    expect(steered.steered).toBe(true);
     hold.release();
+    await parentSteer;
+    const steered = await multipleSteer;
+    expect(steered.steered).toBe(true);
     await promptPromise;
     await ctx.untilTurnEnd();
 
-    const nested = ctx.context.get().filter((message) =>
+    const nested = ctx.context.history().filter((message) =>
       message.origin?.kind === 'skill_activation' && message.origin.skillName === 'child'
     );
     expect(nested).toHaveLength(1);
@@ -362,7 +363,7 @@ describe('promptWithSkills', () => {
     await ctx.untilTurnEnd();
     await ctx.untilTurnEnd();
 
-    const nested = ctx.context.get().filter((message) =>
+    const nested = ctx.context.history().filter((message) =>
       message.origin?.kind === 'skill_activation' && message.origin.skillName === 'child'
     );
     expect(nested).toHaveLength(1);

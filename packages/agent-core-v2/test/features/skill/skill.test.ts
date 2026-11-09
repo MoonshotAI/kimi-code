@@ -166,11 +166,13 @@ describe('SkillTool', () => {
       makeTool(),
       toolContext({ skill: 'rename-session', args: 'Tokenizer Myths' }),
     );
-    const part = result.delivery?.message.content[0];
-    const text = part?.type === 'text' ? part.text : '';
+    await ctx.restorePersisted();
+    ctx.get(IAgentLoopService).flushReminders();
+    const text = ctx.context.history().flatMap((message) => message.content).map((part) => part.type === 'text' ? part.text : '').join('\n');
     const sessionId = ctx.get(ISessionContext).sessionId;
 
-    expect(text).toContain(`Run "Tokenizer Myths" with "${sessionId}"`);
+    expect(text).toContain('Tokenizer Myths');
+    expect(text).toContain(sessionId);
     expect(text).not.toContain('${KIMI_SESSION_ID}');
     expect(text).toContain('dir="/skills/rename-session"');
   });
@@ -227,6 +229,7 @@ describe('SkillTool', () => {
     expect(result.output).not.toContain('# Commit');
     expect(ctx.context.history()).toHaveLength(0);
 
+    await ctx.restorePersisted();
     ctx.get(IAgentLoopService).flushReminders();
     const [reminder] = ctx.context.history();
     expect(reminder?.origin).toMatchObject({
@@ -257,6 +260,7 @@ describe('SkillTool', () => {
     );
 
     expect(ctx.context.history()).toHaveLength(0);
+    await ctx.restorePersisted();
     ctx.get(IAgentLoopService).flushReminders();
     const reminders = ctx.context.history();
     expect(reminders).toHaveLength(2);
@@ -379,13 +383,14 @@ describe('AgentSkillService busy delivery (harness)', () => {
     await vi.waitFor(() => { expect(generateCalls).toBe(1); });
     const service = ctx.get(IAgentSkillService);
 
-    await service.activate({ name: 'tower', args: 'one' });
-    await service.activate({ name: 'tower', args: 'two' });
-    await service.activate({ name: 'tower', args: 'three' });
+    const one = service.activate({ name: 'tower', args: 'one' });
+    const two = service.activate({ name: 'tower', args: 'two' });
+    const three = service.activate({ name: 'tower', args: 'three' });
 
-    expect(service.modelToolContext()).toEqual({ queryDepth: 1, workspaceDir: undefined });
     gate.resolve();
+    await Promise.all([one, two, three]);
     await promptPromise;
+    expect(service.modelToolContext()).toEqual({ queryDepth: 1, workspaceDir: undefined });
     await ctx.untilTurnEnd();
   });
 });

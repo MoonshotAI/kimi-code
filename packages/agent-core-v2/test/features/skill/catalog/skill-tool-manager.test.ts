@@ -231,17 +231,19 @@ describe('SkillTool nested variants', () => {
       modelToolContext: () => ({ queryDepth: 0 }),
     };
 
-    const result = await executeModelSkill(
+    const reminders: unknown[] = [];
+    await executeModelSkill(
       sessionCatalog,
       skillService,
+      { remind: (...entries: unknown[]) => reminders.push(...entries) } as unknown as IAgentLoopService,
       { skill: 'parent.child' },
       1,
       'session-1',
       '/work/B',
     );
 
-    expect(JSON.stringify(result.delivery)).toContain('from B');
-    expect(JSON.stringify(result.delivery)).toContain('/work/B/parent/child/SKILL.md');
+    expect(JSON.stringify(reminders)).toContain('from B');
+    expect(JSON.stringify(reminders)).toContain('/work/B/parent/child/SKILL.md');
   });
 });
 

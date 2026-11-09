@@ -470,6 +470,7 @@ export interface TestAgentOptions {
   | undefined;
   readonly initialConfig?: Partial<KimiConfig> | undefined;
   readonly autoConfigure?: boolean | undefined;
+  readonly autoStart?: boolean | undefined;
   readonly cwd?: string | undefined;
   readonly [key: string]: unknown;
 }
@@ -1467,16 +1468,13 @@ export class AgentTestContext {
     this.session.accessor
       .get(ISessionEventBus)
       .activateAgent(harnessAgentContext);
-    const loop = this.agent.accessor.get(IAgentLoopService) as {
-      requester: IAgentLoopService['requester'];
-      start: IAgentLoopService['start'];
-    };
+    const loop = this.agent.accessor.get(IAgentLoopService);
     const start = loop.start.bind(loop);
     loop.start = async () => {
       await start();
       this.runtimeStarted = true;
     };
-    loop.requester = new PromptCacheGuardedLoopRequester(
+    (loop as { requester: IAgentLoopService['requester'] }).requester = new PromptCacheGuardedLoopRequester(
       loop.requester,
       this.agent.accessor.get(IAgentLoopService),
       this.agent.accessor.get(IWireService),
@@ -1498,6 +1496,29 @@ export class AgentTestContext {
 
     this.rpc = this.createPromiseAgentApi();
 
+    if (options.autoStart !== false && persistence.records.length === 0) {
+      const restoreAfterWrites = () => {
+        this.persistedRestored ??= this.wire.flush().then(() => this.dispatcher.restore());
+        return this.restorePersisted();
+      };
+      const submit = loop.submit.bind(loop);
+      loop.submit = ((input: Parameters<IAgentLoopService['submit']>[0]) => {
+        const result = submit(input);
+        void Promise.resolve().then(restoreAfterWrites);
+        return result;
+      }) as IAgentLoopService['submit'];
+      const notify = loop.notify.bind(loop);
+      loop.notify = ((input: Parameters<IAgentLoopService['notify']>[0]) => {
+        const result = notify(input);
+        void Promise.resolve().then(restoreAfterWrites);
+        return result;
+      }) as IAgentLoopService['notify'];
+      const remind = loop.remind.bind(loop);
+      loop.remind = (...entries: readonly import('#human/agent/turn').HistoryMessage[]) => {
+        remind(...entries);
+        void Promise.resolve().then(restoreAfterWrites);
+      };
+    }
     if (options.autoConfigure !== false) {
       this.configure({ preserveProfile: persistence.records.length > 0 });
     }

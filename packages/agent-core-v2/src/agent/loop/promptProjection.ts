@@ -65,7 +65,7 @@ export class AgentPromptProjection {
   constructor(
     private readonly dispatcher: IEventDispatcher,
     private readonly agentId: string,
-    private readonly queueLength: () => number,
+    private readonly queueLength: (includeCurrent: boolean) => number,
   ) {}
 
   admit(input: UserEntry, queued: boolean): { readonly id: string; readonly entry: UserEntry } {
@@ -89,7 +89,7 @@ export class AgentPromptProjection {
     this.steered.delete(id);
     const projection = projectionFromEntry(entry);
     this.publishSubmitted(projection, queued ? 'queued' : 'running');
-    if (queued) this.publishQueued(projection);
+    if (queued) this.publishQueued(projection, true);
     return { id, entry };
   }
 
@@ -109,7 +109,7 @@ export class AgentPromptProjection {
     if (waiter.submitted !== true) {
       const projection = projectionFromEntry(normalized);
       this.publishSubmitted(projection, queued ? 'queued' : 'running');
-      if (queued) this.publishQueued(projection);
+      if (queued) this.publishQueued(projection, false);
       waiter.submitted = true;
     }
     return waiter;
@@ -145,6 +145,10 @@ export class AgentPromptProjection {
 
   hasPendingTurns(): boolean {
     return this.pendingTurns.size > 0;
+  }
+
+  pendingEntries(): readonly UserEntry[] {
+    return [...this.pendingTurns.values()].map((pending) => pending.entry);
   }
 
   pending(turnId: number): PendingTurn | undefined {
@@ -346,7 +350,7 @@ export class AgentPromptProjection {
     }));
   }
 
-  private publishQueued(projection: PromptProjection & { readonly id?: string }): void {
+  private publishQueued(projection: PromptProjection & { readonly id?: string }, includeCurrent: boolean): void {
     const promptId = projection.id ?? projection.message.id;
     if (promptId === undefined) return;
     void this.dispatcher.dispatch(new PromptQueued({
@@ -354,7 +358,7 @@ export class AgentPromptProjection {
       promptId,
       content: stripBundledSkillBlocks(projection.message),
       clientMetadata: projection.origin.kind === 'user' ? projection.origin.clientMetadata : undefined,
-      queueLength: this.queueLength(),
+      queueLength: this.queueLength(includeCurrent),
     }));
   }
 
