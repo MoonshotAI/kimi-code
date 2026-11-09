@@ -28,6 +28,7 @@ import {
   IEventDispatcher,
   IEventService,
   IEnvironmentService,
+  ISessionIndexMirror,
   ISessionManager,
   ISessionMetadata,
   ISessionTitleService,
@@ -929,6 +930,8 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(created.body.code).not.toBe(0);
       expect(await listed()).toEqual(before);
       expect(announced.filter((type) => type.startsWith('event.session.'))).toEqual([]);
+      const index = (server as RunningServer).core.accessor.get(ISessionIndexMirror);
+      expect(index.pending().filter((summary) => !before.includes(summary.id))).toEqual([]);
     } finally {
       subscription.dispose();
     }
