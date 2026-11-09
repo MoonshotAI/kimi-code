@@ -17,7 +17,6 @@ import {
   ISessionActivityView,
   type SessionActivityChangedEvent,
 } from '#/session/sessionActivity/sessionActivity';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
 
 function finish(
   text: string,
@@ -101,15 +100,10 @@ describe('SessionPromptPredictionService', () => {
       }),
       onDidChange: activityEmitter.event,
     } as unknown as ISessionActivityView;
-    const usage = {
-      status: () => ({
-        currentTurn: { inputOther: 4, output: 1, inputCacheCreation: 2 },
-      }),
-    } as unknown as ISessionUsageService;
     const flags = { enabled: () => enabled } as unknown as IFlagService;
     const log = { info: vi.fn() } as unknown as ILogService;
     const telemetry = { track2: vi.fn() } as unknown as ITelemetryService;
-    const service = new SessionPromptPredictionService(lifecycle, activity, usage, flags, log);
+    const service = new SessionPromptPredictionService(lifecycle, activity, flags, log);
 
     await expect(service.predict({ predictionId: 'disabled', expectedTurnId: 0 })).resolves.toBeNull();
     enabled = true;

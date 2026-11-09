@@ -7,7 +7,6 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService, type LoopSnapshot } from '#/agent/loop/loop';
 import type { AgentLLMRequestFinish } from '#/agent/loop/requesterContract';
 import { turnKey } from '#/agent/loop/turnOps';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFlagService } from '#/app/flag/flag';
 import type { PredictionGeneratedEvent } from '#/app/telemetry/events';
@@ -21,7 +20,6 @@ import {
   type SessionActivityCause,
   type SessionActivityState,
 } from '#/session/sessionActivity/sessionActivity';
-import { ISessionUsageService } from '#/session/usage/sessionUsage';
 
 import {
   ISessionPromptPredictionService,
@@ -29,7 +27,6 @@ import {
   PROMPT_PREDICTION_INSTRUCTION,
   PROMPT_PREDICTION_MAX_CHARS,
   PROMPT_PREDICTION_MAX_OUTPUT_TOKENS,
-  PROMPT_PREDICTION_MAX_UNCACHED_INPUT_TOKENS,
   PROMPT_PREDICTION_TIMEOUT_MS,
   type PromptPredictionCancelReason,
   type PromptPredictionInput,
@@ -86,7 +83,6 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
   constructor(
     @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
     @ISessionActivityView private readonly activity: ISessionActivityView,
-    @ISessionUsageService private readonly usage: ISessionUsageService,
     @IFlagService private readonly flags: IFlagService,
     @ILogService private readonly log: ILogService,
   ) {
@@ -117,16 +113,6 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
     if (!this.idle(scope.loop.snapshot(), this.activity.state())) return null;
 
     const contextSnapshot = scope.context.get();
-    const agentContext = scope.handle.accessor.get(IAgentScopeContext).agentContext;
-    const currentTurn = this.usage.status(agentContext).currentTurn;
-    if (
-      currentTurn === undefined ||
-      currentTurn.inputOther + currentTurn.inputCacheCreation >
-        PROMPT_PREDICTION_MAX_UNCACHED_INPUT_TOKENS
-    ) {
-      return null;
-    }
-
     this.attemptedTurnIds.add(input.expectedTurnId);
     const controller = new AbortController();
     const active: ActivePrediction = {
