@@ -1,3 +1,4 @@
+import { Text, TuiAltScreen, TuiMainScreen } from '@moonshot-ai/pi-tui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CTRL_C_HINT, DOUBLE_ESC_WINDOW_MS } from '#/tui/constant/kimi-tui';
@@ -6,6 +7,8 @@ import {
   type EditorKeyboardHost,
 } from '#/tui/controllers/editor-keyboard';
 import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
+
+import { VirtualTerminal } from '../../../../../packages/pi-tui/test/virtual-terminal';
 
 interface Harness {
   readonly host: EditorKeyboardHost;
@@ -26,7 +29,9 @@ interface Harness {
   };
 }
 
-function createHarness(options: { streamingPhase?: string; isCompacting?: boolean } = {}): Harness {
+function createHarness(
+  options: { streamingPhase?: string; isCompacting?: boolean; ui?: TuiAltScreen | TuiMainScreen } = {},
+): Harness {
   const editor: Record<string, ((...args: never[]) => unknown) | undefined> = {
     setHistoryFilter: vi.fn() as unknown as (...args: never[]) => unknown,
     setInputMode: vi.fn() as unknown as (...args: never[]) => unknown,
@@ -58,7 +63,7 @@ function createHarness(options: { streamingPhase?: string; isCompacting?: boolea
         editorCommand: null,
       },
       footer: { setTransientHint: footerHint },
-      ui: { requestRender: vi.fn() },
+      ui: options.ui ?? { requestRender: vi.fn() },
     },
     session,
     btwPanelController: { cancelRunning: btwCancelRunning, closeOrCancel: btwCloseOrCancel },
@@ -720,5 +725,113 @@ describe('EditorKeyboardController survey wiring', () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe('EditorKeyboardController fullscreen selection copy', () => {
+  async function mountSelectedTranscript(copyOnSelect = false): Promise<{
+    harness: Harness;
+    ui: TuiAltScreen;
+    vt: VirtualTerminal;
+    copySelection: ReturnType<typeof vi.fn<(text: string) => Promise<boolean | string>>>;
+    passedThrough: ReturnType<typeof vi.fn>;
+  }> {
+    const copySelection = vi.fn<(text: string) => Promise<boolean | string>>(async () => true);
+    const vt = new VirtualTerminal(20, 6);
+    const ui = new TuiAltScreen(vt, undefined, undefined, { copyOnSelect, copySelection });
+    ui.addChild(new Text('hello world', 0, 0));
+    ui.start();
+    await vt.waitForRender();
+    const harness = createHarness({ ui });
+    const passedThrough = vi.fn(() => undefined);
+    ui.addInputListener(passedThrough);
+    vt.sendInput('\u001B[<0;1;1M');
+    vt.sendInput('\u001B[<32;5;1M');
+    vt.sendInput('\u001B[<0;5;1m');
+    await vt.waitForRender();
+    return { harness, ui, vt, copySelection, passedThrough };
+  }
+
+  it.each([
+    ['Ctrl+C', '\u0003'],
+    ['Ctrl+C under the kitty protocol', '\u001B[99;5u'],
+    ['Ctrl+Shift+C', '\u001B[99;6u'],
+    ['Cmd+C', '\u001B[99;9u'],
+  ])('copies the selection on %s, clears it, and swallows the key', async (_name, key) => {
+    const { ui, vt, copySelection, passedThrough } = await mountSelectedTranscript();
+    expect(copySelection).not.toHaveBeenCalled();
+
+    vt.sendInput(key);
+
+    expect(copySelection).toHaveBeenCalledWith('hello');
+    expect(ui.hasActiveSelection()).toBe(false);
+    expect(passedThrough).not.toHaveBeenCalled();
+
+    vt.sendInput(key);
+    expect(copySelection).toHaveBeenCalledOnce();
+    expect(passedThrough).toHaveBeenCalledWith(key);
+    ui.stop();
+  });
+
+  it('copies again a highlight that copy on select already copied', async () => {
+    const { ui, vt, copySelection, passedThrough } = await mountSelectedTranscript(true);
+    expect(copySelection).toHaveBeenCalledOnce();
+
+    vt.sendInput('\u0003');
+
+    expect(copySelection).toHaveBeenCalledTimes(2);
+    expect(copySelection).toHaveBeenLastCalledWith('hello');
+    expect(ui.hasActiveSelection()).toBe(false);
+    expect(passedThrough).not.toHaveBeenCalled();
+    ui.stop();
+  });
+
+  it('ignores the key release that follows a copy key', async () => {
+    const { ui, vt, copySelection } = await mountSelectedTranscript();
+
+    vt.sendInput('\u001B[99;9:3u');
+
+    expect(copySelection).not.toHaveBeenCalled();
+    expect(ui.hasActiveSelection()).toBe(true);
+    ui.stop();
+  });
+
+  it('breaks a pending Ctrl+C exit so the next Ctrl+C does not quit', async () => {
+    const { harness, ui, vt } = await mountSelectedTranscript();
+    const onCtrlC = harness.editor['onCtrlC'] as unknown as () => void;
+
+    onCtrlC();
+    expect(harness.footerHint).toHaveBeenLastCalledWith(CTRL_C_HINT);
+    vt.sendInput('\u0003');
+    expect(harness.footerHint).toHaveBeenLastCalledWith(null);
+    onCtrlC();
+
+    expect(harness.stop).not.toHaveBeenCalled();
+    ui.stop();
+  });
+
+  it('leaves Ctrl+C to the app in regular mode', async () => {
+    const vt = new VirtualTerminal(20, 6);
+    const ui = new TuiMainScreen(vt);
+    ui.start();
+    await vt.waitForRender();
+    createHarness({ ui });
+    const passedThrough = vi.fn(() => undefined);
+    ui.addInputListener(passedThrough);
+
+    vt.sendInput('\u0003');
+
+    expect(passedThrough).toHaveBeenCalledWith('\u0003');
+    ui.stop();
+  });
+
+  it('stops copying once the controller is disposed', async () => {
+    const { harness, ui, vt, copySelection } = await mountSelectedTranscript();
+
+    harness.controller.dispose();
+    vt.sendInput('\u0003');
+
+    expect(copySelection).not.toHaveBeenCalled();
+    ui.stop();
   });
 });
