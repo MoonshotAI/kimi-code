@@ -19,6 +19,8 @@ import { walkDirectoryTree } from '#/os/backends/node-local/hostFsService';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
 import { WorkspaceFsService } from '#/workspace/workspaceFs/fsService';
+import { suggestWithFd } from '#/workspace/workspaceFs/internal/fdSuggest';
+import { POSIX_ENVIRONMENT_PATH } from '#/environment/environmentDefaults';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
@@ -448,7 +450,9 @@ function makeSession(
     stubPair(ITelemetryService, telemetryStub(events)),
     stubPair(IWorkspaceGitService, workspaceGitStub(git)),
   ]);
-  return workspace.accessor.get(IWorkspaceFsService);
+  const service = workspace.accessor.get(IWorkspaceFsService);
+  Object.defineProperty(service, 'fdResolution', { value: null, configurable: true, writable: true });
+  return service;
 }
 
 const emptyHandler: RunHandler = () => ({ stdout: '', exitCode: 0 });
@@ -476,7 +480,7 @@ function makeRemoteSession(
   );
   Object.defineProperty(environment, 'process', { value: fakeRunner(handler) });
   const resolver = resolverFor(environment);
-  return new WorkspaceFsService(
+  const service = new WorkspaceFsService(
     stubWorkspaceContext(),
     stubWorkspaceDirs(),
     hostFs ?? fakeFs(files),
@@ -485,6 +489,8 @@ function makeRemoteSession(
     workspaceGitStub(defaultGitStub()),
     environmentId,
   );
+  Object.defineProperty(service, 'fdResolution', { value: null, configurable: true, writable: true });
+  return service;
 }
 
 function makeRemoteWalkSession(backend: IHostFileSystem): IWorkspaceFsService {
@@ -994,6 +1000,30 @@ describe('WorkspaceFsService.suggest', () => {
     return { stdout: '', exitCode: 0 };
   }
 
+  function fdLinesHandler(lines: readonly string[], captured?: string[][]): RunHandler {
+    return (args) => {
+      if (args[0] === 'fd' && args[1] === '--version') return { stdout: 'fd 10.4.2', exitCode: 0 };
+      if (args[0] === 'fd') {
+        captured?.push([...args]);
+        return { stdout: lines.map((line) => `${line}\n`).join(''), exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 1 };
+    };
+  }
+
+  function fdMultiRootHandler(perRoot: Record<string, readonly string[]>, captured?: string[][]): RunHandler {
+    return (args) => {
+      if (args[0] === 'fd' && args[1] === '--version') return { stdout: 'fd 10.4.2', exitCode: 0 };
+      if (args[0] === 'fd') {
+        captured?.push([...args]);
+        const baseDir = args[args.indexOf('--base-directory') + 1] ?? '';
+        const lines = perRoot[baseDir] ?? [];
+        return { stdout: lines.map((line) => `${line}\n`).join(''), exitCode: 0 };
+      }
+      return { stdout: '', exitCode: 1 };
+    };
+  }
+
   function rgMultiRootHandler(perRoot: Record<string, readonly string[]>, captured?: string[][]): RunHandler {
     return (args) => {
       captured?.push([...args]);
@@ -1077,12 +1107,20 @@ describe('WorkspaceFsService.suggest', () => {
     expect(result.items[0]?.path).toBe('apps');
   });
 
-  it('supplements an exact ignored path returned by neither rg pass', async () => {
+  it('uses the local fd strategy for scoped ignored suggestions', async () => {
     const captured: string[][] = [];
     const fs = makeSession(
       { '.gitignore': 'apps/desktop/package.json\n', 'apps/desktop/package.json': '' },
-      rgLinesHandler([], captured),
+      (args) => {
+        if (args[0] === 'fd' && args[1] === '--version') return { stdout: 'fd 10.4.2', exitCode: 0 };
+        if (args[0] === 'fd') {
+          captured.push([...args]);
+          return { stdout: args.includes('--no-ignore-vcs') ? 'package.json\n' : '', exitCode: 0 };
+        }
+        return { stdout: '', exitCode: 1 };
+      },
     );
+    Object.defineProperty(fs, 'fdResolution', { value: undefined });
     const result = await fs.suggest({
       query: 'apps/desktop/package.json',
       limit: 50,
@@ -1091,13 +1129,72 @@ describe('WorkspaceFsService.suggest', () => {
     });
     expect(result.items.map((item) => item.path)).toEqual(['apps/desktop/package.json']);
     expect(result.truncated).toBe(false);
-    const filePasses = captured.filter((args) => args.includes('--files'));
-    expect(filePasses).toHaveLength(2);
-    expect(filePasses.flat()).not.toContain('/repo/apps/desktop');
+    expect(captured).toHaveLength(4);
+    for (const args of captured) {
+      expect(args).toContain('--max-results');
+      expect(args).toContain('100');
+      expect(args).toContain('--hidden');
+      expect(args).not.toContain('--follow');
+    }
+    expect(captured.slice(2).every((args) => args.includes('--no-ignore-vcs'))).toBe(true);
+
+    const streamFs = makeSession(
+      { 'apps/desktop/package.json': '' },
+      (args) => {
+        if (args[0] === 'fd') {
+          return { stdout: args.includes('--no-ignore-vcs') ? 'package.json\n' : 'package-helper.ts\n', exitCode: 0 };
+        }
+        return { stdout: '', exitCode: 1 };
+      },
+    );
+    Object.defineProperty(streamFs, 'fdResolution', { value: { path: 'fd', source: 'system-path' } });
+    const phases: string[] = [];
+    const previews: string[][] = [];
+    const finals: string[][] = [];
+    for await (const event of streamFs.suggestStream!({
+      query: 'apps/desktop/package',
+      limit: 50,
+      follow_gitignore: false,
+      show_hidden: false,
+    })) {
+      phases.push(event.phase);
+      if (event.phase === 'preview') previews.push(event.response.items.map((item) => item.path));
+      if (event.phase === 'final') finals.push(event.response.items.map((item) => item.path));
+    }
+    expect(phases).toEqual(['preview', 'final']);
+    expect(previews).toEqual([['apps/desktop/package-helper.ts']]);
+    expect(finals[0]).toEqual(['apps/desktop/package-helper.ts', 'apps/desktop/package.json']);
+
+    const controller = new AbortController();
+    const runner: IHostProcessService = {
+      _serviceBrand: undefined,
+      spawn: async (_command, args) => {
+        if (args?.includes('--no-ignore-vcs')) {
+          controller.abort();
+          return fakeProcess('', '', -1);
+        }
+        return fakeProcess('ordinary.ts\n', '', 0);
+      },
+    };
+    const partial = await suggestWithFd({
+      fdBinary: 'fd',
+      query: 'ordinary',
+      cap: 20,
+      followGitignore: false,
+      roots: [{ dir: WORK_DIR, real: WORK_DIR, primary: true }],
+      path: POSIX_ENVIRONMENT_PATH,
+      hostFs: fakeFs({}),
+      process: runner,
+      workDir: WORK_DIR,
+      signal: controller.signal,
+    });
+    expect(partial.items.map((item) => item.path)).toEqual(['ordinary.ts']);
+    expect(partial.truncated).toBe(true);
   });
 
-  it('matches basenames across the whole workspace in name mode', async () => {
-    const fs = makeSession({}, rgLinesHandler(['docs/README.md', 'src/app.ts']));
+  it('applies fd matching, hidden, and bounded result semantics', async () => {
+    const fs = makeSession({}, fdLinesHandler(['docs/README.md', 'src/app.ts']));
+    Object.defineProperty(fs, 'fdResolution', { value: undefined });
     const result = await fs.suggest({
       query: 'readme',
       limit: 50,
@@ -1107,6 +1204,21 @@ describe('WorkspaceFsService.suggest', () => {
     expect(result.items.map((i) => i.path)).toEqual(['docs/README.md']);
     expect(result.items[0]).toMatchObject({ name: 'README.md', kind: 'file' });
     expect(result.items[0]?.match_positions).toEqual([5, 6, 7, 8, 9, 10]);
+
+    const captured: string[][] = [];
+    const hiddenFs = makeSession({}, fdLinesHandler(['.hidden/note.ts'], captured));
+    Object.defineProperty(hiddenFs, 'fdResolution', { value: { path: 'fd', source: 'system-path' } });
+    const hidden = await hiddenFs.suggest({ query: 'note', limit: 50, follow_gitignore: true, show_hidden: false });
+    expect(hidden.items.map((item) => item.path)).toEqual(['.hidden/note.ts']);
+    expect(captured[0]).toContain('--hidden');
+
+    const weak = Array.from({ length: 100 }, (_, index) => `weak-zzz-${index}.ts`);
+    const boundedFs = makeSession({}, fdLinesHandler(weak));
+    Object.defineProperty(boundedFs, 'fdResolution', { value: { path: 'fd', source: 'system-path' } });
+    const bounded = await boundedFs.suggest({ query: 'zzz', limit: 50, follow_gitignore: false, show_hidden: false });
+    expect(bounded.items).toHaveLength(20);
+    expect(bounded.items.some((item) => item.path === 'zzz')).toBe(false);
+    expect(bounded.truncated).toBe(true);
   });
 
   it('ranks a shallow prefix hit before a deeper one and varies scores', async () => {
@@ -1348,6 +1460,7 @@ describe('WorkspaceFsService.suggest', () => {
       undefined,
       { 'src/link': '/outside' },
     );
+    Object.defineProperty(fs, 'fdResolution', { value: undefined });
     const result = await fs.suggest({
       query: 'foo',
       limit: 50,
@@ -1617,6 +1730,31 @@ describe('WorkspaceFsService.suggest', () => {
     });
     const item = readme.items.find((i) => i.path === '/extra/README.md');
     expect(item?.match_positions).toEqual([7, 8, 9, 10, 11, 12]);
+
+    const fdCaptured: string[][] = [];
+    const fdFs = makeSession(
+      {
+        'apps/desktop/package.json': '',
+        '/extra/lib/util.ts': '',
+        '/extra/README.md': '',
+      },
+      fdMultiRootHandler({
+        '/repo/apps': ['desktop/', 'desktop/package.json'],
+        '/extra': ['lib/util.ts', 'README.md'],
+      }, fdCaptured),
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+    Object.defineProperty(fdFs, 'fdResolution', { value: { path: 'fd', source: 'system-path' } });
+    const fdPathResult = await fdFs.suggest({ query: 'apps/de', limit: 50, follow_gitignore: true, show_hidden: false });
+    expect(fdPathResult.items[0]?.path).toBe('apps/desktop');
+    const fdNameResult = await fdFs.suggest({ query: 'util', limit: 50, follow_gitignore: true, show_hidden: false });
+    expect(fdNameResult.items.map((entry) => entry.path)).toContain('/extra/lib/util.ts');
+    expect(fdCaptured.some((args) => args.includes('/repo/apps'))).toBe(true);
   });
 
   it('passes every root to rg as a path argument', async () => {

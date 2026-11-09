@@ -236,6 +236,11 @@ export const fsSuggestResponseSchema = z.object({
 });
 export type FsSuggestResponse = z.infer<typeof fsSuggestResponseSchema>;
 
+export interface FsSuggestStreamEvent {
+  readonly phase: 'preview' | 'final';
+  readonly response: FsSuggestResponse;
+}
+
 export const fsGrepRequestSchema = z.object({
   pattern: z.string().min(1),
   regex: z.boolean().default(false),
@@ -284,6 +289,7 @@ export interface IWorkspaceFsService {
   mkdir(req: FsMkdirRequest): Promise<FsMkdirResponse>;
   search(req: FsSearchRequest): Promise<FsSearchResponse>;
   suggest(req: FsSuggestRequest): Promise<FsSuggestResponse>;
+  suggestStream?(req: FsSuggestRequest, signal?: AbortSignal): AsyncIterable<FsSuggestStreamEvent>;
   grep(req: FsGrepRequest): Promise<FsGrepResponse>;
   gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse>;
   gitStatusBatch(req: FsGitStatusBatchRequest): Promise<FsGitStatusBatchResponse>;

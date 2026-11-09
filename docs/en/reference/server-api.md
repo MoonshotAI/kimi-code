@@ -1984,13 +1984,16 @@ Suggests file and directory completion candidates in a workspace without a sessi
 | --- | --- | --- | --- |
 | `workspace` | body | string | **Required.** Registered workspace id or absolute root (registered on the spot) |
 | `query` | body | string | **Required.** Partial path text to complete |
-| `limit` | body | integer | Maximum candidates, 1–200. Default `50` |
+| `limit` | body | integer | Maximum candidates, 1–200. Default `50`; fd-backed searches return at most `20` |
 | `follow_gitignore` | body | boolean | Skip gitignored paths when `true`. Default `false` |
-| `show_hidden` | body | boolean | Include dotfiles. Default `false` |
+| `show_hidden` | body | boolean | Include dotfiles. Default `false`; fd-backed searches always include them |
+| `stream` | body | boolean | Return NDJSON preview/final events when `true`. Default `false` |
 | `include_globs` | body | string[] | Only paths matching one of these globs |
 | `exclude_globs` | body | string[] | Skip paths matching these globs |
 
-On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }`, the same hit shape as `fs:search`. Candidates prioritize match quality and place ignored candidates after non-ignored candidates of equal quality. A dot-prefixed query also enables hidden-path matching; `show_hidden` remains `false` by default for other queries. Including ignored candidates may require a supplemental scan.
+On success, `data` is `{ items, truncated }` where each item is `{ path, name, kind, score, match_positions }`, the same hit shape as `fs:search`. Candidates prioritize match quality and place ignored candidates after non-ignored candidates of equal quality. When fd is available, searches use the local `@`-completion strategy: hidden paths are always included, each root scans at most 100 entries per pass, and at most 20 items are returned. Matches beyond the scan cap may be omitted. Including ignored candidates may require a supplemental `--no-ignore-vcs` scan; the ripgrep/Node fallback applies when fd is unavailable.
+
+With `stream:true`, the response is NDJSON instead of a single JSON object. Each envelope's `data` includes `phase` (`preview`, `final`, or `error`) and the same result fields. A preview contains ordinary fd candidates with `truncated:true`; the final result replaces it after the ignored scan. Closing the connection cancels the search.
 
 - `40001`: body validation failure
 - `40410`: workspace not found and not a usable absolute path

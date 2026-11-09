@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Include gitignored files in `@` completions and file-search requests that omit `follow_gitignore`, after equally matched regular files and with a possible extra scan; set `follow_gitignore: true` to restore request filtering.
+Align `fs:suggest` with local fd completion, using bounded scans and at most 20 results with optional streamed previews, while including hidden and gitignored paths by default and placing regular files first at equal match quality.

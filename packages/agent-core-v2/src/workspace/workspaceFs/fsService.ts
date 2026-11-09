@@ -32,6 +32,7 @@ import {
   type FsStatResponse,
   type FsSuggestRequest,
   type FsSuggestResponse,
+  type FsSuggestStreamEvent,
 } from './fs';
 
 const FsWireErrorCode = {
@@ -73,6 +74,7 @@ import { IWorkspaceGitService } from '#/workspace/workspaceGit/workspaceGit';
 import { type FsDownloadResolved, type FsPathResolved, IWorkspaceFsService } from './fs';
 import { readStream, runCommand } from './internal/fsProcess';
 import { ensureRgPath, type RgProbe, type RgResolution } from './internal/rgLocator';
+import { ensureFdPath, suggestWithFd, suggestWithFdEvents, type FdResolution } from './internal/fdSuggest';
 import {
   compileGrepPattern,
   computeFuzzyScore,
@@ -147,6 +149,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     readonly walkRules: readonly string[];
   }>();
   private rgResolution: RgResolution | null | undefined = undefined;
+  private fdResolution: FdResolution | null | undefined = undefined;
   private realRootsCache:
     | { readonly key: string; readonly roots: readonly { dir: string; real: string }[] }
     | undefined = undefined;
@@ -774,18 +777,11 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     };
   }
 
-  async suggest(req: FsSuggestRequest): Promise<FsSuggestResponse> {
+  async suggest(req: FsSuggestRequest, externalSignal?: AbortSignal): Promise<FsSuggestResponse> {
     const queryLower = req.query.toLowerCase();
-    if (req.query === '') {
-      return this.suggestTopLevel(req, await this.suggestRoots());
-    }
-
     const pathSegments = queryLower.includes('/')
       ? queryLower.split('/').filter((seg) => seg.length > 0)
       : [];
-    if (queryLower.includes('/') && pathSegments.length === 0) {
-      return { items: [], truncated: false };
-    }
     const query: SuggestQuery = {
       nameQuery: queryLower,
       pathSegments,
@@ -797,13 +793,45 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const cap = req.limit;
     const deadline = Date.now() + SUGGEST_TIMEOUT_MS;
     const controller = new AbortController();
+    const signal = externalSignal === undefined ? controller.signal : AbortSignal.any([controller.signal, externalSignal]);
     const timer = setTimeout(() => controller.abort(), SUGGEST_TIMEOUT_MS);
     timer.unref?.();
     try {
       const roots = await this.suggestRoots();
       if (roots.length === 0) return { items: [], truncated: false };
+      const fd = await this.resolveFd(signal);
+      if (fd !== null) {
+        const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
+        try {
+          return await suggestWithFd({
+            fdBinary: fd.path,
+            query: req.query,
+            cap: Math.min(cap, 20),
+            followGitignore: req.follow_gitignore,
+            includeGlobs: req.include_globs,
+            excludeGlobs: req.exclude_globs,
+            roots,
+            path: this.path,
+            hostFs: this.hostFs,
+            process: lease.environment.process!,
+            workDir: this.workDir,
+            homeDir: lease.environment.host?.homeDir,
+            signal,
+          });
+        } catch (error) {
+          if (signal.aborted) throw error;
+        } finally {
+          lease.dispose();
+        }
+      }
+      if (req.query === '') {
+        return this.suggestTopLevel(req, roots);
+      }
+      if (queryLower.includes('/') && pathSegments.length === 0) {
+        return { items: [], truncated: false };
+      }
       const direct = await this.directSuggestTargets(roots, req.query, {
-        signal: controller.signal,
+        signal,
         deadline,
       });
       let resolution: RgResolution | null = null;
@@ -814,15 +842,60 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       }
       if (resolution !== null) {
         try {
-          return await this.suggestWithRg(query, cap, controller.signal, resolution.path, roots, direct);
+          return await this.suggestWithRg(query, cap, signal, resolution.path, roots, direct);
         } catch (error) {
-          if (controller.signal.aborted) throw error;
+          if (signal.aborted) throw error;
           this.telemetry.track2('fs_suggest_node_fallback', { reason: 'rg_error' });
-          return await this.suggestWithNode(query, cap, controller.signal, roots, direct, deadline);
+          return await this.suggestWithNode(query, cap, signal, roots, direct, deadline);
         }
       }
       this.telemetry.track2('fs_suggest_node_fallback', { reason: 'rg_missing' });
-      return await this.suggestWithNode(query, cap, controller.signal, roots, direct, deadline);
+      return await this.suggestWithNode(query, cap, signal, roots, direct, deadline);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async *suggestStream(req: FsSuggestRequest, externalSignal?: AbortSignal): AsyncGenerator<FsSuggestStreamEvent> {
+    const controller = new AbortController();
+    const signal = externalSignal === undefined ? controller.signal : AbortSignal.any([controller.signal, externalSignal]);
+    const timer = setTimeout(() => controller.abort(), SUGGEST_TIMEOUT_MS);
+    timer.unref?.();
+    try {
+      const roots = await this.suggestRoots();
+      if (roots.length === 0) {
+        yield { phase: 'final', response: { items: [], truncated: false } };
+        return;
+      }
+      const fd = await this.resolveFd(signal);
+      if (fd !== null) {
+        const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
+        try {
+          for await (const event of suggestWithFdEvents({
+            fdBinary: fd.path,
+            query: req.query,
+            cap: Math.min(req.limit, 20),
+            followGitignore: req.follow_gitignore,
+            includeGlobs: req.include_globs,
+            excludeGlobs: req.exclude_globs,
+            roots,
+            path: this.path,
+            hostFs: this.hostFs,
+            process: lease.environment.process!,
+            workDir: this.workDir,
+            homeDir: lease.environment.host?.homeDir,
+            signal,
+          })) {
+            yield event;
+          }
+          return;
+        } catch (error) {
+          if (signal.aborted) throw error;
+        } finally {
+          lease.dispose();
+        }
+      }
+      yield { phase: 'final', response: await this.suggest(req, externalSignal) };
     } finally {
       clearTimeout(timer);
     }
@@ -1515,6 +1588,22 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const result = { matcher: ig, walkRules: rules };
     this.gitignoreCache.set(rootDir, result);
     return result;
+  }
+
+  private async resolveFd(signal: AbortSignal): Promise<FdResolution | null> {
+    if (this.fdResolution !== undefined) return this.fdResolution;
+    const lease = this.resolver.acquire({ environmentId: this.environmentId }, ['process']);
+    try {
+      this.fdResolution = await ensureFdPath({
+        exec: (args) => runCommand(lease.environment.process!, args, { cwd: this.workDir, signal }),
+      }, { environment: lease.environment, signal });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      this.fdResolution = null;
+    } finally {
+      lease.dispose();
+    }
+    return this.fdResolution;
   }
 
   private async resolveRg(): Promise<RgResolution | null> {

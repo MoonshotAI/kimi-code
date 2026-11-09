@@ -1985,13 +1985,16 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | --- | --- | --- | --- |
 | `workspace` | body | string | **必填。** 已注册工作区 id 或绝对根路径（当场注册） |
 | `query` | body | string | **必填。** 要补全的部分路径文本 |
-| `limit` | body | integer | 最大候选数，1–200。默认 `50` |
+| `limit` | body | integer | 最大候选数，1–200。默认 `50`；fd 搜索最多返回 `20` 条 |
 | `follow_gitignore` | body | boolean | 为 `true` 时跳过 gitignore 路径。默认 `false` |
-| `show_hidden` | body | boolean | 包含点文件。默认 `false` |
+| `show_hidden` | body | boolean | 包含点文件。默认 `false`；fd 搜索始终包含 |
+| `stream` | body | boolean | 为 `true` 时以 NDJSON 返回 preview/final 事件。默认 `false` |
 | `include_globs` | body | string[] | 只保留匹配这些 glob 之一的路径 |
 | `exclude_globs` | body | string[] | 跳过匹配这些 glob 的路径 |
 
-成功时 `data` 为 `{ items, truncated }`，每项为 `{ path, name, kind, score, match_positions }`，命中结构同 `fs:search`。候选优先按匹配质量排序，同一匹配质量内普通候选排在忽略候选之前。点开头查询会自动启用隐藏路径匹配；其他查询的 `show_hidden` 默认值仍为 `false`。包含忽略候选时可能执行一次补充扫描。
+成功时 `data` 为 `{ items, truncated }`，每项为 `{ path, name, kind, score, match_positions }`，命中结构同 `fs:search`。候选优先按匹配质量排序，同一匹配质量内普通候选排在忽略候选之前。fd 可用时采用与本地 `@` 补全相同的策略：始终包含隐藏路径，每个 root 每轮最多扫描 100 条，最多返回 20 条；超出扫描上限的匹配可能遗漏。包含忽略候选时可能执行一次 `--no-ignore-vcs` 补充扫描；fd 不可用时回退到 ripgrep/Node 实现。
+
+使用 `stream:true` 时，响应改为 NDJSON，而不是单个 JSON 对象。每个响应包的 `data` 包含 `phase`（`preview`、`final` 或 `error`）以及相同的结果字段。preview 携带普通 fd 候选且 `truncated:true`；ignored 扫描完成后的 final 用于替换 preview。关闭连接会取消搜索。
 
 - `40001`：请求体校验失败
 - `40410`：工作区不存在，且不是可用的绝对路径
