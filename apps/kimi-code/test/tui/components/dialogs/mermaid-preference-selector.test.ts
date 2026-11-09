@@ -103,8 +103,8 @@ describe('CopyOnSelectSelectorComponent', () => {
       onCancel: () => {},
     });
     const text = strip(picker.render(100).join('\n'));
-    expect(text).toContain('Keep the selection ← current');
-    expect(text).toContain('press Ctrl-C to copy it');
+    expect(text).toContain('Off ← current');
+    expect(text).toContain('Press Ctrl-C to copy selected text.');
 
     picker.handleInput('\r');
     picker.handleInput('\u001B[A');

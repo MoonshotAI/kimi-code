@@ -50,7 +50,7 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'copyOnSelect',
     label: 'Copy on select',
-    description: 'Choose whether releasing a mouse selection copies it.',
+    description: 'Choose whether selecting text in fullscreen mode copies it.',
   },
   {
     value: 'mermaid',
@@ -201,13 +201,13 @@ export class TranscriptGroupThinkingSelectorComponent extends ChoicePickerCompon
 const COPY_ON_SELECT_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'on',
-    label: 'Copy on release',
-    description: 'Copy the selection as soon as you release the mouse.',
+    label: 'On',
+    description: 'Copy text as soon as you select it.',
   },
   {
     value: 'off',
-    label: 'Keep the selection',
-    description: 'Keep the selection highlighted; press Ctrl-C to copy it.',
+    label: 'Off',
+    description: 'Press Ctrl-C to copy selected text.',
   },
 ];
 

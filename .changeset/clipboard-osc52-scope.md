@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Copy through OSC 52 only over SSH, mosh, WSL, Termux, or without a display; set `KIMI_CODE_CLIPBOARD_OSC52=1` to always use it.
+Outside SSH and mosh, copying now goes only to the system clipboard instead of also through the terminal (OSC 52); set `KIMI_CODE_CLIPBOARD_OSC52=1` to keep the old behavior.

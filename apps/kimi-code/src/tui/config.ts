@@ -427,7 +427,7 @@ export function renderTuiConfig(config: TuiConfig): string {
 
 theme = "${escapeTomlBasicString(config.theme)}" # "auto" | "dark" | "light" | custom theme name
 ${tuiModeLine}
-copy_on_select = ${String(config.copyOnSelect !== false)} # fullscreen only: false keeps the selection until you press Ctrl-C
+copy_on_select = ${String(config.copyOnSelect !== false)} # fullscreen only: false copies only when you press Ctrl-C
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit
