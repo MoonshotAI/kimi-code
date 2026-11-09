@@ -1092,21 +1092,22 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.activeRequestTrace = undefined;
     this.telemetry.setContext({ request_id: undefined });
     EventEmitter.setMaxListeners(MAX_STEP_SIGNAL_LISTENERS, turn.controller.signal);
+    const gateSignal = AbortSignal.any([turn.controller.signal, turn.steerController.signal]);
     try {
 
       await this.hooks.onWillBeginStep.run({
         turnId: turn.id,
         step: stepOrdinal,
         firstStepOfTurn: stepOrdinal === 1,
-        signal: step.signal,
+        signal: gateSignal,
       });
 
     } catch (error) {
 
-      return this.failMachineGate(turn, step, error);
+      return this.failMachineGate(turn, step, error, gateSignal);
     }
-    if (step.signal.aborted) {
-      return this.failMachineGate(turn, step, step.signal.reason ?? abortError('Step aborted'));
+    if (gateSignal.aborted) {
+      return this.failMachineGate(turn, step, gateSignal.reason ?? abortError('Step aborted'), gateSignal);
     }
     return { type: 'proceed', signal: step.signal, step: step.number };
   }
@@ -1115,9 +1116,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     turn: ActiveTurn,
     step: MachineStepState,
     error: unknown,
+    gateSignal: AbortSignal,
   ): MachineGateDecision {
-    if (turn.controller.signal.aborted || isAbortError(error) || step.signal.aborted) {
-      turn.abortReason = turn.controller.signal.aborted ? turn.controller.signal.reason : error;
+    if (turn.controller.signal.aborted || isAbortError(error) || gateSignal.aborted) {
+      if (turn.controller.signal.aborted) turn.abortReason = turn.controller.signal.reason;
       return { type: 'fail' };
     }
     turn.failedStep = {

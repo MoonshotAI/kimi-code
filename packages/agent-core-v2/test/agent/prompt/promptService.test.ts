@@ -392,27 +392,42 @@ describe('prompt queue', () => {
     expect(materialized[1]?.promptIds).toEqual([three.id]);
   });
 
-  it('returns the prompt identity and delivery state for an accepted steer', async () => {
+  it('returns the prompt identity and continues after a stale gate failure', async () => {
     setup();
-    const hold = holdNextStep();
-    ctx.mockNextResponse({ type: 'text', text: 'active' });
-    ctx.mockNextResponse({ type: 'text', text: 'merged' });
+    const gateStarts: number[] = [];
+    let rejectFirst!: (error: Error) => void;
+    let markFirst!: () => void;
+    let markSecond!: () => void;
+    const first = new Promise<void>((resolve) => { markFirst = resolve; });
+    const second = new Promise<void>((resolve) => { markSecond = resolve; });
+    loop.hooks.onWillBeginStep.register('test-stale-gate', async (hookCtx, next) => {
+      gateStarts.push(hookCtx.step);
+      if (hookCtx.step === 1) {
+        markFirst();
+        await new Promise<void>((_resolve, reject) => { rejectFirst = reject; });
+      }
+      if (hookCtx.step === 2) markSecond();
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'continued' });
+    const turnEnds: TurnEnded[] = [];
+    ctx.get(IEventBus).subscribe(TurnEnded, (event) => turnEnds.push(event));
     await enqueue(loop, { message: message('active') });
-    await hold.started;
+    await first;
 
     const result = await ctx.rpc.steer({ input: [{ type: 'text', text: 'steer' }] });
+    await second;
 
-    try {
-      expect(result).toMatchObject({
-        prompt_id: expect.any(String),
-        state: 'running',
-        steered: true,
-        turn_id: 0,
-      });
-    } finally {
-      hold.release();
-      await loop.settled();
-    }
+    expect(result).toMatchObject({
+      prompt_id: expect.any(String),
+      state: 'running',
+      steered: true,
+      turn_id: 0,
+    });
+    rejectFirst(new Error('stale gate'));
+    await loop.settled();
+    expect(gateStarts).toEqual([1, 2]);
+    expect(turnEnds).toMatchObject([{ turnId: 0, reason: 'completed' }]);
   });
 
   it('steers into an untracked active turn and interrupts the current llm request', async () => {
