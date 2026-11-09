@@ -910,19 +910,28 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(state.permission_mode).toBe('yolo');
   });
 
-  it('removes the new session when its agent_config cannot be applied', async () => {
+  it('creates nothing and announces nothing when its agent_config cannot be applied', async () => {
     const cwd = home as string;
     const listed = async (): Promise<string[]> =>
       (await getJson<PageWire>('/api/v1/sessions')).body.data.items.map((session) => session.id);
     const before = await listed();
+    const announced: string[] = [];
+    const subscription = (server as RunningServer).core.accessor
+      .get(IEventService)
+      .subscribe((event) => announced.push(event.type));
 
-    const created = await postJson<SessionWire>('/api/v1/sessions', {
-      metadata: { cwd },
-      agent_config: { tower_mode: true },
-    });
+    try {
+      const created = await postJson<SessionWire>('/api/v1/sessions', {
+        metadata: { cwd },
+        agent_config: { tower_mode: true },
+      });
 
-    expect(created.body.code).not.toBe(0);
-    expect(await listed()).toEqual(before);
+      expect(created.body.code).not.toBe(0);
+      expect(await listed()).toEqual(before);
+      expect(announced.filter((type) => type.startsWith('event.session.'))).toEqual([]);
+    } finally {
+      subscription.dispose();
+    }
   });
 
   it('rejects tower_mode agent_config when the tower feature is unavailable', async () => {

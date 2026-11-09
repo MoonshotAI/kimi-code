@@ -656,7 +656,7 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 | `last_turn_reason` | string | Main agent's latest turn outcome: `completed` / `cancelled` / `failed` |
 | `last_prompt` | string | Most recent user prompt text, when present |
 | `metadata` | object | Custom metadata; always carries `cwd` (the session's working directory) |
-| `agent_config` | object | Projected as `{ model }`; `model` is `""` in most responses and only filled with the live model by `GET /api/v1/sessions/{session_id}/snapshot` |
+| `agent_config` | object | Projected as `{ model }`; `model` is `""` in most responses and filled with the live model by `GET /api/v1/sessions/{session_id}/snapshot`, and by the creation response and `event.session.created` when the creation request set a model |
 | `usage` | object | Token rollup `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`; all zeros outside the snapshot endpoint |
 | `permission_rules` | array | Session permission rules; currently always `[]` |
 | `message_count` | integer | Message count; currently always `0` |
@@ -669,7 +669,7 @@ Creates a session and returns it. The target directory comes from `workspace_id`
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | **Required** when `metadata.cwd` is absent. Registered workspace id; the session is created at that workspace's root |
-| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root. Other keys are kept as the session's custom metadata |
+| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root. Other keys are kept as the session's custom metadata, except the reserved `goal` key, which is dropped |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
 | `agent_config` | body | object | Partial main-agent config, with the same fields as `POST /api/v1/sessions/{session_id}/profile`, applied before the session is returned. When it cannot be applied, the session is not created and the error is returned |
 

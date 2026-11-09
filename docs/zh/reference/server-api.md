@@ -656,7 +656,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `last_turn_reason` | string | main agent 最近一次轮次的结果：`completed` / `cancelled` / `failed` |
 | `last_prompt` | string | 最近一条用户提示词文本（如有） |
 | `metadata` | object | 自定义元数据；始终携带 `cwd`（会话的工作目录） |
-| `agent_config` | object | 投影为 `{ model }`；`model` 在大多数响应中为 `""`，仅由 `GET /api/v1/sessions/{session_id}/snapshot` 填入实时模型 |
+| `agent_config` | object | 投影为 `{ model }`；`model` 在大多数响应中为 `""`，由 `GET /api/v1/sessions/{session_id}/snapshot` 填入实时模型；创建请求设置了模型时，创建响应和 `event.session.created` 里也会带上 |
 | `usage` | object | token 汇总 `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`；在 snapshot 端点之外全为零 |
 | `permission_rules` | array | 会话权限规则；当前始终为 `[]` |
 | `message_count` | integer | 消息数；当前始终为 `0` |
@@ -669,7 +669,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | 未提供 `metadata.cwd` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
-| `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录。其他键保存为会话的自定义元数据 |
+| `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录。其他键保存为会话的自定义元数据；保留键 `goal` 会被丢弃 |
 | `title` | body | string | 初始标题（至少 1 个字符）；否则会话无标题 |
 | `agent_config` | body | object | main agent 的部分配置，字段与 `POST /api/v1/sessions/{session_id}/profile` 相同，在返回会话之前应用。无法应用时不创建会话，直接返回错误 |
 

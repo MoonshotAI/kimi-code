@@ -262,6 +262,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         }
         await planHandle.accessor.get(IAgentPlanService).enter();
       }
+      await opts.prepare?.(handle);
       await this.appendSessionIndexEntry(sessionId, workDir);
     } catch (error) {
       const sessionDir = handle.accessor.get(ISessionContext).sessionDir;

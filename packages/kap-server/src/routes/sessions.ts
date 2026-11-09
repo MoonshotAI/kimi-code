@@ -85,7 +85,7 @@ import {
   sendMappedError as sendSessionMappedError,
   sessionConflictErrors,
 } from './sessionErrors';
-import { applySessionAgentConfig } from './sessionAgentConfig';
+import { agentConfigErrors, applyAgentConfigToSession, applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
 interface SessionRouteHost {
@@ -206,6 +206,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
         [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+        ...agentConfigErrors,
       },
       description: 'Create a new session',
       tags: ['sessions'],
@@ -264,28 +265,25 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conve
           bucket === undefined
             ? await registry.createOrTouch(workDir)
             : ((await registry.touch(bucket.id)) ?? bucket);
-        const sessions = core.accessor.get(ISessionManager);
-        const handle = await sessions.create({
+        const { cwd: _cwd, goal: _goal, ...custom }: Record<string, unknown> = body.metadata ?? {};
+        const agentConfig = body.agent_config ?? {};
+        const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: resolved.id,
           workDir,
           environmentId: body.environment_id,
           environmentCwd: body.environment_cwd,
           ensureMainAgent: body.environment_id !== undefined && body.environment_id !== 'local',
+          prepare: async (session) => {
+            if (Object.keys(custom).length > 0) {
+              await session.accessor.get(ISessionMetadata).update({ custom });
+            }
+            if (Object.keys(agentConfig).length > 0) await applyAgentConfigToSession(session, agentConfig);
+          },
         });
         const metadata = handle.accessor.get(ISessionMetadata);
-        const sessionId = (await metadata.read()).id;
-        try {
-          if (typeof body.title === 'string') await metadata.setTitle(body.title);
-          const { cwd: _cwd, ...custom } = body.metadata ?? {};
-          if (Object.keys(custom).length > 0) await metadata.update({ custom });
-          if (body.agent_config !== undefined) {
-            await applySessionAgentConfig(core, sessionId, body.agent_config);
-          }
-        } catch (error) {
-          await sessions.delete(sessionId).catch(() => undefined);
-          throw error;
-        }
+        if (typeof body.title === 'string') await metadata.setTitle(body.title);
         const meta = await metadata.read();
+        const sessionId = meta.id;
         const session = toWireSession(
           { ...meta, workspaceId: resolved.id },
           resolved.root,

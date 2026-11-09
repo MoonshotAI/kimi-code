@@ -9,12 +9,24 @@ import {
   IAgentTowerService,
   resumeSessionById,
   towerEnterFailureMessage,
+  type ISessionScopeHandle,
   type PermissionMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import type { SessionAgentConfigPartial } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
+import { ErrorCode } from '../protocol/error-codes';
 import { ensureMainAgent } from '../transport/mainAgent';
+
+export const agentConfigErrors = {
+  [ErrorCode.GOAL_ALREADY_EXISTS]: {},
+  [ErrorCode.GOAL_NOT_FOUND]: {},
+  [ErrorCode.GOAL_STATUS_INVALID]: {},
+  [ErrorCode.GOAL_NOT_RESUMABLE]: {},
+  [ErrorCode.GOAL_OBJECTIVE_EMPTY]: {},
+  [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: {},
+  [ErrorCode.GOAL_UNSUPPORTED_AGENT]: {},
+} as const;
 
 export async function applySessionAgentConfig(
   core: Scope,
@@ -25,6 +37,13 @@ export async function applySessionAgentConfig(
   if (session === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   }
+  await applyAgentConfigToSession(session, agentConfig);
+}
+
+export async function applyAgentConfigToSession(
+  session: ISessionScopeHandle,
+  agentConfig: SessionAgentConfigPartial,
+): Promise<void> {
   const agent = await ensureMainAgent(session);
 
   const profile = agent.accessor.get(IAgentProfileService);
