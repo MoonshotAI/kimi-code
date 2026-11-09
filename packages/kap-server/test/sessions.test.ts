@@ -1642,6 +1642,12 @@ describe('server-v2 /api/v1/sessions', () => {
     });
     expect(cancelledWithReason.body.data).toEqual({ cancelled: false });
     expect(cancel).toHaveBeenCalledWith('visibility-check', 'visibility');
+    const cancelledForPlan = await postJson<{ cancelled: boolean }>(`/api/v1/sessions/${id}:cancel-prompt-prediction`, {
+      prediction_id: 'plan-check',
+      reason: 'plan',
+    });
+    expect(cancelledForPlan.body.data).toEqual({ cancelled: false });
+    expect(cancel).toHaveBeenCalledWith('plan-check', 'plan');
     const abortController = new AbortController();
     const request = fetch(`${base}/api/v1/sessions/${id}:predict-prompt`, {
       method: 'POST',

@@ -125,6 +125,7 @@ export const cancelPromptPredictionRequestSchema = z.object({
     'dialog',
     'queue',
     'submit',
+    'plan',
     'visibility',
     'shutdown',
     'disconnect',

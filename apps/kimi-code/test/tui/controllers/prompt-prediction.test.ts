@@ -93,6 +93,16 @@ describe('PromptPredictionController', () => {
     editor.handleInput('x');
     expect(editor.getPromptPrediction()).toBeUndefined();
     expect(track).toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({ reason: 'input' }));
+
+    nextPrediction = () => Promise.resolve('do not show this in plan mode');
+    editor.setText('');
+    controller.handleTurnEnded(turnEnded(11));
+    await vi.waitFor(() => expect(editor.getPromptPrediction()).toBeDefined());
+    state.appState.planMode = true;
+    controller.handlePlanModeChanged(true);
+    expect(editor.getPromptPrediction()).toBeUndefined();
+    expect(track).toHaveBeenCalledWith('prediction_dismissed', expect.objectContaining({ reason: 'plan' }));
+
     for (const [, properties] of track.mock.calls) {
       expect(properties).not.toHaveProperty('text');
       expect(properties).not.toHaveProperty('prediction');

@@ -60,6 +60,7 @@ export const PROMPT_PREDICTION_CANCEL_REASONS = [
   'dialog',
   'queue',
   'submit',
+  'plan',
   'visibility',
   'shutdown',
   'disconnect',

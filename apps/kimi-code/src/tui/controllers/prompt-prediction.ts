@@ -33,6 +33,7 @@ type DismissReason =
   | 'dialog'
   | 'queue'
   | 'submit'
+  | 'plan'
   | 'shutdown';
 
 export class PromptPredictionController {
@@ -42,6 +43,10 @@ export class PromptPredictionController {
   private suppressNextChange = false;
 
   constructor(private readonly host: PromptPredictionHost) {}
+
+  handlePlanModeChanged(planMode: boolean): void {
+    if (planMode) this.dismiss('plan');
+  }
 
   handleTurnStarted(): void {
     this.dismiss('new_turn');

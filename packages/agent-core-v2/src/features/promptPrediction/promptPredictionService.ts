@@ -326,10 +326,16 @@ export class SessionPromptPredictionService extends Disposable implements ISessi
 }
 
 function predictionText(finish: AgentLLMRequestFinish): string | null {
-  if (finish.providerFinishReason === 'truncated' || finish.message.toolCalls.length > 0) return null;
+  if (finish.providerFinishReason !== 'completed' || finish.message.toolCalls.length > 0) return null;
   const parts = finish.message.content;
   if (parts.some((part) => part.type !== 'text' && part.type !== 'think')) return null;
   const text = parts.map((part) => part.type === 'text' ? part.text : '').join('').trim();
-  if (text.length === 0 || text.length > PROMPT_PREDICTION_MAX_CHARS || text.includes('\0')) return null;
+  if (
+    text.length === 0 ||
+    text.length > PROMPT_PREDICTION_MAX_CHARS ||
+    /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/.test(text)
+  ) {
+    return null;
+  }
   return text;
 }

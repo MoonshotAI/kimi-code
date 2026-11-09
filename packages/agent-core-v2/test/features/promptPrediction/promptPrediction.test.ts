@@ -19,8 +19,13 @@ import {
 } from '#/session/sessionActivity/sessionActivity';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 
-function finish(text: string, toolCalls: AgentLLMRequestFinish['message']['toolCalls'] = []): AgentLLMRequestFinish {
+function finish(
+  text: string,
+  toolCalls: AgentLLMRequestFinish['message']['toolCalls'] = [],
+  providerFinishReason: AgentLLMRequestFinish['providerFinishReason'] = 'completed',
+): AgentLLMRequestFinish {
   return {
+    providerFinishReason,
     message: {
       role: 'assistant',
       content: text.length === 0 ? [] : [{ type: 'think', think: 'reasoning' }, { type: 'text', text }],
@@ -150,14 +155,24 @@ describe('SessionPromptPredictionService', () => {
     expect(requests).toHaveLength(2);
 
     lastEnded = { turnId: 2, reason: 'completed' };
+    nextResult = () => Promise.resolve(finish('run this\u001b[2J'));
+    await expect(service.predict({ predictionId: 'control', expectedTurnId: 2 })).resolves.toBeNull();
+    expect(requests).toHaveLength(3);
+
+    lastEnded = { turnId: 3, reason: 'completed' };
+    nextResult = () => Promise.resolve(finish('partial', [], 'filtered'));
+    await expect(service.predict({ predictionId: 'filtered', expectedTurnId: 3 })).resolves.toBeNull();
+    expect(requests).toHaveLength(4);
+
+    lastEnded = { turnId: 4, reason: 'completed' };
     nextResult = () => new Promise<AgentLLMRequestFinish>(() => {});
-    const cancelled = service.predict({ predictionId: 'cancel-me', expectedTurnId: 2 });
-    await vi.waitFor(() => expect(requests).toHaveLength(3));
+    const cancelled = service.predict({ predictionId: 'cancel-me', expectedTurnId: 4 });
+    await vi.waitFor(() => expect(requests).toHaveLength(5));
     expect(service.cancel('other')).toBe(false);
     expect(service.cancel('cancel-me', 'escape')).toBe(true);
     expect(service.cancel('cancel-me', 'escape')).toBe(false);
     await expect(cancelled).resolves.toBeNull();
-    expect(requests[2]?.signal?.aborted).toBe(true);
+    expect(requests[4]?.signal?.aborted).toBe(true);
     expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
       status: 'cancelled',
       reason: 'escape',
@@ -167,22 +182,22 @@ describe('SessionPromptPredictionService', () => {
       reason: 'escape',
     }));
 
-    lastEnded = { turnId: 3, reason: 'completed' };
+    lastEnded = { turnId: 5, reason: 'completed' };
     let resolveStale!: (result: AgentLLMRequestFinish) => void;
     nextResult = () => new Promise<AgentLLMRequestFinish>((resolve) => {
       resolveStale = resolve;
     });
-    const stale = service.predict({ predictionId: 'stale', expectedTurnId: 3 });
-    await vi.waitFor(() => expect(requests).toHaveLength(4));
+    const stale = service.predict({ predictionId: 'stale', expectedTurnId: 5 });
+    await vi.waitFor(() => expect(requests).toHaveLength(6));
     contextSnapshot = [];
     resolveStale(finish('must not leak'));
     await expect(stale).resolves.toBeNull();
 
-    lastEnded = { turnId: 4, reason: 'completed' };
+    lastEnded = { turnId: 6, reason: 'completed' };
     contextSnapshot = originalContext;
     nextResult = () => new Promise<AgentLLMRequestFinish>(() => {});
-    const activityCancelled = service.predict({ predictionId: 'activity-cancelled', expectedTurnId: 4 });
-    await vi.waitFor(() => expect(requests).toHaveLength(5));
+    const activityCancelled = service.predict({ predictionId: 'activity-cancelled', expectedTurnId: 6 });
+    await vi.waitFor(() => expect(requests).toHaveLength(7));
     activityEmitter.fire({
       state: {
         busy: true,
@@ -193,21 +208,21 @@ describe('SessionPromptPredictionService', () => {
       cause: 'background',
     });
     await expect(activityCancelled).resolves.toBeNull();
-    expect(requests[4]?.signal?.aborted).toBe(true);
+    expect(requests[6]?.signal?.aborted).toBe(true);
     expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
       status: 'cancelled',
       reason: 'activity_background',
     }));
 
-    lastEnded = { turnId: 5, reason: 'completed' };
+    lastEnded = { turnId: 7, reason: 'completed' };
     vi.useFakeTimers();
-    const timedOut = service.predict({ predictionId: 'timeout', expectedTurnId: 5 });
+    const timedOut = service.predict({ predictionId: 'timeout', expectedTurnId: 7 });
     try {
       await vi.advanceTimersByTimeAsync(0);
-      expect(requests).toHaveLength(6);
+      expect(requests).toHaveLength(8);
       await vi.advanceTimersByTimeAsync(20_000);
       await expect(timedOut).resolves.toBeNull();
-      expect(requests[5]?.signal?.aborted).toBe(true);
+      expect(requests[7]?.signal?.aborted).toBe(true);
       expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
         status: 'timeout',
       }));
@@ -215,12 +230,12 @@ describe('SessionPromptPredictionService', () => {
       vi.useRealTimers();
     }
 
-    lastEnded = { turnId: 6, reason: 'completed' };
-    const disposed = service.predict({ predictionId: 'dispose', expectedTurnId: 6 });
-    await vi.waitFor(() => expect(requests).toHaveLength(7));
+    lastEnded = { turnId: 8, reason: 'completed' };
+    const disposed = service.predict({ predictionId: 'dispose', expectedTurnId: 8 });
+    await vi.waitFor(() => expect(requests).toHaveLength(9));
     service.dispose();
     await expect(disposed).resolves.toBeNull();
-    expect(requests[6]?.signal?.aborted).toBe(true);
+    expect(requests[8]?.signal?.aborted).toBe(true);
     expect(telemetry.track2).toHaveBeenCalledWith('prediction_generated', expect.objectContaining({
       status: 'cancelled',
       reason: 'disposed',

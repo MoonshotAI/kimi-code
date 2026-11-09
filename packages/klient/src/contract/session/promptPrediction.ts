@@ -17,6 +17,7 @@ export const promptPredictionCancelReasonSchema = z.enum([
   'dialog',
   'queue',
   'submit',
+  'plan',
   'visibility',
   'shutdown',
   'disconnect',
