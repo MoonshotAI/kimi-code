@@ -8,8 +8,8 @@
  *
  * Coverage:
  *   1. HTTP envelope unwrap throws on `code !== 0`.
- *   2. WS handshake completes (server_hello + client_hello ack).
- *   3. Subscribe ack succeeds for a real session id.
+ *   2. WS connects without a handshake.
+ *   3. Subscribe succeeds for a real session id.
  *   4. `waitForFrame` times out cleanly (no zombie waiters).
  *   5. Created session is observable via `getSession`.
  */
@@ -83,15 +83,11 @@ describeLive('DaemonClient (live server required)', () => {
     expect(caughtError).toBeInstanceOf(EnvelopeError);
   });
 
-  it('completes handshake (server_hello + client_hello ack)', async () => {
-    const log = createCaseLogger('client: ws handshake');
+  it('opens the WebSocket without a handshake', async () => {
+    const log = createCaseLogger('client: ws connect');
     const client = new DaemonClient({ baseUrl: BASE_URL });
     log('connect request', { url: `${BASE_URL.replace(/^http/, 'ws')}/api/v1/ws` });
-    const hello = await client.connect();
-    log('server hello', hello);
-    // heartbeat_ms is optional — kap-server omits it (no server heartbeat).
-    expect(hello.heartbeat_ms === undefined || hello.heartbeat_ms > 0).toBe(true);
-    expect(typeof hello.ws_connection_id).toBe('string');
+    await expect(client.connect()).resolves.toBeUndefined();
     await client.close();
     log('closed');
   });
@@ -103,7 +99,7 @@ describeLive('DaemonClient (live server required)', () => {
     created.push({ client, sid: session.id });
     log('created session', session);
     await client.connect();
-    log('subscribe request', { type: 'subscribe_v2', session_id: session.id });
+    log('subscribe request', { type: 'subscribe', session_id: session.id });
     await expect(client.subscribe(session.id)).resolves.toBeUndefined();
     log('subscribe accepted', { session_id: session.id });
   });
@@ -597,7 +593,7 @@ function okEnvelope<T>(data: T): { code: 0; msg: string; data: T; request_id: st
 function frameForLog(frame: {
   type: string;
   session_id?: string;
-  id?: string;
+  request_id?: string;
   code?: number;
   msg?: string;
   payload?: unknown;
@@ -605,7 +601,7 @@ function frameForLog(frame: {
   return {
     type: frame.type,
     session_id: frame.session_id,
-    id: frame.id,
+    request_id: frame.request_id,
     code: frame.code,
     msg: frame.msg,
     payload: frame.payload,

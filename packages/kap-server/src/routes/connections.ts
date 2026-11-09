@@ -33,7 +33,6 @@ export function registerConnectionsRoutes(
           connected_at: conn.connectedAt,
           remote_address: conn.remoteAddress,
           user_agent: conn.userAgent,
-          has_client_hello: conn.hasClientHello,
           subscriptions: [...conn.subscriptionSessionIds],
         }))
         .sort((a, b) => a.connected_at.localeCompare(b.connected_at));

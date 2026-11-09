@@ -517,7 +517,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   await registerApiV2Routes(app, core);
 
   const wssV1 = registerWsV1(core, {
-    validateCredential,
     registry: connectionRegistry,
     broadcaster,
   });
