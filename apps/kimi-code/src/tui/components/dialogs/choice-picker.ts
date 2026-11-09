@@ -370,10 +370,6 @@ export class PreviewChoicePickerComponent extends DockSection implements Focusab
 
   protected override handlePartMouse(part: DockPart, event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (event.type === 'wheel' && part === 'body') return undefined;
-    if (event.type === 'wheel' && part === 'head' && event.y >= event.height - PREVIEW_LABEL.length) {
-      this.scrollBody(event.wheelDelta ?? 0);
-      return { handled: true };
-    }
     if (event.type === 'wheel' || part === 'head') {
       return this.showingNewChoiceFromTop(() => this.picker.handleMouse(event));
     }

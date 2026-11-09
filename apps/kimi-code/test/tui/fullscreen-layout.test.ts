@@ -1487,6 +1487,10 @@ describe('fullscreen layout', () => {
 
     vt.sendInput(`\u001B[<65;5;${String(label + 1)}M`);
     await vt.waitForRender();
+    expect(panel().slice(label, content + 1)).toEqual(['Preview', '', summary]);
+
+    vt.sendInput(`\u001B[<65;5;${String(content + 1)}M`);
+    await vt.waitForRender();
     rows = panel();
     expect(rows.slice(label, content)).toEqual(['Preview', '']);
     expect(rows).not.toContain(summary);
