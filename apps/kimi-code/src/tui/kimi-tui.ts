@@ -770,7 +770,9 @@ export class KimiTUI {
   }
 
   defaultSkillPathForCommand(commandName: string): string | undefined {
-    return this.skillCommandDefaultPaths.get(commandName) ?? this.skillCommandDefaultPaths.get(`skill:${commandName}`);
+    const normalized = commandName.toLowerCase();
+    return this.skillCommandDefaultPaths.get(commandName) ?? this.skillCommandDefaultPaths.get(normalized) ??
+      this.skillCommandDefaultPaths.get(`skill:${normalized}`);
   }
 
   async refreshPluginCommands(session?: Session): Promise<void> {

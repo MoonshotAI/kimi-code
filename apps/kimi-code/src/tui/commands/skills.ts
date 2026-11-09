@@ -40,23 +40,35 @@ export function skillSourceLabel(source: SkillSummary['source'] | undefined): st
   return undefined;
 }
 
+function skillCommandKey(skill: SkillSummary): string {
+  return (skill.source === 'builtin' || skill.isSubSkill === true ? skill.name : `skill:${skill.name}`).toLowerCase();
+}
+
 export function buildSkillSlashCommands(skills: readonly SkillSummary[]): SkillSlashCommands {
   const commandMap = new Map<string, string>();
   const defaultPaths = new Map<string, string>();
   const defaultSkills = new Map<string, SkillSummary>();
+  const commandVariants = new Map<string, Set<string>>();
   const sortedSkills = [...skills].toSorted(compareSkillSlashCommands);
   for (const skill of sortedSkills) {
+    const key = skillCommandKey(skill);
+    if (!defaultSkills.has(key)) defaultSkills.set(key, skill);
     const commandName = skill.source === 'builtin' || skill.isSubSkill === true ? skill.name : `skill:${skill.name}`;
-    if (!defaultSkills.has(commandName)) defaultSkills.set(commandName, skill);
+    const variants = commandVariants.get(key) ?? new Set<string>();
+    variants.add(commandName);
+    commandVariants.set(key, variants);
   }
   const commands = sortedSkills.filter(isUserActivatableSkill).filter(isVisibleOnTui).map((skill) => {
     const commandName =
       skill.source === 'builtin' || skill.isSubSkill === true
         ? skill.name
         : `skill:${skill.name}`;
-    if (!commandMap.has(commandName)) {
-      commandMap.set(commandName, skill.name);
-      if (defaultSkills.get(commandName) !== skill) defaultPaths.set(commandName, skill.path);
+    const key = commandName.toLowerCase();
+    const firstVisible = !commandMap.has(commandName);
+    if (!commandMap.has(commandName)) commandMap.set(commandName, skill.name);
+    if (!commandMap.has(key)) commandMap.set(key, skill.name);
+    if ((defaultSkills.get(key) !== skill && firstVisible) || (commandVariants.get(key)?.size ?? 0) > 1) {
+      defaultPaths.set(commandName, skill.path);
     }
     return {
       name: commandName,

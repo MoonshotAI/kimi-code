@@ -104,7 +104,7 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
   // them behind the running turn exactly like normal messages (see
   // sendSkillActivation), and Ctrl-S steers them as real activations, so
   // skill commands can be issued any time.
-  const exactSkillName = options.skillCommandMap.get(parsed.name);
+  const exactSkillName = options.skillCommandMap.get(parsed.name) ?? options.skillCommandMap.get(parsed.name.toLowerCase());
   if (exactSkillName !== undefined) {
     return skillCommandIntent(parsed, exactSkillName);
   }
@@ -133,7 +133,8 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
     };
   }
 
-  const shorthandSkillName = options.skillCommandMap.get(`skill:${parsed.name}`);
+  const shorthandSkillName = options.skillCommandMap.get(`skill:${parsed.name}`) ??
+    options.skillCommandMap.get(`skill:${parsed.name.toLowerCase()}`);
   if (shorthandSkillName !== undefined) {
     return skillCommandIntent(parsed, shorthandSkillName);
   }
@@ -187,7 +188,9 @@ export function resolveSkillCommand(
   skillCommandMap: ReadonlyMap<string, string>,
   commandName: string,
 ): string | undefined {
-  return skillCommandMap.get(commandName) ?? skillCommandMap.get(`skill:${commandName}`);
+  const normalized = commandName.toLowerCase();
+  return skillCommandMap.get(commandName) ?? skillCommandMap.get(`skill:${commandName}`) ??
+    skillCommandMap.get(normalized) ?? skillCommandMap.get(`skill:${normalized}`);
 }
 
 export function skillVariantPathsForInput(

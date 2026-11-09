@@ -165,6 +165,28 @@ describe('skill slash commands', () => {
     expect(built.commands.every((command) => command.isSkill === true)).toBe(true);
   });
 
+  it('normalizes command keys while retaining exact-case variant paths', () => {
+    const built = buildSkillSlashCommands([
+      skill('Review', 'prompt', {
+        path: '/work/A/review/SKILL.md',
+        workspaceDir: '/work/A',
+        source: 'project',
+      }),
+      skill('review', 'prompt', {
+        path: '/work/B/review/SKILL.md',
+        workspaceDir: '/work/B',
+        source: 'project',
+      }),
+    ]);
+
+    expect(built.commands.map((command) => command.name)).toEqual(
+      expect.arrayContaining(['skill:Review', 'skill:review']),
+    );
+    expect(built.commandMap.has('skill:review')).toBe(true);
+    expect(built.defaultPaths.get('skill:Review')).toBe('/work/A/review/SKILL.md');
+    expect(built.defaultPaths.get('skill:review')).toBe('/work/B/review/SKILL.md');
+  });
+
   it('filters skills restricted to other scopes', () => {
     const built = buildSkillSlashCommands([
       skill('custom-theme', 'inline', { source: 'builtin', scopes: ['tui'] }),

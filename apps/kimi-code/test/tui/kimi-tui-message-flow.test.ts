@@ -831,6 +831,29 @@ describe('KimiTUI message flow', () => {
     });
   });
 
+  it.each([
+    ['/skill:Review', '/work/A/review/SKILL.md'],
+    ['/skill:review', '/work/B/review/SKILL.md'],
+  ])('preserves the matching case variant for manually typed command %s', async (command, path) => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const { driver } = await makeDriver(session, {
+      listWorkspaceSkills: vi.fn(async () => [
+        { name: 'Review', description: 'Review skill', path: '/work/A/review/SKILL.md', source: 'project', workspaceDir: '/work/A' },
+        { name: 'review', description: 'Review skill', path: '/work/B/review/SKILL.md', source: 'project', workspaceDir: '/work/B' },
+      ]),
+      listPluginCommands: vi.fn(async () => []),
+    });
+    await (driver as unknown as { refreshSkillCommands(): Promise<void> }).refreshSkillCommands();
+
+    driver.handleUserInput(command);
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(command, [
+        expect.objectContaining({ path }),
+      ]);
+    });
+  });
+
   it('restores selected variant bindings when recalling a queued skill', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const { driver } = await makeDriver(session, {

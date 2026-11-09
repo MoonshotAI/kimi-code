@@ -87,8 +87,10 @@ export function extractInlineSkillActivations(
   options?: ExtractInlineSkillActivationsOptions,
 ): InlineSkillActivation[] {
   const tokens = findInlineSkillTokens(text, {
-    isKnownSkill: (commandName) =>
-      skillCommandMap.has(commandName) || skillCommandMap.has(`skill:${commandName}`),
+    isKnownSkill: (commandName) => {
+      const normalized = commandName.toLowerCase();
+      return skillCommandMap.has(normalized) || skillCommandMap.has(`skill:${normalized}`);
+    },
     includeLeading: options?.includeLeading,
   });
 
@@ -97,8 +99,9 @@ export function extractInlineSkillActivations(
     occurrences: Array<{ commandName: string; start: number }>;
   }>();
   for (const token of tokens) {
-    const skillName =
-      skillCommandMap.get(token.commandName) ?? skillCommandMap.get(`skill:${token.commandName}`);
+    const normalized = token.commandName.toLowerCase();
+    const skillName = skillCommandMap.get(token.commandName) ?? skillCommandMap.get(`skill:${token.commandName}`) ??
+      skillCommandMap.get(normalized) ?? skillCommandMap.get(`skill:${normalized}`);
     if (skillName === undefined) continue;
     const path = options?.skillVariantPathForCommand?.(token.commandName, token.start) ??
       options?.defaultSkillPathForCommand?.(token.commandName);
