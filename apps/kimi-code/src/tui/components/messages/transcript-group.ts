@@ -485,7 +485,7 @@ function memberDraft(
 
 function prefixFor(branch: Branch, guide: (text: string) => string): (first: boolean) => string {
   if (branch === 'bare') return () => '';
-  if (branch === 'indent') return () => '  ';
+  if (branch === 'indent') return () => TITLE_INDENT;
   const first = `${TITLE_INDENT}${guide(branch === 'last' ? '└ ' : '├ ')}`;
   const rest = `${TITLE_INDENT}${branch === 'last' ? '  ' : guide('│ ')}`;
   return (isFirst) => isFirst ? first : rest;
