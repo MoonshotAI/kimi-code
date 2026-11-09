@@ -1084,10 +1084,18 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
     for (const agent of agentLifecycle.list()) {
       const agentHandle = agentLifecycle.handleOf(agent.agentId);
       if (agentHandle === undefined) continue;
-      if (agentHandle.accessor.get(IAgentLoopService).snapshot().state === 'running') {
+      const loop = agentHandle.accessor.get(IAgentLoopService).snapshot();
+      if (loop.state === 'running') {
         throw new Error2(
           ErrorCodes.SESSION_BUSY,
           `Session "${id}" cannot be reloaded while a turn is running`,
+          { details: { sessionId: id } },
+        );
+      }
+      if (loop.queue.length > 0) {
+        throw new Error2(
+          ErrorCodes.SESSION_BUSY,
+          `Session "${id}" cannot be reloaded while prompts are queued`,
           { details: { sessionId: id } },
         );
       }

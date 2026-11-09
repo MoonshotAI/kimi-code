@@ -68,6 +68,8 @@ class FakeAgentHandle {
   readonly state = new AgentStateService();
   readonly restoreSlot = new OrderedHookSlot<Record<string, never>>();
   loopState: 'idle' | 'running' = 'idle';
+  queuedIds: string[] = [];
+  readonly queueChange = new Emitter<void>();
   activeTasks: string[] = [];
   compactingValue: unknown = null;
   readonly context: AgentContext;
@@ -80,7 +82,10 @@ class FakeAgentHandle {
         if (token === IEventBus) return this.bus;
         if (token === IEventDispatcher) return { hooks: { onDidRestore: this.restoreSlot } };
         if (token === IAgentLoopService) {
-          return { snapshot: () => ({ state: this.loopState }) };
+          return {
+            snapshot: () => ({ state: this.loopState, queue: this.queuedIds.map((promptId) => ({ meta: { promptId } })) }),
+            onDidChangeQueue: this.queueChange.event,
+          };
         }
         if (token === IAgentTaskService) {
           return { list: () => this.activeTasks.map((taskId) => ({ taskId })) };
@@ -142,6 +147,11 @@ class FakeAgentHandle {
         },
       }),
     );
+  }
+
+  setQueue(ids: string[]): void {
+    this.queuedIds = ids;
+    this.queueChange.fire();
   }
 
   async runRestore(): Promise<void> {
@@ -341,6 +351,33 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
 
     main.terminateTask('t1');
     expect(view.state().busy).toBe(false);
+  });
+
+  it('stays busy while any agent has queued prompts', () => {
+    const sub = lifecycle.addAgent('agent-0');
+    const { view, changes } = viewWithChanges();
+
+    sub.startTurn(1);
+    sub.setQueue(['p1']);
+    sub.endTurn(1, 'completed');
+    expect(view.state().busy).toBe(true);
+
+    sub.setQueue([]);
+    expect(changes.at(-1)).toEqual({
+      state: { busy: false, mainTurnActive: false, pendingInteraction: 'none', lastTurnReason: undefined },
+      cause: 'queue',
+    });
+  });
+
+  it('seeds queued prompts as busy', () => {
+    const seededLifecycle = new FakeAgentLifecycle();
+    seededLifecycle.addAgent(MAIN_AGENT_ID).queuedIds = ['p1'];
+    const seededSession = host.child(LifecycleScope.Session, 'session-queued', [
+      stubPair(IAgentLifecycleService, seededLifecycle),
+      stubPair(IWorkspaceStateService, new WorkspaceStateService()),
+      stubPair(ISessionContext, { sessionId: 'session-queued' } as ISessionContext),
+    ]);
+    expect(seededSession.accessor.get(ISessionActivityView).state().busy).toBe(true);
   });
 
   it('re-seeds from restored agent state when restore completes', async () => {

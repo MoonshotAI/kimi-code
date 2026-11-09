@@ -23,6 +23,7 @@ import {
   IAgentConversationUndoService,
   IAgentCronService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IAgentEnvironmentBindingService,
   IEventBus,
   IEventDispatcher,
@@ -1541,6 +1542,32 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(response.body.code).toBe(40901);
     } finally {
       compacting.mockRestore();
+    }
+  });
+
+  it('returns 40901 when :reload is requested while prompts are queued', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor
+      .get(IAgentLifecycleService)
+      .create({ agentId: MAIN_AGENT_ID });
+    const loop = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentLoopService);
+    const idle = loop.snapshot();
+    const queued = vi.spyOn(loop, 'snapshot').mockReturnValue({
+      ...idle,
+      queue: [{ message: { role: 'user', content: [] }, meta: { promptId: 'p_queued' } }],
+    });
+
+    try {
+      const response = await postJson<null>(`/api/v1/sessions/${id}:reload`);
+      expect(response.body.code).toBe(40901);
+      expect(response.body.msg).toContain('queued');
+    } finally {
+      queued.mockRestore();
     }
   });
 
