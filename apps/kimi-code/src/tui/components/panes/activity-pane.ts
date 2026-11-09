@@ -56,7 +56,9 @@ export class LastTurnSummary implements Component {
   constructor(private readonly timeline: Pick<TimelineReader, 'turn'>) {}
 
   render(width: number): string[] {
-    return new TruncatedText(currentTheme.fg('textDim', workedSummary(this.timeline.turn())), 1, 0).render(width);
+    const summary = workedSummary(this.timeline.turn());
+    if (summary === '') return [];
+    return new TruncatedText(currentTheme.fg('textDim', summary), 1, 0).render(width);
   }
 
   invalidate(): void {}

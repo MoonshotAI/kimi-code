@@ -4643,11 +4643,8 @@ export class KimiTUI {
 
     this.lastActivityMode = activityModeKey;
     this.state.activityContainer.clear();
-    const fullscreen = this.state.ui instanceof TuiAltScreen;
     const { timeline } = this.streamingUI;
-    const working: SpinnerLabel = fullscreen
-      ? (now) => workingLabel(timeline.turn(), instant(now))
-      : 'Working…';
+    const working: SpinnerLabel = (now) => workingLabel(timeline.turn(), instant(now));
 
     switch (effectiveMode) {
       case 'hidden':
@@ -4730,7 +4727,7 @@ export class KimiTUI {
         this.stopActivitySpinner();
         this.syncAgentSwarmActivitySpinner(undefined);
         this.state.activityContainer.addChild(new Spacer(1));
-        if (fullscreen) this.state.activityContainer.addChild(new LastTurnSummary(timeline));
+        this.state.activityContainer.addChild(new LastTurnSummary(timeline));
         break;
       }
     }

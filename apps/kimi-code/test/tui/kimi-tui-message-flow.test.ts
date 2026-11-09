@@ -14846,7 +14846,7 @@ describe('activity bar Ctrl+B hint', () => {
   });
 });
 
-describe('fullscreen activity bar', () => {
+describe('activity bar', () => {
   const MOON_PHASE = /[🌑🌒🌓🌔🌕🌖🌗🌘]/u;
 
   async function makeActivityDriver(tuiMode: 'fullscreen' | 'regular', session = makeSession()) {
@@ -14883,7 +14883,7 @@ describe('fullscreen activity bar', () => {
   it('counts the turn while the model writes, keeps the moon otherwise, and sums up the finished turn', async () => {
     await withFixedClock(async () => {
       const { driver, emit, activity, activityRows } = await makeActivityDriver('fullscreen');
-      expect(activityRows()).toEqual(['', '']);
+      expect(activityRows()).toEqual(['']);
 
       driver.handleUserInput('hello');
       emit({ type: 'turn.started', origin: { kind: 'user' } });
@@ -14919,7 +14919,7 @@ describe('fullscreen activity bar', () => {
   });
 
   it.each(['cancelled', 'failed', 'blocked'] as const)(
-    'sums up no turn that ended %s, keeping the two rows',
+    'sums up no turn that ended %s, keeping the one blank row',
     async (reason) => {
       await withFixedClock(async () => {
         const { driver, emit, activityRows } = await makeActivityDriver('fullscreen');
@@ -14930,7 +14930,7 @@ describe('fullscreen activity bar', () => {
 
         emit({ type: 'turn.ended', reason });
 
-        expect(activityRows()).toEqual(['', '']);
+        expect(activityRows()).toEqual(['']);
       });
     },
   );
@@ -14948,7 +14948,7 @@ describe('fullscreen activity bar', () => {
     await vi.waitFor(() => {
       expect(driver.state.appState.streamingPhase).toBe('idle');
     });
-    expect(activityRows()).toEqual(['', '']);
+    expect(activityRows()).toEqual(['']);
   });
 
   it('sums up a finished /init, which ends without a turn of its own', async () => {
@@ -14964,19 +14964,36 @@ describe('fullscreen activity bar', () => {
     expect(activityRows()[1]).toMatch(/^Worked for \d+s · done \d{1,2}:\d{2} [AP]M$/);
   });
 
-  it('keeps Working… and the one-row idle placeholder outside fullscreen', async () => {
+  it('counts the turn and sums it up in regular mode too', async () => {
     await withFixedClock(async () => {
       const { driver, emit, activity, activityRows } = await makeActivityDriver('regular');
+      expect(activityRows()).toEqual(['']);
+
       driver.handleUserInput('hello');
       emit({ type: 'turn.started', origin: { kind: 'user' } });
       vi.advanceTimersByTime(4_000);
       emit({ type: 'thinking.delta', delta: 'Plan the change.' });
+      expect(activity()).toContain('Working for 4s');
       vi.advanceTimersByTime(8_000);
-      expect(activity()).toContain('Working…');
-      expect(activity()).not.toContain('Working for');
+      expect(activity()).toContain('Working for 12s');
+      emit({ type: 'assistant.delta', delta: 'Done.' });
+      vi.advanceTimersByTime(3_000);
+      expect(activity()).toContain('Working for 15s');
 
       emit({ type: 'turn.ended', reason: 'completed' });
-      expect(activityRows()).toEqual(['']);
+      expect(activityRows()).toEqual(['', 'Worked for 15s · done 4:31 AM']);
+    });
+  });
+
+  it('keeps the working row as tall as the finished-turn summary', async () => {
+    await withFixedClock(async () => {
+      const { driver, emit, activityRows } = await makeActivityDriver('fullscreen');
+      driver.handleUserInput('hello');
+      emit({ type: 'turn.started', origin: { kind: 'user' } });
+      emit({ type: 'thinking.delta', delta: 'Plan the change.' });
+      const working = activityRows().length;
+      emit({ type: 'turn.ended', reason: 'completed' });
+      expect(activityRows()).toHaveLength(working);
     });
   });
 
@@ -14997,7 +15014,7 @@ describe('fullscreen activity bar', () => {
       await vi.waitFor(() => {
         expect(driver.streamingUI.timeline.turn()).toBeUndefined();
       });
-      expect(activityRows()).toEqual(['', '']);
+      expect(activityRows()).toEqual(['']);
     });
   });
 });
