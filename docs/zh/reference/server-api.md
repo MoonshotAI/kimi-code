@@ -1077,7 +1077,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 | `thinking` | body | string | Thinking 强度等级 |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
 | `disabled_tools` | body | array | 要为会话禁用的工具名 |
-| `delivery` | body | string | `queue`（默认）或 `steer`：Agent 正在运行轮次时如何处理这条提示词。`steer` 会在下一步把它交给正在运行的轮次；没有运行中的轮次，或队列里已有等待新轮次的提示词时，改为排队 |
+| `delivery` | body | string | `queue`（默认）或 `steer`：Agent 正在运行轮次时如何处理这条提示词。`steer` 会在下一步把它交给正在运行的轮次，不受队列中已有提示词影响；没有由用户提示词开启的轮次在运行时（例如两轮之间，或正在运行的是后台通知触发的轮次），改为排队 |
 
 schema 还接受 `metadata`、`plan_mode`、`swarm_mode`、`goal_objective` 和 `goal_control`，但提交路由当前不会应用它们。每个 `content` 内容块是按 `type` 区分的对象：
 

@@ -2459,6 +2459,23 @@ describe('prompt queue', () => {
     expect(queueIds()).toEqual(['b']);
   });
 
+  it('queues a prompt behind one parked before the engine attaches', async () => {
+    const parked = createTestAgent(sessionService(IAgentLifecycleService, parkedLifecycleStub()));
+    try {
+      const parkedLoop = parked.get(IAgentLoopService);
+      const submitParked = (id: string) =>
+        parkedLoop.submit({
+          message: { role: 'user', content: [{ type: 'text', text: id }] },
+          meta: { promptId: id, origin: { kind: 'user' }, tracked: true },
+        }).acceptedAs;
+
+      expect(submitParked('a')).toBe('turn');
+      expect(submitParked('b')).toBe('queue');
+    } finally {
+      await parked.dispose();
+    }
+  });
+
   it('moves queued prompts and refuses ids that are not queued', async () => {
     submit('a');
     await untilModelRequest();

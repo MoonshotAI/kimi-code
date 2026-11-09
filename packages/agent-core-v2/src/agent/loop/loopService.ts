@@ -357,6 +357,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const queued =
       this.active !== undefined ||
       this.machinePaused() ||
+      this.pendingSubmissions.length > 0 ||
       (this.engine !== undefined && this.engine.snapshot().queue.length > 0);
     let acceptedAs: PromptAcceptance = queued ? 'queue' : 'turn';
     if (tracked) {

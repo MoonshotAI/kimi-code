@@ -492,6 +492,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/sessions/{session_id}/agents/{agent_id}/queue/{tail}',
+      params: z.object({ session_id: z.string().min(1), agent_id: z.string().min(1), tail: z.string().min(1) }),
+      body: queueMoveRequestSchema.default({}),
       success: { data: z.object({}) },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
@@ -503,7 +505,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       operationId: 'queueAction',
     },
     async (req, reply) => {
-      const { session_id, agent_id, tail } = req.params as { session_id: string; agent_id: string; tail: string };
+      const { session_id, agent_id, tail } = req.params;
       try {
         const target = resolveActionTarget({ tail, actions: queueActions, resourceLabel: 'queued prompt' });
         if ('message' in target) {
@@ -515,7 +517,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           id: target.id,
           actions: queueActions,
           extra: { resolved: await resolvePrompt(core, session_id, agent_id), session_id, req, reply },
-          body: req.body ?? {},
+          body: req.body,
         });
       } catch (error) {
         sendMappedError(reply, req, error);

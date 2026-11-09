@@ -1077,7 +1077,7 @@ Submits a user prompt to the session. Media references are validated first, then
 | `thinking` | body | string | Thinking-mode effort level |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
 | `disabled_tools` | body | array | Tool names to disable for the session |
-| `delivery` | body | string | `queue` (default) or `steer`: what to do with the prompt while the agent is running a turn. `steer` hands it to the running turn at its next step; when no turn is running, or the queue already holds prompts that wait for one, the prompt is queued instead |
+| `delivery` | body | string | `queue` (default) or `steer`: what to do with the prompt while the agent is running a turn. `steer` hands it to the running turn at its next step, ahead of any prompts already queued; when no turn started by a user prompt is running, for example between turns or while a background notification runs a turn, the prompt is queued instead |
 
 The schema also accepts `metadata`, `plan_mode`, `swarm_mode`, `goal_objective`, and `goal_control`, but the submit route currently does not apply them. Each `content` part is an object discriminated by `type`:
 
