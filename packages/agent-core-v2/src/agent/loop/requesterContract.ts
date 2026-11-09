@@ -1,6 +1,5 @@
 import type { FinishReason } from '#human/llm-requester/finish-reason';
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
-import type { ResponseFormat } from '#human/llm/request';
 import type { ThinkingEffort } from '#human/llm-requester/thinking';
 import type {
   AssistantMessage,
@@ -21,14 +20,12 @@ export type AgentLLMRequestSource =
       readonly turnId: number;
       readonly step?: number;
       readonly logFields?: AgentLLMRequestLogFields;
-      readonly cacheBreakBaseline?: false;
     }
   | {
       readonly type: 'operation';
       readonly turnId?: number;
       readonly requestKind?: string;
       readonly logFields?: AgentLLMRequestLogFields;
-      readonly cacheBreakBaseline?: false;
     };
 
 export interface AgentLLMRequestFinish {
@@ -49,10 +46,6 @@ export interface AgentLLMRequestOverrides {
   tools?: readonly Tool[];
   systemPrompt?: string;
   source?: AgentLLMRequestSource;
-  modelAlias?: string;
-  responseFormat?: ResponseFormat;
-  cacheKey?: string;
-  thinkingEffort?: ThinkingEffort;
   maxOutputSize?: number;
   usedContextTokens?: number;
   promptCacheProbe?: 'compaction';

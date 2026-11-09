@@ -3,12 +3,26 @@ import { z } from 'zod';
 import { Service } from '#/_base/di/service';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
-import { abortable, createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
+import { createDeadlineAbortSignal, type DeadlineAbortSignal } from '#/_base/utils/abort';
 import { IConfigService } from '#/app/config/config';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { ErrorCodes, Error2 } from '#/errors';
+import type { TokenUsage } from '#human/llm-requester/usage';
+import type { AssistantMessage, Message } from '#human/llm/message';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
+import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
+import { generateModel, type ModelRequestParams } from '#/llm-adapter/model/generate';
+import type { ModelOverrides } from '#/llm-adapter/model/model.types';
+import {
+  requiresStrictThinkingValidation,
+  resolveThinkingEffortForModel,
+  resolveThinkingKeep,
+  type ThinkingConfig,
+} from '#/llm-adapter/model/thinking';
+import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -16,6 +30,7 @@ import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/tool
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { resolveSubagentModelPool } from '#/session/subagent/configSection';
+import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { AutoReviewCompleted } from './autoReviewEvents';
@@ -86,7 +101,9 @@ export class AutoReviewService extends Service implements IAutoReviewService {
 
   constructor(
     @IConfigService private readonly configService: IConfigService,
-    @IAgentLoopService private readonly loop: IAgentLoopService,
+    @IModelCatalog private readonly models: IModelCatalog,
+    @IProtocolAdapterRegistry private readonly protocols: IProtocolAdapterRegistry,
+    @ISessionUsageService private readonly usage: ISessionUsageService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -181,10 +198,9 @@ export class AutoReviewService extends Service implements IAutoReviewService {
     const history = this.context.get();
     const authorization = extractAuthorization(history);
     const cwd = this.workspace.workDir;
-    const response = await abortable(this.loop.requester.request({
+    const message = await this.requestModel(
       modelAlias,
-      systemPrompt: REVIEW_POLICY,
-      messages: buildReviewMessages(
+      buildReviewMessages(
         history,
         authorization,
         projectInstructions.agentsMd,
@@ -192,16 +208,9 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         cwd,
         context,
       ),
-      source: {
-        type: 'operation',
-        turnId: context.turnId,
-        requestKind: AUTO_REVIEW_REQUEST_KIND,
-        cacheBreakBaseline: false,
-      },
-      responseFormat: RESPONSE_FORMAT,
-      cacheKey: `${this.session.sessionId}:${AUTO_REVIEW_REQUEST_KIND}`,
-      thinkingEffort: 'off',
-    }, undefined, deadline.signal), deadline.signal);
+      context.turnId,
+      deadline.signal,
+    );
     const current = extractAuthorization(this.context.get());
     if (this.workspace.workDir !== cwd) return authorizationChanged();
     if (!sameAuthorization(authorization, current)) {
@@ -209,13 +218,82 @@ export class AutoReviewService extends Service implements IAutoReviewService {
         ? { kind: 'appended' }
         : authorizationChanged();
     }
-    if (response.message.toolCalls.length > 0) {
+    if (message.toolCalls.length > 0) {
       return { kind: 'failed', reason: 'The reviewer attempted a tool call.' };
     }
-    const text = response.message.content.filter((part) => part.type === 'text').map((part) => part.text).join('');
+    const text = message.content.filter((part) => part.type === 'text').map((part) => part.text).join('');
     const parsed = DecisionSchema.safeParse(JSON.parse(text));
     if (!parsed.success) return { kind: 'failed', reason: 'The reviewer returned an invalid decision.' };
     return { kind: 'decision', decision: parsed.data };
+  }
+
+  private async requestModel(
+    modelAlias: string,
+    messages: readonly Message[],
+    turnId: number,
+    signal: AbortSignal,
+  ): Promise<AssistantMessage> {
+    const model = this.models.get(modelAlias);
+    const overrides = this.configService.get<ModelOverrides>('modelOverrides');
+    const thinkingConfig = this.configService.get<ThinkingConfig>(THINKING_SECTION);
+    const strict = requiresStrictThinkingValidation(
+      this.protocols,
+      model.protocol,
+      model.providerType,
+    );
+    const thinkingEffort = resolveThinkingEffortForModel('off', undefined, model, strict);
+    const maxCompletionTokensCap = overrides?.maxCompletionTokens;
+    const budget = completionBudgetParams({
+      budget: resolveCompletionBudget({
+        maxOutputSize: model.maxOutputSize,
+        maxCompletionTokensCap,
+      }),
+      capability: model.capabilities,
+    });
+    const optedOut = maxCompletionTokensCap !== undefined && maxCompletionTokensCap <= 0;
+    const sampling =
+      overrides?.temperature === undefined && overrides?.topP === undefined
+        ? undefined
+        : { temperature: overrides.temperature, topP: overrides.topP };
+    const params: ModelRequestParams = {
+      cacheKey: `${this.session.sessionId}:${AUTO_REVIEW_REQUEST_KIND}`,
+      sampling,
+      thinkingEffort,
+      thinkingKeep: resolveThinkingKeep(
+        overrides?.thinkingKeep,
+        thinkingConfig?.keep,
+        thinkingEffort,
+      ),
+      maxCompletionTokens: optedOut ? maxCompletionTokensCap : budget?.maxCompletionTokens,
+      maxContextTokens: budget?.maxContextTokens,
+    };
+    let message: AssistantMessage | undefined;
+    let usage: TokenUsage | undefined;
+    for await (const event of generateModel(
+      this.protocols.request(model, params),
+      {
+        systemPrompt: REVIEW_POLICY,
+        messages,
+        responseFormat: RESPONSE_FORMAT,
+      },
+      signal,
+      params,
+    )) {
+      if (event.type === 'usage') usage = event.usage;
+      if (event.type === 'finish') message = event.message;
+    }
+    if (message === undefined) {
+      throw new Error2(
+        ErrorCodes.PROVIDER_API_ERROR,
+        'LLM request stream ended without a finish event.',
+      );
+    }
+    void this.usage.record(this.scopeContext.agentContext, modelAlias, usage, {
+      type: 'operation',
+      turnId,
+      requestKind: AUTO_REVIEW_REQUEST_KIND,
+    });
+    return message;
   }
 }
 

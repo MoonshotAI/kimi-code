@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
 import {
@@ -23,7 +23,7 @@ import {
 } from '#/llm-adapter/contract/errors';
 import type { Message } from '#human/llm/message';
 import { createMediaDegradeRecovery } from '#human/llm/builtin/policy/media-degrade';
-import type { IModelCatalog, Model } from '#/llm-adapter/model/catalog';
+import type { Model } from '#/llm-adapter/model/catalog';
 import {
   effectiveMaxCompletionTokens,
   generateModel,
@@ -33,7 +33,6 @@ import {
   type ModelRequestPolicy,
 } from '#/llm-adapter/model/generate';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
-import type { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import {
   buildStreamTiming,
   coreRequesterFromA,
