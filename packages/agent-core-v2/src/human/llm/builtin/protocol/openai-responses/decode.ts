@@ -184,7 +184,7 @@ function errorFromOpenAIResponsesEvent(
   if (isOpenAIOverloadedErrorCode(code)) {
     return { kind: 'overloaded', message, retryable: true, ...statusInfo };
   }
-  return toLlmStreamErrorMessage({ message, ...statusInfo });
+  return toLlmStreamErrorMessage({ message, retryable: true, ...statusInfo });
 }
 
 function parseNestedGatewayStreamError(message: string):

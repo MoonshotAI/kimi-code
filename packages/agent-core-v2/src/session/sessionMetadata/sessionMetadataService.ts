@@ -224,6 +224,8 @@ export class SessionMetadata extends Service implements ISessionMetadata {
           id: this.data.id,
           workspaceId: this.ctx.workspaceId,
           cwd: this.effectiveCwd(),
+          environmentId: this.data.environmentId,
+          environmentCwd: this.data.environmentCwd,
           title: this.data.title,
           lastPrompt: this.data.lastPrompt,
           createdAt: this.data.createdAt,

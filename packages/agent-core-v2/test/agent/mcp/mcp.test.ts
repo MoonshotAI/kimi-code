@@ -572,10 +572,13 @@ describe('AgentMcpService', () => {
     expect(events.filter((event) => event.type === 'error')).toHaveLength(1);
   });
 
-  it('re-registering the same server replaces its previous tool set', async () => {
+  it('re-registering the same server applies additions and removals but holds same-name updates pending', async () => {
     const manager = new FakeMcpManager();
-    const firstClient = fakeMcpClient();
+    const firstClient = fakeMcpClient([
+      { name: 'echo', description: 'first', inputSchema: { type: 'object', properties: {} } },
+    ]);
     const secondClient = fakeMcpClient([
+      { name: 'echo', description: 'second', inputSchema: { type: 'object', properties: {} } },
       { name: 'only', description: 'Sole tool', inputSchema: { type: 'object', properties: {} } },
     ]);
     manager.setResolved('s', firstClient, await discoverTools(firstClient));
@@ -585,8 +588,9 @@ describe('AgentMcpService', () => {
     manager.setResolved('s', secondClient, await discoverTools(secondClient));
     manager.connect('s');
 
-    const names = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp').map((tool) => tool.name);
-    expect(names).toEqual(['mcp__s__only']);
+    const tools = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
+    expect(tools.map((tool) => tool.name)).toEqual(['mcp__s__echo', 'mcp__s__only']);
+    expect(tools.find((tool) => tool.name === 'mcp__s__echo')?.description).toBe('first');
   });
 
   it('executing a wrapped MCP tool dispatches to client.callTool', async () => {

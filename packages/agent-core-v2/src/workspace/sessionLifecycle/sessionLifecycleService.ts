@@ -820,6 +820,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           id: targetId,
           workspaceId: this.workspaceId,
           cwd: hostCwd,
+          environmentId: meta.environmentId,
+          environmentCwd: meta.environmentCwd,
           title,
           lastPrompt: meta.lastPrompt,
           createdAt: now,

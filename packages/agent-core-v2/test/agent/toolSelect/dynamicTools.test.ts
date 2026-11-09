@@ -155,7 +155,7 @@ describe('shapeUnsupportedDynamicToolContext', () => {
   });
 
   it('drops snapshots and schemas while preserving runtime changes as reminders', () => {
-    const delta = deltaAnnouncement([tool('t')], []);
+    const delta = deltaAnnouncement([tool('t')], [tool('removed')]);
     const original = delta.content;
     const history = [
       userMessage('a'),
@@ -170,6 +170,12 @@ describe('shapeUnsupportedDynamicToolContext', () => {
       type: 'text',
       text: expect.stringContaining('The available tools changed during this session.'),
     });
+    const reminder = shaped[1]?.content.map((part) => part.type === 'text' ? part.text : '').join('') ?? '';
+    expect(reminder).toContain('Use the tool definitions provided in this request.');
+    expect(reminder).toContain('cannot load runtime tool additions with select_tools. Do not call select_tools.');
+    expect(reminder).toContain('Removed tools may be unavailable or fail when called.');
+    expect(reminder).toContain('<tools_removed>\nremoved\n</tools_removed>');
+    expect(reminder).not.toContain('replaced definitions');
     expect(delta.content).toBe(original);
   });
 

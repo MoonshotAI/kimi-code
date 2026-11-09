@@ -33,10 +33,11 @@ import { appendedStoreJournal, seededStoreJournal } from './storeJournal';
 export type { PromptGateVerdict };
 
 export type MachineEngineDelta =
-  | { readonly kind: 'assistant'; readonly delta: string }
+  | { readonly kind: 'assistant'; readonly delta: string; readonly block?: number }
   | {
       readonly kind: 'thinking';
       readonly delta: string;
+      readonly block?: number;
       readonly encrypted?: string;
       readonly detailsIndex?: number;
       readonly hidden?: boolean;
@@ -74,6 +75,7 @@ export type MachineEngineEvent =
     }
   | { readonly type: 'stepFailed'; readonly step: number; readonly error: LlmErrorMessage; readonly rawError?: unknown }
   | { readonly type: 'delta'; readonly delta: MachineEngineDelta }
+  | { readonly type: 'streamReset'; readonly step: number }
   | {
       readonly type: 'retrying';
       readonly step: number;
@@ -381,7 +383,12 @@ export function attachMachineEngine(
     }),
     ref.on('llm.streaming.part', (event) => {
       const delta = split(event.part);
-      if (delta !== undefined) publish({ type: 'delta', delta });
+      if (delta === undefined) return;
+      publish({ type: 'delta', delta: delta.kind === 'toolCall' ? delta : { ...delta, block: event.block } });
+    }),
+    ref.on('step.stream_reset', () => {
+      split = createDeltaSplitter();
+      publish({ type: 'streamReset', step: currentStep });
     }),
     ref.on('llm.retrying', (event) => {
       pendingFailure = undefined;

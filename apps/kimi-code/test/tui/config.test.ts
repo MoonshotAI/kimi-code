@@ -75,6 +75,7 @@ auto_install = false
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
       markdown: { mermaid: 'final' },
+      transcript: { groupTools: 'auto', groupThinking: true },
     });
   });
 
@@ -144,6 +145,7 @@ command = "   "
       upgrade: { autoInstall: true },
       statusLine: { items: null, command: null },
       markdown: { mermaid: 'final' },
+      transcript: { groupTools: 'auto', groupThinking: true },
     });
   });
 
@@ -177,6 +179,7 @@ command = "   "
         editorCommand: 'vim',
         notifications: { enabled: false, condition: 'always' },
         upgrade: { autoInstall: false },
+        transcript: { groupTools: 'auto', groupThinking: true },
         statusLine: { items: null, command: null },
       },
       filePath,
@@ -194,6 +197,7 @@ command = "   "
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
       markdown: { mermaid: 'final' },
+      transcript: { groupTools: 'auto', groupThinking: true },
     });
   });
 
@@ -293,12 +297,78 @@ command = "   "
         editorCommand: null,
         notifications: DEFAULT_TUI_CONFIG.notifications,
         upgrade: DEFAULT_TUI_CONFIG.upgrade,
+        transcript: DEFAULT_TUI_CONFIG.transcript,
         statusLine: DEFAULT_TUI_CONFIG.statusLine,
       },
       filePath,
     );
 
     expect((await loadTuiConfig(filePath)).theme).toBe(theme);
+  });
+});
+
+describe('TUI config transcript', () => {
+  it('keeps the transcript section commented out at default values', async () => {
+    await saveTuiConfig(DEFAULT_TUI_CONFIG, filePath);
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('# [transcript.group]');
+    expect(text).toContain('# Fullscreen transcript grouping preferences.');
+    expect(text).toContain('# tools = "auto"');
+    expect(text).toContain('# group_thinking = true');
+    expect(text).not.toContain('max_visible');
+    expect(text).not.toContain('\n[transcript.group]\n');
+  });
+
+  it('uses auto and grouped thinking when the section is omitted', () => {
+    expect(parseTuiConfig('').transcript).toEqual({
+      groupTools: 'auto',
+      groupThinking: true,
+    });
+  });
+
+  it('parses group preferences, drops max_visible, and round-trips through unrelated saves', async () => {
+    const previous = parseTuiConfig(`
+[transcript.group]
+tools = "explore"
+group_thinking = false
+max_visible = 4
+`);
+    expect(previous.transcript).toEqual({ groupTools: 'explore', groupThinking: false });
+
+    await saveTuiConfig({ ...previous, theme: 'light' }, filePath);
+
+    expect(await loadTuiConfig(filePath)).toMatchObject({
+      theme: 'light',
+      transcript: { groupTools: 'explore', groupThinking: false },
+    });
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('[transcript.group]');
+    expect(text).toContain('tools = "explore"');
+    expect(text).toContain('group_thinking = false');
+    expect(text).not.toContain('max_visible');
+  });
+
+  it('ignores the unpublished flat keys and full thinking value', () => {
+    const warnings: string[] = [];
+    const config = parseTuiConfig(`
+[transcript]
+group_tools = "all"
+thinking = "full"
+`, (message) => warnings.push(message));
+
+    expect(config.transcript).toEqual(DEFAULT_TUI_CONFIG.transcript);
+    expect(warnings).toEqual([]);
+  });
+
+  it.each([
+    ['tools = "sometimes"', 'transcript.group.tools', 'sometimes'],
+  ])('warns and uses defaults for invalid %s', (setting, label, value) => {
+    const warnings: string[] = [];
+    const config = parseTuiConfig(`[transcript.group]\n${setting}\n`, (message) => warnings.push(message));
+
+    expect(config.transcript).toEqual(DEFAULT_TUI_CONFIG.transcript);
+    expect(warnings).toEqual([`[tui.toml] ignoring unknown ${label} value: ${value}`]);
   });
 });
 

@@ -180,6 +180,18 @@ describe('FileSessionIndex (legacy)', () => {
     expect(JSON.parse(await fsp.readFile(join(sessionsDir, workspaceId, 'default', 'session-meta', 'state.json'), 'utf8')).cwd).toBe('/old');
   });
 
+  it('recovers the session environment binding from metadata', async () => {
+    await seedSession('remote', {
+      cwd: '/local/workspace',
+      environmentId: 'dev-box',
+      environmentCwd: '/remote/project',
+    });
+
+    const store = build();
+    expect((await store.get('remote'))?.environmentId).toBe('dev-box');
+    expect((await store.get('remote'))?.environmentCwd).toBe('/remote/project');
+  });
+
   it('listRecent filters by sessionId without enumerating all sessions', async () => {
     await seedSession('active', { title: 'hello' });
     await seedSession('archived', { archived: true });
@@ -1546,6 +1558,51 @@ describe('FileSessionIndex (read model)', () => {
     expect(docs.gets).toBe(0);
   });
 
+  it('re-projects summaries indexed before environment bindings were recorded', async () => {
+    await seedSession('remote', {
+      createdAt: 1,
+      updatedAt: 2,
+      environmentId: 'dev-box',
+      environmentCwd: '/remote/project',
+    });
+
+    const first = build();
+    await first.prepare();
+    const manifest = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    expect(manifest).toBeDefined();
+    const generation = manifest!.seq;
+    const legacy = { id: 'remote', workspaceId, createdAt: 1, updatedAt: 2, archived: false };
+    await queryStore.batch([
+      {
+        kind: 'put',
+        collection: sessionCollection(generation),
+        key: 'remote',
+        value: { ...legacy, [recencyColumn(generation)]: legacy.updatedAt },
+        columns: { [recencyColumn(generation)]: legacy.updatedAt },
+      },
+    ]);
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { ...manifest!, schemaVersion: 2 });
+    const scanCachePath = join(sessionsDir, '.index-cache', 'scan.json');
+    const scanCache = JSON.parse(await fsp.readFile(scanCachePath, 'utf8')) as {
+      sessions: Record<string, Record<string, unknown>>;
+    };
+    await fsp.writeFile(
+      scanCachePath,
+      JSON.stringify({ version: 1, sessions: { remote: { ...scanCache.sessions['remote'], summary: legacy } } }),
+    );
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+
+    const second = build();
+    await second.prepare();
+    const page = await second.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items).toMatchObject([
+      { id: 'remote', environmentId: 'dev-box', environmentCwd: '/remote/project' },
+    ]);
+  });
+
   it('reconciles the current generation on the next startup when the session directories changed externally', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
@@ -1742,7 +1799,7 @@ describe('FileSessionIndex (read model)', () => {
       items: [{ id: 'a' }, { id: 'c' }, { id: 'b' }],
     });
     const refreshed = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-    expect(refreshed).toMatchObject({ seq: 1, sourceSessionCount: 3, schemaVersion: 2 });
+    expect(refreshed).toMatchObject({ seq: 1, sourceSessionCount: 3, schemaVersion: 3 });
     expect(await fsp.readdir(join(sessionsDir, '.index-dirty'))).toEqual([]);
   });
 

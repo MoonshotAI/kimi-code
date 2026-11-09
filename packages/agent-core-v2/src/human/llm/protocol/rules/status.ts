@@ -118,10 +118,26 @@ export interface LlmStatusErrorInput {
   readonly requestId?: string | null;
   readonly retryAfterMs?: number | null;
   readonly headers?: Record<string, string> | null;
-  readonly retryable?: boolean;
+  readonly retryable: boolean;
 }
 
-const RETRYABLE_HTTP_STATUS_CODES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
+export function isTransientHttpStatus(statusCode: number | undefined): boolean {
+  switch (statusCode) {
+    case 408:
+    case 409:
+    case 429:
+    case 500:
+    case 502:
+    case 503:
+    case 504:
+    case 529:
+      return true;
+    case undefined:
+      return false;
+    default:
+      return false;
+  }
+}
 
 export function toLlmStreamErrorMessage(
   input: Omit<LlmStatusErrorInput, 'statusCode'> & { readonly businessCode?: number },
@@ -130,9 +146,7 @@ export function toLlmStreamErrorMessage(
     requestId: input.requestId ?? null,
     retryAfterMs: input.retryAfterMs ?? null,
     headers: input.headers ?? null,
-    retryable:
-      input.retryable ??
-      (input.businessCode === undefined || RETRYABLE_HTTP_STATUS_CODES.has(input.businessCode)),
+    retryable: input.retryable,
   };
   if (input.businessCode === 429) {
     return { kind: 'rate_limit', message: input.message, ...info };
@@ -156,9 +170,7 @@ export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteEr
     requestId: input.requestId ?? null,
     retryAfterMs: input.retryAfterMs ?? null,
     headers: input.headers ?? null,
-    retryable:
-      input.retryable ??
-      (input.statusCode !== undefined && RETRYABLE_HTTP_STATUS_CODES.has(input.statusCode)),
+    retryable: input.retryable,
   };
   if (input.statusCode === 429) {
     return { kind: 'rate_limit', message: input.message, ...info };

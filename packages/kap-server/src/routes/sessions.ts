@@ -2,9 +2,7 @@ import {
   ErrorCodes,
   IAgentChangeNotifierService,
   IAgentGoalService,
-  IAgentContextMemoryService,
   IAgentProfileService,
-  IAgentConversationUndoService,
   IAgentFullCompactionService,
   IAgentLifecycleService,
   IAgentLoopService,
@@ -35,7 +33,6 @@ import {
   resumeSessionById,
   setSessionArchived,
   Error2,
-  type ContextMessage,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type Scope,
@@ -46,7 +43,8 @@ import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/inte
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
-import { toProtocolMessage } from '../services/messages/messageProjection';
+import type { ConversationService } from '../services/conversation/conversationService';
+import { loadWorkspaceVisibility } from '../services/workspaceVisibility';
 import {
   archiveSessionResponseSchema,
   compactSessionRequestSchema,
@@ -188,14 +186,14 @@ const sessionActionRequestSchema = z.preprocess(
     metadata: z.record(z.string(), z.unknown()).optional(),
     turn_index: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     instruction: z.string().optional(),
-    count: z.number().int().positive().optional(),
-    page_size: z.number().int().min(1).max(100).optional(),
+    turn_id: z.string().min(1).optional(),
+    agent_id: z.string().min(1).optional(),
   }),
 );
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void {
+export function registerSessionsRoutes(app: SessionRouteHost, core: Scope, conversations: ConversationService): void {
   const createRoute = defineRoute(
     {
       method: 'POST',
@@ -314,8 +312,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       const raw = req.query;
       const archivedOnly = raw.archived_only === true;
 
-      const workspaces = await core.accessor.get(IWorkspaceService).list();
-      const roots = new Map(workspaces.map((w) => [w.id, w.root]));
+      const { roots, visibleWorkspaceIds } = await loadWorkspaceVisibility(core);
 
       if (raw.workspace_id !== undefined && !roots.has(raw.workspace_id)) {
         reply.send(
@@ -362,6 +359,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           if (page.items.length === 0) break;
           let exhausted = false;
           for (const summary of page.items) {
+            if (!visibleWorkspaceIds.has(summary.workspaceId)) continue;
             if (!newerThanCursor(summary)) {
               exhausted = true;
               break;
@@ -393,6 +391,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         });
         const eligible: Eligible[] = [];
         for (const summary of page.items) {
+          if (!visibleWorkspaceIds.has(summary.workspaceId)) continue;
           const cwd = summary.cwd ?? roots.get(summary.workspaceId);
           if (cwd === undefined) continue;
           if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
@@ -646,6 +645,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         ...sessionConflictErrors,
         [ErrorCode.COMPACTION_UNABLE]: {},
         [ErrorCode.SESSION_UNDO_UNAVAILABLE]: {},
+        [ErrorCode.TURN_NOT_FOUND]: {},
       },
       description: 'Run a session action',
       tags: ['sessions'],
@@ -657,7 +657,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           tail: req.params.tail,
           actions: sessionActions,
           resourceLabel: 'session',
-          extra: { core, req, reply },
+          extra: { core, conversations, req, reply },
           body: req.body,
           onUnsupported: (message) => {
             reply.send(buildValidationEnvelope([{ path: 'session_id', message }], req.id));
@@ -923,6 +923,7 @@ type SessionAction =
 
 interface SessionActionExtra {
   readonly core: Scope;
+  readonly conversations: ConversationService;
   readonly req: { readonly id: string };
   readonly reply: { readonly send: (payload: unknown) => unknown };
 }
@@ -995,25 +996,15 @@ async function compactSessionAction(
 async function undoSessionAction(
   ctx: SessionActionCtx<z.infer<typeof undoSessionRequestSchema>>,
 ): Promise<void> {
-  const { core, req, reply, id, body } = ctx;
-  const agent = await resolveMainAgent(core, id);
-  await reloadOnStale(
+  const { core, conversations, req, reply, id, body } = ctx;
+  const removed = await reloadOnStale(
     core.accessor,
     id,
-    () => agent.accessor.get(IAgentConversationUndoService).undo(body.count),
+    async () => (await conversations.feed(id, body.agent_id ?? MAIN_AGENT_ID)).undo(body.turn_id),
     { retry: false },
   );
-  const history = agent.accessor.get(IAgentContextMemoryService).get();
   requestLog(req)?.info({ session_id: id, action: 'undo' }, 'session action completed');
-  const summary = await core.accessor.get(ISessionIndex).get(id);
-  reply.send(
-    okEnvelope(
-      {
-        messages: pageUndoMessages(id, summary?.createdAt ?? 0, history, body.page_size),
-      },
-      req.id,
-    ),
-  );
+  reply.send(okEnvelope({ removed_turn_ids: removed }, req.id));
 }
 
 async function abortSessionAction(ctx: SessionActionCtx): Promise<void> {
@@ -1282,29 +1273,6 @@ function normalizeOptional(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
-}
-
-const DEFAULT_UNDO_MESSAGE_PAGE_SIZE = 50;
-const MAX_UNDO_MESSAGE_PAGE_SIZE = 100;
-
-function pageUndoMessages(
-  sessionId: string,
-  sessionCreatedAtMs: number,
-  history: readonly ContextMessage[],
-  requestedPageSize: number | undefined,
-): { items: ReturnType<typeof toProtocolMessage>[]; has_more: boolean } {
-  const pageSize = Math.min(
-    Math.max(requestedPageSize ?? DEFAULT_UNDO_MESSAGE_PAGE_SIZE, 1),
-    MAX_UNDO_MESSAGE_PAGE_SIZE,
-  );
-  const all = history.map((message, index) =>
-    toProtocolMessage(sessionId, index, message, sessionCreatedAtMs),
-  );
-  const desc = all.toReversed();
-  return {
-    items: desc.slice(0, pageSize),
-    has_more: desc.length > pageSize,
-  };
 }
 
 function buildWireMetadata(

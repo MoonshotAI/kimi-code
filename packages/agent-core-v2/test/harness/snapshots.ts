@@ -366,7 +366,7 @@ function normalizeValue(value: unknown, labels: SnapshotLabels): unknown {
 
 function normalizeObjectField(key: string, value: unknown, labels: SnapshotLabels): unknown {
   if (
-    (key === 'time' || key === 'created_at' || key === 'since' || key === 'at') &&
+    (key === 'time' || key === 'created_at' || key === 'since' || key === 'at' || key === 'startedAt') &&
     typeof value === 'number'
   ) {
     return '<time>';

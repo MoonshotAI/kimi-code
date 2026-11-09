@@ -11,12 +11,14 @@ import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
-import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
+import { ALL_TIPS, TRANSCRIPT_GROUPING_TIP, type ToolbarTip } from '#/tui/constant/tips';
+import { transcriptGroupingActive } from '#/tui/config';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 import type { AppState, EnvironmentSlotState } from '#/tui/types';
 import { PERMISSION_MODE_DISPLAY_NAMES } from '#/tui/utils/permission-mode';
+import { sessionWorkDir } from '#/tui/utils/session-work-dir';
 import { SpinnerTicker } from '#/tui/utils/spinner-ticker';
 import {
   StatusLineCommandRunner,
@@ -81,9 +83,17 @@ export function buildWeightedTips(tips: readonly ToolbarTip[]): readonly Toolbar
 }
 
 const ROTATION: readonly ToolbarTip[] = buildWeightedTips(ALL_TIPS);
+const GROUPING_ROTATION: readonly ToolbarTip[] = buildWeightedTips([
+  ...ALL_TIPS,
+  TRANSCRIPT_GROUPING_TIP,
+]);
 
 function currentTipIndex(): number {
   return Math.floor(Date.now() / TIP_ROTATE_INTERVAL_MS);
+}
+
+function showsGroupingTip(state: AppState, fullscreen: boolean): boolean {
+  return transcriptGroupingActive({ ...state.transcript, fullscreen });
 }
 
 /**
@@ -94,13 +104,17 @@ function currentTipIndex(): number {
  * current tip (which can happen at the wrap boundary), keeping long/important
  * tips on their own and avoiding "X | X".
  */
-function tipsForIndex(index: number): { primary: string; pair: string | null } {
-  const n = ROTATION.length;
+function tipsForIndex(
+  index: number,
+  groupingTip: boolean,
+): { primary: string; pair: string | null } {
+  const rotation = groupingTip ? GROUPING_ROTATION : ROTATION;
+  const n = rotation.length;
   if (n === 0) return { primary: '', pair: null };
   const offset = ((index % n) + n) % n;
-  const current = ROTATION[offset]!;
+  const current = rotation[offset]!;
   if (n === 1 || current.solo) return { primary: current.text, pair: null };
-  const next = ROTATION[(offset + 1) % n]!;
+  const next = rotation[(offset + 1) % n]!;
   if (next.solo || next.text === current.text) return { primary: current.text, pair: null };
   return { primary: current.text, pair: current.text + TIP_SEPARATOR + next.text };
 }
@@ -207,6 +221,7 @@ export interface FooterGitBinding {
 export class FooterComponent implements Component {
   private state: AppState;
   private readonly onRefresh: () => void;
+  private readonly runningFullscreen: boolean;
   private gitBinding: ((state: AppState) => FooterGitBinding | null) | null = null;
   private gitCache: GitStatusCache | null = null;
   private gitCacheKey: string | null = null;
@@ -230,9 +245,10 @@ export class FooterComponent implements Component {
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
 
-  constructor(state: AppState, onRefresh: () => void = () => {}) {
+  constructor(state: AppState, onRefresh: () => void = () => {}, runningFullscreen = false) {
     this.state = state;
     this.onRefresh = onRefresh;
+    this.runningFullscreen = runningFullscreen;
     this.syncGoalClock(state.goal);
     this.syncGoalTimer(state.goal);
     this.syncEnvironmentSpinner(state.environment);
@@ -380,7 +396,10 @@ export class FooterComponent implements Component {
       const showTips = !tipsInline && (configured === null || configured.includes('tips'));
       const tipCandidates: string[] = [];
       if (showTips) {
-        const { primary, pair } = tipsForIndex(currentTipIndex());
+        const { primary, pair } = tipsForIndex(
+          currentTipIndex(),
+          showsGroupingTip(state, this.runningFullscreen),
+        );
         if (pair) tipCandidates.push(pair);
         if (primary) tipCandidates.push(primary);
       }
@@ -472,7 +491,10 @@ export class FooterComponent implements Component {
     };
 
     {
-      const { primary, pair } = tipsForIndex(currentTipIndex());
+      const { primary, pair } = tipsForIndex(
+        currentTipIndex(),
+        showsGroupingTip(state, this.runningFullscreen),
+      );
       const tip = pair ?? primary;
       if (tip) slots['tips'] = [chalk.hex(colors.textMuted)(tip)];
     }
@@ -583,9 +605,7 @@ export class FooterComponent implements Component {
     const state = this.state;
     return {
       model: modelDisplayName(state),
-      cwd: isRemoteEnvironment(state.environment) && state.environment.cwd !== undefined
-        ? state.environment.cwd
-        : state.workDir,
+      cwd: sessionWorkDir(state),
       gitBranch: this.gitCache?.getStatus()?.branch ?? null,
       permissionMode: state.permissionMode,
       planMode: state.planMode,
