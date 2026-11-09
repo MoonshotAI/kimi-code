@@ -1081,6 +1081,16 @@ describe('group view', () => {
     expect(fitRunningTail([{ verb: 'running', names: ['a'] }], 0)).toBe('');
   });
 
+  it('fits a running command thousands of columns wide within one frame', () => {
+    const command = `node -e "${'x'.repeat(10_000)}"`;
+    const started = performance.now();
+    const tail = fitRunningTail([{ verb: 'running', names: [command] }], 40);
+    const elapsedMs = performance.now() - started;
+
+    expect(tail).toBe(`Running node -e "${'x'.repeat(22)}…`);
+    expect(elapsedMs).toBeLessThan(100);
+  });
+
   it('titles a group with nothing counted yet by its first member category', () => {
     const { timeline, at } = scriptedTimeline();
     const bash = tool('Bash', { command: 'make' }, null);

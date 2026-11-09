@@ -183,7 +183,7 @@ export function fitRunningTail(kinds: NonEmpty<RunningKind>, room: number): stri
     if (visibleWidth(text) <= room) return text;
   }
   const longest = Math.max(...kinds.map((kind) => visibleWidth(kind.names[0])));
-  for (let nameWidth = longest - 1; nameWidth >= TRANSCRIPT_TAIL_MIN_NAME_COLUMNS; nameWidth--) {
+  for (let nameWidth = Math.min(longest - 1, room); nameWidth >= TRANSCRIPT_TAIL_MIN_NAME_COLUMNS; nameWidth--) {
     const text = runningBody(kinds, 1, nameWidth);
     if (visibleWidth(text) <= room) return text;
   }
